@@ -157,3 +157,34 @@ export interface InstantiateTemplateRequest {
 }
 
 export type StackStatus = 'draft' | 'deploying' | 'running' | 'stopped' | 'error';
+
+export interface CreateUserRequest {
+  username: string;
+  password: string;
+  display_name: string;
+  role: string;
+}
+
+export interface APIKey {
+  id: string;
+  user_id: string;
+  name: string;
+  prefix: string;
+  created_at: string;
+  last_used_at?: string;
+  expires_at?: string;
+}
+
+export interface CreateAPIKeyRequest {
+  name: string;
+  expires_at?: string;
+}
+
+export interface CreateAPIKeyResponse {
+  id: string;
+  user_id: string;
+  name: string;
+  prefix: string;
+  raw_key: string;
+  created_at: string;
+}

@@ -37,6 +37,11 @@ const Layout = ({ children }: LayoutProps) => {
               <Button color="inherit" component={RouterLink} to="/audit-log">
                 Audit Log
               </Button>
+              {user?.role === 'admin' && (
+                <Button color="inherit" component={RouterLink} to="/admin/users">
+                  Users
+                </Button>
+              )}
             </Box>
           )}
 
@@ -44,8 +49,11 @@ const Layout = ({ children }: LayoutProps) => {
 
           {isAuthenticated && user && (
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+              <Button color="inherit" component={RouterLink} to="/profile" size="small">
+                {user.username}
+              </Button>
               <Chip
-                label={`${user.username} (${user.role})`}
+                label={user.role}
                 size="small"
                 sx={{ color: 'inherit', borderColor: 'rgba(255,255,255,0.5)' }}
                 variant="outlined"
