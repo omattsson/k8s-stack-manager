@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"time"
 
 	"backend/internal/models"
 )
@@ -732,6 +733,134 @@ func (m *MockAuditLogRepository) SetError(err error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.err = err
+}
+
+// ---- APIKeyRepository mock ----
+
+type MockAPIKeyRepository struct {
+	mu        sync.RWMutex
+	keys      map[string]*models.APIKey // by ID
+	byPrefix  map[string]*models.APIKey // by Prefix
+	createErr error
+	findErr   error
+	deleteErr error
+	listErr   error
+}
+
+func NewMockAPIKeyRepository() *MockAPIKeyRepository {
+	return &MockAPIKeyRepository{
+		keys:     make(map[string]*models.APIKey),
+		byPrefix: make(map[string]*models.APIKey),
+	}
+}
+
+func (m *MockAPIKeyRepository) Create(key *models.APIKey) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.createErr != nil {
+		return m.createErr
+	}
+	if key.ID == "" {
+		key.ID = fmt.Sprintf("key-%d", len(m.keys)+1)
+	}
+	cp := *key
+	m.keys[key.ID] = &cp
+	m.byPrefix[key.Prefix] = &cp
+	return nil
+}
+
+func (m *MockAPIKeyRepository) FindByID(userID, keyID string) (*models.APIKey, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.findErr != nil {
+		return nil, m.findErr
+	}
+	k, ok := m.keys[keyID]
+	if !ok || k.UserID != userID {
+		return nil, errors.New("not found")
+	}
+	cp := *k
+	return &cp, nil
+}
+
+func (m *MockAPIKeyRepository) FindByPrefix(prefix string) (*models.APIKey, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.findErr != nil {
+		return nil, m.findErr
+	}
+	k, ok := m.byPrefix[prefix]
+	if !ok {
+		return nil, errors.New("not found")
+	}
+	cp := *k
+	return &cp, nil
+}
+
+func (m *MockAPIKeyRepository) ListByUser(userID string) ([]*models.APIKey, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.listErr != nil {
+		return nil, m.listErr
+	}
+	var out []*models.APIKey
+	for _, k := range m.keys {
+		if k.UserID == userID {
+			cp := *k
+			out = append(out, &cp)
+		}
+	}
+	return out, nil
+}
+
+func (m *MockAPIKeyRepository) UpdateLastUsed(userID, keyID string, t time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	k, ok := m.keys[keyID]
+	if !ok || k.UserID != userID {
+		return errors.New("not found")
+	}
+	k.LastUsedAt = &t
+	return nil
+}
+
+func (m *MockAPIKeyRepository) Delete(userID, keyID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.deleteErr != nil {
+		return m.deleteErr
+	}
+	k, ok := m.keys[keyID]
+	if !ok || k.UserID != userID {
+		return errors.New("not found")
+	}
+	delete(m.byPrefix, k.Prefix)
+	delete(m.keys, keyID)
+	return nil
+}
+
+func (m *MockAPIKeyRepository) SetCreateError(err error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.createErr = err
+}
+
+func (m *MockAPIKeyRepository) SetFindError(err error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.findErr = err
+}
+
+func (m *MockAPIKeyRepository) SetDeleteError(err error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.deleteErr = err
+}
+
+func (m *MockAPIKeyRepository) SetListError(err error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.listErr = err
 }
 
 // ---- helpers ----
