@@ -14,7 +14,7 @@ type Order struct {
     UserID    uint    `gorm:"not null" json:"user_id"`
     Total     float64 `gorm:"not null" json:"total"`
     Status    string  `gorm:"size:50;not null;default:'pending'" json:"status"`
-    Version   uint    `gorm:"not null;default:0" json:"version"` // optimistic locking
+    Version   uint    `gorm:"not null;default:1" json:"version"` // optimistic locking (1 = initial; 0 = not provided)
 }
 ```
 
@@ -49,7 +49,7 @@ migrator.AddMigration(schema.Migration{
 ```
 
 ### 4. Create Handler File
-Create `internal/api/handlers/orders.go`. Use the existing `Handler` struct — it already has the `Repository` dependency:
+Create `internal/api/handlers/orders.go`. Use the existing `Handler` struct — it already has the `Repository` and optional `BroadcastSender` dependencies:
 ```go
 func (h *Handler) CreateOrder(c *gin.Context) {
     var order models.Order
@@ -57,7 +57,7 @@ func (h *Handler) CreateOrder(c *gin.Context) {
         c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request format"})
         return
     }
-    if err := h.repository.Create(&order); err != nil {
+    if err := h.repository.Create(c.Request.Context(), &order); err != nil {
         status, message := handleDBError(err)
         c.JSON(status, gin.H{"error": message})
         return

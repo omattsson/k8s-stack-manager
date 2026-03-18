@@ -1,6 +1,6 @@
 ---
 name: Frontend Developer
-description: Expert React/TypeScript frontend developer for implementing UI features from GitHub issues. Builds accessible, performant, well-tested pages following this project's MUI-based patterns.
+description: Expert React/TypeScript frontend developer for implementing UI features from GitHub issues. Builds accessible, performant, well-tested pages following this project's MUI-based patterns. Covers pages, components, API client services, routing, and data fetching.
 model: Claude Opus 4.6 (copilot)
 tools:
   - search/codebase
@@ -352,3 +352,28 @@ Common handoff targets:
 - **go-api-developer** — when frontend needs a new backend endpoint
 - **code-reviewer** — when all code and tests are complete and ready for review
 - **devops-engineer** — when proxy/nginx config or build changes are needed
+
+## API Integration Details
+
+When connecting frontend to backend APIs, follow these patterns:
+
+### Service object pattern (`src/api/client.ts`)
+- Group related endpoints into service objects (e.g., `orderService.list`, `orderService.create`)
+- Use `try/catch` with `console.error` in every service method
+- Use the shared `api` axios instance — never raw axios
+- Define request/response interfaces above the service object
+
+### Auth integration
+- Add auth headers via the axios interceptor pattern in `client.ts`
+- Match TypeScript types to backend Swagger definitions
+- Provide loading and error states in custom hooks
+
+### Endpoint config (`src/api/config.ts`)
+- `API_BASE_URL` switches automatically between dev (`localhost:8081`) and prod (`/api`)
+- Add new endpoint URLs to `config.ts` when needed
+- Vite proxy handles `/api` in dev Docker environment
+
+### Custom hooks (when patterns are reused)
+- Build custom hooks (e.g., `useStackDefinitions`, `useAuditLog`) for data fetching
+- Always provide loading, data, and error states
+- Clean up subscriptions in effect cleanup functions

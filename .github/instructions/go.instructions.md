@@ -12,25 +12,28 @@ HTTP handlers live in `internal/api/handlers/`. Resource handlers use the `Handl
 ```go
 type Handler struct {
     repository models.Repository
+    hub        websocket.BroadcastSender
 }
 func NewHandler(repository models.Repository) *Handler { ... }
+func NewHandlerWithHub(repository models.Repository, hub websocket.BroadcastSender) *Handler { ... }
 func (h *Handler) CreateItem(c *gin.Context) { ... }
 ```
-Register new handlers in `internal/api/routes/routes.go` under the `/api/v1` Gin route group.
+Use `NewHandlerWithHub` when the handler needs to broadcast WebSocket events on mutations. Register new handlers in `internal/api/routes/routes.go` under the `/api/v1` Gin route group.
 
 ## Repository Interface
 All data access goes through `models.Repository` (defined in `internal/models/models.go`):
 ```go
 type Repository interface {
-    Create(interface{}) error
-    FindByID(id uint, dest interface{}) error
-    Update(interface{}) error
-    Delete(interface{}) error
-    List(dest interface{}, conditions ...interface{}) error
-    Ping() error
+    Create(ctx context.Context, entity interface{}) error
+    FindByID(ctx context.Context, id uint, dest interface{}) error
+    Update(ctx context.Context, entity interface{}) error
+    Delete(ctx context.Context, entity interface{}) error
+    List(ctx context.Context, dest interface{}, conditions ...interface{}) error
+    Ping(ctx context.Context) error
+    Close() error
 }
 ```
-Two implementations exist: `GenericRepository` (GORM/MySQL) and `azure.TableRepository`. The factory in `internal/database/repository.go` selects based on config.
+All methods take `context.Context` as the first parameter. Two implementations exist: `GenericRepository` (GORM/MySQL) and `azure.TableRepository`. The factory in `internal/database/repository.go` selects based on config.
 
 ## Models
 Define models in `internal/models/models.go`. Embed `Base` for ID, timestamps, and soft-delete:
@@ -39,10 +42,18 @@ type Item struct {
     Base
     Name    string  `gorm:"size:255;not null" json:"name"`
     Price   float64 `json:"price"`
-    Version uint    `gorm:"not null;default:0" json:"version"`
+    Version uint    `gorm:"not null;default:1" json:"version"` // 1 = initial; 0 = not provided
 }
 ```
 Add validation methods implementing `Validator` interface in `internal/models/validation.go`.
+
+Models supporting optimistic locking should also implement the `Versionable` interface:
+```go
+type Versionable interface {
+    GetVersion() uint
+    SetVersion(v uint)
+}
+```
 
 ## Error Handling
 Use the custom error types in `internal/database/errors.go` and `pkg/dberrors/errors.go`:

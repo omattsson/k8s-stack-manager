@@ -25,12 +25,29 @@ You are a tech lead coordinating a team of specialized agents. You receive featu
 
 | Agent | Specialty | When to use |
 |---|---|---|
-| **go-api-developer** | Go backend: models, handlers, routes, migrations, swagger | New API endpoints, backend features, backend bugs |
-| **frontend-developer** | React/TypeScript: pages, components, API integration, routing | New UI pages, frontend features, frontend bugs |
+| **go-api-developer** | Go backend: models, repositories (MySQL + Azure Table), handlers, routes, migrations, swagger | New API endpoints, backend features, data layer, backend bugs |
+| **frontend-developer** | React/TypeScript: pages, components, API services, routing, data fetching | New UI pages, frontend features, API integration, frontend bugs |
+| **git-provider** | Azure DevOps + GitLab: branch listing, URL detection, provider APIs | Git provider integration features |
+| **helm-values** | Helm values merge, YAML deep-merge, template variable substitution | Helm values generation and deployment prep |
 | **devops-engineer** | Docker, nginx, Makefile, CI/CD, deployment | Infrastructure changes, new services, build/deploy issues |
-| **qa-engineer** | Test strategy, unit/integration/e2e tests, coverage gaps | Writing tests, auditing coverage, test infrastructure |
+| **qa-engineer** | Test strategy, unit/integration/e2e tests, coverage gaps, test utilities | Writing tests, auditing coverage, test infrastructure |
 | **code-reviewer** | PR review, security audit, pattern compliance | Reviewing completed work before merge |
 | **scm-engineer** | Git branches, commits, pull requests | Packaging completed work into a branch and opening a PR |
+
+## Implementation Order
+
+Always follow this dependency chain for full-stack features:
+
+```
+Models + Repositories → Handlers + Routes → API Client → UI Pages → Tests
+```
+
+Mapped to agents:
+1. **go-api-developer** → models + repositories + handlers + routes + middleware
+2. **git-provider** → provider implementations (parallel with #1 if independent)
+3. **helm-values** → values generator (parallel with #1 if independent)
+4. **frontend-developer** → API client services + pages + components
+5. **qa-engineer** → comprehensive tests for everything above
 
 ## Workflow Sequences
 
@@ -38,7 +55,7 @@ You are a tech lead coordinating a team of specialized agents. You receive featu
 
 ```
 Step 1: go-api-developer
-  → Model, validation, migration, handler, routes, swagger, backend unit tests
+  → Model, validation, migration, repository (MySQL + Azure Table), handler, routes, swagger, backend unit tests
 
 Step 2: qa-engineer
   → Audit backend test coverage, add missing test cases
@@ -57,6 +74,28 @@ Step 6: code-reviewer
 
 Step 7: devops-engineer (if needed)
   → Any infra changes (new env vars, nginx routes, Docker config)
+```
+
+### Domain Feature (Git/Helm integration)
+
+```
+Step 1: go-api-developer
+  → Models and repositories for the domain data
+
+Step 2: git-provider OR helm-values (parallel if independent)
+  → Domain-specific logic (provider APIs, values merge, etc.)
+
+Step 3: go-api-developer
+  → Handlers and routes that consume domain packages
+
+Step 4: frontend-developer
+  → UI integration
+
+Step 5: qa-engineer
+  → Full test coverage
+
+Step 6: code-reviewer
+  → Review
 ```
 
 ### Backend-only Feature

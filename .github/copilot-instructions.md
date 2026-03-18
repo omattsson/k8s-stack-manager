@@ -4,7 +4,7 @@
 
 Full-stack app: **Go (Gin) backend** + **React (TypeScript, Vite, MUI) frontend**, with **MySQL** (GORM) or **Azure Table Storage** as swappable data stores. Docker Compose orchestrates all services.
 
-**Bootstrap flow**: `backend/api/main.go` → `config.LoadConfig()` → `database.NewRepository(cfg)` (factory selects MySQL or Azure based on `USE_AZURE_TABLE`) → `routes.SetupRoutes(router, repo, healthChecker, cfg)` → `http.Server` with graceful shutdown (`SIGINT`/`SIGTERM`).
+**Bootstrap flow**: `backend/api/main.go` → `config.LoadConfig()` → `database.NewRepository(cfg)` (factory selects MySQL or Azure based on `USE_AZURE_TABLE`) → `routes.SetupRoutes(router, repo, healthChecker, cfg, hub)` → `http.Server` with graceful shutdown (`SIGINT`/`SIGTERM`).
 
 **Ports**: Backend `:8081` on host, frontend `:3000` in dev. Inside Docker, nginx and Vite proxy `/api` to `backend:8080`. Local non-Docker dev hits `localhost:8081` directly (`frontend/src/api/config.ts`).
 
@@ -28,6 +28,9 @@ backend/
     models/models.go             # Domain models + Repository interface + Filter/Pagination
     models/validation.go         # Validator interface implementations
     health/health.go             # Dependency health checks (liveness/readiness)
+    websocket/hub.go             # WebSocket hub (BroadcastSender interface)
+    websocket/client.go          # WebSocket client with read/write pumps
+    websocket/message.go         # Message envelope type
   pkg/dberrors/errors.go         # Canonical error types: ErrNotFound, ErrDuplicateKey, ErrValidation
 ```
 
@@ -35,7 +38,7 @@ backend/
 
 **Repository interface** (`models.Repository`): All data access uses `Create`, `FindByID`, `Update`, `Delete`, `List` — all take `context.Context` first. Two implementations: `GenericRepository` (GORM/MySQL) and `azure.TableRepository`. The repository auto-calls `Validate()` on create/update if the model implements `Validator`.
 
-**Handler struct**: `handlers.Handler` holds `models.Repository` via constructor injection (`NewHandler(repo)`). CRUD handlers are receiver methods. Health handlers use a different pattern — factory functions returning `gin.HandlerFunc` with `*health.HealthChecker` via closure. If a new resource needs dependencies beyond Repository, create a separate handler struct.
+**Handler struct**: `handlers.Handler` holds `models.Repository` and optional `websocket.BroadcastSender` via constructor injection (`NewHandler(repo)` or `NewHandlerWithHub(repo, hub)`). CRUD handlers are receiver methods. Health handlers use a different pattern — factory functions returning `gin.HandlerFunc` with `*health.HealthChecker` via closure. If a new resource needs dependencies beyond Repository, create a separate handler struct.
 
 **Error flow**: Repository returns `*dberrors.DatabaseError` wrapping sentinel errors → `handleDBError()` in `handlers/items.go` maps via `errors.As`/`errors.Is` to HTTP status (400 validation, 404 not found, 409 duplicate/version conflict, 500 internal). **Never expose raw error messages for 500s** — always return `"Internal server error"`.
 
@@ -43,7 +46,7 @@ backend/
 
 **Filter whitelist**: `GenericRepository` has `allowedFilterFields` map. `NewRepository()` hardcodes Item fields ("name", "price"). New entities need `NewRepositoryWithFilterFields()` or the existing repo must be extended.
 
-**Routes registration**: `SetupRoutes()` returns `*RateLimiter` (caller must call `Stop()` on shutdown). Middleware order: RequestID → Logger → Recovery → CORS → MaxBodySize (1MB). Health at `/health/*` (no rate limit), API at `/api/v1/*` (100 req/min per IP).
+**Routes registration**: `SetupRoutes()` returns `*RateLimiter` (caller must call `Stop()` on shutdown). Middleware order: RequestID → Logger → Recovery → CORS → MaxBodySize (1MB). WebSocket at `/ws` (no rate limit), health at `/health/*` (no rate limit), API at `/api/v1/*` (100 req/min per IP).
 
 ## Frontend Structure
 
@@ -51,7 +54,7 @@ backend/
 frontend/src/
   api/config.ts          # API_BASE_URL: localhost:8081 (dev) | /api (prod)
   api/client.ts          # Axios instance + service objects (e.g., healthService)
-  routes.tsx             # Route definitions: / → Home, /health → Health
+  routes.tsx             # Route definitions: / → Home, /health → Health, /items → Items
   components/Layout/     # AppBar + nav + footer shell
   pages/{Name}/index.tsx # Page components (one dir per page)
 ```

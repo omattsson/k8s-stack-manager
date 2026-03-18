@@ -50,7 +50,8 @@ Indexes are added via versioned migrations in `internal/database/migrations.go`.
 ## Server Timeouts
 HTTP server timeouts are configurable in `internal/config/config.go`:
 - `SERVER_READ_TIMEOUT` (default: 10s) — max time to read request
-- `SERVER_WRITE_TIMEOUT` (default: 10s) — max time to write response
+- `SERVER_WRITE_TIMEOUT` (default: 0, disabled) — max time to write response. Disabled by default to support long-lived WebSocket connections. Per-write deadlines are enforced in the WebSocket write pump. Set to a positive value (e.g. 30s) in environments without WebSocket to protect against slow clients.
+- `SERVER_IDLE_TIMEOUT` (default: 30s) — max time an idle keep-alive connection stays open
 - `SERVER_SHUTDOWN_TIMEOUT` (default: 30s) — graceful shutdown window
 
 These prevent slow clients from consuming connections. Set via env vars in production based on expected request sizes.

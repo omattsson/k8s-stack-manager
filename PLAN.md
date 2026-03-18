@@ -16,12 +16,21 @@ Today each developer runs a local docker-compose to spin up an application stack
 
 A self-service web application where developers can:
 
-1. Define reusable **stack definitions** (collections of Helm charts)
-2. Spin up **stack instances** from those definitions, choosing branches per service
-3. Configure **values overrides** per chart with a YAML editor
-4. **Export** generated `values.yaml` files for use with Helm
-5. See **all stacks** across the team with a full **audit log** of changes
-6. (Future) **Deploy directly** to the shared AKS Arc cluster
+1. Browse a **template gallery** of curated application stacks created by DevOps
+2. **Instantiate** a template into a personal **stack definition**, using it as-is or extending it
+3. Define freeform **stack definitions** (collections of Helm charts) without a template
+4. Spin up **stack instances** from those definitions, choosing branches per service
+5. Configure **values overrides** per chart with a YAML editor (respecting template-locked values)
+6. **Export** generated `values.yaml` files for use with Helm
+7. See **all stacks** across the team with a full **audit log** of changes
+8. (Future) **Deploy directly** to the shared AKS Arc cluster
+
+DevOps teams can:
+
+1. **Create and version** stack templates with curated charts and default values
+2. **Lock values** that developers cannot override (enforcing guardrails)
+3. **Mark charts as required** that developers cannot remove
+4. **Publish/unpublish** templates to control availability
 
 ## Architecture
 
@@ -32,12 +41,13 @@ A self-service web application where developers can:
 ├─────────────────────────────────────────────────────────┤
 │                   Backend (Go + Gin)                     │
 │  REST API · JWT Auth · Swagger · Audit Middleware        │
-├──────────┬──────────┬───────────┬───────────────────────┤
-│ Azure    │ Git      │ Helm      │ K8s                   │
-│ Tables   │ Provider │ Values    │ Deployer              │
-│ (CRUD)   │ (AzDO +  │ (Merge +  │ (Phase 3)             │
-│          │  GitLab) │  Export)  │                       │
-└──────────┴──────────┴───────────┴───────────────────────┘
+├──────────┬──────────┬───────────┬──────────┬──────────────┤
+│ Azure    │ Template │ Git       │ Helm     │ K8s          │
+│ Tables   │ Engine   │ Provider  │ Values   │ Deployer     │
+│ (CRUD)   │ (Create, │ (AzDO +   │ (Merge + │ (Phase 3)    │
+│          │  Publish,│  GitLab)  │  Export) │              │
+│          │  Lock)   │           │         │              │
+└──────────┴──────────┴───────────┴──────────┴──────────────┘
 ```
 
 ## Tech Stack
@@ -69,20 +79,21 @@ Create the custom agents, workspace instructions, and file-specific instructions
 
 Project-wide standards covering architecture, code style, build/test commands, and conventions (audit logging, branch defaults, namespace naming, Helm values merge, Git provider detection).
 
-### Step 0.2 — Custom Agents (8 agents)
+### Step 0.2 — Custom Agents (9 agents)
 
 All agents in `.github/agents/`:
 
 | Agent | File | Purpose |
 |-------|------|---------|
-| Backend API Developer | `backend-api.agent.md` | Go handlers, routes, middleware, Swagger annotations |
-| Data Layer Specialist | `data-layer.agent.md` | Domain models, Azure Table repositories, factory wiring |
-| Frontend UI Developer | `frontend-ui.agent.md` | React pages, MUI components, routing, state |
-| Frontend API Integration | `frontend-api.agent.md` | Axios services, TypeScript types, data fetching hooks |
+| Go API Developer | `go-api-developer.md` | Go backend: models, repositories (MySQL + Azure Table), handlers, routes, migrations, swagger |
+| Frontend Developer | `frontend-developer.md` | React pages, MUI components, API services, routing, data fetching |
 | Git Provider Specialist | `git-provider.agent.md` | Azure DevOps + GitLab API integration, URL parsing, caching |
 | Helm Values Specialist | `helm-values.agent.md` | YAML deep-merge, template variables, values export |
-| Test Specialist | `test-writer.agent.md` | Go tests (testify), React tests (Vitest/RTL), E2E (Playwright) |
-| Build Orchestrator | `orchestrator.agent.md` | Coordinates multi-step features across specialist agents |
+| QA Engineer | `qa-engineer.md` | Test strategy, Go tests (testify), React tests (Vitest/RTL), E2E (Playwright) |
+| Orchestrator | `orchestrator.md` | Coordinates multi-step features across specialist agents |
+| DevOps Engineer | `devops-engineer.md` | Docker, nginx, Makefile, CI/CD, deployment |
+| SCM Engineer | `scm-engineer.md` | Git branches, commits, pull requests |
+| Code Reviewer | `code-reviewer.md` | PR review, security audit, pattern compliance |
 
 ### Step 0.3 — File-Specific Instructions (3 files)
 
@@ -117,9 +128,39 @@ New files in `backend/internal/models/`:
 | Username | string | Unique |
 | PasswordHash | string | bcrypt |
 | DisplayName | string | |
-| Role | string | "admin" / "user" |
+| Role | string | "admin" / "devops" / "user" |
 | CreatedAt | time.Time | |
 | UpdatedAt | time.Time | |
+
+**StackTemplate** *(new — DevOps-managed reusable stack recipes)*
+| Field | Type | Notes |
+|-------|------|-------|
+| ID | string (UUID) | |
+| Name | string | Unique |
+| Description | string | |
+| Category | string | e.g., "Full Stack", "Backend Only", "Minimal", "Custom" |
+| Version | string | Semver, e.g., "1.0.0" |
+| OwnerID | string | FK → User (DevOps/Admin only) |
+| DefaultBranch | string | Default: "master" |
+| IsPublished | bool | Only published templates visible to developers |
+| CreatedAt | time.Time | |
+| UpdatedAt | time.Time | |
+
+**TemplateChartConfig** *(new — charts within a template)*
+| Field | Type | Notes |
+|-------|------|-------|
+| ID | string (UUID) | |
+| StackTemplateID | string | FK → StackTemplate |
+| ChartName | string | e.g., "my-service" |
+| RepositoryURL | string | Helm chart repo URL |
+| SourceRepoURL | string | Git repo for branch listing |
+| ChartPath | string | Path within repo to chart |
+| ChartVersion | string | Version or "latest" |
+| DefaultValues | string | YAML — base values |
+| LockedValues | string | YAML — values devs **cannot** override |
+| DeployOrder | int | Deployment sequence |
+| Required | bool | If true, dev cannot remove this chart from derived definitions |
+| CreatedAt | time.Time | |
 
 **StackDefinition**
 | Field | Type | Notes |
@@ -128,6 +169,8 @@ New files in `backend/internal/models/`:
 | Name | string | Unique |
 | Description | string | |
 | OwnerID | string | FK → User |
+| SourceTemplateID | string | Nullable — FK → StackTemplate if created from template |
+| SourceTemplateVersion | string | Template version when instantiated (for upgrade awareness) |
 | DefaultBranch | string | Default: "master" |
 | CreatedAt | time.Time | |
 | UpdatedAt | time.Time | |
@@ -188,8 +231,8 @@ Extend `backend/internal/database/azure/` following the existing `table.go` patt
 
 | Table | Partition Key | Row Key | Rationale |
 |-------|--------------|---------|-----------|
-| Users | `"users"` | username | Fast lookup by username for auth |
-| StackDefinitions | `"global"` | definition_id | All definitions visible to all users |
+| Users | `"users"` | username | Fast lookup by username for auth || StackTemplates | `"global"` | template_id | All templates visible for browsing |
+| TemplateChartConfigs | stack_template_id | chart_config_id | All charts for a template || StackDefinitions | `"global"` | definition_id | All definitions visible to all users |
 | ChartConfigs | stack_definition_id | chart_config_id | All charts for a definition |
 | StackInstances | `"global"` | instance_id | All instances visible to all users |
 | ValueOverrides | stack_instance_id | chart_config_id | All overrides for an instance |
@@ -197,7 +240,9 @@ Extend `backend/internal/database/azure/` following the existing `table.go` patt
 
 **Repositories to create**:
 - `UserRepository` — CRUD + `FindByUsername()`
-- `StackDefinitionRepository` — CRUD + `List()`
+- `StackTemplateRepository` — CRUD + `List()` + `ListPublished()` + `ListByOwner(ownerID)`
+- `TemplateChartConfigRepository` — CRUD + `ListByTemplate(templateID)`
+- `StackDefinitionRepository` — CRUD + `List()` + `ListByTemplate(templateID)`
 - `ChartConfigRepository` — CRUD + `ListByDefinition(definitionID)`
 - `StackInstanceRepository` — CRUD + `List()` + `ListByOwner(ownerID)`
 - `ValueOverrideRepository` — CRUD + `ListByInstance(instanceID)`
@@ -214,6 +259,28 @@ New handlers in `backend/internal/api/handlers/` and routes in `backend/internal
 | POST | `/login` | Username/password → JWT token | None |
 | POST | `/register` | Create user (admin-only or configurable) | Admin |
 | GET | `/me` | Current user info from JWT | User |
+
+**Stack Templates** (`/api/v1/templates`):
+
+| Method | Path | Description | Auth |
+|--------|------|-------------|------|
+| GET | `/` | List published templates (devs) / all templates (devops/admin) | User |
+| POST | `/` | Create template | DevOps/Admin |
+| GET | `/:id` | Get template with charts | User |
+| PUT | `/:id` | Update template | DevOps/Admin |
+| DELETE | `/:id` | Delete template (if no definitions link to it) | DevOps/Admin |
+| POST | `/:id/publish` | Publish template (makes visible to devs) | DevOps/Admin |
+| POST | `/:id/unpublish` | Unpublish template (hides from devs) | DevOps/Admin |
+| POST | `/:id/instantiate` | Create StackDefinition from template (copies charts + values) | User |
+| POST | `/:id/clone` | Clone as new draft template (for versioning) | DevOps/Admin |
+
+**Template Charts** (nested under `/api/v1/templates/:id/charts`):
+
+| Method | Path | Description | Auth |
+|--------|------|-------------|------|
+| POST | `/` | Add chart to template | DevOps/Admin |
+| PUT | `/:chartId` | Update chart (values, locked values, required flag) | DevOps/Admin |
+| DELETE | `/:chartId` | Remove chart from template | DevOps/Admin |
 
 **Stack Definitions** (`/api/v1/stack-definitions`):
 
@@ -283,6 +350,8 @@ New handlers in `backend/internal/api/handlers/` and routes in `backend/internal
 
 **Role Middleware** (`backend/internal/api/middleware/role.go`):
 - Check user role from context against required role
+- Support role hierarchy: admin > devops > user
+- DevOps role can manage templates but not system-level admin tasks
 - Return 403 for insufficient permissions
 
 ### Step 1.5 — Helm Values Generation
@@ -290,7 +359,8 @@ New handlers in `backend/internal/api/handlers/` and routes in `backend/internal
 New package `backend/internal/helm/`:
 
 **ValuesGenerator**:
-- Deep-merge chart default values + instance value overrides → final `values.yaml`
+- Deep-merge: template locked values (highest priority) + chart default values + instance value overrides → final `values.yaml`
+- Locked values from templates always win and cannot be overridden
 - Override-specific keys only (not full replacement)
 - Template variable substitution:
   - `{{.Branch}}` → instance branch
@@ -346,13 +416,18 @@ GitProviders: GitProvidersConfig{
 
 ### Phase 1 Verification
 
-- [ ] All 6 model structs defined with proper types and tags
-- [ ] All 6 Azure Table repositories implement CRUD + filters
+- [ ] All 8 model structs defined with proper types and tags
+- [ ] All 8 Azure Table repositories implement CRUD + filters
+- [ ] StackTemplate + TemplateChartConfig repos support publish/unpublish + ListPublished
+- [ ] Instantiate endpoint copies template charts into a new StackDefinition
+- [ ] Locked values enforced: override attempts on locked keys rejected by API
+- [ ] Required charts enforced: delete attempts on required charts rejected by API
+- [ ] DevOps role can manage templates but not admin-level operations
 - [ ] All REST endpoints return correct status codes and response shapes
 - [ ] JWT auth middleware rejects unauthenticated requests with 401
-- [ ] Role middleware rejects unauthorized requests with 403
+- [ ] Role middleware rejects unauthorized requests with 403 (admin > devops > user)
 - [ ] Every POST/PUT/DELETE endpoint produces an AuditLog entry
-- [ ] Helm values merge produces valid YAML with correct override precedence
+- [ ] Helm values merge produces valid YAML with correct override precedence (locked > override > default)
 - [ ] Template variables are substituted in exported values
 - [ ] Git provider detects Azure DevOps and GitLab URLs correctly
 - [ ] Branch listing returns branches from both providers
@@ -376,19 +451,58 @@ GitProviders: GitProvidersConfig{
 - `src/api/client.ts` — add auth header interceptor (`Authorization: Bearer <token>`)
 - `src/components/Layout/index.tsx` — show username + logout button, update nav links
 
-### Step 2.2 — Stack Definitions Pages
+### Step 2.2 — Stack Templates Pages (DevOps + Dev)
+
+**Template Gallery** (`/templates`) — All authenticated users:
+- Card/grid view of published templates with category filters
+- Each card shows: Name, Description, Category, Version, Chart count, "Use Template" button
+- Search bar for templates by name/description
+- DevOps/Admin users see an additional "My Templates" tab with draft and published templates
+- "Create Template" button visible only to DevOps/Admin
+
+**Template Builder** (`/templates/new`, `/templates/:id/edit`) — DevOps/Admin only:
+- Form fields: Name, Description, Category (dropdown), Version, Default Branch
+- Dynamic chart list:
+  - Add/remove/reorder charts via drag-and-drop
+  - Per chart: Chart Name, Repo URL, Source Repo URL, Chart Path, Version, Deploy Order
+  - Default Values: inline YAML editor (Monaco) per chart
+  - Locked Values: separate YAML editor — values that devs **cannot** override
+  - Required toggle: if on, devs cannot remove this chart from derived definitions
+- Publish/Unpublish toggle
+- Save → POST/PUT API call
+
+**Template Preview** (`/templates/:id`) — All users:
+- Read-only view of template: name, description, category, version, charts
+- Per-chart: default values, locked values (highlighted), required badge
+- "Use Template" button → navigates to instantiate flow
+- "Clone as Template" button (DevOps/Admin only) → creates a new draft copy
+
+**Instantiate from Template** (`/templates/:id/use`):
+- Pre-filled form with template’s charts and values
+- Dev enters: Definition name, optional description
+- Per-chart value editor pre-populated with template defaults
+- Locked values shown as read-only (visually distinct, grayed out)
+- Required charts marked with badge; optional charts can be toggled off
+- Save → POST `/api/v1/templates/:id/instantiate` → navigate to new StackDefinition
+
+### Step 2.3 — Stack Definitions Pages
 
 **List page** (`/stack-definitions`):
-- Table with columns: Name, Description, Owner, Charts count, Created, Actions
+- Table with columns: Name, Description, Owner, Source Template, Charts count, Created, Actions
+- Source Template column shows linked template name (with link) or "—" if freeform
+- "Template upgrade available" badge when source template has newer version
 - Create button → navigate to create form
 - Row click → navigate to detail/edit
 
 **Create/Edit page** (`/stack-definitions/new`, `/stack-definitions/:id/edit`):
 - Form fields: Name, Description, Default Branch
+- If derived from template: shows source template link + version
 - Dynamic chart list:
   - Add/remove/reorder charts via drag-and-drop
+  - Required charts (from template) cannot be removed — shown with lock icon
   - Per chart: Chart Name, Repo URL, Source Repo URL, Chart Path, Version, Deploy Order
   - Default Values: inline YAML editor (Monaco) per chart
+  - Locked values (from template) shown as read-only within the editor
 - Save → POST/PUT API call + navigate to list
 
 ### Step 2.3 — Stack Instances Pages
@@ -417,7 +531,7 @@ GitProviders: GitProvidersConfig{
 - Actions toolbar: Save, Deploy (Phase 3), Stop (Phase 3), Clone, Delete, Export All Values
 - Branch selector (changing branch updates all charts or per-chart in advanced mode)
 
-### Step 2.4 — Audit Log Page
+### Step 2.5 — Audit Log Page
 
 **Audit Log** (`/audit-log`):
 - Table with columns: Timestamp, User, Action, Entity Type, Entity, Details (expandable)
@@ -426,7 +540,7 @@ GitProviders: GitProvidersConfig{
 - Click entity → navigate to the entity detail page
 - Accessible to all authenticated users (read-only)
 
-### Step 2.5 — Shared Components
+### Step 2.6 — Shared Components
 
 | Component | Location | Purpose |
 |-----------|----------|---------|
@@ -435,14 +549,22 @@ GitProviders: GitProvidersConfig{
 | BranchSelector | `src/components/BranchSelector/` | Searchable dropdown calling `/api/v1/git/branches`, debounced, with provider icon, fallback to text input |
 | ConfirmDialog | `src/components/ConfirmDialog/` | MUI dialog for destructive action confirmation |
 | EntityLink | `src/components/EntityLink/` | Clickable link to entity detail pages (for audit log) |
+| LockedValuesBanner | `src/components/LockedValuesBanner/` | Read-only YAML display for template-locked values |
+| TemplateBadge | `src/components/TemplateBadge/` | Badge showing source template name + version, with upgrade indicator |
 
 ### Phase 2 Verification
 
 - [ ] Login flow works: login → JWT stored → protected routes accessible → logout clears JWT
 - [ ] Unauthenticated users redirected to login
+- [ ] Template gallery: devs see only published templates; devops/admin see all
+- [ ] Template builder: devops/admin can create, edit, publish/unpublish templates
+- [ ] Template locked values and required charts are enforced in the UI
+- [ ] Instantiate from template pre-fills definition with correct charts and values
+- [ ] Derived definitions show source template link and upgrade indicator
 - [ ] Stack definitions: create, list, edit, delete all functional
-- [ ] Chart configs: add, remove, reorder within a definition
+- [ ] Chart configs: add, remove, reorder within a definition (respecting required flag)
 - [ ] YAML editor validates and highlights syntax errors
+- [ ] Locked values shown as read-only in definition editor
 - [ ] Stack instances: create from definition, edit, clone, delete
 - [ ] Branch selector fetches live branches from Azure DevOps and GitLab
 - [ ] Branch selector falls back to text input when provider is unavailable
@@ -526,15 +648,16 @@ Optional enhancement to branch selection:
 - Show which values differ from definition defaults
 - Useful for debugging "why does my stack behave differently?"
 
-### Step 4.2 — Stack Templates & Presets
+### Step 4.2 — ~~Stack Templates & Presets~~ (Promoted to Core)
 
-- Mark stack definitions as "template" (official/shared)
-- One-click "create stack from template" with sensible defaults
-- Pre-ship common templates:
-  - "Full Stack" (all 7 services)
-  - "Backend Only" (API + database + message queue)
-  - "Minimal" (single service + database)
-- Template marketplace: browse, preview, clone
+> **This feature has been promoted to Phase 1 (backend) and Phase 2 (frontend).**
+> See: Step 1.1 (StackTemplate + TemplateChartConfig models), Step 1.2 (template repos),
+> Step 1.3 (template API endpoints), Step 2.2 (Template Gallery/Builder/Instantiate pages).
+>
+> Remaining **Phase 4 enhancements** for templates:
+> - Template versioning with diff between versions
+> - Template upgrade workflow: detect newer template version, show diff, one-click upgrade
+> - Template marketplace: share templates across organizations
 
 ### Step 4.3 — Resource Quotas
 
@@ -578,12 +701,12 @@ Important for shared cluster:
 | Agent | Primary Phase | Steps |
 |-------|--------------|-------|
 | Orchestrator | All | Coordinates multi-step features |
-| Data Layer | Phase 1 | 1.1 (models), 1.2 (repositories) |
-| Backend API | Phase 1 | 1.3 (endpoints), 1.4 (middleware) |
+| Data Layer | Phase 1 | 1.1 (models incl. templates), 1.2 (repositories incl. template repos) |
+| Backend API | Phase 1 | 1.3 (endpoints incl. template CRUD + instantiate), 1.4 (middleware incl. devops role) |
 | Git Provider | Phase 1 | 1.6 (AzDO + GitLab integration) |
-| Helm Values | Phase 1, 3 | 1.5 (generation), 3.1 (deployment) |
-| Frontend API | Phase 2 | 2.1 (auth), services for all endpoints |
-| Frontend UI | Phase 2 | 2.2–2.5 (all pages and components) |
+| Helm Values | Phase 1, 3 | 1.5 (generation with locked values), 3.1 (deployment) |
+| Frontend API | Phase 2 | 2.1 (auth), services for all endpoints incl. templates |
+| Frontend UI | Phase 2 | 2.2–2.6 (all pages: template gallery/builder, definitions, instances, audit) |
 | Test Writer | All | Tests after each feature is built |
 
 ## Implementation Order
@@ -595,13 +718,11 @@ Models → Repositories → Handlers → Routes → API Client → UI Pages → 
 ```
 
 Specifically:
-1. data-layer agent: models + repos
-2. backend-api agent: handlers + routes + middleware
-3. git-provider agent: provider implementations (parallel with #2)
-4. helm-values agent: values generator (parallel with #2)
-5. frontend-api agent: API client services + auth context
-6. frontend-ui agent: pages and components
-7. test-writer agent: comprehensive tests for everything above
+1. go-api-developer agent: models + repositories + handlers + routes + middleware
+2. git-provider agent: provider implementations (parallel with #1)
+3. helm-values agent: values generator (parallel with #1)
+4. frontend-developer agent: API client services + pages + components
+5. qa-engineer agent: comprehensive tests for everything above
 
 ---
 
@@ -613,14 +734,15 @@ Specifically:
 .github/
 ├── copilot-instructions.md
 ├── agents/
-│   ├── backend-api.agent.md
-│   ├── data-layer.agent.md
-│   ├── frontend-ui.agent.md
-│   ├── frontend-api.agent.md
+│   ├── go-api-developer.md
+│   ├── frontend-developer.md
 │   ├── git-provider.agent.md
 │   ├── helm-values.agent.md
-│   ├── test-writer.agent.md
-│   └── orchestrator.agent.md
+│   ├── qa-engineer.md
+│   ├── orchestrator.md
+│   ├── devops-engineer.md
+│   ├── scm-engineer.md
+│   └── code-reviewer.md
 └── instructions/
     ├── go-handlers.instructions.md
     ├── azure-table-repos.instructions.md
@@ -633,6 +755,8 @@ Specifically:
 backend/internal/
 ├── models/
 │   ├── user.go
+│   ├── stack_template.go
+│   ├── template_chart_config.go
 │   ├── stack_definition.go
 │   ├── chart_config.go
 │   ├── stack_instance.go
@@ -640,6 +764,8 @@ backend/internal/
 │   └── audit_log.go
 ├── database/azure/
 │   ├── user_repository.go
+│   ├── stack_template_repository.go
+│   ├── template_chart_config_repository.go
 │   ├── stack_definition_repository.go
 │   ├── chart_config_repository.go
 │   ├── stack_instance_repository.go
@@ -648,6 +774,8 @@ backend/internal/
 ├── api/
 │   ├── handlers/
 │   │   ├── auth.go
+│   │   ├── stack_templates.go
+│   │   ├── template_charts.go
 │   │   ├── stack_definitions.go
 │   │   ├── chart_configs.go
 │   │   ├── stack_instances.go
@@ -679,6 +807,12 @@ frontend/src/
 │   ├── Login/
 │   │   ├── index.tsx
 │   │   └── __tests__/Login.test.tsx
+│   ├── Templates/
+│   │   ├── Gallery.tsx
+│   │   ├── Builder.tsx
+│   │   ├── Preview.tsx
+│   │   ├── Instantiate.tsx
+│   │   └── __tests__/
 │   ├── StackDefinitions/
 │   │   ├── List.tsx
 │   │   ├── Form.tsx
@@ -706,8 +840,14 @@ frontend/src/
 │   │   └── __tests__/
 │   ├── ProtectedRoute/
 │   │   └── index.tsx
-│   └── EntityLink/
-│       └── index.tsx
+│   ├── EntityLink/
+│   │   └── index.tsx
+│   ├── LockedValuesBanner/
+│   │   ├── index.tsx
+│   │   └── __tests__/
+│   └── TemplateBadge/
+│       ├── index.tsx
+│       └── __tests__/
 └── api/
     └── client.ts (modified: add auth + all new service methods)
 ```
@@ -768,6 +908,10 @@ backend/internal/
 | 10 | All stacks visible to all users | Team transparency; audit log tracks ownership |
 | 11 | Branch cache 5-min TTL | Balances freshness vs. API rate limits |
 | 12 | URL-based provider detection | No per-chart provider config needed; just look at the URL |
+| 13 | Stack Templates as core feature | Templates are the primary workflow for devs; DevOps curates, devs consume |
+| 14 | DevOps role (admin > devops > user) | Template management needs elevated perms without full admin access |
+| 15 | Locked values + required charts | DevOps enforces guardrails; devs customize within bounds |
+| 16 | Separate StackTemplate entity | Cleaner than overloading StackDefinition; separate permissions, publishing, versioning |
 
 ---
 

@@ -52,4 +52,4 @@ items.Use(rateLimiter.RateLimit())
 The `Recovery()` middleware in `internal/api/middleware/middleware.go` catches panics and returns a generic 500. This is applied globally in `routes.go`. Never remove it — it prevents unhandled panics from crashing the server and potentially leaking stack traces.
 
 ## Graceful Shutdown
-`api/main.go` handles `SIGINT`/`SIGTERM` with a 5-second context for in-flight requests. Ensure any new background goroutines or workers respect shutdown signals.
+`api/main.go` handles `SIGINT`/`SIGTERM` with a 30-second context for in-flight requests (configurable via `SERVER_SHUTDOWN_TIMEOUT`). Ensure any new background goroutines or workers respect shutdown signals.
