@@ -92,10 +92,10 @@ func (r *APIKeyRepository) FindByID(userID, keyID string) (*models.APIKey, error
 	return apiKeyFromEntity(entity), nil
 }
 
-// FindByPrefix scans the entire table and returns the first key matching prefix.
+// FindByPrefix scans the entire table and returns all keys matching prefix.
 // Azure Table Storage has no secondary index, so client-side filtering is used.
 // This is acceptable given the expected low total volume of API keys.
-func (r *APIKeyRepository) FindByPrefix(prefix string) (*models.APIKey, error) {
+func (r *APIKeyRepository) FindByPrefix(prefix string) ([]*models.APIKey, error) {
 	ctx := context.Background()
 
 	pager := r.client.NewListEntitiesPager(nil)
@@ -109,7 +109,11 @@ func (r *APIKeyRepository) FindByPrefix(prefix string) (*models.APIKey, error) {
 		return nil, dberrors.NewDatabaseError("find_by_prefix", dberrors.ErrNotFound)
 	}
 
-	return apiKeyFromEntity(entities[0]), nil
+	keys := make([]*models.APIKey, 0, len(entities))
+	for _, e := range entities {
+		keys = append(keys, apiKeyFromEntity(e))
+	}
+	return keys, nil
 }
 
 func (r *APIKeyRepository) ListByUser(userID string) ([]*models.APIKey, error) {

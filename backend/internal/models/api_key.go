@@ -15,7 +15,7 @@ type APIKey struct {
 	UserID     string     `json:"user_id"`
 	Name       string     `json:"name"`
 	KeyHash    string     `json:"-"`      // stored; never returned
-	Prefix     string     `json:"prefix"` // first 8 chars of raw key for display
+	Prefix     string     `json:"prefix"` // first 16 chars of raw key for display
 	CreatedAt  time.Time  `json:"created_at"`
 	LastUsedAt *time.Time `json:"last_used_at,omitempty"`
 	ExpiresAt  *time.Time `json:"expires_at,omitempty"`
@@ -27,7 +27,7 @@ type APIKeyRepository interface {
 	Create(key *APIKey) error
 	FindByID(userID, keyID string) (*APIKey, error)
 	// FindByPrefix performs a table scan filtered client-side; acceptable at low volume.
-	FindByPrefix(prefix string) (*APIKey, error)
+	FindByPrefix(prefix string) ([]*APIKey, error)
 	ListByUser(userID string) ([]*APIKey, error)
 	UpdateLastUsed(userID, keyID string, t time.Time) error
 	Delete(userID, keyID string) error
@@ -35,7 +35,7 @@ type APIKeyRepository interface {
 
 // GenerateAPIKey creates a cryptographically random 32-byte key and returns:
 //   - rawKey  — 64-char hex string, returned to the user once
-//   - prefix  — first 8 chars for display/lookup
+//   - prefix  — first 16 chars for display/lookup
 //   - hash    — SHA-256 hex of rawKey, stored in DB
 func GenerateAPIKey() (rawKey, prefix, hash string, err error) {
 	b := make([]byte, 32)
@@ -43,7 +43,7 @@ func GenerateAPIKey() (rawKey, prefix, hash string, err error) {
 		return "", "", "", fmt.Errorf("generate api key: %w", err)
 	}
 	rawKey = hex.EncodeToString(b)
-	prefix = rawKey[:8]
+	prefix = rawKey[:16]
 	sum := sha256.Sum256([]byte(rawKey))
 	hash = hex.EncodeToString(sum[:])
 	return rawKey, prefix, hash, nil

@@ -216,28 +216,23 @@ func TestCreateInstance(t *testing.T) {
 func TestGetInstance(t *testing.T) {
 	t.Parallel()
 
-	t.Run("returns instance with overrides", func(t *testing.T) {
+	t.Run("returns instance", func(t *testing.T) {
 		t.Parallel()
 		instRepo := NewMockStackInstanceRepository()
-		overrideRepo := NewMockValueOverrideRepository()
 		seedInstance(t, instRepo, "i1", "stack-a", "d1", "uid-1", models.StackStatusDraft)
-		require.NoError(t, overrideRepo.Create(&models.ValueOverride{
-			ID:              "ov1",
-			StackInstanceID: "i1",
-			ChartConfigID:   "c1",
-			Values:          "replicas: 2",
-		}))
 
-		router := setupInstanceRouter(instRepo, overrideRepo, NewMockStackDefinitionRepository(), NewMockChartConfigRepository(), NewMockStackTemplateRepository(), NewMockTemplateChartConfigRepository(), "uid-1", "alice", "user")
+		router := setupInstanceRouter(instRepo, NewMockValueOverrideRepository(), NewMockStackDefinitionRepository(), NewMockChartConfigRepository(), NewMockStackTemplateRepository(), NewMockTemplateChartConfigRepository(), "uid-1", "alice", "user")
 		w := httptest.NewRecorder()
 		req, _ := http.NewRequest(http.MethodGet, "/api/v1/stack-instances/i1", nil)
 		router.ServeHTTP(w, req)
 
 		assert.Equal(t, http.StatusOK, w.Code)
-		var resp map[string]interface{}
+		var resp models.StackInstance
 		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-		assert.NotNil(t, resp["instance"])
-		assert.NotNil(t, resp["overrides"])
+		assert.Equal(t, "i1", resp.ID)
+		assert.Equal(t, "stack-a", resp.Name)
+		assert.Equal(t, "d1", resp.StackDefinitionID)
+		assert.Equal(t, models.StackStatusDraft, resp.Status)
 	})
 
 	t.Run("not found returns 404", func(t *testing.T) {

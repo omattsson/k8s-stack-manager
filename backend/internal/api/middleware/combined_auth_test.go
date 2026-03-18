@@ -22,28 +22,32 @@ const combinedTestSecret = "combined-test-jwt-secret"
 
 type testAPIKeyRepo struct {
 	mu   sync.RWMutex
-	keys map[string]*models.APIKey // keyed by Prefix
+	keys map[string][]*models.APIKey // keyed by Prefix
 }
 
 func newTestAPIKeyRepo() *testAPIKeyRepo {
-	return &testAPIKeyRepo{keys: make(map[string]*models.APIKey)}
+	return &testAPIKeyRepo{keys: make(map[string][]*models.APIKey)}
 }
 
 func (r *testAPIKeyRepo) addKey(k *models.APIKey) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.keys[k.Prefix] = k
+	r.keys[k.Prefix] = append(r.keys[k.Prefix], k)
 }
 
-func (r *testAPIKeyRepo) FindByPrefix(prefix string) (*models.APIKey, error) {
+func (r *testAPIKeyRepo) FindByPrefix(prefix string) ([]*models.APIKey, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	k, ok := r.keys[prefix]
-	if !ok {
+	ks, ok := r.keys[prefix]
+	if !ok || len(ks) == 0 {
 		return nil, http.ErrNoCookie // any non-nil error signals "not found"
 	}
-	cp := *k
-	return &cp, nil
+	out := make([]*models.APIKey, len(ks))
+	for i, k := range ks {
+		cp := *k
+		out[i] = &cp
+	}
+	return out, nil
 }
 
 func (r *testAPIKeyRepo) UpdateLastUsed(userID, keyID string, t time.Time) error { return nil }
@@ -221,9 +225,9 @@ func TestCombinedAuth(t *testing.T) {
 		userRepo := newTestUserRepo()
 		rawKey := seedKeyInRepo(t, apiKeyRepo, userRepo, "key-real", "user-real", "charlie", "user", nil)
 
-		// Keep the same prefix (first 8 chars of rawKey) but replace the rest with 'f's.
+		// Keep the same prefix (first 16 chars of rawKey) but replace the rest with 'f's.
 		// The prefix will match the stored key, but the hash will differ.
-		fakeRaw := rawKey[:8] + strings.Repeat("f", len(rawKey)-8)
+		fakeRaw := rawKey[:16] + strings.Repeat("f", len(rawKey)-16)
 
 		router := buildCombinedAuthRouter(APIKeyAuthDeps{
 			JWTSecret:  combinedTestSecret,
@@ -283,8 +287,8 @@ func TestCombinedAuth(t *testing.T) {
 			UserRepo:   newTestUserRepo(),
 		})
 
-		// "sk_" + 7-char raw = raw length 7, which is < 8, so middleware rejects it.
-		w := doGET(router, map[string]string{"X-API-Key": "sk_short"})
+		// "sk_" + 15-char raw = raw length 15, which is < 16, so middleware rejects it.
+		w := doGET(router, map[string]string{"X-API-Key": "sk_short0123456789"})
 		assert.Equal(t, http.StatusUnauthorized, w.Code)
 	})
 }

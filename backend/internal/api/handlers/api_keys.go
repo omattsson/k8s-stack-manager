@@ -23,8 +23,8 @@ func NewAPIKeyHandler(apiKeyRepo models.APIKeyRepository, userRepo models.UserRe
 
 // CreateAPIKeyRequest is the request body for creating an API key.
 type CreateAPIKeyRequest struct {
-	Name      string     `json:"name" binding:"required"`
-	ExpiresAt *time.Time `json:"expires_at,omitempty"`
+	Name      string  `json:"name" binding:"required"`
+	ExpiresAt *string `json:"expires_at,omitempty"`
 }
 
 // CreateAPIKeyResponse is returned once at key creation time.
@@ -84,12 +84,27 @@ func (h *APIKeyHandler) CreateAPIKey(c *gin.Context) {
 		return
 	}
 
+	var expiresAt *time.Time
+	if req.ExpiresAt != nil && *req.ExpiresAt != "" {
+		parsed, perr := time.Parse(time.RFC3339, *req.ExpiresAt)
+		if perr != nil {
+			// Try date-only format: treat as end-of-day UTC.
+			parsed, perr = time.Parse("2006-01-02", *req.ExpiresAt)
+			if perr != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid expires_at format; use YYYY-MM-DD or RFC3339"})
+				return
+			}
+			parsed = parsed.Add(23*time.Hour + 59*time.Minute + 59*time.Second)
+		}
+		expiresAt = &parsed
+	}
+
 	key := &models.APIKey{
 		UserID:    userID,
 		Name:      req.Name,
 		KeyHash:   hash,
 		Prefix:    prefix,
-		ExpiresAt: req.ExpiresAt,
+		ExpiresAt: expiresAt,
 	}
 
 	if err := h.apiKeyRepo.Create(key); err != nil {

@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import Profile from '../index';
 
@@ -133,6 +134,132 @@ describe('Profile Page', () => {
     );
     await waitFor(() => {
       expect(screen.getByRole('button', { name: /generate api key/i })).toBeInTheDocument();
+    });
+  });
+
+  it('opens generate dialog, submits, and calls apiKeyService.create', async () => {
+    (apiKeyService.list as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    (apiKeyService.create as ReturnType<typeof vi.fn>).mockResolvedValue({
+      id: 'k-new',
+      name: 'Test Key',
+      prefix: 'sk_test11',
+      raw_key: 'sk_test11abcdef',
+      created_at: '2026-03-18T00:00:00Z',
+    });
+
+    const user = userEvent.setup();
+    render(
+      <MemoryRouter>
+        <Profile />
+      </MemoryRouter>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /generate api key/i })).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole('button', { name: /generate api key/i }));
+    expect(screen.getByRole('heading', { name: /generate api key/i })).toBeInTheDocument();
+
+    await user.type(screen.getByLabelText(/key name/i), 'Test Key');
+    await user.click(screen.getByRole('button', { name: /^generate$/i }));
+
+    await waitFor(() => {
+      expect(apiKeyService.create).toHaveBeenCalledWith('u1', { name: 'Test Key' });
+    });
+  });
+
+  it('shows raw key modal with the generated key after successful creation', async () => {
+    (apiKeyService.list as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    (apiKeyService.create as ReturnType<typeof vi.fn>).mockResolvedValue({
+      id: 'k-new',
+      name: 'Test Key',
+      prefix: 'sk_test11',
+      raw_key: 'sk_test11abcdef',
+      created_at: '2026-03-18T00:00:00Z',
+    });
+
+    const user = userEvent.setup();
+    render(
+      <MemoryRouter>
+        <Profile />
+      </MemoryRouter>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /generate api key/i })).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole('button', { name: /generate api key/i }));
+    await user.type(screen.getByLabelText(/key name/i), 'Test Key');
+    await user.click(screen.getByRole('button', { name: /^generate$/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText('API Key Generated')).toBeInTheDocument();
+      expect(screen.getByText('sk_test11abcdef')).toBeInTheDocument();
+    });
+  });
+
+  it('shows revoke confirmation dialog and calls apiKeyService.delete on confirm', async () => {
+    (apiKeyService.list as ReturnType<typeof vi.fn>).mockResolvedValue(mockApiKeys);
+    (apiKeyService.delete as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+
+    const user = userEvent.setup();
+    render(
+      <MemoryRouter>
+        <Profile />
+      </MemoryRouter>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('CI Key')).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole('button', { name: /revoke key ci key/i }));
+    expect(screen.getByText('Revoke API Key')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: /^revoke$/i }));
+
+    await waitFor(() => {
+      expect(apiKeyService.delete).toHaveBeenCalledWith('u1', 'k1');
+    });
+  });
+
+  it('includes expires_at when generate form has an expiry date', async () => {
+    (apiKeyService.list as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    (apiKeyService.create as ReturnType<typeof vi.fn>).mockResolvedValue({
+      id: 'k-temp',
+      name: 'Temp Key',
+      prefix: 'sk_temp11',
+      raw_key: 'sk_temp11abcdef',
+      created_at: '2026-03-18T00:00:00Z',
+    });
+
+    const user = userEvent.setup();
+    render(
+      <MemoryRouter>
+        <Profile />
+      </MemoryRouter>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /generate api key/i })).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole('button', { name: /generate api key/i }));
+    await user.type(screen.getByLabelText(/key name/i), 'Temp Key');
+
+    fireEvent.change(screen.getByLabelText(/expires at/i), {
+      target: { value: '2026-12-31' },
+    });
+
+    await user.click(screen.getByRole('button', { name: /^generate$/i }));
+
+    await waitFor(() => {
+      expect(apiKeyService.create).toHaveBeenCalledWith(
+        'u1',
+        expect.objectContaining({ name: 'Temp Key', expires_at: '2026-12-31' }),
+      );
     });
   });
 });

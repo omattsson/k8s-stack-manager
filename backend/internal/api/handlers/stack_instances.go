@@ -136,7 +136,7 @@ func (h *InstanceHandler) CreateInstance(c *gin.Context) {
 
 // GetInstance godoc
 // @Summary     Get a stack instance
-// @Description Get a stack instance by ID with its overrides
+// @Description Get a stack instance by ID
 // @Tags        stack-instances
 // @Produce     json
 // @Param       id  path     string true "Instance ID"
@@ -157,17 +157,7 @@ func (h *InstanceHandler) GetInstance(c *gin.Context) {
 		return
 	}
 
-	overrides, err := h.overrideRepo.ListByInstance(id)
-	if err != nil {
-		status, message := mapError(err, "Value overrides")
-		c.JSON(status, gin.H{"error": message})
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{
-		"instance":  inst,
-		"overrides": overrides,
-	})
+	c.JSON(http.StatusOK, inst)
 }
 
 // UpdateInstance godoc

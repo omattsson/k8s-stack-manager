@@ -1,8 +1,11 @@
-.PHONY: dev dev-backend dev-frontend dev-local prod prod-backend prod-frontend build clean prune test test-backend test-backend-integration test-backend-all test-frontend test-e2e integration-infra-start integration-infra-stop install docs fmt lint azurite-start azurite-stop
+.PHONY: dev seed dev-backend dev-frontend dev-local prod prod-backend prod-frontend build clean prune test test-backend test-backend-integration test-backend-all test-frontend test-e2e integration-infra-start integration-infra-stop install docs fmt lint azurite-start azurite-stop
 
 # Development mode for both services
 dev:
 	NODE_ENV=development GO_ENV=development PORT=3000 BACKEND_PORT=8081 GIN_MODE=debug docker compose up --build --remove-orphans
+
+seed: ## Seed dev environment with sample data (requires running dev stack)
+	@./scripts/seed-dev-data.sh
 
 # Development mode for backend only
 dev-backend:

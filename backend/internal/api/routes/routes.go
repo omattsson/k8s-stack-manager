@@ -97,7 +97,12 @@ func SetupRoutes(router *gin.Engine, deps Deps) *handlers.RateLimiter {
 		auth := v1.Group("/auth")
 		{
 			auth.POST("/login", deps.AuthHandler.Login)
-			auth.POST("/register", authMW, deps.AuthHandler.Register)
+			registerHandlers := []gin.HandlerFunc{authMW}
+			if deps.AuditLogger != nil {
+				registerHandlers = append(registerHandlers, middleware.NewAuditMiddleware(deps.AuditLogger))
+			}
+			registerHandlers = append(registerHandlers, deps.AuthHandler.Register)
+			auth.POST("/register", registerHandlers...)
 			auth.GET("/me", authMW, deps.AuthHandler.GetCurrentUser)
 		}
 

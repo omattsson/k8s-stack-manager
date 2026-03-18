@@ -39,8 +39,8 @@ func setupAPIKeyRouter(
 // seedAPIKey inserts an APIKey with deterministic values into the mock repo.
 func seedAPIKey(t *testing.T, repo *MockAPIKeyRepository, id, userID, name string) *models.APIKey {
 	t.Helper()
-	// Ensure prefix is exactly 8 characters (required by GenerateAPIKey contract).
-	prefix := (id + "00000000")[:8]
+	// Ensure prefix is exactly 16 characters (required by GenerateAPIKey contract).
+	prefix := (id + "0000000000000000")[:16]
 	key := &models.APIKey{
 		ID:        id,
 		UserID:    userID,

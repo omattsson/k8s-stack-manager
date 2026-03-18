@@ -739,8 +739,8 @@ func (m *MockAuditLogRepository) SetError(err error) {
 
 type MockAPIKeyRepository struct {
 	mu        sync.RWMutex
-	keys      map[string]*models.APIKey // by ID
-	byPrefix  map[string]*models.APIKey // by Prefix
+	keys      map[string]*models.APIKey   // by ID
+	byPrefix  map[string][]*models.APIKey // by Prefix (slice for collision support)
 	createErr error
 	findErr   error
 	deleteErr error
@@ -750,7 +750,7 @@ type MockAPIKeyRepository struct {
 func NewMockAPIKeyRepository() *MockAPIKeyRepository {
 	return &MockAPIKeyRepository{
 		keys:     make(map[string]*models.APIKey),
-		byPrefix: make(map[string]*models.APIKey),
+		byPrefix: make(map[string][]*models.APIKey),
 	}
 }
 
@@ -765,7 +765,7 @@ func (m *MockAPIKeyRepository) Create(key *models.APIKey) error {
 	}
 	cp := *key
 	m.keys[key.ID] = &cp
-	m.byPrefix[key.Prefix] = &cp
+	m.byPrefix[key.Prefix] = append(m.byPrefix[key.Prefix], &cp)
 	return nil
 }
 
@@ -783,18 +783,22 @@ func (m *MockAPIKeyRepository) FindByID(userID, keyID string) (*models.APIKey, e
 	return &cp, nil
 }
 
-func (m *MockAPIKeyRepository) FindByPrefix(prefix string) (*models.APIKey, error) {
+func (m *MockAPIKeyRepository) FindByPrefix(prefix string) ([]*models.APIKey, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	if m.findErr != nil {
 		return nil, m.findErr
 	}
-	k, ok := m.byPrefix[prefix]
-	if !ok {
+	ks, ok := m.byPrefix[prefix]
+	if !ok || len(ks) == 0 {
 		return nil, errors.New("not found")
 	}
-	cp := *k
-	return &cp, nil
+	out := make([]*models.APIKey, len(ks))
+	for i, k := range ks {
+		cp := *k
+		out[i] = &cp
+	}
+	return out, nil
 }
 
 func (m *MockAPIKeyRepository) ListByUser(userID string) ([]*models.APIKey, error) {
@@ -834,7 +838,18 @@ func (m *MockAPIKeyRepository) Delete(userID, keyID string) error {
 	if !ok || k.UserID != userID {
 		return errors.New("not found")
 	}
-	delete(m.byPrefix, k.Prefix)
+	// Remove from byPrefix slice.
+	if ks, exists := m.byPrefix[k.Prefix]; exists {
+		for i, entry := range ks {
+			if entry.ID == keyID {
+				m.byPrefix[k.Prefix] = append(ks[:i], ks[i+1:]...)
+				break
+			}
+		}
+		if len(m.byPrefix[k.Prefix]) == 0 {
+			delete(m.byPrefix, k.Prefix)
+		}
+	}
 	delete(m.keys, keyID)
 	return nil
 }

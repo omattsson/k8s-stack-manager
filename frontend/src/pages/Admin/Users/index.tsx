@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useState, useCallback } from 'react';
+import { Fragment, useEffect, useState, useCallback, useRef } from 'react';
 import {
   Box,
   Typography,
@@ -77,6 +77,7 @@ const AdminUsers = () => {
   // Raw key modal (shown after successful key creation)
   const [rawKeyData, setRawKeyData] = useState<CreateAPIKeyResponse | null>(null);
   const [keyCopied, setKeyCopied] = useState(false);
+  const copyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Revoke API key confirm
   const [revokeKeyTarget, setRevokeKeyTarget] = useState<{ userId: string; key: APIKey } | null>(null);
@@ -99,6 +100,12 @@ const AdminUsers = () => {
       fetchUsers();
     }
   }, [fetchUsers, currentUser]);
+
+  useEffect(() => {
+    return () => {
+      if (copyTimeoutRef.current) clearTimeout(copyTimeoutRef.current);
+    };
+  }, []);
 
   const loadApiKeys = useCallback(async (userId: string) => {
     setApiKeysLoadingMap((prev) => ({ ...prev, [userId]: true }));
@@ -200,8 +207,9 @@ const AdminUsers = () => {
     if (!rawKeyData) return;
     try {
       await navigator.clipboard.writeText(rawKeyData.raw_key);
+      if (copyTimeoutRef.current) clearTimeout(copyTimeoutRef.current);
       setKeyCopied(true);
-      setTimeout(() => setKeyCopied(false), 2000);
+      copyTimeoutRef.current = setTimeout(() => setKeyCopied(false), 2000);
     } catch {
       // Clipboard API unavailable in this environment
     }

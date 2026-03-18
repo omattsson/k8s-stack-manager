@@ -47,22 +47,29 @@ func CombinedAuth(deps APIKeyAuthDeps) gin.HandlerFunc {
 
 		// Strip the sk_ prefix.
 		raw := strings.TrimPrefix(apiKeyHeader, "sk_")
-		if len(raw) < 8 {
+		if len(raw) < 16 {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Invalid API key"})
 			return
 		}
 
-		prefix := raw[:8]
+		prefix := raw[:16]
 		hash := models.HashAPIKey(raw)
 
-		record, err := deps.APIKeyRepo.FindByPrefix(prefix)
-		if err != nil {
+		records, err := deps.APIKeyRepo.FindByPrefix(prefix)
+		if err != nil || len(records) == 0 {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Invalid API key"})
 			return
 		}
 
-		// Constant-time comparison to prevent timing side-channels.
-		if subtle.ConstantTimeCompare([]byte(hash), []byte(record.KeyHash)) != 1 {
+		// Find the record whose hash matches.
+		var record *models.APIKey
+		for _, r := range records {
+			if subtle.ConstantTimeCompare([]byte(hash), []byte(r.KeyHash)) == 1 {
+				record = r
+				break
+			}
+		}
+		if record == nil {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Invalid API key"})
 			return
 		}
@@ -85,11 +92,7 @@ func CombinedAuth(deps APIKeyAuthDeps) gin.HandlerFunc {
 		c.Set(contextKeyUsername, user.Username)
 		c.Set(contextKeyRole, user.Role)
 
-		// Best-effort async update of last-used timestamp — never blocks the request.
-		go func() {
-			_ = deps.APIKeyRepo.UpdateLastUsed(record.UserID, record.ID, time.Now().UTC())
-		}()
-
-		c.Next()
+		// Synchronous best-effort update of last-used timestamp.
+		_ = deps.APIKeyRepo.UpdateLastUsed(record.UserID, record.ID, time.Now().UTC())
 	}
 }

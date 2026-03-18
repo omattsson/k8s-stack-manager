@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import {
   Box,
   Typography,
@@ -51,6 +51,7 @@ const Profile = () => {
   // Raw key modal
   const [rawKeyData, setRawKeyData] = useState<CreateAPIKeyResponse | null>(null);
   const [keyCopied, setKeyCopied] = useState(false);
+  const copyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Revoke key confirm
   const [revokeKeyTarget, setRevokeKeyTarget] = useState<APIKey | null>(null);
@@ -72,6 +73,12 @@ const Profile = () => {
   useEffect(() => {
     fetchApiKeys();
   }, [fetchApiKeys]);
+
+  useEffect(() => {
+    return () => {
+      if (copyTimeoutRef.current) clearTimeout(copyTimeoutRef.current);
+    };
+  }, []);
 
   const handleGenerateKey = async () => {
     if (!currentUser || !generateKeyForm.name.trim()) {
@@ -109,8 +116,9 @@ const Profile = () => {
     if (!rawKeyData) return;
     try {
       await navigator.clipboard.writeText(rawKeyData.raw_key);
+      if (copyTimeoutRef.current) clearTimeout(copyTimeoutRef.current);
       setKeyCopied(true);
-      setTimeout(() => setKeyCopied(false), 2000);
+      copyTimeoutRef.current = setTimeout(() => setKeyCopied(false), 2000);
     } catch {
       // Clipboard API unavailable in this environment
     }

@@ -39,6 +39,16 @@ const (
 // @schemes         http https
 // @produce         json
 // @consumes        json
+
+// @securityDefinitions.apikey BearerAuth
+// @in header
+// @name Authorization
+// @description JWT Bearer token (format: "Bearer <token>")
+
+// @securityDefinitions.apikey ApiKeyAuth
+// @in header
+// @name X-API-Key
+// @description API key (format: "sk_<key>")
 func main() {
 	// Load configuration
 	cfg, err := config.LoadConfig()

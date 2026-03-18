@@ -125,6 +125,8 @@ func normalizeEntityType(segment string) string {
 		"charts":            "chart_config",
 		"overrides":         "value_override",
 		"auth":              "user",
+		"register":          "user",
+		"users":             "user",
 		"audit-logs":        "audit_log",
 	}
 	if v, ok := mapping[segment]; ok {
