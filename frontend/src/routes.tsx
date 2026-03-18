@@ -1,10 +1,33 @@
 import { Routes, Route } from 'react-router-dom';
-import { Typography } from '@mui/material';
+import ProtectedRoute from './components/ProtectedRoute';
+import Login from './pages/Login';
+import Dashboard from './pages/StackInstances/Dashboard';
+import Gallery from './pages/Templates/Gallery';
+import Builder from './pages/Templates/Builder';
+import Preview from './pages/Templates/Preview';
+import Instantiate from './pages/Templates/Instantiate';
+import DefinitionList from './pages/StackDefinitions/List';
+import DefinitionForm from './pages/StackDefinitions/Form';
+import InstanceForm from './pages/StackInstances/Form';
+import InstanceDetail from './pages/StackInstances/Detail';
+import AuditLog from './pages/AuditLog';
 
 const AppRoutes = () => {
   return (
     <Routes>
-      <Route path="/" element={<Typography>Welcome to K8s Stack Manager</Typography>} />
+      <Route path="/login" element={<Login />} />
+      <Route path="/" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
+      <Route path="/templates" element={<ProtectedRoute><Gallery /></ProtectedRoute>} />
+      <Route path="/templates/new" element={<ProtectedRoute><Builder /></ProtectedRoute>} />
+      <Route path="/templates/:id" element={<ProtectedRoute><Preview /></ProtectedRoute>} />
+      <Route path="/templates/:id/edit" element={<ProtectedRoute><Builder /></ProtectedRoute>} />
+      <Route path="/templates/:id/use" element={<ProtectedRoute><Instantiate /></ProtectedRoute>} />
+      <Route path="/stack-definitions" element={<ProtectedRoute><DefinitionList /></ProtectedRoute>} />
+      <Route path="/stack-definitions/new" element={<ProtectedRoute><DefinitionForm /></ProtectedRoute>} />
+      <Route path="/stack-definitions/:id/edit" element={<ProtectedRoute><DefinitionForm /></ProtectedRoute>} />
+      <Route path="/stack-instances/new" element={<ProtectedRoute><InstanceForm /></ProtectedRoute>} />
+      <Route path="/stack-instances/:id" element={<ProtectedRoute><InstanceDetail /></ProtectedRoute>} />
+      <Route path="/audit-log" element={<ProtectedRoute><AuditLog /></ProtectedRoute>} />
     </Routes>
   );
 };

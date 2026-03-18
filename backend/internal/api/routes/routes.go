@@ -12,10 +12,29 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// Deps holds all handler dependencies needed by SetupRoutes.
+type Deps struct {
+	Repository    models.Repository
+	HealthChecker *health.HealthChecker
+	Config        *config.Config
+	Hub           *websocket.Hub
+
+	// Phase 1 handlers — constructed by the caller (main.go).
+	AuthHandler       *handlers.AuthHandler
+	TemplateHandler   *handlers.TemplateHandler
+	DefinitionHandler *handlers.DefinitionHandler
+	InstanceHandler   *handlers.InstanceHandler
+	GitHandler        *handlers.GitHandler
+	AuditLogHandler   *handlers.AuditLogHandler
+	AuditLogger       middleware.AuditLogger
+}
+
 // SetupRoutes configures all the routes for our application.
 // healthChecker is injected from main so the readiness endpoint reflects real dependency health.
 // Returns the rate limiter so the caller can stop it during shutdown.
-func SetupRoutes(router *gin.Engine, repository models.Repository, healthChecker *health.HealthChecker, cfg *config.Config, hub *websocket.Hub) *handlers.RateLimiter {
+func SetupRoutes(router *gin.Engine, deps Deps) *handlers.RateLimiter {
+	cfg := deps.Config
+
 	// Add middleware
 	router.Use(middleware.RequestID())
 	router.Use(middleware.Logger())
@@ -24,14 +43,14 @@ func SetupRoutes(router *gin.Engine, repository models.Repository, healthChecker
 	router.Use(middleware.MaxBodySize(1 << 20)) // 1 MB default
 
 	// WebSocket endpoint (top-level, outside rate limiter — connections are long-lived)
-	wsHandler := handlers.NewWebSocketHandler(hub, cfg.CORS.AllowedOrigins)
+	wsHandler := handlers.NewWebSocketHandler(deps.Hub, cfg.CORS.AllowedOrigins)
 	router.GET("/ws", wsHandler.HandleWebSocket)
 
 	// Health check endpoints
 	healthGroup := router.Group("/health")
 	{
-		healthGroup.GET("/live", handlers.LivenessHandler(healthChecker))
-		healthGroup.GET("/ready", handlers.ReadinessHandler(healthChecker))
+		healthGroup.GET("/live", handlers.LivenessHandler(deps.HealthChecker))
+		healthGroup.GET("/ready", handlers.ReadinessHandler(deps.HealthChecker))
 		healthGroup.GET("", handlers.HealthCheck) // Keep the original health check for backward compatibility
 	}
 
@@ -46,7 +65,7 @@ func SetupRoutes(router *gin.Engine, repository models.Repository, healthChecker
 		v1.GET("/ping", handlers.Ping)
 
 		// Items endpoints
-		itemsHandler := handlers.NewHandlerWithHub(repository, hub)
+		itemsHandler := handlers.NewHandlerWithHub(deps.Repository, deps.Hub)
 		items := v1.Group("/items")
 		{
 			items.GET("", itemsHandler.GetItems)
@@ -54,6 +73,97 @@ func SetupRoutes(router *gin.Engine, repository models.Repository, healthChecker
 			items.POST("", itemsHandler.CreateItem)
 			items.PUT("/:id", itemsHandler.UpdateItem)
 			items.DELETE("/:id", itemsHandler.DeleteItem)
+		}
+	}
+
+	// Phase 1 routes — only register if handlers are provided (they are nil in legacy tests).
+	if deps.AuthHandler != nil {
+		jwtSecret := cfg.Auth.JWTSecret
+		authMW := middleware.AuthRequired(jwtSecret)
+
+		// Auth — login is public; register requires auth (admin or self-reg checked inside handler).
+		auth := v1.Group("/auth")
+		{
+			auth.POST("/login", deps.AuthHandler.Login)
+			auth.POST("/register", authMW, deps.AuthHandler.Register)
+			auth.GET("/me", authMW, deps.AuthHandler.GetCurrentUser)
+		}
+
+		// All remaining Phase 1 routes require authentication.
+		authed := v1.Group("")
+		authed.Use(authMW)
+
+		// Attach audit middleware if an audit logger is provided.
+		if deps.AuditLogger != nil {
+			authed.Use(middleware.NewAuditMiddleware(deps.AuditLogger))
+		}
+
+		devops := middleware.RequireDevOps()
+
+		// Stack Templates
+		if deps.TemplateHandler != nil {
+			templates := authed.Group("/templates")
+			{
+				templates.GET("", deps.TemplateHandler.ListTemplates)
+				templates.POST("", devops, deps.TemplateHandler.CreateTemplate)
+				templates.GET("/:id", deps.TemplateHandler.GetTemplate)
+				templates.PUT("/:id", devops, deps.TemplateHandler.UpdateTemplate)
+				templates.DELETE("/:id", devops, deps.TemplateHandler.DeleteTemplate)
+				templates.POST("/:id/publish", devops, deps.TemplateHandler.PublishTemplate)
+				templates.POST("/:id/unpublish", devops, deps.TemplateHandler.UnpublishTemplate)
+				templates.POST("/:id/instantiate", deps.TemplateHandler.InstantiateTemplate)
+				templates.POST("/:id/clone", devops, deps.TemplateHandler.CloneTemplate)
+				templates.POST("/:id/charts", devops, deps.TemplateHandler.AddTemplateChart)
+				templates.PUT("/:id/charts/:chartId", devops, deps.TemplateHandler.UpdateTemplateChart)
+				templates.DELETE("/:id/charts/:chartId", devops, deps.TemplateHandler.DeleteTemplateChart)
+			}
+		}
+
+		// Stack Definitions
+		if deps.DefinitionHandler != nil {
+			definitions := authed.Group("/stack-definitions")
+			{
+				definitions.GET("", deps.DefinitionHandler.ListDefinitions)
+				definitions.POST("", deps.DefinitionHandler.CreateDefinition)
+				definitions.GET("/:id", deps.DefinitionHandler.GetDefinition)
+				definitions.PUT("/:id", deps.DefinitionHandler.UpdateDefinition)
+				definitions.DELETE("/:id", deps.DefinitionHandler.DeleteDefinition)
+				definitions.POST("/:id/charts", deps.DefinitionHandler.AddChartConfig)
+				definitions.PUT("/:id/charts/:chartId", deps.DefinitionHandler.UpdateChartConfig)
+				definitions.DELETE("/:id/charts/:chartId", deps.DefinitionHandler.DeleteChartConfig)
+			}
+		}
+
+		// Stack Instances + Value Overrides + Values Export
+		if deps.InstanceHandler != nil {
+			instances := authed.Group("/stack-instances")
+			{
+				instances.GET("", deps.InstanceHandler.ListInstances)
+				instances.POST("", deps.InstanceHandler.CreateInstance)
+				instances.GET("/:id", deps.InstanceHandler.GetInstance)
+				instances.PUT("/:id", deps.InstanceHandler.UpdateInstance)
+				instances.DELETE("/:id", deps.InstanceHandler.DeleteInstance)
+				instances.POST("/:id/clone", deps.InstanceHandler.CloneInstance)
+				instances.GET("/:id/values", deps.InstanceHandler.ExportAllValues)
+				instances.GET("/:id/values/:chartId", deps.InstanceHandler.ExportChartValues)
+				instances.GET("/:id/overrides", deps.InstanceHandler.GetOverrides)
+				instances.PUT("/:id/overrides/:chartId", deps.InstanceHandler.SetOverride)
+			}
+		}
+
+		// Git
+		if deps.GitHandler != nil {
+			git := authed.Group("/git")
+			{
+				git.GET("/branches", deps.GitHandler.ListBranches)
+				git.GET("/validate-branch", deps.GitHandler.ValidateBranch)
+				git.GET("/providers", deps.GitHandler.GetProviders)
+			}
+		}
+
+		// Audit Logs
+		if deps.AuditLogHandler != nil {
+			authed.GET("/audit-logs", deps.AuditLogHandler.ListAuditLogs)
 		}
 	}
 

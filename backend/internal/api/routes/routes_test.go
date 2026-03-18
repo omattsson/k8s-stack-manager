@@ -40,7 +40,12 @@ func TestSetupRoutes(t *testing.T) {
 	defer hub.Shutdown()
 
 	// Setup routes
-	rl := SetupRoutes(router, mockRepo, healthChecker, cfg, hub)
+	rl := SetupRoutes(router, Deps{
+		Repository:    mockRepo,
+		HealthChecker: healthChecker,
+		Config:        cfg,
+		Hub:           hub,
+	})
 	defer rl.Stop()
 
 	// Test cases

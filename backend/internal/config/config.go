@@ -32,6 +32,24 @@ type CORSConfig struct {
 	AllowedOrigins string
 }
 
+// AuthConfig holds authentication and authorization configuration.
+type AuthConfig struct {
+	JWTSecret        string
+	JWTExpiration    time.Duration
+	AdminUsername    string
+	AdminPassword    string
+	DefaultBranch    string
+	SelfRegistration bool
+}
+
+// GitProviderConfig holds Git provider configuration.
+type GitProviderConfig struct {
+	AzureDevOpsPAT        string
+	AzureDevOpsDefaultOrg string
+	GitLabToken           string
+	GitLabBaseURL         string
+}
+
 // Config holds all configuration for the application
 //
 //nolint:govet // Struct field alignment has been optimized for better memory usage
@@ -39,11 +57,13 @@ type Config struct {
 	// Group larger structs with time.Duration fields first
 	Database DatabaseConfig
 	Server   ServerConfig
+	Auth     AuthConfig
 	// Then string and simple field structs
-	App        AppConfig
-	AzureTable AzureTableConfig
-	CORS       CORSConfig
-	Logging    LogConfig
+	App         AppConfig
+	AzureTable  AzureTableConfig
+	CORS        CORSConfig
+	Logging     LogConfig
+	GitProvider GitProviderConfig
 }
 
 // AppConfig holds application-wide configuration
@@ -130,6 +150,12 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("server config: %w", err)
 	}
 
+	if c.Auth.JWTSecret != "" || c.Auth.AdminPassword != "" {
+		if err := c.Auth.Validate(); err != nil {
+			return fmt.Errorf("auth config: %w", err)
+		}
+	}
+
 	return nil
 }
 
@@ -192,6 +218,22 @@ func (c *AzureTableConfig) Validate() error {
 
 	if c.TableName == "" {
 		return errors.New("table name is required")
+	}
+
+	return nil
+}
+
+func (c *AuthConfig) Validate() error {
+	if c.JWTSecret == "" {
+		return errors.New("jwt_secret is required")
+	}
+
+	if len(c.JWTSecret) < 16 {
+		return errors.New("jwt_secret must be at least 16 characters")
+	}
+
+	if c.JWTExpiration <= 0 {
+		return errors.New("jwt_expiration must be positive")
 	}
 
 	return nil
@@ -299,6 +341,20 @@ func LoadConfig() (*Config, error) {
 		Logging: LogConfig{
 			Level: getEnv("LOG_LEVEL", "info"),
 			File:  getEnv("LOG_FILE", ""),
+		},
+		Auth: AuthConfig{
+			JWTSecret:        getEnv("JWT_SECRET", ""),
+			JWTExpiration:    getEnvDuration("JWT_EXPIRATION", 24*time.Hour),
+			AdminUsername:    getEnv("ADMIN_USERNAME", "admin"),
+			AdminPassword:    getEnv("ADMIN_PASSWORD", ""),
+			SelfRegistration: getEnvBool("SELF_REGISTRATION", false),
+			DefaultBranch:    getEnv("DEFAULT_BRANCH", "master"),
+		},
+		GitProvider: GitProviderConfig{
+			AzureDevOpsPAT:        getEnv("AZURE_DEVOPS_PAT", ""),
+			AzureDevOpsDefaultOrg: getEnv("AZURE_DEVOPS_DEFAULT_ORG", ""),
+			GitLabToken:           getEnv("GITLAB_TOKEN", ""),
+			GitLabBaseURL:         getEnv("GITLAB_BASE_URL", ""),
 		},
 	}
 

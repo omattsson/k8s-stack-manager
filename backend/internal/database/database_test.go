@@ -62,9 +62,9 @@ func TestDatabaseTransaction(t *testing.T) {
 		require.NoError(t, db.AutoMigrate())
 		err := db.Transaction(func(tx *gorm.DB) error {
 			user := &models.User{
-				Username: "test_user",
-				Email:    "test@example.com",
-				Name:     "Test User",
+				Username:    "test_user",
+				DisplayName: "Test User",
+				Role:        "user",
 			}
 			return tx.Create(user).Error
 		})
@@ -73,7 +73,7 @@ func TestDatabaseTransaction(t *testing.T) {
 		var user models.User
 		err = db.First(&user, "username = ?", "test_user").Error
 		assert.NoError(t, err)
-		assert.Equal(t, "test@example.com", user.Email)
+		assert.Equal(t, "Test User", user.DisplayName)
 	})
 
 	t.Run("Failed Transaction", func(t *testing.T) {
@@ -84,18 +84,18 @@ func TestDatabaseTransaction(t *testing.T) {
 		// Create initial user to test duplicate error
 		require.NoError(t, db.Transaction(func(tx *gorm.DB) error {
 			user := &models.User{
-				Username: "test_user",
-				Email:    "test@example.com",
-				Name:     "Test User",
+				Username:    "test_user",
+				DisplayName: "Test User",
+				Role:        "user",
 			}
 			return tx.Create(user).Error
 		}))
 
 		err := db.Transaction(func(tx *gorm.DB) error {
 			user := &models.User{
-				Username: "test_user", // Duplicate username should cause error
-				Email:    "another@example.com",
-				Name:     "Another User",
+				Username:    "test_user", // Duplicate username should cause error
+				DisplayName: "Another User",
+				Role:        "user",
 			}
 			return tx.Create(user).Error
 		})

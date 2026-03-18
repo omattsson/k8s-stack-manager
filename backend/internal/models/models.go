@@ -28,14 +28,6 @@ type Item struct {
 	Version uint    `gorm:"not null;default:1" json:"version"` // For optimistic locking (1 = initial; 0 = not provided)
 }
 
-// User represents a user in the system
-type User struct {
-	Base
-	Username string `gorm:"size:255;not null;unique" json:"username"`
-	Email    string `gorm:"size:255;not null;unique" json:"email"`
-	Name     string `gorm:"size:255" json:"name"`
-}
-
 // Validator is an interface for model validation
 type Validator interface {
 	Validate() error

@@ -4,10 +4,14 @@ package main
 
 import (
 	_ "backend/docs"
+	"backend/internal/api/handlers"
 	"backend/internal/api/routes"
 	"backend/internal/config"
 	"backend/internal/database"
+	"backend/internal/database/azure"
+	"backend/internal/gitprovider"
 	"backend/internal/health"
+	"backend/internal/helm"
 	"backend/internal/websocket"
 	"context"
 	"fmt"
@@ -61,9 +65,106 @@ func main() {
 	hub := websocket.NewHub()
 	go hub.Run()
 
+	// ------------------------------------------------------------------
+	// Phase 1: Create domain-specific Azure Table repositories
+	// ------------------------------------------------------------------
+	azCfg := cfg.AzureTable
+
+	userRepo, err := azure.NewUserRepository(azCfg.AccountName, azCfg.AccountKey, azCfg.Endpoint, azCfg.UseAzurite)
+	if err != nil {
+		slog.Error("Failed to create user repository", "error", err)
+		os.Exit(1)
+	}
+
+	templateRepo, err := azure.NewStackTemplateRepository(azCfg.AccountName, azCfg.AccountKey, azCfg.Endpoint, azCfg.UseAzurite)
+	if err != nil {
+		slog.Error("Failed to create stack template repository", "error", err)
+		os.Exit(1)
+	}
+
+	templateChartRepo, err := azure.NewTemplateChartConfigRepository(azCfg.AccountName, azCfg.AccountKey, azCfg.Endpoint, azCfg.UseAzurite)
+	if err != nil {
+		slog.Error("Failed to create template chart config repository", "error", err)
+		os.Exit(1)
+	}
+
+	definitionRepo, err := azure.NewStackDefinitionRepository(azCfg.AccountName, azCfg.AccountKey, azCfg.Endpoint, azCfg.UseAzurite)
+	if err != nil {
+		slog.Error("Failed to create stack definition repository", "error", err)
+		os.Exit(1)
+	}
+
+	chartConfigRepo, err := azure.NewChartConfigRepository(azCfg.AccountName, azCfg.AccountKey, azCfg.Endpoint, azCfg.UseAzurite)
+	if err != nil {
+		slog.Error("Failed to create chart config repository", "error", err)
+		os.Exit(1)
+	}
+
+	instanceRepo, err := azure.NewStackInstanceRepository(azCfg.AccountName, azCfg.AccountKey, azCfg.Endpoint, azCfg.UseAzurite)
+	if err != nil {
+		slog.Error("Failed to create stack instance repository", "error", err)
+		os.Exit(1)
+	}
+
+	overrideRepo, err := azure.NewValueOverrideRepository(azCfg.AccountName, azCfg.AccountKey, azCfg.Endpoint, azCfg.UseAzurite)
+	if err != nil {
+		slog.Error("Failed to create value override repository", "error", err)
+		os.Exit(1)
+	}
+
+	auditRepo, err := azure.NewAuditLogRepository(azCfg.AccountName, azCfg.AccountKey, azCfg.Endpoint, azCfg.UseAzurite)
+	if err != nil {
+		slog.Error("Failed to create audit log repository", "error", err)
+		os.Exit(1)
+	}
+
+	// ------------------------------------------------------------------
+	// Phase 1: Create domain services
+	// ------------------------------------------------------------------
+	gitRegistry := gitprovider.NewRegistry(gitprovider.Config{
+		AzureDevOps: gitprovider.AzureDevOpsConfig{
+			PAT:        cfg.GitProvider.AzureDevOpsPAT,
+			DefaultOrg: cfg.GitProvider.AzureDevOpsDefaultOrg,
+		},
+		GitLab: gitprovider.GitLabConfig{
+			Token:   cfg.GitProvider.GitLabToken,
+			BaseURL: cfg.GitProvider.GitLabBaseURL,
+		},
+	})
+
+	valuesGen := helm.NewValuesGenerator()
+
+	// ------------------------------------------------------------------
+	// Phase 1: Create handlers
+	// ------------------------------------------------------------------
+	authHandler := handlers.NewAuthHandler(userRepo, &cfg.Auth)
+	templateHandler := handlers.NewTemplateHandler(templateRepo, templateChartRepo, definitionRepo, chartConfigRepo)
+	definitionHandler := handlers.NewDefinitionHandler(definitionRepo, chartConfigRepo, instanceRepo)
+	instanceHandler := handlers.NewInstanceHandler(
+		instanceRepo, overrideRepo, definitionRepo, chartConfigRepo,
+		templateRepo, templateChartRepo, valuesGen, userRepo,
+	)
+	gitHandler := handlers.NewGitHandler(gitRegistry)
+	auditLogHandler := handlers.NewAuditLogHandler(auditRepo)
+
+	// Auto-create admin user on startup if ADMIN_PASSWORD is set.
+	authHandler.EnsureAdminUser()
+
 	// Setup router — use gin.New() since SetupRoutes registers its own Logger and Recovery middleware.
 	router := gin.New()
-	rateLimiter := routes.SetupRoutes(router, repo, healthChecker, cfg, hub)
+	rateLimiter := routes.SetupRoutes(router, routes.Deps{
+		Repository:        repo,
+		HealthChecker:     healthChecker,
+		Config:            cfg,
+		Hub:               hub,
+		AuthHandler:       authHandler,
+		TemplateHandler:   templateHandler,
+		DefinitionHandler: definitionHandler,
+		InstanceHandler:   instanceHandler,
+		GitHandler:        gitHandler,
+		AuditLogHandler:   auditLogHandler,
+		AuditLogger:       auditRepo,
+	})
 	defer rateLimiter.Stop()
 	router.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
 

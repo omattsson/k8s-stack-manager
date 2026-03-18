@@ -44,10 +44,10 @@ func (d *Database) AutoMigrate() error {
 				}
 			}
 
-			// Add unique index on email (uniqueness already enforced by schema)
-			tx.Raw("SELECT COUNT(1) FROM information_schema.statistics WHERE table_schema = DATABASE() AND table_name = 'users' AND index_name = 'idx_users_email'").Scan(&count)
+			// Add unique index on username
+			tx.Raw("SELECT COUNT(1) FROM information_schema.statistics WHERE table_schema = DATABASE() AND table_name = 'users' AND index_name = 'idx_users_username'").Scan(&count)
 			if count == 0 {
-				if err := tx.Exec("CREATE INDEX idx_users_email ON users(email)").Error; err != nil {
+				if err := tx.Exec("CREATE UNIQUE INDEX idx_users_username ON users(username)").Error; err != nil {
 					return err
 				}
 			}
@@ -57,7 +57,7 @@ func (d *Database) AutoMigrate() error {
 			if err := tx.Exec("DROP INDEX idx_items_name_price ON items").Error; err != nil {
 				return err
 			}
-			return tx.Exec("DROP INDEX idx_users_email ON users").Error
+			return tx.Exec("DROP INDEX idx_users_username ON users").Error
 		},
 	})
 

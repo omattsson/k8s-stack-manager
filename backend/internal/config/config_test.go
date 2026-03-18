@@ -337,6 +337,86 @@ func TestConfigValidate(t *testing.T) {
 		assert.Contains(t, err.Error(), "write timeout")
 	})
 }
+func TestAuthConfigValidate(t *testing.T) {
+	t.Parallel()
+
+	t.Run("valid auth config passes", func(t *testing.T) {
+		t.Parallel()
+		cfg := config.AuthConfig{
+			JWTSecret:     "this-is-a-long-enough-secret",
+			JWTExpiration: 24 * time.Hour,
+		}
+		assert.NoError(t, cfg.Validate())
+	})
+
+	t.Run("empty JWT secret fails", func(t *testing.T) {
+		t.Parallel()
+		cfg := config.AuthConfig{
+			JWTSecret:     "",
+			JWTExpiration: 24 * time.Hour,
+		}
+		err := cfg.Validate()
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "jwt_secret is required")
+	})
+
+	t.Run("short JWT secret fails", func(t *testing.T) {
+		t.Parallel()
+		cfg := config.AuthConfig{
+			JWTSecret:     "tooshort",
+			JWTExpiration: 24 * time.Hour,
+		}
+		err := cfg.Validate()
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "jwt_secret must be at least 16 characters")
+	})
+
+	t.Run("negative expiration fails", func(t *testing.T) {
+		t.Parallel()
+		cfg := config.AuthConfig{
+			JWTSecret:     "this-is-a-long-enough-secret",
+			JWTExpiration: -1 * time.Hour,
+		}
+		err := cfg.Validate()
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "jwt_expiration must be positive")
+	})
+
+	t.Run("Config.Validate with auth config set validates it", func(t *testing.T) {
+		t.Parallel()
+		cfg := &config.Config{
+			App: config.AppConfig{
+				Name:        "myapp",
+				Environment: "production",
+			},
+			Database: config.DatabaseConfig{
+				Host:            "localhost",
+				Port:            "3306",
+				User:            "user",
+				DBName:          "dbname",
+				MaxOpenConns:    10,
+				MaxIdleConns:    5,
+				ConnMaxLifetime: 1 * time.Minute,
+			},
+			Server: config.ServerConfig{
+				Port:            "8080",
+				ReadTimeout:     5 * time.Second,
+				WriteTimeout:    0,
+				IdleTimeout:     30 * time.Second,
+				ShutdownTimeout: 10 * time.Second,
+			},
+			Auth: config.AuthConfig{
+				JWTSecret:     "short",
+				JWTExpiration: 24 * time.Hour,
+				AdminPassword: "admin123",
+			},
+		}
+		err := cfg.Validate()
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "auth config")
+	})
+}
+
 func TestAzureTableConfigValidate(t *testing.T) {
 	t.Parallel()
 

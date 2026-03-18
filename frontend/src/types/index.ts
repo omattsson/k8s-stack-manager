@@ -1,0 +1,159 @@
+export interface User {
+  id: string;
+  username: string;
+  display_name: string;
+  role: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface JwtPayload {
+  user_id: string;
+  username: string;
+  role: string;
+  exp: number;
+}
+
+export interface LoginRequest {
+  username: string;
+  password: string;
+}
+
+export interface LoginResponse {
+  token: string;
+  user: User;
+}
+
+export interface RegisterRequest {
+  username: string;
+  password: string;
+  display_name: string;
+}
+
+export interface StackTemplate {
+  id: string;
+  name: string;
+  description: string;
+  category: string;
+  version: string;
+  owner_id: string;
+  default_branch: string;
+  is_published: boolean;
+  created_at: string;
+  updated_at: string;
+  charts?: TemplateChartConfig[];
+}
+
+export interface TemplateChartConfig {
+  id: string;
+  stack_template_id: string;
+  chart_name: string;
+  repository_url: string;
+  source_repo_url: string;
+  chart_path: string;
+  chart_version: string;
+  default_values: string;
+  locked_values: string;
+  deploy_order: number;
+  required: boolean;
+  created_at: string;
+}
+
+export interface StackDefinition {
+  id: string;
+  name: string;
+  description: string;
+  owner_id: string;
+  source_template_id?: string;
+  source_template_version?: string;
+  default_branch: string;
+  created_at: string;
+  updated_at: string;
+  charts?: ChartConfig[];
+}
+
+export interface ChartConfig {
+  id: string;
+  stack_definition_id: string;
+  chart_name: string;
+  repository_url: string;
+  source_repo_url: string;
+  chart_path: string;
+  chart_version: string;
+  default_values: string;
+  deploy_order: number;
+  created_at: string;
+}
+
+export interface StackInstance {
+  id: string;
+  stack_definition_id: string;
+  name: string;
+  namespace: string;
+  owner_id: string;
+  branch: string;
+  status: string;
+  created_at: string;
+  updated_at: string;
+  definition?: StackDefinition;
+}
+
+export interface ValueOverride {
+  id: string;
+  stack_instance_id: string;
+  chart_config_id: string;
+  values: string;
+  updated_at: string;
+}
+
+export interface AuditLog {
+  id: string;
+  user_id: string;
+  username: string;
+  action: string;
+  entity_type: string;
+  entity_id: string;
+  details: string;
+  timestamp: string;
+}
+
+export interface AuditLogFilters {
+  user_id?: string;
+  entity_type?: string;
+  action?: string;
+  start_date?: string;
+  end_date?: string;
+  limit?: number;
+  offset?: number;
+}
+
+export interface CreateChartConfigRequest {
+  chart_name: string;
+  repository_url: string;
+  source_repo_url: string;
+  chart_path: string;
+  chart_version: string;
+  default_values: string;
+  deploy_order: number;
+}
+
+export interface CreateTemplateChartRequest {
+  chart_name: string;
+  repository_url: string;
+  source_repo_url: string;
+  chart_path: string;
+  chart_version: string;
+  default_values: string;
+  locked_values: string;
+  deploy_order: number;
+  required: boolean;
+}
+
+export interface InstantiateTemplateRequest {
+  name: string;
+  description: string;
+  default_branch?: string;
+  chart_overrides?: Record<string, string>;
+}
+
+export type StackStatus = 'draft' | 'deploying' | 'running' | 'stopped' | 'error';

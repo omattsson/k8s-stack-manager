@@ -120,3 +120,25 @@ func (m *MockTableClient) NewListEntitiesPager(options *aztables.ListEntitiesOpt
 	}
 	return &MockTablePager{}
 }
+
+// Setter methods for configuring mock behavior from external test packages.
+
+func (m *MockTableClient) SetAddEntity(fn func(context.Context, []byte, *aztables.AddEntityOptions) (aztables.AddEntityResponse, error)) {
+	m.addEntityFn = fn
+}
+
+func (m *MockTableClient) SetGetEntity(fn func(context.Context, string, string, *aztables.GetEntityOptions) (aztables.GetEntityResponse, error)) {
+	m.getEntityFn = fn
+}
+
+func (m *MockTableClient) SetUpdateEntity(fn func(context.Context, []byte, *aztables.UpdateEntityOptions) (aztables.UpdateEntityResponse, error)) {
+	m.updateEntityFn = fn
+}
+
+func (m *MockTableClient) SetDeleteEntity(fn func(context.Context, string, string, *aztables.DeleteEntityOptions) (aztables.DeleteEntityResponse, error)) {
+	m.deleteEntityFn = fn
+}
+
+func (m *MockTableClient) SetNewListEntitiesPager(fn func(*aztables.ListEntitiesOptions) azure.ListEntitiesPager) {
+	m.newListEntitiesPagerFn = fn
+}
