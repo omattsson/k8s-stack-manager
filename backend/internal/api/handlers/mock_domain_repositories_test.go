@@ -404,6 +404,21 @@ func (m *MockStackDefinitionRepository) ListByOwner(ownerID string) ([]models.St
 	return out, nil
 }
 
+func (m *MockStackDefinitionRepository) ListByTemplate(templateID string) ([]models.StackDefinition, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.err != nil {
+		return nil, m.err
+	}
+	var out []models.StackDefinition
+	for _, d := range m.items {
+		if d.SourceTemplateID == templateID {
+			out = append(out, *d)
+		}
+	}
+	return out, nil
+}
+
 func (m *MockStackDefinitionRepository) SetError(err error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

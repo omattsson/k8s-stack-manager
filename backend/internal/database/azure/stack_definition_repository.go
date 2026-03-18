@@ -143,6 +143,26 @@ func (r *StackDefinitionRepository) ListByOwner(ownerID string) ([]models.StackD
 	return results, nil
 }
 
+func (r *StackDefinitionRepository) ListByTemplate(templateID string) ([]models.StackDefinition, error) {
+	ctx := context.Background()
+
+	filter := "PartitionKey eq 'global' and SourceTemplateID eq '" + templateID + "'"
+	pager := r.client.NewListEntitiesPager(&aztables.ListEntitiesOptions{
+		Filter: &filter,
+	})
+
+	entities, err := collectEntities(ctx, pager, nil)
+	if err != nil {
+		return nil, mapAzureError("list_by_template", err)
+	}
+
+	results := make([]models.StackDefinition, 0, len(entities))
+	for _, e := range entities {
+		results = append(results, *stackDefinitionFromEntity(e))
+	}
+	return results, nil
+}
+
 func stackDefinitionToEntity(d *models.StackDefinition) map[string]interface{} {
 	return map[string]interface{}{
 		"PartitionKey":          "global",

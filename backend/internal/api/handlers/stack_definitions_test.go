@@ -22,11 +22,24 @@ func setupDefinitionRouter(
 	instanceRepo *MockStackInstanceRepository,
 	callerID, callerRole string,
 ) *gin.Engine {
+	return setupDefinitionRouterWithTemplates(defRepo, chartRepo, instanceRepo, nil, nil, callerID, callerRole)
+}
+
+// setupDefinitionRouterWithTemplates creates a test gin engine with DefinitionHandler routes
+// and optional template repositories for testing required-chart enforcement.
+func setupDefinitionRouterWithTemplates(
+	defRepo *MockStackDefinitionRepository,
+	chartRepo *MockChartConfigRepository,
+	instanceRepo *MockStackInstanceRepository,
+	templateRepo *MockStackTemplateRepository,
+	templateChartRepo *MockTemplateChartConfigRepository,
+	callerID, callerRole string,
+) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
 	r.Use(injectAuthContext(callerID, callerRole))
 
-	h := NewDefinitionHandler(defRepo, chartRepo, instanceRepo)
+	h := NewDefinitionHandler(defRepo, chartRepo, instanceRepo, templateRepo, templateChartRepo)
 
 	defs := r.Group("/api/v1/stack-definitions")
 	{
@@ -35,6 +48,7 @@ func setupDefinitionRouter(
 		defs.GET("/:id", h.GetDefinition)
 		defs.PUT("/:id", h.UpdateDefinition)
 		defs.DELETE("/:id", h.DeleteDefinition)
+		defs.DELETE("/:id/charts/:chartId", h.DeleteChartConfig)
 	}
 	return r
 }

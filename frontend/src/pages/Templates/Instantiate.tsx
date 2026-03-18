@@ -15,6 +15,7 @@ import {
 } from '@mui/material';
 import { templateService } from '../../api/client';
 import type { StackTemplate, TemplateChartConfig } from '../../types';
+import YamlEditor from '../../components/YamlEditor';
 
 interface ChartOverride {
   chart: TemplateChartConfig;
@@ -165,29 +166,23 @@ const Instantiate = () => {
 
           {co.enabled && (
             <>
-              <TextField
+              <YamlEditor
                 label="Values (YAML)"
                 value={co.values}
-                onChange={(e) => updateOverride(index, e.target.value)}
-                multiline
-                rows={8}
-                fullWidth
-                size="small"
-                slotProps={{ input: { sx: { fontFamily: 'monospace', fontSize: 13 } } }}
+                onChange={(val) => updateOverride(index, val)}
+                height="250px"
               />
 
               {co.chart.locked_values && (
                 <>
                   <Divider sx={{ my: 2 }} />
-                  <Typography variant="subtitle2" gutterBottom>
-                    Locked Values
-                    <Chip label="Read-only" size="small" color="warning" sx={{ ml: 1 }} />
-                  </Typography>
-                  <Paper variant="outlined" sx={{ p: 2, bgcolor: 'warning.50', borderColor: 'warning.main' }}>
-                    <Typography variant="body2" component="pre" sx={{ fontFamily: 'monospace', fontSize: 13, whiteSpace: 'pre-wrap', m: 0 }}>
-                      {co.chart.locked_values}
-                    </Typography>
-                  </Paper>
+                  <YamlEditor
+                    label="Locked Values"
+                    value={co.chart.locked_values}
+                    onChange={() => {}}
+                    readOnly
+                    height="150px"
+                  />
                 </>
               )}
             </>

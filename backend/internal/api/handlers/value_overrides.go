@@ -1,13 +1,16 @@
 package handlers
 
 import (
+	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"backend/internal/models"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"gopkg.in/yaml.v3"
 )
 
 // GetOverrides godoc
@@ -57,7 +60,8 @@ func (h *InstanceHandler) SetOverride(c *gin.Context) {
 	chartID := c.Param("chartId")
 
 	// Verify instance exists.
-	if _, err := h.instanceRepo.FindByID(instanceID); err != nil {
+	inst, err := h.instanceRepo.FindByID(instanceID)
+	if err != nil {
 		status, message := mapError(err, "Stack instance")
 		c.JSON(status, gin.H{"error": message})
 		return
@@ -68,6 +72,12 @@ func (h *InstanceHandler) SetOverride(c *gin.Context) {
 	}
 	if err := c.ShouldBindJSON(&input); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request format"})
+		return
+	}
+
+	// Check for locked values from the source template.
+	if err := h.checkLockedValues(inst, chartID, input.Values); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
@@ -105,4 +115,66 @@ func (h *InstanceHandler) SetOverride(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, override)
+}
+
+// checkLockedValues verifies that the submitted override values do not conflict
+// with locked values from the source template. Returns an error if conflicts exist.
+func (h *InstanceHandler) checkLockedValues(inst *models.StackInstance, chartID, overrideYAML string) error {
+	if overrideYAML == "" {
+		return nil
+	}
+
+	// Look up the definition to check for a source template.
+	def, err := h.definitionRepo.FindByID(inst.StackDefinitionID)
+	if err != nil || def.SourceTemplateID == "" {
+		return nil
+	}
+
+	// Look up the chart config to get its ChartName.
+	chart, err := h.chartConfigRepo.FindByID(chartID)
+	if err != nil {
+		return nil
+	}
+
+	// Find the matching template chart config by ChartName.
+	templateCharts, err := h.templateChartRepo.ListByTemplate(def.SourceTemplateID)
+	if err != nil {
+		return nil
+	}
+
+	var lockedYAML string
+	for _, tc := range templateCharts {
+		if tc.ChartName == chart.ChartName {
+			lockedYAML = tc.LockedValues
+			break
+		}
+	}
+
+	if lockedYAML == "" {
+		return nil
+	}
+
+	// Parse both YAML strings into maps and check for top-level key conflicts.
+	var lockedMap map[string]interface{}
+	if err := yaml.Unmarshal([]byte(lockedYAML), &lockedMap); err != nil {
+		return nil // If locked values can't be parsed, skip the check.
+	}
+
+	var overrideMap map[string]interface{}
+	if err := yaml.Unmarshal([]byte(overrideYAML), &overrideMap); err != nil {
+		return nil // If override values can't be parsed, skip the check.
+	}
+
+	var conflicts []string
+	for key := range overrideMap {
+		if _, exists := lockedMap[key]; exists {
+			conflicts = append(conflicts, key)
+		}
+	}
+
+	if len(conflicts) > 0 {
+		return fmt.Errorf("Cannot override locked values: %s", strings.Join(conflicts, ", "))
+	}
+
+	return nil
 }

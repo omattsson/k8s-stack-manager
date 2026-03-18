@@ -13,9 +13,11 @@ import (
 
 // DefinitionHandler handles stack definition and chart config endpoints.
 type DefinitionHandler struct {
-	definitionRepo models.StackDefinitionRepository
-	chartRepo      models.ChartConfigRepository
-	instanceRepo   models.StackInstanceRepository
+	definitionRepo    models.StackDefinitionRepository
+	chartRepo         models.ChartConfigRepository
+	instanceRepo      models.StackInstanceRepository
+	templateRepo      models.StackTemplateRepository
+	templateChartRepo models.TemplateChartConfigRepository
 }
 
 // NewDefinitionHandler creates a new DefinitionHandler.
@@ -23,11 +25,15 @@ func NewDefinitionHandler(
 	definitionRepo models.StackDefinitionRepository,
 	chartRepo models.ChartConfigRepository,
 	instanceRepo models.StackInstanceRepository,
+	templateRepo models.StackTemplateRepository,
+	templateChartRepo models.TemplateChartConfigRepository,
 ) *DefinitionHandler {
 	return &DefinitionHandler{
-		definitionRepo: definitionRepo,
-		chartRepo:      chartRepo,
-		instanceRepo:   instanceRepo,
+		definitionRepo:    definitionRepo,
+		chartRepo:         chartRepo,
+		instanceRepo:      instanceRepo,
+		templateRepo:      templateRepo,
+		templateChartRepo: templateChartRepo,
 	}
 }
 

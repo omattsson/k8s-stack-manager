@@ -23,4 +23,5 @@ type StackDefinitionRepository interface {
 	Delete(id string) error
 	List() ([]StackDefinition, error)
 	ListByOwner(ownerID string) ([]StackDefinition, error)
+	ListByTemplate(templateID string) ([]StackDefinition, error)
 }

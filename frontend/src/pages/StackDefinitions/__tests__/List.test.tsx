@@ -7,6 +7,9 @@ vi.mock('../../../api/client', () => ({
   definitionService: {
     list: vi.fn(),
   },
+  templateService: {
+    list: vi.fn().mockResolvedValue([]),
+  },
 }));
 
 vi.mock('../../../context/AuthContext', () => ({

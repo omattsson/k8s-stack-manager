@@ -9,15 +9,19 @@ import {
   Alert,
   Tabs,
   Tab,
-  TextField,
   Divider,
   Snackbar,
+  Stepper,
+  Step,
+  StepLabel,
+  Grid,
 } from '@mui/material';
 import StatusBadge from '../../components/StatusBadge';
 import BranchSelector from '../../components/BranchSelector';
 import ConfirmDialog from '../../components/ConfirmDialog';
 import { instanceService, definitionService } from '../../api/client';
 import type { StackInstance, ChartConfig, ValueOverride } from '../../types';
+import YamlEditor from '../../components/YamlEditor';
 
 const Detail = () => {
   const { id } = useParams<{ id: string }>();
@@ -179,6 +183,32 @@ const Detail = () => {
 
         <Divider sx={{ my: 2 }} />
 
+        {(() => {
+          const LIFECYCLE_STEPS = ['draft', 'deploying', 'running'];
+          const activeStep = LIFECYCLE_STEPS.indexOf(instance.status);
+          const isError = instance.status === 'error';
+          const isStopped = instance.status === 'stopped';
+
+          return (
+            <Box sx={{ mb: 2 }}>
+              <Typography variant="subtitle2" gutterBottom>Status Lifecycle</Typography>
+              {isError || isStopped ? (
+                <Alert severity={isError ? 'error' : 'warning'} sx={{ py: 0.5 }}>
+                  Instance is {instance.status}
+                </Alert>
+              ) : (
+                <Stepper activeStep={activeStep} alternativeLabel>
+                  {LIFECYCLE_STEPS.map((label) => (
+                    <Step key={label} completed={activeStep > LIFECYCLE_STEPS.indexOf(label)}>
+                      <StepLabel>{label}</StepLabel>
+                    </Step>
+                  ))}
+                </Stepper>
+              )}
+            </Box>
+          );
+        })()}
+
         <Box sx={{ maxWidth: 400 }}>
           <Typography variant="subtitle2" gutterBottom>Branch</Typography>
           <BranchSelector
@@ -205,28 +235,25 @@ const Detail = () => {
                   {chart.chart_version && ` | Version: ${chart.chart_version}`}
                 </Typography>
 
-                {chart.default_values && (
-                  <Box sx={{ mb: 2 }}>
-                    <Typography variant="subtitle2" gutterBottom>Default Values</Typography>
-                    <Paper variant="outlined" sx={{ p: 2, bgcolor: 'grey.50' }}>
-                      <Typography variant="body2" component="pre" sx={{ fontFamily: 'monospace', fontSize: 13, whiteSpace: 'pre-wrap', m: 0 }}>
-                        {chart.default_values}
-                      </Typography>
-                    </Paper>
-                  </Box>
-                )}
-
-                <Typography variant="subtitle2" gutterBottom>Value Overrides (YAML)</Typography>
-                <TextField
-                  value={editedOverrides[chart.id] || ''}
-                  onChange={(e) => setEditedOverrides({ ...editedOverrides, [chart.id]: e.target.value })}
-                  multiline
-                  rows={10}
-                  fullWidth
-                  size="small"
-                  slotProps={{ input: { sx: { fontFamily: 'monospace', fontSize: 13 } } }}
-                  placeholder="Enter YAML value overrides..."
-                />
+                <Grid container spacing={2}>
+                  <Grid size={{ xs: 12, md: 6 }}>
+                    <YamlEditor
+                      label="Default Values"
+                      value={chart.default_values || ''}
+                      onChange={() => {}}
+                      readOnly={true}
+                      height="300px"
+                    />
+                  </Grid>
+                  <Grid size={{ xs: 12, md: 6 }}>
+                    <YamlEditor
+                      label="Your Overrides"
+                      value={editedOverrides[chart.id] || ''}
+                      onChange={(val) => setEditedOverrides({ ...editedOverrides, [chart.id]: val })}
+                      height="300px"
+                    />
+                  </Grid>
+                </Grid>
               </Box>
             ))}
           </Box>

@@ -18,6 +18,7 @@ import AddIcon from '@mui/icons-material/Add';
 import DeleteIcon from '@mui/icons-material/Delete';
 import { templateService } from '../../api/client';
 import type { StackTemplate, TemplateChartConfig } from '../../types';
+import YamlEditor from '../../components/YamlEditor';
 
 const CATEGORIES = ['Web', 'API', 'Data', 'Infrastructure', 'Other'];
 
@@ -261,25 +262,17 @@ const Builder = () => {
                 label="Required"
               />
               <Divider />
-              <TextField
+              <YamlEditor
                 label="Default Values (YAML)"
                 value={chart.default_values}
-                onChange={(e) => updateChart(index, 'default_values', e.target.value)}
-                multiline
-                rows={6}
-                fullWidth
-                size="small"
-                slotProps={{ input: { sx: { fontFamily: 'monospace', fontSize: 13 } } }}
+                onChange={(val) => updateChart(index, 'default_values', val)}
+                height="200px"
               />
-              <TextField
+              <YamlEditor
                 label="Locked Values (YAML)"
                 value={chart.locked_values}
-                onChange={(e) => updateChart(index, 'locked_values', e.target.value)}
-                multiline
-                rows={4}
-                fullWidth
-                size="small"
-                slotProps={{ input: { sx: { fontFamily: 'monospace', fontSize: 13 } } }}
+                onChange={(val) => updateChart(index, 'locked_values', val)}
+                height="150px"
               />
             </Box>
           </Box>

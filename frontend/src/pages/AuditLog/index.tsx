@@ -18,6 +18,7 @@ import {
 } from '@mui/material';
 import { auditService } from '../../api/client';
 import type { AuditLog as AuditLogType } from '../../types';
+import EntityLink from '../../components/EntityLink';
 
 const ENTITY_TYPES = ['All', 'stack_template', 'stack_definition', 'stack_instance', 'value_override', 'user'];
 const ACTIONS = ['All', 'create', 'update', 'delete', 'publish', 'unpublish', 'clone', 'instantiate'];
@@ -145,8 +146,8 @@ const AuditLog = () => {
                       <TableCell>{log.username}</TableCell>
                       <TableCell>{log.action}</TableCell>
                       <TableCell>{log.entity_type}</TableCell>
-                      <TableCell sx={{ fontFamily: 'monospace', fontSize: 12 }}>
-                        {log.entity_id}
+                      <TableCell>
+                        <EntityLink entityType={log.entity_type} entityId={log.entity_id} />
                       </TableCell>
                       <TableCell sx={{ maxWidth: 300 }}>
                         <Typography variant="body2" noWrap>

@@ -206,14 +206,10 @@ func (h *TemplateHandler) DeleteTemplate(c *gin.Context) {
 
 	// Check that no definitions reference this template.
 	if h.definitionRepo != nil {
-		defs, err := h.definitionRepo.List()
-		if err == nil {
-			for _, d := range defs {
-				if d.SourceTemplateID == id {
-					c.JSON(http.StatusConflict, gin.H{"error": "Cannot delete template: stack definitions reference it"})
-					return
-				}
-			}
+		defs, err := h.definitionRepo.ListByTemplate(id)
+		if err == nil && len(defs) > 0 {
+			c.JSON(http.StatusConflict, gin.H{"error": "Cannot delete template: stack definitions reference it"})
+			return
 		}
 	}
 

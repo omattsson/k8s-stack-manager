@@ -16,11 +16,12 @@ import {
   Chip,
 } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
-import { definitionService } from '../../api/client';
-import type { StackDefinition } from '../../types';
+import { definitionService, templateService } from '../../api/client';
+import type { StackDefinition, StackTemplate } from '../../types';
 
 const List = () => {
   const [definitions, setDefinitions] = useState<StackDefinition[]>([]);
+  const [templates, setTemplates] = useState<Record<string, StackTemplate>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const navigate = useNavigate();
@@ -30,6 +31,17 @@ const List = () => {
       try {
         const data = await definitionService.list();
         setDefinitions(data || []);
+        // Fetch templates to check for updates
+        try {
+          const tmplList = await templateService.list();
+          const tmplMap: Record<string, StackTemplate> = {};
+          for (const t of tmplList) {
+            tmplMap[t.id] = t;
+          }
+          setTemplates(tmplMap);
+        } catch {
+          // Best-effort: don't block page if templates fail
+        }
       } catch {
         setError('Failed to load stack definitions');
       } finally {
@@ -106,15 +118,26 @@ const List = () => {
                   <TableCell>{def.charts ? def.charts.length : '—'}</TableCell>
                   <TableCell>
                     {def.source_template_id ? (
-                      <Chip
-                        label={`Template${def.source_template_version ? ` v${def.source_template_version}` : ''}`}
-                        size="small"
-                        variant="outlined"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          navigate(`/templates/${def.source_template_id}`);
-                        }}
-                      />
+                      <Box sx={{ display: 'flex', gap: 0.5, alignItems: 'center', flexWrap: 'wrap' }}>
+                        <Chip
+                          label={`Template${def.source_template_version ? ` v${def.source_template_version}` : ''}`}
+                          size="small"
+                          variant="outlined"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            navigate(`/templates/${def.source_template_id}`);
+                          }}
+                        />
+                        {templates[def.source_template_id] &&
+                          def.source_template_version &&
+                          templates[def.source_template_id].version !== def.source_template_version && (
+                          <Chip
+                            label="Template update available"
+                            size="small"
+                            color="info"
+                          />
+                        )}
+                      </Box>
                     ) : (
                       '—'
                     )}

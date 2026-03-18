@@ -11,11 +11,14 @@ import {
   CircularProgress,
   Chip,
   Divider,
+  Tooltip,
 } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
 import DeleteIcon from '@mui/icons-material/Delete';
-import { definitionService } from '../../api/client';
-import type { StackDefinition, ChartConfig } from '../../types';
+import LockIcon from '@mui/icons-material/Lock';
+import { definitionService, templateService } from '../../api/client';
+import type { StackDefinition, ChartConfig, TemplateChartConfig } from '../../types';
+import YamlEditor from '../../components/YamlEditor';
 
 interface ChartFormData {
   id?: string;
@@ -49,6 +52,7 @@ const Form = () => {
   const [sourceTemplateId, setSourceTemplateId] = useState<string | undefined>();
   const [sourceTemplateVersion, setSourceTemplateVersion] = useState<string | undefined>();
   const [charts, setCharts] = useState<ChartFormData[]>([]);
+  const [templateCharts, setTemplateCharts] = useState<TemplateChartConfig[]>([]);
   const [loading, setLoading] = useState(isEdit);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -74,6 +78,14 @@ const Form = () => {
             default_values: c.default_values,
             deploy_order: c.deploy_order,
           })));
+        }
+        if (data.source_template_id) {
+          try {
+            const tmpl = await templateService.get(data.source_template_id);
+            setTemplateCharts(tmpl.charts || []);
+          } catch {
+            // Template fetch is best-effort
+          }
         }
       } catch {
         setError('Failed to load definition');
@@ -193,13 +205,29 @@ const Form = () => {
           <Typography color="text.secondary">No charts added yet.</Typography>
         )}
 
-        {charts.map((chart, index) => (
+        {charts.map((chart, index) => {
+          const matchingTemplateChart = templateCharts.find(
+            (tc) => tc.chart_name === chart.chart_name
+          );
+          const isRequired = matchingTemplateChart?.required === true;
+          const lockedValues = matchingTemplateChart?.locked_values || '';
+
+          return (
           <Box key={index} sx={{ mb: 3, p: 2, border: 1, borderColor: 'divider', borderRadius: 1 }}>
             <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-              <Typography variant="subtitle1">Chart #{index + 1}</Typography>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                <Typography variant="subtitle1">Chart #{index + 1}</Typography>
+                {isRequired && (
+                  <Tooltip title="Required by template — cannot be removed">
+                    <Chip icon={<LockIcon />} label="Required by template" size="small" color="info" variant="outlined" />
+                  </Tooltip>
+                )}
+              </Box>
+              {!isRequired && (
               <IconButton onClick={() => removeChart(index)} size="small" color="error">
                 <DeleteIcon />
               </IconButton>
+              )}
             </Box>
             <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
               <Box sx={{ display: 'flex', gap: 2 }}>
@@ -213,19 +241,27 @@ const Form = () => {
                 <TextField label="Chart Version" value={chart.chart_version} onChange={(e) => updateChart(index, 'chart_version', e.target.value)} sx={{ width: 150 }} size="small" />
               </Box>
               <Divider />
-              <TextField
+              <YamlEditor
                 label="Default Values (YAML)"
                 value={chart.default_values}
-                onChange={(e) => updateChart(index, 'default_values', e.target.value)}
-                multiline
-                rows={6}
-                fullWidth
-                size="small"
-                slotProps={{ input: { sx: { fontFamily: 'monospace', fontSize: 13 } } }}
+                onChange={(val) => updateChart(index, 'default_values', val)}
+                height="200px"
               />
+              {lockedValues && (
+                <Box sx={{ mt: 2 }}>
+                  <YamlEditor
+                    label="Locked Values (from template — cannot be overridden)"
+                    value={lockedValues}
+                    onChange={() => {}}
+                    readOnly={true}
+                    height="150px"
+                  />
+                </Box>
+              )}
             </Box>
           </Box>
-        ))}
+          );
+        })}
       </Paper>
 
       <Box sx={{ display: 'flex', gap: 2 }}>

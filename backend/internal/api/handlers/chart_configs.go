@@ -118,7 +118,32 @@ func (h *DefinitionHandler) UpdateChartConfig(c *gin.Context) {
 // @Failure     404     {object} map[string]string
 // @Router      /api/v1/stack-definitions/{id}/charts/{chartId} [delete]
 func (h *DefinitionHandler) DeleteChartConfig(c *gin.Context) {
+	defID := c.Param("id")
 	chartID := c.Param("chartId")
+
+	// Look up the chart config to get its ChartName.
+	chart, err := h.chartRepo.FindByID(chartID)
+	if err != nil {
+		status, message := mapError(err, "Chart config")
+		c.JSON(status, gin.H{"error": message})
+		return
+	}
+
+	// Check if the definition was created from a template with a required chart.
+	if defID != "" && h.templateChartRepo != nil {
+		def, err := h.definitionRepo.FindByID(defID)
+		if err == nil && def.SourceTemplateID != "" {
+			templateCharts, err := h.templateChartRepo.ListByTemplate(def.SourceTemplateID)
+			if err == nil {
+				for _, tc := range templateCharts {
+					if tc.ChartName == chart.ChartName && tc.Required {
+						c.JSON(http.StatusConflict, gin.H{"error": "Cannot delete required chart: " + chart.ChartName})
+						return
+					}
+				}
+			}
+		}
+	}
 
 	if err := h.chartRepo.Delete(chartID); err != nil {
 		status, message := mapError(err, "Chart config")
