@@ -118,6 +118,12 @@ func main() {
 		os.Exit(1)
 	}
 
+	apiKeyRepo, err := azure.NewAPIKeyRepository(azCfg.AccountName, azCfg.AccountKey, azCfg.Endpoint, azCfg.UseAzurite)
+	if err != nil {
+		slog.Error("Failed to create API key repository", "error", err)
+		os.Exit(1)
+	}
+
 	// ------------------------------------------------------------------
 	// Phase 1: Create domain services
 	// ------------------------------------------------------------------
@@ -146,6 +152,8 @@ func main() {
 	)
 	gitHandler := handlers.NewGitHandler(gitRegistry)
 	auditLogHandler := handlers.NewAuditLogHandler(auditRepo)
+	userHandler := handlers.NewUserHandler(userRepo)
+	apiKeyHandler := handlers.NewAPIKeyHandler(apiKeyRepo, userRepo)
 
 	// Auto-create admin user on startup if ADMIN_PASSWORD is set.
 	authHandler.EnsureAdminUser()
@@ -164,6 +172,10 @@ func main() {
 		GitHandler:        gitHandler,
 		AuditLogHandler:   auditLogHandler,
 		AuditLogger:       auditRepo,
+		UserHandler:       userHandler,
+		APIKeyHandler:     apiKeyHandler,
+		UserRepo:          userRepo,
+		APIKeyRepo:        apiKeyRepo,
 	})
 	defer rateLimiter.Stop()
 	router.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))

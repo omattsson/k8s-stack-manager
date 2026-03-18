@@ -1,32 +1,4 @@
 services:
-  db:
-    image: mysql:8.0
-    container_name: app-mysql-${GO_ENV:-prod}
-    restart: unless-stopped
-    command: --default-authentication-plugin=mysql_native_password
-    environment:
-      - MYSQL_DATABASE=${MYSQL_DATABASE:-app}
-      - MYSQL_USER=${MYSQL_USER:-appuser}
-      - MYSQL_PASSWORD=${MYSQL_PASSWORD:-apppass}
-      - MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASSWORD:-rootpass}
-      - TZ=UTC
-    ports:
-      - "${MYSQL_PORT:-3306}:3306"
-    volumes:
-      - mysql_data:/var/lib/mysql
-      - mysql_logs:/var/log/mysql
-      - ./backend/config/mysql/my.cnf:/etc/mysql/conf.d/my.cnf:ro
-    networks:
-      - backend-net
-    healthcheck:
-      test: ["CMD-SHELL", "mysqladmin ping -h localhost -u $$MYSQL_USER --password=$$MYSQL_PASSWORD || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 30s
-    cap_add:
-      - SYS_NICE  # CAP_SYS_NICE to allow MySQL to adjust its process priority
-
   backend:
     build:
       context: ./backend
@@ -34,21 +6,13 @@ services:
       target: ${GO_ENV:-production}
     container_name: app-backend-${GO_ENV:-prod}
     ports:
-      - "${PORT:-8081}:8081"
+      - "${BACKEND_PORT:-8081}:8081"
     environment:
       - APP_NAME=${APP_NAME:-application}
       - APP_ENV=${GO_ENV:-production}
       - APP_DEBUG=${APP_DEBUG:-false}
-      - DB_HOST=db
-      - DB_PORT=3306
-      - DB_NAME=${MYSQL_DATABASE:-app}
-      - DB_USER=${MYSQL_USER:-appuser}
-      - DB_PASSWORD=${MYSQL_PASSWORD:-apppass}
-      - DB_MAX_OPEN_CONNS=${DB_MAX_OPEN_CONNS:-25}
-      - DB_MAX_IDLE_CONNS=${DB_MAX_IDLE_CONNS:-25}
-      - DB_CONN_MAX_LIFETIME=${DB_CONN_MAX_LIFETIME:-5m}
       - SERVER_HOST=0.0.0.0
-      - PORT=${PORT:-8081}
+      - SERVER_PORT=8081
       - SERVER_READ_TIMEOUT=${SERVER_READ_TIMEOUT:-15s}
       - SERVER_WRITE_TIMEOUT=${SERVER_WRITE_TIMEOUT:-15s}
       - SERVER_SHUTDOWN_TIMEOUT=${SERVER_SHUTDOWN_TIMEOUT:-30s}
@@ -81,8 +45,6 @@ services:
       # Stack defaults
       - DEFAULT_BRANCH=${DEFAULT_BRANCH:-master}
     depends_on:
-      db:
-        condition: service_healthy
       azurite:
         condition: service_healthy
     networks:
@@ -140,10 +102,6 @@ services:
       start_period: 10s
 
 volumes:
-  mysql_data:
-    driver: local  # Explicitly set local driver
-  mysql_logs:
-    driver: local  # For MySQL logs
   backend_go_mod:
   frontend_node_modules:
   azurite_data: {}
