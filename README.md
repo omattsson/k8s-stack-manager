@@ -1,232 +1,134 @@
-# Full-Stack Application Template
+# K8s Stack Manager
 
-A modern, production-ready template for full-stack web applications using Go (Gin) for the backend and React (TypeScript + Vite) for the frontend.
+A web application for configuring, storing, and managing multi-service Helm-based application stacks for deployment to a shared Kubernetes cluster.
 
-## Features
+Developers create **stack definitions** (collections of Helm charts with configuration), launch **stack instances** (per-developer copies with branch and value overrides), and manage everything through an audit-logged UI with Git provider integration.
 
-### Backend (Go + Gin)
+## Architecture
 
-- 🚀 Modular Go architecture with clean separation of concerns
-- 🔍 Built-in health checks and monitoring
-- 📝 Swagger/OpenAPI documentation
-- 🧪 Comprehensive test suite
-- 🛠️ Development and production Docker configurations
-- 🔒 Middleware support (logging, recovery, CORS)
-
-### Frontend (React + TypeScript)
-
-- ⚡️ Vite for lightning-fast development
-- 🎨 Modern UI components
-- 📱 Responsive layout structure
-- 🔄 API client with axios
-- 🛣️ React Router for navigation
-- 🐳 Docker support for development and production
-
-### Development Workflow
-
-- 📋 Standardized PR templates for different types of changes
-- 📊 Project structure for maintainable, scalable applications
-- 🔄 Clear contribution guidelines
+```
+Frontend (React + MUI + TypeScript)
+        │
+        ▼
+Backend (Go + Gin)
+  ├── REST API with JWT auth
+  ├── Azure Table Storage (Azurite for local dev)
+  ├── Git Provider (Azure DevOps + GitLab)
+  ├── Helm Values (deep merge + template substitution)
+  └── Audit Logging
+```
 
 ## Quick Start
 
 ### Prerequisites
-
 - Docker and Docker Compose
-- Go 1.24 or later (for local development)
-- Node.js 20 or later (for local development)
-- Make (optional, for using Makefile commands)
+- Go 1.24+ (for local backend development)
+- Node.js 20+ (for local frontend development)
 
-### Development Setup
+### Start with Docker Compose
 
-1. **Clone the template:**
+```bash
+make dev
+```
 
-   ```bash
-   git clone <repository-url> your-project-name
-   cd your-project-name
-   ```
+This starts all services:
+- **Frontend**: http://localhost:3000
+- **Backend API**: http://localhost:8081
+- **Swagger docs**: http://localhost:8081/swagger/index.html
+- **Azurite** (Azure Table Storage emulator): localhost:10002
 
-2. **Install dependencies (if developing locally):**
+Default admin credentials: `admin` / `admin` (configured in docker-compose.yml).
 
-   ```bash
-   make install
-   ```
+### Start Locally (without Docker)
 
-3. **Start the application:**
+```bash
+# Start Azurite
+make azurite-start
 
-   Full stack (recommended):
+# Run backend
+make dev-local
 
-   ```bash
-   make dev
-   ```
+# In another terminal — run frontend
+cd frontend && npm install && npm run dev
+```
 
-   Backend only:
+## Commands
 
-   ```bash
-   make dev-backend
-   ```
-
-   Frontend only:
-
-   ```bash
-   make dev-frontend
-   ```
-
-   The services will be available at:
-
-   - Frontend: [http://localhost:3000](http://localhost:3000)
-   - Backend: [http://localhost:8081](http://localhost:8081)
-   - API Documentation: [http://localhost:8081/swagger/index.html](http://localhost:8081/swagger/index.html)
+| Command | Description |
+|---|---|
+| `make dev` | Start full stack via Docker Compose |
+| `make dev-local` | Run backend locally against Azurite |
+| `make azurite-start` | Start Azurite container |
+| `make test` | Run all tests (backend + frontend) |
+| `make test-backend` | Backend unit tests |
+| `make test-frontend` | Frontend unit tests |
+| `make test-backend-all` | Backend unit + integration tests |
+| `make test-e2e` | End-to-end Playwright tests |
+| `make docs` | Regenerate Swagger documentation |
+| `make lint` | Lint backend + frontend |
+| `make clean` | Stop containers and remove volumes |
+| `make install` | Install all dependencies |
 
 ## Project Structure
 
-```text
-.
-├── backend/                # Go backend service
-│   ├── api/               # API entry point
-│   ├── internal/          # Internal packages
-│   │   ├── api/          # API implementation
-│   │   ├── config/       # Configuration
-│   │   ├── health/       # Health checks
-│   │   └── models/       # Data models
-│   └── pkg/              # Public packages
-├── frontend/             # React frontend
-│   ├── src/
-│   │   ├── api/         # API integration
-│   │   ├── components/  # Reusable components
-│   │   ├── pages/       # Page components
-│   │   └── services/    # Business logic
-│   └── public/          # Static assets
-└── docker-compose.yml    # Docker services configuration
+```
+├── backend/                    # Go API server
+│   ├── api/main.go            # Application entry point
+│   ├── internal/
+│   │   ├── api/               # Handlers, middleware, routes
+│   │   ├── config/            # Environment-based configuration
+│   │   ├── database/azure/    # Azure Table Storage repositories
+│   │   ├── gitprovider/       # Azure DevOps + GitLab integration
+│   │   ├── helm/              # Values merge + template substitution
+│   │   ├── models/            # Domain models + interfaces
+│   │   └── websocket/         # Real-time event broadcasting
+│   └── docs/                  # Swagger/OpenAPI
+├── frontend/                   # React SPA
+│   └── src/
+│       ├── api/               # API client + types
+│       ├── components/        # Shared UI components
+│       ├── context/           # Auth + WebSocket contexts
+│       ├── pages/             # Page components
+│       └── routes.tsx         # Route definitions
+└── docker-compose.yml
 ```
 
-## Available Commands
+## API Overview
 
-### Development
-
-- `make dev` - Start both services in development mode
-- `make dev-backend` - Start backend in development mode
-- `make dev-frontend` - Start frontend in development mode
-- `make install` - Install dependencies
-- `make test` - Run all tests
-- `make test-backend` - Run backend tests
-- `make test-frontend` - Run frontend tests
-- `make docs` - Generate API documentation
-- `make fmt` - Format code
-- `make lint` - Run linters
-
-### Production
-
-- `make prod` - Start both services in production mode
-- `make prod-backend` - Start backend in production mode
-- `make prod-frontend` - Start frontend in production mode
-
-### Maintenance
-
-- `make clean` - Stop and remove containers
-- `make prune` - Clean up Docker resources
+| Group | Prefix | Description |
+|-------|--------|-------------|
+| Auth | `/api/v1/auth` | Login, register, current user |
+| Templates | `/api/v1/templates` | Stack template CRUD, publish, instantiate |
+| Definitions | `/api/v1/stack-definitions` | Stack definition CRUD, chart configs |
+| Instances | `/api/v1/stack-instances` | Stack instance CRUD, clone, export |
+| Overrides | `/api/v1/stack-instances/:id/overrides` | Per-chart value overrides |
+| Git | `/api/v1/git` | Branch listing, validation |
+| Audit Logs | `/api/v1/audit-logs` | Filterable audit trail |
+| Health | `/health/*` | Liveness + readiness |
 
 ## Configuration
 
-### Environment Variables
+Key environment variables (see `docker-compose.yml` for full list):
 
-Backend:
-
-- `GO_ENV` - Environment (development/production)
-- `GIN_MODE` - Gin framework mode (debug/release)
-- `BACKEND_PORT` - Backend port (default: 8081)
-
-Frontend:
-
-- `NODE_ENV` - Environment (development/production)
-- `PORT` - Frontend port (default: 3000 in dev, 80 in prod)
-- `VITE_API_URL` - Backend API URL
-
-## API Documentation
-
-The API documentation is automatically generated using Swagger/OpenAPI. You can access it at:
-
-- Development: [http://localhost:8081/swagger/index.html](http://localhost:8081/swagger/index.html)
-- Production: [http://[your-domain]/swagger/index.html](http://[your-domain]/swagger/index.html)
-
-To regenerate the API documentation:
-
-```bash
-make docs
-```
+| Variable | Required | Description |
+|---|---|---|
+| `JWT_SECRET` | Yes | JWT signing secret (min 16 chars) |
+| `ADMIN_PASSWORD` | Yes | Initial admin password |
+| `USE_AZURE_TABLE` | No | `true` to use Azure Table Storage |
+| `USE_AZURITE` | No | `true` to use Azurite emulator |
+| `AZURE_DEVOPS_PAT` | No | Azure DevOps personal access token |
+| `GITLAB_TOKEN` | No | GitLab access token |
+| `DEFAULT_BRANCH` | No | Default Git branch (default: `master`) |
 
 ## Testing
 
-The template includes comprehensive testing setups for both frontend and backend:
-
 ```bash
-# Run all tests
-make test
-
-# Run backend tests only
-make test-backend
-
-# Run frontend tests only
-make test-frontend
-```
-
-## Health Checks
-
-Both services include health check endpoints:
-
-- Backend: [http://localhost:8081/health/live](http://localhost:8081/health/live)
-- Frontend: Built into the Docker container
-
-## Contributing
-
-We welcome contributions to this project! Please check out our [Contributing Guidelines](.github/CONTRIBUTING.md) for detailed information on how to get started.
-
-### GitHub Templates and Workflows
-
-This repository includes a comprehensive set of templates and workflows to streamline the development process:
-
-#### Pull Request Templates
-
-- **Default Template**: Used automatically when creating a PR
-- **Bug Fix Template**: For PRs that fix bugs (`?template=bugfix.md`)
-- **Feature Template**: For PRs that add new features (`?template=feature.md`)
-- **Documentation Template**: For PRs that update docs (`?template=documentation.md`)
-
-To use a specialized template, add the query parameter to the PR URL:
-```
-https://github.com/username/application_template/compare/main...your-branch?template=feature.md
-```
-
-#### Issue Templates
-
-- **Bug Report**: For reporting bugs and unexpected behavior
-- **Feature Request**: For suggesting new features or improvements
-- **Documentation Issue**: For reporting issues with documentation
-
-#### Other Resources
-
-- **Code of Conduct**: Our [Code of Conduct](.github/CODE_OF_CONDUCT.md) outlines expectations for participation
-- **CODEOWNERS**: Automatically assigns reviewers based on the files changed
-- **GitHub Actions**: Automatically validates pull requests with linting, testing, and security scans
-
-### Getting Started
-
-1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'feat: add some amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request using one of our templates
-
-- **Default Template**: Used automatically when creating a PR
-- **Bug Fix Template**: For PRs that fix bugs (`?template=bugfix.md`)
-- **Feature Template**: For PRs that add new features (`?template=feature.md`) 
-- **Documentation Template**: For PRs that update docs (`?template=documentation.md`)
-
-To use a specialized template, add the query parameter to the PR URL:
-```
-https://github.com/your-username/application_template/compare/main...your-branch?template=feature.md
+make test                    # All unit tests
+make test-backend-all        # Backend unit + integration
+make test-e2e                # Playwright end-to-end
+cd backend && make test-coverage  # Coverage report (80% threshold)
 ```
 
 ## License
 
-This project is licensed under the MIT License - see the LICENSE file for details
+See [LICENSE](LICENSE).

@@ -60,8 +60,30 @@ services:
       - CORS_ALLOWED_METHODS=${CORS_ALLOWED_METHODS:-GET,POST,PUT,DELETE,OPTIONS}
       - CORS_ALLOWED_HEADERS=${CORS_ALLOWED_HEADERS:-Origin,Content-Type,Accept,Authorization}
       - CORS_MAX_AGE=${CORS_MAX_AGE:-300}
+      # Auth
+      - JWT_SECRET=${JWT_SECRET:-dev-secret-change-in-production-minimum-16-chars}
+      - JWT_EXPIRATION=${JWT_EXPIRATION:-24h}
+      - ADMIN_USERNAME=${ADMIN_USERNAME:-admin}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD:-admin}
+      - SELF_REGISTRATION=${SELF_REGISTRATION:-true}
+      # Azure Table Storage (Azurite for local dev)
+      - USE_AZURE_TABLE=${USE_AZURE_TABLE:-true}
+      - USE_AZURITE=${USE_AZURITE:-true}
+      - AZURE_TABLE_ACCOUNT_NAME=${AZURE_TABLE_ACCOUNT_NAME:-devstoreaccount1}
+      - AZURE_TABLE_ACCOUNT_KEY=${AZURE_TABLE_ACCOUNT_KEY:-Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==}
+      - AZURE_TABLE_ENDPOINT=${AZURE_TABLE_ENDPOINT:-azurite:10002}
+      - AZURE_TABLE_NAME=${AZURE_TABLE_NAME:-items}
+      # Git providers (optional - leave empty for local dev)
+      - AZURE_DEVOPS_PAT=${AZURE_DEVOPS_PAT:-}
+      - AZURE_DEVOPS_DEFAULT_ORG=${AZURE_DEVOPS_DEFAULT_ORG:-}
+      - GITLAB_TOKEN=${GITLAB_TOKEN:-}
+      - GITLAB_BASE_URL=${GITLAB_BASE_URL:-https://gitlab.com}
+      # Stack defaults
+      - DEFAULT_BRANCH=${DEFAULT_BRANCH:-master}
     depends_on:
       db:
+        condition: service_healthy
+      azurite:
         condition: service_healthy
     networks:
       - backend-net

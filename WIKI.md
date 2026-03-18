@@ -1,115 +1,78 @@
-# Application Template Wiki
+# K8s Stack Manager — Wiki
 
-## Overview
+## Concepts
 
-This project is a full-stack application template featuring a Go (Gin) backend and a React (Vite) frontend. It is designed for rapid development, clean architecture, and easy deployment with Docker.
+### Stack Template
+A reusable blueprint created by DevOps engineers. Contains a set of Helm chart configurations with default values. Templates can be **published** for developers to use, and individual chart values can be **locked** to prevent modification.
 
----
+### Stack Definition
+A concrete collection of Helm chart configurations. Created by instantiating a template or from scratch. Owns the chart configs (chart name, repository, version, default values).
 
-## Project Structure
+### Stack Instance
+A developer's working copy of a stack definition. Each instance has:
+- An **owner** (the developer)
+- A **branch** (Git branch for the deployment)
+- **Value overrides** per chart (merged on top of chart defaults)
+- An auto-generated **namespace** (`stack-{instance-name}-{owner}`)
 
+### Value Override
+Per-chart configuration overrides on a stack instance. Deep-merged with chart defaults during Helm values export. Template variables (`{{.Branch}}`, `{{.Namespace}}`, `{{.InstanceName}}`, etc.) are substituted at export time.
+
+### Audit Log
+Every mutating API call (POST, PUT, DELETE) is recorded with user, action, entity type, entity ID, and timestamp.
+
+## Architecture
+
+### Data Flow
 ```
-.
-├── backend/                # Go backend service
-│   ├── api/               # API entry point
-│   ├── internal/          # Internal packages (API, config, database, health, models)
-│   ├── pkg/               # Public packages (utils, dberrors)
-│   ├── docs/              # Swagger/OpenAPI docs
-│   ├── config/            # Configuration files (e.g., MySQL)
-│   └── Makefile           # Backend build/test commands
-├── frontend/               # React frontend (Vite)
-│   ├── src/               # Source code (api, components, pages, services, utils)
-│   └── public/            # Static assets
-├── docker-compose.yml      # Docker Compose for dev/prod
-└── README.md               # Project overview
+Template → (instantiate) → Definition + ChartConfigs → (create instance) → Instance + ValueOverrides
 ```
 
----
+### Storage
+- **Azure Table Storage** (Azurite for local dev) for all domain entities
+- **MySQL** (GORM) for legacy Items CRUD
 
-## Features
+### Authentication
+- JWT-based with `Authorization: Bearer <token>` header
+- Role hierarchy: `admin` > `devops` > `user`
+- Admin can register users; self-registration is configurable
 
-### Backend (Go + Gin)
-- Modular, clean architecture
-- Auto-generated Swagger/OpenAPI documentation
-- Health check endpoints (`/health/live`, `/health/ready`)
-- Robust configuration system with `.env` support
-- Database migrations and connection pooling
-- Comprehensive error handling
-- Middleware: logging, recovery, CORS
-- Docker support for development and production
+### Git Integration
+- Auto-detects provider from repository URL (`dev.azure.com` → Azure DevOps, `gitlab.com` → GitLab)
+- Branch listing with in-memory caching (5-minute TTL)
+- Service-level tokens (PAT/token), not per-user
 
-### Frontend (React + Vite)
-- Modern React with TypeScript
-- Fast development with Vite
-- Modular component structure
-- API client with axios
-- Docker support
+### Helm Values
+- Deep merge: chart defaults ← instance overrides
+- Template variable substitution: `{{.Branch}}`, `{{.Namespace}}`, `{{.InstanceName}}`, `{{.StackName}}`, `{{.Owner}}`
+- Export as YAML
 
----
-
-## Getting Started
+## Development
 
 ### Prerequisites
-- Go 1.20+
-- Node.js 18+
-- Docker & Docker Compose
+- Docker and Docker Compose
+- Go 1.24+ (backend)
+- Node.js 20+ (frontend)
 
-### Backend Setup
-
+### Running
 ```bash
-cd backend
-cp .env.example .env
-# Edit .env as needed (DB_HOST=localhost for local, DB_HOST=db for Docker)
-make dev
+make dev              # Full stack via Docker Compose
+make dev-local        # Backend only, local against Azurite
 ```
 
-- Swagger docs: [http://localhost:8081/swagger/index.html](http://localhost:8081/swagger/index.html)
-- Health checks: `/health/live`, `/health/ready`
-
-### Frontend Setup
-
+### Testing
 ```bash
-cd frontend
-npm install
-npm run dev
+make test             # All unit tests
+make test-backend-all # Backend unit + integration (starts MySQL + Azurite)
+make test-e2e         # End-to-end with Playwright
 ```
 
-- App: [http://localhost:3000](http://localhost:3000)
-
-### Docker Compose
-
-```bash
-docker compose up --build
-```
-
----
-
-## Testing
-
-- Backend: `make test` or `make test-coverage`
-- Frontend: `npm test`
-
----
-
-## Migrations
-
-- Migrations are run automatically on backend startup.
-- To add a migration, edit `internal/database/migrations.go`.
-
----
+### Adding a New API Resource
+See `.github/instructions/api-extension.instructions.md` for the step-by-step guide.
 
 ## Troubleshooting
 
-- **Database connection errors:**  
-  - Ensure MySQL is running and accessible.
-  - Use `DB_HOST=localhost` for local, `DB_HOST=db` for Docker Compose.
-- **Duplicate index errors:**  
-  - Migrations now check for existing indexes before creating them.
-
----
-
-## Contributing
-
-- Follow Go and React best practices.
-- Add tests for new features.
-- Update documentation as needed.
+- **Azurite connection errors**: Ensure Azurite is running (`make azurite-start`). Inside Docker, endpoint is `azurite:10002`; locally it's `127.0.0.1:10002`.
+- **JWT errors**: Ensure `JWT_SECRET` is set and at least 16 characters.
+- **Database connection errors (MySQL)**: Only affects legacy Items. Ensure MySQL is running if `USE_AZURE_TABLE=false`.
+- **Git provider errors**: Check `AZURE_DEVOPS_PAT` or `GITLAB_TOKEN` are set correctly. Empty tokens are valid (provider just won't be available).
