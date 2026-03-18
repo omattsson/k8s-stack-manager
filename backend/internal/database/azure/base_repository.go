@@ -23,7 +23,7 @@ func newID() string {
 func createTableClient(accountName, accountKey, endpoint, tableName string, useAzurite bool) (AzureTableClient, error) {
 	var serviceURL string
 	if useAzurite {
-		serviceURL = "http://" + endpoint
+		serviceURL = fmt.Sprintf("http://%s/%s", endpoint, accountName)
 	} else {
 		serviceURL = fmt.Sprintf("https://%s.table.%s", accountName, endpoint)
 	}
@@ -32,8 +32,13 @@ func createTableClient(accountName, accountKey, endpoint, tableName string, useA
 		return nil, dberrors.NewDatabaseError("azure_client", errors.New("invalid connection string: missing account name or key"))
 	}
 
+	protocol := "https"
+	if useAzurite {
+		protocol = "http"
+	}
 	serviceClient, err := aztables.NewServiceClientFromConnectionString(
-		fmt.Sprintf("DefaultEndpointsProtocol=https;AccountName=%s;AccountKey=%s;TableEndpoint=%s",
+		fmt.Sprintf("DefaultEndpointsProtocol=%s;AccountName=%s;AccountKey=%s;TableEndpoint=%s",
+			protocol,
 			accountName,
 			accountKey,
 			serviceURL),
