@@ -1,5 +1,50 @@
 basePath: /
 definitions:
+  gitprovider.Branch:
+    properties:
+      is_default:
+        type: boolean
+      name:
+        type: string
+    type: object
+  gitprovider.ProviderStatus:
+    properties:
+      available:
+        type: boolean
+      type:
+        type: string
+    type: object
+  handlers.LoginRequest:
+    properties:
+      password:
+        type: string
+      username:
+        type: string
+    required:
+    - password
+    - username
+    type: object
+  handlers.LoginResponse:
+    properties:
+      token:
+        type: string
+      user:
+        $ref: '#/definitions/models.User'
+    type: object
+  handlers.RegisterRequest:
+    properties:
+      display_name:
+        type: string
+      password:
+        type: string
+      role:
+        type: string
+      username:
+        type: string
+    required:
+    - password
+    - username
+    type: object
   health.CheckStatus:
     properties:
       message:
@@ -16,6 +61,48 @@ definitions:
       status:
         type: string
       uptime:
+        type: string
+    type: object
+  models.AuditLog:
+    properties:
+      action:
+        type: string
+      details:
+        type: string
+      entity_id:
+        type: string
+      entity_type:
+        type: string
+      id:
+        type: string
+      timestamp:
+        type: string
+      user_id:
+        type: string
+      username:
+        type: string
+    type: object
+  models.ChartConfig:
+    properties:
+      chart_name:
+        type: string
+      chart_path:
+        type: string
+      chart_version:
+        type: string
+      created_at:
+        type: string
+      default_values:
+        type: string
+      deploy_order:
+        type: integer
+      id:
+        type: string
+      repository_url:
+        type: string
+      source_repo_url:
+        type: string
+      stack_definition_id:
         type: string
     type: object
   models.Item:
@@ -40,6 +127,126 @@ definitions:
         description: For optimistic locking (1 = initial; 0 = not provided)
         type: integer
     type: object
+  models.StackDefinition:
+    properties:
+      created_at:
+        type: string
+      default_branch:
+        type: string
+      description:
+        type: string
+      id:
+        type: string
+      name:
+        type: string
+      owner_id:
+        type: string
+      source_template_id:
+        type: string
+      source_template_version:
+        type: string
+      updated_at:
+        type: string
+    type: object
+  models.StackInstance:
+    properties:
+      branch:
+        type: string
+      created_at:
+        type: string
+      id:
+        type: string
+      name:
+        type: string
+      namespace:
+        type: string
+      owner_id:
+        type: string
+      stack_definition_id:
+        type: string
+      status:
+        type: string
+      updated_at:
+        type: string
+    type: object
+  models.StackTemplate:
+    properties:
+      category:
+        type: string
+      created_at:
+        type: string
+      default_branch:
+        type: string
+      description:
+        type: string
+      id:
+        type: string
+      is_published:
+        type: boolean
+      name:
+        type: string
+      owner_id:
+        type: string
+      updated_at:
+        type: string
+      version:
+        type: string
+    type: object
+  models.TemplateChartConfig:
+    properties:
+      chart_name:
+        type: string
+      chart_path:
+        type: string
+      chart_version:
+        type: string
+      created_at:
+        type: string
+      default_values:
+        type: string
+      deploy_order:
+        type: integer
+      id:
+        type: string
+      locked_values:
+        type: string
+      repository_url:
+        type: string
+      required:
+        type: boolean
+      source_repo_url:
+        type: string
+      stack_template_id:
+        type: string
+    type: object
+  models.User:
+    properties:
+      created_at:
+        type: string
+      display_name:
+        type: string
+      id:
+        type: string
+      role:
+        type: string
+      updated_at:
+        type: string
+      username:
+        type: string
+    type: object
+  models.ValueOverride:
+    properties:
+      chart_config_id:
+        type: string
+      id:
+        type: string
+      stack_instance_id:
+        type: string
+      updated_at:
+        type: string
+      values:
+        type: string
+    type: object
 host: localhost:8081
 info:
   contact: {}
@@ -47,6 +254,243 @@ info:
   title: Backend API
   version: "1.0"
 paths:
+  /api/v1/audit-logs:
+    get:
+      description: List audit logs with optional filters
+      parameters:
+      - description: Filter by user ID
+        in: query
+        name: user_id
+        type: string
+      - description: Filter by entity type
+        in: query
+        name: entity_type
+        type: string
+      - description: Filter by entity ID
+        in: query
+        name: entity_id
+        type: string
+      - description: Filter by action
+        in: query
+        name: action
+        type: string
+      - description: Start date (RFC3339)
+        in: query
+        name: start_date
+        type: string
+      - description: End date (RFC3339)
+        in: query
+        name: end_date
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/models.AuditLog'
+            type: array
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: List audit logs
+      tags:
+      - audit-logs
+  /api/v1/auth/login:
+    post:
+      consumes:
+      - application/json
+      description: Authenticate with username and password, returns a JWT token
+      parameters:
+      - description: Login credentials
+        in: body
+        name: credentials
+        required: true
+        schema:
+          $ref: '#/definitions/handlers.LoginRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handlers.LoginResponse'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: User login
+      tags:
+      - auth
+  /api/v1/auth/me:
+    get:
+      description: Returns the authenticated user's information
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.User'
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Get current user
+      tags:
+      - auth
+  /api/v1/auth/register:
+    post:
+      consumes:
+      - application/json
+      description: Create a new user account (admin only, or when self-registration
+        is enabled)
+      parameters:
+      - description: User registration data
+        in: body
+        name: user
+        required: true
+        schema:
+          $ref: '#/definitions/handlers.RegisterRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/models.User'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "409":
+          description: Conflict
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Register a new user
+      tags:
+      - auth
+  /api/v1/git/branches:
+    get:
+      description: List branches for a given repository URL
+      parameters:
+      - description: Repository URL
+        in: query
+        name: repo
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/gitprovider.Branch'
+            type: array
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: List branches
+      tags:
+      - git
+  /api/v1/git/providers:
+    get:
+      description: Get the status of all configured Git providers
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/gitprovider.ProviderStatus'
+            type: array
+      summary: List Git providers
+      tags:
+      - git
+  /api/v1/git/validate-branch:
+    get:
+      description: Check if a branch exists in the given repository
+      parameters:
+      - description: Repository URL
+        in: query
+        name: repo
+        required: true
+        type: string
+      - description: Branch name
+        in: query
+        name: branch
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Validate a branch
+      tags:
+      - git
   /api/v1/items:
     get:
       description: Get a list of all items
@@ -183,6 +627,921 @@ paths:
       summary: Ping test
       tags:
       - ping
+  /api/v1/stack-definitions:
+    get:
+      description: List all stack definitions
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/models.StackDefinition'
+            type: array
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: List stack definitions
+      tags:
+      - stack-definitions
+    post:
+      consumes:
+      - application/json
+      description: Create a new stack definition
+      parameters:
+      - description: Definition object
+        in: body
+        name: definition
+        required: true
+        schema:
+          $ref: '#/definitions/models.StackDefinition'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/models.StackDefinition'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Create a stack definition
+      tags:
+      - stack-definitions
+  /api/v1/stack-definitions/{id}:
+    delete:
+      description: Delete a stack definition if no running instances link to it
+      parameters:
+      - description: Definition ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "409":
+          description: Conflict
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Delete a stack definition
+      tags:
+      - stack-definitions
+    get:
+      description: Get a stack definition by ID, including its chart configurations
+      parameters:
+      - description: Definition ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.StackDefinition'
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Get a stack definition
+      tags:
+      - stack-definitions
+    put:
+      consumes:
+      - application/json
+      description: Update an existing stack definition
+      parameters:
+      - description: Definition ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Definition object
+        in: body
+        name: definition
+        required: true
+        schema:
+          $ref: '#/definitions/models.StackDefinition'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.StackDefinition'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Update a stack definition
+      tags:
+      - stack-definitions
+  /api/v1/stack-definitions/{id}/charts:
+    post:
+      consumes:
+      - application/json
+      description: Add a new chart configuration to a stack definition
+      parameters:
+      - description: Definition ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Chart config
+        in: body
+        name: chart
+        required: true
+        schema:
+          $ref: '#/definitions/models.ChartConfig'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/models.ChartConfig'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Add a chart to a definition
+      tags:
+      - chart-configs
+  /api/v1/stack-definitions/{id}/charts/{chartId}:
+    delete:
+      description: Remove a chart configuration from a stack definition
+      parameters:
+      - description: Definition ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Chart config ID
+        in: path
+        name: chartId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Delete a chart config
+      tags:
+      - chart-configs
+    put:
+      consumes:
+      - application/json
+      description: Update a chart configuration within a stack definition
+      parameters:
+      - description: Definition ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Chart config ID
+        in: path
+        name: chartId
+        required: true
+        type: string
+      - description: Updated chart config
+        in: body
+        name: chart
+        required: true
+        schema:
+          $ref: '#/definitions/models.ChartConfig'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.ChartConfig'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Update a chart config
+      tags:
+      - chart-configs
+  /api/v1/stack-instances:
+    get:
+      description: List all stack instances, optionally filtered by owner
+      parameters:
+      - description: Filter by owner (use 'me' for current user)
+        in: query
+        name: owner
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/models.StackInstance'
+            type: array
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: List stack instances
+      tags:
+      - stack-instances
+    post:
+      consumes:
+      - application/json
+      description: Create a new stack instance from a definition
+      parameters:
+      - description: Instance object
+        in: body
+        name: instance
+        required: true
+        schema:
+          $ref: '#/definitions/models.StackInstance'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/models.StackInstance'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Create a stack instance
+      tags:
+      - stack-instances
+  /api/v1/stack-instances/{id}:
+    delete:
+      description: Delete a stack instance
+      parameters:
+      - description: Instance ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Delete a stack instance
+      tags:
+      - stack-instances
+    get:
+      description: Get a stack instance by ID with its overrides
+      parameters:
+      - description: Instance ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.StackInstance'
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Get a stack instance
+      tags:
+      - stack-instances
+    put:
+      consumes:
+      - application/json
+      description: Update a stack instance (branch, name, etc.)
+      parameters:
+      - description: Instance ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Instance object
+        in: body
+        name: instance
+        required: true
+        schema:
+          $ref: '#/definitions/models.StackInstance'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.StackInstance'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Update a stack instance
+      tags:
+      - stack-instances
+  /api/v1/stack-instances/{id}/clone:
+    post:
+      description: Create a new stack instance as a copy of an existing one
+      parameters:
+      - description: Instance ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/models.StackInstance'
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Clone a stack instance
+      tags:
+      - stack-instances
+  /api/v1/stack-instances/{id}/overrides:
+    get:
+      description: List all value overrides for a stack instance
+      parameters:
+      - description: Instance ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/models.ValueOverride'
+            type: array
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Get overrides for an instance
+      tags:
+      - value-overrides
+  /api/v1/stack-instances/{id}/overrides/{chartId}:
+    put:
+      consumes:
+      - application/json
+      description: Upsert value overrides for a specific chart in a stack instance
+      parameters:
+      - description: Instance ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Chart config ID
+        in: path
+        name: chartId
+        required: true
+        type: string
+      - description: Override values
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/models.ValueOverride'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.ValueOverride'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Set or update override for a chart
+      tags:
+      - value-overrides
+  /api/v1/stack-instances/{id}/values:
+    get:
+      description: Generate and export merged values for all charts as a zip archive
+      parameters:
+      - description: Instance ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/zip
+      responses:
+        "200":
+          description: ZIP archive
+          schema:
+            type: file
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Export all chart values
+      tags:
+      - stack-instances
+  /api/v1/stack-instances/{id}/values/{chartId}:
+    get:
+      description: Generate and export merged values.yaml for a specific chart
+      parameters:
+      - description: Instance ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Chart config ID
+        in: path
+        name: chartId
+        required: true
+        type: string
+      produces:
+      - application/x-yaml
+      responses:
+        "200":
+          description: YAML content
+          schema:
+            type: string
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Export chart values
+      tags:
+      - stack-instances
+  /api/v1/templates:
+    get:
+      description: List published templates for regular users, all templates for devops/admin
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/models.StackTemplate'
+            type: array
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: List stack templates
+      tags:
+      - templates
+    post:
+      consumes:
+      - application/json
+      description: Create a new stack template (devops/admin only)
+      parameters:
+      - description: Template object
+        in: body
+        name: template
+        required: true
+        schema:
+          $ref: '#/definitions/models.StackTemplate'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/models.StackTemplate'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Create a stack template
+      tags:
+      - templates
+  /api/v1/templates/{id}:
+    delete:
+      description: Delete a stack template if no definitions link to it (devops/admin
+        only)
+      parameters:
+      - description: Template ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "409":
+          description: Conflict
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Delete a stack template
+      tags:
+      - templates
+    get:
+      description: Get a stack template by ID, including its chart configurations
+      parameters:
+      - description: Template ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.StackTemplate'
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Get a stack template
+      tags:
+      - templates
+    put:
+      consumes:
+      - application/json
+      description: Update an existing stack template (devops/admin only)
+      parameters:
+      - description: Template ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Template object
+        in: body
+        name: template
+        required: true
+        schema:
+          $ref: '#/definitions/models.StackTemplate'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.StackTemplate'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Update a stack template
+      tags:
+      - templates
+  /api/v1/templates/{id}/charts:
+    post:
+      consumes:
+      - application/json
+      description: Add a new chart configuration to a stack template
+      parameters:
+      - description: Template ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Chart config
+        in: body
+        name: chart
+        required: true
+        schema:
+          $ref: '#/definitions/models.TemplateChartConfig'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/models.TemplateChartConfig'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Add a chart to a template
+      tags:
+      - template-charts
+  /api/v1/templates/{id}/charts/{chartId}:
+    delete:
+      description: Remove a chart configuration from a stack template
+      parameters:
+      - description: Template ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Chart config ID
+        in: path
+        name: chartId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Delete a template chart
+      tags:
+      - template-charts
+    put:
+      consumes:
+      - application/json
+      description: Update a chart configuration within a stack template
+      parameters:
+      - description: Template ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Chart config ID
+        in: path
+        name: chartId
+        required: true
+        type: string
+      - description: Updated chart config
+        in: body
+        name: chart
+        required: true
+        schema:
+          $ref: '#/definitions/models.TemplateChartConfig'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.TemplateChartConfig'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Update a template chart
+      tags:
+      - template-charts
+  /api/v1/templates/{id}/clone:
+    post:
+      description: Create a new draft template that is a copy of the source (devops/admin
+        only)
+      parameters:
+      - description: Template ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/models.StackTemplate'
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Clone a stack template
+      tags:
+      - templates
+  /api/v1/templates/{id}/instantiate:
+    post:
+      consumes:
+      - application/json
+      description: Create a StackDefinition and ChartConfigs from a template
+      parameters:
+      - description: Template ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Definition overrides (name, description)
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/models.StackDefinition'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/models.StackDefinition'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Instantiate a template
+      tags:
+      - templates
+  /api/v1/templates/{id}/publish:
+    post:
+      description: Make a template visible to all users (devops/admin only)
+      parameters:
+      - description: Template ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.StackTemplate'
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Publish a stack template
+      tags:
+      - templates
+  /api/v1/templates/{id}/unpublish:
+    post:
+      description: Hide a template from regular users (devops/admin only)
+      parameters:
+      - description: Template ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.StackTemplate'
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Unpublish a stack template
+      tags:
+      - templates
   /health:
     get:
       description: Get API health status
