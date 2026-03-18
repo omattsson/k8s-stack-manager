@@ -92,3 +92,54 @@ frontend/src/
 8. Frontend service methods in `api/client.ts`, new page in `pages/`, register in `routes.tsx`
 
 See `.github/instructions/api-extension.instructions.md` for detailed examples.
+
+---
+
+## K8s Stack Manager — Project-Specific Guidelines
+
+This application enables developers to configure, store, and deploy multi-service Helm-based application stacks to a shared AKS Arc cluster.
+
+### Domain Packages (new)
+
+```
+backend/internal/
+  gitprovider/           # Azure DevOps + GitLab branch listing, URL detection, caching
+  helm/                  # Values deep-merge, template variable substitution, YAML export
+  deployer/              # (Phase 3) Helm CLI wrapper for deploy/undeploy
+  k8s/                   # (Phase 3) Cluster status monitoring
+```
+
+### Domain Conventions
+
+- **Audit trail**: Every mutating API endpoint (POST, PUT, DELETE) must create an AuditLog entry with user, action, entity type, entity ID, and details
+- **Branch default**: "master" unless overridden per stack definition's `DefaultBranch` field
+- **Namespace naming**: Auto-generated as `stack-{instance-name}-{owner}` to prevent collisions in the shared cluster
+- **Git provider detection**: URL-based — `dev.azure.com` or `visualstudio.com` → Azure DevOps; `gitlab.com` or custom configured domain → GitLab
+- **Helm values merge**: Deep-merge chart defaults + instance overrides; substitute template vars `{{.Branch}}`, `{{.Namespace}}`, `{{.InstanceName}}`, `{{.StackName}}`, `{{.Owner}}`
+- **Auth**: JWT with `Authorization: Bearer <token>` header; middleware injects `userID`, `username`, `role` into Gin context
+- **Generic design**: No company-specific hardcoding; all branding and configurable values via environment variables
+
+### New API Route Groups
+
+| Group | Prefix | Description |
+|-------|--------|-------------|
+| Auth | `/api/v1/auth` | Login, register, current user |
+| Stack Definitions | `/api/v1/stack-definitions` | CRUD + nested chart management |
+| Stack Instances | `/api/v1/stack-instances` | CRUD + clone, values export |
+| Value Overrides | `/api/v1/stack-instances/:id/overrides` | Per-chart value overrides |
+| Git | `/api/v1/git` | Branch listing, validation, provider status |
+| Audit Logs | `/api/v1/audit-logs` | Filterable audit log viewer |
+
+### New Frontend Pages
+
+| Page | Route | Description |
+|------|-------|-------------|
+| Login | `/login` | Username/password authentication |
+| Dashboard | `/` | All stack instances overview (replaces Home) |
+| Stack Definitions | `/stack-definitions` | List, create, edit definitions |
+| Stack Instance Detail | `/stack-instances/:id` | Values editor, branch selector, actions |
+| Audit Log | `/audit-log` | Filterable audit log viewer |
+
+### Project Plan
+
+See `PLAN.md` in the repository root for the complete phased plan, data models, API specifications, and agent mapping.
