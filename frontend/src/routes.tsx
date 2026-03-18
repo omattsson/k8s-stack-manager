@@ -11,6 +11,8 @@ import DefinitionForm from './pages/StackDefinitions/Form';
 import InstanceForm from './pages/StackInstances/Form';
 import InstanceDetail from './pages/StackInstances/Detail';
 import AuditLog from './pages/AuditLog';
+import AdminUsers from './pages/Admin/Users';
+import Profile from './pages/Profile';
 
 const AppRoutes = () => {
   return (
@@ -28,6 +30,8 @@ const AppRoutes = () => {
       <Route path="/stack-instances/new" element={<ProtectedRoute><InstanceForm /></ProtectedRoute>} />
       <Route path="/stack-instances/:id" element={<ProtectedRoute><InstanceDetail /></ProtectedRoute>} />
       <Route path="/audit-log" element={<ProtectedRoute><AuditLog /></ProtectedRoute>} />
+      <Route path="/admin/users" element={<ProtectedRoute requiredRole="admin"><AdminUsers /></ProtectedRoute>} />
+      <Route path="/profile" element={<ProtectedRoute><Profile /></ProtectedRoute>} />
     </Routes>
   );
 };

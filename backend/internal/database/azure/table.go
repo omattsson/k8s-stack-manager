@@ -40,7 +40,7 @@ type TableRepository struct {
 func NewTableRepository(accountName, accountKey, endpoint, tableName string, useAzurite bool) (*TableRepository, error) {
 	var serviceURL string
 	if useAzurite {
-		serviceURL = "http://" + endpoint // Azurite uses http
+		serviceURL = fmt.Sprintf("http://%s/%s", endpoint, accountName)
 	} else {
 		serviceURL = fmt.Sprintf("https://%s.table.%s", accountName, endpoint)
 	}
@@ -49,9 +49,14 @@ func NewTableRepository(accountName, accountKey, endpoint, tableName string, use
 		return nil, dberrors.NewDatabaseError("azure_client", errors.New("invalid connection string: missing account name or key"))
 	}
 
+	protocol := "https"
+	if useAzurite {
+		protocol = "http"
+	}
 	// Create service client
 	serviceClient, err := aztables.NewServiceClientFromConnectionString(
-		fmt.Sprintf("DefaultEndpointsProtocol=https;AccountName=%s;AccountKey=%s;TableEndpoint=%s",
+		fmt.Sprintf("DefaultEndpointsProtocol=%s;AccountName=%s;AccountKey=%s;TableEndpoint=%s",
+			protocol,
 			accountName,
 			accountKey,
 			serviceURL),

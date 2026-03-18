@@ -1,33 +1,15 @@
-.PHONY: dev dev-backend dev-frontend dev-local prod prod-backend prod-frontend mysql mysql-start mysql-stop mysql-logs mysql-shell build clean prune test test-backend test-backend-integration test-backend-all test-frontend test-e2e integration-infra-start integration-infra-stop install docs fmt lint azurite-start azurite-stop
-
-# MySQL service management
-mysql-start:
-	@echo "Starting MySQL container..."
-	GO_ENV=development docker compose up -d db
-	@echo "Waiting for MySQL to be ready..."
-	@until docker compose exec db mysqladmin ping -h localhost -u$${MYSQL_USER:-appuser} -p$${MYSQL_PASSWORD:-apppass} --silent; do \
-		echo "Waiting for MySQL..."; \
-		sleep 2; \
-	done
-	@echo "MySQL is ready!"
-
-mysql-stop:
-	@echo "Stopping MySQL container..."
-	docker compose stop db
-
-mysql-logs:
-	docker compose logs -f db
-
-mysql-shell:
-	docker compose exec db mysql -u$${MYSQL_USER:-appuser} -p$${MYSQL_PASSWORD:-apppass} $${MYSQL_DATABASE:-app}
+.PHONY: dev seed dev-backend dev-frontend dev-local prod prod-backend prod-frontend build clean prune test test-backend test-backend-integration test-backend-all test-frontend test-e2e integration-infra-start integration-infra-stop install docs fmt lint azurite-start azurite-stop
 
 # Development mode for both services
 dev:
-	NODE_ENV=development PORT=3000 BACKEND_PORT=8081 GIN_MODE=debug docker compose up --build
+	NODE_ENV=development GO_ENV=development PORT=3000 BACKEND_PORT=8081 GIN_MODE=debug docker compose up --build --remove-orphans
+
+seed: ## Seed dev environment with sample data (requires running dev stack)
+	@./scripts/seed-dev-data.sh
 
 # Development mode for backend only
 dev-backend:
-	NODE_ENV=development BACKEND_PORT=8081 GIN_MODE=debug docker compose up --build backend
+	NODE_ENV=development GO_ENV=development BACKEND_PORT=8081 GIN_MODE=debug docker compose up --build --remove-orphans backend
 
 # Development mode for frontend only
 dev-frontend:
@@ -35,11 +17,11 @@ dev-frontend:
 
 # Production mode for both services
 prod:
-	NODE_ENV=production PORT=80 BACKEND_PORT=8080 GIN_MODE=release docker compose up --build
+	NODE_ENV=production GO_ENV=production PORT=80 BACKEND_PORT=8080 GIN_MODE=release docker compose up --build --remove-orphans
 
 # Production mode for backend only
 prod-backend:
-	NODE_ENV=production BACKEND_PORT=8080 GIN_MODE=release docker compose up --build backend
+	NODE_ENV=production GO_ENV=production BACKEND_PORT=8080 GIN_MODE=release docker compose up --build backend
 
 # Production mode for frontend only
 prod-frontend:
@@ -63,12 +45,7 @@ test-backend:
 # Start infrastructure for integration tests
 integration-infra-start:
 	@echo "Starting integration test infrastructure..."
-	GO_ENV=test docker compose up -d db azurite
-	@echo "Waiting for MySQL to be ready..."
-	@until docker compose exec db mysqladmin ping -h localhost -u$${MYSQL_USER:-appuser} -p$${MYSQL_PASSWORD:-apppass} --silent 2>/dev/null; do \
-		echo "Waiting for MySQL..."; \
-		sleep 2; \
-	done
+	GO_ENV=test docker compose up -d azurite
 	@echo "Waiting for Azurite to be ready..."
 	@until curl -s -o /dev/null http://localhost:10002/ 2>/dev/null; do \
 		echo "Waiting for Azurite..."; \
@@ -79,7 +56,7 @@ integration-infra-start:
 # Stop infrastructure for integration tests
 integration-infra-stop:
 	@echo "Stopping integration test infrastructure..."
-	GO_ENV=test docker compose stop db azurite
+	GO_ENV=test docker compose stop azurite
 
 # Run backend integration tests (starts/stops infra automatically)
 test-backend-integration: integration-infra-start
@@ -98,8 +75,7 @@ test-frontend:
 test-e2e: integration-infra-start
 	@echo "Building and starting backend..."
 	@cd backend && go build -o tmp/main ./api/main.go
-	@cd backend && DB_HOST=localhost DB_PORT=3306 DB_NAME=$${MYSQL_DATABASE:-app} DB_USER=$${MYSQL_USER:-appuser} DB_PASSWORD=$${MYSQL_PASSWORD:-apppass} \
-		USE_AZURE_TABLE=true USE_AZURITE=true \
+	@cd backend && USE_AZURE_TABLE=true USE_AZURITE=true \
 		AZURE_TABLE_ACCOUNT_NAME=devstoreaccount1 \
 		AZURE_TABLE_ACCOUNT_KEY="Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==" \
 		AZURE_TABLE_ENDPOINT=127.0.0.1:10002 \

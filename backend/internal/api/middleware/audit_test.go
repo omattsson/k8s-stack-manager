@@ -285,7 +285,7 @@ func TestExtractEntityType(t *testing.T) {
 		{"/api/v1/stack-definitions/:id/charts", "chart_config"},
 		{"/api/v1/stack-definitions/:id/charts/:chartId", "chart_config"},
 		{"/api/v1/stack-instances/:id/overrides", "value_override"},
-		{"/api/v1/auth/register", "register"}, // last non-param segment is "register"
+		{"/api/v1/auth/register", "user"}, // normalizeEntityType maps "register" → "user"
 		{"/api/v1/auth/:id", "user"},          // last non-param segment is "auth" → "user"
 		{"/api/v1/audit-logs", "audit_log"},
 		{"/", ""},

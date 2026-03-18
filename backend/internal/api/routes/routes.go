@@ -27,6 +27,14 @@ type Deps struct {
 	GitHandler        *handlers.GitHandler
 	AuditLogHandler   *handlers.AuditLogHandler
 	AuditLogger       middleware.AuditLogger
+
+	// User management and API key handlers.
+	UserHandler   *handlers.UserHandler
+	APIKeyHandler *handlers.APIKeyHandler
+
+	// Repos needed by combined JWT+API-key auth middleware.
+	UserRepo   models.UserRepository
+	APIKeyRepo models.APIKeyRepository
 }
 
 // SetupRoutes configures all the routes for our application.
@@ -79,13 +87,22 @@ func SetupRoutes(router *gin.Engine, deps Deps) *handlers.RateLimiter {
 	// Phase 1 routes — only register if handlers are provided (they are nil in legacy tests).
 	if deps.AuthHandler != nil {
 		jwtSecret := cfg.Auth.JWTSecret
-		authMW := middleware.AuthRequired(jwtSecret)
+		authMW := middleware.CombinedAuth(middleware.APIKeyAuthDeps{
+			JWTSecret:  jwtSecret,
+			APIKeyRepo: deps.APIKeyRepo,
+			UserRepo:   deps.UserRepo,
+		})
 
 		// Auth — login is public; register requires auth (admin or self-reg checked inside handler).
 		auth := v1.Group("/auth")
 		{
 			auth.POST("/login", deps.AuthHandler.Login)
-			auth.POST("/register", authMW, deps.AuthHandler.Register)
+			registerHandlers := []gin.HandlerFunc{authMW}
+			if deps.AuditLogger != nil {
+				registerHandlers = append(registerHandlers, middleware.NewAuditMiddleware(deps.AuditLogger))
+			}
+			registerHandlers = append(registerHandlers, deps.AuthHandler.Register)
+			auth.POST("/register", registerHandlers...)
 			auth.GET("/me", authMW, deps.AuthHandler.GetCurrentUser)
 		}
 
@@ -164,6 +181,30 @@ func SetupRoutes(router *gin.Engine, deps Deps) *handlers.RateLimiter {
 		// Audit Logs
 		if deps.AuditLogHandler != nil {
 			authed.GET("/audit-logs", deps.AuditLogHandler.ListAuditLogs)
+		}
+
+		// User management (admin only)
+		if deps.UserHandler != nil {
+			admin := middleware.RequireAdmin()
+			users := authed.Group("/users")
+			{
+				users.GET("", admin, deps.UserHandler.ListUsers)
+				users.DELETE("/:id", admin, deps.UserHandler.DeleteUser)
+			}
+		}
+
+		// API key management (admin or own user)
+		if deps.APIKeyHandler != nil {
+			if deps.UserHandler == nil {
+				// Ensure the parent /users group exists even without UserHandler.
+				_ = authed.Group("/users")
+			}
+			userKeys := authed.Group("/users/:id/api-keys")
+			{
+				userKeys.GET("", deps.APIKeyHandler.ListAPIKeys)
+				userKeys.POST("", deps.APIKeyHandler.CreateAPIKey)
+				userKeys.DELETE("/:keyId", deps.APIKeyHandler.DeleteAPIKey)
+			}
 		}
 	}
 

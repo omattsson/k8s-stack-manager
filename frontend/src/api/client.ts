@@ -16,6 +16,10 @@ import type {
   AuditLog,
   AuditLogFilters,
   InstantiateTemplateRequest,
+  CreateUserRequest,
+  APIKey,
+  CreateAPIKeyRequest,
+  CreateAPIKeyResponse,
 } from '../types';
 
 const api = axios.create(axiosConfig);
@@ -375,6 +379,64 @@ export const auditService = {
       return response.data;
     } catch (error) {
       console.error('Failed to fetch audit logs:', error);
+      throw error;
+    }
+  },
+};
+
+export const userService = {
+  list: async (): Promise<User[]> => {
+    try {
+      const response = await api.get('/api/v1/users');
+      return response.data;
+    } catch (error) {
+      console.error('Failed to fetch users:', error);
+      throw error;
+    }
+  },
+  create: async (data: CreateUserRequest): Promise<User> => {
+    try {
+      const response = await api.post('/api/v1/auth/register', data);
+      return response.data;
+    } catch (error) {
+      console.error('Failed to create user:', error);
+      throw error;
+    }
+  },
+  delete: async (id: string): Promise<void> => {
+    try {
+      await api.delete(`/api/v1/users/${id}`);
+    } catch (error) {
+      console.error('Failed to delete user:', error);
+      throw error;
+    }
+  },
+};
+
+export const apiKeyService = {
+  list: async (userId: string): Promise<APIKey[]> => {
+    try {
+      const response = await api.get(`/api/v1/users/${userId}/api-keys`);
+      return response.data;
+    } catch (error) {
+      console.error('Failed to fetch API keys:', error);
+      throw error;
+    }
+  },
+  create: async (userId: string, data: CreateAPIKeyRequest): Promise<CreateAPIKeyResponse> => {
+    try {
+      const response = await api.post(`/api/v1/users/${userId}/api-keys`, data);
+      return response.data;
+    } catch (error) {
+      console.error('Failed to create API key:', error);
+      throw error;
+    }
+  },
+  delete: async (userId: string, keyId: string): Promise<void> => {
+    try {
+      await api.delete(`/api/v1/users/${userId}/api-keys/${keyId}`);
+    } catch (error) {
+      console.error('Failed to delete API key:', error);
       throw error;
     }
   },
