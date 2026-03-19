@@ -19,8 +19,10 @@ import {
 import StatusBadge from '../../components/StatusBadge';
 import BranchSelector from '../../components/BranchSelector';
 import ConfirmDialog from '../../components/ConfirmDialog';
+import DeploymentLogViewer from '../../components/DeploymentLogViewer';
+import PodStatusDisplay from '../../components/PodStatusDisplay';
 import { instanceService, definitionService } from '../../api/client';
-import type { StackInstance, ChartConfig, ValueOverride } from '../../types';
+import type { StackInstance, ChartConfig, ValueOverride, DeploymentLog, NamespaceStatus } from '../../types';
 import YamlEditor from '../../components/YamlEditor';
 
 const Detail = () => {
@@ -38,6 +40,11 @@ const Detail = () => {
   const [error, setError] = useState<string | null>(null);
   const [snackbar, setSnackbar] = useState<string | null>(null);
   const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deploying, setDeploying] = useState(false);
+  const [stopping, setStopping] = useState(false);
+  const [deployLogs, setDeployLogs] = useState<DeploymentLog[]>([]);
+  const [k8sStatus, setK8sStatus] = useState<NamespaceStatus | null>(null);
+  const [statusLoading, setStatusLoading] = useState(false);
 
   useEffect(() => {
     if (!id) return;
@@ -60,6 +67,22 @@ const Detail = () => {
           overrideMap[o.chart_config_id] = o.values;
         });
         setEditedOverrides(overrideMap);
+
+        // Fetch deployment logs
+        try {
+          const logs = await instanceService.getDeployLog(id);
+          setDeployLogs(logs);
+        } catch { /* ignore — no logs yet */ }
+
+        // Fetch K8s status if instance is running or deploying
+        if (inst.status === 'running' || inst.status === 'deploying') {
+          try {
+            setStatusLoading(true);
+            const status = await instanceService.getStatus(id);
+            setK8sStatus(status);
+          } catch { /* ignore */ }
+          finally { setStatusLoading(false); }
+        }
       } catch {
         setError('Failed to load instance details');
       } finally {
@@ -133,6 +156,44 @@ const Detail = () => {
     }
   };
 
+  const handleDeploy = async () => {
+    if (!id) return;
+    setDeploying(true);
+    setError(null);
+    try {
+      await instanceService.deploy(id);
+      setSnackbar('Deployment started');
+      // Refresh instance to get new status
+      const inst = await instanceService.get(id);
+      setInstance(inst);
+      // Refresh logs
+      const logs = await instanceService.getDeployLog(id);
+      setDeployLogs(logs);
+    } catch {
+      setError('Failed to start deployment');
+    } finally {
+      setDeploying(false);
+    }
+  };
+
+  const handleStop = async () => {
+    if (!id) return;
+    setStopping(true);
+    setError(null);
+    try {
+      await instanceService.stop(id);
+      setSnackbar('Stop initiated');
+      const inst = await instanceService.get(id);
+      setInstance(inst);
+      const logs = await instanceService.getDeployLog(id);
+      setDeployLogs(logs);
+    } catch {
+      setError('Failed to stop instance');
+    } finally {
+      setStopping(false);
+    }
+  };
+
   const getRepoUrl = (): string => {
     if (charts.length > 0 && charts[0].source_repo_url) {
       return charts[0].source_repo_url;
@@ -175,6 +236,16 @@ const Detail = () => {
             </Typography>
           </Box>
           <Box sx={{ display: 'flex', gap: 1 }}>
+            {(instance.status === 'draft' || instance.status === 'stopped' || instance.status === 'error') && (
+              <Button variant="contained" color="success" onClick={handleDeploy} disabled={deploying}>
+                {deploying ? 'Deploying...' : 'Deploy'}
+              </Button>
+            )}
+            {(instance.status === 'running' || instance.status === 'deploying') && (
+              <Button variant="contained" color="warning" onClick={handleStop} disabled={stopping}>
+                {stopping ? 'Stopping...' : 'Stop'}
+              </Button>
+            )}
             <Button variant="outlined" onClick={handleExport}>Export Values</Button>
             <Button variant="outlined" onClick={handleClone}>Clone</Button>
             <Button variant="outlined" color="error" onClick={() => setDeleteOpen(true)}>Delete</Button>
@@ -208,6 +279,13 @@ const Detail = () => {
             </Box>
           );
         })()}
+
+        {(instance.status === 'running' || instance.status === 'deploying' || instance.status === 'error') && (
+          <Box sx={{ mb: 2 }}>
+            <Typography variant="subtitle2" gutterBottom>Cluster Resources</Typography>
+            <PodStatusDisplay status={k8sStatus} loading={statusLoading} />
+          </Box>
+        )}
 
         <Box sx={{ maxWidth: 400 }}>
           <Typography variant="subtitle2" gutterBottom>Branch</Typography>
@@ -257,6 +335,13 @@ const Detail = () => {
               </Box>
             ))}
           </Box>
+        </Paper>
+      )}
+
+      {deployLogs.length > 0 && (
+        <Paper sx={{ p: 3, mb: 3 }}>
+          <Typography variant="h6" gutterBottom>Deployment History</Typography>
+          <DeploymentLogViewer logs={deployLogs} />
         </Paper>
       )}
 

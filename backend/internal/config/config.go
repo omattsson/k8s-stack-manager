@@ -50,6 +50,14 @@ type GitProviderConfig struct {
 	GitLabBaseURL         string
 }
 
+// DeploymentConfig holds deployment-related configuration for Helm operations.
+type DeploymentConfig struct {
+	DeploymentTimeout    time.Duration
+	HelmBinary           string
+	KubeconfigPath       string
+	MaxConcurrentDeploys int32
+}
+
 // Config holds all configuration for the application
 //
 //nolint:govet // Struct field alignment has been optimized for better memory usage
@@ -64,6 +72,7 @@ type Config struct {
 	CORS        CORSConfig
 	Logging     LogConfig
 	GitProvider GitProviderConfig
+	Deployment  DeploymentConfig
 }
 
 // AppConfig holds application-wide configuration
@@ -358,6 +367,12 @@ func LoadConfig() (*Config, error) {
 			AzureDevOpsDefaultOrg: getEnv("AZURE_DEVOPS_DEFAULT_ORG", ""),
 			GitLabToken:           getEnv("GITLAB_TOKEN", ""),
 			GitLabBaseURL:         getEnv("GITLAB_BASE_URL", ""),
+		},
+		Deployment: DeploymentConfig{
+			HelmBinary:           getEnv("HELM_BINARY", "helm"),
+			KubeconfigPath:       getEnv("KUBECONFIG_PATH", ""),
+			DeploymentTimeout:    getEnvDuration("DEPLOYMENT_TIMEOUT", 10*time.Minute),
+			MaxConcurrentDeploys: getEnvInt32("MAX_CONCURRENT_DEPLOYS", 5),
 		},
 	}
 

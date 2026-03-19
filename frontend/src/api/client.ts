@@ -20,6 +20,8 @@ import type {
   APIKey,
   CreateAPIKeyRequest,
   CreateAPIKeyResponse,
+  DeploymentLog,
+  NamespaceStatus,
 } from '../types';
 
 const api = axios.create(axiosConfig);
@@ -342,6 +344,42 @@ export const instanceService = {
       return response.data;
     } catch (error) {
       console.error('Failed to export values:', error);
+      throw error;
+    }
+  },
+  deploy: async (id: string): Promise<{ log_id: string }> => {
+    try {
+      const response = await api.post(`/api/v1/stack-instances/${id}/deploy`);
+      return response.data;
+    } catch (error) {
+      console.error('Failed to deploy instance:', error);
+      throw error;
+    }
+  },
+  stop: async (id: string): Promise<{ log_id: string }> => {
+    try {
+      const response = await api.post(`/api/v1/stack-instances/${id}/stop`);
+      return response.data;
+    } catch (error) {
+      console.error('Failed to stop instance:', error);
+      throw error;
+    }
+  },
+  getDeployLog: async (id: string): Promise<DeploymentLog[]> => {
+    try {
+      const response = await api.get(`/api/v1/stack-instances/${id}/deploy-log`);
+      return response.data;
+    } catch (error) {
+      console.error('Failed to fetch deployment logs:', error);
+      throw error;
+    }
+  },
+  getStatus: async (id: string): Promise<NamespaceStatus> => {
+    try {
+      const response = await api.get(`/api/v1/stack-instances/${id}/status`);
+      return response.data;
+    } catch (error) {
+      console.error('Failed to fetch instance status:', error);
       throw error;
     }
   },

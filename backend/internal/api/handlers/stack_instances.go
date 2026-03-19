@@ -2,12 +2,15 @@ package handlers
 
 import (
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
 
 	"backend/internal/api/middleware"
+	"backend/internal/deployer"
 	"backend/internal/helm"
+	"backend/internal/k8s"
 	"backend/internal/models"
 
 	"github.com/gin-gonic/gin"
@@ -24,6 +27,10 @@ type InstanceHandler struct {
 	templateChartRepo models.TemplateChartConfigRepository
 	valuesGen         *helm.ValuesGenerator
 	userRepo          models.UserRepository
+	deployManager     *deployer.Manager
+	k8sWatcher        *k8s.Watcher
+	k8sClient         *k8s.Client
+	deployLogRepo     models.DeploymentLogRepository
 }
 
 // NewInstanceHandler creates a new InstanceHandler.
@@ -46,6 +53,37 @@ func NewInstanceHandler(
 		templateChartRepo: templateChartRepo,
 		valuesGen:         valuesGen,
 		userRepo:          userRepo,
+	}
+}
+
+// NewInstanceHandlerWithDeployer creates an InstanceHandler with Phase 3 deployment capabilities.
+func NewInstanceHandlerWithDeployer(
+	instanceRepo models.StackInstanceRepository,
+	overrideRepo models.ValueOverrideRepository,
+	definitionRepo models.StackDefinitionRepository,
+	chartConfigRepo models.ChartConfigRepository,
+	templateRepo models.StackTemplateRepository,
+	templateChartRepo models.TemplateChartConfigRepository,
+	valuesGen *helm.ValuesGenerator,
+	userRepo models.UserRepository,
+	deployManager *deployer.Manager,
+	k8sWatcher *k8s.Watcher,
+	k8sClient *k8s.Client,
+	deployLogRepo models.DeploymentLogRepository,
+) *InstanceHandler {
+	return &InstanceHandler{
+		instanceRepo:      instanceRepo,
+		overrideRepo:      overrideRepo,
+		definitionRepo:    definitionRepo,
+		chartConfigRepo:   chartConfigRepo,
+		templateRepo:      templateRepo,
+		templateChartRepo: templateChartRepo,
+		valuesGen:         valuesGen,
+		userRepo:          userRepo,
+		deployManager:     deployManager,
+		k8sWatcher:        k8sWatcher,
+		k8sClient:         k8sClient,
+		deployLogRepo:     deployLogRepo,
 	}
 }
 
@@ -464,6 +502,286 @@ func (h *InstanceHandler) ExportAllValues(c *gin.Context) {
 
 	c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=%s-values.zip", inst.Name))
 	c.Data(http.StatusOK, "application/zip", allValues)
+}
+
+// DeployInstance godoc
+// @Summary     Deploy a stack instance
+// @Description Trigger Helm deployment for a stack instance
+// @Tags        stack-instances
+// @Produce     json
+// @Param       id path string true "Instance ID"
+// @Success     202 {object} map[string]string "Deployment started"
+// @Failure     400 {object} map[string]string
+// @Failure     404 {object} map[string]string
+// @Failure     409 {object} map[string]string "Already deploying"
+// @Router      /api/v1/stack-instances/{id}/deploy [post]
+func (h *InstanceHandler) DeployInstance(c *gin.Context) {
+	id := c.Param("id")
+	if id == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Instance ID is required"})
+		return
+	}
+
+	if h.deployManager == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Deployment service not configured"})
+		return
+	}
+
+	inst, err := h.instanceRepo.FindByID(id)
+	if err != nil {
+		status, message := mapError(err, "Stack instance")
+		c.JSON(status, gin.H{"error": message})
+		return
+	}
+
+	// Only allow deploy from draft, stopped, or error.
+	switch inst.Status {
+	case models.StackStatusDraft, models.StackStatusStopped, models.StackStatusError:
+		// OK
+	case models.StackStatusDeploying, models.StackStatusRunning, models.StackStatusQueued, models.StackStatusStopping:
+		c.JSON(http.StatusConflict, gin.H{"error": fmt.Sprintf("Cannot deploy: instance is currently %s", inst.Status)})
+		return
+	default:
+		c.JSON(http.StatusConflict, gin.H{"error": fmt.Sprintf("Cannot deploy: instance is in state %s", inst.Status)})
+		return
+	}
+
+	def, err := h.definitionRepo.FindByID(inst.StackDefinitionID)
+	if err != nil {
+		status, message := mapError(err, "Stack definition")
+		c.JSON(status, gin.H{"error": message})
+		return
+	}
+
+	charts, err := h.chartConfigRepo.ListByDefinition(def.ID)
+	if err != nil {
+		status, message := mapError(err, "Chart configs")
+		c.JSON(status, gin.H{"error": message})
+		return
+	}
+
+	if len(charts) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "No charts configured for this stack definition"})
+		return
+	}
+
+	// Build locked values map from template.
+	lockedMap := make(map[string]string)
+	if def.SourceTemplateID != "" && h.templateChartRepo != nil {
+		templateCharts, err := h.templateChartRepo.ListByTemplate(def.SourceTemplateID)
+		if err == nil {
+			for _, tc := range templateCharts {
+				lockedMap[tc.ChartName] = tc.LockedValues
+			}
+		}
+	}
+
+	// Build overrides map.
+	overridesMap := make(map[string]string)
+	overrides, err := h.overrideRepo.ListByInstance(inst.ID)
+	if err == nil {
+		for _, ov := range overrides {
+			overridesMap[ov.ChartConfigID] = ov.Values
+		}
+	}
+
+	ownerName := resolveOwnerName(h.userRepo, inst.OwnerID)
+
+	templateVars := helm.TemplateVars{
+		Branch:       inst.Branch,
+		Namespace:    inst.Namespace,
+		InstanceName: inst.Name,
+		StackName:    def.Name,
+		Owner:        ownerName,
+	}
+
+	// Generate values YAML for each chart.
+	var chartInfos []deployer.ChartDeployInfo
+	for _, ch := range charts {
+		params := helm.GenerateParams{
+			ChartName:      ch.ChartName,
+			DefaultValues:  ch.DefaultValues,
+			LockedValues:   lockedMap[ch.ChartName],
+			OverrideValues: overridesMap[ch.ID],
+			TemplateVars:   templateVars,
+		}
+
+		yamlData, err := h.valuesGen.GenerateValues(c.Request.Context(), params)
+		if err != nil {
+			slog.Error("Failed to generate values for chart",
+				"chart", ch.ChartName,
+				"instance_id", id,
+				"error", err,
+			)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
+			return
+		}
+
+		chartInfos = append(chartInfos, deployer.ChartDeployInfo{
+			ChartConfig: ch,
+			ValuesYAML:  yamlData,
+		})
+	}
+
+	req := deployer.DeployRequest{
+		Instance:   inst,
+		Definition: def,
+		Charts:     chartInfos,
+		Owner:      ownerName,
+	}
+
+	logID, err := h.deployManager.Deploy(c.Request.Context(), req)
+	if err != nil {
+		slog.Error("Failed to start deployment",
+			"instance_id", id,
+			"error", err,
+		)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
+		return
+	}
+
+	c.JSON(http.StatusAccepted, gin.H{"log_id": logID, "message": "Deployment started"})
+}
+
+// StopInstance godoc
+// @Summary     Stop a stack instance
+// @Description Trigger Helm uninstall for a stack instance
+// @Tags        stack-instances
+// @Produce     json
+// @Param       id path string true "Instance ID"
+// @Success     202 {object} map[string]string "Stop initiated"
+// @Failure     400 {object} map[string]string
+// @Failure     404 {object} map[string]string
+// @Failure     409 {object} map[string]string "Not running"
+// @Router      /api/v1/stack-instances/{id}/stop [post]
+func (h *InstanceHandler) StopInstance(c *gin.Context) {
+	id := c.Param("id")
+	if id == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Instance ID is required"})
+		return
+	}
+
+	if h.deployManager == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Deployment service not configured"})
+		return
+	}
+
+	inst, err := h.instanceRepo.FindByID(id)
+	if err != nil {
+		status, message := mapError(err, "Stack instance")
+		c.JSON(status, gin.H{"error": message})
+		return
+	}
+
+	// Only allow stop from running or deploying.
+	switch inst.Status {
+	case models.StackStatusRunning, models.StackStatusDeploying:
+		// OK
+	default:
+		c.JSON(http.StatusConflict, gin.H{"error": fmt.Sprintf("Cannot stop: instance is currently %s", inst.Status)})
+		return
+	}
+
+	logID, err := h.deployManager.Stop(c.Request.Context(), inst)
+	if err != nil {
+		slog.Error("Failed to start stop operation",
+			"instance_id", id,
+			"error", err,
+		)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
+		return
+	}
+
+	c.JSON(http.StatusAccepted, gin.H{"log_id": logID, "message": "Stop initiated"})
+}
+
+// GetDeployLog godoc
+// @Summary     Get deployment logs
+// @Description Get deployment log history for a stack instance
+// @Tags        stack-instances
+// @Produce     json
+// @Param       id path string true "Instance ID"
+// @Success     200 {array} models.DeploymentLog
+// @Failure     404 {object} map[string]string
+// @Router      /api/v1/stack-instances/{id}/deploy-log [get]
+func (h *InstanceHandler) GetDeployLog(c *gin.Context) {
+	id := c.Param("id")
+	if id == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Instance ID is required"})
+		return
+	}
+
+	if h.deployLogRepo == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Deployment log service not configured"})
+		return
+	}
+
+	// Verify instance exists.
+	if _, err := h.instanceRepo.FindByID(id); err != nil {
+		status, message := mapError(err, "Stack instance")
+		c.JSON(status, gin.H{"error": message})
+		return
+	}
+
+	logs, err := h.deployLogRepo.ListByInstance(id)
+	if err != nil {
+		status, message := mapError(err, "Deployment log")
+		c.JSON(status, gin.H{"error": message})
+		return
+	}
+
+	c.JSON(http.StatusOK, logs)
+}
+
+// GetInstanceStatus godoc
+// @Summary     Get instance K8s status
+// @Description Get detailed Kubernetes resource status for a stack instance
+// @Tags        stack-instances
+// @Produce     json
+// @Param       id path string true "Instance ID"
+// @Success     200 {object} k8s.NamespaceStatus
+// @Failure     404 {object} map[string]string
+// @Failure     503 {object} map[string]string
+// @Router      /api/v1/stack-instances/{id}/status [get]
+func (h *InstanceHandler) GetInstanceStatus(c *gin.Context) {
+	id := c.Param("id")
+	if id == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Instance ID is required"})
+		return
+	}
+
+	inst, err := h.instanceRepo.FindByID(id)
+	if err != nil {
+		status, message := mapError(err, "Stack instance")
+		c.JSON(status, gin.H{"error": message})
+		return
+	}
+
+	// Try cached status from watcher first.
+	if h.k8sWatcher != nil {
+		if nsStatus, ok := h.k8sWatcher.GetStatus(id); ok {
+			c.JSON(http.StatusOK, nsStatus)
+			return
+		}
+	}
+
+	// Fall back to direct query if we have a K8s client.
+	if h.k8sClient != nil {
+		nsStatus, err := h.k8sClient.GetNamespaceStatus(c.Request.Context(), inst.Namespace)
+		if err != nil {
+			slog.Error("Failed to get namespace status",
+				"instance_id", id,
+				"namespace", inst.Namespace,
+				"error", err,
+			)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
+			return
+		}
+		c.JSON(http.StatusOK, nsStatus)
+		return
+	}
+
+	c.JSON(http.StatusServiceUnavailable, gin.H{"error": "K8s monitoring not configured"})
 }
 
 func resolveOwnerName(userRepo models.UserRepository, ownerID string) string {

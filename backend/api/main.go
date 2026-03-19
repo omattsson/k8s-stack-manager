@@ -9,9 +9,11 @@ import (
 	"backend/internal/config"
 	"backend/internal/database"
 	"backend/internal/database/azure"
+	"backend/internal/deployer"
 	"backend/internal/gitprovider"
 	"backend/internal/health"
 	"backend/internal/helm"
+	"backend/internal/k8s"
 	"backend/internal/websocket"
 	"context"
 	"fmt"
@@ -134,6 +136,12 @@ func main() {
 		os.Exit(1)
 	}
 
+	deployLogRepo, err := azure.NewDeploymentLogRepository(azCfg.AccountName, azCfg.AccountKey, azCfg.Endpoint, azCfg.UseAzurite)
+	if err != nil {
+		slog.Error("Failed to create deployment log repository", "error", err)
+		os.Exit(1)
+	}
+
 	// ------------------------------------------------------------------
 	// Phase 1: Create domain services
 	// ------------------------------------------------------------------
@@ -151,14 +159,50 @@ func main() {
 	valuesGen := helm.NewValuesGenerator()
 
 	// ------------------------------------------------------------------
+	// Phase 3: Create deployment services
+	// ------------------------------------------------------------------
+	helmClient := deployer.NewHelmClient(
+		cfg.Deployment.HelmBinary,
+		cfg.Deployment.KubeconfigPath,
+		cfg.Deployment.DeploymentTimeout,
+	)
+
+	deployManager := deployer.NewManager(deployer.ManagerConfig{
+		HelmClient:    helmClient,
+		InstanceRepo:  instanceRepo,
+		DeployLogRepo: deployLogRepo,
+		Hub:           hub,
+		MaxConcurrent: int(cfg.Deployment.MaxConcurrentDeploys),
+	})
+
+	// K8s client — optional, log warning if unavailable
+	var k8sClient *k8s.Client
+	var k8sWatcher *k8s.Watcher
+	k8sClient, err = k8s.NewClient(cfg.Deployment.KubeconfigPath)
+	if err != nil {
+		slog.Warn("K8s client unavailable — status monitoring disabled", "error", err)
+		k8sClient = nil
+	} else {
+		k8sWatcher = k8s.NewWatcher(k8sClient, instanceRepo, hub, 30*time.Second)
+		go k8sWatcher.Start(context.Background())
+
+		// Add K8s health check
+		healthChecker.AddCheck("kubernetes", func(ctx context.Context) error {
+			_, err := k8sClient.Clientset().Discovery().ServerVersion()
+			return err
+		})
+	}
+
+	// ------------------------------------------------------------------
 	// Phase 1: Create handlers
 	// ------------------------------------------------------------------
 	authHandler := handlers.NewAuthHandler(userRepo, &cfg.Auth)
 	templateHandler := handlers.NewTemplateHandler(templateRepo, templateChartRepo, definitionRepo, chartConfigRepo)
 	definitionHandler := handlers.NewDefinitionHandler(definitionRepo, chartConfigRepo, instanceRepo, templateRepo, templateChartRepo)
-	instanceHandler := handlers.NewInstanceHandler(
+	instanceHandler := handlers.NewInstanceHandlerWithDeployer(
 		instanceRepo, overrideRepo, definitionRepo, chartConfigRepo,
 		templateRepo, templateChartRepo, valuesGen, userRepo,
+		deployManager, k8sWatcher, k8sClient, deployLogRepo,
 	)
 	gitHandler := handlers.NewGitHandler(gitRegistry)
 	auditLogHandler := handlers.NewAuditLogHandler(auditRepo)
@@ -213,6 +257,11 @@ func main() {
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
 	slog.Info("Shutting down server...")
+
+	// Stop K8s status watcher
+	if k8sWatcher != nil {
+		k8sWatcher.Stop()
+	}
 
 	// Shut down WebSocket hub (closes all client connections)
 	hub.Shutdown()
