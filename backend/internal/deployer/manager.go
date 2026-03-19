@@ -31,7 +31,7 @@ const maxOutputLen = 64 * 1024
 
 // Manager orchestrates asynchronous deployments with concurrency control.
 type Manager struct {
-	helm           *HelmClient
+	helm           HelmExecutor
 	instanceRepo   models.StackInstanceRepository
 	logRepo        models.DeploymentLogRepository
 	hub            websocket.BroadcastSender
@@ -42,7 +42,7 @@ type Manager struct {
 
 // ManagerConfig holds the dependencies for creating a Manager.
 type ManagerConfig struct {
-	HelmClient    *HelmClient
+	HelmClient    HelmExecutor
 	InstanceRepo  models.StackInstanceRepository
 	DeployLogRepo models.DeploymentLogRepository
 	Hub           websocket.BroadcastSender
@@ -165,6 +165,9 @@ func (m *Manager) executeDeploy(instanceID string, deployLog *models.DeploymentL
 	ctx, cancel := context.WithTimeout(m.shutdownCtx, m.helm.Timeout())
 	defer cancel()
 
+	// Track successfully installed charts for rollback on partial failure.
+	var installedCharts []ChartDeployInfo
+
 	for _, chart := range charts {
 		// Use chart name as release name. Releases are namespace-scoped, so
 		// there is no collision risk across instances (each gets its own namespace).
@@ -220,9 +223,58 @@ func (m *Manager) executeDeploy(instanceID string, deployLog *models.DeploymentL
 			allOutput += fmt.Sprintf("ERROR: %s\n", deployErr.Error())
 			break
 		}
+
+		installedCharts = append(installedCharts, chart)
+	}
+
+	// Roll back successfully installed charts on partial failure.
+	if deployErr != nil && len(installedCharts) > 0 {
+		rollbackOutput := m.rollbackCharts(ctx, instanceID, deployLog.ID, namespace, installedCharts)
+		allOutput += rollbackOutput
 	}
 
 	m.finalizeDeploy(instanceID, deployLog, allOutput, deployErr)
+}
+
+// rollbackCharts uninstalls previously-installed charts in reverse order after
+// a partial deployment failure. It is best-effort: individual uninstall failures
+// are logged but do not stop the remaining rollbacks. Returns the accumulated
+// rollback output for inclusion in the deployment log.
+func (m *Manager) rollbackCharts(ctx context.Context, instanceID, logID, namespace string, charts []ChartDeployInfo) string {
+	var rollbackOutput string
+	rollbackOutput += "=== Rolling back installed charts ===\n"
+
+	// Iterate in reverse order (last installed first).
+	for i := len(charts) - 1; i >= 0; i-- {
+		chart := charts[i]
+		releaseName := chart.ChartConfig.ChartName
+
+		slog.Warn("rolling back chart",
+			"instance_id", instanceID,
+			"chart", releaseName,
+			"namespace", namespace,
+		)
+
+		output, err := m.helm.Uninstall(ctx, UninstallRequest{
+			ReleaseName: releaseName,
+			Namespace:   namespace,
+		})
+
+		rollbackOutput += fmt.Sprintf("=== Rollback: %s ===\n%s\n", releaseName, output)
+		m.broadcastLog(instanceID, logID, output)
+
+		if err != nil {
+			slog.Error("rollback failed for chart",
+				"instance_id", instanceID,
+				"chart", releaseName,
+				"namespace", namespace,
+				"error", err,
+			)
+			rollbackOutput += fmt.Sprintf("ROLLBACK ERROR: %s\n", err.Error())
+		}
+	}
+
+	return rollbackOutput
 }
 
 // finalizeDeploy updates the instance and deployment log with the final status.

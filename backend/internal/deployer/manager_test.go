@@ -1238,3 +1238,272 @@ func TestManager_FinalizeDeploy_OutputTruncation(t *testing.T) {
 	assert.NoError(t, err)
 	assert.LessOrEqual(t, len(finalLog.Output), maxOutputLen)
 }
+
+// ---- mock helm executor ----
+
+type mockHelmExecutor struct {
+	mu            sync.Mutex
+	installFunc   func(ctx context.Context, req InstallRequest) (string, error)
+	uninstallFunc func(ctx context.Context, req UninstallRequest) (string, error)
+	installCalls  []InstallRequest
+	uninstallCalls []UninstallRequest
+	timeout       time.Duration
+}
+
+func (m *mockHelmExecutor) Install(ctx context.Context, req InstallRequest) (string, error) {
+	m.mu.Lock()
+	m.installCalls = append(m.installCalls, req)
+	m.mu.Unlock()
+	if m.installFunc != nil {
+		return m.installFunc(ctx, req)
+	}
+	return "installed " + req.ReleaseName, nil
+}
+
+func (m *mockHelmExecutor) Uninstall(ctx context.Context, req UninstallRequest) (string, error) {
+	m.mu.Lock()
+	m.uninstallCalls = append(m.uninstallCalls, req)
+	m.mu.Unlock()
+	if m.uninstallFunc != nil {
+		return m.uninstallFunc(ctx, req)
+	}
+	return "uninstalled " + req.ReleaseName, nil
+}
+
+func (m *mockHelmExecutor) Status(_ context.Context, releaseName, _ string) (*ReleaseStatus, error) {
+	return &ReleaseStatus{Name: releaseName, Info: releaseInfo{Status: "deployed"}}, nil
+}
+
+func (m *mockHelmExecutor) Timeout() time.Duration {
+	if m.timeout > 0 {
+		return m.timeout
+	}
+	return 30 * time.Second
+}
+
+func (m *mockHelmExecutor) getUninstallCalls() []UninstallRequest {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	cp := make([]UninstallRequest, len(m.uninstallCalls))
+	copy(cp, m.uninstallCalls)
+	return cp
+}
+
+// ---- rollback tests ----
+
+func TestManager_Deploy_PartialRollback(t *testing.T) {
+	t.Parallel()
+
+	instanceRepo := newMockInstanceRepo()
+	logRepo := newMockDeployLogRepo()
+	hub := &mockBroadcaster{}
+
+	inst := &models.StackInstance{
+		ID:                "inst-rollback-1",
+		StackDefinitionID: "def-1",
+		Name:              "partial-rollback",
+		Namespace:         "stack-rollback-test",
+		OwnerID:           "user-1",
+		Branch:            "main",
+		Status:            models.StackStatusDraft,
+	}
+	require.NoError(t, instanceRepo.Create(inst))
+
+	helmMock := &mockHelmExecutor{
+		installFunc: func(_ context.Context, req InstallRequest) (string, error) {
+			// Charts 1 and 2 succeed, chart 3 fails.
+			if req.ReleaseName == "chart-c" {
+				return "install failed", fmt.Errorf("helm command failed: exit status 1")
+			}
+			return "installed " + req.ReleaseName, nil
+		},
+	}
+
+	mgr := NewManager(ManagerConfig{
+		HelmClient:    helmMock,
+		InstanceRepo:  instanceRepo,
+		DeployLogRepo: logRepo,
+		Hub:           hub,
+		MaxConcurrent: 2,
+	})
+
+	req := DeployRequest{
+		Instance:   inst,
+		Definition: &models.StackDefinition{ID: "def-1", Name: "test-def"},
+		Charts: []ChartDeployInfo{
+			{ChartConfig: models.ChartConfig{ChartName: "chart-a", DeployOrder: 1}},
+			{ChartConfig: models.ChartConfig{ChartName: "chart-b", DeployOrder: 2}},
+			{ChartConfig: models.ChartConfig{ChartName: "chart-c", DeployOrder: 3}},
+		},
+		Owner: "testuser",
+	}
+
+	logID, err := mgr.Deploy(context.Background(), req)
+	assert.NoError(t, err)
+	assert.NotEmpty(t, logID)
+
+	// Wait for async completion.
+	time.Sleep(500 * time.Millisecond)
+
+	// Verify instance status is error with original failure message.
+	final, err := instanceRepo.FindByID(inst.ID)
+	assert.NoError(t, err)
+	assert.Equal(t, models.StackStatusError, final.Status)
+	assert.Contains(t, final.ErrorMessage, "chart-c")
+
+	// Verify deployment log contains rollback output.
+	finalLog, err := logRepo.FindByID(context.Background(), logID)
+	assert.NoError(t, err)
+	assert.Equal(t, models.DeployLogError, finalLog.Status)
+	assert.Contains(t, finalLog.Output, "Rollback: chart-b")
+	assert.Contains(t, finalLog.Output, "Rollback: chart-a")
+
+	// Verify uninstall was called for chart-b and chart-a (reverse order),
+	// but NOT for chart-c (the one that failed).
+	uninstalls := helmMock.getUninstallCalls()
+	require.Len(t, uninstalls, 2)
+	assert.Equal(t, "chart-b", uninstalls[0].ReleaseName)
+	assert.Equal(t, "chart-a", uninstalls[1].ReleaseName)
+}
+
+func TestManager_Deploy_PartialRollback_RollbackFails(t *testing.T) {
+	t.Parallel()
+
+	instanceRepo := newMockInstanceRepo()
+	logRepo := newMockDeployLogRepo()
+	hub := &mockBroadcaster{}
+
+	inst := &models.StackInstance{
+		ID:                "inst-rollback-2",
+		StackDefinitionID: "def-1",
+		Name:              "rollback-fails",
+		Namespace:         "stack-rollback-fail",
+		OwnerID:           "user-1",
+		Branch:            "main",
+		Status:            models.StackStatusDraft,
+	}
+	require.NoError(t, instanceRepo.Create(inst))
+
+	helmMock := &mockHelmExecutor{
+		installFunc: func(_ context.Context, req InstallRequest) (string, error) {
+			// Chart 1 succeeds, chart 2 fails.
+			if req.ReleaseName == "chart-b" {
+				return "install failed", fmt.Errorf("helm command failed: exit status 1")
+			}
+			return "installed " + req.ReleaseName, nil
+		},
+		uninstallFunc: func(_ context.Context, req UninstallRequest) (string, error) {
+			// Rollback also fails.
+			return "uninstall failed", fmt.Errorf("helm uninstall failed: exit status 1")
+		},
+	}
+
+	mgr := NewManager(ManagerConfig{
+		HelmClient:    helmMock,
+		InstanceRepo:  instanceRepo,
+		DeployLogRepo: logRepo,
+		Hub:           hub,
+		MaxConcurrent: 2,
+	})
+
+	req := DeployRequest{
+		Instance:   inst,
+		Definition: &models.StackDefinition{ID: "def-1", Name: "test-def"},
+		Charts: []ChartDeployInfo{
+			{ChartConfig: models.ChartConfig{ChartName: "chart-a", DeployOrder: 1}},
+			{ChartConfig: models.ChartConfig{ChartName: "chart-b", DeployOrder: 2}},
+			{ChartConfig: models.ChartConfig{ChartName: "chart-c", DeployOrder: 3}},
+		},
+		Owner: "testuser",
+	}
+
+	logID, err := mgr.Deploy(context.Background(), req)
+	assert.NoError(t, err)
+	assert.NotEmpty(t, logID)
+
+	// Wait for async completion.
+	time.Sleep(500 * time.Millisecond)
+
+	// Verify instance status is error with the ORIGINAL deploy failure (not rollback failure).
+	final, err := instanceRepo.FindByID(inst.ID)
+	assert.NoError(t, err)
+	assert.Equal(t, models.StackStatusError, final.Status)
+	assert.Contains(t, final.ErrorMessage, "chart-b")
+
+	// Verify deployment log contains both deploy error and rollback error.
+	finalLog, err := logRepo.FindByID(context.Background(), logID)
+	assert.NoError(t, err)
+	assert.Equal(t, models.DeployLogError, finalLog.Status)
+	assert.Contains(t, finalLog.Output, "ERROR:")
+	assert.Contains(t, finalLog.Output, "ROLLBACK ERROR:")
+
+	// Verify uninstall was attempted for chart-a despite failure.
+	uninstalls := helmMock.getUninstallCalls()
+	require.Len(t, uninstalls, 1)
+	assert.Equal(t, "chart-a", uninstalls[0].ReleaseName)
+}
+
+func TestManager_Deploy_FirstChartFails_NoRollback(t *testing.T) {
+	t.Parallel()
+
+	instanceRepo := newMockInstanceRepo()
+	logRepo := newMockDeployLogRepo()
+	hub := &mockBroadcaster{}
+
+	inst := &models.StackInstance{
+		ID:                "inst-rollback-3",
+		StackDefinitionID: "def-1",
+		Name:              "first-chart-fails",
+		Namespace:         "stack-no-rollback",
+		OwnerID:           "user-1",
+		Branch:            "main",
+		Status:            models.StackStatusDraft,
+	}
+	require.NoError(t, instanceRepo.Create(inst))
+
+	helmMock := &mockHelmExecutor{
+		installFunc: func(_ context.Context, _ InstallRequest) (string, error) {
+			return "install failed", fmt.Errorf("helm command failed: exit status 1")
+		},
+	}
+
+	mgr := NewManager(ManagerConfig{
+		HelmClient:    helmMock,
+		InstanceRepo:  instanceRepo,
+		DeployLogRepo: logRepo,
+		Hub:           hub,
+		MaxConcurrent: 2,
+	})
+
+	req := DeployRequest{
+		Instance:   inst,
+		Definition: &models.StackDefinition{ID: "def-1", Name: "test-def"},
+		Charts: []ChartDeployInfo{
+			{ChartConfig: models.ChartConfig{ChartName: "chart-a", DeployOrder: 1}},
+			{ChartConfig: models.ChartConfig{ChartName: "chart-b", DeployOrder: 2}},
+		},
+		Owner: "testuser",
+	}
+
+	logID, err := mgr.Deploy(context.Background(), req)
+	assert.NoError(t, err)
+	assert.NotEmpty(t, logID)
+
+	// Wait for async completion.
+	time.Sleep(500 * time.Millisecond)
+
+	// Verify instance is in error state.
+	final, err := instanceRepo.FindByID(inst.ID)
+	assert.NoError(t, err)
+	assert.Equal(t, models.StackStatusError, final.Status)
+	assert.Contains(t, final.ErrorMessage, "chart-a")
+
+	// Verify NO uninstall calls were made (nothing to roll back).
+	uninstalls := helmMock.getUninstallCalls()
+	assert.Empty(t, uninstalls)
+
+	// Verify log does not contain rollback output.
+	finalLog, err := logRepo.FindByID(context.Background(), logID)
+	assert.NoError(t, err)
+	assert.NotContains(t, finalLog.Output, "Rollback:")
+}
