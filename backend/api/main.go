@@ -167,14 +167,6 @@ func main() {
 		cfg.Deployment.DeploymentTimeout,
 	)
 
-	deployManager := deployer.NewManager(deployer.ManagerConfig{
-		HelmClient:    helmClient,
-		InstanceRepo:  instanceRepo,
-		DeployLogRepo: deployLogRepo,
-		Hub:           hub,
-		MaxConcurrent: int(cfg.Deployment.MaxConcurrentDeploys),
-	})
-
 	// K8s client — optional, log warning if unavailable
 	var k8sClient *k8s.Client
 	var k8sWatcher *k8s.Watcher
@@ -196,6 +188,15 @@ func main() {
 			return err
 		})
 	}
+
+	deployManager := deployer.NewManager(deployer.ManagerConfig{
+		HelmClient:    helmClient,
+		InstanceRepo:  instanceRepo,
+		DeployLogRepo: deployLogRepo,
+		Hub:           hub,
+		K8sClient:     k8sClient,
+		MaxConcurrent: int(cfg.Deployment.MaxConcurrentDeploys),
+	})
 
 	// ------------------------------------------------------------------
 	// Phase 1: Create handlers

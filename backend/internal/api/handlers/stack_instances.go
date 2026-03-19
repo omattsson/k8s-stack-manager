@@ -740,6 +740,76 @@ func (h *InstanceHandler) StopInstance(c *gin.Context) {
 	c.JSON(http.StatusAccepted, gin.H{"log_id": logID, "message": "Stop initiated"})
 }
 
+// CleanInstance godoc
+// @Summary     Clean a stack instance namespace
+// @Description Uninstall all Helm releases and delete the K8s namespace, returning the instance to draft status
+// @Tags        stack-instances
+// @Produce     json
+// @Param       id path string true "Instance ID"
+// @Success     202 {object} map[string]string "Namespace cleanup initiated"
+// @Failure     400 {object} map[string]string
+// @Failure     404 {object} map[string]string
+// @Failure     409 {object} map[string]string "Invalid status for clean"
+// @Failure     503 {object} map[string]string "Deployment service not configured"
+// @Router      /api/v1/stack-instances/{id}/clean [post]
+func (h *InstanceHandler) CleanInstance(c *gin.Context) {
+	id := c.Param("id")
+	if id == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Instance ID is required"})
+		return
+	}
+
+	if h.deployManager == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Deployment service not configured"})
+		return
+	}
+
+	inst, err := h.instanceRepo.FindByID(id)
+	if err != nil {
+		status, message := mapError(err, "Stack instance")
+		c.JSON(status, gin.H{"error": message})
+		return
+	}
+
+	// Note: status check is not atomic with the update in Manager.Clean().
+	// Concurrent API calls could race. The frontend mitigates this by
+	// disabling buttons optimistically. A per-instance mutex would fix this
+	// but is deferred as a known limitation shared with Deploy/Stop.
+	switch inst.Status {
+	case models.StackStatusRunning, models.StackStatusStopped, models.StackStatusError:
+		// OK
+	default:
+		c.JSON(http.StatusConflict, gin.H{"error": fmt.Sprintf("Cannot clean: instance is currently %s", inst.Status)})
+		return
+	}
+
+	def, err := h.definitionRepo.FindByID(inst.StackDefinitionID)
+	if err != nil {
+		status, message := mapError(err, "Stack definition")
+		c.JSON(status, gin.H{"error": message})
+		return
+	}
+
+	charts, err := h.chartConfigRepo.ListByDefinition(def.ID)
+	if err != nil {
+		status, message := mapError(err, "Chart configs")
+		c.JSON(status, gin.H{"error": message})
+		return
+	}
+
+	logID, err := h.deployManager.Clean(c.Request.Context(), inst, charts)
+	if err != nil {
+		slog.Error("Failed to start clean operation",
+			"instance_id", id,
+			"error", err,
+		)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
+		return
+	}
+
+	c.JSON(http.StatusAccepted, gin.H{"log_id": logID, "message": "Namespace cleanup initiated"})
+}
+
 // GetDeployLog godoc
 // @Summary     Get deployment logs
 // @Description Get deployment log history for a stack instance

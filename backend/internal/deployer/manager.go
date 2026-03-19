@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"backend/internal/k8s"
 	"backend/internal/models"
 	"backend/internal/websocket"
 
@@ -35,6 +36,7 @@ type Manager struct {
 	instanceRepo   models.StackInstanceRepository
 	logRepo        models.DeploymentLogRepository
 	hub            websocket.BroadcastSender
+	k8sClient      *k8s.Client
 	semaphore      chan struct{}
 	shutdownCtx    context.Context
 	shutdownCancel context.CancelFunc
@@ -46,6 +48,7 @@ type ManagerConfig struct {
 	InstanceRepo  models.StackInstanceRepository
 	DeployLogRepo models.DeploymentLogRepository
 	Hub           websocket.BroadcastSender
+	K8sClient     *k8s.Client
 	MaxConcurrent int
 }
 
@@ -77,6 +80,7 @@ func NewManager(cfg ManagerConfig) *Manager {
 		instanceRepo:   cfg.InstanceRepo,
 		logRepo:        cfg.DeployLogRepo,
 		hub:            cfg.Hub,
+		k8sClient:      cfg.K8sClient,
 		semaphore:      make(chan struct{}, maxConcurrent),
 		shutdownCtx:    ctx,
 		shutdownCancel: cancel,
@@ -503,7 +507,7 @@ func sanitizeDeployError(err error) string {
 
 	// Look for the pattern "deploying chart ..." or "uninstalling chart ..."
 	// which is the outermost fmt.Errorf wrapper in executeDeploy / executeStopWithCharts.
-	for _, prefix := range []string{"deploying chart ", "uninstalling chart ", "creating temp directory"} {
+	for _, prefix := range []string{"deploying chart ", "uninstalling chart ", "deleting namespace ", "creating temp directory"} {
 		if strings.HasPrefix(msg, prefix) {
 			// Find the chart name in quotes if present.
 			if idx := strings.Index(msg, ":"); idx > 0 {
@@ -515,6 +519,189 @@ func sanitizeDeployError(err error) string {
 
 	// Fallback: return a generic message if the format is unexpected.
 	return "deployment operation failed"
+}
+
+// Clean starts an async namespace cleanup. It uninstalls all Helm releases
+// and deletes the Kubernetes namespace, returning the instance to draft status.
+// Returns the deployment log ID immediately.
+//
+// The ctx parameter is used for early cancellation: if the request context is
+// already done before work begins, Clean returns an error immediately. The
+// background goroutine uses m.shutdownCtx instead, because it outlives the
+// HTTP request that triggered the clean.
+func (m *Manager) Clean(ctx context.Context, instance *models.StackInstance, charts []models.ChartConfig) (string, error) {
+	// Short-circuit if the request context is already cancelled.
+	if err := ctx.Err(); err != nil {
+		return "", fmt.Errorf("request cancelled: %w", err)
+	}
+
+	logID := uuid.New().String()
+	now := time.Now().UTC()
+
+	deployLog := &models.DeploymentLog{
+		ID:              logID,
+		StackInstanceID: instance.ID,
+		Action:          models.DeployActionClean,
+		Status:          models.DeployLogRunning,
+		StartedAt:       now,
+	}
+	if err := m.logRepo.Create(ctx, deployLog); err != nil {
+		return "", fmt.Errorf("creating deployment log: %w", err)
+	}
+
+	instance.Status = models.StackStatusCleaning
+	instance.ErrorMessage = ""
+	if err := m.instanceRepo.Update(instance); err != nil {
+		return "", fmt.Errorf("updating instance status: %w", err)
+	}
+
+	m.broadcastStatus(instance.ID, models.StackStatusCleaning, logID)
+
+	// Sort charts in reverse deploy order for teardown.
+	sortedCharts := make([]ChartDeployInfo, len(charts))
+	for i, ch := range charts {
+		sortedCharts[i] = ChartDeployInfo{ChartConfig: ch}
+	}
+	sort.Slice(sortedCharts, func(i, j int) bool {
+		return sortedCharts[i].ChartConfig.DeployOrder > sortedCharts[j].ChartConfig.DeployOrder
+	})
+
+	go m.executeClean(instance.ID, deployLog, instance.Namespace, sortedCharts)
+
+	return logID, nil
+}
+
+// executeClean runs helm uninstall for each chart in reverse order, then
+// deletes the Kubernetes namespace.
+func (m *Manager) executeClean(instanceID string, deployLog *models.DeploymentLog, namespace string, charts []ChartDeployInfo) {
+	m.semaphore <- struct{}{}
+	defer func() { <-m.semaphore }()
+
+	var allOutput string
+	var cleanErr error
+
+	// Use a bounded context derived from the shutdown context so that
+	// operations are cancelled both on timeout and on server shutdown.
+	ctx, cancel := context.WithTimeout(m.shutdownCtx, m.helm.Timeout())
+	defer cancel()
+
+	var uninstallErrors int
+	for _, chart := range charts {
+		releaseName := chart.ChartConfig.ChartName
+
+		slog.Info("cleaning: uninstalling chart",
+			"instance_id", instanceID,
+			"chart", chart.ChartConfig.ChartName,
+			"release", releaseName,
+			"namespace", namespace,
+		)
+
+		output, err := m.helm.Uninstall(ctx, UninstallRequest{
+			ReleaseName: releaseName,
+			Namespace:   namespace,
+		})
+
+		allOutput += fmt.Sprintf("=== Chart: %s ===\n%s\n", chart.ChartConfig.ChartName, output)
+		m.broadcastLog(instanceID, deployLog.ID, output)
+
+		if err != nil {
+			// If the release is already gone (e.g. instance was stopped),
+			// treat as a successful no-op rather than an error.
+			if strings.Contains(err.Error(), "not found") {
+				allOutput += fmt.Sprintf("Release %q already removed, skipping\n", releaseName)
+				continue
+			}
+			// Best-effort: log warning and continue with remaining charts,
+			// matching the pattern used in rollbackCharts.
+			slog.Warn("clean: uninstall failed for chart",
+				"instance_id", instanceID,
+				"chart", releaseName,
+				"namespace", namespace,
+				"error", err,
+			)
+			allOutput += fmt.Sprintf("ERROR: uninstalling chart %q: %s\n", chart.ChartConfig.ChartName, err.Error())
+			uninstallErrors++
+		}
+	}
+
+	// Always attempt namespace deletion, even if some uninstalls failed.
+	// The namespace delete will clean up any remaining resources.
+	if m.k8sClient != nil {
+		slog.Info("cleaning: deleting namespace",
+			"instance_id", instanceID,
+			"namespace", namespace,
+		)
+
+		if err := m.k8sClient.DeleteNamespace(ctx, namespace); err != nil {
+			cleanErr = fmt.Errorf("deleting namespace %q: %w", namespace, err)
+			allOutput += fmt.Sprintf("ERROR: %s\n", cleanErr.Error())
+		} else {
+			allOutput += fmt.Sprintf("=== Namespace %s deleted ===\n", namespace)
+		}
+	}
+
+	// If namespace deletion succeeded but some uninstalls failed, report a summary error.
+	if cleanErr == nil && uninstallErrors > 0 {
+		cleanErr = fmt.Errorf("uninstalling chart: %d of %d charts failed to uninstall", uninstallErrors, len(charts))
+	}
+
+	m.finalizeClean(instanceID, deployLog, allOutput, cleanErr)
+}
+
+// finalizeClean updates the instance and deployment log with the final clean status.
+// On success the instance is returned to draft status with cleared error and deploy time.
+func (m *Manager) finalizeClean(instanceID string, deployLog *models.DeploymentLog, output string, cleanErr error) {
+	now := time.Now().UTC()
+
+	instance, err := m.instanceRepo.FindByID(instanceID)
+	if err != nil {
+		slog.Error("failed to find instance for clean finalization",
+			"instance_id", instanceID, "error", err)
+		return
+	}
+
+	deployLog.Output = truncateString(output, maxOutputLen)
+	deployLog.CompletedAt = &now
+
+	if cleanErr != nil {
+		sanitized := sanitizeDeployError(cleanErr)
+		instance.Status = models.StackStatusError
+		instance.ErrorMessage = truncateString(sanitized, maxInstanceErrorLen)
+		deployLog.Status = models.DeployLogError
+		deployLog.ErrorMessage = truncateString(sanitized, maxLogErrorLen)
+
+		slog.Error("clean failed",
+			"instance_id", instanceID,
+			"log_id", deployLog.ID,
+			"error", cleanErr,
+		)
+	} else {
+		instance.Status = models.StackStatusDraft
+		instance.ErrorMessage = ""
+		instance.LastDeployedAt = nil
+		deployLog.Status = models.DeployLogSuccess
+
+		slog.Info("clean succeeded",
+			"instance_id", instanceID,
+			"log_id", deployLog.ID,
+		)
+	}
+
+	if err := m.instanceRepo.Update(instance); err != nil {
+		slog.Error("failed to update instance status after clean",
+			"instance_id", instanceID, "error", err)
+	}
+
+	if err := m.logRepo.Update(m.shutdownCtx, deployLog); err != nil {
+		slog.Error("failed to update deployment log after clean",
+			"log_id", deployLog.ID, "error", err)
+	}
+
+	if cleanErr != nil {
+		m.broadcastStatusWithError(instanceID, models.StackStatusError, deployLog.ID, instance.ErrorMessage)
+	} else {
+		m.broadcastStatus(instanceID, models.StackStatusDraft, deployLog.ID)
+	}
 }
 
 // truncateString returns s truncated to maxLen characters. If truncation

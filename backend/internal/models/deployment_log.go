@@ -11,7 +11,7 @@ type DeploymentLog struct {
 	CompletedAt     *time.Time `json:"completed_at,omitempty"`
 	ID              string     `json:"id"`
 	StackInstanceID string     `json:"stack_instance_id"`
-	Action          string     `json:"action"` // "deploy" or "stop"
+	Action          string     `json:"action"` // "deploy", "stop", or "clean"
 	Status          string     `json:"status"` // "running", "success", "error"
 	Output          string     `json:"output"`
 	ErrorMessage    string     `json:"error_message,omitempty"`
@@ -21,6 +21,7 @@ type DeploymentLog struct {
 const (
 	DeployActionDeploy = "deploy"
 	DeployActionStop   = "stop"
+	DeployActionClean  = "clean"
 )
 
 // Deployment log status constants.

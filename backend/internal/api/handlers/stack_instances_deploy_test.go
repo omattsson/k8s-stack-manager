@@ -154,6 +154,7 @@ func setupDeployRouter(
 	{
 		insts.POST("/:id/deploy", h.DeployInstance)
 		insts.POST("/:id/stop", h.StopInstance)
+		insts.POST("/:id/clean", h.CleanInstance)
 		insts.GET("/:id/deploy-log", h.GetDeployLog)
 		insts.GET("/:id/status", h.GetInstanceStatus)
 	}
@@ -619,4 +620,130 @@ func TestGetInstanceStatus(t *testing.T) {
 		assert.Equal(t, "stack-stack-a-owner", resp.Namespace)
 		assert.Equal(t, "healthy", resp.Status)
 	})
+}
+
+// ---- CleanInstance tests ----
+
+func TestCleanInstance(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		instanceID string
+		setup      func(*MockStackInstanceRepository, *MockStackDefinitionRepository, *MockChartConfigRepository)
+		noManager  bool
+		wantStatus int
+		checkFn    func(*testing.T, *httptest.ResponseRecorder)
+	}{
+		{
+			name:       "running instance returns 202",
+			instanceID: "i1",
+			setup: func(instRepo *MockStackInstanceRepository, defRepo *MockStackDefinitionRepository, ccRepo *MockChartConfigRepository) {
+				seedInstance(t, instRepo, "i1", "stack-a", "d1", "uid-1", models.StackStatusRunning)
+				seedDefinition(t, defRepo, "d1", "My Def", "uid-1")
+				seedChartConfig(t, ccRepo, "cc1", "d1", "nginx")
+			},
+			wantStatus: http.StatusAccepted,
+			checkFn: func(t *testing.T, w *httptest.ResponseRecorder) {
+				var resp map[string]string
+				require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+				assert.NotEmpty(t, resp["log_id"])
+				assert.Equal(t, "Namespace cleanup initiated", resp["message"])
+			},
+		},
+		{
+			name:       "stopped instance returns 202",
+			instanceID: "i2",
+			setup: func(instRepo *MockStackInstanceRepository, defRepo *MockStackDefinitionRepository, ccRepo *MockChartConfigRepository) {
+				seedInstance(t, instRepo, "i2", "stack-b", "d1", "uid-1", models.StackStatusStopped)
+				seedDefinition(t, defRepo, "d1", "My Def", "uid-1")
+				seedChartConfig(t, ccRepo, "cc1", "d1", "nginx")
+			},
+			wantStatus: http.StatusAccepted,
+		},
+		{
+			name:       "error instance returns 202",
+			instanceID: "i3",
+			setup: func(instRepo *MockStackInstanceRepository, defRepo *MockStackDefinitionRepository, ccRepo *MockChartConfigRepository) {
+				seedInstance(t, instRepo, "i3", "stack-c", "d1", "uid-1", models.StackStatusError)
+				seedDefinition(t, defRepo, "d1", "My Def", "uid-1")
+				seedChartConfig(t, ccRepo, "cc1", "d1", "nginx")
+			},
+			wantStatus: http.StatusAccepted,
+		},
+		{
+			name:       "draft instance returns 409",
+			instanceID: "i4",
+			setup: func(instRepo *MockStackInstanceRepository, _ *MockStackDefinitionRepository, _ *MockChartConfigRepository) {
+				seedInstance(t, instRepo, "i4", "stack-d", "d1", "uid-1", models.StackStatusDraft)
+			},
+			wantStatus: http.StatusConflict,
+		},
+		{
+			name:       "deploying instance returns 409",
+			instanceID: "i5",
+			setup: func(instRepo *MockStackInstanceRepository, _ *MockStackDefinitionRepository, _ *MockChartConfigRepository) {
+				seedInstance(t, instRepo, "i5", "stack-e", "d1", "uid-1", models.StackStatusDeploying)
+			},
+			wantStatus: http.StatusConflict,
+		},
+		{
+			name:       "cleaning instance returns 409",
+			instanceID: "i6",
+			setup: func(instRepo *MockStackInstanceRepository, _ *MockStackDefinitionRepository, _ *MockChartConfigRepository) {
+				seedInstance(t, instRepo, "i6", "stack-f", "d1", "uid-1", models.StackStatusCleaning)
+			},
+			wantStatus: http.StatusConflict,
+		},
+		{
+			name:       "nil deploy manager returns 503",
+			instanceID: "i7",
+			setup: func(instRepo *MockStackInstanceRepository, _ *MockStackDefinitionRepository, _ *MockChartConfigRepository) {
+				seedInstance(t, instRepo, "i7", "stack-g", "d1", "uid-1", models.StackStatusRunning)
+			},
+			noManager:  true,
+			wantStatus: http.StatusServiceUnavailable,
+		},
+		{
+			name:       "instance not found returns 404",
+			instanceID: "missing",
+			setup:      func(_ *MockStackInstanceRepository, _ *MockStackDefinitionRepository, _ *MockChartConfigRepository) {},
+			wantStatus: http.StatusNotFound,
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			instRepo := NewMockStackInstanceRepository()
+			defRepo := NewMockStackDefinitionRepository()
+			ccRepo := NewMockChartConfigRepository()
+			logRepo := NewMockDeploymentLogRepository()
+			tt.setup(instRepo, defRepo, ccRepo)
+
+			var mgr *deployer.Manager
+			if !tt.noManager {
+				mgr = newTestManager(instRepo, logRepo)
+			}
+
+			router := setupDeployRouter(
+				instRepo, NewMockValueOverrideRepository(),
+				defRepo, ccRepo,
+				NewMockStackTemplateRepository(), NewMockTemplateChartConfigRepository(),
+				mgr, nil, nil, logRepo,
+				"uid-1", "alice", "user",
+			)
+
+			w := httptest.NewRecorder()
+			req, _ := http.NewRequest(http.MethodPost, "/api/v1/stack-instances/"+tt.instanceID+"/clean", nil)
+			router.ServeHTTP(w, req)
+
+			assert.Equal(t, tt.wantStatus, w.Code)
+			if tt.checkFn != nil {
+				tt.checkFn(t, w)
+			}
+		})
+	}
 }
