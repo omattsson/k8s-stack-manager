@@ -61,6 +61,11 @@ func NewHelmClient(binaryPath, kubeconfig string, timeout time.Duration) *HelmCl
 	}
 }
 
+// Timeout returns the configured timeout duration for helm operations.
+func (h *HelmClient) Timeout() time.Duration {
+	return h.timeout
+}
+
 // Install runs: helm upgrade --install <release> <chart> -f <valuesFile> -n <namespace> --create-namespace --timeout <timeout>
 // Returns combined stdout+stderr output and error.
 func (h *HelmClient) Install(ctx context.Context, req InstallRequest) (string, error) {

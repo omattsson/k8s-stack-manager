@@ -3,6 +3,7 @@ package azure
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"time"
 
 	"backend/internal/models"
@@ -11,9 +12,21 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/data/aztables"
 )
 
+// escapeODataString escapes single quotes in a string value for use in OData
+// filter expressions. OData uses doubled single quotes ('') as the escape
+// sequence for a literal single quote within a string literal.
+func escapeODataString(s string) string {
+	return strings.ReplaceAll(s, "'", "''")
+}
+
 // DeploymentLogRepository implements models.DeploymentLogRepository for Azure Table Storage.
 // Partition key: stack_instance_id, Row key: reverse_timestamp + uuid.
 // This ensures recent-first ordering within each instance partition.
+//
+// Known limitation: All methods use context.Background() internally because the
+// DeploymentLogRepository interface (models.DeploymentLogRepository) does not
+// accept context parameters, unlike the main Repository interface. Adding context
+// support requires a broader interface refactor tracked for a future release.
 type DeploymentLogRepository struct {
 	client    AzureTableClient
 	tableName string
@@ -68,7 +81,7 @@ func (r *DeploymentLogRepository) FindByID(id string) (*models.DeploymentLog, er
 	ctx := context.Background()
 
 	// No secondary index available; scan all partitions filtering by ID property.
-	filter := "ID eq '" + id + "'"
+	filter := "ID eq '" + escapeODataString(id) + "'"
 	pager := r.client.NewListEntitiesPager(&aztables.ListEntitiesOptions{
 		Filter: &filter,
 	})
@@ -89,7 +102,7 @@ func (r *DeploymentLogRepository) Update(log *models.DeploymentLog) error {
 	ctx := context.Background()
 
 	// Reconstruct the row key by scanning for the entity first.
-	filter := "PartitionKey eq '" + log.StackInstanceID + "' and ID eq '" + log.ID + "'"
+	filter := "PartitionKey eq '" + escapeODataString(log.StackInstanceID) + "' and ID eq '" + escapeODataString(log.ID) + "'"
 	pager := r.client.NewListEntitiesPager(&aztables.ListEntitiesOptions{
 		Filter: &filter,
 	})
@@ -122,7 +135,7 @@ func (r *DeploymentLogRepository) Update(log *models.DeploymentLog) error {
 func (r *DeploymentLogRepository) ListByInstance(instanceID string) ([]models.DeploymentLog, error) {
 	ctx := context.Background()
 
-	filter := "PartitionKey eq '" + instanceID + "'"
+	filter := "PartitionKey eq '" + escapeODataString(instanceID) + "'"
 	pager := r.client.NewListEntitiesPager(&aztables.ListEntitiesOptions{
 		Filter: &filter,
 	})
@@ -142,7 +155,7 @@ func (r *DeploymentLogRepository) ListByInstance(instanceID string) ([]models.De
 func (r *DeploymentLogRepository) GetLatestByInstance(instanceID string) (*models.DeploymentLog, error) {
 	ctx := context.Background()
 
-	filter := "PartitionKey eq '" + instanceID + "'"
+	filter := "PartitionKey eq '" + escapeODataString(instanceID) + "'"
 	top := int32(1)
 	pager := r.client.NewListEntitiesPager(&aztables.ListEntitiesOptions{
 		Filter: &filter,

@@ -1,7 +1,6 @@
 package deployer
 
 import (
-	"encoding/json"
 	"log/slog"
 
 	"backend/internal/websocket"
@@ -44,9 +43,9 @@ func (m *Manager) broadcastStatusWithError(instanceID, status, logID, errorMessa
 		return
 	}
 
-	data, err := json.Marshal(msg)
+	data, err := msg.Bytes()
 	if err != nil {
-		slog.Error("failed to marshal deployment status message", "error", err)
+		slog.Error("failed to serialize deployment status message", "error", err)
 		return
 	}
 
@@ -69,9 +68,9 @@ func (m *Manager) broadcastLog(instanceID, logID, line string) {
 		return
 	}
 
-	data, err := json.Marshal(msg)
+	data, err := msg.Bytes()
 	if err != nil {
-		slog.Error("failed to marshal deployment log message", "error", err)
+		slog.Error("failed to serialize deployment log message", "error", err)
 		return
 	}
 

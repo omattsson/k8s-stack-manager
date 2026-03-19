@@ -682,7 +682,29 @@ func (h *InstanceHandler) StopInstance(c *gin.Context) {
 		return
 	}
 
-	logID, err := h.deployManager.Stop(c.Request.Context(), inst)
+	// Fetch chart configs so StopWithCharts can run helm uninstall per chart.
+	def, err := h.definitionRepo.FindByID(inst.StackDefinitionID)
+	if err != nil {
+		status, message := mapError(err, "Stack definition")
+		c.JSON(status, gin.H{"error": message})
+		return
+	}
+
+	charts, err := h.chartConfigRepo.ListByDefinition(def.ID)
+	if err != nil {
+		status, message := mapError(err, "Chart configs")
+		c.JSON(status, gin.H{"error": message})
+		return
+	}
+
+	var chartInfos []deployer.ChartDeployInfo
+	for _, ch := range charts {
+		chartInfos = append(chartInfos, deployer.ChartDeployInfo{
+			ChartConfig: ch,
+		})
+	}
+
+	logID, err := h.deployManager.StopWithCharts(c.Request.Context(), inst, chartInfos)
 	if err != nil {
 		slog.Error("Failed to start stop operation",
 			"instance_id", id,

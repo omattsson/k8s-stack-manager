@@ -75,7 +75,7 @@ const Detail = () => {
         } catch { /* ignore — no logs yet */ }
 
         // Fetch K8s status if instance is running or deploying
-        if (inst.status === 'running' || inst.status === 'deploying') {
+        if (inst.status === 'running' || inst.status === 'deploying' || inst.status === 'error') {
           try {
             setStatusLoading(true);
             const status = await instanceService.getStatus(id);

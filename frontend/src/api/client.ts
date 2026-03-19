@@ -347,7 +347,7 @@ export const instanceService = {
       throw error;
     }
   },
-  deploy: async (id: string): Promise<{ log_id: string }> => {
+  deploy: async (id: string): Promise<{ log_id: string; message: string }> => {
     try {
       const response = await api.post(`/api/v1/stack-instances/${id}/deploy`);
       return response.data;
@@ -356,7 +356,7 @@ export const instanceService = {
       throw error;
     }
   },
-  stop: async (id: string): Promise<{ log_id: string }> => {
+  stop: async (id: string): Promise<{ log_id: string; message: string }> => {
     try {
       const response = await api.post(`/api/v1/stack-instances/${id}/stop`);
       return response.data;

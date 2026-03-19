@@ -325,7 +325,7 @@ func TestStopInstance(t *testing.T) {
 	tests := []struct {
 		name       string
 		instanceID string
-		setup      func(*MockStackInstanceRepository)
+		setup      func(*MockStackInstanceRepository, *MockStackDefinitionRepository, *MockChartConfigRepository)
 		noManager  bool
 		wantStatus int
 		checkFn    func(*testing.T, *httptest.ResponseRecorder)
@@ -333,8 +333,10 @@ func TestStopInstance(t *testing.T) {
 		{
 			name:       "happy path — running instance returns 202",
 			instanceID: "i1",
-			setup: func(instRepo *MockStackInstanceRepository) {
+			setup: func(instRepo *MockStackInstanceRepository, defRepo *MockStackDefinitionRepository, ccRepo *MockChartConfigRepository) {
 				seedInstance(t, instRepo, "i1", "stack-a", "d1", "uid-1", models.StackStatusRunning)
+				seedDefinition(t, defRepo, "d1", "My Def", "uid-1")
+				seedChartConfig(t, ccRepo, "cc1", "d1", "nginx")
 			},
 			wantStatus: http.StatusAccepted,
 			checkFn: func(t *testing.T, w *httptest.ResponseRecorder) {
@@ -347,15 +349,17 @@ func TestStopInstance(t *testing.T) {
 		{
 			name:       "deploying instance can be stopped",
 			instanceID: "i2",
-			setup: func(instRepo *MockStackInstanceRepository) {
+			setup: func(instRepo *MockStackInstanceRepository, defRepo *MockStackDefinitionRepository, ccRepo *MockChartConfigRepository) {
 				seedInstance(t, instRepo, "i2", "stack-b", "d1", "uid-1", models.StackStatusDeploying)
+				seedDefinition(t, defRepo, "d1", "My Def", "uid-1")
+				seedChartConfig(t, ccRepo, "cc1", "d1", "nginx")
 			},
 			wantStatus: http.StatusAccepted,
 		},
 		{
 			name:       "draft instance returns 409",
 			instanceID: "i3",
-			setup: func(instRepo *MockStackInstanceRepository) {
+			setup: func(instRepo *MockStackInstanceRepository, _ *MockStackDefinitionRepository, _ *MockChartConfigRepository) {
 				seedInstance(t, instRepo, "i3", "stack-c", "d1", "uid-1", models.StackStatusDraft)
 			},
 			wantStatus: http.StatusConflict,
@@ -363,7 +367,7 @@ func TestStopInstance(t *testing.T) {
 		{
 			name:       "stopped instance returns 409",
 			instanceID: "i4",
-			setup: func(instRepo *MockStackInstanceRepository) {
+			setup: func(instRepo *MockStackInstanceRepository, _ *MockStackDefinitionRepository, _ *MockChartConfigRepository) {
 				seedInstance(t, instRepo, "i4", "stack-d", "d1", "uid-1", models.StackStatusStopped)
 			},
 			wantStatus: http.StatusConflict,
@@ -371,13 +375,13 @@ func TestStopInstance(t *testing.T) {
 		{
 			name:       "not found returns 404",
 			instanceID: "missing",
-			setup:      func(_ *MockStackInstanceRepository) {},
+			setup:      func(_ *MockStackInstanceRepository, _ *MockStackDefinitionRepository, _ *MockChartConfigRepository) {},
 			wantStatus: http.StatusNotFound,
 		},
 		{
 			name:       "no deploy manager returns 503",
 			instanceID: "i5",
-			setup: func(instRepo *MockStackInstanceRepository) {
+			setup: func(instRepo *MockStackInstanceRepository, _ *MockStackDefinitionRepository, _ *MockChartConfigRepository) {
 				seedInstance(t, instRepo, "i5", "stack-e", "d1", "uid-1", models.StackStatusRunning)
 			},
 			noManager:  true,
@@ -391,8 +395,10 @@ func TestStopInstance(t *testing.T) {
 			t.Parallel()
 
 			instRepo := NewMockStackInstanceRepository()
+			defRepo := NewMockStackDefinitionRepository()
+			ccRepo := NewMockChartConfigRepository()
 			logRepo := NewMockDeploymentLogRepository()
-			tt.setup(instRepo)
+			tt.setup(instRepo, defRepo, ccRepo)
 
 			var mgr *deployer.Manager
 			if !tt.noManager {
@@ -401,7 +407,7 @@ func TestStopInstance(t *testing.T) {
 
 			router := setupDeployRouter(
 				instRepo, NewMockValueOverrideRepository(),
-				NewMockStackDefinitionRepository(), NewMockChartConfigRepository(),
+				defRepo, ccRepo,
 				NewMockStackTemplateRepository(), NewMockTemplateChartConfigRepository(),
 				mgr, nil, nil, logRepo,
 				"uid-1", "alice", "user",

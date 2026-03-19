@@ -184,7 +184,11 @@ func main() {
 		k8sClient = nil
 	} else {
 		k8sWatcher = k8s.NewWatcher(k8sClient, instanceRepo, hub, 30*time.Second)
-		go k8sWatcher.Start(context.Background())
+		// Start already spawns an internal goroutine; no need for go here.
+		// Use a cancellable context so the watcher respects shutdown.
+		watcherCtx, watcherCancel := context.WithCancel(context.Background())
+		defer watcherCancel()
+		k8sWatcher.Start(watcherCtx)
 
 		// Add K8s health check
 		healthChecker.AddCheck("kubernetes", func(ctx context.Context) error {

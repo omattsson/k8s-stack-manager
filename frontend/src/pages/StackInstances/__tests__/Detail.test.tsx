@@ -381,8 +381,8 @@ describe('StackInstances Detail', () => {
 
   it('shows Deployment History section when logs exist', async () => {
     const mockLogs = [
-      { id: 'log-1', stack_instance_id: '123', action: 'deploy', status: 'success', started_at: '2025-01-01T00:00:00Z', finished_at: '2025-01-01T00:01:00Z' },
-      { id: 'log-2', stack_instance_id: '123', action: 'deploy', status: 'failed', started_at: '2025-01-02T00:00:00Z', finished_at: '2025-01-02T00:01:00Z' },
+      { id: 'log-1', stack_instance_id: '123', action: 'deploy', status: 'success', started_at: '2025-01-01T00:00:00Z', completed_at: '2025-01-01T00:01:00Z' },
+      { id: 'log-2', stack_instance_id: '123', action: 'deploy', status: 'error', started_at: '2025-01-02T00:00:00Z', completed_at: '2025-01-02T00:01:00Z' },
     ];
     setupMocks({ status: 'draft' }, { logs: mockLogs });
 

@@ -778,7 +778,7 @@ func TestManager_FinalizeStop_Success(t *testing.T) {
 	})
 
 	// Call finalizeStop directly for the success path.
-	mgr.finalizeStop(inst.ID, deployLog.ID, "all charts uninstalled", nil)
+	mgr.finalizeStop(inst.ID, deployLog, "all charts uninstalled", nil)
 
 	final, err := instanceRepo.FindByID(inst.ID)
 	assert.NoError(t, err)
@@ -828,7 +828,7 @@ func TestManager_FinalizeStop_Error(t *testing.T) {
 	})
 
 	stopErr := errors.New("helm uninstall timed out")
-	mgr.finalizeStop(inst.ID, deployLog.ID, "partial output", stopErr)
+	mgr.finalizeStop(inst.ID, deployLog, "partial output", stopErr)
 
 	final, err := instanceRepo.FindByID(inst.ID)
 	assert.NoError(t, err)
@@ -860,32 +860,8 @@ func TestManager_FinalizeStop_InstanceNotFound(t *testing.T) {
 	})
 
 	// Should not panic when instance is not found.
-	mgr.finalizeStop("nonexistent-id", "some-log-id", "output", nil)
-}
-
-func TestManager_FinalizeStop_LogNotFound(t *testing.T) {
-	t.Parallel()
-
-	instanceRepo := newMockInstanceRepo()
-	logRepo := newMockDeployLogRepo()
-
-	inst := &models.StackInstance{
-		ID:     "inst-fin-log-miss",
-		Name:   "log-miss",
-		Status: models.StackStatusStopping,
-	}
-	require.NoError(t, instanceRepo.Create(inst))
-
-	mgr := NewManager(ManagerConfig{
-		HelmClient:    NewHelmClient("helm", "", 1*time.Minute),
-		InstanceRepo:  instanceRepo,
-		DeployLogRepo: logRepo,
-		Hub:           nil,
-		MaxConcurrent: 2,
-	})
-
-	// Should not panic when log is not found.
-	mgr.finalizeStop(inst.ID, "nonexistent-log", "output", nil)
+	orphanLog := &models.DeploymentLog{ID: "some-log-id", StackInstanceID: "nonexistent-id"}
+	mgr.finalizeStop("nonexistent-id", orphanLog, "output", nil)
 }
 
 func TestManager_FinalizeDeploy_InstanceNotFound(t *testing.T) {
@@ -903,32 +879,8 @@ func TestManager_FinalizeDeploy_InstanceNotFound(t *testing.T) {
 	})
 
 	// Should not panic when instance is not found.
-	mgr.finalizeDeploy("nonexistent-id", "some-log-id", "output", nil)
-}
-
-func TestManager_FinalizeDeploy_LogNotFound(t *testing.T) {
-	t.Parallel()
-
-	instanceRepo := newMockInstanceRepo()
-	logRepo := newMockDeployLogRepo()
-
-	inst := &models.StackInstance{
-		ID:     "inst-deploy-log-miss",
-		Name:   "log-miss",
-		Status: models.StackStatusDeploying,
-	}
-	require.NoError(t, instanceRepo.Create(inst))
-
-	mgr := NewManager(ManagerConfig{
-		HelmClient:    NewHelmClient("helm", "", 1*time.Minute),
-		InstanceRepo:  instanceRepo,
-		DeployLogRepo: logRepo,
-		Hub:           nil,
-		MaxConcurrent: 2,
-	})
-
-	// Should not panic when log is not found.
-	mgr.finalizeDeploy(inst.ID, "nonexistent-log", "output", nil)
+	orphanLog := &models.DeploymentLog{ID: "some-log-id", StackInstanceID: "nonexistent-id"}
+	mgr.finalizeDeploy("nonexistent-id", orphanLog, "output", nil)
 }
 
 func TestManager_BroadcastStatusWithError_NilHub(t *testing.T) {

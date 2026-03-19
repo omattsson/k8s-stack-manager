@@ -98,48 +98,23 @@ func (m *Manager) Deploy(ctx context.Context, req DeployRequest) (string, error)
 		return charts[i].ChartConfig.DeployOrder < charts[j].ChartConfig.DeployOrder
 	})
 
-	// Launch async deployment.
-	go m.executeDeploy(req.Instance.ID, logID, req.Instance.Namespace, charts)
+	// Launch async deployment, passing the deployLog to avoid re-fetching.
+	go m.executeDeploy(req.Instance.ID, deployLog, req.Instance.Namespace, charts)
 
 	return logID, nil
 }
 
-// Stop starts an async stop/uninstall. Returns the deployment log ID immediately.
+// Stop starts an async stop/uninstall without chart information.
+// Deprecated: Use StopWithCharts for chart-aware uninstall. Stop is retained
+// for backward compatibility and delegates to a no-op uninstall that marks
+// the instance as stopped.
 func (m *Manager) Stop(ctx context.Context, instance *models.StackInstance) (string, error) {
-	logID := uuid.New().String()
-	now := time.Now().UTC()
-
-	// Create deployment log entry.
-	deployLog := &models.DeploymentLog{
-		ID:              logID,
-		StackInstanceID: instance.ID,
-		Action:          models.DeployActionStop,
-		Status:          models.DeployLogRunning,
-		StartedAt:       now,
-	}
-	if err := m.logRepo.Create(deployLog); err != nil {
-		return "", fmt.Errorf("creating deployment log: %w", err)
-	}
-
-	// Update instance status to stopping.
-	instance.Status = models.StackStatusStopping
-	instance.ErrorMessage = ""
-	if err := m.instanceRepo.Update(instance); err != nil {
-		return "", fmt.Errorf("updating instance status: %w", err)
-	}
-
-	// Broadcast initial status.
-	m.broadcastStatus(instance.ID, models.StackStatusStopping, logID)
-
-	// Launch async stop.
-	go m.executeStop(instance, logID)
-
-	return logID, nil
+	return m.StopWithCharts(ctx, instance, nil)
 }
 
 // executeDeploy runs the helm install for each chart sequentially within
 // a concurrency-limited goroutine.
-func (m *Manager) executeDeploy(instanceID, logID, namespace string, charts []ChartDeployInfo) {
+func (m *Manager) executeDeploy(instanceID string, deployLog *models.DeploymentLog, namespace string, charts []ChartDeployInfo) {
 	// Acquire semaphore.
 	m.semaphore <- struct{}{}
 	defer func() { <-m.semaphore }()
@@ -152,12 +127,15 @@ func (m *Manager) executeDeploy(instanceID, logID, namespace string, charts []Ch
 	if err != nil {
 		deployErr = fmt.Errorf("creating temp directory: %w", err)
 		slog.Error("deployment failed", "instance_id", instanceID, "error", deployErr)
-		m.finalizeDeploy(instanceID, logID, allOutput, deployErr)
+		m.finalizeDeploy(instanceID, deployLog, allOutput, deployErr)
 		return
 	}
 	defer os.RemoveAll(tmpDir)
 
-	ctx := context.Background()
+	// Use a bounded context based on the configured helm timeout to prevent
+	// operations from hanging indefinitely.
+	ctx, cancel := context.WithTimeout(context.Background(), m.helm.Timeout())
+	defer cancel()
 
 	for _, chart := range charts {
 		releaseName := fmt.Sprintf("%s-%s", namespace, chart.ChartConfig.ChartName)
@@ -194,7 +172,7 @@ func (m *Manager) executeDeploy(instanceID, logID, namespace string, charts []Ch
 		})
 
 		allOutput += fmt.Sprintf("=== Chart: %s ===\n%s\n", chart.ChartConfig.ChartName, output)
-		m.broadcastLog(instanceID, logID, output)
+		m.broadcastLog(instanceID, deployLog.ID, output)
 
 		if err != nil {
 			deployErr = fmt.Errorf("deploying chart %q: %w", chart.ChartConfig.ChartName, err)
@@ -202,24 +180,19 @@ func (m *Manager) executeDeploy(instanceID, logID, namespace string, charts []Ch
 		}
 	}
 
-	m.finalizeDeploy(instanceID, logID, allOutput, deployErr)
+	m.finalizeDeploy(instanceID, deployLog, allOutput, deployErr)
 }
 
 // finalizeDeploy updates the instance and deployment log with the final status.
-func (m *Manager) finalizeDeploy(instanceID, logID, output string, deployErr error) {
+// The deployLog is passed directly from the goroutine closure to avoid a
+// partition-scanning FindByID call on Azure Table Storage.
+func (m *Manager) finalizeDeploy(instanceID string, deployLog *models.DeploymentLog, output string, deployErr error) {
 	now := time.Now().UTC()
 
 	instance, err := m.instanceRepo.FindByID(instanceID)
 	if err != nil {
 		slog.Error("failed to find instance for finalization",
 			"instance_id", instanceID, "error", err)
-		return
-	}
-
-	deployLog, err := m.logRepo.FindByID(logID)
-	if err != nil {
-		slog.Error("failed to find deployment log for finalization",
-			"log_id", logID, "error", err)
 		return
 	}
 
@@ -234,7 +207,7 @@ func (m *Manager) finalizeDeploy(instanceID, logID, output string, deployErr err
 
 		slog.Error("deployment failed",
 			"instance_id", instanceID,
-			"log_id", logID,
+			"log_id", deployLog.ID,
 			"error", deployErr,
 		)
 	} else {
@@ -245,7 +218,7 @@ func (m *Manager) finalizeDeploy(instanceID, logID, output string, deployErr err
 
 		slog.Info("deployment succeeded",
 			"instance_id", instanceID,
-			"log_id", logID,
+			"log_id", deployLog.ID,
 		)
 	}
 
@@ -256,43 +229,20 @@ func (m *Manager) finalizeDeploy(instanceID, logID, output string, deployErr err
 
 	if err := m.logRepo.Update(deployLog); err != nil {
 		slog.Error("failed to update deployment log after deploy",
-			"log_id", logID, "error", err)
+			"log_id", deployLog.ID, "error", err)
 	}
 
 	// Broadcast final status.
 	if deployErr != nil {
-		m.broadcastStatusWithError(instanceID, models.StackStatusError, logID, deployErr.Error())
+		m.broadcastStatusWithError(instanceID, models.StackStatusError, deployLog.ID, deployErr.Error())
 	} else {
-		m.broadcastStatus(instanceID, models.StackStatusRunning, logID)
+		m.broadcastStatus(instanceID, models.StackStatusRunning, deployLog.ID)
 	}
 }
 
-// executeStop runs helm uninstall for each chart in reverse deploy order.
-func (m *Manager) executeStop(instance *models.StackInstance, logID string) {
-	// Acquire semaphore.
-	m.semaphore <- struct{}{}
-	defer func() { <-m.semaphore }()
-
-	// We need the charts to uninstall. Retrieve the deployment log to get the instance ID,
-	// then we rely on the release naming convention: {namespace}-{chartName}.
-	// For stop, we use the instance data passed in. Since we don't have the chart list
-	// here, we use helm to check what's installed in the namespace.
-	// For simplicity and reliability, we perform the uninstall using the instance data.
-	// The caller should use the StopWithCharts method if chart info is available.
-
-	slog.Info("stop operation started",
-		"instance_id", instance.ID,
-		"namespace", instance.Namespace,
-		"log_id", logID,
-	)
-
-	// Since Stop doesn't receive chart info, finalize with an informational message.
-	// Use StopWithCharts for full chart-aware uninstall.
-	m.finalizeStop(instance.ID, logID, "stop initiated — use StopWithCharts for chart-aware uninstall", nil)
-}
-
 // StopWithCharts starts an async stop/uninstall with explicit chart information.
-// Returns the deployment log ID immediately.
+// Returns the deployment log ID immediately. If charts is nil or empty, the
+// stop finalizes immediately without running helm uninstall.
 func (m *Manager) StopWithCharts(ctx context.Context, instance *models.StackInstance, charts []ChartDeployInfo) (string, error) {
 	logID := uuid.New().String()
 	now := time.Now().UTC()
@@ -323,20 +273,24 @@ func (m *Manager) StopWithCharts(ctx context.Context, instance *models.StackInst
 		return sortedCharts[i].ChartConfig.DeployOrder > sortedCharts[j].ChartConfig.DeployOrder
 	})
 
-	go m.executeStopWithCharts(instance.ID, logID, instance.Namespace, sortedCharts)
+	// Pass deployLog into the goroutine to avoid a partition-scanning re-fetch.
+	go m.executeStopWithCharts(instance.ID, deployLog, instance.Namespace, sortedCharts)
 
 	return logID, nil
 }
 
 // executeStopWithCharts runs helm uninstall for each chart in reverse order.
-func (m *Manager) executeStopWithCharts(instanceID, logID, namespace string, charts []ChartDeployInfo) {
+func (m *Manager) executeStopWithCharts(instanceID string, deployLog *models.DeploymentLog, namespace string, charts []ChartDeployInfo) {
 	m.semaphore <- struct{}{}
 	defer func() { <-m.semaphore }()
 
 	var allOutput string
 	var stopErr error
 
-	ctx := context.Background()
+	// Use a bounded context based on the configured helm timeout to prevent
+	// operations from hanging indefinitely.
+	ctx, cancel := context.WithTimeout(context.Background(), m.helm.Timeout())
+	defer cancel()
 
 	for _, chart := range charts {
 		releaseName := fmt.Sprintf("%s-%s", namespace, chart.ChartConfig.ChartName)
@@ -354,7 +308,7 @@ func (m *Manager) executeStopWithCharts(instanceID, logID, namespace string, cha
 		})
 
 		allOutput += fmt.Sprintf("=== Chart: %s ===\n%s\n", chart.ChartConfig.ChartName, output)
-		m.broadcastLog(instanceID, logID, output)
+		m.broadcastLog(instanceID, deployLog.ID, output)
 
 		if err != nil {
 			stopErr = fmt.Errorf("uninstalling chart %q: %w", chart.ChartConfig.ChartName, err)
@@ -362,24 +316,19 @@ func (m *Manager) executeStopWithCharts(instanceID, logID, namespace string, cha
 		}
 	}
 
-	m.finalizeStop(instanceID, logID, allOutput, stopErr)
+	m.finalizeStop(instanceID, deployLog, allOutput, stopErr)
 }
 
 // finalizeStop updates the instance and deployment log with the final stop status.
-func (m *Manager) finalizeStop(instanceID, logID, output string, stopErr error) {
+// The deployLog is passed directly from the goroutine closure to avoid a
+// partition-scanning FindByID call on Azure Table Storage.
+func (m *Manager) finalizeStop(instanceID string, deployLog *models.DeploymentLog, output string, stopErr error) {
 	now := time.Now().UTC()
 
 	instance, err := m.instanceRepo.FindByID(instanceID)
 	if err != nil {
 		slog.Error("failed to find instance for stop finalization",
 			"instance_id", instanceID, "error", err)
-		return
-	}
-
-	deployLog, err := m.logRepo.FindByID(logID)
-	if err != nil {
-		slog.Error("failed to find deployment log for stop finalization",
-			"log_id", logID, "error", err)
 		return
 	}
 
@@ -394,7 +343,7 @@ func (m *Manager) finalizeStop(instanceID, logID, output string, stopErr error) 
 
 		slog.Error("stop failed",
 			"instance_id", instanceID,
-			"log_id", logID,
+			"log_id", deployLog.ID,
 			"error", stopErr,
 		)
 	} else {
@@ -404,7 +353,7 @@ func (m *Manager) finalizeStop(instanceID, logID, output string, stopErr error) 
 
 		slog.Info("stop succeeded",
 			"instance_id", instanceID,
-			"log_id", logID,
+			"log_id", deployLog.ID,
 		)
 	}
 
@@ -415,12 +364,12 @@ func (m *Manager) finalizeStop(instanceID, logID, output string, stopErr error) 
 
 	if err := m.logRepo.Update(deployLog); err != nil {
 		slog.Error("failed to update deployment log after stop",
-			"log_id", logID, "error", err)
+			"log_id", deployLog.ID, "error", err)
 	}
 
 	if stopErr != nil {
-		m.broadcastStatusWithError(instanceID, models.StackStatusError, logID, stopErr.Error())
+		m.broadcastStatusWithError(instanceID, models.StackStatusError, deployLog.ID, stopErr.Error())
 	} else {
-		m.broadcastStatus(instanceID, models.StackStatusStopped, logID)
+		m.broadcastStatus(instanceID, models.StackStatusStopped, deployLog.ID)
 	}
 }
