@@ -10,6 +10,6 @@
   - AuditLogs: PK=YYYY-MM, RK=reverse_timestamp+uuid
 - Always handle `azcore.ResponseError` and map to domain errors from `pkg/dberrors`
 - Entity JSON field names must be PascalCase for Azure Tables compatibility
-- Include `Timestamp` field for optimistic concurrency on updates
+- Optimistic concurrency uses two layers: application-level `Version` field check + Azure ETag/IfMatch on `UpdateEntity` (HTTP 412 on conflict)
 - Use `context.Context` on all repository methods
 - Return `dberrors.ErrNotFound` when entity doesn't exist, not raw Azure errors
