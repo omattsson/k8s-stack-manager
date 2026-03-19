@@ -20,6 +20,11 @@ import {
   Accordion,
   AccordionSummary,
   AccordionDetails,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogContentText,
+  DialogActions,
 } from '@mui/material';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import StatusBadge from '../../components/StatusBadge';
@@ -48,6 +53,8 @@ const Detail = () => {
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deploying, setDeploying] = useState(false);
   const [stopping, setStopping] = useState(false);
+  const [cleaning, setCleaning] = useState(false);
+  const [cleanDialogOpen, setCleanDialogOpen] = useState(false);
   const [deployLogs, setDeployLogs] = useState<DeploymentLog[]>([]);
   const [k8sStatus, setK8sStatus] = useState<NamespaceStatus | null>(null);
   const [statusLoading, setStatusLoading] = useState(false);
@@ -83,7 +90,7 @@ const Detail = () => {
         } catch { /* ignore — no logs yet */ }
 
         // Fetch K8s status if instance is running or deploying
-        if (inst.status === 'running' || inst.status === 'deploying' || inst.status === 'error' || inst.status === 'stopping') {
+        if (inst.status === 'running' || inst.status === 'deploying' || inst.status === 'error' || inst.status === 'stopping' || inst.status === 'cleaning') {
           try {
             setStatusLoading(true);
             const status = await instanceService.getStatus(id);
@@ -111,16 +118,22 @@ const Detail = () => {
       const newStatus = payload.status as string;
       setInstance((prev) => prev ? { ...prev, status: newStatus } : prev);
 
-      // Refresh K8s status for running/deploying/error states.
-      if (newStatus === 'running' || newStatus === 'deploying' || newStatus === 'error' || newStatus === 'stopping') {
+      // Refresh K8s status for running/deploying/error/stopping/cleaning states.
+      if (newStatus === 'running' || newStatus === 'deploying' || newStatus === 'error' || newStatus === 'stopping' || newStatus === 'cleaning') {
         instanceService.getStatus(id).then(setK8sStatus).catch(() => {});
       }
 
+      // Clear K8s status when returning to draft (after clean).
+      if (newStatus === 'draft') {
+        setK8sStatus(null);
+      }
+
       // Refresh deploy logs on terminal states.
-      if (newStatus === 'running' || newStatus === 'stopped' || newStatus === 'error') {
+      if (newStatus === 'running' || newStatus === 'stopped' || newStatus === 'error' || newStatus === 'draft') {
         instanceService.getDeployLog(id).then(setDeployLogs).catch(() => {});
         setDeploying(false);
         setStopping(false);
+        setCleaning(false);
       }
     }
 
@@ -198,9 +211,8 @@ const Detail = () => {
       setSnackbar('Deployment started');
     } catch {
       setError('Failed to start deployment');
-      return;
-    } finally {
       setDeploying(false);
+      return;
     }
     // Best-effort refresh — don't surface errors to the user
     try {
@@ -222,9 +234,8 @@ const Detail = () => {
       setSnackbar('Stop initiated');
     } catch {
       setError('Failed to stop instance');
-      return;
-    } finally {
       setStopping(false);
+      return;
     }
     // Best-effort refresh — don't surface errors to the user
     try {
@@ -235,6 +246,29 @@ const Detail = () => {
       const logs = await instanceService.getDeployLog(id);
       setDeployLogs(logs);
     } catch (e) { console.error('Failed to refresh deploy logs after stop', e); }
+  };
+
+  const handleClean = async () => {
+    if (!id) return;
+    setCleaning(true);
+    setError(null);
+    try {
+      await instanceService.clean(id);
+      setSnackbar('Namespace cleanup initiated');
+    } catch {
+      setError('Failed to clean namespace');
+      setCleaning(false);
+      return;
+    }
+    // Best-effort refresh — don't surface errors to the user
+    try {
+      const inst = await instanceService.get(id);
+      setInstance(inst);
+    } catch (e) { console.error('Failed to refresh instance after clean', e); }
+    try {
+      const logs = await instanceService.getDeployLog(id);
+      setDeployLogs(logs);
+    } catch (e) { console.error('Failed to refresh deploy logs after clean', e); }
   };
 
   const getRepoUrl = (): string => {
@@ -289,9 +323,19 @@ const Detail = () => {
                 Stopping...
               </Button>
             )}
+            {instance.status === 'cleaning' && (
+              <Button variant="outlined" color="error" disabled>
+                Cleaning...
+              </Button>
+            )}
             {(instance.status === 'running' || instance.status === 'deploying') && (
               <Button variant="contained" color="warning" onClick={handleStop} disabled={stopping}>
                 {stopping ? 'Stopping...' : 'Stop'}
+              </Button>
+            )}
+            {(instance.status === 'running' || instance.status === 'stopped' || instance.status === 'error') && (
+              <Button variant="outlined" color="error" onClick={() => setCleanDialogOpen(true)} disabled={cleaning}>
+                {cleaning ? 'Cleaning...' : 'Clean Namespace'}
               </Button>
             )}
             <Button variant="outlined" onClick={handleExport}>Export Values</Button>
@@ -308,11 +352,12 @@ const Detail = () => {
           const isError = instance.status === 'error';
           const isStopped = instance.status === 'stopped';
           const isStopping = instance.status === 'stopping';
+          const isCleaning = instance.status === 'cleaning';
 
           return (
             <Box sx={{ mb: 2 }}>
               <Typography variant="subtitle2" gutterBottom>Status Lifecycle</Typography>
-              {isError || isStopped || isStopping ? (
+              {isError || isStopped || isStopping || isCleaning ? (
                 <Alert severity={isError ? 'error' : 'warning'} sx={{ py: 0.5 }}>
                   Instance is {instance.status}
                 </Alert>
@@ -329,7 +374,7 @@ const Detail = () => {
           );
         })()}
 
-        {(instance.status === 'running' || instance.status === 'deploying' || instance.status === 'error' || instance.status === 'stopping') && (
+        {(instance.status === 'running' || instance.status === 'deploying' || instance.status === 'error' || instance.status === 'stopping' || instance.status === 'cleaning') && (
           <Box sx={{ mb: 2 }}>
             <Typography variant="subtitle2" gutterBottom>Cluster Resources</Typography>
             <PodStatusDisplay status={k8sStatus} loading={statusLoading} />
@@ -415,6 +460,19 @@ const Detail = () => {
         onCancel={() => setDeleteOpen(false)}
         confirmText="Delete"
       />
+
+      <Dialog open={cleanDialogOpen} onClose={() => setCleanDialogOpen(false)}>
+        <DialogTitle>Clean Namespace?</DialogTitle>
+        <DialogContent>
+          <DialogContentText>
+            This will uninstall all Helm releases and delete the Kubernetes namespace. The instance will return to draft status. This action cannot be undone.
+          </DialogContentText>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setCleanDialogOpen(false)}>Cancel</Button>
+          <Button color="error" onClick={() => { setCleanDialogOpen(false); handleClean(); }}>Clean</Button>
+        </DialogActions>
+      </Dialog>
 
       <Snackbar
         open={Boolean(snackbar)}

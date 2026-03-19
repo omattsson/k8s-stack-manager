@@ -207,7 +207,7 @@ export interface InstantiateTemplateRequest {
   chart_overrides?: Record<string, string>;
 }
 
-export type StackStatus = 'draft' | 'deploying' | 'running' | 'stopped' | 'error';
+export type StackStatus = 'draft' | 'deploying' | 'running' | 'stopped' | 'error' | 'stopping' | 'cleaning';
 
 export interface CreateUserRequest {
   username: string;

@@ -6,6 +6,8 @@ const statusColors: Record<StackStatus, 'default' | 'info' | 'success' | 'warnin
   deploying: 'info',
   running: 'success',
   stopped: 'warning',
+  stopping: 'warning',
+  cleaning: 'warning',
   error: 'error',
 };
 
