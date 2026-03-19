@@ -42,6 +42,11 @@ services:
       - AZURE_DEVOPS_DEFAULT_ORG=${AZURE_DEVOPS_DEFAULT_ORG:-}
       - GITLAB_TOKEN=${GITLAB_TOKEN:-}
       - GITLAB_BASE_URL=${GITLAB_BASE_URL:-https://gitlab.com}
+      # Deployment
+      - HELM_BINARY=${HELM_BINARY:-helm}
+      - KUBECONFIG_PATH=${KUBECONFIG_PATH:-}
+      - DEPLOYMENT_TIMEOUT=${DEPLOYMENT_TIMEOUT:-10m}
+      - MAX_CONCURRENT_DEPLOYS=${MAX_CONCURRENT_DEPLOYS:-5}
       # Stack defaults
       - DEFAULT_BRANCH=${DEFAULT_BRANCH:-master}
     depends_on:

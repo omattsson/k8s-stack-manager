@@ -81,6 +81,8 @@ test-e2e: integration-infra-start
 		AZURE_TABLE_ENDPOINT=127.0.0.1:10002 \
 		JWT_SECRET="dev-secret-change-in-production-minimum-16-chars" \
 		ADMIN_USERNAME=admin ADMIN_PASSWORD=admin SELF_REGISTRATION=true \
+		HELM_BINARY=$${HELM_BINARY:-helm} \
+		KUBECONFIG_PATH=$${KUBECONFIG_PATH:-$$HOME/.kube/config} \
 		RATE_LIMIT=10000 PORT=8081 ./tmp/main &
 	@echo "Waiting for backend to be healthy..."
 	@until curl -sf http://localhost:8081/health/live >/dev/null 2>&1; do \
