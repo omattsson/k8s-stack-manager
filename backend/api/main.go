@@ -262,6 +262,9 @@ func main() {
 	<-quit
 	slog.Info("Shutting down server...")
 
+	// Cancel in-flight deploy/stop goroutines
+	deployManager.Shutdown()
+
 	// Stop K8s status watcher
 	if k8sWatcher != nil {
 		k8sWatcher.Stop()

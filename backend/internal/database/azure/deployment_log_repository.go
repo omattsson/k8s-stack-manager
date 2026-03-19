@@ -101,23 +101,10 @@ func (r *DeploymentLogRepository) FindByID(id string) (*models.DeploymentLog, er
 func (r *DeploymentLogRepository) Update(log *models.DeploymentLog) error {
 	ctx := context.Background()
 
-	// Reconstruct the row key by scanning for the entity first.
-	filter := "PartitionKey eq '" + escapeODataString(log.StackInstanceID) + "' and ID eq '" + escapeODataString(log.ID) + "'"
-	pager := r.client.NewListEntitiesPager(&aztables.ListEntitiesOptions{
-		Filter: &filter,
-	})
-
-	entities, err := collectEntities(ctx, pager, nil)
-	if err != nil {
-		return mapAzureError("update_lookup", err)
-	}
-	if len(entities) == 0 {
-		return dberrors.NewDatabaseError("update", dberrors.ErrNotFound)
-	}
-
-	// Use the original PK/RK from the found entity.
-	pk := getString(entities[0], "PartitionKey")
-	rk := getString(entities[0], "RowKey")
+	// Reconstruct PK/RK directly from the log fields (same formula as Create)
+	// to avoid an O(partition) scan query.
+	pk := log.StackInstanceID
+	rk := reverseTimestamp(log.StartedAt) + "_" + log.ID
 
 	entity := deploymentLogToEntity(log, pk, rk)
 	entityBytes, err := json.Marshal(entity)

@@ -140,7 +140,7 @@ func (h *HelmClient) run(ctx context.Context, args []string) (string, error) {
 	output := combined.String()
 
 	if err != nil {
-		return output, fmt.Errorf("helm command failed: %w\noutput: %s", err, output)
+		return output, fmt.Errorf("helm command failed: %w", err)
 	}
 
 	return output, nil

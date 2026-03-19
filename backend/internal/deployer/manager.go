@@ -15,13 +15,23 @@ import (
 	"github.com/google/uuid"
 )
 
+// maxInstanceErrorLen is the maximum length of error messages stored on
+// StackInstance records. These appear in list views, so they must be short.
+const maxInstanceErrorLen = 256
+
+// maxLogErrorLen is the maximum length of error messages stored on
+// DeploymentLog records. Logs are viewed individually, so they can be longer.
+const maxLogErrorLen = 1024
+
 // Manager orchestrates asynchronous deployments with concurrency control.
 type Manager struct {
-	helm         *HelmClient
-	instanceRepo models.StackInstanceRepository
-	logRepo      models.DeploymentLogRepository
-	hub          websocket.BroadcastSender
-	semaphore    chan struct{}
+	helm           *HelmClient
+	instanceRepo   models.StackInstanceRepository
+	logRepo        models.DeploymentLogRepository
+	hub            websocket.BroadcastSender
+	semaphore      chan struct{}
+	shutdownCtx    context.Context
+	shutdownCancel context.CancelFunc
 }
 
 // ManagerConfig holds the dependencies for creating a Manager.
@@ -54,13 +64,23 @@ func NewManager(cfg ManagerConfig) *Manager {
 		maxConcurrent = 3
 	}
 
+	ctx, cancel := context.WithCancel(context.Background())
+
 	return &Manager{
-		helm:         cfg.HelmClient,
-		instanceRepo: cfg.InstanceRepo,
-		logRepo:      cfg.DeployLogRepo,
-		hub:          cfg.Hub,
-		semaphore:    make(chan struct{}, maxConcurrent),
+		helm:           cfg.HelmClient,
+		instanceRepo:   cfg.InstanceRepo,
+		logRepo:        cfg.DeployLogRepo,
+		hub:            cfg.Hub,
+		semaphore:      make(chan struct{}, maxConcurrent),
+		shutdownCtx:    ctx,
+		shutdownCancel: cancel,
 	}
+}
+
+// Shutdown cancels the context used by background deploy/stop goroutines,
+// signalling them to abort at the next cancellation check point.
+func (m *Manager) Shutdown() {
+	m.shutdownCancel()
 }
 
 // Deploy starts an async deployment. Returns the deployment log ID immediately.
@@ -132,9 +152,9 @@ func (m *Manager) executeDeploy(instanceID string, deployLog *models.DeploymentL
 	}
 	defer os.RemoveAll(tmpDir)
 
-	// Use a bounded context based on the configured helm timeout to prevent
-	// operations from hanging indefinitely.
-	ctx, cancel := context.WithTimeout(context.Background(), m.helm.Timeout())
+	// Use a bounded context derived from the shutdown context so that
+	// operations are cancelled both on timeout and on server shutdown.
+	ctx, cancel := context.WithTimeout(m.shutdownCtx, m.helm.Timeout())
 	defer cancel()
 
 	for _, chart := range charts {
@@ -202,9 +222,9 @@ func (m *Manager) finalizeDeploy(instanceID string, deployLog *models.Deployment
 
 	if deployErr != nil {
 		instance.Status = models.StackStatusError
-		instance.ErrorMessage = deployErr.Error()
+		instance.ErrorMessage = truncateString(deployErr.Error(), maxInstanceErrorLen)
 		deployLog.Status = models.DeployLogError
-		deployLog.ErrorMessage = deployErr.Error()
+		deployLog.ErrorMessage = truncateString(deployErr.Error(), maxLogErrorLen)
 
 		slog.Error("deployment failed",
 			"instance_id", instanceID,
@@ -288,9 +308,9 @@ func (m *Manager) executeStopWithCharts(instanceID string, deployLog *models.Dep
 	var allOutput string
 	var stopErr error
 
-	// Use a bounded context based on the configured helm timeout to prevent
-	// operations from hanging indefinitely.
-	ctx, cancel := context.WithTimeout(context.Background(), m.helm.Timeout())
+	// Use a bounded context derived from the shutdown context so that
+	// operations are cancelled both on timeout and on server shutdown.
+	ctx, cancel := context.WithTimeout(m.shutdownCtx, m.helm.Timeout())
 	defer cancel()
 
 	for _, chart := range charts {
@@ -339,9 +359,9 @@ func (m *Manager) finalizeStop(instanceID string, deployLog *models.DeploymentLo
 
 	if stopErr != nil {
 		instance.Status = models.StackStatusError
-		instance.ErrorMessage = stopErr.Error()
+		instance.ErrorMessage = truncateString(stopErr.Error(), maxInstanceErrorLen)
 		deployLog.Status = models.DeployLogError
-		deployLog.ErrorMessage = stopErr.Error()
+		deployLog.ErrorMessage = truncateString(stopErr.Error(), maxLogErrorLen)
 
 		slog.Error("stop failed",
 			"instance_id", instanceID,
@@ -374,4 +394,17 @@ func (m *Manager) finalizeStop(instanceID string, deployLog *models.DeploymentLo
 	} else {
 		m.broadcastStatus(instanceID, models.StackStatusStopped, deployLog.ID)
 	}
+}
+
+// truncateString returns s truncated to maxLen characters. If truncation
+// occurs, the last three characters are replaced with "..." to signal that
+// the string was cut.
+func truncateString(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	if maxLen <= 3 {
+		return s[:maxLen]
+	}
+	return s[:maxLen-3] + "..."
 }

@@ -49,6 +49,8 @@ const Detail = () => {
   useEffect(() => {
     if (!id) return;
     const fetchData = async () => {
+      setDeployLogs([]);
+      setK8sStatus(null);
       try {
         const inst = await instanceService.get(id);
         setInstance(inst);
@@ -163,17 +165,21 @@ const Detail = () => {
     try {
       await instanceService.deploy(id);
       setSnackbar('Deployment started');
-      // Refresh instance to get new status
-      const inst = await instanceService.get(id);
-      setInstance(inst);
-      // Refresh logs
-      const logs = await instanceService.getDeployLog(id);
-      setDeployLogs(logs);
     } catch {
       setError('Failed to start deployment');
+      return;
     } finally {
       setDeploying(false);
     }
+    // Best-effort refresh — don't surface errors to the user
+    try {
+      const inst = await instanceService.get(id);
+      setInstance(inst);
+    } catch (e) { console.error('Failed to refresh instance after deploy', e); }
+    try {
+      const logs = await instanceService.getDeployLog(id);
+      setDeployLogs(logs);
+    } catch (e) { console.error('Failed to refresh deploy logs after deploy', e); }
   };
 
   const handleStop = async () => {
@@ -183,15 +189,21 @@ const Detail = () => {
     try {
       await instanceService.stop(id);
       setSnackbar('Stop initiated');
-      const inst = await instanceService.get(id);
-      setInstance(inst);
-      const logs = await instanceService.getDeployLog(id);
-      setDeployLogs(logs);
     } catch {
       setError('Failed to stop instance');
+      return;
     } finally {
       setStopping(false);
     }
+    // Best-effort refresh — don't surface errors to the user
+    try {
+      const inst = await instanceService.get(id);
+      setInstance(inst);
+    } catch (e) { console.error('Failed to refresh instance after stop', e); }
+    try {
+      const logs = await instanceService.getDeployLog(id);
+      setDeployLogs(logs);
+    } catch (e) { console.error('Failed to refresh deploy logs after stop', e); }
   };
 
   const getRepoUrl = (): string => {

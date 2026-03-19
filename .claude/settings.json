@@ -23,7 +23,8 @@
       "Bash(npx tsc:*)",
       "Bash(go tool:*)",
       "Bash(grep -v \"^$\")",
-      "Bash(gh api:*)"
+      "Bash(gh api:*)",
+      "Bash(docker build:*)"
     ]
   }
 }
