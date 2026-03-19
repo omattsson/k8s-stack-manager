@@ -103,7 +103,7 @@ export interface StackInstance {
 export interface DeploymentLog {
   id: string;
   stack_instance_id: string;
-  action: 'deploy' | 'stop';
+  action: 'deploy' | 'stop' | 'clean';
   status: 'running' | 'success' | 'error';
   output: string;
   error_message?: string;
