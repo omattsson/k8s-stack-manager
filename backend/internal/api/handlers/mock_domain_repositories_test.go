@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"backend/internal/models"
+	"backend/pkg/dberrors"
 )
 
 // ---- UserRepository mock ----
@@ -557,7 +558,7 @@ func (m *MockStackInstanceRepository) FindByNamespace(namespace string) (*models
 			return &cp, nil
 		}
 	}
-	return nil, errors.New("not found")
+	return nil, dberrors.NewDatabaseError("FindByNamespace", dberrors.ErrNotFound)
 }
 
 func (m *MockStackInstanceRepository) Update(i *models.StackInstance) error {

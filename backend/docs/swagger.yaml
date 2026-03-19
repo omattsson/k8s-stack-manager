@@ -56,6 +56,17 @@ definitions:
       user:
         $ref: '#/definitions/models.User'
     type: object
+  handlers.NamespaceConflictResponse:
+    properties:
+      error:
+        type: string
+      message:
+        type: string
+      suggestions:
+        items:
+          type: string
+        type: array
+    type: object
   handlers.RegisterRequest:
     properties:
       display_name:
@@ -1066,9 +1077,7 @@ paths:
         "409":
           description: Namespace already exists
           schema:
-            additionalProperties:
-              type: string
-            type: object
+            $ref: '#/definitions/handlers.NamespaceConflictResponse'
       summary: Create a stack instance
       tags:
       - stack-instances
@@ -1228,9 +1237,7 @@ paths:
         "409":
           description: Namespace already exists
           schema:
-            additionalProperties:
-              type: string
-            type: object
+            $ref: '#/definitions/handlers.NamespaceConflictResponse'
       summary: Clone a stack instance
       tags:
       - stack-instances

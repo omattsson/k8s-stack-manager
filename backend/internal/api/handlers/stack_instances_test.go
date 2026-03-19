@@ -404,12 +404,13 @@ func TestCreateInstanceNamespaceConflict(t *testing.T) {
 				require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 				assert.Equal(t, "namespace already exists", resp["error"])
 				assert.Contains(t, resp["message"], "stack-my-stack-alice")
+				// Suggestions are instance name suggestions (not namespaces).
 				suggestions, ok := resp["suggestions"].([]interface{})
 				require.True(t, ok, "suggestions should be an array")
 				assert.Len(t, suggestions, 3)
-				assert.Equal(t, "stack-my-stack-2-alice", suggestions[0])
-				assert.Equal(t, "stack-my-stack-3-alice", suggestions[1])
-				assert.Equal(t, "stack-my-stack-4-alice", suggestions[2])
+				assert.Equal(t, "my-stack-2", suggestions[0])
+				assert.Equal(t, "my-stack-3", suggestions[1])
+				assert.Equal(t, "my-stack-4", suggestions[2])
 			},
 		},
 		{

@@ -50,8 +50,13 @@ describe('DeploymentLogViewer', () => {
 
   it('does not show the second log output by default (collapsed)', () => {
     render(<DeploymentLogViewer logs={mockLogs} />);
-    // The second log's output should not be visible (collapsed)
-    expect(screen.queryByText(/Attempting to uninstall/)).not.toBeVisible();
+    // MUI Accordion collapsed content stays in DOM, so use aria-expanded
+    // on the accordion summary button instead of checking content visibility.
+    const buttons = screen.getAllByRole('button');
+    // First accordion (most recent log) should be expanded
+    expect(buttons[0]).toHaveAttribute('aria-expanded', 'true');
+    // Second accordion should be collapsed
+    expect(buttons[1]).toHaveAttribute('aria-expanded', 'false');
   });
 
   it('expands a collapsed log when clicked', async () => {

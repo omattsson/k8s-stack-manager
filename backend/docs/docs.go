@@ -1038,10 +1038,7 @@ const docTemplate = `{
                     "409": {
                         "description": "Namespace already exists",
                         "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
+                            "$ref": "#/definitions/handlers.NamespaceConflictResponse"
                         }
                     }
                 }
@@ -1281,10 +1278,7 @@ const docTemplate = `{
                     "409": {
                         "description": "Namespace already exists",
                         "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
+                            "$ref": "#/definitions/handlers.NamespaceConflictResponse"
                         }
                     }
                 }
@@ -2769,6 +2763,23 @@ const docTemplate = `{
                 },
                 "user": {
                     "$ref": "#/definitions/models.User"
+                }
+            }
+        },
+        "handlers.NamespaceConflictResponse": {
+            "type": "object",
+            "properties": {
+                "error": {
+                    "type": "string"
+                },
+                "message": {
+                    "type": "string"
+                },
+                "suggestions": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
                 }
             }
         },
