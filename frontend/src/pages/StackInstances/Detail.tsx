@@ -20,11 +20,6 @@ import {
   Accordion,
   AccordionSummary,
   AccordionDetails,
-  Dialog,
-  DialogTitle,
-  DialogContent,
-  DialogContentText,
-  DialogActions,
 } from '@mui/material';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import StatusBadge from '../../components/StatusBadge';
@@ -461,18 +456,14 @@ const Detail = () => {
         confirmText="Delete"
       />
 
-      <Dialog open={cleanDialogOpen} onClose={() => setCleanDialogOpen(false)}>
-        <DialogTitle>Clean Namespace?</DialogTitle>
-        <DialogContent>
-          <DialogContentText>
-            This will uninstall all Helm releases and delete the Kubernetes namespace. The instance will return to draft status. This action cannot be undone.
-          </DialogContentText>
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setCleanDialogOpen(false)}>Cancel</Button>
-          <Button color="error" onClick={() => { setCleanDialogOpen(false); handleClean(); }}>Clean</Button>
-        </DialogActions>
-      </Dialog>
+      <ConfirmDialog
+        open={cleanDialogOpen}
+        title="Clean Namespace?"
+        message="This will uninstall all Helm releases and delete the Kubernetes namespace. The instance will return to draft status. This action cannot be undone."
+        onConfirm={() => { setCleanDialogOpen(false); handleClean(); }}
+        onCancel={() => setCleanDialogOpen(false)}
+        confirmText="Clean"
+      />
 
       <Snackbar
         open={Boolean(snackbar)}

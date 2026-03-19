@@ -488,8 +488,9 @@ func (m *Manager) finalizeStop(instanceID string, deployLog *models.DeploymentLo
 	}
 }
 
-// sanitizeDeployError extracts a high-level, safe error message from a
-// deployment or stop error. The full Helm output may contain sensitive data
+// sanitizeDeployError extracts the relevant error message from Helm/K8s
+// command output for deploy, stop, and clean operations, stripping verbose output.
+// The full Helm output may contain sensitive data
 // (cluster names, internal URLs, credentials in env vars) and must not be
 // exposed in user-visible fields like StackInstance.ErrorMessage. The raw
 // error is still available in DeploymentLog.Output for debugging.
@@ -640,9 +641,11 @@ func (m *Manager) executeClean(instanceID string, deployLog *models.DeploymentLo
 		}
 	}
 
-	// If namespace deletion succeeded but some uninstalls failed, report a summary error.
+	// If namespace deletion succeeded but some uninstalls failed, include a
+	// warning in the output but do NOT fail the operation. The namespace delete
+	// already cleaned up remaining resources, so the clean is successful.
 	if cleanErr == nil && uninstallErrors > 0 {
-		cleanErr = fmt.Errorf("uninstalling chart: %d of %d charts failed to uninstall", uninstallErrors, len(charts))
+		allOutput += fmt.Sprintf("WARNING: %d of %d charts failed to uninstall (namespace deletion cleaned up remaining resources)\n", uninstallErrors, len(charts))
 	}
 
 	m.finalizeClean(instanceID, deployLog, allOutput, cleanErr)

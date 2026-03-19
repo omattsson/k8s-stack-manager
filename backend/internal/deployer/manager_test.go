@@ -1447,28 +1447,6 @@ func TestManager_Deploy_PartialRollback_RollbackFails(t *testing.T) {
 	assert.Equal(t, "chart-a", uninstalls[0].ReleaseName)
 }
 
-// ---- mock K8s client ----
-
-type mockK8sClient struct {
-	mu               sync.Mutex
-	deleteNamespace  []string
-	deleteErr        error
-}
-
-func (m *mockK8sClient) recordDeleteNamespace(ns string) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.deleteNamespace = append(m.deleteNamespace, ns)
-}
-
-func (m *mockK8sClient) getDeleteNamespaceCalls() []string {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	cp := make([]string, len(m.deleteNamespace))
-	copy(cp, m.deleteNamespace)
-	return cp
-}
-
 // ---- Clean tests ----
 
 func TestManager_Clean_Success(t *testing.T) {
@@ -1486,7 +1464,6 @@ func TestManager_Clean_Success(t *testing.T) {
 	}
 	require.NoError(t, instanceRepo.Create(inst))
 
-	mock8s := &mockK8sClient{}
 	helmMock := &mockHelmExecutor{}
 
 	// Create a real k8s.Client with a fake clientset that has the namespace.
@@ -1551,7 +1528,6 @@ func TestManager_Clean_Success(t *testing.T) {
 	assert.Greater(t, hub.messageCount(), 0)
 
 	// We used a real k8s.Client with a fake clientset — namespace was deleted.
-	_ = mock8s // mock8s is not used here; the real client handles it.
 }
 
 func TestManager_Clean_Success_NoK8sClient(t *testing.T) {
@@ -1650,18 +1626,21 @@ func TestManager_Clean_HelmFails(t *testing.T) {
 	// Wait for async completion.
 	time.Sleep(500 * time.Millisecond)
 
-	// Verify instance status is error.
+	// Best-effort: uninstall failures are warnings, not errors.
+	// With no K8s client, namespace deletion is skipped, so the clean succeeds.
 	final, err := instanceRepo.FindByID(inst.ID)
 	assert.NoError(t, err)
-	assert.Equal(t, models.StackStatusError, final.Status)
-	assert.NotEmpty(t, final.ErrorMessage)
+	assert.Equal(t, models.StackStatusDraft, final.Status)
+	assert.Empty(t, final.ErrorMessage)
 
-	// Verify log was updated to error.
+	// Verify log was updated to success with warning in output.
 	finalLog, err := logRepo.FindByID(context.Background(), logID)
 	assert.NoError(t, err)
-	assert.Equal(t, models.DeployLogError, finalLog.Status)
-	assert.NotEmpty(t, finalLog.ErrorMessage)
+	assert.Equal(t, models.DeployLogSuccess, finalLog.Status)
+	assert.Empty(t, finalLog.ErrorMessage)
 	assert.NotNil(t, finalLog.CompletedAt)
+	assert.Contains(t, finalLog.Output, "WARNING:")
+	assert.Contains(t, finalLog.Output, "1 of 1 charts failed to uninstall")
 
 	// Verify broadcasts were sent.
 	assert.Greater(t, hub.messageCount(), 0)
