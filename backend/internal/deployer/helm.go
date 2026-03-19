@@ -121,16 +121,18 @@ func (h *HelmClient) Status(ctx context.Context, release, namespace string) (*Re
 
 // run executes a helm command with the given arguments and returns the combined output.
 func (h *HelmClient) run(ctx context.Context, args []string) (string, error) {
+	// Prepend --kubeconfig flag so helm always uses the configured kubeconfig
+	// regardless of the process environment.
+	if h.kubeconfig != "" {
+		args = append([]string{"--kubeconfig", h.kubeconfig}, args...)
+	}
+
 	slog.Info("executing helm command",
 		"binary", h.binaryPath,
 		"args", args,
 	)
 
 	cmd := exec.CommandContext(ctx, h.binaryPath, args...)
-
-	if h.kubeconfig != "" {
-		cmd.Env = append(cmd.Environ(), "KUBECONFIG="+h.kubeconfig)
-	}
 
 	var combined bytes.Buffer
 	cmd.Stdout = &combined

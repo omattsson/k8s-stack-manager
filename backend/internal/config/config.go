@@ -370,7 +370,7 @@ func LoadConfig() (*Config, error) {
 		},
 		Deployment: DeploymentConfig{
 			HelmBinary:           getEnv("HELM_BINARY", "helm"),
-			KubeconfigPath:       getEnv("KUBECONFIG_PATH", ""),
+			KubeconfigPath:       getEnv("KUBECONFIG_PATH", getEnv("KUBECONFIG", "")),
 			DeploymentTimeout:    getEnvDuration("DEPLOYMENT_TIMEOUT", 10*time.Minute),
 			MaxConcurrentDeploys: getEnvInt32("MAX_CONCURRENT_DEPLOYS", 5),
 		},
