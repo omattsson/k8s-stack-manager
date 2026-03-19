@@ -365,6 +365,15 @@ export const instanceService = {
       throw error;
     }
   },
+  clean: async (id: string): Promise<{ log_id: string; message: string }> => {
+    try {
+      const response = await api.post(`/api/v1/stack-instances/${id}/clean`);
+      return response.data;
+    } catch (error) {
+      console.error('Failed to clean namespace:', error);
+      throw error;
+    }
+  },
   getDeployLog: async (id: string): Promise<DeploymentLog[]> => {
     try {
       const response = await api.get(`/api/v1/stack-instances/${id}/deploy-log`);

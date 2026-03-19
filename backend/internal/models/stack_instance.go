@@ -25,6 +25,7 @@ const (
 	StackStatusRunning   = "running"
 	StackStatusStopping  = "stopping"
 	StackStatusStopped   = "stopped"
+	StackStatusCleaning  = "cleaning"
 	StackStatusError     = "error"
 )
 

@@ -9,10 +9,14 @@ import (
 	"testing"
 	"time"
 
+	"backend/internal/k8s"
 	"backend/internal/models"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes/fake"
 )
 
 // ---- mock repositories ----
@@ -1441,6 +1445,205 @@ func TestManager_Deploy_PartialRollback_RollbackFails(t *testing.T) {
 	uninstalls := helmMock.getUninstallCalls()
 	require.Len(t, uninstalls, 1)
 	assert.Equal(t, "chart-a", uninstalls[0].ReleaseName)
+}
+
+// ---- Clean tests ----
+
+func TestManager_Clean_Success(t *testing.T) {
+	t.Parallel()
+
+	instanceRepo := newMockInstanceRepo()
+	logRepo := newMockDeployLogRepo()
+	hub := &mockBroadcaster{}
+
+	inst := &models.StackInstance{
+		ID:        "inst-clean-1",
+		Name:      "clean-test",
+		Namespace: "stack-clean-test",
+		Status:    models.StackStatusRunning,
+	}
+	require.NoError(t, instanceRepo.Create(inst))
+
+	helmMock := &mockHelmExecutor{}
+
+	// Create a real k8s.Client with a fake clientset that has the namespace.
+	fakeCS := fake.NewSimpleClientset(&corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{Name: "stack-clean-test"},
+	})
+	k8sClient := k8s.NewClientFromInterface(fakeCS)
+
+	mgr := NewManager(ManagerConfig{
+		HelmClient:    helmMock,
+		InstanceRepo:  instanceRepo,
+		DeployLogRepo: logRepo,
+		Hub:           hub,
+		K8sClient:     k8sClient,
+		MaxConcurrent: 2,
+	})
+
+	charts := []models.ChartConfig{
+		{ChartName: "redis", DeployOrder: 1},
+		{ChartName: "nginx", DeployOrder: 2},
+	}
+
+	logID, err := mgr.Clean(context.Background(), inst, charts)
+	assert.NoError(t, err)
+	assert.NotEmpty(t, logID)
+
+	// Verify deployment log was created with clean action.
+	log, err := logRepo.FindByID(context.Background(), logID)
+	assert.NoError(t, err)
+	assert.Equal(t, models.DeployActionClean, log.Action)
+	assert.Equal(t, models.DeployLogRunning, log.Status)
+
+	// Verify instance status was updated to cleaning.
+	updated, err := instanceRepo.FindByID(inst.ID)
+	assert.NoError(t, err)
+	assert.Equal(t, models.StackStatusCleaning, updated.Status)
+
+	// Wait for async completion.
+	time.Sleep(500 * time.Millisecond)
+
+	// Verify final status is draft.
+	final, err := instanceRepo.FindByID(inst.ID)
+	assert.NoError(t, err)
+	assert.Equal(t, models.StackStatusDraft, final.Status)
+	assert.Empty(t, final.ErrorMessage)
+	assert.Nil(t, final.LastDeployedAt)
+
+	// Verify log was updated to success.
+	finalLog, err := logRepo.FindByID(context.Background(), logID)
+	assert.NoError(t, err)
+	assert.Equal(t, models.DeployLogSuccess, finalLog.Status)
+	assert.NotNil(t, finalLog.CompletedAt)
+	assert.Contains(t, finalLog.Output, "Namespace stack-clean-test deleted")
+
+	// Verify uninstall was called for each chart in reverse order.
+	uninstalls := helmMock.getUninstallCalls()
+	require.Len(t, uninstalls, 2)
+	assert.Equal(t, "nginx", uninstalls[0].ReleaseName)
+	assert.Equal(t, "redis", uninstalls[1].ReleaseName)
+
+	// Verify broadcasts were sent.
+	assert.Greater(t, hub.messageCount(), 0)
+
+	// We used a real k8s.Client with a fake clientset — namespace was deleted.
+}
+
+func TestManager_Clean_Success_NoK8sClient(t *testing.T) {
+	t.Parallel()
+
+	instanceRepo := newMockInstanceRepo()
+	logRepo := newMockDeployLogRepo()
+	hub := &mockBroadcaster{}
+
+	inst := &models.StackInstance{
+		ID:        "inst-clean-nok8s",
+		Name:      "clean-nok8s",
+		Namespace: "stack-clean-nok8s",
+		Status:    models.StackStatusStopped,
+	}
+	require.NoError(t, instanceRepo.Create(inst))
+
+	helmMock := &mockHelmExecutor{}
+
+	mgr := NewManager(ManagerConfig{
+		HelmClient:    helmMock,
+		InstanceRepo:  instanceRepo,
+		DeployLogRepo: logRepo,
+		Hub:           hub,
+		K8sClient:     nil, // No K8s client.
+		MaxConcurrent: 2,
+	})
+
+	charts := []models.ChartConfig{
+		{ChartName: "app", DeployOrder: 1},
+	}
+
+	logID, err := mgr.Clean(context.Background(), inst, charts)
+	assert.NoError(t, err)
+	assert.NotEmpty(t, logID)
+
+	// Wait for async completion.
+	time.Sleep(500 * time.Millisecond)
+
+	// Verify final status is draft (namespace delete skipped).
+	final, err := instanceRepo.FindByID(inst.ID)
+	assert.NoError(t, err)
+	assert.Equal(t, models.StackStatusDraft, final.Status)
+	assert.Empty(t, final.ErrorMessage)
+
+	// Verify uninstall was called.
+	uninstalls := helmMock.getUninstallCalls()
+	require.Len(t, uninstalls, 1)
+	assert.Equal(t, "app", uninstalls[0].ReleaseName)
+
+	// Verify log does NOT contain namespace deletion.
+	finalLog, err := logRepo.FindByID(context.Background(), logID)
+	assert.NoError(t, err)
+	assert.Equal(t, models.DeployLogSuccess, finalLog.Status)
+	assert.NotContains(t, finalLog.Output, "Namespace")
+}
+
+func TestManager_Clean_HelmFails(t *testing.T) {
+	t.Parallel()
+
+	instanceRepo := newMockInstanceRepo()
+	logRepo := newMockDeployLogRepo()
+	hub := &mockBroadcaster{}
+
+	inst := &models.StackInstance{
+		ID:        "inst-clean-fail",
+		Name:      "clean-fail",
+		Namespace: "stack-clean-fail",
+		Status:    models.StackStatusError,
+	}
+	require.NoError(t, instanceRepo.Create(inst))
+
+	helmMock := &mockHelmExecutor{
+		uninstallFunc: func(_ context.Context, _ UninstallRequest) (string, error) {
+			return "uninstall failed", fmt.Errorf("helm command failed: exit status 1")
+		},
+	}
+
+	mgr := NewManager(ManagerConfig{
+		HelmClient:    helmMock,
+		InstanceRepo:  instanceRepo,
+		DeployLogRepo: logRepo,
+		Hub:           hub,
+		K8sClient:     nil,
+		MaxConcurrent: 2,
+	})
+
+	charts := []models.ChartConfig{
+		{ChartName: "nginx", DeployOrder: 1},
+	}
+
+	logID, err := mgr.Clean(context.Background(), inst, charts)
+	assert.NoError(t, err)
+	assert.NotEmpty(t, logID)
+
+	// Wait for async completion.
+	time.Sleep(500 * time.Millisecond)
+
+	// Best-effort: uninstall failures are warnings, not errors.
+	// With no K8s client, namespace deletion is skipped, so the clean succeeds.
+	final, err := instanceRepo.FindByID(inst.ID)
+	assert.NoError(t, err)
+	assert.Equal(t, models.StackStatusDraft, final.Status)
+	assert.Empty(t, final.ErrorMessage)
+
+	// Verify log was updated to success with warning in output.
+	finalLog, err := logRepo.FindByID(context.Background(), logID)
+	assert.NoError(t, err)
+	assert.Equal(t, models.DeployLogSuccess, finalLog.Status)
+	assert.Empty(t, finalLog.ErrorMessage)
+	assert.NotNil(t, finalLog.CompletedAt)
+	assert.Contains(t, finalLog.Output, "WARNING:")
+	assert.Contains(t, finalLog.Output, "1 of 1 charts failed to uninstall")
+
+	// Verify broadcasts were sent.
+	assert.Greater(t, hub.messageCount(), 0)
 }
 
 func TestManager_Deploy_FirstChartFails_NoRollback(t *testing.T) {

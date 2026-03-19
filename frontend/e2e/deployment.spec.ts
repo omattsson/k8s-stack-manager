@@ -304,6 +304,124 @@ test.describe('Deployment API', () => {
     expect(body).toHaveProperty('log_id');
     expect(body).toHaveProperty('message', 'Deployment started');
   });
+
+  test('clean draft instance returns 409', async ({ request }) => {
+    const defName = uniqueName('clean-draft-def');
+    const defId = await apiCreateDefinition(request, token, defName);
+    const instName = uniqueName('clean-draft-inst');
+    const instId = await apiCreateInstance(request, token, defId, instName);
+
+    // Instance is in draft state — clean should be rejected.
+    const cleanRes = await request.post(`${API_BASE}/api/v1/stack-instances/${instId}/clean`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+
+    expect(cleanRes.status()).toBe(409);
+    const body = await cleanRes.json();
+    expect(body.error).toContain('Cannot clean');
+  });
+
+  test('clean endpoint returns 202 for error instance', async ({ request }) => {
+    const defName = uniqueName('clean-err-def');
+    const defId = await apiCreateDeployableDefinition(request, token, defName);
+    const instName = uniqueName('clean-err-inst');
+    const instId = await apiCreateInstance(request, token, defId, instName);
+
+    // Deploy — it will fail since no real helm, transitioning to error.
+    const deployRes = await request.post(`${API_BASE}/api/v1/stack-instances/${instId}/deploy`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+
+    if (deployRes.status() === 503) {
+      test.skip();
+      return;
+    }
+    expect(deployRes.status()).toBe(202);
+
+    // Wait for the deploy to fail (helm not available).
+    let retries = 10;
+    let inst;
+    while (retries > 0) {
+      await new Promise((r) => setTimeout(r, 1000));
+      inst = await apiGetInstance(request, token, instId);
+      if (inst.status === 'error' || inst.status === 'running') break;
+      retries--;
+    }
+
+    // If not in a cleanable state after waiting, skip.
+    if (!['error', 'running', 'stopped'].includes(inst?.status)) {
+      test.skip();
+      return;
+    }
+
+    // Clean the instance.
+    const cleanRes = await request.post(`${API_BASE}/api/v1/stack-instances/${instId}/clean`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    expect(cleanRes.status()).toBe(202);
+    const body = await cleanRes.json();
+    expect(body).toHaveProperty('log_id');
+  });
+
+  test('clean creates deployment log with action clean', async ({ request }) => {
+    const defName = uniqueName('clean-log-def');
+    const defId = await apiCreateDeployableDefinition(request, token, defName);
+    const instName = uniqueName('clean-log-inst');
+    const instId = await apiCreateInstance(request, token, defId, instName);
+
+    // Deploy first to get the instance into error state.
+    const deployRes = await request.post(`${API_BASE}/api/v1/stack-instances/${instId}/deploy`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+
+    if (deployRes.status() === 503) {
+      test.skip();
+      return;
+    }
+    expect(deployRes.status()).toBe(202);
+
+    // Wait for the deploy to fail.
+    let retries = 10;
+    let inst;
+    while (retries > 0) {
+      await new Promise((r) => setTimeout(r, 1000));
+      inst = await apiGetInstance(request, token, instId);
+      if (inst.status === 'error' || inst.status === 'running') break;
+      retries--;
+    }
+
+    if (!['error', 'running', 'stopped'].includes(inst?.status)) {
+      test.skip();
+      return;
+    }
+
+    // Clean the instance.
+    const cleanRes = await request.post(`${API_BASE}/api/v1/stack-instances/${instId}/clean`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    expect(cleanRes.status()).toBe(202);
+
+    // Wait for the clean operation to complete and log to be written.
+    await new Promise((r) => setTimeout(r, 3000));
+
+    // Fetch deploy logs and verify a clean action exists.
+    const logRes = await request.get(`${API_BASE}/api/v1/stack-instances/${instId}/deploy-log`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    expect(logRes.ok()).toBe(true);
+    const logs = await logRes.json();
+    expect(Array.isArray(logs)).toBe(true);
+
+    const cleanLogs = logs.filter((entry: { action: string }) => entry.action === 'clean');
+    expect(cleanLogs.length).toBeGreaterThanOrEqual(1);
+
+    // Verify the clean log entry shape.
+    const cleanEntry = cleanLogs[0];
+    expect(cleanEntry).toHaveProperty('id');
+    expect(cleanEntry).toHaveProperty('stack_instance_id', instId);
+    expect(cleanEntry).toHaveProperty('action', 'clean');
+    expect(cleanEntry).toHaveProperty('started_at');
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -405,5 +523,61 @@ test.describe('Deployment UI', () => {
     // Reload the page — now Deployment History should be visible.
     await page.reload();
     await expect(page.getByText('Deployment History')).toBeVisible({ timeout: 15_000 });
+  });
+
+  test('Clean Namespace button is visible for error instance', async ({ page }) => {
+    const tplName = uniqueName('tpl-clean-btn');
+    const templateId = await createAndPublishTemplate(page, tplName);
+    const defName = uniqueName('def-clean-btn');
+    await instantiateTemplate(page, templateId, defName);
+
+    // Create instance via UI.
+    const instName = uniqueName('inst-clean-btn');
+    await page.goto('/stack-instances/new');
+    await page.getByLabel('Stack Definition').click();
+    await page.getByRole('option', { name: new RegExp(defName) }).click();
+    await page.getByLabel('Instance Name').fill(instName);
+    await page.getByRole('button', { name: 'Create Instance' }).click();
+    await page.waitForURL(/\/stack-instances\/[^/]+$/, { timeout: 10_000 });
+
+    // Deploy to trigger error state (helm not available in test env).
+    await page.getByRole('button', { name: 'Deploy' }).click();
+
+    // Wait for snackbar to confirm deploy was triggered.
+    const snackbar = page.locator('.MuiSnackbar-root, .MuiAlert-root');
+    await expect(snackbar.first()).toBeVisible({ timeout: 10_000 });
+
+    // Extract the instance ID and poll for error state via API.
+    const instanceId = page.url().split('/stack-instances/')[1];
+    const token = await page.evaluate(() => localStorage.getItem('token'));
+
+    let reachedError = false;
+    for (let i = 0; i < 10; i++) {
+      await new Promise((r) => setTimeout(r, 1000));
+      const res = await page.request.get(
+        `http://localhost:8081/api/v1/stack-instances/${instanceId}`,
+        { headers: { Authorization: `Bearer ${token}` } },
+      );
+      if (res.ok()) {
+        const inst = await res.json();
+        if (inst.status === 'error') {
+          reachedError = true;
+          break;
+        }
+      }
+    }
+
+    if (!reachedError) {
+      test.skip();
+      return;
+    }
+
+    // Reload the page so the UI reflects the error state.
+    await page.reload();
+
+    // Verify Clean Namespace button is visible for error instance.
+    await expect(
+      page.getByRole('button', { name: 'Clean Namespace' }),
+    ).toBeVisible({ timeout: 10_000 });
   });
 });

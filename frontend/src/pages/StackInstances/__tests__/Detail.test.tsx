@@ -28,6 +28,7 @@ vi.mock('../../../api/client', () => ({
     exportValues: vi.fn(),
     deploy: vi.fn(),
     stop: vi.fn(),
+    clean: vi.fn(),
     getDeployLog: vi.fn(),
     getStatus: vi.fn(),
   },
@@ -534,5 +535,139 @@ describe('StackInstances Detail', () => {
     });
 
     expect(screen.getByText('Instance is stopped')).toBeInTheDocument();
+  });
+
+  it('shows Clean Namespace button for running instance', async () => {
+    setupMocks({ status: 'running' });
+    renderDetail();
+
+    await waitFor(() => {
+      expect(screen.getByText('Test Instance')).toBeInTheDocument();
+    });
+    expect(screen.getByRole('button', { name: /clean namespace/i })).toBeInTheDocument();
+  });
+
+  it('shows Clean Namespace button for error instance', async () => {
+    setupMocks({ status: 'error' }, { deployLogReject: true });
+    renderDetail();
+
+    await waitFor(() => {
+      expect(screen.getByText('Test Instance')).toBeInTheDocument();
+    });
+    expect(screen.getByRole('button', { name: /clean namespace/i })).toBeInTheDocument();
+  });
+
+  it('does not show Clean Namespace button for draft instance', async () => {
+    setupMocks({ status: 'draft' }, { deployLogReject: true });
+    renderDetail();
+
+    await waitFor(() => {
+      expect(screen.getByText('Test Instance')).toBeInTheDocument();
+    });
+    expect(screen.queryByRole('button', { name: /clean namespace/i })).not.toBeInTheDocument();
+  });
+
+  it('opens confirmation dialog when Clean Namespace is clicked', async () => {
+    const user = userEvent.setup();
+    setupMocks({ status: 'running' });
+    renderDetail();
+
+    await waitFor(() => {
+      expect(screen.getByText('Test Instance')).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole('button', { name: /clean namespace/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText('Clean Namespace?')).toBeInTheDocument();
+      expect(screen.getByText(/uninstall all Helm releases/)).toBeInTheDocument();
+    });
+  });
+
+  it('calls instanceService.clean when Clean is confirmed', async () => {
+    const user = userEvent.setup();
+    const inst = setupMocks({ status: 'running' });
+    (instanceService.clean as MockFn).mockResolvedValue({});
+    (instanceService.get as MockFn)
+      .mockResolvedValueOnce(inst)
+      .mockResolvedValueOnce({ ...inst, status: 'cleaning' });
+    (instanceService.getDeployLog as MockFn)
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([]);
+
+    renderDetail();
+
+    await waitFor(() => {
+      expect(screen.getByText('Test Instance')).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole('button', { name: /clean namespace/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText('Clean Namespace?')).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole('button', { name: /^clean$/i }));
+
+    await waitFor(() => {
+      expect(instanceService.clean).toHaveBeenCalledWith('123');
+    });
+  });
+
+  it('shows error alert on clean failure', async () => {
+    const user = userEvent.setup();
+    setupMocks({ status: 'running' });
+    (instanceService.clean as MockFn).mockRejectedValue(new Error('Clean failed'));
+
+    renderDetail();
+
+    await waitFor(() => {
+      expect(screen.getByText('Test Instance')).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole('button', { name: /clean namespace/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText('Clean Namespace?')).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole('button', { name: /^clean$/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText('Failed to clean namespace')).toBeInTheDocument();
+    });
+  });
+
+  it('shows disabled Cleaning button for cleaning instance', async () => {
+    setupMocks({ status: 'cleaning' });
+    renderDetail();
+
+    await waitFor(() => {
+      expect(screen.getByText('Test Instance')).toBeInTheDocument();
+    });
+
+    const btn = screen.getByRole('button', { name: /cleaning/i });
+    expect(btn).toBeDisabled();
+  });
+
+  it('shows warning alert in lifecycle for cleaning status', async () => {
+    setupMocks({ status: 'cleaning' });
+    renderDetail();
+
+    await waitFor(() => {
+      expect(screen.getByText('Test Instance')).toBeInTheDocument();
+    });
+
+    expect(screen.getByText('Instance is cleaning')).toBeInTheDocument();
+  });
+
+  it('shows Clean Namespace button for stopped instance', async () => {
+    setupMocks({ status: 'stopped' }, { deployLogReject: true });
+    renderDetail();
+
+    await waitFor(() => {
+      expect(screen.getByText('Test Instance')).toBeInTheDocument();
+    });
+    expect(screen.getByRole('button', { name: /clean namespace/i })).toBeInTheDocument();
   });
 });
