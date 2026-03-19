@@ -1,163 +1,99 @@
-# Frontend Application
+# K8s Stack Manager — Frontend
 
-This is a React-based frontend application built with TypeScript, Vite, and other modern web technologies.
+React SPA for the K8s Stack Manager, built with TypeScript, Vite, and Material UI.
 
-## Features
+## Tech Stack
 
-- ⚡️ Lightning-fast development with Vite
-- 🔧 TypeScript for type safety
-- 📱 Responsive layouts
-- 🔄 Efficient API integration with axios
-- 🛣️ Clean routing with React Router
-- 🧪 Testing setup included
-- 🐳 Docker support for development and production
+- React 19 + TypeScript (strict mode)
+- Vite with SWC (`@vitejs/plugin-react-swc`)
+- Material UI (MUI) v7 for components and styling
+- React Router v7 for routing
+- Axios for API calls
+- Vitest + Testing Library (unit tests)
+- Playwright (e2e tests)
 
 ## Project Structure
 
-```text
+```
 frontend/
-├── Dockerfile           # Docker configuration for development and production
-├── index.html          # HTML entry point
-├── nginx.conf          # Nginx configuration for production
-├── package.json        # Project dependencies and scripts
-├── tsconfig.json       # TypeScript configuration
-├── vite.config.ts      # Vite configuration
+├── Dockerfile           # Multi-stage: dev (Vite) + prod (nginx)
+├── nginx.conf           # Production reverse proxy
+├── vite.config.ts       # Vite config + dev proxy
 └── src/
-    ├── api/           # API client configuration and services
-    │   ├── client.ts  # Axios client setup
-    │   └── config.ts  # API configuration
-    ├── components/    # Reusable React components
-    │   └── Layout/    # Layout components
-    ├── pages/         # Page components
-    │   ├── Health/    # Health check page
-    │   └── Home/      # Home page
-    ├── services/      # Business logic and services
-    ├── utils/         # Utility functions
-    ├── App.tsx        # Root React component
-    ├── main.tsx       # Application entry point
-    └── routes.tsx     # Application routing configuration
+    ├── api/
+    │   ├── config.ts    # API_BASE_URL: localhost:8081 (dev) | /api (prod)
+    │   └── client.ts    # Axios instance + all service objects
+    ├── components/
+    │   └── Layout/      # AppBar + nav + footer shell
+    ├── context/         # Auth + WebSocket context providers
+    ├── pages/
+    │   ├── Admin/       # User management (admin only)
+    │   ├── AuditLog/    # Audit log viewer
+    │   ├── Login/       # Login page
+    │   ├── Profile/     # User profile
+    │   ├── StackDefinitions/  # Definition list + form
+    │   ├── StackInstances/    # Instance dashboard + detail + form
+    │   └── Templates/         # Template gallery, builder, preview
+    ├── routes.tsx       # Route definitions + protected routes
+    ├── App.tsx          # Root component
+    └── main.tsx         # Entry point
 ```
 
-## Prerequisites
+## Pages and Routes
 
-- Node.js 20.x or later
-- npm 9.x or later
-- Docker (for containerized development)
+| Route | Page | Access |
+|-------|------|--------|
+| `/login` | Login | Public |
+| `/` | Stack Instances dashboard | Authenticated |
+| `/templates` | Template gallery | Authenticated |
+| `/templates/new` | Template builder | Authenticated |
+| `/templates/:id` | Template preview | Authenticated |
+| `/templates/:id/edit` | Template editor | Authenticated |
+| `/templates/:id/use` | Instantiate template | Authenticated |
+| `/stack-definitions` | Definition list | Authenticated |
+| `/stack-definitions/new` | Definition form | Authenticated |
+| `/stack-definitions/:id/edit` | Definition editor | Authenticated |
+| `/stack-instances/new` | Instance form | Authenticated |
+| `/stack-instances/:id` | Instance detail | Authenticated |
+| `/audit-log` | Audit log viewer | Authenticated |
+| `/admin/users` | User management | Admin |
+| `/profile` | User profile | Authenticated |
 
-## Development Setup
+## API Services
 
-1. **Install dependencies**:
+All services are defined in `src/api/client.ts`:
 
-   ```bash
-   npm install
-   ```
+| Service | Methods |
+|---------|---------|
+| `authService` | login, register, me |
+| `templateService` | list, get, create, update, delete, publish, unpublish, instantiate, clone, addChart, updateChart, deleteChart |
+| `definitionService` | list, get, create, update, delete, addChart, updateChart, deleteChart |
+| `instanceService` | list, get, create, update, delete, clone, getOverrides, setOverride, exportValues |
+| `gitService` | branches, validateBranch, providers |
+| `auditService` | list |
+| `userService` | list, create, delete |
+| `apiKeyService` | list, create, delete |
 
-2. **Start the development server**:
-
-   With Docker (recommended):
-
-   ```bash
-   docker compose up frontend
-   ```
-
-   Without Docker:
-
-   ```bash
-   npm run dev
-   ```
-
-   The application will be available at [http://localhost:3000](http://localhost:3000)
-
-## Available Scripts
-
-- `npm run dev` - Start development server
-- `npm run build` - Build for production
-- `npm run preview` - Preview production build
-- `npm run test` - Run tests
-- `npm run lint` - Run ESLint
-- `npm run format` - Format code with Prettier
-
-## Environment Variables
-
-Create a `.env` file in the root directory:
-
-```text
-VITE_API_URL=http://localhost:8081  # Backend API URL
-```
-
-Available environment variables:
-
-- `VITE_API_URL` - Backend API endpoint
-- `PORT` - Development server port (default: 3000)
-
-## API Integration
-
-The `api` directory contains all API-related code:
-
-- `client.ts` - Axios client configuration
-- `config.ts` - API endpoints and configuration
-
-Example usage:
-
-```typescript
-import { apiClient } from '@/api/client';
-
-// Make API calls
-const response = await apiClient.get('/health/live');
-```
-
-## Routing
-
-Routes are defined in `src/routes.tsx`:
-
-```typescript
-import { Route } from 'react-router-dom';
-
-<Route path="/" element={<Home />} />
-<Route path="/health" element={<Health />} />
-```
-
-## Styling
-
-The project uses CSS modules for styling. Create a `.module.css` file next to your component:
-
-```text
-Component.tsx
-Component.module.css
-```
-
-## Testing
-
-Tests are written using Vitest and React Testing Library:
+## Development
 
 ```bash
-# Run tests
-npm test
-
-# Run tests in watch mode
-npm test:watch
+npm install          # Install dependencies
+npm run dev          # Dev server on port 3000 with HMR
+npm run build        # Production build (tsc + vite)
+npm run lint         # ESLint
+npm run format       # Prettier
+npm test             # Vitest unit tests
 ```
 
-## Docker Support
+### Proxy Configuration
 
-The project includes multi-stage Dockerfile for both development and production:
+- **Dev (Vite)**: `/api` requests are proxied to `backend:8081` with the `/api` prefix stripped
+- **Prod (nginx)**: `/api/` location proxies to `backend:8081/` (trailing slash strips prefix)
 
-Development:
+## Patterns
 
-```bash
-docker compose up frontend
-```
-
-Production:
-
-```bash
-docker compose -f docker-compose.prod.yml up frontend
-```
-
-## Contributing
-
-1. Follow the project structure
-2. Write meaningful commit messages
-3. Add tests for new features
-4. Update documentation as needed
-5. Format code before committing
+- **MUI components only** — no raw HTML; use `sx` prop for styling
+- **Functional components** with `useState`/`useEffect` for state
+- **Loading/Error/Content** rendering pattern on all data-fetching pages
+- **TypeScript interfaces** for all props, API responses, and state
+- Tests in `__tests__/` directories alongside pages

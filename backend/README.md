@@ -10,22 +10,37 @@ backend/
 ├── internal/
 │   ├── api/
 │   │   ├── handlers/                   # HTTP handlers (auth, templates, definitions, instances, etc.)
-│   │   ├── middleware/                  # Auth (JWT), CORS, audit logging, rate limiting, recovery
+│   │   ├── middleware/                  # Auth (JWT + API key), CORS, audit logging, rate limiting, recovery
 │   │   └── routes/                     # Route registration
 │   ├── config/                         # Environment-based configuration
 │   ├── database/
-│   │   ├── azure/  │   │   ├── azure/  │   │   ├── azure/  │   │   ��│   │   ├── azure/  # Migration framework
+│   │   ├── azure/                      # Azure Table Storage repositories
+│   │   ├── factory.go                  # MySQL connection with retry
+│   │   ├── repository.go              # Repository factory (MySQL vs Azure)
+│   │   ├── migrations.go              # Versioned schema migrations
+│   │   └── errors.go                  # Re-exports from pkg/dberrors
 │   ├── gitprovider/                    # Azure DevOps + GitLab branch listing
 │   ├── health/                         # Liveness + readiness checks
 │   ├── helm/                           # Values deep-merge + template substitution
-│   ├── models/                         # Domain models + │   ├── models/                         # Domain models + │   ├── models/         ng│   ├── │ │   ├── mods/│   ├── models/                         # Domain models + │   ├── models/                       s
-│   ├── models/                         # Domain models + │   ├── models/                   ou│   ├── models/                         # Domain models + �-|-------------|
-| Auth | `/api/v1/auth` | Public (login) / Admin (register) | JWT lo| Auth | `/api/v1/auth` current user |
-| Templates | `/api/v1/templates` | User / DevOps | Stack template CRUD, publish/unpublish, chart management, instantiate |
-| Definitions | `/api/v1/stack-definitions` | User | Stack definition CRUD, chart configs |
-| Instances | `| Instances | `| Instances | `| Instances | `| Instances | `| Instances | `||
-| Instances | `| Instances | `| Instances | `| Instances | `| Instances | `| Instances | `
-||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||tream |
+│   ├── models/                         # Domain models + repository interfaces + validation
+│   └── websocket/                      # Real-time event broadcasting (hub + clients)
+├── pkg/dberrors/                       # Canonical error types
+└── docs/                               # Swagger/OpenAPI (auto-generated)
+```
+
+## API Routes
+
+| Group | Prefix | Auth | Description |
+|-------|--------|------|-------------|
+| Health | `/health/*` | No | Liveness + readiness |
+| Auth | `/api/v1/auth` | Login: No, Register/Me: Yes | JWT login, register, current user |
+| Templates | `/api/v1/templates` | Yes (DevOps for writes) | Stack template CRUD, publish, chart management, instantiate |
+| Definitions | `/api/v1/stack-definitions` | Yes | Stack definition CRUD, chart configs |
+| Instances | `/api/v1/stack-instances` | Yes | Stack instance CRUD, clone, value export |
+| Git | `/api/v1/git` | Yes | Branch listing, validation, provider status |
+| Audit Logs | `/api/v1/audit-logs` | Yes | Filterable audit trail |
+| Users | `/api/v1/users` | Admin | List and delete users |
+| API Keys | `/api/v1/users/:id/api-keys` | Yes | Per-user API key management |
 
 ## Prerequisites
 
@@ -35,10 +50,17 @@ backend/
 ## Quick Start
 
 ```bash
-# From project root - start with Docker Compose (recommended)
+# From project root — start with Docker Compose (recommended)
 make dev
 
-# Or run locally with Azurite# Or run locally with Azurite# Or run locally with Azurite# Or run locally with Azurite# Or run locally wak# Or run locally with Azurite# Or run locally with Azurite# Or run locally with Azurite# Or run locally with Azurite# Or  re# Or run locally with Azurite# Or run locally with Azurite# Or run locally with Azurite# Os # Or run locally with Azurite# Or run locally with Azurite# Or run locally with Azurite# Or (see `docker-compose.yml` for full list):
+# Or run locally with Azurite
+make azurite-start
+make dev-local
+```
+
+## Configuration
+
+Key environment variables (see `docker-compose.yml` for full list):
 
 | Variable | Default | Description |
 |---|---|---|
@@ -46,24 +68,32 @@ make dev
 | `JWT_EXPIRATION` | `24h` | Token expiration |
 | `ADMIN_USERNAME` | `admin` | Initial admin username |
 | `ADMIN_PASSWORD` | (required) | Initial admin password |
+| `SELF_REGISTRATION` | `false` | Allow self-registration |
 | `USE_AZURE_TABLE` | `false` | Enable Azure Table Storage |
 | `USE_AZURITE` | `false` | Use Azurite emulator |
-| `A|URE_TABLE_| `A|URE_TABLE_| `A|URE_TABLE_ls || `A|URE_TABLOPS| `A|U| | `A|URE_TABLE_| `A|URE_TABLE_| `A|URE_TABLE_ls || `A|UR| | GitLab access token |
+| `AZURE_TABLE_ACCOUNT_NAME` | | Azure Storage account name |
+| `AZURE_TABLE_ACCOUNT_KEY` | | Azure Storage account key |
+| `AZURE_TABLE_ENDPOINT` | | Azure Table endpoint |
+| `AZURE_DEVOPS_PAT` | | Azure DevOps personal access token |
+| `GITLAB_TOKEN` | | GitLab access token |
 | `DEFAULT_BRANCH` | `master` | Default Git branch |
+| `RATE_LIMIT` | `100` | Requests per minute per IP |
+| `CORS_ALLOWED_ORIGINS` | `*` | Allowed CORS origins |
 
 ## Data Storage
 
-- **Azure Table Storage** (via Azurite locally): Users, Templates, Definitions, Instances, Overrides, AuditLogs
+- **Azure Table Storage** (via Azurite locally): Users, Templates, Definitions, Instances, Overrides, ChartConfigs, APIKeys, AuditLogs
 - **MySQL** (GORM): Legacy Items table only
 
 ## Testing
 
 ```bash
-make test              # Unit tests
-make test-coverage     # With coverage report
+cd backend && go test ./... -v -short    # Unit tests
+cd backend && make test-coverage         # With coverage report (80% threshold)
+make test-backend-all                    # Unit + integration tests
 ```
 
-Tests use testify + httptest with mock repositories.
+Tests use testify + httptest with mock repositories, table-driven patterns, and `t.Parallel()`.
 
 ## Swagger
 
