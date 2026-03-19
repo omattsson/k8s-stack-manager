@@ -4,6 +4,10 @@
 dev:
 	NODE_ENV=development GO_ENV=development PORT=3000 BACKEND_PORT=8081 GIN_MODE=debug docker compose up --build --remove-orphans
 
+# Development mode with local K8s cluster access (rancher-desktop, Docker Desktop K8s, etc.)
+dev-k8s:
+	NODE_ENV=development GO_ENV=development PORT=3000 BACKEND_PORT=8081 GIN_MODE=debug docker compose -f docker-compose.yml -f docker-compose.k8s.yml up --build --remove-orphans
+
 seed: ## Seed dev environment with sample data (requires running dev stack)
 	@./scripts/seed-dev-data.sh
 
