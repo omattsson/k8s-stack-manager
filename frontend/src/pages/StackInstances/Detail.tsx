@@ -109,14 +109,15 @@ const Detail = () => {
       const newStatus = payload.status as string;
       setInstance((prev) => prev ? { ...prev, status: newStatus } : prev);
 
-      // Refresh K8s status for running/deploying/error/stopping/cleaning states.
-      if (newStatus === 'running' || newStatus === 'deploying' || newStatus === 'error' || newStatus === 'stopping' || newStatus === 'cleaning') {
-        instanceService.getStatus(id).then(setK8sStatus).catch(() => {});
+      // Clear stale K8s status at the start of any operation or when resources are gone.
+      // The watcher will push fresh status via instance.status messages as pods come up.
+      if (newStatus === 'deploying' || newStatus === 'stopping' || newStatus === 'cleaning' || newStatus === 'stopped' || newStatus === 'draft') {
+        setK8sStatus(null);
       }
 
-      // Clear K8s status when resources are gone (stopped or cleaned to draft).
-      if (newStatus === 'stopped' || newStatus === 'draft') {
-        setK8sStatus(null);
+      // Fetch current K8s status for terminal states where resources may exist.
+      if (newStatus === 'running' || newStatus === 'error') {
+        instanceService.getStatus(id).then(setK8sStatus).catch(() => {});
       }
 
       // Refresh deploy logs on terminal states.
