@@ -73,9 +73,8 @@ api_post "/api/v1/templates/${WEB_ID}/charts" '{
 }' > /dev/null
 
 api_post "/api/v1/templates/${WEB_ID}/charts" '{
-  "chart_name": "backend-app",
+  "chart_name": "azurite-storage",
   "repository_url": "https://emberstack.github.io/helm-charts",
-  "source_repo_url": "https://dev.azure.com/org/project/_git/backend",
   "chart_path": "azurite",
   "chart_version": "1.0.19",
   "deploy_order": 2,
@@ -95,7 +94,7 @@ api_post "/api/v1/templates/${WEB_ID}/charts" '{
   "default_values": "replicaCount: 1\nservice:\n  type: ClusterIP\n  port: 8080",
   "locked_values": ""
 }' > /dev/null
-log "  + 3 charts (ingress-nginx, backend-app, frontend-app)"
+log "  + 3 charts (ingress-nginx, azurite-storage, frontend-app)"
 
 # ── 2. API Category ──────────────────────────────────────────────────
 API_ID=$(api_post "/api/v1/templates" '{

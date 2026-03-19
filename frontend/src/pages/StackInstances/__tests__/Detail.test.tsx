@@ -385,8 +385,8 @@ describe('StackInstances Detail', () => {
 
   it('shows Deployment History section when logs exist', async () => {
     const mockLogs = [
-      { id: 'log-1', stack_instance_id: '123', action: 'deploy', status: 'success', started_at: '2025-01-01T00:00:00Z', completed_at: '2025-01-01T00:01:00Z' },
-      { id: 'log-2', stack_instance_id: '123', action: 'deploy', status: 'error', started_at: '2025-01-02T00:00:00Z', completed_at: '2025-01-02T00:01:00Z' },
+      { id: 'log-1', stack_instance_id: '123', action: 'deploy', status: 'success', output: '', started_at: '2025-01-01T00:00:00Z', completed_at: '2025-01-01T00:01:00Z' },
+      { id: 'log-2', stack_instance_id: '123', action: 'deploy', status: 'error', output: '', error_message: 'helm failed', started_at: '2025-01-02T00:00:00Z', completed_at: '2025-01-02T00:01:00Z' },
     ];
     setupMocks({ status: 'draft' }, { logs: mockLogs });
 
@@ -482,6 +482,46 @@ describe('StackInstances Detail', () => {
     });
 
     expect(screen.getByText('Instance is error')).toBeInTheDocument();
+  });
+
+  it('shows warning alert in lifecycle for stopping status', async () => {
+    setupMocks({ status: 'stopping' });
+
+    renderDetail();
+
+    await waitFor(() => {
+      expect(screen.getByText('Test Instance')).toBeInTheDocument();
+    });
+
+    expect(screen.getByText('Instance is stopping')).toBeInTheDocument();
+  });
+
+  it('shows disabled Stopping button for stopping instance', async () => {
+    setupMocks({ status: 'stopping' });
+
+    renderDetail();
+
+    await waitFor(() => {
+      expect(screen.getByText('Test Instance')).toBeInTheDocument();
+    });
+
+    const btn = screen.getByRole('button', { name: /stopping/i });
+    expect(btn).toBeDisabled();
+  });
+
+  it('shows Cluster Resources for stopping instance', async () => {
+    const mockStatus = { namespace: 'stack-test', pods: [], services: [] };
+    setupMocks({ status: 'stopping' }, { status: mockStatus });
+
+    renderDetail();
+
+    await waitFor(() => {
+      expect(screen.getByText('Test Instance')).toBeInTheDocument();
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText('Cluster Resources')).toBeInTheDocument();
+    });
   });
 
   it('shows warning alert in lifecycle for stopped status', async () => {

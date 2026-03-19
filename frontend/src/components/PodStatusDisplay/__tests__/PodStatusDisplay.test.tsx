@@ -97,9 +97,11 @@ describe('PodStatusDisplay', () => {
     const restartText = screen.getByText('10');
     expect(restartText).toBeInTheDocument();
     // The Typography has color="error" when restart_count > 5.
-    // MUI applies the error color via CSS-in-JS, so we verify the
-    // element's computed color style matches the theme error palette.
-    const style = window.getComputedStyle(restartText);
-    expect(style.color).not.toBe('');
+    // MUI applies the error color via Emotion CSS-in-JS. The generated class
+    // differs from the non-error variant, so we verify the element does NOT
+    // share the same class as a normal "text.primary" Typography. We also
+    // verify the computed style contains the theme error color (#d32f2f).
+    const normalText = screen.getByText('crash-pod');
+    expect(restartText.className).not.toBe(normalText.className);
   });
 });

@@ -139,13 +139,13 @@ test.describe('Deployment API', () => {
 
     // Instance should be in deploying (or already transitioned to error/running).
     const inst = await apiGetInstance(request, token, instId);
-    expect(['deploying', 'error', 'running']).toContain(inst.status);
+    expect(['deploying', 'error', 'running', 'stopping']).toContain(inst.status);
 
     // Wait briefly for async deploy to fail (no helm in CI), then check status.
     await new Promise((r) => setTimeout(r, 3000));
     const instAfter = await apiGetInstance(request, token, instId);
     // Should be error because helm is not available in the test environment, but may be running if Helm/K8s succeeds.
-    expect(['deploying', 'error', 'running']).toContain(instAfter.status);
+    expect(['deploying', 'error', 'running', 'stopping']).toContain(instAfter.status);
   });
 
   test('deploy already deploying instance returns 409', async ({ request }) => {

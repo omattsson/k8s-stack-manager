@@ -83,7 +83,7 @@ const Detail = () => {
         } catch { /* ignore — no logs yet */ }
 
         // Fetch K8s status if instance is running or deploying
-        if (inst.status === 'running' || inst.status === 'deploying' || inst.status === 'error') {
+        if (inst.status === 'running' || inst.status === 'deploying' || inst.status === 'error' || inst.status === 'stopping') {
           try {
             setStatusLoading(true);
             const status = await instanceService.getStatus(id);
@@ -112,7 +112,7 @@ const Detail = () => {
       setInstance((prev) => prev ? { ...prev, status: newStatus } : prev);
 
       // Refresh K8s status for running/deploying/error states.
-      if (newStatus === 'running' || newStatus === 'deploying' || newStatus === 'error') {
+      if (newStatus === 'running' || newStatus === 'deploying' || newStatus === 'error' || newStatus === 'stopping') {
         instanceService.getStatus(id).then(setK8sStatus).catch(() => {});
       }
 
@@ -284,6 +284,11 @@ const Detail = () => {
                 {deploying ? 'Deploying...' : 'Deploy'}
               </Button>
             )}
+            {instance.status === 'stopping' && (
+              <Button variant="contained" color="warning" disabled>
+                Stopping...
+              </Button>
+            )}
             {(instance.status === 'running' || instance.status === 'deploying') && (
               <Button variant="contained" color="warning" onClick={handleStop} disabled={stopping}>
                 {stopping ? 'Stopping...' : 'Stop'}
@@ -302,11 +307,12 @@ const Detail = () => {
           const activeStep = LIFECYCLE_STEPS.indexOf(instance.status);
           const isError = instance.status === 'error';
           const isStopped = instance.status === 'stopped';
+          const isStopping = instance.status === 'stopping';
 
           return (
             <Box sx={{ mb: 2 }}>
               <Typography variant="subtitle2" gutterBottom>Status Lifecycle</Typography>
-              {isError || isStopped ? (
+              {isError || isStopped || isStopping ? (
                 <Alert severity={isError ? 'error' : 'warning'} sx={{ py: 0.5 }}>
                   Instance is {instance.status}
                 </Alert>
@@ -323,7 +329,7 @@ const Detail = () => {
           );
         })()}
 
-        {(instance.status === 'running' || instance.status === 'deploying' || instance.status === 'error') && (
+        {(instance.status === 'running' || instance.status === 'deploying' || instance.status === 'error' || instance.status === 'stopping') && (
           <Box sx={{ mb: 2 }}>
             <Typography variant="subtitle2" gutterBottom>Cluster Resources</Typography>
             <PodStatusDisplay status={k8sStatus} loading={statusLoading} />
