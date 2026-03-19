@@ -22,11 +22,6 @@ func escapeODataString(s string) string {
 // DeploymentLogRepository implements models.DeploymentLogRepository for Azure Table Storage.
 // Partition key: stack_instance_id, Row key: reverse_timestamp + uuid.
 // This ensures recent-first ordering within each instance partition.
-//
-// Known limitation: All methods use context.Background() internally because the
-// DeploymentLogRepository interface (models.DeploymentLogRepository) does not
-// accept context parameters, unlike the main Repository interface. Adding context
-// support requires a broader interface refactor tracked for a future release.
 type DeploymentLogRepository struct {
 	client    AzureTableClient
 	tableName string
@@ -51,8 +46,7 @@ func (r *DeploymentLogRepository) SetTestClient(client AzureTableClient) {
 	r.client = client
 }
 
-func (r *DeploymentLogRepository) Create(log *models.DeploymentLog) error {
-	ctx := context.Background()
+func (r *DeploymentLogRepository) Create(ctx context.Context, log *models.DeploymentLog) error {
 
 	if log.StartedAt.IsZero() {
 		log.StartedAt = time.Now().UTC()
@@ -77,8 +71,7 @@ func (r *DeploymentLogRepository) Create(log *models.DeploymentLog) error {
 	return nil
 }
 
-func (r *DeploymentLogRepository) FindByID(id string) (*models.DeploymentLog, error) {
-	ctx := context.Background()
+func (r *DeploymentLogRepository) FindByID(ctx context.Context, id string) (*models.DeploymentLog, error) {
 
 	// No secondary index available; scan all partitions filtering by ID property.
 	filter := "ID eq '" + escapeODataString(id) + "'"
@@ -98,8 +91,7 @@ func (r *DeploymentLogRepository) FindByID(id string) (*models.DeploymentLog, er
 	return deploymentLogFromEntity(entities[0]), nil
 }
 
-func (r *DeploymentLogRepository) Update(log *models.DeploymentLog) error {
-	ctx := context.Background()
+func (r *DeploymentLogRepository) Update(ctx context.Context, log *models.DeploymentLog) error {
 
 	// Reconstruct PK/RK directly from the log fields (same formula as Create)
 	// to avoid an O(partition) scan query.
@@ -119,8 +111,7 @@ func (r *DeploymentLogRepository) Update(log *models.DeploymentLog) error {
 	return nil
 }
 
-func (r *DeploymentLogRepository) ListByInstance(instanceID string) ([]models.DeploymentLog, error) {
-	ctx := context.Background()
+func (r *DeploymentLogRepository) ListByInstance(ctx context.Context, instanceID string) ([]models.DeploymentLog, error) {
 
 	filter := "PartitionKey eq '" + escapeODataString(instanceID) + "'"
 	pager := r.client.NewListEntitiesPager(&aztables.ListEntitiesOptions{
@@ -139,8 +130,7 @@ func (r *DeploymentLogRepository) ListByInstance(instanceID string) ([]models.De
 	return results, nil
 }
 
-func (r *DeploymentLogRepository) GetLatestByInstance(instanceID string) (*models.DeploymentLog, error) {
-	ctx := context.Background()
+func (r *DeploymentLogRepository) GetLatestByInstance(ctx context.Context, instanceID string) (*models.DeploymentLog, error) {
 
 	filter := "PartitionKey eq '" + escapeODataString(instanceID) + "'"
 	top := int32(1)

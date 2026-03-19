@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -34,7 +35,7 @@ func NewMockDeploymentLogRepository() *MockDeploymentLogRepository {
 	return &MockDeploymentLogRepository{items: make(map[string]*models.DeploymentLog)}
 }
 
-func (m *MockDeploymentLogRepository) Create(log *models.DeploymentLog) error {
+func (m *MockDeploymentLogRepository) Create(_ context.Context, log *models.DeploymentLog) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.err != nil {
@@ -45,7 +46,7 @@ func (m *MockDeploymentLogRepository) Create(log *models.DeploymentLog) error {
 	return nil
 }
 
-func (m *MockDeploymentLogRepository) FindByID(id string) (*models.DeploymentLog, error) {
+func (m *MockDeploymentLogRepository) FindByID(_ context.Context, id string) (*models.DeploymentLog, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	if m.err != nil {
@@ -59,7 +60,7 @@ func (m *MockDeploymentLogRepository) FindByID(id string) (*models.DeploymentLog
 	return &cp, nil
 }
 
-func (m *MockDeploymentLogRepository) Update(log *models.DeploymentLog) error {
+func (m *MockDeploymentLogRepository) Update(_ context.Context, log *models.DeploymentLog) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.err != nil {
@@ -70,7 +71,7 @@ func (m *MockDeploymentLogRepository) Update(log *models.DeploymentLog) error {
 	return nil
 }
 
-func (m *MockDeploymentLogRepository) ListByInstance(instanceID string) ([]models.DeploymentLog, error) {
+func (m *MockDeploymentLogRepository) ListByInstance(_ context.Context, instanceID string) ([]models.DeploymentLog, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	if m.err != nil {
@@ -85,7 +86,7 @@ func (m *MockDeploymentLogRepository) ListByInstance(instanceID string) ([]model
 	return out, nil
 }
 
-func (m *MockDeploymentLogRepository) GetLatestByInstance(instanceID string) (*models.DeploymentLog, error) {
+func (m *MockDeploymentLogRepository) GetLatestByInstance(_ context.Context, instanceID string) (*models.DeploymentLog, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	var latest *models.DeploymentLog
@@ -443,14 +444,14 @@ func TestGetDeployLog(t *testing.T) {
 		seedInstance(t, instRepo, "i1", "stack-a", "d1", "uid-1", models.StackStatusRunning)
 
 		now := time.Now().UTC()
-		require.NoError(t, logRepo.Create(&models.DeploymentLog{
+		require.NoError(t, logRepo.Create(context.Background(), &models.DeploymentLog{
 			ID:              "log-1",
 			StackInstanceID: "i1",
 			Action:          models.DeployActionDeploy,
 			Status:          models.DeployLogSuccess,
 			StartedAt:       now,
 		}))
-		require.NoError(t, logRepo.Create(&models.DeploymentLog{
+		require.NoError(t, logRepo.Create(context.Background(), &models.DeploymentLog{
 			ID:              "log-2",
 			StackInstanceID: "i1",
 			Action:          models.DeployActionStop,

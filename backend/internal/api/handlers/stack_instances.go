@@ -230,15 +230,9 @@ func (h *InstanceHandler) UpdateInstance(c *gin.Context) {
 		return
 	}
 
-	if update.Name != "" {
-		existing.Name = update.Name
-	}
-	if update.Branch != "" {
-		existing.Branch = update.Branch
-	}
-	if update.Namespace != "" {
-		existing.Namespace = update.Namespace
-	}
+	existing.Name = update.Name
+	existing.Branch = update.Branch
+	existing.Namespace = update.Namespace
 	existing.UpdatedAt = time.Now().UTC()
 
 	if err := existing.Validate(); err != nil {
@@ -575,20 +569,38 @@ func (h *InstanceHandler) DeployInstance(c *gin.Context) {
 	lockedMap := make(map[string]string)
 	if def.SourceTemplateID != "" && h.templateChartRepo != nil {
 		templateCharts, err := h.templateChartRepo.ListByTemplate(def.SourceTemplateID)
-		if err == nil {
-			for _, tc := range templateCharts {
-				lockedMap[tc.ChartName] = tc.LockedValues
-			}
+		if err != nil {
+			slog.Error("Failed to list template chart configs",
+				"template_id", def.SourceTemplateID,
+				"instance_id", id,
+				"error", err,
+			)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
+			return
+		}
+		for _, tc := range templateCharts {
+			lockedMap[tc.ChartName] = tc.LockedValues
 		}
 	}
 
 	// Build overrides map.
 	overridesMap := make(map[string]string)
 	overrides, err := h.overrideRepo.ListByInstance(inst.ID)
-	if err == nil {
-		for _, ov := range overrides {
-			overridesMap[ov.ChartConfigID] = ov.Values
-		}
+	if err != nil {
+		slog.Error("Failed to list value overrides",
+			"instance_id", id,
+			"error", err,
+		)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
+		return
+	}
+	for _, ov := range overrides {
+		overridesMap[ov.ChartConfigID] = ov.Values
+	}
+
+	if inst.Namespace == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Instance namespace is empty"})
+		return
 	}
 
 	ownerName := resolveOwnerName(h.userRepo, inst.OwnerID)
@@ -703,6 +715,11 @@ func (h *InstanceHandler) StopInstance(c *gin.Context) {
 		return
 	}
 
+	if len(charts) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "No charts configured for this stack definition"})
+		return
+	}
+
 	var chartInfos []deployer.ChartDeployInfo
 	for _, ch := range charts {
 		chartInfos = append(chartInfos, deployer.ChartDeployInfo{
@@ -751,7 +768,7 @@ func (h *InstanceHandler) GetDeployLog(c *gin.Context) {
 		return
 	}
 
-	logs, err := h.deployLogRepo.ListByInstance(id)
+	logs, err := h.deployLogRepo.ListByInstance(c.Request.Context(), id)
 	if err != nil {
 		status, message := mapError(err, "Deployment log")
 		c.JSON(status, gin.H{"error": message})

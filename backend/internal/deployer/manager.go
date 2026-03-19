@@ -24,6 +24,11 @@ const maxInstanceErrorLen = 256
 // DeploymentLog records. Logs are viewed individually, so they can be longer.
 const maxLogErrorLen = 1024
 
+// maxOutputLen is the maximum length of the aggregated Helm output stored in
+// DeploymentLog.Output. Azure Table Storage has a 64 KB entity size limit,
+// and large Helm output could exceed it.
+const maxOutputLen = 64 * 1024
+
 // Manager orchestrates asynchronous deployments with concurrency control.
 type Manager struct {
 	helm           *HelmClient
@@ -108,7 +113,7 @@ func (m *Manager) Deploy(ctx context.Context, req DeployRequest) (string, error)
 		Status:          models.DeployLogRunning,
 		StartedAt:       now,
 	}
-	if err := m.logRepo.Create(deployLog); err != nil {
+	if err := m.logRepo.Create(ctx, deployLog); err != nil {
 		return "", fmt.Errorf("creating deployment log: %w", err)
 	}
 
@@ -133,14 +138,6 @@ func (m *Manager) Deploy(ctx context.Context, req DeployRequest) (string, error)
 	go m.executeDeploy(req.Instance.ID, deployLog, req.Instance.Namespace, charts)
 
 	return logID, nil
-}
-
-// Stop starts an async stop/uninstall without chart information.
-// Deprecated: Use StopWithCharts for chart-aware uninstall. Stop is retained
-// for backward compatibility and delegates to a no-op uninstall that marks
-// the instance as stopped.
-func (m *Manager) Stop(ctx context.Context, instance *models.StackInstance) (string, error) {
-	return m.StopWithCharts(ctx, instance, nil)
 }
 
 // executeDeploy runs the helm install for each chart sequentially within
@@ -241,14 +238,18 @@ func (m *Manager) finalizeDeploy(instanceID string, deployLog *models.Deployment
 		return
 	}
 
-	deployLog.Output = output
+	deployLog.Output = truncateString(output, maxOutputLen)
 	deployLog.CompletedAt = &now
 
 	if deployErr != nil {
+		// Use a sanitized, high-level message for user-visible fields.
+		// The full Helm output (which may contain sensitive data) is only
+		// stored in deployLog.Output.
+		sanitized := sanitizeDeployError(deployErr)
 		instance.Status = models.StackStatusError
-		instance.ErrorMessage = truncateString(deployErr.Error(), maxInstanceErrorLen)
+		instance.ErrorMessage = truncateString(sanitized, maxInstanceErrorLen)
 		deployLog.Status = models.DeployLogError
-		deployLog.ErrorMessage = truncateString(deployErr.Error(), maxLogErrorLen)
+		deployLog.ErrorMessage = truncateString(sanitized, maxLogErrorLen)
 
 		slog.Error("deployment failed",
 			"instance_id", instanceID,
@@ -272,14 +273,14 @@ func (m *Manager) finalizeDeploy(instanceID string, deployLog *models.Deployment
 			"instance_id", instanceID, "error", err)
 	}
 
-	if err := m.logRepo.Update(deployLog); err != nil {
+	if err := m.logRepo.Update(m.shutdownCtx, deployLog); err != nil {
 		slog.Error("failed to update deployment log after deploy",
 			"log_id", deployLog.ID, "error", err)
 	}
 
 	// Broadcast final status.
 	if deployErr != nil {
-		m.broadcastStatusWithError(instanceID, models.StackStatusError, deployLog.ID, deployErr.Error())
+		m.broadcastStatusWithError(instanceID, models.StackStatusError, deployLog.ID, instance.ErrorMessage)
 	} else {
 		m.broadcastStatus(instanceID, models.StackStatusRunning, deployLog.ID)
 	}
@@ -309,7 +310,7 @@ func (m *Manager) StopWithCharts(ctx context.Context, instance *models.StackInst
 		Status:          models.DeployLogRunning,
 		StartedAt:       now,
 	}
-	if err := m.logRepo.Create(deployLog); err != nil {
+	if err := m.logRepo.Create(ctx, deployLog); err != nil {
 		return "", fmt.Errorf("creating deployment log: %w", err)
 	}
 
@@ -388,14 +389,15 @@ func (m *Manager) finalizeStop(instanceID string, deployLog *models.DeploymentLo
 		return
 	}
 
-	deployLog.Output = output
+	deployLog.Output = truncateString(output, maxOutputLen)
 	deployLog.CompletedAt = &now
 
 	if stopErr != nil {
+		sanitized := sanitizeDeployError(stopErr)
 		instance.Status = models.StackStatusError
-		instance.ErrorMessage = truncateString(stopErr.Error(), maxInstanceErrorLen)
+		instance.ErrorMessage = truncateString(sanitized, maxInstanceErrorLen)
 		deployLog.Status = models.DeployLogError
-		deployLog.ErrorMessage = truncateString(stopErr.Error(), maxLogErrorLen)
+		deployLog.ErrorMessage = truncateString(sanitized, maxLogErrorLen)
 
 		slog.Error("stop failed",
 			"instance_id", instanceID,
@@ -418,16 +420,49 @@ func (m *Manager) finalizeStop(instanceID string, deployLog *models.DeploymentLo
 			"instance_id", instanceID, "error", err)
 	}
 
-	if err := m.logRepo.Update(deployLog); err != nil {
+	if err := m.logRepo.Update(m.shutdownCtx, deployLog); err != nil {
 		slog.Error("failed to update deployment log after stop",
 			"log_id", deployLog.ID, "error", err)
 	}
 
 	if stopErr != nil {
-		m.broadcastStatusWithError(instanceID, models.StackStatusError, deployLog.ID, stopErr.Error())
+		m.broadcastStatusWithError(instanceID, models.StackStatusError, deployLog.ID, instance.ErrorMessage)
 	} else {
 		m.broadcastStatus(instanceID, models.StackStatusStopped, deployLog.ID)
 	}
+}
+
+// sanitizeDeployError extracts a high-level, safe error message from a
+// deployment or stop error. The full Helm output may contain sensitive data
+// (cluster names, internal URLs, credentials in env vars) and must not be
+// exposed in user-visible fields like StackInstance.ErrorMessage. The raw
+// error is still available in DeploymentLog.Output for debugging.
+//
+// Expected error format from executeDeploy/executeStopWithCharts:
+//
+//	"deploying chart \"nginx\": helm command failed: exit status 1"
+//	"uninstalling chart \"nginx\": helm command failed: exit status 1"
+//	"creating temp directory: <os error>"
+//
+// The function keeps only the first wrapped layer (e.g. "deploying chart
+// \"nginx\"") plus a generic suffix.
+func sanitizeDeployError(err error) string {
+	msg := err.Error()
+
+	// Look for the pattern "deploying chart ..." or "uninstalling chart ..."
+	// which is the outermost fmt.Errorf wrapper in executeDeploy / executeStopWithCharts.
+	for _, prefix := range []string{"deploying chart ", "uninstalling chart ", "creating temp directory"} {
+		if strings.HasPrefix(msg, prefix) {
+			// Find the chart name in quotes if present.
+			if idx := strings.Index(msg, ":"); idx > 0 {
+				return msg[:idx] + ": operation failed"
+			}
+			return prefix + "operation failed"
+		}
+	}
+
+	// Fallback: return a generic message if the format is unexpected.
+	return "deployment operation failed"
 }
 
 // truncateString returns s truncated to maxLen characters. If truncation

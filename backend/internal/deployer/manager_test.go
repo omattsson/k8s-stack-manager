@@ -3,6 +3,8 @@ package deployer
 import (
 	"context"
 	"errors"
+	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -103,7 +105,7 @@ func newMockDeployLogRepo() *mockDeployLogRepo {
 	return &mockDeployLogRepo{items: make(map[string]*models.DeploymentLog)}
 }
 
-func (m *mockDeployLogRepo) Create(log *models.DeploymentLog) error {
+func (m *mockDeployLogRepo) Create(_ context.Context, log *models.DeploymentLog) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.err != nil {
@@ -114,7 +116,7 @@ func (m *mockDeployLogRepo) Create(log *models.DeploymentLog) error {
 	return nil
 }
 
-func (m *mockDeployLogRepo) FindByID(id string) (*models.DeploymentLog, error) {
+func (m *mockDeployLogRepo) FindByID(_ context.Context, id string) (*models.DeploymentLog, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	if m.err != nil {
@@ -128,7 +130,7 @@ func (m *mockDeployLogRepo) FindByID(id string) (*models.DeploymentLog, error) {
 	return &cp, nil
 }
 
-func (m *mockDeployLogRepo) Update(log *models.DeploymentLog) error {
+func (m *mockDeployLogRepo) Update(_ context.Context, log *models.DeploymentLog) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.err != nil {
@@ -139,7 +141,7 @@ func (m *mockDeployLogRepo) Update(log *models.DeploymentLog) error {
 	return nil
 }
 
-func (m *mockDeployLogRepo) ListByInstance(instanceID string) ([]models.DeploymentLog, error) {
+func (m *mockDeployLogRepo) ListByInstance(_ context.Context, instanceID string) ([]models.DeploymentLog, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	var out []models.DeploymentLog
@@ -151,7 +153,7 @@ func (m *mockDeployLogRepo) ListByInstance(instanceID string) ([]models.Deployme
 	return out, nil
 }
 
-func (m *mockDeployLogRepo) GetLatestByInstance(instanceID string) (*models.DeploymentLog, error) {
+func (m *mockDeployLogRepo) GetLatestByInstance(_ context.Context, instanceID string) (*models.DeploymentLog, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	var latest *models.DeploymentLog
@@ -272,7 +274,7 @@ func TestManager_Deploy_CreatesLogAndUpdatesStatus(t *testing.T) {
 	assert.NotEmpty(t, logID)
 
 	// Verify deployment log was created.
-	log, err := logRepo.FindByID(logID)
+	log, err := logRepo.FindByID(context.Background(), logID)
 	assert.NoError(t, err)
 	assert.Equal(t, models.DeployActionDeploy, log.Action)
 	assert.Equal(t, models.DeployLogRunning, log.Status)
@@ -292,7 +294,7 @@ func TestManager_Deploy_CreatesLogAndUpdatesStatus(t *testing.T) {
 	assert.Equal(t, models.StackStatusRunning, final.Status)
 
 	// Verify log was updated to success.
-	finalLog, err := logRepo.FindByID(logID)
+	finalLog, err := logRepo.FindByID(context.Background(), logID)
 	assert.NoError(t, err)
 	assert.Equal(t, models.DeployLogSuccess, finalLog.Status)
 	assert.NotNil(t, finalLog.CompletedAt)
@@ -358,7 +360,7 @@ func TestManager_Deploy_WithCharts_Fails(t *testing.T) {
 	assert.NotEmpty(t, final.ErrorMessage)
 
 	// Verify log was updated to error.
-	finalLog, err := logRepo.FindByID(logID)
+	finalLog, err := logRepo.FindByID(context.Background(), logID)
 	assert.NoError(t, err)
 	assert.Equal(t, models.DeployLogError, finalLog.Status)
 	assert.NotEmpty(t, finalLog.ErrorMessage)
@@ -387,12 +389,12 @@ func TestManager_Stop_CreatesLogAndUpdatesStatus(t *testing.T) {
 		MaxConcurrent: 2,
 	})
 
-	logID, err := mgr.Stop(context.Background(), inst)
+	logID, err := mgr.StopWithCharts(context.Background(), inst, nil)
 	assert.NoError(t, err)
 	assert.NotEmpty(t, logID)
 
 	// Verify deployment log was created with stop action.
-	log, err := logRepo.FindByID(logID)
+	log, err := logRepo.FindByID(context.Background(), logID)
 	assert.NoError(t, err)
 	assert.Equal(t, models.DeployActionStop, log.Action)
 	assert.Equal(t, models.DeployLogRunning, log.Status)
@@ -406,7 +408,7 @@ func TestManager_Stop_CreatesLogAndUpdatesStatus(t *testing.T) {
 	// Wait for async completion.
 	time.Sleep(200 * time.Millisecond)
 
-	// Verify final status (Stop without charts finalizes to stopped).
+	// Verify final status (StopWithCharts without charts finalizes to stopped).
 	final, err := instanceRepo.FindByID(inst.ID)
 	assert.NoError(t, err)
 	assert.Equal(t, models.StackStatusStopped, final.Status)
@@ -536,7 +538,7 @@ func TestManager_Stop_LogRepoError(t *testing.T) {
 		MaxConcurrent: 2,
 	})
 
-	_, err := mgr.Stop(context.Background(), inst)
+	_, err := mgr.StopWithCharts(context.Background(), inst, nil)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "creating deployment log")
 }
@@ -632,7 +634,7 @@ func TestManager_Deploy_ChartsSortedByDeployOrder(t *testing.T) {
 	time.Sleep(500 * time.Millisecond)
 
 	// The error should reference the first chart (deploy order 1) since it fails first.
-	finalLog, err := logRepo.FindByID(logID)
+	finalLog, err := logRepo.FindByID(context.Background(), logID)
 	assert.NoError(t, err)
 	assert.Equal(t, models.DeployLogError, finalLog.Status)
 	assert.Contains(t, finalLog.ErrorMessage, "first-chart")
@@ -693,7 +695,7 @@ func TestManager_StopWithCharts_ExecutesUninstall(t *testing.T) {
 	assert.NotEmpty(t, final.ErrorMessage)
 
 	// Verify the error references the chart that was attempted first (reverse order = nginx first).
-	finalLog, err := logRepo.FindByID(logID)
+	finalLog, err := logRepo.FindByID(context.Background(), logID)
 	assert.NoError(t, err)
 	assert.Equal(t, models.DeployLogError, finalLog.Status)
 	assert.Contains(t, finalLog.ErrorMessage, "nginx")
@@ -739,7 +741,7 @@ func TestManager_StopWithCharts_Success_NoCharts(t *testing.T) {
 	assert.Equal(t, models.StackStatusStopped, final.Status)
 	assert.Empty(t, final.ErrorMessage)
 
-	finalLog, err := logRepo.FindByID(logID)
+	finalLog, err := logRepo.FindByID(context.Background(), logID)
 	assert.NoError(t, err)
 	assert.Equal(t, models.DeployLogSuccess, finalLog.Status)
 	assert.NotNil(t, finalLog.CompletedAt)
@@ -767,7 +769,7 @@ func TestManager_FinalizeStop_Success(t *testing.T) {
 		Status:          models.DeployLogRunning,
 		StartedAt:       time.Now().UTC(),
 	}
-	require.NoError(t, logRepo.Create(deployLog))
+	require.NoError(t, logRepo.Create(context.Background(), deployLog))
 
 	mgr := NewManager(ManagerConfig{
 		HelmClient:    NewHelmClient("/nonexistent/helm", "", 1*time.Second),
@@ -785,7 +787,7 @@ func TestManager_FinalizeStop_Success(t *testing.T) {
 	assert.Equal(t, models.StackStatusStopped, final.Status)
 	assert.Empty(t, final.ErrorMessage)
 
-	finalLog, err := logRepo.FindByID(deployLog.ID)
+	finalLog, err := logRepo.FindByID(context.Background(), deployLog.ID)
 	assert.NoError(t, err)
 	assert.Equal(t, models.DeployLogSuccess, finalLog.Status)
 	assert.Equal(t, "all charts uninstalled", finalLog.Output)
@@ -817,7 +819,7 @@ func TestManager_FinalizeStop_Error(t *testing.T) {
 		Status:          models.DeployLogRunning,
 		StartedAt:       time.Now().UTC(),
 	}
-	require.NoError(t, logRepo.Create(deployLog))
+	require.NoError(t, logRepo.Create(context.Background(), deployLog))
 
 	mgr := NewManager(ManagerConfig{
 		HelmClient:    NewHelmClient("/nonexistent/helm", "", 1*time.Second),
@@ -827,18 +829,19 @@ func TestManager_FinalizeStop_Error(t *testing.T) {
 		MaxConcurrent: 2,
 	})
 
-	stopErr := errors.New("helm uninstall timed out")
+	stopErr := fmt.Errorf("uninstalling chart %q: helm command failed: exit status 1", "nginx")
 	mgr.finalizeStop(inst.ID, deployLog, "partial output", stopErr)
 
 	final, err := instanceRepo.FindByID(inst.ID)
 	assert.NoError(t, err)
 	assert.Equal(t, models.StackStatusError, final.Status)
-	assert.Equal(t, "helm uninstall timed out", final.ErrorMessage)
+	// Error message is sanitized — no raw Helm output.
+	assert.Equal(t, `uninstalling chart "nginx": operation failed`, final.ErrorMessage)
 
-	finalLog, err := logRepo.FindByID(deployLog.ID)
+	finalLog, err := logRepo.FindByID(context.Background(), deployLog.ID)
 	assert.NoError(t, err)
 	assert.Equal(t, models.DeployLogError, finalLog.Status)
-	assert.Equal(t, "helm uninstall timed out", finalLog.ErrorMessage)
+	assert.Equal(t, `uninstalling chart "nginx": operation failed`, finalLog.ErrorMessage)
 	assert.Equal(t, "partial output", finalLog.Output)
 	assert.NotNil(t, finalLog.CompletedAt)
 
@@ -1021,7 +1024,7 @@ func TestManager_StopWithCharts_ReversesDeployOrder(t *testing.T) {
 
 	// The error should reference the third chart (highest deploy order),
 	// which should be uninstalled first (reverse order).
-	finalLog, err := logRepo.FindByID(logID)
+	finalLog, err := logRepo.FindByID(context.Background(), logID)
 	assert.NoError(t, err)
 	assert.Equal(t, models.DeployLogError, finalLog.Status)
 	assert.Contains(t, finalLog.ErrorMessage, "third-chart")
@@ -1051,7 +1054,7 @@ func TestManager_Stop_InstanceRepoUpdateError(t *testing.T) {
 		MaxConcurrent: 2,
 	})
 
-	_, err := mgr.Stop(context.Background(), inst)
+	_, err := mgr.StopWithCharts(context.Background(), inst, nil)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "updating instance status")
 }
@@ -1109,4 +1112,129 @@ func TestManager_StopWithCharts_InstanceUpdateError(t *testing.T) {
 	_, err := mgr.StopWithCharts(context.Background(), inst, []ChartDeployInfo{})
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "updating instance status")
+}
+
+func TestSanitizeDeployError(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{
+			name: "deploying chart error",
+			err:  fmt.Errorf("deploying chart %q: helm command failed: exit status 1\nsome sensitive output", "nginx"),
+			want: `deploying chart "nginx": operation failed`,
+		},
+		{
+			name: "uninstalling chart error",
+			err:  fmt.Errorf("uninstalling chart %q: helm command failed: exit status 1", "redis"),
+			want: `uninstalling chart "redis": operation failed`,
+		},
+		{
+			name: "creating temp directory error",
+			err:  fmt.Errorf("creating temp directory: permission denied"),
+			want: "creating temp directory: operation failed",
+		},
+		{
+			name: "unknown error format",
+			err:  errors.New("something totally unexpected with secrets"),
+			want: "deployment operation failed",
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := sanitizeDeployError(tt.err)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestTruncateString(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		input  string
+		maxLen int
+		want   string
+	}{
+		{
+			name:   "no truncation needed",
+			input:  "short",
+			maxLen: 10,
+			want:   "short",
+		},
+		{
+			name:   "exact length",
+			input:  "exact",
+			maxLen: 5,
+			want:   "exact",
+		},
+		{
+			name:   "truncated with ellipsis",
+			input:  "this is a long string",
+			maxLen: 10,
+			want:   "this is...",
+		},
+		{
+			name:   "very small max",
+			input:  "abcdef",
+			maxLen: 3,
+			want:   "abc",
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := truncateString(tt.input, tt.maxLen)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestManager_FinalizeDeploy_OutputTruncation(t *testing.T) {
+	t.Parallel()
+
+	instanceRepo := newMockInstanceRepo()
+	logRepo := newMockDeployLogRepo()
+
+	inst := &models.StackInstance{
+		ID:        "inst-trunc",
+		Name:      "truncate-test",
+		Namespace: "stack-trunc",
+		Status:    models.StackStatusDeploying,
+	}
+	require.NoError(t, instanceRepo.Create(inst))
+
+	deployLog := &models.DeploymentLog{
+		ID:              "log-trunc",
+		StackInstanceID: inst.ID,
+		Action:          models.DeployActionDeploy,
+		Status:          models.DeployLogRunning,
+		StartedAt:       time.Now().UTC(),
+	}
+	require.NoError(t, logRepo.Create(context.Background(), deployLog))
+
+	mgr := NewManager(ManagerConfig{
+		HelmClient:    NewHelmClient("/nonexistent/helm", "", 1*time.Second),
+		InstanceRepo:  instanceRepo,
+		DeployLogRepo: logRepo,
+		Hub:           nil,
+		MaxConcurrent: 2,
+	})
+
+	// Create output larger than maxOutputLen (64KB).
+	largeOutput := strings.Repeat("x", maxOutputLen+1000)
+	mgr.finalizeDeploy(inst.ID, deployLog, largeOutput, nil)
+
+	finalLog, err := logRepo.FindByID(context.Background(), deployLog.ID)
+	assert.NoError(t, err)
+	assert.LessOrEqual(t, len(finalLog.Output), maxOutputLen)
 }

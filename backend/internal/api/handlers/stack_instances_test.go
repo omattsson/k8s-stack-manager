@@ -275,13 +275,13 @@ func TestUpdateInstance(t *testing.T) {
 			wantStatus: http.StatusNotFound,
 		},
 		{
-			name: "partial update with only branch keeps existing name",
+			name: "partial update with only branch fails validation (PUT requires all fields)",
 			id:   "i1",
 			body: `{"branch":"develop"}`,
 			setup: func(repo *MockStackInstanceRepository) {
 				seedInstance(t, repo, "i1", "stack-a", "d1", "uid-1", models.StackStatusDraft)
 			},
-			wantStatus: http.StatusOK,
+			wantStatus: http.StatusBadRequest,
 		},
 		{
 			name: "invalid JSON returns 400",

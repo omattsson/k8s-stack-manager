@@ -1,6 +1,9 @@
 package models
 
-import "time"
+import (
+	"context"
+	"time"
+)
 
 // DeploymentLog records the output and status of a deployment operation.
 type DeploymentLog struct {
@@ -29,9 +32,9 @@ const (
 
 // DeploymentLogRepository defines data access operations for deployment logs.
 type DeploymentLogRepository interface {
-	Create(log *DeploymentLog) error
-	FindByID(id string) (*DeploymentLog, error)
-	Update(log *DeploymentLog) error
-	ListByInstance(instanceID string) ([]DeploymentLog, error)
-	GetLatestByInstance(instanceID string) (*DeploymentLog, error)
+	Create(ctx context.Context, log *DeploymentLog) error
+	FindByID(ctx context.Context, id string) (*DeploymentLog, error)
+	Update(ctx context.Context, log *DeploymentLog) error
+	ListByInstance(ctx context.Context, instanceID string) ([]DeploymentLog, error)
+	GetLatestByInstance(ctx context.Context, instanceID string) (*DeploymentLog, error)
 }
