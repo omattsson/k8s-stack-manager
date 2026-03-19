@@ -8,7 +8,7 @@ Built with Vite + React 19 + TypeScript (strict mode). Uses SWC via `@vitejs/plu
 - **Routing**: `react-router-dom` v7 with `<Routes>` / `<Route>` in `src/routes.tsx`
 - **UI Library**: MUI v7 — use MUI components instead of raw HTML
 - **API Client**: Axios instance in `src/api/client.ts`
-- **API Config**: `src/api/config.ts` — switches between `localhost:8081` (dev) and `/api` (prod)
+- **API Config**: `src/api/config.ts` — dev: `http://localhost:8081` (direct), prod: `/api` (nginx strips `/api` prefix via trailing `/` in `proxy_pass`). Endpoints in `client.ts` use full `/api/v1/...` paths.
 - **WebSocket**: `reconnecting-websocket` with context provider and hook
 
 ## Component Patterns

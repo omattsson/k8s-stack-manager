@@ -30,7 +30,7 @@ You are a senior Go backend engineer. Implement the requested feature or fix end
 7. Tests in `internal/api/handlers/` (table-driven, `t.Parallel()`, `MockRepository`)
 
 ## Critical Rules
-- Every mutating handler (POST/PUT/DELETE) must create an AuditLog entry
+- Audit logging is handled by `middleware.NewAuditMiddleware` on route groups — do NOT add audit calls inside handlers
 - Use `handleDBError()` for ALL repository errors — never `err.Error()` for 500s
 - Parse IDs with `strconv.ParseUint` — return 400 for invalid
 - `t.Parallel()` on parent AND subtests; `tt := tt` before `t.Run`
