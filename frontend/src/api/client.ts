@@ -424,8 +424,15 @@ export const gitService = {
   },
 };
 
+export interface PaginatedAuditLogs {
+  data: AuditLog[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
 export const auditService = {
-  list: async (filters?: AuditLogFilters): Promise<AuditLog[]> => {
+  list: async (filters?: AuditLogFilters): Promise<PaginatedAuditLogs> => {
     try {
       const response = await api.get('/api/v1/audit-logs', { params: filters });
       return response.data;

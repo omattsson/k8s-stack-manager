@@ -20,7 +20,7 @@ const docTemplate = `{
     "paths": {
         "/api/v1/audit-logs": {
             "get": {
-                "description": "List audit logs with optional filters",
+                "description": "List audit logs with optional filters and pagination",
                 "produces": [
                     "application/json"
                 ],
@@ -64,16 +64,25 @@ const docTemplate = `{
                         "description": "End date (RFC3339)",
                         "name": "end_date",
                         "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Page size (default 25)",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Offset (default 0)",
+                        "name": "offset",
+                        "in": "query"
                     }
                 ],
                 "responses": {
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "type": "array",
-                            "items": {
-                                "$ref": "#/definitions/models.AuditLog"
-                            }
+                            "$ref": "#/definitions/models.PaginatedAuditLogs"
                         }
                     },
                     "400": {
@@ -3087,6 +3096,26 @@ const docTemplate = `{
                 },
                 "version": {
                     "description": "For optimistic locking (1 = initial; 0 = not provided)",
+                    "type": "integer"
+                }
+            }
+        },
+        "models.PaginatedAuditLogs": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/models.AuditLog"
+                    }
+                },
+                "limit": {
+                    "type": "integer"
+                },
+                "offset": {
+                    "type": "integer"
+                },
+                "total": {
                     "type": "integer"
                 }
             }

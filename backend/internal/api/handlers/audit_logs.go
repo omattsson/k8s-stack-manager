@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"net/http"
+	"strconv"
 	"time"
 
 	"backend/internal/models"
@@ -21,7 +22,7 @@ func NewAuditLogHandler(auditRepo models.AuditLogRepository) *AuditLogHandler {
 
 // ListAuditLogs godoc
 // @Summary     List audit logs
-// @Description List audit logs with optional filters
+// @Description List audit logs with optional filters and pagination
 // @Tags        audit-logs
 // @Produce     json
 // @Param       user_id     query    string false "Filter by user ID"
@@ -30,7 +31,9 @@ func NewAuditLogHandler(auditRepo models.AuditLogRepository) *AuditLogHandler {
 // @Param       action      query    string false "Filter by action"
 // @Param       start_date  query    string false "Start date (RFC3339)"
 // @Param       end_date    query    string false "End date (RFC3339)"
-// @Success     200         {array}  models.AuditLog
+// @Param       limit       query    int    false "Page size (default 25)"
+// @Param       offset      query    int    false "Offset (default 0)"
+// @Success     200         {object} models.PaginatedAuditLogs
 // @Failure     400         {object} map[string]string
 // @Failure     500         {object} map[string]string
 // @Router      /api/v1/audit-logs [get]
@@ -40,6 +43,26 @@ func (h *AuditLogHandler) ListAuditLogs(c *gin.Context) {
 		EntityType: c.Query("entity_type"),
 		EntityID:   c.Query("entity_id"),
 		Action:     c.Query("action"),
+		Limit:      25,
+		Offset:     0,
+	}
+
+	if limitStr := c.Query("limit"); limitStr != "" {
+		l, err := strconv.Atoi(limitStr)
+		if err != nil || l < 0 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid limit parameter"})
+			return
+		}
+		filters.Limit = l
+	}
+
+	if offsetStr := c.Query("offset"); offsetStr != "" {
+		o, err := strconv.Atoi(offsetStr)
+		if err != nil || o < 0 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid offset parameter"})
+			return
+		}
+		filters.Offset = o
 	}
 
 	if sd := c.Query("start_date"); sd != "" {
@@ -60,12 +83,17 @@ func (h *AuditLogHandler) ListAuditLogs(c *gin.Context) {
 		filters.EndDate = &t
 	}
 
-	logs, err := h.auditRepo.List(filters)
+	logs, total, err := h.auditRepo.List(filters)
 	if err != nil {
 		status, message := mapError(err, "Audit log")
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
 
-	c.JSON(http.StatusOK, logs)
+	c.JSON(http.StatusOK, models.PaginatedAuditLogs{
+		Data:   logs,
+		Total:  total,
+		Limit:  filters.Limit,
+		Offset: filters.Offset,
+	})
 }

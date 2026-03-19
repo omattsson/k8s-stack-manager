@@ -84,7 +84,7 @@ func (r *AuditLogRepository) Create(log *models.AuditLog) error {
 	return nil
 }
 
-func (r *AuditLogRepository) List(filters models.AuditLogFilters) ([]models.AuditLog, error) {
+func (r *AuditLogRepository) List(filters models.AuditLogFilters) ([]models.AuditLog, int64, error) {
 	ctx := context.Background()
 
 	// Build filter parts.
@@ -147,14 +147,28 @@ func (r *AuditLogRepository) List(filters models.AuditLogFilters) ([]models.Audi
 
 	entities, err := collectEntities(ctx, pager, fn)
 	if err != nil {
-		return nil, mapAzureError("list", err)
+		return nil, 0, mapAzureError("list", err)
+	}
+
+	total := int64(len(entities))
+
+	// Apply offset and limit for pagination.
+	offset := filters.Offset
+	if offset > len(entities) {
+		offset = len(entities)
+	}
+	entities = entities[offset:]
+
+	limit := filters.Limit
+	if limit > 0 && limit < len(entities) {
+		entities = entities[:limit]
 	}
 
 	results := make([]models.AuditLog, 0, len(entities))
 	for _, e := range entities {
 		results = append(results, *auditLogFromEntity(e))
 	}
-	return results, nil
+	return results, total, nil
 }
 
 func auditLogFromEntity(e map[string]interface{}) *models.AuditLog {

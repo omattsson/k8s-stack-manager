@@ -735,11 +735,11 @@ func (m *MockAuditLogRepository) Create(log *models.AuditLog) error {
 	return nil
 }
 
-func (m *MockAuditLogRepository) List(filters models.AuditLogFilters) ([]models.AuditLog, error) {
+func (m *MockAuditLogRepository) List(filters models.AuditLogFilters) ([]models.AuditLog, int64, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	if m.err != nil {
-		return nil, m.err
+		return nil, 0, m.err
 	}
 	var out []models.AuditLog
 	for _, e := range m.entries {
@@ -757,7 +757,21 @@ func (m *MockAuditLogRepository) List(filters models.AuditLogFilters) ([]models.
 		}
 		out = append(out, e)
 	}
-	return out, nil
+	total := int64(len(out))
+
+	// Apply offset.
+	offset := filters.Offset
+	if offset > len(out) {
+		offset = len(out)
+	}
+	out = out[offset:]
+
+	// Apply limit.
+	if filters.Limit > 0 && filters.Limit < len(out) {
+		out = out[:filters.Limit]
+	}
+
+	return out, total, nil
 }
 
 func (m *MockAuditLogRepository) SetError(err error) {

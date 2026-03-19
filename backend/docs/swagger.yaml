@@ -271,6 +271,19 @@ definitions:
         description: For optimistic locking (1 = initial; 0 = not provided)
         type: integer
     type: object
+  models.PaginatedAuditLogs:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/models.AuditLog'
+        type: array
+      limit:
+        type: integer
+      offset:
+        type: integer
+      total:
+        type: integer
+    type: object
   models.StackDefinition:
     properties:
       created_at:
@@ -404,7 +417,7 @@ info:
 paths:
   /api/v1/audit-logs:
     get:
-      description: List audit logs with optional filters
+      description: List audit logs with optional filters and pagination
       parameters:
       - description: Filter by user ID
         in: query
@@ -430,15 +443,21 @@ paths:
         in: query
         name: end_date
         type: string
+      - description: Page size (default 25)
+        in: query
+        name: limit
+        type: integer
+      - description: Offset (default 0)
+        in: query
+        name: offset
+        type: integer
       produces:
       - application/json
       responses:
         "200":
           description: OK
           schema:
-            items:
-              $ref: '#/definitions/models.AuditLog'
-            type: array
+            $ref: '#/definitions/models.PaginatedAuditLogs'
         "400":
           description: Bad Request
           schema:
