@@ -128,6 +128,14 @@ const Detail = () => {
       }
     }
 
+    // Live K8s status updates from the watcher (pod state changes, etc.).
+    if (msg.type === 'instance.status') {
+      const nsPayload = msg.payload as { instance_id?: string; namespace_status?: NamespaceStatus };
+      if (nsPayload.namespace_status) {
+        setK8sStatus(nsPayload.namespace_status);
+      }
+    }
+
   }, [id]);
 
   useWebSocket(handleWsMessage);
