@@ -22,7 +22,9 @@ type HelmClient struct {
 // InstallRequest contains the parameters for a helm upgrade --install operation.
 type InstallRequest struct {
 	ReleaseName string
-	ChartPath   string
+	ChartPath   string // chart name (e.g. "ingress-nginx") or local path
+	RepoURL     string // optional: helm repository URL (passed as --repo)
+	Version     string // optional: chart version (passed as --version)
 	ValuesFile  string
 	Namespace   string
 }
@@ -76,6 +78,12 @@ func (h *HelmClient) Install(ctx context.Context, req InstallRequest) (string, e
 		"-n", req.Namespace,
 		"--create-namespace",
 		"--timeout", h.timeout.String(),
+	}
+	if req.RepoURL != "" {
+		args = append(args, "--repo", req.RepoURL)
+	}
+	if req.Version != "" {
+		args = append(args, "--version", req.Version)
 	}
 	if req.ValuesFile != "" {
 		args = append(args, "-f", req.ValuesFile)

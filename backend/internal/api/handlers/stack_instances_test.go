@@ -275,13 +275,13 @@ func TestUpdateInstance(t *testing.T) {
 			wantStatus: http.StatusNotFound,
 		},
 		{
-			name: "empty name returns 400",
+			name: "partial update with only branch keeps existing name",
 			id:   "i1",
-			body: `{"name":"","branch":"main"}`,
+			body: `{"branch":"develop"}`,
 			setup: func(repo *MockStackInstanceRepository) {
 				seedInstance(t, repo, "i1", "stack-a", "d1", "uid-1", models.StackStatusDraft)
 			},
-			wantStatus: http.StatusBadRequest,
+			wantStatus: http.StatusOK,
 		},
 		{
 			name: "invalid JSON returns 400",

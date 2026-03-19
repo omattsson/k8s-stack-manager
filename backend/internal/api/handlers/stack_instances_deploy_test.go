@@ -216,13 +216,17 @@ func TestDeployInstance(t *testing.T) {
 			wantStatus: http.StatusConflict,
 		},
 		{
-			name:       "running returns 409",
+			name:       "running is not blocked by status check",
 			instanceID: "i3",
 			setup: func(instRepo *MockStackInstanceRepository, defRepo *MockStackDefinitionRepository, _ *MockChartConfigRepository) {
 				seedInstance(t, instRepo, "i3", "stack-c", "d1", "uid-1", models.StackStatusRunning)
 				seedDefinition(t, defRepo, "d1", "My Def", "uid-1")
 			},
-			wantStatus: http.StatusConflict,
+			// 400 from "no charts" — NOT 409 from status check.
+			wantStatus: http.StatusBadRequest,
+			checkFn: func(t *testing.T, w *httptest.ResponseRecorder) {
+				assert.NotContains(t, w.Body.String(), "Cannot deploy")
+			},
 		},
 		{
 			name:       "not found returns 404",

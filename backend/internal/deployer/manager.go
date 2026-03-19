@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 
 	"backend/internal/models"
@@ -168,7 +169,10 @@ func (m *Manager) executeDeploy(instanceID string, deployLog *models.DeploymentL
 	defer cancel()
 
 	for _, chart := range charts {
-		releaseName := fmt.Sprintf("%s-%s", namespace, chart.ChartConfig.ChartName)
+		// Use chart name as release name. Releases are namespace-scoped, so
+		// there is no collision risk across instances (each gets its own namespace).
+		// This keeps names short to stay within the K8s 63-char name limit.
+		releaseName := chart.ChartConfig.ChartName
 
 		slog.Info("deploying chart",
 			"instance_id", instanceID,
@@ -188,15 +192,25 @@ func (m *Manager) executeDeploy(instanceID string, deployLog *models.DeploymentL
 			valuesFile = valuesPath
 		}
 
-		// Determine chart path — use repository URL if chart path is empty.
-		chartPath := chart.ChartConfig.ChartPath
-		if chartPath == "" {
-			chartPath = chart.ChartConfig.RepositoryURL
+		// Determine chart reference and optional --repo URL.
+		// For OCI registries (oci://...), combine repo URL and chart path into a
+		// single chart reference (e.g. oci://registry/charts/node) — --repo is
+		// not supported for OCI. For HTTP repos, pass --repo separately.
+		chartRef := chart.ChartConfig.ChartPath
+		if chartRef == "" {
+			chartRef = chart.ChartConfig.ChartName
+		}
+		repoURL := chart.ChartConfig.RepositoryURL
+		if strings.HasPrefix(repoURL, "oci://") {
+			chartRef = strings.TrimRight(repoURL, "/") + "/" + chartRef
+			repoURL = ""
 		}
 
 		output, err := m.helm.Install(ctx, InstallRequest{
 			ReleaseName: releaseName,
-			ChartPath:   chartPath,
+			ChartPath:   chartRef,
+			RepoURL:     repoURL,
+			Version:     chart.ChartConfig.ChartVersion,
 			ValuesFile:  valuesFile,
 			Namespace:   namespace,
 		})
@@ -334,7 +348,7 @@ func (m *Manager) executeStopWithCharts(instanceID string, deployLog *models.Dep
 	defer cancel()
 
 	for _, chart := range charts {
-		releaseName := fmt.Sprintf("%s-%s", namespace, chart.ChartConfig.ChartName)
+		releaseName := chart.ChartConfig.ChartName
 
 		slog.Info("uninstalling chart",
 			"instance_id", instanceID,

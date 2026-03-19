@@ -83,6 +83,7 @@ func (c *Client) GetNamespaceStatus(ctx context.Context, namespace string) (*Nam
 		return &NamespaceStatus{
 			Namespace:   namespace,
 			Status:      StatusNotFound,
+			Charts:      []ChartStatus{},
 			LastChecked: time.Now().UTC(),
 		}, nil
 	}
@@ -124,7 +125,11 @@ func (c *Client) GetNamespaceStatus(ctx context.Context, namespace string) (*Nam
 
 	ensureChart := func(release string) *chartResources {
 		if _, ok := charts[release]; !ok {
-			charts[release] = &chartResources{}
+			charts[release] = &chartResources{
+				deployments: []DeploymentInfo{},
+				pods:        []PodInfo{},
+				services:    []ServiceInfo{},
+			}
 		}
 		return charts[release]
 	}

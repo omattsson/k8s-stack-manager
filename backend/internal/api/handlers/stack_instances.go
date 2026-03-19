@@ -230,9 +230,15 @@ func (h *InstanceHandler) UpdateInstance(c *gin.Context) {
 		return
 	}
 
-	existing.Name = update.Name
-	existing.Branch = update.Branch
-	existing.Namespace = update.Namespace
+	if update.Name != "" {
+		existing.Name = update.Name
+	}
+	if update.Branch != "" {
+		existing.Branch = update.Branch
+	}
+	if update.Namespace != "" {
+		existing.Namespace = update.Namespace
+	}
 	existing.UpdatedAt = time.Now().UTC()
 
 	if err := existing.Validate(); err != nil {
@@ -534,11 +540,11 @@ func (h *InstanceHandler) DeployInstance(c *gin.Context) {
 		return
 	}
 
-	// Only allow deploy from draft, stopped, or error.
+	// Allow deploy from draft, stopped, error, or running (upgrade).
 	switch inst.Status {
-	case models.StackStatusDraft, models.StackStatusStopped, models.StackStatusError:
-		// OK
-	case models.StackStatusDeploying, models.StackStatusRunning, models.StackStatusQueued, models.StackStatusStopping:
+	case models.StackStatusDraft, models.StackStatusStopped, models.StackStatusError, models.StackStatusRunning:
+		// OK — running triggers a helm upgrade with the latest values.
+	case models.StackStatusDeploying, models.StackStatusQueued, models.StackStatusStopping:
 		c.JSON(http.StatusConflict, gin.H{"error": fmt.Sprintf("Cannot deploy: instance is currently %s", inst.Status)})
 		return
 	default:
