@@ -32,6 +32,9 @@ func TestSetupRoutes(t *testing.T) {
 		CORS: config.CORSConfig{
 			AllowedOrigins: "*",
 		},
+		Server: config.ServerConfig{
+			RateLimit: 100,
+		},
 	}
 
 	// Create a test WebSocket hub

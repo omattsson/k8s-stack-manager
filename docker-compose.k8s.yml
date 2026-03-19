@@ -1,0 +1,14 @@
+# Optional override for local K8s cluster access (e.g. rancher-desktop).
+# Usage: docker compose -f docker-compose.yml -f docker-compose.k8s.yml up
+#
+# This adds host access so the backend can reach the K8s API at host.docker.internal
+# and mounts ~/.kube for kubeconfig access.
+# NOT for CI or production — only for local development with a desktop K8s.
+services:
+  backend:
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      - KUBECONFIG_PATH=${KUBECONFIG_PATH:-/root/.kube/config}
+    volumes:
+      - ${HOME}/.kube:/root/.kube:ro

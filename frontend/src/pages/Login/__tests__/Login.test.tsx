@@ -4,7 +4,6 @@ import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import Login from '../index';
 
-const mockLogin = vi.fn();
 const mockNavigate = vi.fn();
 
 vi.mock('react-router-dom', async () => {
@@ -15,11 +14,14 @@ vi.mock('react-router-dom', async () => {
   };
 });
 
+let mockIsAuthenticated = false;
+const mockLogin = vi.fn();
+
 vi.mock('../../../context/AuthContext', () => ({
   useAuth: () => ({
     login: mockLogin,
-    user: null,
-    isAuthenticated: false,
+    user: mockIsAuthenticated ? { id: '1', username: 'admin' } : null,
+    isAuthenticated: mockIsAuthenticated,
     isLoading: false,
     logout: vi.fn(),
   }),
@@ -28,6 +30,7 @@ vi.mock('../../../context/AuthContext', () => ({
 describe('Login Page', () => {
   afterEach(() => {
     vi.clearAllMocks();
+    mockIsAuthenticated = false;
   });
 
   it('renders the login form', () => {
@@ -43,7 +46,9 @@ describe('Login Page', () => {
   });
 
   it('calls login and navigates on success', async () => {
-    mockLogin.mockResolvedValue(undefined);
+    mockLogin.mockImplementation(async () => {
+      mockIsAuthenticated = true;
+    });
     const user = userEvent.setup();
 
     render(
@@ -58,7 +63,7 @@ describe('Login Page', () => {
 
     await waitFor(() => {
       expect(mockLogin).toHaveBeenCalledWith('admin', 'password');
-      expect(mockNavigate).toHaveBeenCalledWith('/');
+      expect(mockNavigate).toHaveBeenCalledWith('/', { replace: true });
     });
   });
 

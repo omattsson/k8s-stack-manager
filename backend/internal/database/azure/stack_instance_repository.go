@@ -144,7 +144,7 @@ func (r *StackInstanceRepository) ListByOwner(ownerID string) ([]models.StackIns
 }
 
 func stackInstanceToEntity(i *models.StackInstance) map[string]interface{} {
-	return map[string]interface{}{
+	entity := map[string]interface{}{
 		"PartitionKey":      "global",
 		"RowKey":            i.ID,
 		"ID":                i.ID,
@@ -154,13 +154,18 @@ func stackInstanceToEntity(i *models.StackInstance) map[string]interface{} {
 		"OwnerID":           i.OwnerID,
 		"Branch":            i.Branch,
 		"Status":            i.Status,
+		"ErrorMessage":      i.ErrorMessage,
 		"CreatedAt":         i.CreatedAt.Format(time.RFC3339),
 		"UpdatedAt":         i.UpdatedAt.Format(time.RFC3339),
 	}
+	if i.LastDeployedAt != nil {
+		entity["LastDeployedAt"] = i.LastDeployedAt.Format(time.RFC3339)
+	}
+	return entity
 }
 
 func stackInstanceFromEntity(e map[string]interface{}) *models.StackInstance {
-	return &models.StackInstance{
+	instance := &models.StackInstance{
 		ID:                getString(e, "ID"),
 		StackDefinitionID: getString(e, "StackDefinitionID"),
 		Name:              getString(e, "Name"),
@@ -168,7 +173,13 @@ func stackInstanceFromEntity(e map[string]interface{}) *models.StackInstance {
 		OwnerID:           getString(e, "OwnerID"),
 		Branch:            getString(e, "Branch"),
 		Status:            getString(e, "Status"),
+		ErrorMessage:      getString(e, "ErrorMessage"),
 		CreatedAt:         parseTime(e, "CreatedAt"),
 		UpdatedAt:         parseTime(e, "UpdatedAt"),
 	}
+	if s := getString(e, "LastDeployedAt"); s != "" {
+		t := parseTime(e, "LastDeployedAt")
+		instance.LastDeployedAt = &t
+	}
+	return instance
 }

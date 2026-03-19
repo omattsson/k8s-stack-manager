@@ -42,19 +42,24 @@ services:
       - AZURE_DEVOPS_DEFAULT_ORG=${AZURE_DEVOPS_DEFAULT_ORG:-}
       - GITLAB_TOKEN=${GITLAB_TOKEN:-}
       - GITLAB_BASE_URL=${GITLAB_BASE_URL:-https://gitlab.com}
+      # Deployment
+      - HELM_BINARY=${HELM_BINARY:-helm}
+      - KUBECONFIG_PATH=${KUBECONFIG_PATH:-}
+      - DEPLOYMENT_TIMEOUT=${DEPLOYMENT_TIMEOUT:-10m}
+      - MAX_CONCURRENT_DEPLOYS=${MAX_CONCURRENT_DEPLOYS:-5}
       # Stack defaults
       - DEFAULT_BRANCH=${DEFAULT_BRANCH:-master}
     depends_on:
       azurite:
         condition: service_healthy
-    networks:
-      - backend-net
-      - frontend-net
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8081/health/live"]
       interval: 30s
       timeout: 10s
       retries: 3
+    networks:
+      - backend-net
+      - frontend-net
     volumes:
       - ./backend:/app
       - backend_go_mod:/go/pkg/mod
@@ -71,7 +76,7 @@ services:
       - "${PORT:-3000}:${PORT:-3000}"
     environment:
       - NODE_ENV=${NODE_ENV:-production}
-      - VITE_API_URL=http://backend:8081
+      - VITE_API_URL=${VITE_API_URL:-http://localhost:8081}
     depends_on:
       backend:
         condition: service_healthy
@@ -92,14 +97,14 @@ services:
     volumes:
       - azurite_data:/data
     command: azurite --tableHost 0.0.0.0 --blobHost 0.0.0.0 --queueHost 0.0.0.0
-    networks:
-      - backend-net
     healthcheck:
       test: ["CMD-SHELL", "node -e \"require('net').createConnection(10002,'127.0.0.1').on('connect',()=>process.exit(0)).on('error',()=>process.exit(1))\""]
       interval: 10s
       timeout: 5s
       retries: 5
       start_period: 10s
+    networks:
+      - backend-net
 
 volumes:
   backend_go_mod:
@@ -108,6 +113,6 @@ volumes:
 
 networks:
   backend-net:
-    name: backend-network-${NODE_ENV:-prod}
+    name: backend-network-${GO_ENV:-prod}
   frontend-net:
     name: frontend-network-${NODE_ENV:-prod}

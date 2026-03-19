@@ -73,29 +73,28 @@ api_post "/api/v1/templates/${WEB_ID}/charts" '{
 }' > /dev/null
 
 api_post "/api/v1/templates/${WEB_ID}/charts" '{
-  "chart_name": "backend-app",
-  "repository_url": "oci://registry-1.docker.io/bitnamicharts",
-  "source_repo_url": "https://dev.azure.com/org/project/_git/backend",
-  "chart_path": "node",
-  "chart_version": "23.2.1",
+  "chart_name": "azurite-storage",
+  "repository_url": "https://emberstack.github.io/helm-charts",
+  "chart_path": "azurite",
+  "chart_version": "1.0.19",
   "deploy_order": 2,
   "required": true,
-  "default_values": "replicaCount: 1\nimage:\n  tag: \"{{.Branch}}\"\nservice:\n  type: ClusterIP\n  port: 3000",
-  "locked_values": "containerSecurityContext:\n  runAsNonRoot: true"
+  "default_values": "persistence:\n  enabled: false\nservice:\n  type: ClusterIP",
+  "locked_values": ""
 }' > /dev/null
 
 api_post "/api/v1/templates/${WEB_ID}/charts" '{
   "chart_name": "frontend-app",
-  "repository_url": "oci://registry-1.docker.io/bitnamicharts",
+  "repository_url": "https://charts.bitnami.com/bitnami",
   "source_repo_url": "https://dev.azure.com/org/project/_git/frontend",
   "chart_path": "nginx",
-  "chart_version": "18.2.4",
+  "chart_version": "22.6.5",
   "deploy_order": 3,
   "required": true,
-  "default_values": "replicaCount: 1\nimage:\n  tag: \"{{.Branch}}\"\nservice:\n  type: ClusterIP\n  port: 8080",
+  "default_values": "replicaCount: 1\nservice:\n  type: ClusterIP\n  port: 8080",
   "locked_values": ""
 }' > /dev/null
-log "  + 3 charts (ingress-nginx, backend-app, frontend-app)"
+log "  + 3 charts (ingress-nginx, azurite-storage, frontend-app)"
 
 # ── 2. API Category ──────────────────────────────────────────────────
 API_ID=$(api_post "/api/v1/templates" '{
@@ -109,10 +108,10 @@ log "API template: ${API_ID}"
 
 api_post "/api/v1/templates/${API_ID}/charts" '{
   "chart_name": "api-service",
-  "repository_url": "oci://registry-1.docker.io/bitnamicharts",
+  "repository_url": "https://charts.bitnami.com/bitnami",
   "source_repo_url": "https://dev.azure.com/org/project/_git/api-service",
   "chart_path": "node",
-  "chart_version": "23.2.1",
+  "chart_version": "19.1.7",
   "deploy_order": 1,
   "required": true,
   "default_values": "replicaCount: 2\nimage:\n  tag: \"{{.Branch}}\"\nservice:\n  type: ClusterIP\n  port: 8080\nresources:\n  requests:\n    cpu: 100m\n    memory: 128Mi\n  limits:\n    cpu: 500m\n    memory: 512Mi",
@@ -121,7 +120,7 @@ api_post "/api/v1/templates/${API_ID}/charts" '{
 
 api_post "/api/v1/templates/${API_ID}/charts" '{
   "chart_name": "redis",
-  "repository_url": "oci://registry-1.docker.io/bitnamicharts",
+  "repository_url": "https://charts.bitnami.com/bitnami",
   "chart_path": "redis",
   "chart_version": "20.3.0",
   "deploy_order": 2,
@@ -154,7 +153,7 @@ api_post "/api/v1/templates/${DATA_ID}/charts" '{
 
 api_post "/api/v1/templates/${DATA_ID}/charts" '{
   "chart_name": "redis",
-  "repository_url": "oci://registry-1.docker.io/bitnamicharts",
+  "repository_url": "https://charts.bitnami.com/bitnami",
   "chart_path": "redis",
   "chart_version": "20.3.0",
   "deploy_order": 2,
@@ -165,10 +164,10 @@ api_post "/api/v1/templates/${DATA_ID}/charts" '{
 
 api_post "/api/v1/templates/${DATA_ID}/charts" '{
   "chart_name": "worker",
-  "repository_url": "oci://registry-1.docker.io/bitnamicharts",
+  "repository_url": "https://charts.bitnami.com/bitnami",
   "source_repo_url": "https://dev.azure.com/org/project/_git/data-worker",
   "chart_path": "node",
-  "chart_version": "23.2.1",
+  "chart_version": "19.1.7",
   "deploy_order": 3,
   "required": true,
   "default_values": "replicaCount: 1\nimage:\n  tag: \"{{.Branch}}\"\ncommand:\n  - node\n  - worker.js",

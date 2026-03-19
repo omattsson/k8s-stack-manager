@@ -93,9 +93,60 @@ export interface StackInstance {
   owner_id: string;
   branch: string;
   status: string;
+  error_message?: string;
+  last_deployed_at?: string;
   created_at: string;
   updated_at: string;
   definition?: StackDefinition;
+}
+
+export interface DeploymentLog {
+  id: string;
+  stack_instance_id: string;
+  action: 'deploy' | 'stop';
+  status: 'running' | 'success' | 'error';
+  output: string;
+  error_message?: string;
+  started_at: string;
+  completed_at?: string;
+}
+
+export interface ChartStatus {
+  release_name: string;
+  chart_name: string;
+  status: 'healthy' | 'progressing' | 'degraded' | 'error';
+  deployments: DeploymentStatusInfo[];
+  pods: PodInfo[];
+  services: ServiceInfo[];
+}
+
+export interface DeploymentStatusInfo {
+  name: string;
+  ready_replicas: number;
+  desired_replicas: number;
+  updated_replicas: number;
+  available: boolean;
+}
+
+export interface PodInfo {
+  name: string;
+  phase: string;
+  ready: boolean;
+  restart_count: number;
+  image: string;
+}
+
+export interface ServiceInfo {
+  name: string;
+  type: string;
+  cluster_ip: string;
+}
+
+export interface NamespaceStatus {
+  namespace: string;
+  status: 'healthy' | 'degraded' | 'error' | 'not_found';
+  charts: ChartStatus[];
+  last_checked: string;
 }
 
 export interface ValueOverride {

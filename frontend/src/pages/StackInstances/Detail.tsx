@@ -1,5 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
+import { useWebSocket } from '../../hooks/useWebSocket';
+import type { WsMessage } from '../../hooks/useWebSocket';
 import {
   Box,
   Typography,
@@ -15,12 +17,18 @@ import {
   Step,
   StepLabel,
   Grid,
+  Accordion,
+  AccordionSummary,
+  AccordionDetails,
 } from '@mui/material';
+import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import StatusBadge from '../../components/StatusBadge';
 import BranchSelector from '../../components/BranchSelector';
 import ConfirmDialog from '../../components/ConfirmDialog';
+import DeploymentLogViewer from '../../components/DeploymentLogViewer';
+import PodStatusDisplay from '../../components/PodStatusDisplay';
 import { instanceService, definitionService } from '../../api/client';
-import type { StackInstance, ChartConfig, ValueOverride } from '../../types';
+import type { StackInstance, ChartConfig, ValueOverride, DeploymentLog, NamespaceStatus } from '../../types';
 import YamlEditor from '../../components/YamlEditor';
 
 const Detail = () => {
@@ -38,10 +46,17 @@ const Detail = () => {
   const [error, setError] = useState<string | null>(null);
   const [snackbar, setSnackbar] = useState<string | null>(null);
   const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deploying, setDeploying] = useState(false);
+  const [stopping, setStopping] = useState(false);
+  const [deployLogs, setDeployLogs] = useState<DeploymentLog[]>([]);
+  const [k8sStatus, setK8sStatus] = useState<NamespaceStatus | null>(null);
+  const [statusLoading, setStatusLoading] = useState(false);
 
   useEffect(() => {
     if (!id) return;
     const fetchData = async () => {
+      setDeployLogs([]);
+      setK8sStatus(null);
       try {
         const inst = await instanceService.get(id);
         setInstance(inst);
@@ -60,6 +75,22 @@ const Detail = () => {
           overrideMap[o.chart_config_id] = o.values;
         });
         setEditedOverrides(overrideMap);
+
+        // Fetch deployment logs
+        try {
+          const logs = await instanceService.getDeployLog(id);
+          setDeployLogs(logs);
+        } catch { /* ignore — no logs yet */ }
+
+        // Fetch K8s status if instance is running or deploying
+        if (inst.status === 'running' || inst.status === 'deploying' || inst.status === 'error' || inst.status === 'stopping') {
+          try {
+            setStatusLoading(true);
+            const status = await instanceService.getStatus(id);
+            setK8sStatus(status);
+          } catch { /* ignore */ }
+          finally { setStatusLoading(false); }
+        }
       } catch {
         setError('Failed to load instance details');
       } finally {
@@ -68,6 +99,34 @@ const Detail = () => {
     };
     fetchData();
   }, [id]);
+
+  // Live-update instance status and deploy logs via WebSocket.
+  const handleWsMessage = useCallback((msg: WsMessage) => {
+    if (!id) return;
+    const payload = msg.payload as { instance_id?: string; status?: string };
+    if (payload.instance_id !== id) return;
+
+    if (msg.type === 'deployment.status') {
+      // Refresh instance data and K8s status when deployment status changes.
+      const newStatus = payload.status as string;
+      setInstance((prev) => prev ? { ...prev, status: newStatus } : prev);
+
+      // Refresh K8s status for running/deploying/error states.
+      if (newStatus === 'running' || newStatus === 'deploying' || newStatus === 'error' || newStatus === 'stopping') {
+        instanceService.getStatus(id).then(setK8sStatus).catch(() => {});
+      }
+
+      // Refresh deploy logs on terminal states.
+      if (newStatus === 'running' || newStatus === 'stopped' || newStatus === 'error') {
+        instanceService.getDeployLog(id).then(setDeployLogs).catch(() => {});
+        setDeploying(false);
+        setStopping(false);
+      }
+    }
+
+  }, [id]);
+
+  useWebSocket(handleWsMessage);
 
   const handleSave = async () => {
     if (!id || !instance) return;
@@ -82,10 +141,7 @@ const Detail = () => {
 
       // Save overrides
       for (const [chartConfigId, values] of Object.entries(editedOverrides)) {
-        await instanceService.setOverride(id, {
-          chart_config_id: chartConfigId,
-          values,
-        });
+        await instanceService.setOverride(id, chartConfigId, { values });
       }
 
       setSnackbar('Changes saved successfully');
@@ -133,6 +189,54 @@ const Detail = () => {
     }
   };
 
+  const handleDeploy = async () => {
+    if (!id) return;
+    setDeploying(true);
+    setError(null);
+    try {
+      await instanceService.deploy(id);
+      setSnackbar('Deployment started');
+    } catch {
+      setError('Failed to start deployment');
+      return;
+    } finally {
+      setDeploying(false);
+    }
+    // Best-effort refresh — don't surface errors to the user
+    try {
+      const inst = await instanceService.get(id);
+      setInstance(inst);
+    } catch (e) { console.error('Failed to refresh instance after deploy', e); }
+    try {
+      const logs = await instanceService.getDeployLog(id);
+      setDeployLogs(logs);
+    } catch (e) { console.error('Failed to refresh deploy logs after deploy', e); }
+  };
+
+  const handleStop = async () => {
+    if (!id) return;
+    setStopping(true);
+    setError(null);
+    try {
+      await instanceService.stop(id);
+      setSnackbar('Stop initiated');
+    } catch {
+      setError('Failed to stop instance');
+      return;
+    } finally {
+      setStopping(false);
+    }
+    // Best-effort refresh — don't surface errors to the user
+    try {
+      const inst = await instanceService.get(id);
+      setInstance(inst);
+    } catch (e) { console.error('Failed to refresh instance after stop', e); }
+    try {
+      const logs = await instanceService.getDeployLog(id);
+      setDeployLogs(logs);
+    } catch (e) { console.error('Failed to refresh deploy logs after stop', e); }
+  };
+
   const getRepoUrl = (): string => {
     if (charts.length > 0 && charts[0].source_repo_url) {
       return charts[0].source_repo_url;
@@ -175,6 +279,21 @@ const Detail = () => {
             </Typography>
           </Box>
           <Box sx={{ display: 'flex', gap: 1 }}>
+            {(instance.status === 'draft' || instance.status === 'stopped' || instance.status === 'error') && (
+              <Button variant="contained" color="success" onClick={handleDeploy} disabled={deploying}>
+                {deploying ? 'Deploying...' : 'Deploy'}
+              </Button>
+            )}
+            {instance.status === 'stopping' && (
+              <Button variant="contained" color="warning" disabled>
+                Stopping...
+              </Button>
+            )}
+            {(instance.status === 'running' || instance.status === 'deploying') && (
+              <Button variant="contained" color="warning" onClick={handleStop} disabled={stopping}>
+                {stopping ? 'Stopping...' : 'Stop'}
+              </Button>
+            )}
             <Button variant="outlined" onClick={handleExport}>Export Values</Button>
             <Button variant="outlined" onClick={handleClone}>Clone</Button>
             <Button variant="outlined" color="error" onClick={() => setDeleteOpen(true)}>Delete</Button>
@@ -188,11 +307,12 @@ const Detail = () => {
           const activeStep = LIFECYCLE_STEPS.indexOf(instance.status);
           const isError = instance.status === 'error';
           const isStopped = instance.status === 'stopped';
+          const isStopping = instance.status === 'stopping';
 
           return (
             <Box sx={{ mb: 2 }}>
               <Typography variant="subtitle2" gutterBottom>Status Lifecycle</Typography>
-              {isError || isStopped ? (
+              {isError || isStopped || isStopping ? (
                 <Alert severity={isError ? 'error' : 'warning'} sx={{ py: 0.5 }}>
                   Instance is {instance.status}
                 </Alert>
@@ -208,6 +328,13 @@ const Detail = () => {
             </Box>
           );
         })()}
+
+        {(instance.status === 'running' || instance.status === 'deploying' || instance.status === 'error' || instance.status === 'stopping') && (
+          <Box sx={{ mb: 2 }}>
+            <Typography variant="subtitle2" gutterBottom>Cluster Resources</Typography>
+            <PodStatusDisplay status={k8sStatus} loading={statusLoading} />
+          </Box>
+        )}
 
         <Box sx={{ maxWidth: 400 }}>
           <Typography variant="subtitle2" gutterBottom>Branch</Typography>
@@ -258,6 +385,17 @@ const Detail = () => {
             ))}
           </Box>
         </Paper>
+      )}
+
+      {deployLogs.length > 0 && (
+        <Accordion defaultExpanded={false} sx={{ mb: 3 }}>
+          <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+            <Typography variant="h6">Deployment History ({deployLogs.length})</Typography>
+          </AccordionSummary>
+          <AccordionDetails>
+            <DeploymentLogViewer logs={deployLogs} />
+          </AccordionDetails>
+        </Accordion>
       )}
 
       <Box sx={{ display: 'flex', gap: 2 }}>

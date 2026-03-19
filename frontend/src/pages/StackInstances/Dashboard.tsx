@@ -1,5 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useWebSocket } from '../../hooks/useWebSocket';
+import type { WsMessage } from '../../hooks/useWebSocket';
 import {
   Box,
   Typography,
@@ -43,6 +45,21 @@ const Dashboard = () => {
     };
     fetchInstances();
   }, []);
+
+  // Live-update instance statuses via WebSocket.
+  const handleWsMessage = useCallback((msg: WsMessage) => {
+    if (msg.type === 'deployment.status') {
+      const payload = msg.payload as { instance_id?: string; status?: string };
+      if (!payload.instance_id || !payload.status) return;
+      setInstances((prev) =>
+        prev.map((inst) =>
+          inst.id === payload.instance_id ? { ...inst, status: payload.status as string } : inst
+        )
+      );
+    }
+  }, []);
+
+  useWebSocket(handleWsMessage);
 
   const filtered = instances.filter((inst) => {
     if (statusFilter !== 'All' && inst.status !== statusFilter) return false;

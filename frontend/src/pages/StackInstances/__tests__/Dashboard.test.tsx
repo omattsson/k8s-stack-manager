@@ -1,7 +1,18 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, act } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import Dashboard from '../Dashboard';
+import type { WsMessage } from '../../../hooks/useWebSocket';
+
+type MessageHandler = (msg: WsMessage) => void;
+let capturedWsHandler: MessageHandler | null = null;
+
+vi.mock('../../../hooks/useWebSocket', () => ({
+  useWebSocket: (handler: MessageHandler) => {
+    capturedWsHandler = handler;
+    return { send: vi.fn() };
+  },
+}));
 
 vi.mock('../../../api/client', () => ({
   instanceService: {
@@ -24,6 +35,7 @@ import { instanceService } from '../../../api/client';
 describe('Dashboard', () => {
   afterEach(() => {
     vi.clearAllMocks();
+    capturedWsHandler = null;
   });
 
   it('shows loading spinner initially', () => {
@@ -72,5 +84,62 @@ describe('Dashboard', () => {
     await waitFor(() => {
       expect(screen.getByText(/no stack instances found/i)).toBeInTheDocument();
     });
+  });
+
+  it('updates instance status on WebSocket deployment.status message', async () => {
+    (instanceService.list as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { id: 'inst-1', name: 'WS Instance', status: 'draft', branch: 'main', namespace: 'stack-ws', owner_id: '1', stack_definition_id: '1', created_at: '', updated_at: '' },
+    ]);
+    render(
+      <MemoryRouter>
+        <Dashboard />
+      </MemoryRouter>
+    );
+
+    // Wait for initial render with draft status.
+    await waitFor(() => {
+      expect(screen.getByText('WS Instance')).toBeInTheDocument();
+    });
+    expect(screen.getByText('draft')).toBeInTheDocument();
+
+    // Simulate a WebSocket deployment.status message.
+    act(() => {
+      capturedWsHandler?.({
+        type: 'deployment.status',
+        payload: { instance_id: 'inst-1', status: 'deploying', log_id: 'log-1' },
+      });
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText('deploying')).toBeInTheDocument();
+    });
+    expect(screen.queryByText('draft')).not.toBeInTheDocument();
+  });
+
+  it('ignores WebSocket messages for unknown instance IDs', async () => {
+    (instanceService.list as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { id: 'inst-1', name: 'My Instance', status: 'running', branch: 'main', namespace: 'stack-test', owner_id: '1', stack_definition_id: '1', created_at: '', updated_at: '' },
+    ]);
+    render(
+      <MemoryRouter>
+        <Dashboard />
+      </MemoryRouter>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('My Instance')).toBeInTheDocument();
+    });
+    expect(screen.getByText('running')).toBeInTheDocument();
+
+    // Send a message for a different instance.
+    act(() => {
+      capturedWsHandler?.({
+        type: 'deployment.status',
+        payload: { instance_id: 'unknown-id', status: 'error', log_id: 'log-2' },
+      });
+    });
+
+    // Status should remain unchanged.
+    expect(screen.getByText('running')).toBeInTheDocument();
   });
 });
