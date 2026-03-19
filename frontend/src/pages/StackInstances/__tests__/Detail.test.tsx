@@ -13,6 +13,10 @@ vi.mock('react-router-dom', async () => {
   };
 });
 
+vi.mock('../../../hooks/useWebSocket', () => ({
+  useWebSocket: () => ({ send: vi.fn() }),
+}));
+
 vi.mock('../../../api/client', () => ({
   instanceService: {
     get: vi.fn(),
@@ -393,7 +397,7 @@ describe('StackInstances Detail', () => {
     });
 
     await waitFor(() => {
-      expect(screen.getByText('Deployment History')).toBeInTheDocument();
+      expect(screen.getByText(/Deployment History/)).toBeInTheDocument();
       expect(screen.getByTestId('deployment-log-viewer')).toBeInTheDocument();
     });
   });
@@ -407,7 +411,7 @@ describe('StackInstances Detail', () => {
       expect(screen.getByText('Test Instance')).toBeInTheDocument();
     });
 
-    expect(screen.queryByText('Deployment History')).not.toBeInTheDocument();
+    expect(screen.queryByText(/Deployment History/)).not.toBeInTheDocument();
   });
 
   it('shows Cluster Resources for running instance', async () => {

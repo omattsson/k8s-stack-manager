@@ -329,9 +329,9 @@ export const instanceService = {
       throw error;
     }
   },
-  setOverride: async (id: string, data: Partial<ValueOverride>): Promise<ValueOverride> => {
+  setOverride: async (id: string, chartConfigId: string, data: { values: string }): Promise<ValueOverride> => {
     try {
-      const response = await api.put(`/api/v1/stack-instances/${id}/overrides`, data);
+      const response = await api.put(`/api/v1/stack-instances/${id}/overrides/${chartConfigId}`, data);
       return response.data;
     } catch (error) {
       console.error('Failed to set override:', error);

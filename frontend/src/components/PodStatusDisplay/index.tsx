@@ -40,17 +40,17 @@ const PodStatusDisplay = ({ status, loading }: PodStatusDisplayProps) => {
         </Typography>
       </Box>
 
-      {status.charts.map((chart) => (
+      {(status.charts || []).map((chart) => (
         <Paper key={chart.release_name} sx={{ p: 2, mb: 2 }} variant="outlined">
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
             <Typography variant="subtitle2">{chart.chart_name}</Typography>
             <Chip label={chart.status} size="small" color={chartStatusColor(chart.status) as 'success' | 'info' | 'warning' | 'error' | 'default'} />
           </Box>
 
-          {chart.deployments.length > 0 && (
+          {(chart.deployments || []).length > 0 && (
             <Box sx={{ mb: 1 }}>
               <Typography variant="caption" color="text.secondary">Deployments</Typography>
-              {chart.deployments.map((dep) => (
+              {(chart.deployments || []).map((dep) => (
                 <Box key={dep.name} sx={{ display: 'flex', alignItems: 'center', gap: 1, ml: 1 }}>
                   <Typography variant="body2">{dep.name}</Typography>
                   <Chip
@@ -64,7 +64,7 @@ const PodStatusDisplay = ({ status, loading }: PodStatusDisplayProps) => {
             </Box>
           )}
 
-          {chart.pods.length > 0 && (
+          {(chart.pods || []).length > 0 && (
             <TableContainer>
               <Table size="small">
                 <TableHead>
@@ -77,7 +77,7 @@ const PodStatusDisplay = ({ status, loading }: PodStatusDisplayProps) => {
                   </TableRow>
                 </TableHead>
                 <TableBody>
-                  {chart.pods.map((pod) => (
+                  {(chart.pods || []).map((pod) => (
                     <TableRow key={pod.name}>
                       <TableCell>
                         <Typography variant="body2" sx={{ fontFamily: 'monospace', fontSize: '0.75rem' }}>

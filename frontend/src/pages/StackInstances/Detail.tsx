@@ -1,5 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
+import { useWebSocket } from '../../hooks/useWebSocket';
+import type { WsMessage } from '../../hooks/useWebSocket';
 import {
   Box,
   Typography,
@@ -15,7 +17,11 @@ import {
   Step,
   StepLabel,
   Grid,
+  Accordion,
+  AccordionSummary,
+  AccordionDetails,
 } from '@mui/material';
+import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import StatusBadge from '../../components/StatusBadge';
 import BranchSelector from '../../components/BranchSelector';
 import ConfirmDialog from '../../components/ConfirmDialog';
@@ -94,6 +100,34 @@ const Detail = () => {
     fetchData();
   }, [id]);
 
+  // Live-update instance status and deploy logs via WebSocket.
+  const handleWsMessage = useCallback((msg: WsMessage) => {
+    if (!id) return;
+    const payload = msg.payload as { instance_id?: string; status?: string };
+    if (payload.instance_id !== id) return;
+
+    if (msg.type === 'deployment.status') {
+      // Refresh instance data and K8s status when deployment status changes.
+      const newStatus = payload.status as string;
+      setInstance((prev) => prev ? { ...prev, status: newStatus } : prev);
+
+      // Refresh K8s status for running/deploying/error states.
+      if (newStatus === 'running' || newStatus === 'deploying' || newStatus === 'error') {
+        instanceService.getStatus(id).then(setK8sStatus).catch(() => {});
+      }
+
+      // Refresh deploy logs on terminal states.
+      if (newStatus === 'running' || newStatus === 'stopped' || newStatus === 'error') {
+        instanceService.getDeployLog(id).then(setDeployLogs).catch(() => {});
+        setDeploying(false);
+        setStopping(false);
+      }
+    }
+
+  }, [id]);
+
+  useWebSocket(handleWsMessage);
+
   const handleSave = async () => {
     if (!id || !instance) return;
     setSaving(true);
@@ -107,10 +141,7 @@ const Detail = () => {
 
       // Save overrides
       for (const [chartConfigId, values] of Object.entries(editedOverrides)) {
-        await instanceService.setOverride(id, {
-          chart_config_id: chartConfigId,
-          values,
-        });
+        await instanceService.setOverride(id, chartConfigId, { values });
       }
 
       setSnackbar('Changes saved successfully');
@@ -351,10 +382,14 @@ const Detail = () => {
       )}
 
       {deployLogs.length > 0 && (
-        <Paper sx={{ p: 3, mb: 3 }}>
-          <Typography variant="h6" gutterBottom>Deployment History</Typography>
-          <DeploymentLogViewer logs={deployLogs} />
-        </Paper>
+        <Accordion defaultExpanded={false} sx={{ mb: 3 }}>
+          <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+            <Typography variant="h6">Deployment History ({deployLogs.length})</Typography>
+          </AccordionSummary>
+          <AccordionDetails>
+            <DeploymentLogViewer logs={deployLogs} />
+          </AccordionDetails>
+        </Accordion>
       )}
 
       <Box sx={{ display: 'flex', gap: 2 }}>
