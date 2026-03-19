@@ -17,11 +17,7 @@ import {
   Step,
   StepLabel,
   Grid,
-  Accordion,
-  AccordionSummary,
-  AccordionDetails,
 } from '@mui/material';
-import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import StatusBadge from '../../components/StatusBadge';
 import BranchSelector from '../../components/BranchSelector';
 import ConfirmDialog from '../../components/ConfirmDialog';
@@ -118,8 +114,8 @@ const Detail = () => {
         instanceService.getStatus(id).then(setK8sStatus).catch(() => {});
       }
 
-      // Clear K8s status when returning to draft (after clean).
-      if (newStatus === 'draft') {
+      // Clear K8s status when resources are gone (stopped or cleaned to draft).
+      if (newStatus === 'stopped' || newStatus === 'draft') {
         setK8sStatus(null);
       }
 
@@ -428,14 +424,12 @@ const Detail = () => {
       )}
 
       {deployLogs.length > 0 && (
-        <Accordion defaultExpanded={false} sx={{ mb: 3 }}>
-          <AccordionSummary expandIcon={<ExpandMoreIcon />}>
-            <Typography variant="h6">Deployment History ({deployLogs.length})</Typography>
-          </AccordionSummary>
-          <AccordionDetails>
-            <DeploymentLogViewer logs={deployLogs} />
-          </AccordionDetails>
-        </Accordion>
+        <Box sx={{ mb: 3 }}>
+          <Typography variant="h6" sx={{ mb: 1 }}>
+            Deployment History ({deployLogs.length})
+          </Typography>
+          <DeploymentLogViewer logs={deployLogs} />
+        </Box>
       )}
 
       <Box sx={{ display: 'flex', gap: 2 }}>

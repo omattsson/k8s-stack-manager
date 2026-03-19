@@ -423,6 +423,11 @@ func (m *Manager) executeStopWithCharts(instanceID string, deployLog *models.Dep
 		m.broadcastLog(instanceID, deployLog.ID, output)
 
 		if err != nil {
+			// If the release is already gone, treat as a no-op.
+			if strings.Contains(output, "not found") {
+				allOutput += fmt.Sprintf("Release %q already removed, skipping\n", releaseName)
+				continue
+			}
 			stopErr = fmt.Errorf("uninstalling chart %q: %w", chart.ChartConfig.ChartName, err)
 			allOutput += fmt.Sprintf("ERROR: %s\n", stopErr.Error())
 			break
@@ -608,7 +613,9 @@ func (m *Manager) executeClean(instanceID string, deployLog *models.DeploymentLo
 		if err != nil {
 			// If the release is already gone (e.g. instance was stopped),
 			// treat as a successful no-op rather than an error.
-			if strings.Contains(err.Error(), "not found") {
+			// The "not found" message appears in the output (stderr), not
+			// in the Go error which is just "helm command failed: exit status 1".
+			if strings.Contains(output, "not found") {
 				allOutput += fmt.Sprintf("Release %q already removed, skipping\n", releaseName)
 				continue
 			}

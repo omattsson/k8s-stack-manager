@@ -87,6 +87,18 @@ func (m *mockInstanceRepo) List() ([]models.StackInstance, error) {
 	return out, nil
 }
 
+func (m *mockInstanceRepo) FindByNamespace(namespace string) (*models.StackInstance, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	for _, inst := range m.items {
+		if inst.Namespace == namespace {
+			cp := *inst
+			return &cp, nil
+		}
+	}
+	return nil, errors.New("not found")
+}
+
 func (m *mockInstanceRepo) ListByOwner(_ string) ([]models.StackInstance, error) {
 	return m.List()
 }
@@ -1644,6 +1656,70 @@ func TestManager_Clean_HelmFails(t *testing.T) {
 
 	// Verify broadcasts were sent.
 	assert.Greater(t, hub.messageCount(), 0)
+}
+
+func TestManager_Clean_ReleasesAlreadyGone(t *testing.T) {
+	t.Parallel()
+
+	instanceRepo := newMockInstanceRepo()
+	logRepo := newMockDeployLogRepo()
+	hub := &mockBroadcaster{}
+
+	// Simulate a stopped instance whose releases were already removed by stop.
+	inst := &models.StackInstance{
+		ID:        "inst-clean-stopped",
+		Name:      "clean-stopped",
+		Namespace: "stack-clean-stopped",
+		Status:    models.StackStatusStopped,
+	}
+	require.NoError(t, instanceRepo.Create(inst))
+
+	// Helm returns the "release: not found" message that the real CLI produces.
+	helmMock := &mockHelmExecutor{
+		uninstallFunc: func(_ context.Context, req UninstallRequest) (string, error) {
+			msg := fmt.Sprintf("Error: uninstall: Release not loaded: %s: release: not found", req.ReleaseName)
+			return msg, fmt.Errorf("helm command failed: exit status 1")
+		},
+	}
+
+	fakeClient := fake.NewSimpleClientset(&corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{Name: "stack-clean-stopped"},
+	})
+	k8sClient := k8s.NewClientFromInterface(fakeClient)
+
+	mgr := NewManager(ManagerConfig{
+		HelmClient:    helmMock,
+		InstanceRepo:  instanceRepo,
+		DeployLogRepo: logRepo,
+		Hub:           hub,
+		K8sClient:     k8sClient,
+		MaxConcurrent: 2,
+	})
+
+	charts := []models.ChartConfig{
+		{ChartName: "traefik", DeployOrder: 1},
+		{ChartName: "azurite-storage", DeployOrder: 2},
+		{ChartName: "frontend-app", DeployOrder: 3},
+	}
+
+	logID, err := mgr.Clean(context.Background(), inst, charts)
+	assert.NoError(t, err)
+	assert.NotEmpty(t, logID)
+
+	// Wait for async completion.
+	time.Sleep(500 * time.Millisecond)
+
+	// Should succeed — "not found" releases are treated as already removed.
+	final, err := instanceRepo.FindByID(inst.ID)
+	assert.NoError(t, err)
+	assert.Equal(t, models.StackStatusDraft, final.Status)
+	assert.Empty(t, final.ErrorMessage)
+
+	finalLog, err := logRepo.FindByID(context.Background(), logID)
+	assert.NoError(t, err)
+	assert.Equal(t, models.DeployLogSuccess, finalLog.Status)
+	assert.Contains(t, finalLog.Output, "already removed")
+	assert.Contains(t, finalLog.Output, "Namespace stack-clean-stopped deleted")
 }
 
 func TestManager_Deploy_FirstChartFails_NoRollback(t *testing.T) {
