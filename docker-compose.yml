@@ -5,8 +5,7 @@ services:
       dockerfile: Dockerfile
       target: ${GO_ENV:-production}
     container_name: app-backend-${GO_ENV:-prod}
-    ports:
-      - "${BACKEND_PORT:-8081}:8081"
+    network_mode: host
     environment:
       - APP_NAME=${APP_NAME:-application}
       - APP_ENV=${GO_ENV:-production}
@@ -35,7 +34,7 @@ services:
       - USE_AZURITE=${USE_AZURITE:-true}
       - AZURE_TABLE_ACCOUNT_NAME=${AZURE_TABLE_ACCOUNT_NAME:-devstoreaccount1}
       - AZURE_TABLE_ACCOUNT_KEY=${AZURE_TABLE_ACCOUNT_KEY:-Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==}
-      - AZURE_TABLE_ENDPOINT=${AZURE_TABLE_ENDPOINT:-azurite:10002}
+      - AZURE_TABLE_ENDPOINT=${AZURE_TABLE_ENDPOINT:-127.0.0.1:10002}
       - AZURE_TABLE_NAME=${AZURE_TABLE_NAME:-items}
       # Git providers (optional - leave empty for local dev)
       - AZURE_DEVOPS_PAT=${AZURE_DEVOPS_PAT:-}
@@ -44,7 +43,7 @@ services:
       - GITLAB_BASE_URL=${GITLAB_BASE_URL:-https://gitlab.com}
       # Deployment
       - HELM_BINARY=${HELM_BINARY:-helm}
-      - KUBECONFIG_PATH=${KUBECONFIG_PATH:-}
+      - KUBECONFIG_PATH=${KUBECONFIG_PATH:-/root/.kube/config}
       - DEPLOYMENT_TIMEOUT=${DEPLOYMENT_TIMEOUT:-10m}
       - MAX_CONCURRENT_DEPLOYS=${MAX_CONCURRENT_DEPLOYS:-5}
       # Stack defaults
@@ -52,9 +51,6 @@ services:
     depends_on:
       azurite:
         condition: service_healthy
-    networks:
-      - backend-net
-      - frontend-net
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8081/health/live"]
       interval: 30s
@@ -63,6 +59,7 @@ services:
     volumes:
       - ./backend:/app
       - backend_go_mod:/go/pkg/mod
+      - ${HOME}/.kube:/root/.kube:ro
 
   frontend:
     build:
@@ -76,7 +73,7 @@ services:
       - "${PORT:-3000}:${PORT:-3000}"
     environment:
       - NODE_ENV=${NODE_ENV:-production}
-      - VITE_API_URL=http://backend:8081
+      - VITE_API_URL=http://host.docker.internal:8081
     depends_on:
       backend:
         condition: service_healthy
@@ -97,8 +94,6 @@ services:
     volumes:
       - azurite_data:/data
     command: azurite --tableHost 0.0.0.0 --blobHost 0.0.0.0 --queueHost 0.0.0.0
-    networks:
-      - backend-net
     healthcheck:
       test: ["CMD-SHELL", "node -e \"require('net').createConnection(10002,'127.0.0.1').on('connect',()=>process.exit(0)).on('error',()=>process.exit(1))\""]
       interval: 10s
@@ -112,7 +107,5 @@ volumes:
   azurite_data: {}
 
 networks:
-  backend-net:
-    name: backend-network-${NODE_ENV:-prod}
   frontend-net:
     name: frontend-network-${NODE_ENV:-prod}

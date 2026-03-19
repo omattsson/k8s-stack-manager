@@ -377,6 +377,9 @@ test.describe('Deployment UI', () => {
     // Draft instance should NOT show Deployment History yet.
     await expect(page.getByRole('button', { name: 'Deploy' })).toBeVisible({ timeout: 10_000 });
 
+    // Extract the instance ID from the URL for API checks.
+    const instanceId = page.url().split('/stack-instances/')[1];
+
     // Trigger a deploy — this creates a deployment log entry.
     await page.getByRole('button', { name: 'Deploy' }).click();
 
@@ -384,10 +387,23 @@ test.describe('Deployment UI', () => {
     const snackbar = page.locator('.MuiSnackbar-root, .MuiAlert-root');
     await expect(snackbar.first()).toBeVisible({ timeout: 10_000 });
 
-    // Reload to pick up the new deploy log entry.
-    await page.reload();
+    // Poll the deploy-log API until at least one log entry exists.
+    // The deploy is async, so the log may not exist immediately after the 202.
+    const token = await page.evaluate(() => localStorage.getItem('token'));
+    for (let i = 0; i < 10; i++) {
+      await new Promise((r) => setTimeout(r, 1000));
+      const res = await page.request.get(
+        `http://localhost:8081/api/v1/stack-instances/${instanceId}/deploy-log`,
+        { headers: { Authorization: `Bearer ${token}` } },
+      );
+      if (res.ok()) {
+        const logs = (await res.json()) as unknown[];
+        if (logs.length > 0) break;
+      }
+    }
 
-    // The Deployment History heading should now be visible.
+    // Reload the page — now Deployment History should be visible.
+    await page.reload();
     await expect(page.getByText('Deployment History')).toBeVisible({ timeout: 15_000 });
   });
 });
