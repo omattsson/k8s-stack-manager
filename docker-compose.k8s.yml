@@ -1,14 +1,21 @@
 # Optional override for local K8s cluster access (e.g. rancher-desktop).
 # Usage: docker compose -f docker-compose.yml -f docker-compose.k8s.yml up
 #
-# This adds host access so the backend can reach the K8s API at host.docker.internal
-# and mounts ~/.kube for kubeconfig access.
+# This switches the backend to host networking so it can reach the K8s API
+# at 127.0.0.1:6443 and mounts ~/.kube for kubeconfig access.
 # NOT for CI or production — only for local development with a desktop K8s.
 services:
   backend:
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
+    network_mode: host
+    # network_mode is mutually exclusive with networks/ports — clear them.
+    networks: !reset []
+    ports: !reset []
     environment:
+      - AZURE_TABLE_ENDPOINT=${AZURE_TABLE_ENDPOINT:-127.0.0.1:10002}
       - KUBECONFIG_PATH=${KUBECONFIG_PATH:-/root/.kube/config}
     volumes:
       - ${HOME}/.kube:/root/.kube:ro
+
+  frontend:
+    environment:
+      - VITE_API_URL=${VITE_API_URL:-http://localhost:8081}

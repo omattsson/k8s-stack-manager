@@ -62,13 +62,13 @@ WEB_ID=$(api_post "/api/v1/templates" '{
 log "Web template: ${WEB_ID}"
 
 api_post "/api/v1/templates/${WEB_ID}/charts" '{
-  "chart_name": "ingress-nginx",
-  "repository_url": "https://kubernetes.github.io/ingress-nginx",
-  "chart_path": "ingress-nginx",
-  "chart_version": "4.11.3",
+  "chart_name": "traefik",
+  "repository_url": "https://traefik.github.io/charts",
+  "chart_path": "traefik",
+  "chart_version": "34.5.0",
   "deploy_order": 1,
   "required": true,
-  "default_values": "controller:\n  replicaCount: 1\n  service:\n    type: ClusterIP",
+  "default_values": "service:\n  type: ClusterIP\nports:\n  web:\n    port: 8000\n    expose:\n      default: true",
   "locked_values": ""
 }' > /dev/null
 
@@ -94,7 +94,7 @@ api_post "/api/v1/templates/${WEB_ID}/charts" '{
   "default_values": "replicaCount: 1\nservice:\n  type: ClusterIP\n  port: 8080",
   "locked_values": ""
 }' > /dev/null
-log "  + 3 charts (ingress-nginx, azurite-storage, frontend-app)"
+log "  + 3 charts (traefik, azurite-storage, frontend-app)"
 
 # ── 2. API Category ──────────────────────────────────────────────────
 API_ID=$(api_post "/api/v1/templates" '{
