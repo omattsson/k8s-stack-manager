@@ -176,6 +176,7 @@ func (m *Manager) executeDeploy(instanceID string, deployLog *models.DeploymentL
 
 		if err != nil {
 			deployErr = fmt.Errorf("deploying chart %q: %w", chart.ChartConfig.ChartName, err)
+			allOutput += fmt.Sprintf("ERROR: %s\n", deployErr.Error())
 			break
 		}
 	}
@@ -312,6 +313,7 @@ func (m *Manager) executeStopWithCharts(instanceID string, deployLog *models.Dep
 
 		if err != nil {
 			stopErr = fmt.Errorf("uninstalling chart %q: %w", chart.ChartConfig.ChartName, err)
+			allOutput += fmt.Sprintf("ERROR: %s\n", stopErr.Error())
 			break
 		}
 	}
