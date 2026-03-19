@@ -122,6 +122,8 @@ type ServerConfig struct {
 	// String fields (8-byte on 64-bit systems)
 	Host string
 	Port string
+	// 4-byte fields
+	RateLimit int32
 }
 
 // LogConfig holds logging configuration
@@ -334,6 +336,7 @@ func LoadConfig() (*Config, error) {
 			WriteTimeout:    getEnvDuration("SERVER_WRITE_TIMEOUT", defaultWriteTimeout),
 			IdleTimeout:     getEnvDuration("SERVER_IDLE_TIMEOUT", defaultIdleTimeout),
 			ShutdownTimeout: getEnvDuration("SERVER_SHUTDOWN_TIMEOUT", defaultShutdownTimeout),
+			RateLimit:       getEnvInt32("RATE_LIMIT", 100),
 		},
 		CORS: CORSConfig{
 			AllowedOrigins: getEnv("CORS_ALLOWED_ORIGINS", "*"),

@@ -63,7 +63,7 @@ func SetupRoutes(router *gin.Engine, deps Deps) *handlers.RateLimiter {
 	}
 
 	// Rate limiter for API routes
-	rateLimiter := handlers.NewRateLimiter(100, time.Minute)
+	rateLimiter := handlers.NewRateLimiter(int(cfg.Server.RateLimit), time.Minute)
 
 	// API v1 routes
 	v1 := router.Group("/api/v1")

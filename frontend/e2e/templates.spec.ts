@@ -20,7 +20,7 @@ test.describe('Template Management', () => {
       timeout: 10_000,
     });
 
-    await page.getByLabel('Name', { exact: true }).fill(name);
+    await page.getByRole('textbox', { name: 'Name' }).fill(name);
     await page.getByLabel('Description').fill('An e2e test template');
     await page.getByLabel('Category').click();
     await page.getByRole('option', { name: 'Web' }).click();
@@ -28,7 +28,7 @@ test.describe('Template Management', () => {
 
     await page.getByRole('button', { name: 'Save Template' }).click();
     // Redirected to preview page
-    await page.waitForURL(/\/templates\/[^/]+$/, { timeout: 10_000 });
+    await page.waitForURL(/\/templates\/(?!new)[^/]+$/, { timeout: 10_000 });
     await expect(page.getByRole('heading', { level: 1, name })).toBeVisible({ timeout: 10_000 });
   });
 
@@ -36,12 +36,12 @@ test.describe('Template Management', () => {
     const name = uniqueName('tpl-view');
     // Create first
     await page.goto('/templates/new');
-    await page.getByLabel('Name', { exact: true }).fill(name);
+    await page.getByRole('textbox', { name: 'Name' }).fill(name);
     await page.getByLabel('Description').fill('Template to view');
     await page.getByLabel('Category').click();
     await page.getByRole('option', { name: 'API' }).click();
     await page.getByRole('button', { name: 'Save Template' }).click();
-    await page.waitForURL(/\/templates\/[^/]+$/, { timeout: 10_000 });
+    await page.waitForURL(/\/templates\/(?!new)[^/]+$/, { timeout: 10_000 });
 
     // Verify preview content
     await expect(page.getByRole('heading', { level: 1, name })).toBeVisible();
@@ -53,7 +53,7 @@ test.describe('Template Management', () => {
   test('add a chart to a template', async ({ page }) => {
     const name = uniqueName('tpl-chart');
     await page.goto('/templates/new');
-    await page.getByLabel('Name', { exact: true }).fill(name);
+    await page.getByRole('textbox', { name: 'Name' }).fill(name);
 
     // Add a chart
     await page.getByRole('button', { name: 'Add Chart' }).click();
@@ -62,7 +62,7 @@ test.describe('Template Management', () => {
     await page.getByLabel('Repository URL').fill('https://charts.bitnami.com/bitnami');
 
     await page.getByRole('button', { name: 'Save Template' }).click();
-    await page.waitForURL(/\/templates\/[^/]+$/, { timeout: 10_000 });
+    await page.waitForURL(/\/templates\/(?!new)[^/]+$/, { timeout: 10_000 });
 
     // Preview shows chart info
     await expect(page.getByText('nginx')).toBeVisible({ timeout: 10_000 });
@@ -73,9 +73,9 @@ test.describe('Template Management', () => {
     const name = uniqueName('tpl-pub');
     // Create template
     await page.goto('/templates/new');
-    await page.getByLabel('Name', { exact: true }).fill(name);
+    await page.getByRole('textbox', { name: 'Name' }).fill(name);
     await page.getByRole('button', { name: 'Save Template' }).click();
-    await page.waitForURL(/\/templates\/[^/]+$/, { timeout: 10_000 });
+    await page.waitForURL(/\/templates\/(?!new)[^/]+$/, { timeout: 10_000 });
 
     const templateId = page.url().split('/templates/')[1];
 
@@ -84,9 +84,10 @@ test.describe('Template Management', () => {
     await expect(page.getByRole('heading', { level: 1, name: 'Edit Template' })).toBeVisible({
       timeout: 10_000,
     });
-    const publishSwitch = page.getByRole('switch').first();
-    await publishSwitch.check();
-    await page.waitForTimeout(1000);
+    const publishSwitch = page.getByRole('checkbox').first();
+    await publishSwitch.click();
+    // Wait for the async publish API call to complete
+    await expect(publishSwitch).toBeChecked({ timeout: 5_000 });
 
     // Save
     await page.getByRole('button', { name: 'Save Template' }).click();
@@ -101,9 +102,9 @@ test.describe('Template Management', () => {
     await expect(page.getByRole('heading', { level: 1, name: 'Edit Template' })).toBeVisible({
       timeout: 10_000,
     });
-    const unpublishSwitch = page.getByRole('switch').first();
-    await unpublishSwitch.uncheck();
-    await page.waitForTimeout(1000);
+    const unpublishSwitch = page.getByRole('checkbox').first();
+    await unpublishSwitch.click();
+    await expect(unpublishSwitch).not.toBeChecked({ timeout: 5_000 });
     await page.getByRole('button', { name: 'Save Template' }).click();
     await page.waitForURL(/\/templates\//, { timeout: 10_000 });
 
@@ -115,10 +116,10 @@ test.describe('Template Management', () => {
     const name = uniqueName('tpl-clone');
     // Create template
     await page.goto('/templates/new');
-    await page.getByLabel('Name', { exact: true }).fill(name);
+    await page.getByRole('textbox', { name: 'Name' }).fill(name);
     await page.getByLabel('Description').fill('Template to clone');
     await page.getByRole('button', { name: 'Save Template' }).click();
-    await page.waitForURL(/\/templates\/[^/]+$/, { timeout: 10_000 });
+    await page.waitForURL(/\/templates\/(?!new)[^/]+$/, { timeout: 10_000 });
 
     // Clone from preview page
     await page.getByRole('button', { name: 'Clone as Template' }).click();
@@ -128,7 +129,7 @@ test.describe('Template Management', () => {
       timeout: 10_000,
     });
     // The cloned template should have the original name (or a copy prefix)
-    const clonedNameField = page.getByLabel('Name', { exact: true });
+    const clonedNameField = page.getByRole('textbox', { name: 'Name' });
     const clonedName = await clonedNameField.inputValue();
     expect(clonedName).toContain(name);
   });
@@ -142,7 +143,7 @@ test.describe('Template Management', () => {
       timeout: 10_000,
     });
     // Published tab is default
-    await expect(page.getByText(name)).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByRole('heading', { name })).toBeVisible({ timeout: 10_000 });
   });
 
   test('template gallery search filters templates', async ({ page }) => {
@@ -156,7 +157,7 @@ test.describe('Template Management', () => {
 
     // Search for the template
     await page.getByPlaceholder('Search templates...').fill(name);
-    await expect(page.getByText(name)).toBeVisible({ timeout: 5_000 });
+    await expect(page.getByRole('heading', { name })).toBeVisible({ timeout: 5_000 });
 
     // Search for something that doesn't exist
     await page.getByPlaceholder('Search templates...').fill('nonexistent-template-xyz');
@@ -167,9 +168,9 @@ test.describe('Template Management', () => {
     // Create a template via UI
     const name = uniqueName('tpl-del');
     await page.goto('/templates/new');
-    await page.getByLabel('Name', { exact: true }).fill(name);
+    await page.getByRole('textbox', { name: 'Name' }).fill(name);
     await page.getByRole('button', { name: 'Save Template' }).click();
-    await page.waitForURL(/\/templates\/[^/]+$/, { timeout: 10_000 });
+    await page.waitForURL(/\/templates\/(?!new)[^/]+$/, { timeout: 10_000 });
 
     const templateId = page.url().split('/templates/')[1];
 
@@ -205,7 +206,7 @@ test.describe('Template Management', () => {
     await page.getByRole('button', { name: 'Create Stack Definition' }).click();
     // Redirects to definition edit
     await page.waitForURL(/\/stack-definitions\/[^/]+\/edit/, { timeout: 10_000 });
-    await expect(page.getByRole('heading', { level: 1, name: /Edit Definition/ })).toBeVisible({
+    await expect(page.getByRole('heading', { level: 1, name: /Edit Stack Definition/ })).toBeVisible({
       timeout: 10_000,
     });
   });

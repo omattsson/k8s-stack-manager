@@ -21,12 +21,12 @@ test.describe('Stack Definition Management', () => {
     await instantiateTemplate(page, templateId, defName);
 
     // Verify we're on the edit page
-    await expect(page.getByRole('heading', { level: 1, name: /Edit Definition/ })).toBeVisible({
+    await expect(page.getByRole('heading', { level: 1, name: /Edit Stack Definition/ })).toBeVisible({
       timeout: 10_000,
     });
 
     // Check the name field has our value
-    const nameField = page.getByLabel('Name', { exact: true });
+    const nameField = page.getByRole('textbox', { name: 'Name', exact: true });
     await expect(nameField).toHaveValue(defName);
   });
 
@@ -57,7 +57,7 @@ test.describe('Stack Definition Management', () => {
     await page.getByText(defName).click();
 
     await page.waitForURL(/\/stack-definitions\/[^/]+\/edit/, { timeout: 10_000 });
-    await expect(page.getByRole('heading', { level: 1, name: /Edit Definition/ })).toBeVisible({
+    await expect(page.getByRole('heading', { level: 1, name: /Edit Stack Definition/ })).toBeVisible({
       timeout: 10_000,
     });
   });
@@ -71,7 +71,7 @@ test.describe('Stack Definition Management', () => {
 
     // We should be on the edit page after instantiation
     const updatedName = uniqueName('def-edited');
-    const nameField = page.getByLabel('Name', { exact: true });
+    const nameField = page.getByRole('textbox', { name: 'Name', exact: true });
     await nameField.clear();
     await nameField.fill(updatedName);
 
@@ -86,12 +86,12 @@ test.describe('Stack Definition Management', () => {
 
   test('create definition manually via form', async ({ page }) => {
     await page.goto('/stack-definitions/new');
-    await expect(page.getByRole('heading', { level: 1, name: /Create Definition/ })).toBeVisible({
+    await expect(page.getByRole('heading', { level: 1, name: /Create Stack Definition/ })).toBeVisible({
       timeout: 10_000,
     });
 
     const defName = uniqueName('def-manual');
-    await page.getByLabel('Name', { exact: true }).fill(defName);
+    await page.getByRole('textbox', { name: 'Name' }).fill(defName);
     await page.getByLabel('Description').fill('Manually created definition');
     await page.getByLabel('Default Branch').fill('main');
 

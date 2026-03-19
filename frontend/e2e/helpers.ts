@@ -25,15 +25,15 @@ export function uniqueName(prefix: string): string {
  */
 export async function createTemplate(page: Page, name: string): Promise<string> {
   await page.goto('/templates/new');
-  await page.getByLabel('Name', { exact: true }).fill(name);
-  await page.getByLabel('Description').fill(`E2e test template ${name}`);
+  await page.getByRole('textbox', { name: 'Name' }).fill(name);
+  await page.getByRole('textbox', { name: 'Description' }).fill(`E2e test template ${name}`);
   // Pick a category
   await page.getByLabel('Category').click();
   await page.getByRole('option', { name: 'Web' }).click();
   await page.getByLabel('Version').fill('1.0.0');
   await page.getByRole('button', { name: 'Save Template' }).click();
   // Wait for navigation to the preview page
-  await page.waitForURL(/\/templates\/[^/]+$/, { timeout: 10_000 });
+  await page.waitForURL(/\/templates\/(?!new)[^/]+$/, { timeout: 10_000 });
   await expect(page.getByRole('heading', { level: 1, name })).toBeVisible({ timeout: 10_000 });
   return name;
 }
@@ -42,12 +42,10 @@ export async function createTemplate(page: Page, name: string): Promise<string> 
  * Publish a template from its preview page. Assumes the page is already on /templates/:id.
  */
 export async function publishTemplate(page: Page, templateId: string) {
-  await page.goto(`/templates/${templateId}/edit`);
-  // Toggle the publish switch
-  const publishSwitch = page.getByRole('switch');
-  await publishSwitch.check();
-  // Wait briefly for the publish API call
-  await page.waitForTimeout(500);
+  const token = await page.evaluate(() => localStorage.getItem('token'));
+  await page.request.post(`http://localhost:8081/api/v1/templates/${templateId}/publish`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
 }
 
 /**
@@ -57,8 +55,8 @@ export async function publishTemplate(page: Page, templateId: string) {
 export async function createAndPublishTemplate(page: Page, name: string): Promise<string> {
   // Create template
   await page.goto('/templates/new');
-  await page.getByLabel('Name', { exact: true }).fill(name);
-  await page.getByLabel('Description').fill(`E2e test template ${name}`);
+  await page.getByRole('textbox', { name: 'Name' }).fill(name);
+  await page.getByRole('textbox', { name: 'Description' }).fill(`E2e test template ${name}`);
   await page.getByLabel('Category').click();
   await page.getByRole('option', { name: 'Web' }).click();
   await page.getByLabel('Version').fill('1.0.0');
@@ -69,23 +67,22 @@ export async function createAndPublishTemplate(page: Page, name: string): Promis
   await page.getByLabel('Repository URL').fill('https://charts.example.com');
 
   await page.getByRole('button', { name: 'Save Template' }).click();
-  await page.waitForURL(/\/templates\/[^/]+$/, { timeout: 10_000 });
+  // Wait for redirect to preview page (UUID in URL, not /templates/new)
+  await page.waitForURL(/\/templates\/(?!new)[^/]+$/, { timeout: 10_000 });
   await expect(page.getByRole('heading', { level: 1 })).toBeVisible({ timeout: 10_000 });
 
   // Extract template ID from URL
   const url = page.url();
   const templateId = url.split('/templates/')[1];
 
-  // Navigate to edit and publish
-  await page.goto(`/templates/${templateId}/edit`);
-  await expect(page.getByRole('heading', { level: 1, name: /Edit Template/ })).toBeVisible({ timeout: 10_000 });
-  const publishSwitch = page.getByRole('switch').first();
-  await publishSwitch.check();
-  await page.waitForTimeout(1000);
-
-  // Save to persist
-  await page.getByRole('button', { name: 'Save Template' }).click();
-  await page.waitForURL(/\/templates\//, { timeout: 10_000 });
+  // Publish via API (more reliable than UI toggle for test setup)
+  const token = await page.evaluate(() => localStorage.getItem('token'));
+  const response = await page.request.post(`http://localhost:8081/api/v1/templates/${templateId}/publish`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!response.ok()) {
+    throw new Error(`Failed to publish template: ${response.status()}`);
+  }
 
   return templateId;
 }

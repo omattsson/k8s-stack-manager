@@ -65,7 +65,7 @@ test.describe('Stack Instance Management', () => {
     await expect(page.getByRole('heading', { level: 1, name: 'Stack Instances' })).toBeVisible({
       timeout: 10_000,
     });
-    await expect(page.getByText(instName)).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByRole('heading', { name: instName })).toBeVisible({ timeout: 10_000 });
   });
 
   test('view instance detail page', async ({ page }) => {
@@ -169,10 +169,10 @@ test.describe('Stack Instance Management', () => {
 
     // Go to dashboard and search
     await page.goto('/');
-    await expect(page.getByText(instName)).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByRole('heading', { name: instName })).toBeVisible({ timeout: 10_000 });
 
     await page.getByPlaceholder('Search instances...').fill(instName);
-    await expect(page.getByText(instName)).toBeVisible();
+    await expect(page.getByRole('heading', { name: instName })).toBeVisible();
 
     await page.getByPlaceholder('Search instances...').fill('nonexistent-instance-xyz');
     await expect(page.getByText('No stack instances found.')).toBeVisible({ timeout: 5_000 });
@@ -195,7 +195,7 @@ test.describe('Stack Instance Management', () => {
 
     // Go to dashboard
     await page.goto('/');
-    await expect(page.getByText(instName)).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByRole('heading', { name: instName })).toBeVisible({ timeout: 10_000 });
 
     // Click Details button on the card
     const card = page.locator('.MuiCard-root', { hasText: instName });

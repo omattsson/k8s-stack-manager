@@ -90,7 +90,9 @@ export const templateService = {
   get: async (id: string): Promise<StackTemplate> => {
     try {
       const response = await api.get(`/api/v1/templates/${id}`);
-      return response.data;
+      // API returns { template: {...}, charts: [...] }
+      const { template, charts } = response.data;
+      return { ...template, charts: charts || [] };
     } catch (error) {
       console.error('Failed to fetch template:', error);
       throw error;
@@ -143,7 +145,8 @@ export const templateService = {
   instantiate: async (id: string, data: InstantiateTemplateRequest): Promise<StackDefinition> => {
     try {
       const response = await api.post(`/api/v1/templates/${id}/instantiate`, data);
-      return response.data;
+      // API returns { definition: {...}, charts: [...] }
+      return response.data.definition;
     } catch (error) {
       console.error('Failed to instantiate template:', error);
       throw error;
@@ -199,7 +202,9 @@ export const definitionService = {
   get: async (id: string): Promise<StackDefinition> => {
     try {
       const response = await api.get(`/api/v1/stack-definitions/${id}`);
-      return response.data;
+      // API returns { definition: {...}, charts: [...] }
+      const { definition, charts } = response.data;
+      return { ...definition, charts: charts || [] };
     } catch (error) {
       console.error('Failed to fetch definition:', error);
       throw error;
