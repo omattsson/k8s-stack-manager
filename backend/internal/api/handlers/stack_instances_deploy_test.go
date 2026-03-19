@@ -160,9 +160,10 @@ func setupDeployRouter(
 }
 
 // newTestManager creates a Manager with a non-functional helm binary for handler tests.
+// Uses a nonexistent binary path to avoid accidentally executing a real helm CLI.
 func newTestManager(instRepo models.StackInstanceRepository, logRepo models.DeploymentLogRepository) *deployer.Manager {
 	return deployer.NewManager(deployer.ManagerConfig{
-		HelmClient:    deployer.NewHelmClient("helm", "", 1*time.Minute),
+		HelmClient:    deployer.NewHelmClient("/nonexistent/helm", "", 1*time.Second),
 		InstanceRepo:  instRepo,
 		DeployLogRepo: logRepo,
 		Hub:           &MockBroadcastSender{},

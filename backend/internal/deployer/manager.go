@@ -85,7 +85,17 @@ func (m *Manager) Shutdown() {
 
 // Deploy starts an async deployment. Returns the deployment log ID immediately.
 // The actual deployment runs in a background goroutine with concurrency limiting.
+//
+// The ctx parameter is used for early cancellation: if the request context is
+// already done before work begins, Deploy returns an error immediately. The
+// background goroutine uses m.shutdownCtx instead, because it outlives the
+// HTTP request that triggered the deploy.
 func (m *Manager) Deploy(ctx context.Context, req DeployRequest) (string, error) {
+	// Short-circuit if the request context is already cancelled.
+	if err := ctx.Err(); err != nil {
+		return "", fmt.Errorf("request cancelled: %w", err)
+	}
+
 	logID := uuid.New().String()
 	now := time.Now().UTC()
 
@@ -264,7 +274,17 @@ func (m *Manager) finalizeDeploy(instanceID string, deployLog *models.Deployment
 // StopWithCharts starts an async stop/uninstall with explicit chart information.
 // Returns the deployment log ID immediately. If charts is nil or empty, the
 // stop finalizes immediately without running helm uninstall.
+//
+// The ctx parameter is used for early cancellation: if the request context is
+// already done before work begins, StopWithCharts returns an error immediately.
+// The background goroutine uses m.shutdownCtx instead, because it outlives the
+// HTTP request that triggered the stop.
 func (m *Manager) StopWithCharts(ctx context.Context, instance *models.StackInstance, charts []ChartDeployInfo) (string, error) {
+	// Short-circuit if the request context is already cancelled.
+	if err := ctx.Err(); err != nil {
+		return "", fmt.Errorf("request cancelled: %w", err)
+	}
+
 	logID := uuid.New().String()
 	now := time.Now().UTC()
 

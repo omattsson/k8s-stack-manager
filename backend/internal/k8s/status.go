@@ -6,6 +6,8 @@ import (
 	"log/slog"
 	"time"
 
+	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -136,7 +138,7 @@ func (c *Client) GetNamespaceStatus(ctx context.Context, namespace string) (*Nam
 
 		available := false
 		for _, cond := range d.Status.Conditions {
-			if cond.Type == "Available" && cond.Status == "True" {
+			if cond.Type == appsv1.DeploymentAvailable && cond.Status == corev1.ConditionTrue {
 				available = true
 				break
 			}

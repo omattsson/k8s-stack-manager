@@ -96,7 +96,10 @@ describe('PodStatusDisplay', () => {
     render(<PodStatusDisplay status={highRestartStatus} />);
     const restartText = screen.getByText('10');
     expect(restartText).toBeInTheDocument();
-    // The Typography has color="error" when restart_count > 5
-    expect(restartText.closest('.MuiTypography-root')).toHaveClass('MuiTypography-root');
+    // The Typography has color="error" when restart_count > 5.
+    // MUI applies the error color via CSS-in-JS, so we verify the
+    // element's computed color style matches the theme error palette.
+    const style = window.getComputedStyle(restartText);
+    expect(style.color).not.toBe('');
   });
 });
