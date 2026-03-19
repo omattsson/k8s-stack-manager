@@ -1034,13 +1034,22 @@ const docTemplate = `{
                                 "type": "string"
                             }
                         }
+                    },
+                    "409": {
+                        "description": "Namespace already exists",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
                     }
                 }
             }
         },
         "/api/v1/stack-instances/{id}": {
             "get": {
-                "description": "Get a stack instance by ID with its overrides",
+                "description": "Get a stack instance by ID",
                 "produces": [
                     "application/json"
                 ],
@@ -1166,6 +1175,74 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/stack-instances/{id}/clean": {
+            "post": {
+                "description": "Uninstall all Helm releases and delete the K8s namespace, returning the instance to draft status",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "stack-instances"
+                ],
+                "summary": "Clean a stack instance namespace",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Instance ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "202": {
+                        "description": "Namespace cleanup initiated",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "409": {
+                        "description": "Invalid status for clean",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "503": {
+                        "description": "Deployment service not configured",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/stack-instances/{id}/clone": {
             "post": {
                 "description": "Create a new stack instance as a copy of an existing one",
@@ -1190,6 +1267,115 @@ const docTemplate = `{
                         "description": "Created",
                         "schema": {
                             "$ref": "#/definitions/models.StackInstance"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "409": {
+                        "description": "Namespace already exists",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/stack-instances/{id}/deploy": {
+            "post": {
+                "description": "Trigger Helm deployment for a stack instance",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "stack-instances"
+                ],
+                "summary": "Deploy a stack instance",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Instance ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "202": {
+                        "description": "Deployment started",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "409": {
+                        "description": "Already deploying",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/stack-instances/{id}/deploy-log": {
+            "get": {
+                "description": "Get deployment log history for a stack instance",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "stack-instances"
+                ],
+                "summary": "Get deployment logs",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Instance ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/models.DeploymentLog"
+                            }
                         }
                     },
                     "404": {
@@ -1301,6 +1487,112 @@ const docTemplate = `{
                     },
                     "404": {
                         "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/stack-instances/{id}/status": {
+            "get": {
+                "description": "Get detailed Kubernetes resource status for a stack instance",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "stack-instances"
+                ],
+                "summary": "Get instance K8s status",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Instance ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/k8s.NamespaceStatus"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/stack-instances/{id}/stop": {
+            "post": {
+                "description": "Trigger Helm uninstall for a stack instance",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "stack-instances"
+                ],
+                "summary": "Stop a stack instance",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Instance ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "202": {
+                        "description": "Stop initiated",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "409": {
+                        "description": "Not running",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {
@@ -2529,6 +2821,112 @@ const docTemplate = `{
                 }
             }
         },
+        "k8s.ChartStatus": {
+            "type": "object",
+            "properties": {
+                "chart_name": {
+                    "type": "string"
+                },
+                "deployments": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/k8s.DeploymentInfo"
+                    }
+                },
+                "pods": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/k8s.PodInfo"
+                    }
+                },
+                "release_name": {
+                    "type": "string"
+                },
+                "services": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/k8s.ServiceInfo"
+                    }
+                },
+                "status": {
+                    "type": "string"
+                }
+            }
+        },
+        "k8s.DeploymentInfo": {
+            "type": "object",
+            "properties": {
+                "available": {
+                    "type": "boolean"
+                },
+                "desired_replicas": {
+                    "type": "integer"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "ready_replicas": {
+                    "type": "integer"
+                },
+                "updated_replicas": {
+                    "type": "integer"
+                }
+            }
+        },
+        "k8s.NamespaceStatus": {
+            "type": "object",
+            "properties": {
+                "charts": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/k8s.ChartStatus"
+                    }
+                },
+                "last_checked": {
+                    "type": "string"
+                },
+                "namespace": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                }
+            }
+        },
+        "k8s.PodInfo": {
+            "type": "object",
+            "properties": {
+                "image": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "phase": {
+                    "type": "string"
+                },
+                "ready": {
+                    "type": "boolean"
+                },
+                "restart_count": {
+                    "type": "integer"
+                }
+            }
+        },
+        "k8s.ServiceInfo": {
+            "type": "object",
+            "properties": {
+                "cluster_ip": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "type": {
+                    "type": "string"
+                }
+            }
+        },
         "models.APIKey": {
             "type": "object",
             "properties": {
@@ -2548,7 +2946,7 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "prefix": {
-                    "description": "first 8 chars of raw key for display",
+                    "description": "first 16 chars of raw key for display",
                     "type": "string"
                 },
                 "user_id": {
@@ -2616,6 +3014,37 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "stack_definition_id": {
+                    "type": "string"
+                }
+            }
+        },
+        "models.DeploymentLog": {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "description": "\"deploy\", \"stop\", or \"clean\"",
+                    "type": "string"
+                },
+                "completed_at": {
+                    "type": "string"
+                },
+                "error_message": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "output": {
+                    "type": "string"
+                },
+                "stack_instance_id": {
+                    "type": "string"
+                },
+                "started_at": {
+                    "type": "string"
+                },
+                "status": {
+                    "description": "\"running\", \"success\", \"error\"",
                     "type": "string"
                 }
             }
@@ -2692,7 +3121,13 @@ const docTemplate = `{
                 "created_at": {
                     "type": "string"
                 },
+                "error_message": {
+                    "type": "string"
+                },
                 "id": {
+                    "type": "string"
+                },
+                "last_deployed_at": {
                     "type": "string"
                 },
                 "name": {
@@ -2833,6 +3268,20 @@ const docTemplate = `{
                     "type": "string"
                 }
             }
+        }
+    },
+    "securityDefinitions": {
+        "ApiKeyAuth": {
+            "description": "API key (format: \"sk_\u003ckey\u003e\")",
+            "type": "apiKey",
+            "name": "X-API-Key",
+            "in": "header"
+        },
+        "BearerAuth": {
+            "description": "JWT Bearer token (format: \"Bearer \u003ctoken\u003e\")",
+            "type": "apiKey",
+            "name": "Authorization",
+            "in": "header"
         }
     }
 }`

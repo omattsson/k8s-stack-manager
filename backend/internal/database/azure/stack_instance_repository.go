@@ -103,6 +103,25 @@ func (r *StackInstanceRepository) Delete(id string) error {
 	return nil
 }
 
+func (r *StackInstanceRepository) FindByNamespace(namespace string) (*models.StackInstance, error) {
+	ctx := context.Background()
+
+	filter := "PartitionKey eq 'global' and Namespace eq '" + namespace + "'"
+	pager := r.client.NewListEntitiesPager(&aztables.ListEntitiesOptions{
+		Filter: &filter,
+	})
+
+	entities, err := collectEntities(ctx, pager, nil)
+	if err != nil {
+		return nil, mapAzureError("find_by_namespace", err)
+	}
+
+	if len(entities) == 0 {
+		return nil, dberrors.NewDatabaseError("find_by_namespace", dberrors.ErrNotFound)
+	}
+	return stackInstanceFromEntity(entities[0]), nil
+}
+
 func (r *StackInstanceRepository) List() ([]models.StackInstance, error) {
 	ctx := context.Background()
 

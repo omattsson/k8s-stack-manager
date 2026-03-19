@@ -2,6 +2,8 @@ package models
 
 import (
 	"errors"
+	"fmt"
+	"regexp"
 )
 
 var (
@@ -75,6 +77,16 @@ func (c *ChartConfig) Validate() error {
 	return nil
 }
 
+// rfc1123LabelRegex matches valid RFC 1123 label names (used for K8s namespaces).
+var rfc1123LabelRegex = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`)
+
+// MaxInstanceNameLength is the maximum allowed length for a stack instance name.
+// This leaves room for the "stack-" prefix and "-owner" suffix in the generated namespace.
+const MaxInstanceNameLength = 50
+
+// MaxNamespaceLength is the maximum length for a K8s namespace (RFC 1123).
+const MaxNamespaceLength = 63
+
 // Validate implements model validation for StackInstance.
 func (si *StackInstance) Validate() error {
 	if si.StackDefinitionID == "" {
@@ -83,8 +95,19 @@ func (si *StackInstance) Validate() error {
 	if si.Name == "" {
 		return errors.New("name is required")
 	}
+	if len(si.Name) > MaxInstanceNameLength {
+		return fmt.Errorf("name must be at most %d characters", MaxInstanceNameLength)
+	}
 	if si.OwnerID == "" {
 		return errors.New("owner_id is required")
+	}
+	if si.Namespace != "" {
+		if len(si.Namespace) > MaxNamespaceLength {
+			return fmt.Errorf("namespace must be at most %d characters", MaxNamespaceLength)
+		}
+		if !rfc1123LabelRegex.MatchString(si.Namespace) {
+			return errors.New("namespace must be a valid RFC 1123 label: lowercase alphanumeric and dashes, must not start or end with a dash")
+		}
 	}
 	return nil
 }

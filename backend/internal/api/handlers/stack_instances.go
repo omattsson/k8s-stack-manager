@@ -125,6 +125,7 @@ func (h *InstanceHandler) ListInstances(c *gin.Context) {
 // @Param       instance body     models.StackInstance true "Instance object"
 // @Success     201      {object} models.StackInstance
 // @Failure     400      {object} map[string]string
+// @Failure     409      {object} map[string]string "Namespace already exists"
 // @Router      /api/v1/stack-instances [post]
 func (h *InstanceHandler) CreateInstance(c *gin.Context) {
 	var inst models.StackInstance
@@ -145,14 +146,19 @@ func (h *InstanceHandler) CreateInstance(c *gin.Context) {
 	}
 
 	// Auto-generate namespace.
+	owner := middleware.GetUsernameFromContext(c)
 	if inst.Namespace == "" {
-		owner := middleware.GetUsernameFromContext(c)
 		safeName := strings.ToLower(strings.ReplaceAll(inst.Name, " ", "-"))
 		inst.Namespace = fmt.Sprintf("stack-%s-%s", safeName, owner)
 	}
 
 	if err := inst.Validate(); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Check namespace uniqueness.
+	if h.checkNamespaceUniqueness(c, inst.Namespace, inst.Name, owner) {
 		return
 	}
 
@@ -282,6 +288,7 @@ func (h *InstanceHandler) DeleteInstance(c *gin.Context) {
 // @Param       id  path     string true "Instance ID"
 // @Success     201 {object} models.StackInstance
 // @Failure     404 {object} map[string]string
+// @Failure     409 {object} map[string]string "Namespace already exists"
 // @Router      /api/v1/stack-instances/{id}/clone [post]
 func (h *InstanceHandler) CloneInstance(c *gin.Context) {
 	id := c.Param("id")
@@ -297,16 +304,29 @@ func (h *InstanceHandler) CloneInstance(c *gin.Context) {
 	ownerName := middleware.GetUsernameFromContext(c)
 	safeName := strings.ToLower(strings.ReplaceAll(source.Name, " ", "-"))
 
+	cloneName := source.Name + " (Copy)"
+	cloneNamespace := fmt.Sprintf("stack-%s-copy-%s", safeName, ownerName)
+
 	clone := &models.StackInstance{
 		ID:                uuid.New().String(),
 		StackDefinitionID: source.StackDefinitionID,
-		Name:              source.Name + " (Copy)",
-		Namespace:         fmt.Sprintf("stack-%s-copy-%s", safeName, ownerName),
+		Name:              cloneName,
+		Namespace:         cloneNamespace,
 		OwnerID:           ownerID,
 		Branch:            source.Branch,
 		Status:            models.StackStatusDraft,
 		CreatedAt:         now,
 		UpdatedAt:         now,
+	}
+
+	if err := clone.Validate(); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Check namespace uniqueness.
+	if h.checkNamespaceUniqueness(c, clone.Namespace, cloneName, ownerName) {
+		return
 	}
 
 	if err := h.instanceRepo.Create(clone); err != nil {
@@ -897,6 +917,47 @@ func (h *InstanceHandler) GetInstanceStatus(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusServiceUnavailable, gin.H{"error": "K8s monitoring not configured"})
+}
+
+// checkNamespaceUniqueness checks whether the given namespace is already in use.
+// If it is, it returns true and writes a 409 response with suggestions.
+// The caller should return immediately when this returns true.
+func (h *InstanceHandler) checkNamespaceUniqueness(c *gin.Context, namespace, instanceName, owner string) bool {
+	existing, err := h.instanceRepo.FindByNamespace(namespace)
+	if err != nil {
+		// Not found is the happy path — namespace is available.
+		if strings.Contains(err.Error(), "not found") {
+			return false
+		}
+		// Unexpected error — log and respond with 500.
+		slog.Error("Failed to check namespace uniqueness",
+			"namespace", namespace,
+			"error", err,
+		)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
+		return true
+	}
+
+	// Namespace is taken — generate suggestions.
+	suggestions := generateNamespaceSuggestions(instanceName, owner)
+	c.JSON(http.StatusConflict, gin.H{
+		"error":       "namespace already exists",
+		"message":     fmt.Sprintf("Namespace %q is already in use by instance %q", namespace, existing.Name),
+		"suggestions": suggestions,
+	})
+	return true
+}
+
+// generateNamespaceSuggestions returns 3 alternative namespace suggestions by
+// appending -2, -3, -4 to the base instance name.
+func generateNamespaceSuggestions(instanceName, owner string) []string {
+	suggestions := make([]string, 0, 3)
+	for _, suffix := range []string{"-2", "-3", "-4"} {
+		altName := instanceName + suffix
+		safeName := strings.ToLower(strings.ReplaceAll(altName, " ", "-"))
+		suggestions = append(suggestions, fmt.Sprintf("stack-%s-%s", safeName, owner))
+	}
+	return suggestions
 }
 
 func resolveOwnerName(userRepo models.UserRepository, ownerID string) string {

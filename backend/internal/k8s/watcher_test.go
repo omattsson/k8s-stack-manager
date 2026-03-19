@@ -82,6 +82,18 @@ func (m *mockInstanceRepo) List() ([]models.StackInstance, error) {
 	return out, nil
 }
 
+func (m *mockInstanceRepo) FindByNamespace(namespace string) (*models.StackInstance, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	for _, inst := range m.instances {
+		if inst.Namespace == namespace {
+			cp := *inst
+			return &cp, nil
+		}
+	}
+	return nil, errors.New("not found")
+}
+
 func (m *mockInstanceRepo) ListByOwner(_ string) ([]models.StackInstance, error) {
 	return m.List()
 }

@@ -88,6 +88,75 @@ definitions:
       uptime:
         type: string
     type: object
+  k8s.ChartStatus:
+    properties:
+      chart_name:
+        type: string
+      deployments:
+        items:
+          $ref: '#/definitions/k8s.DeploymentInfo'
+        type: array
+      pods:
+        items:
+          $ref: '#/definitions/k8s.PodInfo'
+        type: array
+      release_name:
+        type: string
+      services:
+        items:
+          $ref: '#/definitions/k8s.ServiceInfo'
+        type: array
+      status:
+        type: string
+    type: object
+  k8s.DeploymentInfo:
+    properties:
+      available:
+        type: boolean
+      desired_replicas:
+        type: integer
+      name:
+        type: string
+      ready_replicas:
+        type: integer
+      updated_replicas:
+        type: integer
+    type: object
+  k8s.NamespaceStatus:
+    properties:
+      charts:
+        items:
+          $ref: '#/definitions/k8s.ChartStatus'
+        type: array
+      last_checked:
+        type: string
+      namespace:
+        type: string
+      status:
+        type: string
+    type: object
+  k8s.PodInfo:
+    properties:
+      image:
+        type: string
+      name:
+        type: string
+      phase:
+        type: string
+      ready:
+        type: boolean
+      restart_count:
+        type: integer
+    type: object
+  k8s.ServiceInfo:
+    properties:
+      cluster_ip:
+        type: string
+      name:
+        type: string
+      type:
+        type: string
+    type: object
   models.APIKey:
     properties:
       created_at:
@@ -101,7 +170,7 @@ definitions:
       name:
         type: string
       prefix:
-        description: first 8 chars of raw key for display
+        description: first 16 chars of raw key for display
         type: string
       user_id:
         type: string
@@ -146,6 +215,27 @@ definitions:
       source_repo_url:
         type: string
       stack_definition_id:
+        type: string
+    type: object
+  models.DeploymentLog:
+    properties:
+      action:
+        description: '"deploy", "stop", or "clean"'
+        type: string
+      completed_at:
+        type: string
+      error_message:
+        type: string
+      id:
+        type: string
+      output:
+        type: string
+      stack_instance_id:
+        type: string
+      started_at:
+        type: string
+      status:
+        description: '"running", "success", "error"'
         type: string
     type: object
   models.Item:
@@ -197,7 +287,11 @@ definitions:
         type: string
       created_at:
         type: string
+      error_message:
+        type: string
       id:
+        type: string
+      last_deployed_at:
         type: string
       name:
         type: string
@@ -969,6 +1063,12 @@ paths:
             additionalProperties:
               type: string
             type: object
+        "409":
+          description: Namespace already exists
+          schema:
+            additionalProperties:
+              type: string
+            type: object
       summary: Create a stack instance
       tags:
       - stack-instances
@@ -996,7 +1096,7 @@ paths:
       tags:
       - stack-instances
     get:
-      description: Get a stack instance by ID with its overrides
+      description: Get a stack instance by ID
       parameters:
       - description: Instance ID
         in: path
@@ -1057,6 +1157,52 @@ paths:
       summary: Update a stack instance
       tags:
       - stack-instances
+  /api/v1/stack-instances/{id}/clean:
+    post:
+      description: Uninstall all Helm releases and delete the K8s namespace, returning
+        the instance to draft status
+      parameters:
+      - description: Instance ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "202":
+          description: Namespace cleanup initiated
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "409":
+          description: Invalid status for clean
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "503":
+          description: Deployment service not configured
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Clean a stack instance namespace
+      tags:
+      - stack-instances
   /api/v1/stack-instances/{id}/clone:
     post:
       description: Create a new stack instance as a copy of an existing one
@@ -1079,7 +1225,79 @@ paths:
             additionalProperties:
               type: string
             type: object
+        "409":
+          description: Namespace already exists
+          schema:
+            additionalProperties:
+              type: string
+            type: object
       summary: Clone a stack instance
+      tags:
+      - stack-instances
+  /api/v1/stack-instances/{id}/deploy:
+    post:
+      description: Trigger Helm deployment for a stack instance
+      parameters:
+      - description: Instance ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "202":
+          description: Deployment started
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "409":
+          description: Already deploying
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Deploy a stack instance
+      tags:
+      - stack-instances
+  /api/v1/stack-instances/{id}/deploy-log:
+    get:
+      description: Get deployment log history for a stack instance
+      parameters:
+      - description: Instance ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/models.DeploymentLog'
+            type: array
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Get deployment logs
       tags:
       - stack-instances
   /api/v1/stack-instances/{id}/overrides:
@@ -1153,6 +1371,76 @@ paths:
       summary: Set or update override for a chart
       tags:
       - value-overrides
+  /api/v1/stack-instances/{id}/status:
+    get:
+      description: Get detailed Kubernetes resource status for a stack instance
+      parameters:
+      - description: Instance ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/k8s.NamespaceStatus'
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "503":
+          description: Service Unavailable
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Get instance K8s status
+      tags:
+      - stack-instances
+  /api/v1/stack-instances/{id}/stop:
+    post:
+      description: Trigger Helm uninstall for a stack instance
+      parameters:
+      - description: Instance ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "202":
+          description: Stop initiated
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "409":
+          description: Not running
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Stop a stack instance
+      tags:
+      - stack-instances
   /api/v1/stack-instances/{id}/values:
     get:
       description: Generate and export merged values for all charts as a zip archive
@@ -1872,4 +2160,15 @@ produces:
 schemes:
 - http
 - https
+securityDefinitions:
+  ApiKeyAuth:
+    description: 'API key (format: "sk_<key>")'
+    in: header
+    name: X-API-Key
+    type: apiKey
+  BearerAuth:
+    description: 'JWT Bearer token (format: "Bearer <token>")'
+    in: header
+    name: Authorization
+    type: apiKey
 swagger: "2.0"

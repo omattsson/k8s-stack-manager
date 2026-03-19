@@ -545,6 +545,21 @@ func (m *MockStackInstanceRepository) FindByID(id string) (*models.StackInstance
 	return &cp, nil
 }
 
+func (m *MockStackInstanceRepository) FindByNamespace(namespace string) (*models.StackInstance, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.fetchErr != nil {
+		return nil, m.fetchErr
+	}
+	for _, i := range m.items {
+		if i.Namespace == namespace {
+			cp := *i
+			return &cp, nil
+		}
+	}
+	return nil, errors.New("not found")
+}
+
 func (m *MockStackInstanceRepository) Update(i *models.StackInstance) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
