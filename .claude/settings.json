@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(make test-e2e:*)",
+      "Bash(npm install:*)",
+      "Bash(export PATH=\"/opt/homebrew/bin:$PATH\")",
+      "Bash(npx playwright:*)",
+      "Bash(find /Users/o.mattsson/git/github/k8s-stack-manager/frontend/src -name Login* -o -name ProtectedRoute* -o -name login*)",
+      "Bash(find /Users/o.mattsson/git/github/k8s-stack-manager/frontend -name *.spec.ts -o -name *.spec.tsx -o -name e2e* -type f)",
+      "Bash(git checkout:*)",
+      "Bash(git add:*)"
+    ],
+    "additionalDirectories": [
+      "/Users/o.mattsson/git/github/k8s-stack-manager/.claude"
+    ]
+  }
+}
