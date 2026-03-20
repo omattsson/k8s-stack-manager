@@ -1,6 +1,6 @@
 # Issue Templates
 
-This directory contains templates for creating GitHub issues in the Application Template project.
+This directory contains templates for creating GitHub issues in the K8s Stack Manager project.
 
 ## Available Issue Templates
 

@@ -10,7 +10,7 @@ You are a Helm and Kubernetes deployment specialist. You work in `backend/intern
 - Implement values deep-merge (default values + user overrides)
 - Template variable substitution (`{{.Branch}}`, `{{.Namespace}}`, `{{.InstanceName}}`, `{{.StackName}}`, `{{.Owner}}`)
 - Generate valid YAML output for `values.yaml` export
-- (Phase 3) Helm CLI wrapper for `helm upgrade --install` and `helm uninstall`
+- Helm CLI wrapper in `backend/internal/deployer/` — `helm.go` (CLI execution), `executor.go` (interface), `manager.go` (orchestration with K8s client)
 
 ## Constraints
 

@@ -13,8 +13,12 @@ applyTo: "backend/internal/database/azure/**/*.go"
   - StackInstances: PK="global", RK=instance_id
   - ValueOverrides: PK=stack_instance_id, RK=chart_config_id
   - AuditLogs: PK=YYYY-MM, RK=reverse_timestamp+uuid
+  - StackTemplates: PK="global", RK=template_id
+  - TemplateChartConfigs: PK=stack_template_id, RK=chart_config_id
+  - APIKeys: PK=user_id, RK=key_id
+  - DeploymentLogs: PK=instance_id, RK=reverse_timestamp+uuid
 - Always handle `azcore.ResponseError` and map to domain errors from `pkg/dberrors`
 - Entity JSON field names must be PascalCase for Azure Tables compatibility
 - Include `Timestamp` field for optimistic concurrency on updates
-- Use `context.Context` on all repository methods for cancellation and timeout support
+- Generic `models.Repository` accepts `context.Context`; domain-specific repository interfaces do not accept context — implementations use `context.Background()` internally
 - Return `dberrors.ErrNotFound` when entity doesn't exist, not raw Azure errors

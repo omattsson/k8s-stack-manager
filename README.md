@@ -57,7 +57,7 @@ cd frontend && npm install && npm run dev
 | Command | Description |
 |---|---|
 | `make dev` | Start full stack via Docker Compose |
-| `make dev-local` | Run backend locally against Azurite |
+| `make dev-local` | Run backend + frontend locally against Azurite |
 | `make azurite-start` | Start Azurite container |
 | `make test` | Run all tests (backend + frontend) |
 | `make test-backend` | Backend unit tests |
@@ -80,6 +80,8 @@ cd frontend && npm install && npm run dev
 │   │   ├── database/azure/    # Azure Table Storage repositories
 │   │   ├── gitprovider/       # Azure DevOps + GitLab integration
 │   │   ├── helm/              # Values merge + template substitution
+│   │   ├── deployer/          # Helm CLI wrapper for deploy/undeploy
+│   │   ├── k8s/               # Cluster status monitoring
 │   │   ├── models/            # Domain models + interfaces
 │   │   └── websocket/         # Real-time event broadcasting
 │   └── docs/                  # Swagger/OpenAPI
@@ -104,6 +106,7 @@ cd frontend && npm install && npm run dev
 | Overrides | `/api/v1/stack-instances/:id/overrides` | Per-chart value overrides |
 | Git | `/api/v1/git` | Branch listing, validation |
 | Audit Logs | `/api/v1/audit-logs` | Filterable audit trail |
+| Admin | `/api/v1/admin` | Orphaned namespace detection and cleanup |
 | Health | `/health/*` | Liveness + readiness |
 
 ## Configuration

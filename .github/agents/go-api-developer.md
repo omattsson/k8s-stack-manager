@@ -43,7 +43,7 @@ When given a GitHub issue:
 - **Module**: `backend` (Go 1.23, Gin web framework, GORM ORM)
 - **Data stores**: MySQL (primary) or Azure Table Storage (swappable via `USE_AZURE_TABLE`)
 - **Bootstrap**: `api/main.go` → `config.LoadConfig()` → `database.NewRepository(cfg)` → `routes.SetupRoutes()` → `http.Server` with graceful shutdown
-- **Ports**: Backend `:8081` on host; inside Docker backend listens on `:8080`
+- **Ports**: Backend `:8081` on host and inside Docker
 
 ### Key directories
 

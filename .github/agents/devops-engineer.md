@@ -40,16 +40,17 @@ When given a task:
 
 ### Docker Compose (`docker-compose.yml`)
 
-Four services:
+Services:
 
 | Service | Image | Networks | Health Check |
 |---|---|---|---|
-| `db` | mysql:8.0 | backend-net | `mysqladmin ping` |
 | `backend` | ./backend (multi-stage) | backend-net, frontend-net | `curl /health/live` |
 | `frontend` | ./frontend (multi-stage) | frontend-net | — |
 | `azurite` | azure-storage/azurite | backend-net | TCP port 10002 |
 
-**Network isolation**: `backend-net` connects db + backend + azurite. `frontend-net` connects backend + frontend. Frontend CANNOT reach the database directly. Always maintain this separation.
+Also `docker-compose.k8s.yml` overlay for local K8s cluster access (`make dev-k8s`).
+
+**Network isolation**: `backend-net` connects backend + azurite. `frontend-net` connects backend + frontend. Frontend CANNOT reach the database directly. Always maintain this separation.
 
 **Environment variables**: All config flows via env vars with defaults. Secrets use `${VAR:-default}` substitution — defaults are for local dev ONLY.
 
@@ -113,10 +114,11 @@ Use `depends_on` with `condition: service_healthy` for startup ordering.
 ### Port mapping
 | Service | Container Port | Host Port | Notes |
 |---|---|---|---|
-| db | 3306 | 3306 | MySQL |
-| backend | 8080 | 8081 | API |
+| backend | 8081 | 8081 | API |
 | frontend | 80 (nginx) / 3000 (dev) | 3000 | Web UI |
 | azurite | 10000-10002 | 10000-10002 | Azure Storage emulator |
+
+**K8s integration env vars**: `KUBECONFIG_PATH`, `HELM_BINARY`, `DEPLOYMENT_TIMEOUT` (default 10m), `MAX_CONCURRENT_DEPLOYS` (default 5).
 
 Changing a port requires updating: docker-compose.yml, nginx.conf, frontend API config, and any health check URLs.
 

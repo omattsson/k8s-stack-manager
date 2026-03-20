@@ -10,3 +10,5 @@
 - Group related handlers in the same file
 - For real-time events, use `NewHandlerWithHub(repo, hub)` and call `h.broadcast(msgType, payload)` after successful mutations
 - Use `handleDBError(err)` for all repository errors — never leaks internal details
+- Domain handlers use separate structs with specialized repositories (e.g., `InstanceHandler`, `DefinitionHandler`, `AdminHandler`). Each has its own constructor accepting the repositories it needs. Follow the existing domain handler pattern when creating new resources.
+- The generic `Handler` struct with `models.Repository` is used only for the Items reference implementation

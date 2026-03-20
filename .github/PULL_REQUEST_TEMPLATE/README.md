@@ -1,6 +1,6 @@
 # Pull Request Templates
 
-This directory contains pull request templates for the Application Template project.
+This directory contains pull request templates for the K8s Stack Manager project.
 
 ## Available Templates
 
@@ -23,13 +23,13 @@ Simply create a new PR, and the default template will be used automatically.
 3. Click "Compare & pull request"
 4. Add the query parameter to the URL before filling out the PR form:
    ```
-   https://github.com/your-username/application_template/compare/main...your-branch?template=feature.md
+   https://github.com/your-username/k8s-stack-manager/compare/main...your-branch?template=feature.md
    ```
    
 ## Example
 For a bug fix PR:
 ```
-https://github.com/your-username/application_template/compare/main...fix-login-issue?template=bugfix.md
+https://github.com/your-username/k8s-stack-manager/compare/main...fix-login-issue?template=bugfix.md
 ```
 
 ## Tips for Creating Good Pull Requests

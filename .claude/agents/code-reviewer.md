@@ -9,7 +9,7 @@ You are a principal engineer performing code review. Review the specified code c
 ## Workflow
 1. Read the PR description or understand what changed
 2. Read ALL changed files — every line
-3. Cross-reference against reference implementations (`items.go`, `Health/index.tsx`)
+3. Cross-reference against reference implementations (`items.go` for backend, `pages/StackInstances/` for frontend)
 4. Run `cd backend && go test ./... -v -short` and `cd frontend && npm test`
 5. Run `make lint`
 6. Provide structured feedback
@@ -23,6 +23,9 @@ You are a principal engineer performing code review. Review the specified code c
 - [ ] Swagger annotations on every handler
 - [ ] Table-driven tests with `t.Parallel()`, `tt := tt`, `MockRepository`
 - [ ] New query patterns have DB indexes; list endpoints paginated
+- [ ] Deployment operations: proper context handling in async goroutines; WebSocket progress broadcast; deployment logs created
+- [ ] K8s/Helm integration: error handling for cluster API failures; namespace validation (RFC1123)
+- [ ] Admin operations: proper authorization via `RequireAdmin()` middleware
 
 ## Frontend Checklist
 - [ ] MUI components only; `sx` prop styling; functional components

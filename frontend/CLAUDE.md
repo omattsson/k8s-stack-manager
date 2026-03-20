@@ -10,13 +10,17 @@ Built with Vite + React 19 + TypeScript (strict mode). Uses SWC via `@vitejs/plu
 - **API Client**: Axios instance in `src/api/client.ts`
 - **API Config**: `src/api/config.ts` — dev: `http://localhost:8081` (direct), prod: `/api` (nginx strips `/api` prefix via trailing `/` in `proxy_pass`). Endpoints in `client.ts` use full `/api/v1/...` paths.
 - **WebSocket**: `reconnecting-websocket` with context provider and hook
+- **Auth Context**: `src/context/AuthContext.tsx` — authentication state provider
+- **Hooks**: `src/hooks/useWebSocket.ts` — WebSocket hook for real-time updates
+- **Types**: `src/types/index.ts` — shared TypeScript type definitions
 
 ## Component Patterns
 - Functional components only (no class components)
 - `useState`/`useEffect` for state, no global state library
 - MUI `sx` prop for styling, no separate CSS files
 - TypeScript interfaces for all component props and API response types
-- Pages: one directory per page under `src/pages/` with `index.tsx`
+- Pages: one directory per page under `src/pages/` with `index.tsx` — current pages: Login, StackInstances (Dashboard), StackDefinitions, Templates, AuditLog, Admin, Profile
+- Shared components in `src/components/`: Layout, BranchSelector, ConfirmDialog, DeploymentLogViewer, EntityLink, PodStatusDisplay, ProtectedRoute, StatusBadge, YamlEditor
 - Register new pages in `src/routes.tsx`, add nav in `src/components/Layout/index.tsx`
 
 ## Page Pattern

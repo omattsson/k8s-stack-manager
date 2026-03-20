@@ -9,7 +9,7 @@ applyTo: "frontend/src/pages/**/*.tsx"
 - Import MUI components from `@mui/material` for all UI elements
 - Include loading states using `CircularProgress` centered in a `Box`
 - Include error states using `Alert` with `severity="error"`
-- Follow the page pattern from `pages/Health/index.tsx`:
+- Follow the page pattern from `pages/StackInstances/` or `pages/Templates/`:
   - `useState` for local state
   - `useEffect` for data fetching on mount
   - Loading → Error → Content rendering hierarchy

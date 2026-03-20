@@ -33,7 +33,7 @@ When reviewing code:
 
 1. **Read the PR description or issue** — understand the intent and acceptance criteria
 2. **Read ALL changed files** — use the `changes` tool to view the full diff; don't skim; read every line
-3. **Cross-reference with existing patterns** — compare against reference implementations (`items.go`, `Health/index.tsx`)
+3. **Cross-reference with existing patterns** — compare against reference implementations (`items.go` for backend, `pages/StackInstances/` for frontend)
 4. **Check the instruction files** — verify compliance with `.github/instructions/*.md` rules
 5. **Check diagnostics** — use the `problems` tool to see any compile or lint errors in changed files
 6. **Run tests** — execute `cd backend && go test ./... -v -short` and `cd frontend && npm test`
@@ -132,7 +132,7 @@ make lint                                 # Full lint (backend + frontend)
 
 ## When in doubt
 - Read `internal/api/handlers/items.go` — reference backend implementation
-- Read `src/pages/Health/index.tsx` — reference frontend implementation
+- Read `src/pages/StackInstances/` — reference frontend implementation
 - Read `.github/instructions/*.md` — authoritative project rules
 - If a pattern exists, enforce it; if it doesn't, flag as discussion point
 

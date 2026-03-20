@@ -30,7 +30,7 @@ You are a senior frontend engineer specializing in React, TypeScript, and Materi
 When given a GitHub issue:
 
 1. **Read the issue thoroughly** — understand every acceptance criterion before writing code
-2. **Research the codebase** — read existing pages, components, API services, and tests to understand current patterns. Key references: `pages/Health/index.tsx` (data-fetching page), `pages/Home/index.tsx` (static page), `api/client.ts` (service pattern)
+2. **Research the codebase** — read existing pages, components, API services, and tests to understand current patterns. Key references: `pages/StackInstances/` (data-fetching page), `pages/Templates/` (gallery page), `api/client.ts` (service pattern)
 3. **Plan before coding** — identify all files that need to change
 4. **Implement incrementally** — one component/file at a time, verify types compile
 5. **Write tests alongside code** — every component needs unit tests; complex flows need e2e tests
@@ -60,15 +60,25 @@ frontend/src/
   components/
     Layout/index.tsx                 # AppBar + nav buttons + footer shell
   pages/
-    Home/index.tsx                   # Static page (reference for simple pages)
-    Home/__tests__/Home.test.tsx     # Unit test reference
-    Health/index.tsx                 # Data-fetching page (reference for API pages)
-    Health/__tests__/Health.test.tsx # Unit test reference (mocking, async, loading states)
+    Login/index.tsx                   # Auth page
+    StackInstances/                  # Dashboard — data-fetching page (reference for API pages)
+    StackDefinitions/                # Definition management
+    Templates/                       # Template gallery
+    AuditLog/                        # Audit log viewer
+    Admin/                           # User management (admin only)
+    Profile/                         # User profile + API keys
+  context/
+    AuthContext.tsx                   # Auth state provider
+  hooks/
+    useWebSocket.ts                  # WebSocket hook for real-time updates
+  types/
+    index.ts                         # Shared TypeScript types
   test/
     setup.ts                         # Vitest setup: @testing-library/jest-dom
   e2e/
-    health.spec.ts                   # Playwright e2e reference
-    home.spec.ts
+    auth.spec.ts                     # Auth e2e tests
+    instances.spec.ts                # Stack instances e2e
+    deployment.spec.ts               # Deploy/stop e2e
     navigation.spec.ts
 ```
 
@@ -331,7 +341,7 @@ make test-e2e                    # E2e tests (needs Docker infra)
 ```
 
 ## When in doubt
-- Read `src/pages/Health/index.tsx` — it is the reference for data-fetching pages
+- Read `src/pages/StackInstances/` — it is the reference for data-fetching pages
 - Read `src/pages/Health/__tests__/Health.test.tsx` — it is the reference for testing async components
 - Read `src/api/client.ts` — it shows the service object pattern
 - Read `.github/instructions/typescript.instructions.md` — it has all TypeScript/React conventions

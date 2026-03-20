@@ -10,6 +10,7 @@ You are a senior Go backend engineer. Implement the requested feature or fix end
 1. **Security first** — validate all input; never expose internal errors; parameterized queries only; never hardcode secrets
 2. **Scalable** — optimistic locking, database indexes, pagination on list endpoints, health checks for new dependencies
 3. **Well-architected** — follow existing patterns exactly; read `items.go` as the reference implementation
+4. **Domain-aware** — understand the deployer (`internal/deployer/`) and k8s (`internal/k8s/`) packages for deployment features; domain handlers use specialized repository interfaces
 
 ## Workflow
 1. Read the request and understand acceptance criteria
@@ -24,10 +25,10 @@ You are a senior Go backend engineer. Implement the requested feature or fix end
 1. Model in `internal/models/models.go` (embed `Base`, add `Version uint`)
 2. Validation in `internal/models/validation.go` (implement `Validator`)
 3. Migration in `internal/database/migrations.go` (incrementing version)
-4. Handler in `internal/api/handlers/` (use `Handler` struct, `handleDBError()`)
+4. Handler in `internal/api/handlers/` — for simple CRUD use the generic `Handler` struct; for domain resources, create a dedicated handler struct with specialized repository dependencies (see `InstanceHandler`, `DefinitionHandler`)
 5. Routes in `internal/api/routes/routes.go` under `/api/v1`
 6. Swagger annotations on every handler
-7. Tests in `internal/api/handlers/` (table-driven, `t.Parallel()`, `MockRepository`)
+7. Tests in `internal/api/handlers/` (table-driven, `t.Parallel()`) — `MockRepository` only works for `Item` type; domain resources need separate mock implementations (see `mock_stack_instance_repository_test.go`)
 
 ## Critical Rules
 - Audit logging is handled by `middleware.NewAuditMiddleware` on route groups — do NOT add audit calls inside handlers

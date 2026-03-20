@@ -36,3 +36,5 @@ You are a senior QA engineer. Design test strategies, write comprehensive tests,
 ## E2e Test Pattern (Playwright)
 - Accessible locators; generous timeouts (10s) for API-dependent elements
 - Run with `make test-e2e`; each test independent, no shared state
+- E2e specs: `auth.spec.ts`, `definitions.spec.ts`, `templates.spec.ts`, `instances.spec.ts`, `deployment.spec.ts`, `audit-log.spec.ts`, `navigation.spec.ts`
+- Deployment tests: verify deploy/stop operations, WebSocket progress updates, deployment log display

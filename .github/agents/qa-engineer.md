@@ -112,7 +112,7 @@ If a new entity type is added, extend `MockRepository` in `mock_repository.go`:
 
 ## Writing Frontend Unit Tests
 
-Follow the pattern from `pages/Health/__tests__/Health.test.tsx`:
+Follow this pattern for frontend unit tests:
 
 ```tsx
 import { describe, it, expect, vi, afterEach } from 'vitest';
@@ -168,7 +168,7 @@ Key rules:
 
 ## Writing E2e Tests
 
-Follow the pattern from `e2e/health.spec.ts`:
+Follow this pattern for e2e tests:
 
 ```typescript
 import { test, expect } from '@playwright/test';
@@ -240,8 +240,8 @@ make lint                                 # Full lint
 
 ## When in doubt
 - Read `internal/api/handlers/handlers_test.go` — reference backend test file
-- Read `src/pages/Health/__tests__/Health.test.tsx` — reference frontend test file
-- Read `e2e/health.spec.ts` — reference e2e test file
+- Read frontend test files under `src/pages/*/` — reference frontend test patterns
+- Read `e2e/instances.spec.ts` or `e2e/deployment.spec.ts` — reference e2e test files
 - Read `.github/instructions/*.md` — project rules and conventions
 - Match existing test patterns exactly rather than inventing new ones
 

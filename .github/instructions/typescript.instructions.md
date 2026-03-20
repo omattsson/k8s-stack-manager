@@ -19,9 +19,9 @@ Frontend lives in `frontend/`. Built with Vite + React 19 + TypeScript (strict m
 ### Pages
 Each page is a directory under `src/pages/` with an `index.tsx` export:
 ```
-src/pages/Health/index.tsx
-src/pages/Home/index.tsx
-src/pages/Items/index.tsx
+src/pages/StackInstances/     # Dashboard
+src/pages/StackDefinitions/   # Definition management
+src/pages/Templates/          # Template gallery
 ```
 Register new pages in `src/routes.tsx`:
 ```tsx

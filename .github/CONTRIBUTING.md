@@ -1,6 +1,6 @@
-# Contributing to Application Template
+# Contributing to K8s Stack Manager
 
-Thank you for considering contributing to the Application Template project! This document outlines the guidelines and workflows for contributing to this project.
+Thank you for considering contributing to the K8s Stack Manager project! This document outlines the guidelines and workflows for contributing to this project.
 
 ## Code of Conduct
 
@@ -51,8 +51,8 @@ By participating in this project, you agree to abide by our Code of Conduct. Ple
 
 ```bash
 # Clone your fork
-git clone https://github.com/your-username/application_template.git
-cd application_template
+git clone https://github.com/your-username/k8s-stack-manager.git
+cd k8s-stack-manager
 
 # Set up development environment
 make setup

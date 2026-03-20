@@ -29,30 +29,51 @@ backend/
   api/main.go                    # Bootstrap: config → repo → router → server → shutdown
   internal/
     api/routes/routes.go         # All route registration + middleware ordering
-    api/handlers/items.go        # CRUD handler pattern (reference implementation)
-    api/handlers/health.go       # Health handlers (closure-injection, not Handler struct)
-    api/handlers/rate_limiter.go # Per-IP sliding window, returned from SetupRoutes for shutdown
-    api/handlers/mock_repository.go  # In-memory mock for tests (same package)
-    api/middleware/middleware.go  # CORS, Logger, Recovery, RequestID, MaxBodySize
+    api/handlers/
+      items.go                   # CRUD handler pattern (reference implementation)
+      handlers.go                # Health handlers (closure-injection, not Handler struct)
+      rate_limiter.go            # Per-IP sliding window, returned from SetupRoutes for shutdown
+      errors.go                  # handleDBError() maps repo errors to HTTP status
+      auth.go                    # AuthHandler: login, register, current user
+      stack_definitions.go       # DefinitionHandler: CRUD + chart management
+      stack_instances.go         # InstanceHandler: CRUD + clone + deploy/stop/clean
+      stack_templates.go         # TemplateHandler: CRUD + publish + instantiate
+      chart_configs.go           # Chart config management (nested under definitions)
+      template_charts.go         # Template chart config management
+      value_overrides.go         # Per-chart value overrides
+      audit_logs.go              # AuditLogHandler: filterable audit log viewer
+      users.go                   # UserHandler: user management
+      api_keys.go                # APIKeyHandler: API key management
+      admin.go                   # AdminHandler: orphaned namespace detection/cleanup
+      git.go                     # GitHandler: branch listing, validation
+      websocket.go               # WebSocket upgrade handler
+      mock_repository.go         # In-memory mock for Item tests (same package)
+    api/middleware/
+      middleware.go              # CORS, Logger, Recovery, RequestID, MaxBodySize
+      auth.go                    # JWT authentication + token generation
+      combined_auth.go           # Combined JWT + API key auth middleware
+      audit.go                   # Audit logging middleware (applied to route groups)
+      role.go                    # RequireAdmin, RequireDevOps role-based access
     config/config.go             # Env vars with godotenv .env fallback, typed config structs
     database/factory.go          # MySQL connection with retry (5x, 2s delay)
     database/repository.go       # NewRepository() factory: MySQL vs Azure Table
     database/migrations.go       # Versioned migrations via schema.Migrator, auto-run on startup
     database/errors.go           # Re-exports from pkg/dberrors (single source of truth)
-    models/models.go             # Domain models + Repository interface + Filter/Pagination
-    models/validation.go         # Validator interface implementations
+    models/                      # Domain models, repository interfaces, validation
     health/health.go             # Dependency health checks (liveness/readiness)
-    websocket/hub.go             # WebSocket hub (BroadcastSender interface)
-    websocket/client.go          # WebSocket client with read/write pumps
-    websocket/message.go         # Message envelope type
+    deployer/                    # Helm CLI wrapper for deploy/undeploy/status
+    k8s/                         # Kubernetes cluster client and status monitoring
+    gitprovider/                 # Azure DevOps + GitLab branch listing, URL detection
+    helm/                        # Values deep-merge, template variable substitution
+    websocket/                   # WebSocket hub, client, message types
   pkg/dberrors/errors.go         # Canonical error types: ErrNotFound, ErrDuplicateKey, ErrValidation
 ```
 
 ## Key Backend Patterns
 
-**Repository interface** (`models.Repository`): All data access uses `Create`, `FindByID`, `Update`, `Delete`, `List` — all take `context.Context` first. Two implementations: `GenericRepository` (GORM/MySQL) and `azure.TableRepository`. The repository auto-calls `Validate()` on create/update if the model implements `Validator`.
+**Repository interface**: The generic `models.Repository` interface uses `Create`, `FindByID`, `Update`, `Delete`, `List` — all take `context.Context` first. Two implementations: `GenericRepository` (GORM/MySQL) and `azure.TableRepository`. Domain-specific repositories (e.g., `StackInstanceRepository`, `UserRepository`, `AuditLogRepository`) have dedicated interfaces in their model files with custom method signatures; these currently use `context.Background()` internally in the Azure implementation. The repository auto-calls `Validate()` on create/update if the model implements `Validator`.
 
-**Handler struct**: `handlers.Handler` holds `models.Repository` and optional `websocket.BroadcastSender` via constructor injection (`NewHandler(repo)` or `NewHandlerWithHub(repo, hub)`). CRUD handlers are receiver methods. Health handlers use a different pattern — factory functions returning `gin.HandlerFunc` with `*health.HealthChecker` via closure.
+**Handler struct**: `handlers.Handler` holds `models.Repository` and optional `websocket.BroadcastSender` via constructor injection (`NewHandler(repo)` or `NewHandlerWithHub(repo, hub)`). Domain handlers (e.g., `InstanceHandler`, `DefinitionHandler`, `AdminHandler`) use separate structs with specialized repository dependencies injected via their own constructors. Health handlers use factory functions returning `gin.HandlerFunc` via closure.
 
 **Error flow**: Repository returns `*dberrors.DatabaseError` wrapping sentinel errors → `handleDBError()` in `handlers/items.go` maps via `errors.As`/`errors.Is` to HTTP status (400 validation, 404 not found, 409 duplicate/version conflict, 500 internal). **Never expose raw error messages for 500s** — always return `"Internal server error"`.
 
@@ -60,7 +81,7 @@ backend/
 
 **Filter whitelist**: `GenericRepository` has `allowedFilterFields` map. New entities need `NewRepositoryWithFilterFields()` or the existing repo must be extended.
 
-**Routes registration**: `SetupRoutes()` returns `*RateLimiter` (caller must call `Stop()` on shutdown). Middleware order: RequestID → Logger → Recovery → CORS → MaxBodySize (1MB). WebSocket at `/ws`, health at `/health/*`, API at `/api/v1/*` (100 req/min per IP).
+**Routes registration**: `SetupRoutes()` accepts a `Deps` struct with all handler and repository dependencies. Returns `*RateLimiter` (caller must call `Stop()` on shutdown). Middleware order: RequestID → Logger → Recovery → CORS → MaxBodySize (1MB). Auth uses `CombinedAuth` middleware (JWT + API key). Role-based access via `RequireAdmin()`/`RequireDevOps()`. Audit logging via `NewAuditMiddleware()` on route groups. WebSocket at `/ws`, health at `/health/*`, API at `/api/v1/*` (100 req/min per IP).
 
 ## Frontend Structure
 
@@ -104,8 +125,8 @@ This application enables developers to configure, store, and deploy multi-servic
 backend/internal/
   gitprovider/           # Azure DevOps + GitLab branch listing, URL detection, caching
   helm/                  # Values deep-merge, template variable substitution, YAML export
-  deployer/              # (Phase 3) Helm CLI wrapper for deploy/undeploy
-  k8s/                   # (Phase 3) Cluster status monitoring
+  deployer/              # Helm CLI wrapper for deploy/undeploy/status
+  k8s/                   # Kubernetes cluster client and status monitoring
 ```
 
 ### Domain Conventions
@@ -123,11 +144,16 @@ backend/internal/
 | Group | Prefix | Description |
 |-------|--------|-------------|
 | Auth | `/api/v1/auth` | Login, register, current user |
+| Templates | `/api/v1/templates` | CRUD + publish, unpublish, instantiate, clone |
 | Stack Definitions | `/api/v1/stack-definitions` | CRUD + nested chart management |
-| Stack Instances | `/api/v1/stack-instances` | CRUD + clone, values export |
+| Stack Instances | `/api/v1/stack-instances` | CRUD + clone, deploy, stop, clean, status, logs |
 | Value Overrides | `/api/v1/stack-instances/:id/overrides` | Per-chart value overrides |
 | Git | `/api/v1/git` | Branch listing, validation, provider status |
 | Audit Logs | `/api/v1/audit-logs` | Filterable audit log viewer |
+| Users | `/api/v1/users` | User management (admin) |
+| API Keys | `/api/v1/users/:id/api-keys` | API key management |
+| Admin | `/api/v1/admin` | Orphaned namespace detection and cleanup |
+| Health | `/health/*` | Liveness + readiness |
 
 ## Security Rules
 
