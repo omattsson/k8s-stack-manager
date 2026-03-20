@@ -130,12 +130,13 @@ DEV_LOCAL_ENV = \
 	PORT=8081 GIN_MODE=debug
 
 # Run backend locally against Azurite with hot reload.
-# Uses 'air' for live reload if installed, otherwise falls back to 'go run'.
+# Uses 'air' (Go live reload) if installed, otherwise falls back to 'go run'.
 # Install air: go install github.com/air-verse/air@latest
+GO_AIR := $(shell go env GOPATH 2>/dev/null)/bin/air
 dev-local-backend:
-	@if command -v air >/dev/null 2>&1; then \
+	@if [ -x "$(GO_AIR)" ]; then \
 		echo "Using air for hot reload..."; \
-		cd backend && $(DEV_LOCAL_ENV) air; \
+		cd backend && $(DEV_LOCAL_ENV) $(GO_AIR); \
 	else \
 		echo "air not found — using go run (no hot reload). Install: go install github.com/air-verse/air@latest"; \
 		cd backend && $(DEV_LOCAL_ENV) go run ./api/main.go; \
