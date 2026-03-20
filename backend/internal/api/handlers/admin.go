@@ -52,6 +52,7 @@ func NewAdminHandler(
 // @Produce      json
 // @Success      200  {array}   OrphanedNamespaceResponse
 // @Failure      500  {object}  map[string]string
+// @Failure      503  {object}  map[string]string
 // @Router       /api/v1/admin/orphaned-namespaces [get]
 // @Security     BearerAuth
 func (h *AdminHandler) ListOrphanedNamespaces(c *gin.Context) {
@@ -133,6 +134,7 @@ func (h *AdminHandler) ListOrphanedNamespaces(c *gin.Context) {
 // @Failure      400  {object}  map[string]string
 // @Failure      409  {object}  map[string]string
 // @Failure      500  {object}  map[string]string
+// @Failure      503  {object}  map[string]string
 // @Router       /api/v1/admin/orphaned-namespaces/{namespace} [delete]
 // @Security     BearerAuth
 func (h *AdminHandler) DeleteOrphanedNamespace(c *gin.Context) {
@@ -144,9 +146,14 @@ func (h *AdminHandler) DeleteOrphanedNamespace(c *gin.Context) {
 		return
 	}
 
-	// Safety check: only allow deletion of stack-* namespaces.
+	// Safety check: only allow deletion of valid stack-* namespaces.
 	if !strings.HasPrefix(namespace, "stack-") {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Only namespaces with the 'stack-' prefix can be deleted"})
+		return
+	}
+	// Validate RFC1123: max 63 chars, only lowercase alphanumeric and dashes.
+	if len(namespace) > 63 || rfc1123InvalidChars.MatchString(namespace) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid namespace format"})
 		return
 	}
 

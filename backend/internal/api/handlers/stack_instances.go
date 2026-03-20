@@ -363,12 +363,17 @@ func (h *InstanceHandler) CloneInstance(c *gin.Context) {
 	ownerName := middleware.GetUsernameFromContext(c)
 
 	// Truncate name before adding suffix to stay within the 50-char limit.
+	// Use rune slicing to avoid splitting multi-byte UTF-8 characters.
 	copySuffix := " (Copy)"
-	baseName := source.Name
-	if len(baseName)+len(copySuffix) > models.MaxInstanceNameLength {
-		baseName = baseName[:models.MaxInstanceNameLength-len(copySuffix)]
+	baseRunes := []rune(source.Name)
+	maxBase := models.MaxInstanceNameLength - len(copySuffix)
+	if maxBase < 0 {
+		maxBase = 0
 	}
-	cloneName := baseName + copySuffix
+	if len(baseRunes) > maxBase {
+		baseRunes = baseRunes[:maxBase]
+	}
+	cloneName := string(baseRunes) + copySuffix
 	cloneNamespace := buildNamespace(cloneName, ownerName)
 
 	clone := &models.StackInstance{

@@ -3,6 +3,7 @@ package azure
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"time"
 
 	"backend/internal/models"
@@ -106,7 +107,9 @@ func (r *StackInstanceRepository) Delete(id string) error {
 func (r *StackInstanceRepository) FindByNamespace(namespace string) (*models.StackInstance, error) {
 	ctx := context.Background()
 
-	filter := "PartitionKey eq 'global' and Namespace eq '" + namespace + "'"
+	// Escape single quotes in OData string literals to prevent filter injection.
+	escaped := strings.ReplaceAll(namespace, "'", "''")
+	filter := "PartitionKey eq 'global' and Namespace eq '" + escaped + "'"
 	pager := r.client.NewListEntitiesPager(&aztables.ListEntitiesOptions{
 		Filter: &filter,
 	})
