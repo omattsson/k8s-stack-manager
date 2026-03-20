@@ -217,7 +217,7 @@ func (h *InstanceHandler) CreateInstance(c *gin.Context) {
 	// NOTE: This is a TOCTOU check — concurrent creates can still race past it.
 	// For strict uniqueness, a storage-level constraint (e.g. unique index or
 	// namespace-reservation entity) would be needed.
-	if h.checkNamespaceUniqueness(c, inst.Namespace, inst.Name, owner) {
+	if h.checkNamespaceUniqueness(c, inst.Namespace, inst.Name) {
 		return
 	}
 
@@ -394,7 +394,7 @@ func (h *InstanceHandler) CloneInstance(c *gin.Context) {
 	}
 
 	// Check namespace uniqueness.
-	if h.checkNamespaceUniqueness(c, clone.Namespace, cloneName, ownerName) {
+	if h.checkNamespaceUniqueness(c, clone.Namespace, cloneName) {
 		return
 	}
 
@@ -991,7 +991,7 @@ func (h *InstanceHandler) GetInstanceStatus(c *gin.Context) {
 // checkNamespaceUniqueness checks whether the given namespace is already in use.
 // If it is, it returns true and writes a 409 response with suggestions.
 // The caller should return immediately when this returns true.
-func (h *InstanceHandler) checkNamespaceUniqueness(c *gin.Context, namespace, instanceName, owner string) bool {
+func (h *InstanceHandler) checkNamespaceUniqueness(c *gin.Context, namespace, instanceName string) bool {
 	existing, err := h.instanceRepo.FindByNamespace(namespace)
 	if err != nil {
 		// Not found is the happy path — namespace is available.
@@ -1034,8 +1034,9 @@ func generateNameSuggestions(instanceName string) []string {
 		if maxBaseLen <= 0 {
 			continue
 		}
-		if len(base) > maxBaseLen {
-			base = base[:maxBaseLen]
+		baseRunes := []rune(base)
+		if len(baseRunes) > maxBaseLen {
+			base = string(baseRunes[:maxBaseLen])
 		}
 		suggestions = append(suggestions, base+suffix)
 	}

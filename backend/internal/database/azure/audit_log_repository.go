@@ -104,16 +104,16 @@ func (r *AuditLogRepository) List(filters models.AuditLogFilters) ([]models.Audi
 	}
 
 	if filters.UserID != "" {
-		filterParts = append(filterParts, "UserID eq '"+filters.UserID+"'")
+		filterParts = append(filterParts, "UserID eq '"+escapeODataString(filters.UserID)+"'")
 	}
 	if filters.EntityType != "" {
-		filterParts = append(filterParts, "EntityType eq '"+filters.EntityType+"'")
+		filterParts = append(filterParts, "EntityType eq '"+escapeODataString(filters.EntityType)+"'")
 	}
 	if filters.EntityID != "" {
-		filterParts = append(filterParts, "EntityID eq '"+filters.EntityID+"'")
+		filterParts = append(filterParts, "EntityID eq '"+escapeODataString(filters.EntityID)+"'")
 	}
 	if filters.Action != "" {
-		filterParts = append(filterParts, "Action eq '"+filters.Action+"'")
+		filterParts = append(filterParts, "Action eq '"+escapeODataString(filters.Action)+"'")
 	}
 
 	var opts *aztables.ListEntitiesOptions
@@ -145,6 +145,9 @@ func (r *AuditLogRepository) List(filters models.AuditLogFilters) ([]models.Audi
 		fn = filterFn
 	}
 
+	// TODO: Azure Table Storage does not support server-side offset pagination natively.
+	// Currently we collect all matching entities and slice in-memory. For large audit log
+	// tables, consider using continuation tokens or time-based cursor pagination instead.
 	entities, err := collectEntities(ctx, pager, fn)
 	if err != nil {
 		return nil, 0, mapAzureError("list", err)

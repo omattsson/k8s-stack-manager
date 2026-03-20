@@ -142,7 +142,7 @@ func TestListOrphanedNamespaces(t *testing.T) {
 
 		router := setupAdminRouter(k8sClient, helmExec, instanceRepo, "admin")
 		w := httptest.NewRecorder()
-		req, _ := http.NewRequest(http.MethodGet, "/api/v1/admin/orphaned-namespaces", nil)
+		req, _ := http.NewRequest(http.MethodGet, "/api/v1/admin/orphaned-namespaces?details=true", nil)
 		router.ServeHTTP(w, req)
 
 		assert.Equal(t, http.StatusOK, w.Code)

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 
@@ -24,6 +25,9 @@ type OrphanedNamespaceResponse struct {
 	HelmReleases   []string           `json:"helm_releases"`
 	ResourceCounts *k8s.ResourceCounts `json:"resource_counts,omitempty"`
 }
+
+// rfc1123LabelRegex matches a valid RFC1123 DNS label: starts and ends with alnum, only alnum and dashes, max 63 chars.
+var rfc1123LabelRegex = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)
 
 // AdminHandler provides administrative endpoints for cluster maintenance.
 type AdminHandler struct {
@@ -47,9 +51,10 @@ func NewAdminHandler(
 
 // ListOrphanedNamespaces returns all stack-* namespaces that have no matching StackInstance.
 // @Summary      List orphaned namespaces
-// @Description  Lists all Kubernetes namespaces matching the stack-* pattern that have no corresponding stack instance in the database
+// @Description  Lists all Kubernetes namespaces matching the stack-* pattern that have no corresponding stack instance in the database. Pass ?details=true to include resource counts and helm releases per namespace (expensive).
 // @Tags         Admin
 // @Produce      json
+// @Param        details  query  string  false  "Include resource counts and helm releases (true/false)"
 // @Success      200  {array}   OrphanedNamespaceResponse
 // @Failure      500  {object}  map[string]string
 // @Failure      503  {object}  map[string]string
@@ -62,6 +67,8 @@ func (h *AdminHandler) ListOrphanedNamespaces(c *gin.Context) {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Kubernetes client is not available"})
 		return
 	}
+
+	includeDetails := c.Query("details") == "true"
 
 	namespaces, err := h.k8sClient.ListStackNamespaces(ctx)
 	if err != nil {
@@ -83,24 +90,28 @@ func (h *AdminHandler) ListOrphanedNamespaces(c *gin.Context) {
 					Phase:     ns.Phase,
 				}
 
-				// Best-effort: get resource counts.
-				counts, countErr := h.k8sClient.GetResourceCounts(ctx, ns.Name)
-				if countErr != nil {
-					slog.Warn("Failed to get resource counts for orphaned namespace",
-						"namespace", ns.Name, "error", countErr)
-				} else {
-					resp.ResourceCounts = counts
-				}
-
-				// Best-effort: list helm releases.
-				if h.helmExecutor != nil {
-					releases, relErr := h.helmExecutor.ListReleases(ctx, ns.Name)
-					if relErr != nil {
-						slog.Warn("Failed to list helm releases in orphaned namespace",
-							"namespace", ns.Name, "error", relErr)
-						resp.HelmReleases = []string{}
+				if includeDetails {
+					// Best-effort: get resource counts.
+					counts, countErr := h.k8sClient.GetResourceCounts(ctx, ns.Name)
+					if countErr != nil {
+						slog.Warn("Failed to get resource counts for orphaned namespace",
+							"namespace", ns.Name, "error", countErr)
 					} else {
-						resp.HelmReleases = releases
+						resp.ResourceCounts = counts
+					}
+
+					// Best-effort: list helm releases.
+					if h.helmExecutor != nil {
+						releases, relErr := h.helmExecutor.ListReleases(ctx, ns.Name)
+						if relErr != nil {
+							slog.Warn("Failed to list helm releases in orphaned namespace",
+								"namespace", ns.Name, "error", relErr)
+							resp.HelmReleases = []string{}
+						} else {
+							resp.HelmReleases = releases
+						}
+					} else {
+						resp.HelmReleases = []string{}
 					}
 				} else {
 					resp.HelmReleases = []string{}
@@ -151,8 +162,8 @@ func (h *AdminHandler) DeleteOrphanedNamespace(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Only namespaces with the 'stack-' prefix can be deleted"})
 		return
 	}
-	// Validate RFC1123: max 63 chars, only lowercase alphanumeric and dashes.
-	if len(namespace) > 63 || rfc1123InvalidChars.MatchString(namespace) {
+	// Validate full RFC1123: starts/ends with alnum, only alnum and dashes, max 63 chars.
+	if !rfc1123LabelRegex.MatchString(namespace) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid namespace format"})
 		return
 	}
