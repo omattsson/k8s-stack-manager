@@ -1,4 +1,4 @@
-.PHONY: dev seed dev-backend dev-frontend dev-local prod prod-backend prod-frontend build clean prune test test-backend test-backend-integration test-backend-all test-frontend test-e2e integration-infra-start integration-infra-stop install docs fmt lint azurite-start azurite-stop
+.PHONY: dev seed dev-backend dev-frontend dev-local dev-local-backend dev-local-frontend prod prod-backend prod-frontend build clean prune test test-backend test-backend-integration test-backend-all test-frontend test-e2e integration-infra-start integration-infra-stop install docs fmt lint azurite-start azurite-stop
 
 # Development mode for both services
 dev:
@@ -116,8 +116,8 @@ lint:
 	cd backend && go vet ./...
 	cd frontend && npm run lint
 
-# Run backend locally against Azurite (start Azurite first with: docker compose up -d azurite)
-dev-local:
+# Run backend locally against Azurite with hot reload via go run
+dev-local-backend:
 	cd backend && \
 	USE_AZURE_TABLE=true USE_AZURITE=true \
 	AZURE_TABLE_ACCOUNT_NAME=devstoreaccount1 \
@@ -126,7 +126,23 @@ dev-local:
 	JWT_SECRET="dev-secret-change-in-production-minimum-16-chars" \
 	ADMIN_USERNAME=admin ADMIN_PASSWORD=admin \
 	SELF_REGISTRATION=true \
+	HELM_BINARY=$${HELM_BINARY:-helm} \
+	KUBECONFIG_PATH=$${KUBECONFIG_PATH:-$$HOME/.kube/config} \
+	PORT=8081 GIN_MODE=debug \
 	go run ./api/main.go
+
+# Run frontend dev server locally with HMR (port 3000)
+dev-local-frontend:
+	cd frontend && npm run dev
+
+# Run both backend and frontend locally with hot reload (no Docker except Azurite)
+# Ctrl+C stops both processes. Backend: port 8081, Frontend: port 3000
+dev-local: azurite-start
+	@echo "Starting backend (port 8081) and frontend (port 3000)..."
+	@trap 'kill 0' EXIT; \
+	$(MAKE) dev-local-backend & \
+	$(MAKE) dev-local-frontend & \
+	wait
 
 azurite-start:
 	@echo "Starting Azurite..."
