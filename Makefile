@@ -116,9 +116,8 @@ lint:
 	cd backend && go vet ./...
 	cd frontend && npm run lint
 
-# Run backend locally against Azurite with hot reload via go run
-dev-local-backend:
-	cd backend && \
+# Shared env vars for local backend development
+DEV_LOCAL_ENV = \
 	USE_AZURE_TABLE=true USE_AZURITE=true \
 	AZURE_TABLE_ACCOUNT_NAME=devstoreaccount1 \
 	AZURE_TABLE_ACCOUNT_KEY="Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==" \
@@ -128,8 +127,19 @@ dev-local-backend:
 	SELF_REGISTRATION=true \
 	HELM_BINARY=$${HELM_BINARY:-helm} \
 	KUBECONFIG_PATH=$${KUBECONFIG_PATH:-$$HOME/.kube/config} \
-	PORT=8081 GIN_MODE=debug \
-	go run ./api/main.go
+	PORT=8081 GIN_MODE=debug
+
+# Run backend locally against Azurite with hot reload.
+# Uses 'air' for live reload if installed, otherwise falls back to 'go run'.
+# Install air: go install github.com/air-verse/air@latest
+dev-local-backend:
+	@if command -v air >/dev/null 2>&1; then \
+		echo "Using air for hot reload..."; \
+		cd backend && $(DEV_LOCAL_ENV) air; \
+	else \
+		echo "air not found — using go run (no hot reload). Install: go install github.com/air-verse/air@latest"; \
+		cd backend && $(DEV_LOCAL_ENV) go run ./api/main.go; \
+	fi
 
 # Run frontend dev server locally with HMR (port 3000)
 dev-local-frontend:
