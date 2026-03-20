@@ -1,9 +1,11 @@
 package handlers
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 
@@ -12,10 +14,65 @@ import (
 	"backend/internal/helm"
 	"backend/internal/k8s"
 	"backend/internal/models"
+	"backend/pkg/dberrors"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 )
+
+// NamespaceConflictResponse is the response returned when a namespace is already in use.
+type NamespaceConflictResponse struct {
+	Error       string   `json:"error"`
+	Message     string   `json:"message"`
+	Suggestions []string `json:"suggestions"`
+}
+
+// rfc1123InvalidChars matches any character not allowed in an RFC1123 label.
+var rfc1123InvalidChars = regexp.MustCompile(`[^a-z0-9-]`)
+
+// rfc1123ConsecutiveDashes collapses multiple consecutive dashes into one.
+var rfc1123ConsecutiveDashes = regexp.MustCompile(`-{2,}`)
+
+// sanitizeRFC1123Label sanitizes a string into a valid RFC1123 DNS label:
+// lowercase, only [a-z0-9-], collapse consecutive dashes, trim leading/trailing
+// dashes, max 63 chars. Returns "default" if the result would be empty.
+func sanitizeRFC1123Label(s string) string {
+	s = strings.ToLower(s)
+	s = rfc1123InvalidChars.ReplaceAllString(s, "-")
+	s = rfc1123ConsecutiveDashes.ReplaceAllString(s, "-")
+	s = strings.Trim(s, "-")
+	if len(s) > 63 {
+		s = s[:63]
+		s = strings.TrimRight(s, "-")
+	}
+	if s == "" {
+		return "default"
+	}
+	return s
+}
+
+// buildNamespace constructs a namespace in the form stack-{instance}-{owner},
+// sanitizing both parts and truncating to fit within 63 characters.
+func buildNamespace(instancePart, ownerPart string) string {
+	prefix := "stack-"
+	sanitizedOwner := sanitizeRFC1123Label(ownerPart)
+	// Reserve room for "stack-" + "-" + owner
+	maxInstanceLen := 63 - len(prefix) - 1 - len(sanitizedOwner)
+	sanitizedInstance := sanitizeRFC1123Label(instancePart)
+	if maxInstanceLen < 1 {
+		maxInstanceLen = 1
+	}
+	if len(sanitizedInstance) > maxInstanceLen {
+		sanitizedInstance = sanitizedInstance[:maxInstanceLen]
+		sanitizedInstance = strings.TrimRight(sanitizedInstance, "-")
+	}
+	namespace := fmt.Sprintf("%s%s-%s", prefix, sanitizedInstance, sanitizedOwner)
+	if len(namespace) > 63 {
+		namespace = namespace[:63]
+		namespace = strings.TrimRight(namespace, "-")
+	}
+	return namespace
+}
 
 // InstanceHandler handles stack instance, value override, and values export endpoints.
 type InstanceHandler struct {
@@ -125,6 +182,7 @@ func (h *InstanceHandler) ListInstances(c *gin.Context) {
 // @Param       instance body     models.StackInstance true "Instance object"
 // @Success     201      {object} models.StackInstance
 // @Failure     400      {object} map[string]string
+// @Failure     409      {object} NamespaceConflictResponse "Namespace already exists"
 // @Router      /api/v1/stack-instances [post]
 func (h *InstanceHandler) CreateInstance(c *gin.Context) {
 	var inst models.StackInstance
@@ -145,14 +203,21 @@ func (h *InstanceHandler) CreateInstance(c *gin.Context) {
 	}
 
 	// Auto-generate namespace.
+	owner := middleware.GetUsernameFromContext(c)
 	if inst.Namespace == "" {
-		owner := middleware.GetUsernameFromContext(c)
-		safeName := strings.ToLower(strings.ReplaceAll(inst.Name, " ", "-"))
-		inst.Namespace = fmt.Sprintf("stack-%s-%s", safeName, owner)
+		inst.Namespace = buildNamespace(inst.Name, owner)
 	}
 
 	if err := inst.Validate(); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Check namespace uniqueness.
+	// NOTE: This is a TOCTOU check — concurrent creates can still race past it.
+	// For strict uniqueness, a storage-level constraint (e.g. unique index or
+	// namespace-reservation entity) would be needed.
+	if h.checkNamespaceUniqueness(c, inst.Namespace, inst.Name) {
 		return
 	}
 
@@ -282,6 +347,7 @@ func (h *InstanceHandler) DeleteInstance(c *gin.Context) {
 // @Param       id  path     string true "Instance ID"
 // @Success     201 {object} models.StackInstance
 // @Failure     404 {object} map[string]string
+// @Failure     409 {object} NamespaceConflictResponse "Namespace already exists"
 // @Router      /api/v1/stack-instances/{id}/clone [post]
 func (h *InstanceHandler) CloneInstance(c *gin.Context) {
 	id := c.Param("id")
@@ -295,18 +361,41 @@ func (h *InstanceHandler) CloneInstance(c *gin.Context) {
 	now := time.Now().UTC()
 	ownerID := middleware.GetUserIDFromContext(c)
 	ownerName := middleware.GetUsernameFromContext(c)
-	safeName := strings.ToLower(strings.ReplaceAll(source.Name, " ", "-"))
+
+	// Truncate name before adding suffix to stay within the 50-char limit.
+	// Use rune slicing to avoid splitting multi-byte UTF-8 characters.
+	copySuffix := " (Copy)"
+	baseRunes := []rune(source.Name)
+	maxBase := models.MaxInstanceNameLength - len(copySuffix)
+	if maxBase < 0 {
+		maxBase = 0
+	}
+	if len(baseRunes) > maxBase {
+		baseRunes = baseRunes[:maxBase]
+	}
+	cloneName := string(baseRunes) + copySuffix
+	cloneNamespace := buildNamespace(cloneName, ownerName)
 
 	clone := &models.StackInstance{
 		ID:                uuid.New().String(),
 		StackDefinitionID: source.StackDefinitionID,
-		Name:              source.Name + " (Copy)",
-		Namespace:         fmt.Sprintf("stack-%s-copy-%s", safeName, ownerName),
+		Name:              cloneName,
+		Namespace:         cloneNamespace,
 		OwnerID:           ownerID,
 		Branch:            source.Branch,
 		Status:            models.StackStatusDraft,
 		CreatedAt:         now,
 		UpdatedAt:         now,
+	}
+
+	if err := clone.Validate(); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Check namespace uniqueness.
+	if h.checkNamespaceUniqueness(c, clone.Namespace, cloneName) {
+		return
 	}
 
 	if err := h.instanceRepo.Create(clone); err != nil {
@@ -897,6 +986,61 @@ func (h *InstanceHandler) GetInstanceStatus(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusServiceUnavailable, gin.H{"error": "K8s monitoring not configured"})
+}
+
+// checkNamespaceUniqueness checks whether the given namespace is already in use.
+// If it is, it returns true and writes a 409 response with suggestions.
+// The caller should return immediately when this returns true.
+func (h *InstanceHandler) checkNamespaceUniqueness(c *gin.Context, namespace, instanceName string) bool {
+	existing, err := h.instanceRepo.FindByNamespace(namespace)
+	if err != nil {
+		// Not found is the happy path — namespace is available.
+		if errors.Is(err, dberrors.ErrNotFound) {
+			return false
+		}
+		// Unexpected error — log and respond with 500.
+		slog.Error("Failed to check namespace uniqueness",
+			"namespace", namespace,
+			"error", err,
+		)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
+		return true
+	}
+
+	// Namespace is taken — log details server-side but don't leak the other user's instance name.
+	slog.Info("Namespace conflict detected",
+		"namespace", namespace,
+		"existing_instance_id", existing.ID,
+		"existing_instance_name", existing.Name,
+	)
+	suggestions := generateNameSuggestions(instanceName)
+	c.JSON(http.StatusConflict, NamespaceConflictResponse{
+		Error:       "namespace already exists",
+		Message:     fmt.Sprintf("Namespace %q is already in use", namespace),
+		Suggestions: suggestions,
+	})
+	return true
+}
+
+// generateNameSuggestions returns up to 3 alternative instance name suggestions by
+// appending -2, -3, -4 to the base instance name. The frontend uses these as
+// instance names (not namespaces), so they are returned without the stack- prefix.
+// Suggestions are trimmed to respect the 50-character instance name limit.
+func generateNameSuggestions(instanceName string) []string {
+	suggestions := make([]string, 0, 3)
+	for _, suffix := range []string{"-2", "-3", "-4"} {
+		base := instanceName
+		maxBaseLen := models.MaxInstanceNameLength - len(suffix)
+		if maxBaseLen <= 0 {
+			continue
+		}
+		baseRunes := []rune(base)
+		if len(baseRunes) > maxBaseLen {
+			base = string(baseRunes[:maxBaseLen])
+		}
+		suggestions = append(suggestions, base+suffix)
+	}
+	return suggestions
 }
 
 func resolveOwnerName(userRepo models.UserRepository, ownerID string) string {

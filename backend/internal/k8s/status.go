@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -28,6 +29,66 @@ const degradedRestartThreshold int32 = 5
 var helmReleaseLabels = []string{
 	"app.kubernetes.io/instance",
 	"helm.sh/release",
+}
+
+// NamespaceInfo provides basic metadata about a Kubernetes namespace.
+type NamespaceInfo struct {
+	CreatedAt time.Time `json:"created_at"`
+	Name      string    `json:"name"`
+	Phase     string    `json:"phase"`
+}
+
+// ResourceCounts summarizes the number of key resource types in a namespace.
+type ResourceCounts struct {
+	Pods        int `json:"pods"`
+	Deployments int `json:"deployments"`
+	Services    int `json:"services"`
+}
+
+// ListStackNamespaces returns all namespaces whose names start with "stack-".
+func (c *Client) ListStackNamespaces(ctx context.Context) ([]NamespaceInfo, error) {
+	nsList, err := c.clientset.CoreV1().Namespaces().List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("list namespaces: %w", err)
+	}
+
+	var result []NamespaceInfo
+	for _, ns := range nsList.Items {
+		if strings.HasPrefix(ns.Name, "stack-") {
+			result = append(result, NamespaceInfo{
+				Name:      ns.Name,
+				CreatedAt: ns.CreationTimestamp.Time,
+				Phase:     string(ns.Status.Phase),
+			})
+		}
+	}
+
+	slog.Debug("Listed stack namespaces", "count", len(result))
+	return result, nil
+}
+
+// GetResourceCounts returns the number of pods, deployments, and services in a namespace.
+func (c *Client) GetResourceCounts(ctx context.Context, namespace string) (*ResourceCounts, error) {
+	pods, err := c.clientset.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("list pods in %q: %w", namespace, err)
+	}
+
+	deployments, err := c.clientset.AppsV1().Deployments(namespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("list deployments in %q: %w", namespace, err)
+	}
+
+	services, err := c.clientset.CoreV1().Services(namespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("list services in %q: %w", namespace, err)
+	}
+
+	return &ResourceCounts{
+		Pods:        len(pods.Items),
+		Deployments: len(deployments.Items),
+		Services:    len(services.Items),
+	}, nil
 }
 
 // NamespaceStatus represents the health of all resources in a namespace.

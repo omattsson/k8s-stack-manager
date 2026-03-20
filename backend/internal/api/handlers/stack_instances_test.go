@@ -382,6 +382,149 @@ func TestCloneInstance(t *testing.T) {
 	})
 }
 
+// ---- Namespace Uniqueness ----
+
+func TestCreateInstanceNamespaceConflict(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		body       string
+		seedNS     string // namespace to pre-seed as taken
+		wantStatus int
+		checkFn    func(*testing.T, *httptest.ResponseRecorder)
+	}{
+		{
+			name:       "duplicate namespace returns 409 with suggestions",
+			body:       `{"stack_definition_id":"d1","name":"my-stack"}`,
+			seedNS:     "stack-my-stack-alice", // matches generated namespace
+			wantStatus: http.StatusConflict,
+			checkFn: func(t *testing.T, w *httptest.ResponseRecorder) {
+				var resp map[string]interface{}
+				require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+				assert.Equal(t, "namespace already exists", resp["error"])
+				assert.Contains(t, resp["message"], "stack-my-stack-alice")
+				// Suggestions are instance name suggestions (not namespaces).
+				suggestions, ok := resp["suggestions"].([]interface{})
+				require.True(t, ok, "suggestions should be an array")
+				assert.Len(t, suggestions, 3)
+				assert.Equal(t, "my-stack-2", suggestions[0])
+				assert.Equal(t, "my-stack-3", suggestions[1])
+				assert.Equal(t, "my-stack-4", suggestions[2])
+			},
+		},
+		{
+			name:       "unique namespace succeeds",
+			body:       `{"stack_definition_id":"d1","name":"unique-stack"}`,
+			seedNS:     "stack-other-alice", // different namespace, no conflict
+			wantStatus: http.StatusCreated,
+			checkFn: func(t *testing.T, w *httptest.ResponseRecorder) {
+				var resp models.StackInstance
+				require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+				assert.Equal(t, "stack-unique-stack-alice", resp.Namespace)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			instRepo := NewMockStackInstanceRepository()
+			defRepo := NewMockStackDefinitionRepository()
+			seedDefinition(t, defRepo, "d1", "My Def", "uid-1")
+
+			// Pre-seed an instance with the conflicting namespace.
+			existing := &models.StackInstance{
+				ID:                "existing-1",
+				StackDefinitionID: "d1",
+				Name:              "existing",
+				Namespace:         tt.seedNS,
+				OwnerID:           "uid-other",
+				Branch:            "master",
+				Status:            models.StackStatusRunning,
+			}
+			require.NoError(t, instRepo.Create(existing))
+
+			router := setupInstanceRouter(instRepo, NewMockValueOverrideRepository(), defRepo, NewMockChartConfigRepository(), NewMockStackTemplateRepository(), NewMockTemplateChartConfigRepository(), "uid-1", "alice", "user")
+			w := httptest.NewRecorder()
+			req, _ := http.NewRequest(http.MethodPost, "/api/v1/stack-instances", bytes.NewBufferString(tt.body))
+			req.Header.Set("Content-Type", "application/json")
+			router.ServeHTTP(w, req)
+
+			assert.Equal(t, tt.wantStatus, w.Code)
+			if tt.checkFn != nil {
+				tt.checkFn(t, w)
+			}
+		})
+	}
+}
+
+func TestCloneInstanceNamespaceConflict(t *testing.T) {
+	t.Parallel()
+
+	t.Run("clone with duplicate namespace returns 409", func(t *testing.T) {
+		t.Parallel()
+		instRepo := NewMockStackInstanceRepository()
+		overrideRepo := NewMockValueOverrideRepository()
+
+		// Seed the source instance.
+		seedInstance(t, instRepo, "i1", "stack-a", "d1", "uid-1", models.StackStatusRunning)
+
+		// Seed another instance that already occupies the clone namespace.
+		taken := &models.StackInstance{
+			ID:                "i-taken",
+			StackDefinitionID: "d1",
+			Name:              "taken",
+			Namespace:         "stack-stack-a-copy-bob",
+			OwnerID:           "uid-other",
+			Branch:            "master",
+			Status:            models.StackStatusRunning,
+		}
+		require.NoError(t, instRepo.Create(taken))
+
+		router := setupInstanceRouter(instRepo, overrideRepo, NewMockStackDefinitionRepository(), NewMockChartConfigRepository(), NewMockStackTemplateRepository(), NewMockTemplateChartConfigRepository(), "uid-2", "bob", "user")
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest(http.MethodPost, "/api/v1/stack-instances/i1/clone", nil)
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusConflict, w.Code)
+		var resp map[string]interface{}
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+		assert.Equal(t, "namespace already exists", resp["error"])
+		suggestions, ok := resp["suggestions"].([]interface{})
+		require.True(t, ok)
+		assert.Len(t, suggestions, 3)
+	})
+}
+
+func TestCreateInstanceNameTooLong(t *testing.T) {
+	t.Parallel()
+
+	t.Run("name exceeding 50 chars returns 400", func(t *testing.T) {
+		t.Parallel()
+		instRepo := NewMockStackInstanceRepository()
+		defRepo := NewMockStackDefinitionRepository()
+		seedDefinition(t, defRepo, "d1", "My Def", "uid-1")
+
+		longName := "a]bcdefghij-klmnopqrst-uvwxyz-0123456789-extra-chars"
+		// Ensure the name is actually >50 chars.
+		require.Greater(t, len(longName), 50)
+
+		body := `{"stack_definition_id":"d1","name":"` + longName + `"}`
+		router := setupInstanceRouter(instRepo, NewMockValueOverrideRepository(), defRepo, NewMockChartConfigRepository(), NewMockStackTemplateRepository(), NewMockTemplateChartConfigRepository(), "uid-1", "alice", "user")
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest(http.MethodPost, "/api/v1/stack-instances", bytes.NewBufferString(body))
+		req.Header.Set("Content-Type", "application/json")
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+		var resp map[string]interface{}
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+		assert.Contains(t, resp["error"], "at most 50 characters")
+	})
+}
+
 // ---- ExportChartValues ----
 
 func TestExportChartValues(t *testing.T) {

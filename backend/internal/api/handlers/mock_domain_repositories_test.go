@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"backend/internal/models"
+	"backend/pkg/dberrors"
 )
 
 // ---- UserRepository mock ----
@@ -545,6 +546,21 @@ func (m *MockStackInstanceRepository) FindByID(id string) (*models.StackInstance
 	return &cp, nil
 }
 
+func (m *MockStackInstanceRepository) FindByNamespace(namespace string) (*models.StackInstance, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.fetchErr != nil {
+		return nil, m.fetchErr
+	}
+	for _, i := range m.items {
+		if i.Namespace == namespace {
+			cp := *i
+			return &cp, nil
+		}
+	}
+	return nil, dberrors.NewDatabaseError("FindByNamespace", dberrors.ErrNotFound)
+}
+
 func (m *MockStackInstanceRepository) Update(i *models.StackInstance) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -719,11 +735,11 @@ func (m *MockAuditLogRepository) Create(log *models.AuditLog) error {
 	return nil
 }
 
-func (m *MockAuditLogRepository) List(filters models.AuditLogFilters) ([]models.AuditLog, error) {
+func (m *MockAuditLogRepository) List(filters models.AuditLogFilters) ([]models.AuditLog, int64, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	if m.err != nil {
-		return nil, m.err
+		return nil, 0, m.err
 	}
 	var out []models.AuditLog
 	for _, e := range m.entries {
@@ -741,7 +757,21 @@ func (m *MockAuditLogRepository) List(filters models.AuditLogFilters) ([]models.
 		}
 		out = append(out, e)
 	}
-	return out, nil
+	total := int64(len(out))
+
+	// Apply offset.
+	offset := filters.Offset
+	if offset > len(out) {
+		offset = len(out)
+	}
+	out = out[offset:]
+
+	// Apply limit.
+	if filters.Limit > 0 && filters.Limit < len(out) {
+		out = out[:filters.Limit]
+	}
+
+	return out, total, nil
 }
 
 func (m *MockAuditLogRepository) SetError(err error) {

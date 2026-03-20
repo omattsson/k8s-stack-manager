@@ -16,16 +16,26 @@ type AuditLog struct {
 
 // AuditLogFilters holds optional filters for querying audit logs.
 type AuditLogFilters struct {
+	StartDate  *time.Time
+	EndDate    *time.Time
 	UserID     string
 	EntityType string
 	EntityID   string
 	Action     string
-	StartDate  *time.Time
-	EndDate    *time.Time
+	Limit      int
+	Offset     int
+}
+
+// PaginatedAuditLogs wraps a page of audit log results with pagination metadata.
+type PaginatedAuditLogs struct {
+	Data   []AuditLog `json:"data"`
+	Total  int64      `json:"total"`
+	Limit  int        `json:"limit"`
+	Offset int        `json:"offset"`
 }
 
 // AuditLogRepository defines data access operations for audit logs.
 type AuditLogRepository interface {
 	Create(log *AuditLog) error
-	List(filters AuditLogFilters) ([]AuditLog, error)
+	List(filters AuditLogFilters) ([]AuditLog, int64, error)
 }

@@ -11,5 +11,6 @@ type HelmExecutor interface {
 	Install(ctx context.Context, req InstallRequest) (string, error)
 	Uninstall(ctx context.Context, req UninstallRequest) (string, error)
 	Status(ctx context.Context, releaseName, namespace string) (*ReleaseStatus, error)
+	ListReleases(ctx context.Context, namespace string) ([]string, error)
 	Timeout() time.Duration
 }

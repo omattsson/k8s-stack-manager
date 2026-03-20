@@ -33,6 +33,7 @@ const (
 type StackInstanceRepository interface {
 	Create(instance *StackInstance) error
 	FindByID(id string) (*StackInstance, error)
+	FindByNamespace(namespace string) (*StackInstance, error)
 	Update(instance *StackInstance) error
 	Delete(id string) error
 	List() ([]StackInstance, error)

@@ -17,11 +17,7 @@ import {
   Step,
   StepLabel,
   Grid,
-  Accordion,
-  AccordionSummary,
-  AccordionDetails,
 } from '@mui/material';
-import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import StatusBadge from '../../components/StatusBadge';
 import BranchSelector from '../../components/BranchSelector';
 import ConfirmDialog from '../../components/ConfirmDialog';
@@ -113,14 +109,15 @@ const Detail = () => {
       const newStatus = payload.status as string;
       setInstance((prev) => prev ? { ...prev, status: newStatus } : prev);
 
-      // Refresh K8s status for running/deploying/error/stopping/cleaning states.
-      if (newStatus === 'running' || newStatus === 'deploying' || newStatus === 'error' || newStatus === 'stopping' || newStatus === 'cleaning') {
-        instanceService.getStatus(id).then(setK8sStatus).catch(() => {});
+      // Clear stale K8s status at the start of any operation or when resources are gone.
+      // The watcher will push fresh status via instance.status messages as pods come up.
+      if (newStatus === 'deploying' || newStatus === 'stopping' || newStatus === 'cleaning' || newStatus === 'stopped' || newStatus === 'draft') {
+        setK8sStatus(null);
       }
 
-      // Clear K8s status when returning to draft (after clean).
-      if (newStatus === 'draft') {
-        setK8sStatus(null);
+      // Fetch current K8s status for terminal states where resources may exist.
+      if (newStatus === 'running' || newStatus === 'error') {
+        instanceService.getStatus(id).then(setK8sStatus).catch(() => {});
       }
 
       // Refresh deploy logs on terminal states.
@@ -129,6 +126,14 @@ const Detail = () => {
         setDeploying(false);
         setStopping(false);
         setCleaning(false);
+      }
+    }
+
+    // Live K8s status updates from the watcher (pod state changes, etc.).
+    if (msg.type === 'instance.status') {
+      const nsPayload = msg.payload as { instance_id?: string; namespace_status?: NamespaceStatus };
+      if (nsPayload.namespace_status) {
+        setK8sStatus(nsPayload.namespace_status);
       }
     }
 
@@ -428,14 +433,12 @@ const Detail = () => {
       )}
 
       {deployLogs.length > 0 && (
-        <Accordion defaultExpanded={false} sx={{ mb: 3 }}>
-          <AccordionSummary expandIcon={<ExpandMoreIcon />}>
-            <Typography variant="h6">Deployment History ({deployLogs.length})</Typography>
-          </AccordionSummary>
-          <AccordionDetails>
-            <DeploymentLogViewer logs={deployLogs} />
-          </AccordionDetails>
-        </Accordion>
+        <Box sx={{ mb: 3 }}>
+          <Typography variant="h6" sx={{ mb: 1 }}>
+            Deployment History ({deployLogs.length})
+          </Typography>
+          <DeploymentLogViewer logs={deployLogs} />
+        </Box>
       )}
 
       <Box sx={{ display: 'flex', gap: 2 }}>

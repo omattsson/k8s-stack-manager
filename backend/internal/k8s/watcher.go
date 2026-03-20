@@ -132,7 +132,7 @@ func (w *Watcher) poll(ctx context.Context) {
 		prev := w.lastStatus[inst.ID]
 		w.mu.RUnlock()
 
-		changed := prev == nil || prev.Status != nsStatus.Status
+		changed := prev == nil || prev.Status != nsStatus.Status || statusDetailsChanged(prev, nsStatus)
 		if changed {
 			w.broadcast(inst.ID, nsStatus)
 			w.handleStatusTransition(inst, nsStatus)
@@ -171,6 +171,59 @@ func (w *Watcher) broadcast(instanceID string, nsStatus *NamespaceStatus) {
 		"instance_id", instanceID,
 		"status", nsStatus.Status,
 	)
+}
+
+// statusDetailsChanged returns true if pod-level details have changed between
+// two status snapshots, even when the overall status string is the same.
+// This catches transitions like pods going from Pending to Running while the
+// namespace overall status remains "progressing" or "degraded".
+func statusDetailsChanged(prev, curr *NamespaceStatus) bool {
+	if len(prev.Charts) != len(curr.Charts) {
+		return true
+	}
+
+	prevPods := countPodStates(prev)
+	currPods := countPodStates(curr)
+
+	if len(prevPods) != len(currPods) {
+		return true
+	}
+	for k, v := range prevPods {
+		if currPods[k] != v {
+			return true
+		}
+	}
+
+	// Check ready replica counts on deployments.
+	prevReady := countReadyReplicas(prev)
+	currReady := countReadyReplicas(curr)
+	return prevReady != currReady
+}
+
+// countPodStates builds a map of "phase:ready" -> count for quick comparison.
+func countPodStates(ns *NamespaceStatus) map[string]int {
+	counts := make(map[string]int)
+	for _, chart := range ns.Charts {
+		for _, pod := range chart.Pods {
+			key := pod.Phase
+			if pod.Ready {
+				key += ":ready"
+			}
+			counts[key]++
+		}
+	}
+	return counts
+}
+
+// countReadyReplicas sums ready replicas across all deployments.
+func countReadyReplicas(ns *NamespaceStatus) int32 {
+	var total int32
+	for _, chart := range ns.Charts {
+		for _, d := range chart.Deployments {
+			total += d.ReadyReplicas
+		}
+	}
+	return total
 }
 
 // handleStatusTransition updates the instance status in the repository when

@@ -37,9 +37,14 @@ describe('Audit Log Page', () => {
   });
 
   it('displays audit log entries', async () => {
-    (auditService.list as ReturnType<typeof vi.fn>).mockResolvedValue([
-      { id: '1', user_id: '1', username: 'admin', action: 'create', entity_type: 'stack_instance', entity_id: '123', details: 'Created instance', timestamp: '2024-01-01T00:00:00Z' },
-    ]);
+    (auditService.list as ReturnType<typeof vi.fn>).mockResolvedValue({
+      data: [
+        { id: '1', user_id: '1', username: 'admin', action: 'create', entity_type: 'stack_instance', entity_id: '123', details: 'Created instance', timestamp: '2024-01-01T00:00:00Z' },
+      ],
+      total: 1,
+      limit: 25,
+      offset: 0,
+    });
     render(
       <MemoryRouter>
         <AuditLog />
@@ -64,7 +69,12 @@ describe('Audit Log Page', () => {
   });
 
   it('shows empty state when no entries', async () => {
-    (auditService.list as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    (auditService.list as ReturnType<typeof vi.fn>).mockResolvedValue({
+      data: [],
+      total: 0,
+      limit: 25,
+      offset: 0,
+    });
     render(
       <MemoryRouter>
         <AuditLog />

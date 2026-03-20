@@ -214,6 +214,8 @@ func main() {
 	userHandler := handlers.NewUserHandler(userRepo)
 	apiKeyHandler := handlers.NewAPIKeyHandler(apiKeyRepo, userRepo)
 
+	adminHandler := handlers.NewAdminHandler(k8sClient, helmClient, instanceRepo)
+
 	// Auto-create admin user on startup if ADMIN_PASSWORD is set.
 	authHandler.EnsureAdminUser()
 
@@ -233,6 +235,7 @@ func main() {
 		AuditLogger:       auditRepo,
 		UserHandler:       userHandler,
 		APIKeyHandler:     apiKeyHandler,
+		AdminHandler:      adminHandler,
 		UserRepo:          userRepo,
 		APIKeyRepo:        apiKeyRepo,
 	})

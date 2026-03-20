@@ -38,9 +38,14 @@ const Layout = ({ children }: LayoutProps) => {
                 Audit Log
               </Button>
               {user?.role === 'admin' && (
-                <Button color="inherit" component={RouterLink} to="/admin/users">
-                  Users
-                </Button>
+                <>
+                  <Button color="inherit" component={RouterLink} to="/admin/users">
+                    Users
+                  </Button>
+                  <Button color="inherit" component={RouterLink} to="/admin/orphaned-namespaces">
+                    Orphaned NS
+                  </Button>
+                </>
               )}
             </Box>
           )}

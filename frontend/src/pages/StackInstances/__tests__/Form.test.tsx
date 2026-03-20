@@ -84,8 +84,7 @@ describe('StackInstances Form', () => {
     });
   });
 
-  it('auto-generates namespace from instance name', async () => {
-    const user = userEvent.setup();
+  it('shows helper text about auto-generated namespace', async () => {
     (definitionService.list as ReturnType<typeof vi.fn>).mockResolvedValue(mockDefinitions);
     render(
       <MemoryRouter>
@@ -96,12 +95,7 @@ describe('StackInstances Form', () => {
       expect(screen.getByText('Create Stack Instance')).toBeInTheDocument();
     });
 
-    const nameInput = screen.getByRole('textbox', { name: /instance name/i });
-    await user.type(nameInput, 'My App');
-
-    await waitFor(() => {
-      expect(screen.getByDisplayValue('stack-my-app')).toBeInTheDocument();
-    });
+    expect(screen.getByText(/namespace will be auto-generated/i)).toBeInTheDocument();
   });
 
   it('creates an instance on form submit', async () => {

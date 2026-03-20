@@ -103,7 +103,7 @@ export interface StackInstance {
 export interface DeploymentLog {
   id: string;
   stack_instance_id: string;
-  action: 'deploy' | 'stop';
+  action: 'deploy' | 'stop' | 'clean';
   status: 'running' | 'success' | 'error';
   output: string;
   error_message?: string;
@@ -238,4 +238,18 @@ export interface CreateAPIKeyResponse {
   prefix: string;
   raw_key: string;
   created_at: string;
+}
+
+export interface ResourceCounts {
+  pods: number;
+  deployments: number;
+  services: number;
+}
+
+export interface OrphanedNamespace {
+  name: string;
+  created_at: string;
+  phase: string;
+  resource_counts?: ResourceCounts;
+  helm_releases: string[];
 }

@@ -12,6 +12,7 @@ import InstanceForm from './pages/StackInstances/Form';
 import InstanceDetail from './pages/StackInstances/Detail';
 import AuditLog from './pages/AuditLog';
 import AdminUsers from './pages/Admin/Users';
+import OrphanedNamespaces from './pages/Admin/OrphanedNamespaces';
 import Profile from './pages/Profile';
 
 const AppRoutes = () => {
@@ -31,6 +32,7 @@ const AppRoutes = () => {
       <Route path="/stack-instances/:id" element={<ProtectedRoute><InstanceDetail /></ProtectedRoute>} />
       <Route path="/audit-log" element={<ProtectedRoute><AuditLog /></ProtectedRoute>} />
       <Route path="/admin/users" element={<ProtectedRoute requiredRole="admin"><AdminUsers /></ProtectedRoute>} />
+      <Route path="/admin/orphaned-namespaces" element={<ProtectedRoute requiredRole="admin"><OrphanedNamespaces /></ProtectedRoute>} />
       <Route path="/profile" element={<ProtectedRoute><Profile /></ProtectedRoute>} />
     </Routes>
   );

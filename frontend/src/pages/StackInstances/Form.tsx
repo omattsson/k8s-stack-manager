@@ -9,9 +9,17 @@ import {
   MenuItem,
   CircularProgress,
   Alert,
+  Chip,
 } from '@mui/material';
+import axios from 'axios';
 import { instanceService, definitionService } from '../../api/client';
 import type { StackDefinition } from '../../types';
+
+interface ConflictResponse {
+  error: string;
+  message: string;
+  suggestions: string[];
+}
 
 const Form = () => {
   const navigate = useNavigate();
@@ -20,10 +28,10 @@ const Form = () => {
   const [selectedDefId, setSelectedDefId] = useState('');
   const [name, setName] = useState('');
   const [branch, setBranch] = useState('master');
-  const [namespace, setNamespace] = useState('');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [suggestions, setSuggestions] = useState<string[]>([]);
 
   useEffect(() => {
     const fetchDefinitions = async () => {
@@ -40,15 +48,6 @@ const Form = () => {
   }, []);
 
   useEffect(() => {
-    if (name) {
-      const sanitized = name.toLowerCase().replace(/[^a-z0-9-]/g, '-');
-      setNamespace(`stack-${sanitized}`);
-    } else {
-      setNamespace('');
-    }
-  }, [name]);
-
-  useEffect(() => {
     const def = definitions.find((d) => d.id === selectedDefId);
     if (def) {
       setBranch(def.default_branch || 'master');
@@ -57,6 +56,7 @@ const Form = () => {
 
   const handleCreate = async () => {
     setError(null);
+    setSuggestions([]);
     setSaving(true);
     try {
       const instance = await instanceService.create({
@@ -65,11 +65,25 @@ const Form = () => {
         branch,
       });
       navigate(`/stack-instances/${instance.id}`);
-    } catch {
-      setError('Failed to create instance');
+    } catch (err) {
+      if (axios.isAxiosError(err) && err.response?.status === 409) {
+        const data = err.response.data as ConflictResponse;
+        setError(data.message || data.error || 'Name already taken');
+        if (data.suggestions && data.suggestions.length > 0) {
+          setSuggestions(data.suggestions);
+        }
+      } else {
+        setError('Failed to create instance');
+      }
     } finally {
       setSaving(false);
     }
+  };
+
+  const handleSuggestionClick = (suggestion: string) => {
+    setName(suggestion);
+    setSuggestions([]);
+    setError(null);
   };
 
   if (loading) {
@@ -86,7 +100,27 @@ const Form = () => {
         Create Stack Instance
       </Typography>
 
-      {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
+      {error && (
+        <Alert severity="error" sx={{ mb: 2 }}>
+          {error}
+          {suggestions.length > 0 && (
+            <Box sx={{ mt: 1, display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
+              <Typography variant="body2">Try:</Typography>
+              {suggestions.map((s) => (
+                <Chip
+                  key={s}
+                  label={s}
+                  size="small"
+                  onClick={() => handleSuggestionClick(s)}
+                  clickable
+                  color="primary"
+                  variant="outlined"
+                />
+              ))}
+            </Box>
+          )}
+        </Alert>
+      )}
 
       <Paper sx={{ p: 3 }}>
         <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
@@ -115,6 +149,9 @@ const Form = () => {
             onChange={(e) => setName(e.target.value)}
             required
             fullWidth
+            helperText={`${name.length}/50 characters — namespace will be auto-generated from your name and owner`}
+            error={name.length > 50}
+            slotProps={{ htmlInput: { maxLength: 50 } }}
           />
 
           <TextField
@@ -123,21 +160,13 @@ const Form = () => {
             onChange={(e) => setBranch(e.target.value)}
             fullWidth
           />
-
-          <TextField
-            label="Namespace (auto-generated)"
-            value={namespace}
-            fullWidth
-            slotProps={{ input: { readOnly: true } }}
-            helperText="Namespace is auto-generated from the instance name"
-          />
         </Box>
 
         <Box sx={{ display: 'flex', gap: 2, mt: 3 }}>
           <Button
             variant="contained"
             onClick={handleCreate}
-            disabled={saving || !name || !selectedDefId}
+            disabled={saving || !name || !selectedDefId || name.length > 50}
           >
             {saving ? 'Creating...' : 'Create Instance'}
           </Button>

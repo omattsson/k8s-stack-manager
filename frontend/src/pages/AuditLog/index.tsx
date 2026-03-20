@@ -25,6 +25,7 @@ const ACTIONS = ['All', 'create', 'update', 'delete', 'publish', 'unpublish', 'c
 
 const AuditLog = () => {
   const [logs, setLogs] = useState<AuditLogType[]>([]);
+  const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [entityType, setEntityType] = useState('All');
@@ -45,8 +46,9 @@ const AuditLog = () => {
       if (action !== 'All') filters.action = action;
       if (username) filters.user_id = username;
 
-      const data = await auditService.list(filters);
-      setLogs(data || []);
+      const response = await auditService.list(filters);
+      setLogs(response.data || []);
+      setTotal(response.total);
     } catch {
       setError('Failed to load audit logs');
     } finally {
@@ -162,7 +164,7 @@ const AuditLog = () => {
           </TableContainer>
           <TablePagination
             component="div"
-            count={-1}
+            count={total}
             page={page}
             onPageChange={(_e, newPage) => setPage(newPage)}
             rowsPerPage={rowsPerPage}
@@ -170,7 +172,6 @@ const AuditLog = () => {
               setRowsPerPage(parseInt(e.target.value, 10));
               setPage(0);
             }}
-            labelDisplayedRows={({ from, to }) => `${from}–${to}`}
           />
         </Paper>
       )}

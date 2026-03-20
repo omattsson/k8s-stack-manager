@@ -84,7 +84,7 @@ func (r *AuditLogRepository) Create(log *models.AuditLog) error {
 	return nil
 }
 
-func (r *AuditLogRepository) List(filters models.AuditLogFilters) ([]models.AuditLog, error) {
+func (r *AuditLogRepository) List(filters models.AuditLogFilters) ([]models.AuditLog, int64, error) {
 	ctx := context.Background()
 
 	// Build filter parts.
@@ -104,16 +104,16 @@ func (r *AuditLogRepository) List(filters models.AuditLogFilters) ([]models.Audi
 	}
 
 	if filters.UserID != "" {
-		filterParts = append(filterParts, "UserID eq '"+filters.UserID+"'")
+		filterParts = append(filterParts, "UserID eq '"+escapeODataString(filters.UserID)+"'")
 	}
 	if filters.EntityType != "" {
-		filterParts = append(filterParts, "EntityType eq '"+filters.EntityType+"'")
+		filterParts = append(filterParts, "EntityType eq '"+escapeODataString(filters.EntityType)+"'")
 	}
 	if filters.EntityID != "" {
-		filterParts = append(filterParts, "EntityID eq '"+filters.EntityID+"'")
+		filterParts = append(filterParts, "EntityID eq '"+escapeODataString(filters.EntityID)+"'")
 	}
 	if filters.Action != "" {
-		filterParts = append(filterParts, "Action eq '"+filters.Action+"'")
+		filterParts = append(filterParts, "Action eq '"+escapeODataString(filters.Action)+"'")
 	}
 
 	var opts *aztables.ListEntitiesOptions
@@ -145,16 +145,33 @@ func (r *AuditLogRepository) List(filters models.AuditLogFilters) ([]models.Audi
 		fn = filterFn
 	}
 
+	// TODO: Azure Table Storage does not support server-side offset pagination natively.
+	// Currently we collect all matching entities and slice in-memory. For large audit log
+	// tables, consider using continuation tokens or time-based cursor pagination instead.
 	entities, err := collectEntities(ctx, pager, fn)
 	if err != nil {
-		return nil, mapAzureError("list", err)
+		return nil, 0, mapAzureError("list", err)
+	}
+
+	total := int64(len(entities))
+
+	// Apply offset and limit for pagination.
+	offset := filters.Offset
+	if offset > len(entities) {
+		offset = len(entities)
+	}
+	entities = entities[offset:]
+
+	limit := filters.Limit
+	if limit > 0 && limit < len(entities) {
+		entities = entities[:limit]
 	}
 
 	results := make([]models.AuditLog, 0, len(entities))
 	for _, e := range entities {
 		results = append(results, *auditLogFromEntity(e))
 	}
-	return results, nil
+	return results, total, nil
 }
 
 func auditLogFromEntity(e map[string]interface{}) *models.AuditLog {

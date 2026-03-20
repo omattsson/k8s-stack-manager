@@ -712,8 +712,13 @@ func TestAPIIntegration_AuditLog(t *testing.T) {
 	t.Run("audit log contains entries", func(t *testing.T) {
 		w := s.do("GET", "/api/v1/audit-logs", nil, devopsToken)
 		assert.Equal(t, http.StatusOK, w.Code)
-		arr := parseArray(t, w)
-		assert.NotEmpty(t, arr, "expected at least one audit log entry")
+		resp := parseBody(t, w)
+		data, ok := resp["data"].([]interface{})
+		require.True(t, ok, "expected 'data' array in paginated response")
+		assert.NotEmpty(t, data, "expected at least one audit log entry")
+		assert.NotNil(t, resp["total"], "expected 'total' in paginated response")
+		assert.NotNil(t, resp["limit"], "expected 'limit' in paginated response")
+		assert.NotNil(t, resp["offset"], "expected 'offset' in paginated response")
 	})
 }
 

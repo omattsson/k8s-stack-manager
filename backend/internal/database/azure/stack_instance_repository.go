@@ -3,6 +3,7 @@ package azure
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"time"
 
 	"backend/internal/models"
@@ -101,6 +102,27 @@ func (r *StackInstanceRepository) Delete(id string) error {
 		return mapAzureError("delete", err)
 	}
 	return nil
+}
+
+func (r *StackInstanceRepository) FindByNamespace(namespace string) (*models.StackInstance, error) {
+	ctx := context.Background()
+
+	// Escape single quotes in OData string literals to prevent filter injection.
+	escaped := strings.ReplaceAll(namespace, "'", "''")
+	filter := "PartitionKey eq 'global' and Namespace eq '" + escaped + "'"
+	pager := r.client.NewListEntitiesPager(&aztables.ListEntitiesOptions{
+		Filter: &filter,
+	})
+
+	entities, err := collectEntities(ctx, pager, nil)
+	if err != nil {
+		return nil, mapAzureError("find_by_namespace", err)
+	}
+
+	if len(entities) == 0 {
+		return nil, dberrors.NewDatabaseError("find_by_namespace", dberrors.ErrNotFound)
+	}
+	return stackInstanceFromEntity(entities[0]), nil
 }
 
 func (r *StackInstanceRepository) List() ([]models.StackInstance, error) {
