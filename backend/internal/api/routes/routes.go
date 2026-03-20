@@ -32,6 +32,9 @@ type Deps struct {
 	UserHandler   *handlers.UserHandler
 	APIKeyHandler *handlers.APIKeyHandler
 
+	// Admin handlers.
+	AdminHandler *handlers.AdminHandler
+
 	// Repos needed by combined JWT+API-key auth middleware.
 	UserRepo   models.UserRepository
 	APIKeyRepo models.APIKeyRepository
@@ -209,6 +212,17 @@ func SetupRoutes(router *gin.Engine, deps Deps) *handlers.RateLimiter {
 				userKeys.GET("", deps.APIKeyHandler.ListAPIKeys)
 				userKeys.POST("", deps.APIKeyHandler.CreateAPIKey)
 				userKeys.DELETE("/:keyId", deps.APIKeyHandler.DeleteAPIKey)
+			}
+		}
+
+		// Admin endpoints (admin only)
+		if deps.AdminHandler != nil {
+			admin := middleware.RequireAdmin()
+			adminGroup := authed.Group("/admin")
+			adminGroup.Use(admin)
+			{
+				adminGroup.GET("/orphaned-namespaces", deps.AdminHandler.ListOrphanedNamespaces)
+				adminGroup.DELETE("/orphaned-namespaces/:namespace", deps.AdminHandler.DeleteOrphanedNamespace)
 			}
 		}
 	}

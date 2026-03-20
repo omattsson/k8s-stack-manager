@@ -22,6 +22,7 @@ import type {
   CreateAPIKeyResponse,
   DeploymentLog,
   NamespaceStatus,
+  OrphanedNamespace,
 } from '../types';
 
 const api = axios.create(axiosConfig);
@@ -496,6 +497,26 @@ export const apiKeyService = {
       await api.delete(`/api/v1/users/${userId}/api-keys/${keyId}`);
     } catch (error) {
       console.error('Failed to delete API key:', error);
+      throw error;
+    }
+  },
+};
+
+export const adminService = {
+  listOrphanedNamespaces: async (): Promise<OrphanedNamespace[]> => {
+    try {
+      const response = await api.get('/api/v1/admin/orphaned-namespaces');
+      return response.data;
+    } catch (error) {
+      console.error('Failed to fetch orphaned namespaces:', error);
+      throw error;
+    }
+  },
+  deleteOrphanedNamespace: async (namespace: string): Promise<void> => {
+    try {
+      await api.delete(`/api/v1/admin/orphaned-namespaces/${namespace}`);
+    } catch (error) {
+      console.error('Failed to delete orphaned namespace:', error);
       throw error;
     }
   },

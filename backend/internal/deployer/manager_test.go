@@ -1290,6 +1290,10 @@ func (m *mockHelmExecutor) Status(_ context.Context, releaseName, _ string) (*Re
 	return &ReleaseStatus{Name: releaseName, Info: releaseInfo{Status: "deployed"}}, nil
 }
 
+func (m *mockHelmExecutor) ListReleases(_ context.Context, _ string) ([]string, error) {
+	return nil, nil
+}
+
 func (m *mockHelmExecutor) Timeout() time.Duration {
 	if m.timeout > 0 {
 		return m.timeout

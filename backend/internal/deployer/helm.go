@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os/exec"
+	"strings"
 	"time"
 )
 
@@ -125,6 +126,31 @@ func (h *HelmClient) Status(ctx context.Context, release, namespace string) (*Re
 	}
 
 	return &status, nil
+}
+
+// ListReleases runs: helm list -n <namespace> -q
+// Returns a list of release names in the given namespace.
+func (h *HelmClient) ListReleases(ctx context.Context, namespace string) ([]string, error) {
+	args := []string{
+		"list",
+		"-n", namespace,
+		"-q",
+	}
+
+	output, err := h.run(ctx, args)
+	if err != nil {
+		return nil, fmt.Errorf("helm list: %w", err)
+	}
+
+	var releases []string
+	for _, line := range strings.Split(strings.TrimSpace(output), "\n") {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			releases = append(releases, line)
+		}
+	}
+
+	return releases, nil
 }
 
 // run executes a helm command with the given arguments and returns the combined output.

@@ -67,6 +67,21 @@ definitions:
           type: string
         type: array
     type: object
+  handlers.OrphanedNamespaceResponse:
+    properties:
+      created_at:
+        type: string
+      helm_releases:
+        items:
+          type: string
+        type: array
+      name:
+        type: string
+      phase:
+        type: string
+      resource_counts:
+        $ref: '#/definitions/k8s.ResourceCounts'
+    type: object
   handlers.RegisterRequest:
     properties:
       display_name:
@@ -157,6 +172,15 @@ definitions:
       ready:
         type: boolean
       restart_count:
+        type: integer
+    type: object
+  k8s.ResourceCounts:
+    properties:
+      deployments:
+        type: integer
+      pods:
+        type: integer
+      services:
         type: integer
     type: object
   k8s.ServiceInfo:
@@ -415,6 +439,72 @@ info:
   title: Backend API
   version: "1.0"
 paths:
+  /api/v1/admin/orphaned-namespaces:
+    get:
+      description: Lists all Kubernetes namespaces matching the stack-* pattern that
+        have no corresponding stack instance in the database
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/handlers.OrphanedNamespaceResponse'
+            type: array
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List orphaned namespaces
+      tags:
+      - Admin
+  /api/v1/admin/orphaned-namespaces/{namespace}:
+    delete:
+      description: Verifies the namespace is orphaned, uninstalls all Helm releases,
+        and deletes the Kubernetes namespace
+      parameters:
+      - description: Namespace name
+        in: path
+        name: namespace
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "409":
+          description: Conflict
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Delete an orphaned namespace
+      tags:
+      - Admin
   /api/v1/audit-logs:
     get:
       description: List audit logs with optional filters and pagination

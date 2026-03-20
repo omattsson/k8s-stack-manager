@@ -239,3 +239,17 @@ export interface CreateAPIKeyResponse {
   raw_key: string;
   created_at: string;
 }
+
+export interface ResourceCounts {
+  pods: number;
+  deployments: number;
+  services: number;
+}
+
+export interface OrphanedNamespace {
+  name: string;
+  created_at: string;
+  phase: string;
+  resource_counts?: ResourceCounts;
+  helm_releases: string[];
+}
