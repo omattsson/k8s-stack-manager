@@ -47,10 +47,18 @@ const DeploymentLogViewer = ({ logs, loading }: DeploymentLogViewerProps) => {
   const bottomRef = useRef<HTMLDivElement>(null);
   const [expanded, setExpanded] = useState<string | false>(false);
 
-  // Expand the most recent log (first in array) by default, and re-expand when logs change
+  // Expand the most recent log by default, but only when there's no user selection
+  // or the previously expanded log no longer exists in the list.
   useEffect(() => {
     if (logs.length > 0) {
-      setExpanded(logs[0].id);
+      setExpanded((prev) => {
+        // No selection yet — default to most recent.
+        if (!prev) return logs[0].id;
+        // Current selection still exists — keep it.
+        if (logs.some((l) => l.id === prev)) return prev;
+        // Current selection gone — fall back to most recent.
+        return logs[0].id;
+      });
     }
   }, [logs]);
 

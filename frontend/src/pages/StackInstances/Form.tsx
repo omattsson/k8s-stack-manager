@@ -28,7 +28,6 @@ const Form = () => {
   const [selectedDefId, setSelectedDefId] = useState('');
   const [name, setName] = useState('');
   const [branch, setBranch] = useState('master');
-  const [namespace, setNamespace] = useState('');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -47,15 +46,6 @@ const Form = () => {
     };
     fetchDefinitions();
   }, []);
-
-  useEffect(() => {
-    if (name) {
-      const sanitized = name.toLowerCase().replace(/[^a-z0-9-]/g, '-');
-      setNamespace(`stack-${sanitized}`);
-    } else {
-      setNamespace('');
-    }
-  }, [name]);
 
   useEffect(() => {
     const def = definitions.find((d) => d.id === selectedDefId);
@@ -159,7 +149,7 @@ const Form = () => {
             onChange={(e) => setName(e.target.value)}
             required
             fullWidth
-            helperText={`${name.length}/50 characters (max 50)`}
+            helperText={`${name.length}/50 characters — namespace will be auto-generated from your name and owner`}
             error={name.length > 50}
             slotProps={{ htmlInput: { maxLength: 50 } }}
           />
@@ -169,14 +159,6 @@ const Form = () => {
             value={branch}
             onChange={(e) => setBranch(e.target.value)}
             fullWidth
-          />
-
-          <TextField
-            label="Namespace (auto-generated)"
-            value={namespace}
-            fullWidth
-            slotProps={{ input: { readOnly: true } }}
-            helperText="Namespace is auto-generated from the instance name"
           />
         </Box>
 

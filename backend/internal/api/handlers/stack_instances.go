@@ -66,7 +66,12 @@ func buildNamespace(instancePart, ownerPart string) string {
 		sanitizedInstance = sanitizedInstance[:maxInstanceLen]
 		sanitizedInstance = strings.TrimRight(sanitizedInstance, "-")
 	}
-	return fmt.Sprintf("%s%s-%s", prefix, sanitizedInstance, sanitizedOwner)
+	namespace := fmt.Sprintf("%s%s-%s", prefix, sanitizedInstance, sanitizedOwner)
+	if len(namespace) > 63 {
+		namespace = namespace[:63]
+		namespace = strings.TrimRight(namespace, "-")
+	}
+	return namespace
 }
 
 // InstanceHandler handles stack instance, value override, and values export endpoints.
@@ -209,6 +214,9 @@ func (h *InstanceHandler) CreateInstance(c *gin.Context) {
 	}
 
 	// Check namespace uniqueness.
+	// NOTE: This is a TOCTOU check — concurrent creates can still race past it.
+	// For strict uniqueness, a storage-level constraint (e.g. unique index or
+	// namespace-reservation entity) would be needed.
 	if h.checkNamespaceUniqueness(c, inst.Namespace, inst.Name, owner) {
 		return
 	}
@@ -354,7 +362,13 @@ func (h *InstanceHandler) CloneInstance(c *gin.Context) {
 	ownerID := middleware.GetUserIDFromContext(c)
 	ownerName := middleware.GetUsernameFromContext(c)
 
-	cloneName := source.Name + " (Copy)"
+	// Truncate name before adding suffix to stay within the 50-char limit.
+	copySuffix := " (Copy)"
+	baseName := source.Name
+	if len(baseName)+len(copySuffix) > models.MaxInstanceNameLength {
+		baseName = baseName[:models.MaxInstanceNameLength-len(copySuffix)]
+	}
+	cloneName := baseName + copySuffix
 	cloneNamespace := buildNamespace(cloneName, ownerName)
 
 	clone := &models.StackInstance{
@@ -1003,13 +1017,22 @@ func (h *InstanceHandler) checkNamespaceUniqueness(c *gin.Context, namespace, in
 	return true
 }
 
-// generateNameSuggestions returns 3 alternative instance name suggestions by
+// generateNameSuggestions returns up to 3 alternative instance name suggestions by
 // appending -2, -3, -4 to the base instance name. The frontend uses these as
 // instance names (not namespaces), so they are returned without the stack- prefix.
+// Suggestions are trimmed to respect the 50-character instance name limit.
 func generateNameSuggestions(instanceName string) []string {
 	suggestions := make([]string, 0, 3)
 	for _, suffix := range []string{"-2", "-3", "-4"} {
-		suggestions = append(suggestions, instanceName+suffix)
+		base := instanceName
+		maxBaseLen := models.MaxInstanceNameLength - len(suffix)
+		if maxBaseLen <= 0 {
+			continue
+		}
+		if len(base) > maxBaseLen {
+			base = base[:maxBaseLen]
+		}
+		suggestions = append(suggestions, base+suffix)
 	}
 	return suggestions
 }
