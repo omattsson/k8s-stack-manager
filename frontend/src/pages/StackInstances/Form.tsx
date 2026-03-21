@@ -70,7 +70,7 @@ const Form = () => {
         stack_definition_id: selectedDefId,
         name,
         branch,
-        ...(selectedClusterId ? { cluster_id: selectedClusterId } : {}),
+        cluster_id: selectedClusterId,
       });
       navigate(`/stack-instances/${instance.id}`);
     } catch (err) {

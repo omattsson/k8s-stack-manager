@@ -235,7 +235,8 @@ func SetupRoutes(router *gin.Engine, deps Deps) *handlers.RateLimiter {
 
 		// Cluster management
 		clusterHandler := deps.ClusterHandler
-		if clusterHandler == nil && deps.ClusterRepo != nil {
+		// Only construct a fallback ClusterHandler when all required dependencies are present.
+		if clusterHandler == nil && deps.ClusterRepo != nil && deps.InstanceRepo != nil {
 			clusterHandler = handlers.NewClusterHandler(deps.ClusterRepo, deps.Registry, deps.InstanceRepo)
 		}
 		if clusterHandler != nil {

@@ -63,6 +63,11 @@ func Decrypt(ciphertext, key []byte) ([]byte, error) {
 }
 
 // DeriveKey derives a 32-byte AES-256 key from a passphrase using SHA-256.
+//
+// IMPORTANT: The passphrase should be a high-entropy random string (e.g. 32+
+// bytes of random data, base64-encoded). Do NOT use a human-memorable password
+// — SHA-256 alone is not a password-based KDF and offers no protection against
+// brute-force/dictionary attacks on low-entropy inputs.
 func DeriveKey(passphrase string) []byte {
 	hash := sha256.Sum256([]byte(passphrase))
 	return hash[:]

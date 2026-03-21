@@ -23,23 +23,30 @@ type Client struct {
 }
 
 // NewClient creates a Kubernetes client.
-// If kubeconfigPath is empty, it tries in-cluster config first, then the
+// When kubeconfigPath is provided, it is used directly (no in-cluster fallback)
+// so that multi-cluster routing always targets the intended cluster.
+// When kubeconfigPath is empty, it tries in-cluster config first, then the
 // default kubeconfig path (~/.kube/config).
 func NewClient(kubeconfigPath string) (*Client, error) {
 	var config *rest.Config
 	var err error
 
-	// Try in-cluster config first.
-	config, err = rest.InClusterConfig()
-	if err != nil {
-		// Fall back to kubeconfig file.
-		if kubeconfigPath == "" {
-			home, _ := os.UserHomeDir()
-			kubeconfigPath = filepath.Join(home, ".kube", "config")
-		}
+	if kubeconfigPath != "" {
+		// Explicit kubeconfig — use it directly without in-cluster fallback.
 		config, err = clientcmd.BuildConfigFromFlags("", kubeconfigPath)
 		if err != nil {
-			return nil, fmt.Errorf("build kubeconfig: %w", err)
+			return nil, fmt.Errorf("build kubeconfig from %s: %w", kubeconfigPath, err)
+		}
+	} else {
+		// No kubeconfig path — try in-cluster config first, then default file.
+		config, err = rest.InClusterConfig()
+		if err != nil {
+			home, _ := os.UserHomeDir()
+			defaultPath := filepath.Join(home, ".kube", "config")
+			config, err = clientcmd.BuildConfigFromFlags("", defaultPath)
+			if err != nil {
+				return nil, fmt.Errorf("build kubeconfig: %w", err)
+			}
 		}
 	}
 

@@ -120,17 +120,17 @@ func (h *ClusterHandler) CreateCluster(c *gin.Context) {
 	if req.IsDefault {
 		if err := h.clusterRepo.SetDefault(cl.ID); err != nil {
 			slog.Error("Failed to set new cluster as default", "cluster_id", cl.ID, "error", err)
-			// Cluster was created successfully but could not be set as default.
-			// Return 201 with a warning to avoid duplicate creations on client retry.
+			// Return 201 with consistent schema; surface warning via header.
 			cl.KubeconfigData = ""
 			cl.KubeconfigPath = ""
-			c.JSON(http.StatusCreated, gin.H{
-				"cluster": cl,
-				"warning": "Cluster created but could not be set as default; it remains non-default",
-			})
+			c.Header("Warning", `199 - "Cluster created but could not be set as default; it remains non-default"`)
+			c.JSON(http.StatusCreated, cl)
 			return
 		}
 		cl.IsDefault = true
+		if h.registry != nil {
+			h.registry.InvalidateDefault()
+		}
 	}
 
 	// Clear kubeconfig from the response (json:"-" already handles this,
@@ -305,9 +305,10 @@ func (h *ClusterHandler) DeleteCluster(c *gin.Context) {
 		return
 	}
 
-	// Invalidate cached client.
+	// Invalidate cached client and default routing.
 	if h.registry != nil {
 		h.registry.InvalidateClient(id)
+		h.registry.InvalidateDefault()
 	}
 
 	c.Status(http.StatusNoContent)
