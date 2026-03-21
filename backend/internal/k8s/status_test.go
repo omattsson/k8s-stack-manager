@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
 )
@@ -247,6 +248,311 @@ func TestGetNamespaceStatus_FailedPod(t *testing.T) {
 	assert.Equal(t, StatusError, status.Status)
 	require.Len(t, status.Charts, 1)
 	assert.Equal(t, StatusError, status.Charts[0].Status)
+}
+
+func TestConstructIngressURL(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		host     string
+		path     string
+		tls      bool
+		expected string
+	}{
+		{
+			name:     "HTTP with path",
+			host:     "example.com",
+			path:     "/api",
+			tls:      false,
+			expected: "http://example.com/api",
+		},
+		{
+			name:     "HTTPS with path",
+			host:     "example.com",
+			path:     "/api",
+			tls:      true,
+			expected: "https://example.com/api",
+		},
+		{
+			name:     "HTTP no path",
+			host:     "example.com",
+			path:     "",
+			tls:      false,
+			expected: "http://example.com",
+		},
+		{
+			name:     "HTTPS root path",
+			host:     "example.com",
+			path:     "/",
+			tls:      true,
+			expected: "https://example.com",
+		},
+		{
+			name:     "HTTP with nested path",
+			host:     "app.example.com",
+			path:     "/v1/health",
+			tls:      false,
+			expected: "http://app.example.com/v1/health",
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			result := constructIngressURL(tt.host, tt.path, tt.tls)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
+func TestGetNamespaceStatus_WithIngress(t *testing.T) {
+	t.Parallel()
+
+	ns := "ingress-ns"
+	pathType := networkingv1.PathTypePrefix
+
+	cs := fake.NewSimpleClientset(
+		&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: ns}},
+		&corev1.Service{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "web-svc",
+				Namespace: ns,
+				Labels:    map[string]string{"app.kubernetes.io/instance": "web-release"},
+			},
+			Spec: corev1.ServiceSpec{
+				Type:      corev1.ServiceTypeClusterIP,
+				ClusterIP: "10.0.0.5",
+			},
+		},
+		&networkingv1.Ingress{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "web-ingress",
+				Namespace: ns,
+			},
+			Spec: networkingv1.IngressSpec{
+				TLS: []networkingv1.IngressTLS{
+					{Hosts: []string{"app.example.com"}},
+				},
+				Rules: []networkingv1.IngressRule{
+					{
+						Host: "app.example.com",
+						IngressRuleValue: networkingv1.IngressRuleValue{
+							HTTP: &networkingv1.HTTPIngressRuleValue{
+								Paths: []networkingv1.HTTPIngressPath{
+									{
+										Path:     "/",
+										PathType: &pathType,
+										Backend: networkingv1.IngressBackend{
+											Service: &networkingv1.IngressServiceBackend{
+												Name: "web-svc",
+												Port: networkingv1.ServiceBackendPort{Number: 80},
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	)
+
+	client := NewClientFromInterface(cs)
+	status, err := client.GetNamespaceStatus(context.Background(), ns)
+
+	assert.NoError(t, err)
+	require.NotNil(t, status)
+
+	// Check ingresses.
+	require.Len(t, status.Ingresses, 1)
+	ing := status.Ingresses[0]
+	assert.Equal(t, "web-ingress", ing.Name)
+	assert.Equal(t, "app.example.com", ing.Host)
+	assert.Equal(t, "/", ing.Path)
+	assert.True(t, ing.TLS)
+	assert.Equal(t, "https://app.example.com", ing.URL)
+
+	// Check that the service has ingress hosts populated.
+	require.Len(t, status.Charts, 1)
+	require.Len(t, status.Charts[0].Services, 1)
+	assert.Equal(t, []string{"app.example.com"}, status.Charts[0].Services[0].IngressHosts)
+}
+
+func TestGetNamespaceStatus_WithIngressNoTLS(t *testing.T) {
+	t.Parallel()
+
+	ns := "ingress-notls-ns"
+	pathType := networkingv1.PathTypePrefix
+
+	cs := fake.NewSimpleClientset(
+		&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: ns}},
+		&networkingv1.Ingress{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "plain-ingress",
+				Namespace: ns,
+			},
+			Spec: networkingv1.IngressSpec{
+				Rules: []networkingv1.IngressRule{
+					{
+						Host: "plain.example.com",
+						IngressRuleValue: networkingv1.IngressRuleValue{
+							HTTP: &networkingv1.HTTPIngressRuleValue{
+								Paths: []networkingv1.HTTPIngressPath{
+									{
+										Path:     "/app",
+										PathType: &pathType,
+										Backend: networkingv1.IngressBackend{
+											Service: &networkingv1.IngressServiceBackend{
+												Name: "app-svc",
+												Port: networkingv1.ServiceBackendPort{Number: 8080},
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	)
+
+	client := NewClientFromInterface(cs)
+	status, err := client.GetNamespaceStatus(context.Background(), ns)
+
+	assert.NoError(t, err)
+	require.NotNil(t, status)
+	require.Len(t, status.Ingresses, 1)
+
+	ing := status.Ingresses[0]
+	assert.Equal(t, "plain-ingress", ing.Name)
+	assert.Equal(t, "plain.example.com", ing.Host)
+	assert.Equal(t, "/app", ing.Path)
+	assert.False(t, ing.TLS)
+	assert.Equal(t, "http://plain.example.com/app", ing.URL)
+}
+
+func TestGetNamespaceStatus_LoadBalancerExternalIP(t *testing.T) {
+	t.Parallel()
+
+	ns := "lb-ns"
+
+	cs := fake.NewSimpleClientset(
+		&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: ns}},
+		&corev1.Service{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "lb-svc",
+				Namespace: ns,
+				Labels:    map[string]string{"app.kubernetes.io/instance": "lb-release"},
+			},
+			Spec: corev1.ServiceSpec{
+				Type:      corev1.ServiceTypeLoadBalancer,
+				ClusterIP: "10.0.0.10",
+				Ports: []corev1.ServicePort{
+					{Port: 80, NodePort: 30080},
+				},
+			},
+			Status: corev1.ServiceStatus{
+				LoadBalancer: corev1.LoadBalancerStatus{
+					Ingress: []corev1.LoadBalancerIngress{
+						{IP: "52.1.2.3"},
+					},
+				},
+			},
+		},
+	)
+
+	client := NewClientFromInterface(cs)
+	status, err := client.GetNamespaceStatus(context.Background(), ns)
+
+	assert.NoError(t, err)
+	require.NotNil(t, status)
+	require.Len(t, status.Charts, 1)
+	require.Len(t, status.Charts[0].Services, 1)
+
+	svc := status.Charts[0].Services[0]
+	assert.Equal(t, "lb-svc", svc.Name)
+	assert.Equal(t, "LoadBalancer", svc.Type)
+	assert.Equal(t, "52.1.2.3", svc.ExternalIP)
+	assert.Equal(t, []int32{30080}, svc.NodePorts)
+}
+
+func TestGetNamespaceStatus_LoadBalancerHostname(t *testing.T) {
+	t.Parallel()
+
+	ns := "lb-hostname-ns"
+
+	cs := fake.NewSimpleClientset(
+		&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: ns}},
+		&corev1.Service{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "lb-svc",
+				Namespace: ns,
+				Labels:    map[string]string{"app.kubernetes.io/instance": "lb-release"},
+			},
+			Spec: corev1.ServiceSpec{
+				Type:      corev1.ServiceTypeLoadBalancer,
+				ClusterIP: "10.0.0.11",
+			},
+			Status: corev1.ServiceStatus{
+				LoadBalancer: corev1.LoadBalancerStatus{
+					Ingress: []corev1.LoadBalancerIngress{
+						{Hostname: "my-lb.elb.amazonaws.com"},
+					},
+				},
+			},
+		},
+	)
+
+	client := NewClientFromInterface(cs)
+	status, err := client.GetNamespaceStatus(context.Background(), ns)
+
+	assert.NoError(t, err)
+	require.NotNil(t, status)
+	require.Len(t, status.Charts, 1)
+	require.Len(t, status.Charts[0].Services, 1)
+	assert.Equal(t, "my-lb.elb.amazonaws.com", status.Charts[0].Services[0].ExternalIP)
+}
+
+func TestGetNamespaceStatus_NodePortService(t *testing.T) {
+	t.Parallel()
+
+	ns := "nodeport-ns"
+
+	cs := fake.NewSimpleClientset(
+		&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: ns}},
+		&corev1.Service{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "np-svc",
+				Namespace: ns,
+				Labels:    map[string]string{"app.kubernetes.io/instance": "np-release"},
+			},
+			Spec: corev1.ServiceSpec{
+				Type:      corev1.ServiceTypeNodePort,
+				ClusterIP: "10.0.0.20",
+				Ports: []corev1.ServicePort{
+					{Port: 80, NodePort: 30001},
+					{Port: 443, NodePort: 30002},
+				},
+			},
+		},
+	)
+
+	client := NewClientFromInterface(cs)
+	status, err := client.GetNamespaceStatus(context.Background(), ns)
+
+	assert.NoError(t, err)
+	require.NotNil(t, status)
+	require.Len(t, status.Charts, 1)
+	require.Len(t, status.Charts[0].Services, 1)
+
+	svc := status.Charts[0].Services[0]
+	assert.Equal(t, "NodePort", svc.Type)
+	assert.Empty(t, svc.ExternalIP)
+	assert.Equal(t, []int32{30001, 30002}, svc.NodePorts)
 }
 
 func TestGetNamespaceStatus_ProgressingDeployment(t *testing.T) {
