@@ -80,20 +80,24 @@ const Dashboard = () => {
     fetchData();
   }, []);
 
-  // Track which instance IDs we've already fetched status for
+  // Track which instance IDs have a confirmed URL (won't retry)
   const fetchedStatusIdsRef = useRef<Set<string>>(new Set());
+  // Track currently in-flight fetches to avoid duplicate requests
+  const inFlightIdsRef = useRef<Set<string>>(new Set());
 
   // Phase 2: fetch status/URLs for newly running/deploying instances
   useEffect(() => {
     const running = instances.filter(
       (i) => i.status === 'running' || i.status === 'deploying',
     );
-    const newRunning = running.filter((i) => !fetchedStatusIdsRef.current.has(i.id));
+    const newRunning = running.filter(
+      (i) => !fetchedStatusIdsRef.current.has(i.id) && !inFlightIdsRef.current.has(i.id),
+    );
     if (newRunning.length === 0) return;
 
-    // Mark as fetched immediately to avoid duplicate requests
+    // Mark as in-flight to avoid duplicate requests during async window
     for (const inst of newRunning) {
-      fetchedStatusIdsRef.current.add(inst.id);
+      inFlightIdsRef.current.add(inst.id);
     }
 
     Promise.allSettled(
@@ -105,8 +109,17 @@ const Dashboard = () => {
     ).then((settled) => {
       const newUrls: Record<string, string> = {};
       for (const r of settled) {
-        if (r.status === 'fulfilled' && r.value.url) {
-          newUrls[r.value.id] = r.value.url;
+        if (r.status === 'fulfilled') {
+          inFlightIdsRef.current.delete(r.value.id);
+          if (r.value.url) {
+            // Only mark as fetched when we got a URL; null URLs will be retried
+            fetchedStatusIdsRef.current.add(r.value.id);
+            newUrls[r.value.id] = r.value.url;
+          }
+        } else {
+          // On failure, clear in-flight so the instance can be retried
+          const id = newRunning[settled.indexOf(r)]?.id;
+          if (id) inFlightIdsRef.current.delete(id);
         }
       }
       if (Object.keys(newUrls).length > 0) {

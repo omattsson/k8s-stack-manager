@@ -1,11 +1,14 @@
 package handlers
 
 import (
+	"errors"
+	"log/slog"
 	"net/http"
 	"time"
 
 	"backend/internal/api/middleware"
 	"backend/internal/models"
+	"backend/pkg/dberrors"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -46,6 +49,9 @@ func (h *BranchOverrideHandler) ListBranchOverrides(c *gin.Context) {
 	inst, err := h.instanceRepo.FindByID(instanceID)
 	if err != nil {
 		status, message := mapError(err, "Stack instance")
+		if status == http.StatusInternalServerError {
+			slog.Error("failed to find stack instance", "instance_id", instanceID, "error", err)
+		}
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
@@ -60,6 +66,9 @@ func (h *BranchOverrideHandler) ListBranchOverrides(c *gin.Context) {
 	overrides, err := h.overrideRepo.List(instanceID)
 	if err != nil {
 		status, message := mapError(err, "Branch overrides")
+		if status == http.StatusInternalServerError {
+			slog.Error("failed to list branch overrides", "instance_id", instanceID, "error", err)
+		}
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
@@ -95,6 +104,9 @@ func (h *BranchOverrideHandler) SetBranchOverride(c *gin.Context) {
 	inst, err := h.instanceRepo.FindByID(instanceID)
 	if err != nil {
 		status, message := mapError(err, "Stack instance")
+		if status == http.StatusInternalServerError {
+			slog.Error("failed to find stack instance", "instance_id", instanceID, "error", err)
+		}
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
@@ -125,14 +137,22 @@ func (h *BranchOverrideHandler) SetBranchOverride(c *gin.Context) {
 
 	// Check if one already exists to preserve the ID.
 	existing, err := h.overrideRepo.Get(instanceID, chartID)
-	if err == nil && existing != nil {
-		override.ID = existing.ID
-	} else {
+	if err != nil {
+		if !errors.Is(err, dberrors.ErrNotFound) {
+			slog.Error("failed to check existing branch override", "instance_id", instanceID, "chart_id", chartID, "error", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
+			return
+		}
 		override.ID = uuid.New().String()
+	} else {
+		override.ID = existing.ID
 	}
 
 	if err := h.overrideRepo.Set(override); err != nil {
 		status, message := mapError(err, "Branch override")
+		if status == http.StatusInternalServerError {
+			slog.Error("failed to set branch override", "instance_id", instanceID, "chart_id", chartID, "error", err)
+		}
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
@@ -160,6 +180,9 @@ func (h *BranchOverrideHandler) DeleteBranchOverride(c *gin.Context) {
 	inst, err := h.instanceRepo.FindByID(instanceID)
 	if err != nil {
 		status, message := mapError(err, "Stack instance")
+		if status == http.StatusInternalServerError {
+			slog.Error("failed to find stack instance", "instance_id", instanceID, "error", err)
+		}
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
@@ -173,6 +196,9 @@ func (h *BranchOverrideHandler) DeleteBranchOverride(c *gin.Context) {
 
 	if err := h.overrideRepo.Delete(instanceID, chartID); err != nil {
 		status, message := mapError(err, "Branch override")
+		if status == http.StatusInternalServerError {
+			slog.Error("failed to delete branch override", "instance_id", instanceID, "chart_id", chartID, "error", err)
+		}
 		c.JSON(status, gin.H{"error": message})
 		return
 	}

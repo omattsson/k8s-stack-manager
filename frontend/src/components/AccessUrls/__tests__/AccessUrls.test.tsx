@@ -1,10 +1,18 @@
-import { describe, it, expect, vi, afterEach } from 'vitest';
+import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import AccessUrls from '../index';
 import type { NamespaceStatus } from '../../../types';
 
 describe('AccessUrls', () => {
+  beforeEach(() => {
+    Object.defineProperty(navigator, 'clipboard', {
+      value: { writeText: vi.fn() },
+      writable: true,
+      configurable: true,
+    });
+  });
+
   afterEach(() => {
     vi.clearAllMocks();
   });

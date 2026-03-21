@@ -191,13 +191,21 @@ loadtest-start-backend: azurite-start ## Build and start backend in release mode
 	@cd backend && go build -o tmp/main ./api/main.go
 	@echo "Starting backend (GIN_MODE=release, RATE_LIMIT=10000)..."
 	@cd backend && ( $(LOADTEST_ENV) ./tmp/main > tmp/loadtest.log 2>&1 & echo $$! > tmp/loadtest-backend.pid )
-	@until curl -sf http://localhost:8081/health/live >/dev/null 2>&1; do sleep 1; done
+	@n=0; while ! curl -sf http://localhost:8081/health/live >/dev/null 2>&1; do \
+		n=$$((n+1)); \
+		if [ $$n -ge 30 ]; then echo "ERROR: Backend failed to start after 30s. See backend/tmp/loadtest.log"; exit 1; fi; \
+		sleep 1; \
+	done
 	@echo "Backend is ready on :8081 (logs: backend/tmp/loadtest.log)"
 
 loadtest-start-frontend: ## Start frontend dev server for load testing
 	@echo "Starting frontend dev server..."
 	@cd frontend && ( npm run dev > /tmp/loadtest-frontend.log 2>&1 & echo $$! > /tmp/loadtest-frontend.pid )
-	@until curl -sf http://localhost:3000 >/dev/null 2>&1; do sleep 1; done
+	@n=0; while ! curl -sf http://localhost:3000 >/dev/null 2>&1; do \
+		n=$$((n+1)); \
+		if [ $$n -ge 30 ]; then echo "ERROR: Frontend failed to start after 30s. See /tmp/loadtest-frontend.log"; exit 1; fi; \
+		sleep 1; \
+	done
 	@echo "Frontend is ready on :3000"
 
 loadtest-start: loadtest-start-backend loadtest-start-frontend ## Start backend and frontend for load testing
