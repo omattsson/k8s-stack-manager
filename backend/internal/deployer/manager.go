@@ -124,6 +124,9 @@ func (m *Manager) Deploy(ctx context.Context, req DeployRequest) (string, error)
 	if err != nil {
 		return "", fmt.Errorf("getting cluster clients: %w", err)
 	}
+	if helmExec == nil {
+		return "", fmt.Errorf("getting cluster clients: helm executor is nil")
+	}
 
 	logID := uuid.New().String()
 	now := time.Now().UTC()
@@ -393,6 +396,9 @@ func (m *Manager) StopWithCharts(ctx context.Context, instance *models.StackInst
 	if err != nil {
 		return "", fmt.Errorf("getting cluster clients: %w", err)
 	}
+	if helmExec == nil {
+		return "", fmt.Errorf("getting cluster clients: helm executor is nil")
+	}
 
 	logID := uuid.New().String()
 	now := time.Now().UTC()
@@ -596,6 +602,9 @@ func (m *Manager) Clean(ctx context.Context, instance *models.StackInstance, cha
 	helmExec, err := m.registry.GetHelmExecutor(clusterID)
 	if err != nil {
 		return "", fmt.Errorf("getting cluster clients: %w", err)
+	}
+	if helmExec == nil {
+		return "", fmt.Errorf("getting cluster clients: helm executor is nil")
 	}
 	k8sClient, err := m.registry.GetK8sClient(clusterID)
 	if err != nil {

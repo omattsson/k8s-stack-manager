@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"log/slog"
 	"time"
 
 	"backend/internal/models"
@@ -30,6 +31,8 @@ func NewClusterRepository(accountName, accountKey, endpoint string, useAzurite b
 	repo := &ClusterRepository{client: client, tableName: "Clusters"}
 	if encryptionKey != "" {
 		repo.encryptionKey = crypto.DeriveKey(encryptionKey)
+	} else {
+		slog.Warn("KUBECONFIG_ENCRYPTION_KEY is not set — kubeconfig data will be stored unencrypted")
 	}
 	return repo, nil
 }

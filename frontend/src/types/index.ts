@@ -284,6 +284,7 @@ export interface UpdateClusterRequest {
   description?: string;
   api_server_url?: string;
   kubeconfig_data?: string;
+  kubeconfig_path?: string;
   region?: string;
   max_namespaces?: number;
   is_default?: boolean;

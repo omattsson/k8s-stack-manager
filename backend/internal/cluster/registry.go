@@ -278,12 +278,24 @@ func (r *Registry) Close() error {
 
 // ClusterExists checks whether a cluster with the given ID exists in the
 // underlying repository, without building any k8s/helm clients.
+// Only a definitive not-found returns false; transient backend failures
+// conservatively report true to avoid misclassifying existing clusters.
 func (r *Registry) ClusterExists(clusterID string) bool {
 	_, err := r.clusterRepo.FindByID(clusterID)
-	return err == nil
+	if err == nil {
+		return true
+	}
+	if isNotFoundError(err) {
+		return false
+	}
+	// Transient error — conservatively assume exists.
+	return true
 }
 
-// buildClients creates k8s + helm clients for a cluster. Must be called under write lock.
+// buildClients creates k8s + helm clients for a cluster.
+// It does not perform any locking itself; callers are responsible for
+// holding r.mu when mutating r.clients, but this function may be invoked
+// without the registry lock to avoid holding the mutex during I/O.
 func (r *Registry) buildClients(cluster *models.Cluster) (*ClusterClients, error) {
 	var kubeconfigPath string
 	var tempPath string

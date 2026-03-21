@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useWebSocket } from '../../hooks/useWebSocket';
 import type { WsMessage } from '../../hooks/useWebSocket';
@@ -67,6 +67,14 @@ const Dashboard = () => {
   }, []);
 
   useWebSocket(handleWsMessage);
+
+  const clusterNameMap = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const c of clusters) {
+      map.set(c.id, c.name);
+    }
+    return map;
+  }, [clusters]);
 
   const filtered = instances.filter((inst) => {
     if (statusFilter !== 'All' && inst.status !== statusFilter) return false;
@@ -181,11 +189,11 @@ const Dashboard = () => {
                       Definition: {instance.definition.name}
                     </Typography>
                   )}
-                  {instance.cluster_id && clusters.length > 0 && (() => {
-                    const cluster = clusters.find((c) => c.id === instance.cluster_id);
-                    return cluster ? (
+                  {instance.cluster_id && (() => {
+                    const clusterName = clusterNameMap.get(instance.cluster_id);
+                    return clusterName ? (
                       <Typography variant="body2" color="text.secondary">
-                        Cluster: {cluster.name}
+                        Cluster: {clusterName}
                       </Typography>
                     ) : null;
                   })()}

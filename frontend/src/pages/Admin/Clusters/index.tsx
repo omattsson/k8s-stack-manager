@@ -38,6 +38,7 @@ const emptyCreateForm: CreateClusterRequest = {
   description: '',
   api_server_url: '',
   kubeconfig_data: '',
+  kubeconfig_path: '',
   region: '',
   max_namespaces: 0,
   is_default: false,
@@ -108,6 +109,7 @@ const Clusters = () => {
       description: cluster.description,
       api_server_url: cluster.api_server_url,
       kubeconfig_data: '',
+      kubeconfig_path: '',
       region: cluster.region,
       max_namespaces: cluster.max_namespaces,
       is_default: cluster.is_default,
@@ -121,8 +123,8 @@ const Clusters = () => {
       setDialogError('Name and API Server URL are required');
       return;
     }
-    if (!editingCluster && !(form.kubeconfig_data ?? '').trim()) {
-      setDialogError('Kubeconfig is required when creating a cluster');
+    if (!editingCluster && !(form.kubeconfig_data ?? '').trim() && !(form.kubeconfig_path ?? '').trim()) {
+      setDialogError('Either kubeconfig data or kubeconfig path is required when creating a cluster');
       return;
     }
 
@@ -140,6 +142,9 @@ const Clusters = () => {
         };
         if ((form.kubeconfig_data ?? '').trim()) {
           update.kubeconfig_data = form.kubeconfig_data;
+        }
+        if ((form.kubeconfig_path ?? '').trim()) {
+          update.kubeconfig_path = form.kubeconfig_path;
         }
         await clusterService.update(editingCluster.id, update);
         setSnackbar({ open: true, message: 'Cluster updated', severity: 'success' });
@@ -318,16 +323,26 @@ const Clusters = () => {
               placeholder="https://my-cluster.example.com:6443"
             />
             <TextField
-              label={editingCluster ? 'Kubeconfig (leave blank to keep current)' : 'Kubeconfig'}
+              label={editingCluster ? 'Kubeconfig Data (leave blank to keep current)' : 'Kubeconfig Data'}
               value={form.kubeconfig_data}
-              onChange={(e) => setForm({ ...form, kubeconfig_data: e.target.value })}
-              required={!editingCluster}
+              onChange={(e) => setForm({ ...form, kubeconfig_data: e.target.value, kubeconfig_path: '' })}
               fullWidth
               multiline
               minRows={4}
               maxRows={10}
               placeholder="Paste kubeconfig YAML here"
+              disabled={!!(form.kubeconfig_path ?? '').trim()}
               slotProps={{ htmlInput: { style: { fontFamily: 'monospace', fontSize: '0.85rem' } } }}
+              helperText="Paste kubeconfig content directly, or use the path field below"
+            />
+            <TextField
+              label={editingCluster ? 'Kubeconfig Path (leave blank to keep current)' : 'Kubeconfig Path'}
+              value={form.kubeconfig_path}
+              onChange={(e) => setForm({ ...form, kubeconfig_path: e.target.value, kubeconfig_data: '' })}
+              fullWidth
+              placeholder="/path/to/kubeconfig"
+              disabled={!!(form.kubeconfig_data ?? '').trim()}
+              helperText="Path to kubeconfig file on the backend server"
             />
             <TextField
               label="Region"
