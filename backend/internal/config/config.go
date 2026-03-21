@@ -52,10 +52,12 @@ type GitProviderConfig struct {
 
 // DeploymentConfig holds deployment-related configuration for Helm operations.
 type DeploymentConfig struct {
-	DeploymentTimeout    time.Duration
-	HelmBinary           string
-	KubeconfigPath       string
-	MaxConcurrentDeploys int32
+	DeploymentTimeout         time.Duration
+	ClusterHealthPollInterval time.Duration
+	HelmBinary                string
+	KubeconfigPath            string
+	KubeconfigEncryptionKey   string
+	MaxConcurrentDeploys      int32
 }
 
 // Config holds all configuration for the application
@@ -369,10 +371,12 @@ func LoadConfig() (*Config, error) {
 			GitLabBaseURL:         getEnv("GITLAB_BASE_URL", ""),
 		},
 		Deployment: DeploymentConfig{
-			HelmBinary:           getEnv("HELM_BINARY", "helm"),
-			KubeconfigPath:       getEnv("KUBECONFIG_PATH", getEnv("KUBECONFIG", "")),
-			DeploymentTimeout:    getEnvDuration("DEPLOYMENT_TIMEOUT", 10*time.Minute),
-			MaxConcurrentDeploys: getEnvInt32("MAX_CONCURRENT_DEPLOYS", 5),
+			HelmBinary:                getEnv("HELM_BINARY", "helm"),
+			KubeconfigPath:            getEnv("KUBECONFIG_PATH", getEnv("KUBECONFIG", "")),
+			KubeconfigEncryptionKey:   getEnv("KUBECONFIG_ENCRYPTION_KEY", ""),
+			DeploymentTimeout:         getEnvDuration("DEPLOYMENT_TIMEOUT", 10*time.Minute),
+			ClusterHealthPollInterval: getEnvDuration("CLUSTER_HEALTH_POLL_INTERVAL", 60*time.Second),
+			MaxConcurrentDeploys:      getEnvInt32("MAX_CONCURRENT_DEPLOYS", 5),
 		},
 	}
 

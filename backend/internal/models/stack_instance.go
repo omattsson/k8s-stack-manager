@@ -13,6 +13,7 @@ type StackInstance struct {
 	Namespace         string     `json:"namespace"`
 	OwnerID           string     `json:"owner_id"`
 	Branch            string     `json:"branch"`
+	ClusterID         string     `json:"cluster_id,omitempty"`
 	Status            string     `json:"status"`
 	ErrorMessage      string     `json:"error_message,omitempty"`
 }
@@ -38,4 +39,5 @@ type StackInstanceRepository interface {
 	Delete(id string) error
 	List() ([]StackInstance, error)
 	ListByOwner(ownerID string) ([]StackInstance, error)
+	FindByCluster(clusterID string) ([]StackInstance, error)
 }

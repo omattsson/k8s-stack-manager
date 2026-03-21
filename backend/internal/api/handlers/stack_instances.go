@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"backend/internal/api/middleware"
+	"backend/internal/cluster"
 	"backend/internal/deployer"
 	"backend/internal/helm"
 	"backend/internal/k8s"
@@ -86,7 +87,7 @@ type InstanceHandler struct {
 	userRepo          models.UserRepository
 	deployManager     *deployer.Manager
 	k8sWatcher        *k8s.Watcher
-	k8sClient         *k8s.Client
+	registry          *cluster.Registry
 	deployLogRepo     models.DeploymentLogRepository
 }
 
@@ -125,7 +126,7 @@ func NewInstanceHandlerWithDeployer(
 	userRepo models.UserRepository,
 	deployManager *deployer.Manager,
 	k8sWatcher *k8s.Watcher,
-	k8sClient *k8s.Client,
+	registry *cluster.Registry,
 	deployLogRepo models.DeploymentLogRepository,
 ) *InstanceHandler {
 	return &InstanceHandler{
@@ -139,7 +140,7 @@ func NewInstanceHandlerWithDeployer(
 		userRepo:          userRepo,
 		deployManager:     deployManager,
 		k8sWatcher:        k8sWatcher,
-		k8sClient:         k8sClient,
+		registry:          registry,
 		deployLogRepo:     deployLogRepo,
 	}
 }
@@ -200,6 +201,25 @@ func (h *InstanceHandler) CreateInstance(c *gin.Context) {
 
 	if inst.Branch == "" {
 		inst.Branch = "master"
+	}
+
+	// Resolve or validate ClusterID using the registry when available.
+	// - If empty, resolve to the current default cluster so the persisted
+	//   value is explicit and won't shift if the default changes.
+	// - If non-empty, validate that it refers to a known cluster to avoid
+	//   persisting invalid references that will only fail at deploy time.
+	if h.registry != nil {
+		if inst.ClusterID == "" {
+			resolved, resolveErr := h.registry.ResolveClusterID("")
+			if resolveErr != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "No default cluster configured; specify cluster_id"})
+				return
+			}
+			inst.ClusterID = resolved
+		} else if !h.registry.ClusterExists(inst.ClusterID) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Unknown cluster_id"})
+			return
+		}
 	}
 
 	// Auto-generate namespace.
@@ -969,9 +989,25 @@ func (h *InstanceHandler) GetInstanceStatus(c *gin.Context) {
 		}
 	}
 
-	// Fall back to direct query if we have a K8s client.
-	if h.k8sClient != nil {
-		nsStatus, err := h.k8sClient.GetNamespaceStatus(c.Request.Context(), inst.Namespace)
+	// Fall back to direct query if we have a cluster registry.
+	if h.registry != nil {
+		client, clientErr := h.registry.GetK8sClient(inst.ClusterID)
+		if clientErr != nil {
+			slog.Warn("Failed to get k8s client for instance status",
+				"instance_id", id,
+				"cluster_id", inst.ClusterID,
+				"error", clientErr,
+			)
+			// Distinguish unknown cluster from connectivity/internal errors.
+			var dbErr *dberrors.DatabaseError
+			if errors.As(clientErr, &dbErr) && errors.Is(dbErr.Unwrap(), dberrors.ErrNotFound) {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "Unknown cluster_id"})
+			} else {
+				c.JSON(http.StatusBadGateway, gin.H{"error": "Failed to connect to cluster"})
+			}
+			return
+		}
+		nsStatus, err := client.GetNamespaceStatus(c.Request.Context(), inst.Namespace)
 		if err != nil {
 			slog.Error("Failed to get namespace status",
 				"instance_id", id,

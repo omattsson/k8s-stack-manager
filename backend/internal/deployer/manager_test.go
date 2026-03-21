@@ -103,6 +103,21 @@ func (m *mockInstanceRepo) ListByOwner(_ string) ([]models.StackInstance, error)
 	return m.List()
 }
 
+func (m *mockInstanceRepo) FindByCluster(clusterID string) ([]models.StackInstance, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.err != nil {
+		return nil, m.err
+	}
+	var out []models.StackInstance
+	for _, inst := range m.items {
+		if inst.ClusterID == clusterID {
+			out = append(out, *inst)
+		}
+	}
+	return out, nil
+}
+
 func (m *mockInstanceRepo) setError(err error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -210,6 +225,39 @@ func (m *mockBroadcaster) messageCount() int {
 
 // ---- tests ----
 
+// mockClusterResolver implements ClusterResolver for tests.
+type mockClusterResolver struct {
+	helm       HelmExecutor
+	k8sClient  *k8s.Client
+	resolveErr error
+	helmErr    error
+	k8sErr     error
+}
+
+func (m *mockClusterResolver) ResolveClusterID(clusterID string) (string, error) {
+	if m.resolveErr != nil {
+		return "", m.resolveErr
+	}
+	if clusterID == "" {
+		return "default", nil
+	}
+	return clusterID, nil
+}
+
+func (m *mockClusterResolver) GetHelmExecutor(_ string) (HelmExecutor, error) {
+	if m.helmErr != nil {
+		return nil, m.helmErr
+	}
+	return m.helm, nil
+}
+
+func (m *mockClusterResolver) GetK8sClient(_ string) (*k8s.Client, error) {
+	if m.k8sErr != nil {
+		return nil, m.k8sErr
+	}
+	return m.k8sClient, nil
+}
+
 func TestNewManager(t *testing.T) {
 	t.Parallel()
 
@@ -240,7 +288,7 @@ func TestNewManager(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			mgr := NewManager(ManagerConfig{
-				HelmClient:    NewHelmClient("/nonexistent/helm", "", 1*time.Second),
+				Registry:      &mockClusterResolver{helm: NewHelmClient("/nonexistent/helm", "", 1*time.Second)},
 				InstanceRepo:  newMockInstanceRepo(),
 				DeployLogRepo: newMockDeployLogRepo(),
 				Hub:           &mockBroadcaster{},
@@ -271,7 +319,7 @@ func TestManager_Deploy_CreatesLogAndUpdatesStatus(t *testing.T) {
 	require.NoError(t, instanceRepo.Create(inst))
 
 	mgr := NewManager(ManagerConfig{
-		HelmClient:    NewHelmClient("/nonexistent/helm", "", 1*time.Second),
+		Registry:      &mockClusterResolver{helm: NewHelmClient("/nonexistent/helm", "", 1*time.Second)},
 		InstanceRepo:  instanceRepo,
 		DeployLogRepo: logRepo,
 		Hub:           hub,
@@ -339,7 +387,7 @@ func TestManager_Deploy_WithCharts_Fails(t *testing.T) {
 
 	// Use a nonexistent binary so helm install fails.
 	mgr := NewManager(ManagerConfig{
-		HelmClient:    NewHelmClient("/nonexistent/helm", "", 1*time.Second),
+		Registry:      &mockClusterResolver{helm: NewHelmClient("/nonexistent/helm", "", 1*time.Second)},
 		InstanceRepo:  instanceRepo,
 		DeployLogRepo: logRepo,
 		Hub:           hub,
@@ -398,7 +446,7 @@ func TestManager_Stop_CreatesLogAndUpdatesStatus(t *testing.T) {
 	require.NoError(t, instanceRepo.Create(inst))
 
 	mgr := NewManager(ManagerConfig{
-		HelmClient:    NewHelmClient("/nonexistent/helm", "", 1*time.Second),
+		Registry:      &mockClusterResolver{helm: NewHelmClient("/nonexistent/helm", "", 1*time.Second)},
 		InstanceRepo:  instanceRepo,
 		DeployLogRepo: logRepo,
 		Hub:           hub,
@@ -446,7 +494,7 @@ func TestManager_StopWithCharts_NoCharts(t *testing.T) {
 	require.NoError(t, instanceRepo.Create(inst))
 
 	mgr := NewManager(ManagerConfig{
-		HelmClient:    NewHelmClient("/nonexistent/helm", "", 1*time.Second),
+		Registry:      &mockClusterResolver{helm: NewHelmClient("/nonexistent/helm", "", 1*time.Second)},
 		InstanceRepo:  instanceRepo,
 		DeployLogRepo: logRepo,
 		Hub:           hub,
@@ -481,7 +529,7 @@ func TestManager_Deploy_LogRepoError(t *testing.T) {
 	require.NoError(t, instanceRepo.Create(inst))
 
 	mgr := NewManager(ManagerConfig{
-		HelmClient:    NewHelmClient("/nonexistent/helm", "", 1*time.Second),
+		Registry:      &mockClusterResolver{helm: NewHelmClient("/nonexistent/helm", "", 1*time.Second)},
 		InstanceRepo:  instanceRepo,
 		DeployLogRepo: logRepo,
 		Hub:           &mockBroadcaster{},
@@ -515,7 +563,7 @@ func TestManager_Deploy_InstanceRepoUpdateError(t *testing.T) {
 	instanceRepo.setError(errors.New("update fail"))
 
 	mgr := NewManager(ManagerConfig{
-		HelmClient:    NewHelmClient("/nonexistent/helm", "", 1*time.Second),
+		Registry:      &mockClusterResolver{helm: NewHelmClient("/nonexistent/helm", "", 1*time.Second)},
 		InstanceRepo:  instanceRepo,
 		DeployLogRepo: logRepo,
 		Hub:           &mockBroadcaster{},
@@ -547,7 +595,7 @@ func TestManager_Stop_LogRepoError(t *testing.T) {
 	require.NoError(t, instanceRepo.Create(inst))
 
 	mgr := NewManager(ManagerConfig{
-		HelmClient:    NewHelmClient("/nonexistent/helm", "", 1*time.Second),
+		Registry:      &mockClusterResolver{helm: NewHelmClient("/nonexistent/helm", "", 1*time.Second)},
 		InstanceRepo:  instanceRepo,
 		DeployLogRepo: logRepo,
 		Hub:           &mockBroadcaster{},
@@ -574,7 +622,7 @@ func TestManager_Deploy_NilHub(t *testing.T) {
 
 	// Hub is nil — should not panic.
 	mgr := NewManager(ManagerConfig{
-		HelmClient:    NewHelmClient("/nonexistent/helm", "", 1*time.Second),
+		Registry:      &mockClusterResolver{helm: NewHelmClient("/nonexistent/helm", "", 1*time.Second)},
 		InstanceRepo:  instanceRepo,
 		DeployLogRepo: logRepo,
 		Hub:           nil,
@@ -615,7 +663,7 @@ func TestManager_Deploy_ChartsSortedByDeployOrder(t *testing.T) {
 	// Use nonexistent binary — first chart will fail, but we can
 	// verify from the log output which chart was attempted first.
 	mgr := NewManager(ManagerConfig{
-		HelmClient:    NewHelmClient("/nonexistent/helm", "", 1*time.Second),
+		Registry:      &mockClusterResolver{helm: NewHelmClient("/nonexistent/helm", "", 1*time.Second)},
 		InstanceRepo:  instanceRepo,
 		DeployLogRepo: logRepo,
 		Hub:           &mockBroadcaster{},
@@ -673,7 +721,7 @@ func TestManager_StopWithCharts_ExecutesUninstall(t *testing.T) {
 
 	// Use a nonexistent binary — uninstall will fail, but we exercise the full path.
 	mgr := NewManager(ManagerConfig{
-		HelmClient:    NewHelmClient("/nonexistent/helm", "", 1*time.Second),
+		Registry:      &mockClusterResolver{helm: NewHelmClient("/nonexistent/helm", "", 1*time.Second)},
 		InstanceRepo:  instanceRepo,
 		DeployLogRepo: logRepo,
 		Hub:           hub,
@@ -683,15 +731,15 @@ func TestManager_StopWithCharts_ExecutesUninstall(t *testing.T) {
 	charts := []ChartDeployInfo{
 		{
 			ChartConfig: models.ChartConfig{
-				ID:        "c1",
-				ChartName: "redis",
+				ID:          "c1",
+				ChartName:   "redis",
 				DeployOrder: 1,
 			},
 		},
 		{
 			ChartConfig: models.ChartConfig{
-				ID:        "c2",
-				ChartName: "nginx",
+				ID:          "c2",
+				ChartName:   "nginx",
 				DeployOrder: 2,
 			},
 		},
@@ -737,7 +785,7 @@ func TestManager_StopWithCharts_Success_NoCharts(t *testing.T) {
 	require.NoError(t, instanceRepo.Create(inst))
 
 	mgr := NewManager(ManagerConfig{
-		HelmClient:    NewHelmClient("/nonexistent/helm", "", 1*time.Second),
+		Registry:      &mockClusterResolver{helm: NewHelmClient("/nonexistent/helm", "", 1*time.Second)},
 		InstanceRepo:  instanceRepo,
 		DeployLogRepo: logRepo,
 		Hub:           hub,
@@ -788,7 +836,7 @@ func TestManager_FinalizeStop_Success(t *testing.T) {
 	require.NoError(t, logRepo.Create(context.Background(), deployLog))
 
 	mgr := NewManager(ManagerConfig{
-		HelmClient:    NewHelmClient("/nonexistent/helm", "", 1*time.Second),
+		Registry:      &mockClusterResolver{helm: NewHelmClient("/nonexistent/helm", "", 1*time.Second)},
 		InstanceRepo:  instanceRepo,
 		DeployLogRepo: logRepo,
 		Hub:           hub,
@@ -838,7 +886,7 @@ func TestManager_FinalizeStop_Error(t *testing.T) {
 	require.NoError(t, logRepo.Create(context.Background(), deployLog))
 
 	mgr := NewManager(ManagerConfig{
-		HelmClient:    NewHelmClient("/nonexistent/helm", "", 1*time.Second),
+		Registry:      &mockClusterResolver{helm: NewHelmClient("/nonexistent/helm", "", 1*time.Second)},
 		InstanceRepo:  instanceRepo,
 		DeployLogRepo: logRepo,
 		Hub:           hub,
@@ -871,7 +919,7 @@ func TestManager_FinalizeStop_InstanceNotFound(t *testing.T) {
 	logRepo := newMockDeployLogRepo()
 
 	mgr := NewManager(ManagerConfig{
-		HelmClient:    NewHelmClient("/nonexistent/helm", "", 1*time.Second),
+		Registry:      &mockClusterResolver{helm: NewHelmClient("/nonexistent/helm", "", 1*time.Second)},
 		InstanceRepo:  instanceRepo,
 		DeployLogRepo: logRepo,
 		Hub:           nil,
@@ -890,7 +938,7 @@ func TestManager_FinalizeDeploy_InstanceNotFound(t *testing.T) {
 	logRepo := newMockDeployLogRepo()
 
 	mgr := NewManager(ManagerConfig{
-		HelmClient:    NewHelmClient("/nonexistent/helm", "", 1*time.Second),
+		Registry:      &mockClusterResolver{helm: NewHelmClient("/nonexistent/helm", "", 1*time.Second)},
 		InstanceRepo:  instanceRepo,
 		DeployLogRepo: logRepo,
 		Hub:           nil,
@@ -906,7 +954,7 @@ func TestManager_BroadcastStatusWithError_NilHub(t *testing.T) {
 	t.Parallel()
 
 	mgr := NewManager(ManagerConfig{
-		HelmClient:    NewHelmClient("/nonexistent/helm", "", 1*time.Second),
+		Registry:      &mockClusterResolver{helm: NewHelmClient("/nonexistent/helm", "", 1*time.Second)},
 		InstanceRepo:  newMockInstanceRepo(),
 		DeployLogRepo: newMockDeployLogRepo(),
 		Hub:           nil,
@@ -923,7 +971,7 @@ func TestManager_BroadcastStatus_NilHub(t *testing.T) {
 	t.Parallel()
 
 	mgr := NewManager(ManagerConfig{
-		HelmClient:    NewHelmClient("/nonexistent/helm", "", 1*time.Second),
+		Registry:      &mockClusterResolver{helm: NewHelmClient("/nonexistent/helm", "", 1*time.Second)},
 		InstanceRepo:  newMockInstanceRepo(),
 		DeployLogRepo: newMockDeployLogRepo(),
 		Hub:           nil,
@@ -940,7 +988,7 @@ func TestManager_BroadcastLog_NilHub(t *testing.T) {
 	t.Parallel()
 
 	mgr := NewManager(ManagerConfig{
-		HelmClient:    NewHelmClient("/nonexistent/helm", "", 1*time.Second),
+		Registry:      &mockClusterResolver{helm: NewHelmClient("/nonexistent/helm", "", 1*time.Second)},
 		InstanceRepo:  newMockInstanceRepo(),
 		DeployLogRepo: newMockDeployLogRepo(),
 		Hub:           nil,
@@ -958,7 +1006,7 @@ func TestManager_BroadcastLog_WithHub(t *testing.T) {
 
 	hub := &mockBroadcaster{}
 	mgr := NewManager(ManagerConfig{
-		HelmClient:    NewHelmClient("/nonexistent/helm", "", 1*time.Second),
+		Registry:      &mockClusterResolver{helm: NewHelmClient("/nonexistent/helm", "", 1*time.Second)},
 		InstanceRepo:  newMockInstanceRepo(),
 		DeployLogRepo: newMockDeployLogRepo(),
 		Hub:           hub,
@@ -975,7 +1023,7 @@ func TestManager_BroadcastStatusWithError_WithHub(t *testing.T) {
 
 	hub := &mockBroadcaster{}
 	mgr := NewManager(ManagerConfig{
-		HelmClient:    NewHelmClient("/nonexistent/helm", "", 1*time.Second),
+		Registry:      &mockClusterResolver{helm: NewHelmClient("/nonexistent/helm", "", 1*time.Second)},
 		InstanceRepo:  newMockInstanceRepo(),
 		DeployLogRepo: newMockDeployLogRepo(),
 		Hub:           hub,
@@ -1004,7 +1052,7 @@ func TestManager_StopWithCharts_ReversesDeployOrder(t *testing.T) {
 
 	// Use nonexistent binary so we can check which chart fails first.
 	mgr := NewManager(ManagerConfig{
-		HelmClient:    NewHelmClient("/nonexistent/helm", "", 1*time.Second),
+		Registry:      &mockClusterResolver{helm: NewHelmClient("/nonexistent/helm", "", 1*time.Second)},
 		InstanceRepo:  instanceRepo,
 		DeployLogRepo: logRepo,
 		Hub:           hub,
@@ -1063,7 +1111,7 @@ func TestManager_Stop_InstanceRepoUpdateError(t *testing.T) {
 	instanceRepo.setError(errors.New("update fail"))
 
 	mgr := NewManager(ManagerConfig{
-		HelmClient:    NewHelmClient("/nonexistent/helm", "", 1*time.Second),
+		Registry:      &mockClusterResolver{helm: NewHelmClient("/nonexistent/helm", "", 1*time.Second)},
 		InstanceRepo:  instanceRepo,
 		DeployLogRepo: logRepo,
 		Hub:           &mockBroadcaster{},
@@ -1090,7 +1138,7 @@ func TestManager_StopWithCharts_LogRepoError(t *testing.T) {
 	require.NoError(t, instanceRepo.Create(inst))
 
 	mgr := NewManager(ManagerConfig{
-		HelmClient:    NewHelmClient("/nonexistent/helm", "", 1*time.Second),
+		Registry:      &mockClusterResolver{helm: NewHelmClient("/nonexistent/helm", "", 1*time.Second)},
 		InstanceRepo:  instanceRepo,
 		DeployLogRepo: logRepo,
 		Hub:           &mockBroadcaster{},
@@ -1118,7 +1166,7 @@ func TestManager_StopWithCharts_InstanceUpdateError(t *testing.T) {
 	instanceRepo.setError(errors.New("update fail"))
 
 	mgr := NewManager(ManagerConfig{
-		HelmClient:    NewHelmClient("/nonexistent/helm", "", 1*time.Second),
+		Registry:      &mockClusterResolver{helm: NewHelmClient("/nonexistent/helm", "", 1*time.Second)},
 		InstanceRepo:  instanceRepo,
 		DeployLogRepo: logRepo,
 		Hub:           &mockBroadcaster{},
@@ -1239,7 +1287,7 @@ func TestManager_FinalizeDeploy_OutputTruncation(t *testing.T) {
 	require.NoError(t, logRepo.Create(context.Background(), deployLog))
 
 	mgr := NewManager(ManagerConfig{
-		HelmClient:    NewHelmClient("/nonexistent/helm", "", 1*time.Second),
+		Registry:      &mockClusterResolver{helm: NewHelmClient("/nonexistent/helm", "", 1*time.Second)},
 		InstanceRepo:  instanceRepo,
 		DeployLogRepo: logRepo,
 		Hub:           nil,
@@ -1258,12 +1306,12 @@ func TestManager_FinalizeDeploy_OutputTruncation(t *testing.T) {
 // ---- mock helm executor ----
 
 type mockHelmExecutor struct {
-	mu            sync.Mutex
-	installFunc   func(ctx context.Context, req InstallRequest) (string, error)
-	uninstallFunc func(ctx context.Context, req UninstallRequest) (string, error)
-	installCalls  []InstallRequest
+	mu             sync.Mutex
+	installFunc    func(ctx context.Context, req InstallRequest) (string, error)
+	uninstallFunc  func(ctx context.Context, req UninstallRequest) (string, error)
+	installCalls   []InstallRequest
 	uninstallCalls []UninstallRequest
-	timeout       time.Duration
+	timeout        time.Duration
 }
 
 func (m *mockHelmExecutor) Install(ctx context.Context, req InstallRequest) (string, error) {
@@ -1340,7 +1388,7 @@ func TestManager_Deploy_PartialRollback(t *testing.T) {
 	}
 
 	mgr := NewManager(ManagerConfig{
-		HelmClient:    helmMock,
+		Registry:      &mockClusterResolver{helm: helmMock},
 		InstanceRepo:  instanceRepo,
 		DeployLogRepo: logRepo,
 		Hub:           hub,
@@ -1419,7 +1467,7 @@ func TestManager_Deploy_PartialRollback_RollbackFails(t *testing.T) {
 	}
 
 	mgr := NewManager(ManagerConfig{
-		HelmClient:    helmMock,
+		Registry:      &mockClusterResolver{helm: helmMock},
 		InstanceRepo:  instanceRepo,
 		DeployLogRepo: logRepo,
 		Hub:           hub,
@@ -1489,11 +1537,10 @@ func TestManager_Clean_Success(t *testing.T) {
 	k8sClient := k8s.NewClientFromInterface(fakeCS)
 
 	mgr := NewManager(ManagerConfig{
-		HelmClient:    helmMock,
+		Registry:      &mockClusterResolver{helm: helmMock, k8sClient: k8sClient},
 		InstanceRepo:  instanceRepo,
 		DeployLogRepo: logRepo,
 		Hub:           hub,
-		K8sClient:     k8sClient,
 		MaxConcurrent: 2,
 	})
 
@@ -1564,11 +1611,10 @@ func TestManager_Clean_Success_NoK8sClient(t *testing.T) {
 	helmMock := &mockHelmExecutor{}
 
 	mgr := NewManager(ManagerConfig{
-		HelmClient:    helmMock,
+		Registry:      &mockClusterResolver{helm: helmMock},
 		InstanceRepo:  instanceRepo,
 		DeployLogRepo: logRepo,
 		Hub:           hub,
-		K8sClient:     nil, // No K8s client.
 		MaxConcurrent: 2,
 	})
 
@@ -1623,11 +1669,10 @@ func TestManager_Clean_HelmFails(t *testing.T) {
 	}
 
 	mgr := NewManager(ManagerConfig{
-		HelmClient:    helmMock,
+		Registry:      &mockClusterResolver{helm: helmMock},
 		InstanceRepo:  instanceRepo,
 		DeployLogRepo: logRepo,
 		Hub:           hub,
-		K8sClient:     nil,
 		MaxConcurrent: 2,
 	})
 
@@ -1692,11 +1737,10 @@ func TestManager_Clean_ReleasesAlreadyGone(t *testing.T) {
 	k8sClient := k8s.NewClientFromInterface(fakeClient)
 
 	mgr := NewManager(ManagerConfig{
-		HelmClient:    helmMock,
+		Registry:      &mockClusterResolver{helm: helmMock, k8sClient: k8sClient},
 		InstanceRepo:  instanceRepo,
 		DeployLogRepo: logRepo,
 		Hub:           hub,
-		K8sClient:     k8sClient,
 		MaxConcurrent: 2,
 	})
 
@@ -1751,7 +1795,7 @@ func TestManager_Deploy_FirstChartFails_NoRollback(t *testing.T) {
 	}
 
 	mgr := NewManager(ManagerConfig{
-		HelmClient:    helmMock,
+		Registry:      &mockClusterResolver{helm: helmMock},
 		InstanceRepo:  instanceRepo,
 		DeployLogRepo: logRepo,
 		Hub:           hub,

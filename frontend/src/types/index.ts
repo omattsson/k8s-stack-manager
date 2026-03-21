@@ -92,6 +92,7 @@ export interface StackInstance {
   namespace: string;
   owner_id: string;
   branch: string;
+  cluster_id?: string;
   status: string;
   error_message?: string;
   last_deployed_at?: string;
@@ -252,4 +253,45 @@ export interface OrphanedNamespace {
   phase: string;
   resource_counts?: ResourceCounts;
   helm_releases: string[];
+}
+
+export interface Cluster {
+  id: string;
+  name: string;
+  description: string;
+  api_server_url: string;
+  region: string;
+  health_status: 'healthy' | 'degraded' | 'unreachable' | '';
+  max_namespaces: number;
+  is_default: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CreateClusterRequest {
+  name: string;
+  description: string;
+  api_server_url: string;
+  kubeconfig_data?: string;
+  kubeconfig_path?: string;
+  region: string;
+  max_namespaces: number;
+  is_default: boolean;
+}
+
+export interface UpdateClusterRequest {
+  name?: string;
+  description?: string;
+  api_server_url?: string;
+  kubeconfig_data?: string;
+  kubeconfig_path?: string;
+  region?: string;
+  max_namespaces?: number;
+  is_default?: boolean;
+}
+
+export interface ClusterTestResult {
+  status: string;
+  message: string;
+  server_version?: string;
 }

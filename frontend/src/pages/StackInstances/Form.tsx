@@ -12,8 +12,8 @@ import {
   Chip,
 } from '@mui/material';
 import axios from 'axios';
-import { instanceService, definitionService } from '../../api/client';
-import type { StackDefinition } from '../../types';
+import { instanceService, definitionService, clusterService } from '../../api/client';
+import type { StackDefinition, Cluster } from '../../types';
 
 interface ConflictResponse {
   error: string;
@@ -25,7 +25,9 @@ const Form = () => {
   const navigate = useNavigate();
 
   const [definitions, setDefinitions] = useState<StackDefinition[]>([]);
+  const [clusters, setClusters] = useState<Cluster[]>([]);
   const [selectedDefId, setSelectedDefId] = useState('');
+  const [selectedClusterId, setSelectedClusterId] = useState('');
   const [name, setName] = useState('');
   const [branch, setBranch] = useState('master');
   const [loading, setLoading] = useState(true);
@@ -34,17 +36,18 @@ const Form = () => {
   const [suggestions, setSuggestions] = useState<string[]>([]);
 
   useEffect(() => {
-    const fetchDefinitions = async () => {
+    const fetchData = async () => {
       try {
-        const data = await definitionService.list();
-        setDefinitions(data || []);
+        const [defs, cls] = await Promise.all([definitionService.list(), clusterService.list()]);
+        setDefinitions(defs || []);
+        setClusters(cls || []);
       } catch {
-        setError('Failed to load definitions');
+        setError('Failed to load form data');
       } finally {
         setLoading(false);
       }
     };
-    fetchDefinitions();
+    fetchData();
   }, []);
 
   useEffect(() => {
@@ -63,6 +66,7 @@ const Form = () => {
         stack_definition_id: selectedDefId,
         name,
         branch,
+        ...(selectedClusterId ? { cluster_id: selectedClusterId } : {}),
       });
       navigate(`/stack-instances/${instance.id}`);
     } catch (err) {
@@ -160,6 +164,39 @@ const Form = () => {
             onChange={(e) => setBranch(e.target.value)}
             fullWidth
           />
+
+          {clusters.length > 0 && (
+            <TextField
+              label="Cluster"
+              value={selectedClusterId}
+              onChange={(e) => setSelectedClusterId(e.target.value)}
+              select
+              fullWidth
+              helperText="Select a cluster or leave empty to use the default cluster"
+            >
+              <MenuItem value="">
+                <em>Default cluster</em>
+              </MenuItem>
+              {clusters.map((c) => (
+                <MenuItem key={c.id} value={c.id}>
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                    {c.name}
+                    {c.region && (
+                      <Chip label={c.region} size="small" variant="outlined" />
+                    )}
+                    <Chip
+                      label={c.health_status || 'unknown'}
+                      size="small"
+                      color={c.health_status === 'healthy' ? 'success' : c.health_status === 'degraded' ? 'warning' : c.health_status === 'unreachable' ? 'error' : 'default'}
+                    />
+                    {c.is_default && (
+                      <Chip label="Default" size="small" variant="outlined" color="primary" />
+                    )}
+                  </Box>
+                </MenuItem>
+              ))}
+            </TextField>
+          )}
         </Box>
 
         <Box sx={{ display: 'flex', gap: 2, mt: 3 }}>

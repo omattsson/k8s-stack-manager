@@ -45,6 +45,7 @@ backend/
       users.go                   # UserHandler: user management
       api_keys.go                # APIKeyHandler: API key management
       admin.go                   # AdminHandler: orphaned namespace detection/cleanup
+      clusters.go                # ClusterHandler: CRUD + test-connection + health
       git.go                     # GitHandler: branch listing, validation
       websocket.go               # WebSocket upgrade handler
       mock_repository.go         # In-memory mock for Item tests (same package)
@@ -61,12 +62,14 @@ backend/
     database/errors.go           # Re-exports from pkg/dberrors (single source of truth)
     models/                      # Domain models, repository interfaces, validation
     health/health.go             # Dependency health checks (liveness/readiness)
-    deployer/                    # Helm CLI wrapper for deploy/undeploy/status
+    cluster/                     # ClusterRegistry (multi-cluster coordination) + health poller
+    deployer/                    # Helm CLI wrapper for deploy/undeploy/status (multi-cluster via registry)
     k8s/                         # Kubernetes cluster client and status monitoring
     gitprovider/                 # Azure DevOps + GitLab branch listing, URL detection
     helm/                        # Values deep-merge, template variable substitution
     websocket/                   # WebSocket hub, client, message types
   pkg/dberrors/errors.go         # Canonical error types: ErrNotFound, ErrDuplicateKey, ErrValidation
+  pkg/crypto/                    # AES-GCM encryption/decryption for kubeconfig data at rest (key derived via SHA-256)
 ```
 
 ## Key Backend Patterns
@@ -123,9 +126,10 @@ This application enables developers to configure, store, and deploy multi-servic
 
 ```
 backend/internal/
+  cluster/               # ClusterRegistry: multi-cluster client management, health poller
   gitprovider/           # Azure DevOps + GitLab branch listing, URL detection, caching
   helm/                  # Values deep-merge, template variable substitution, YAML export
-  deployer/              # Helm CLI wrapper for deploy/undeploy/status
+  deployer/              # Helm CLI wrapper for deploy/undeploy/status (multi-cluster via registry)
   k8s/                   # Kubernetes cluster client and status monitoring
 ```
 
@@ -134,6 +138,7 @@ backend/internal/
 - **Audit trail**: Every mutating API endpoint (POST, PUT, DELETE) must create an AuditLog entry
 - **Branch default**: "master" unless overridden per stack definition's `DefaultBranch` field
 - **Namespace naming**: Auto-generated as `stack-{instance-name}-{owner}`
+- **Multi-cluster**: Clusters are registered via `/api/v1/clusters` with kubeconfig data (encrypted at rest via `pkg/crypto`) or kubeconfig path. `ClusterRegistry` manages per-cluster K8s/Helm clients. Health poller monitors cluster status. Stack instances target a specific cluster (or the default).
 - **Git provider detection**: URL-based — `dev.azure.com`/`visualstudio.com` → Azure DevOps; `gitlab.com` or custom → GitLab
 - **Helm values merge**: Deep-merge chart defaults + instance overrides; substitute template vars `{{.Branch}}`, `{{.Namespace}}`, `{{.InstanceName}}`, `{{.StackName}}`, `{{.Owner}}`
 - **Auth**: JWT with `Authorization: Bearer <token>` header; middleware injects `userID`, `username`, `role` into Gin context
@@ -153,6 +158,7 @@ backend/internal/
 | Users | `/api/v1/users` | User management (admin) |
 | API Keys | `/api/v1/users/:id/api-keys` | API key management |
 | Admin | `/api/v1/admin` | Orphaned namespace detection and cleanup |
+| Clusters | `/api/v1/clusters` | Multi-cluster registration, health, test-connection |
 | Health | `/health/*` | Liveness + readiness |
 
 ## Security Rules

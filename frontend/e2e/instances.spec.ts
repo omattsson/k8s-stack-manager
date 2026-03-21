@@ -205,4 +205,45 @@ test.describe('Stack Instance Management', () => {
       timeout: 10_000,
     });
   });
+
+  test('instance creation form shows cluster selector when clusters exist', async ({ page }) => {
+    // Create a cluster via API so the selector appears
+    const token = await page.evaluate(() => localStorage.getItem('token'));
+    const clusterName = uniqueName('e2e-cluster');
+    const createRes = await page.request.post('http://localhost:8081/api/v1/clusters', {
+      headers: { Authorization: `Bearer ${token}` },
+      data: {
+        name: clusterName,
+        api_server_url: 'https://fake-cluster.example.com:6443',
+        kubeconfig_data: 'apiVersion: v1\nkind: Config\nclusters: []\n',
+        region: 'e2e-region',
+      },
+    });
+    expect(createRes.ok()).toBeTruthy();
+    const cluster = await createRes.json();
+
+    try {
+      await page.goto('/stack-instances/new');
+      await expect(
+        page.getByRole('heading', { level: 1, name: 'Create Stack Instance' }),
+      ).toBeVisible({ timeout: 10_000 });
+
+      // The Cluster dropdown should be visible and contain our cluster
+      const clusterField = page.getByLabel('Cluster');
+      await expect(clusterField).toBeVisible({ timeout: 5_000 });
+
+      // Open the dropdown and verify options
+      await clusterField.click();
+      await expect(page.getByRole('option', { name: /Default cluster/ })).toBeVisible();
+      await expect(page.getByRole('option', { name: new RegExp(clusterName) })).toBeVisible();
+
+      // Select the created cluster
+      await page.getByRole('option', { name: new RegExp(clusterName) }).click();
+    } finally {
+      // Clean up
+      await page.request.delete(`http://localhost:8081/api/v1/clusters/${cluster.id}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+    }
+  });
 });

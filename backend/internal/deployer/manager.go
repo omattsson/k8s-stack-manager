@@ -30,13 +30,20 @@ const maxLogErrorLen = 1024
 // and large Helm output could exceed it.
 const maxOutputLen = 64 * 1024
 
+// ClusterResolver resolves per-cluster Helm and K8s clients.
+// cluster.Registry implements this interface.
+type ClusterResolver interface {
+	ResolveClusterID(clusterID string) (string, error)
+	GetHelmExecutor(clusterID string) (HelmExecutor, error)
+	GetK8sClient(clusterID string) (*k8s.Client, error)
+}
+
 // Manager orchestrates asynchronous deployments with concurrency control.
 type Manager struct {
-	helm           HelmExecutor
+	registry       ClusterResolver
 	instanceRepo   models.StackInstanceRepository
 	logRepo        models.DeploymentLogRepository
 	hub            websocket.BroadcastSender
-	k8sClient      *k8s.Client
 	semaphore      chan struct{}
 	shutdownCtx    context.Context
 	shutdownCancel context.CancelFunc
@@ -44,11 +51,10 @@ type Manager struct {
 
 // ManagerConfig holds the dependencies for creating a Manager.
 type ManagerConfig struct {
-	HelmClient    HelmExecutor
+	Registry      ClusterResolver
 	InstanceRepo  models.StackInstanceRepository
 	DeployLogRepo models.DeploymentLogRepository
 	Hub           websocket.BroadcastSender
-	K8sClient     *k8s.Client
 	MaxConcurrent int
 }
 
@@ -76,11 +82,10 @@ func NewManager(cfg ManagerConfig) *Manager {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	return &Manager{
-		helm:           cfg.HelmClient,
+		registry:       cfg.Registry,
 		instanceRepo:   cfg.InstanceRepo,
 		logRepo:        cfg.DeployLogRepo,
 		hub:            cfg.Hub,
-		k8sClient:      cfg.K8sClient,
 		semaphore:      make(chan struct{}, maxConcurrent),
 		shutdownCtx:    ctx,
 		shutdownCancel: cancel,
@@ -104,6 +109,23 @@ func (m *Manager) Deploy(ctx context.Context, req DeployRequest) (string, error)
 	// Short-circuit if the request context is already cancelled.
 	if err := ctx.Err(); err != nil {
 		return "", fmt.Errorf("request cancelled: %w", err)
+	}
+
+	// Resolve cluster clients before starting the async goroutine so that
+	// lookup errors are returned synchronously to the caller.
+	if m.registry == nil {
+		return "", fmt.Errorf("cluster registry is not configured")
+	}
+	clusterID, err := m.registry.ResolveClusterID(req.Instance.ClusterID)
+	if err != nil {
+		return "", fmt.Errorf("resolving cluster: %w", err)
+	}
+	helmExec, err := m.registry.GetHelmExecutor(clusterID)
+	if err != nil {
+		return "", fmt.Errorf("getting cluster clients: %w", err)
+	}
+	if helmExec == nil {
+		return "", fmt.Errorf("getting cluster clients: helm executor is nil")
 	}
 
 	logID := uuid.New().String()
@@ -139,14 +161,14 @@ func (m *Manager) Deploy(ctx context.Context, req DeployRequest) (string, error)
 	})
 
 	// Launch async deployment, passing the deployLog to avoid re-fetching.
-	go m.executeDeploy(req.Instance.ID, deployLog, req.Instance.Namespace, charts)
+	go m.executeDeploy(helmExec, req.Instance.ID, deployLog, req.Instance.Namespace, charts)
 
 	return logID, nil
 }
 
 // executeDeploy runs the helm install for each chart sequentially within
 // a concurrency-limited goroutine.
-func (m *Manager) executeDeploy(instanceID string, deployLog *models.DeploymentLog, namespace string, charts []ChartDeployInfo) {
+func (m *Manager) executeDeploy(helm HelmExecutor, instanceID string, deployLog *models.DeploymentLog, namespace string, charts []ChartDeployInfo) {
 	// Acquire semaphore.
 	m.semaphore <- struct{}{}
 	defer func() { <-m.semaphore }()
@@ -166,7 +188,13 @@ func (m *Manager) executeDeploy(instanceID string, deployLog *models.DeploymentL
 
 	// Use a bounded context derived from the shutdown context so that
 	// operations are cancelled both on timeout and on server shutdown.
-	ctx, cancel := context.WithTimeout(m.shutdownCtx, m.helm.Timeout())
+	var timeout time.Duration
+	if helm != nil {
+		timeout = helm.Timeout()
+	} else {
+		timeout = 5 * time.Minute
+	}
+	ctx, cancel := context.WithTimeout(m.shutdownCtx, timeout)
 	defer cancel()
 
 	// Track successfully installed charts for rollback on partial failure.
@@ -210,7 +238,7 @@ func (m *Manager) executeDeploy(instanceID string, deployLog *models.DeploymentL
 			repoURL = ""
 		}
 
-		output, err := m.helm.Install(ctx, InstallRequest{
+		output, err := helm.Install(ctx, InstallRequest{
 			ReleaseName: releaseName,
 			ChartPath:   chartRef,
 			RepoURL:     repoURL,
@@ -233,7 +261,7 @@ func (m *Manager) executeDeploy(instanceID string, deployLog *models.DeploymentL
 
 	// Roll back successfully installed charts on partial failure.
 	if deployErr != nil && len(installedCharts) > 0 {
-		rollbackOutput := m.rollbackCharts(ctx, instanceID, deployLog.ID, namespace, installedCharts)
+		rollbackOutput := m.rollbackCharts(helm, ctx, instanceID, deployLog.ID, namespace, installedCharts)
 		allOutput += rollbackOutput
 	}
 
@@ -244,7 +272,7 @@ func (m *Manager) executeDeploy(instanceID string, deployLog *models.DeploymentL
 // a partial deployment failure. It is best-effort: individual uninstall failures
 // are logged but do not stop the remaining rollbacks. Returns the accumulated
 // rollback output for inclusion in the deployment log.
-func (m *Manager) rollbackCharts(ctx context.Context, instanceID, logID, namespace string, charts []ChartDeployInfo) string {
+func (m *Manager) rollbackCharts(helm HelmExecutor, ctx context.Context, instanceID, logID, namespace string, charts []ChartDeployInfo) string {
 	var rollbackOutput string
 	rollbackOutput += "=== Rolling back installed charts ===\n"
 
@@ -259,7 +287,7 @@ func (m *Manager) rollbackCharts(ctx context.Context, instanceID, logID, namespa
 			"namespace", namespace,
 		)
 
-		output, err := m.helm.Uninstall(ctx, UninstallRequest{
+		output, err := helm.Uninstall(ctx, UninstallRequest{
 			ReleaseName: releaseName,
 			Namespace:   namespace,
 		})
@@ -356,6 +384,22 @@ func (m *Manager) StopWithCharts(ctx context.Context, instance *models.StackInst
 		return "", fmt.Errorf("request cancelled: %w", err)
 	}
 
+	// Resolve cluster clients before starting the async goroutine.
+	if m.registry == nil {
+		return "", fmt.Errorf("cluster registry is not configured")
+	}
+	clusterID, err := m.registry.ResolveClusterID(instance.ClusterID)
+	if err != nil {
+		return "", fmt.Errorf("resolving cluster: %w", err)
+	}
+	helmExec, err := m.registry.GetHelmExecutor(clusterID)
+	if err != nil {
+		return "", fmt.Errorf("getting cluster clients: %w", err)
+	}
+	if helmExec == nil {
+		return "", fmt.Errorf("getting cluster clients: helm executor is nil")
+	}
+
 	logID := uuid.New().String()
 	now := time.Now().UTC()
 
@@ -386,13 +430,13 @@ func (m *Manager) StopWithCharts(ctx context.Context, instance *models.StackInst
 	})
 
 	// Pass deployLog into the goroutine to avoid a partition-scanning re-fetch.
-	go m.executeStopWithCharts(instance.ID, deployLog, instance.Namespace, sortedCharts)
+	go m.executeStopWithCharts(helmExec, instance.ID, deployLog, instance.Namespace, sortedCharts)
 
 	return logID, nil
 }
 
 // executeStopWithCharts runs helm uninstall for each chart in reverse order.
-func (m *Manager) executeStopWithCharts(instanceID string, deployLog *models.DeploymentLog, namespace string, charts []ChartDeployInfo) {
+func (m *Manager) executeStopWithCharts(helm HelmExecutor, instanceID string, deployLog *models.DeploymentLog, namespace string, charts []ChartDeployInfo) {
 	m.semaphore <- struct{}{}
 	defer func() { <-m.semaphore }()
 
@@ -401,7 +445,13 @@ func (m *Manager) executeStopWithCharts(instanceID string, deployLog *models.Dep
 
 	// Use a bounded context derived from the shutdown context so that
 	// operations are cancelled both on timeout and on server shutdown.
-	ctx, cancel := context.WithTimeout(m.shutdownCtx, m.helm.Timeout())
+	var timeout time.Duration
+	if helm != nil {
+		timeout = helm.Timeout()
+	} else {
+		timeout = 5 * time.Minute
+	}
+	ctx, cancel := context.WithTimeout(m.shutdownCtx, timeout)
 	defer cancel()
 
 	for _, chart := range charts {
@@ -414,7 +464,7 @@ func (m *Manager) executeStopWithCharts(instanceID string, deployLog *models.Dep
 			"namespace", namespace,
 		)
 
-		output, err := m.helm.Uninstall(ctx, UninstallRequest{
+		output, err := helm.Uninstall(ctx, UninstallRequest{
 			ReleaseName: releaseName,
 			Namespace:   namespace,
 		})
@@ -541,6 +591,26 @@ func (m *Manager) Clean(ctx context.Context, instance *models.StackInstance, cha
 		return "", fmt.Errorf("request cancelled: %w", err)
 	}
 
+	// Resolve cluster clients before starting the async goroutine.
+	if m.registry == nil {
+		return "", fmt.Errorf("cluster registry is not configured")
+	}
+	clusterID, err := m.registry.ResolveClusterID(instance.ClusterID)
+	if err != nil {
+		return "", fmt.Errorf("resolving cluster: %w", err)
+	}
+	helmExec, err := m.registry.GetHelmExecutor(clusterID)
+	if err != nil {
+		return "", fmt.Errorf("getting cluster clients: %w", err)
+	}
+	if helmExec == nil {
+		return "", fmt.Errorf("getting cluster clients: helm executor is nil")
+	}
+	k8sClient, err := m.registry.GetK8sClient(clusterID)
+	if err != nil {
+		return "", fmt.Errorf("getting cluster k8s client: %w", err)
+	}
+
 	logID := uuid.New().String()
 	now := time.Now().UTC()
 
@@ -572,14 +642,14 @@ func (m *Manager) Clean(ctx context.Context, instance *models.StackInstance, cha
 		return sortedCharts[i].ChartConfig.DeployOrder > sortedCharts[j].ChartConfig.DeployOrder
 	})
 
-	go m.executeClean(instance.ID, deployLog, instance.Namespace, sortedCharts)
+	go m.executeClean(helmExec, k8sClient, instance.ID, deployLog, instance.Namespace, sortedCharts)
 
 	return logID, nil
 }
 
 // executeClean runs helm uninstall for each chart in reverse order, then
 // deletes the Kubernetes namespace.
-func (m *Manager) executeClean(instanceID string, deployLog *models.DeploymentLog, namespace string, charts []ChartDeployInfo) {
+func (m *Manager) executeClean(helm HelmExecutor, k8sClient *k8s.Client, instanceID string, deployLog *models.DeploymentLog, namespace string, charts []ChartDeployInfo) {
 	m.semaphore <- struct{}{}
 	defer func() { <-m.semaphore }()
 
@@ -588,7 +658,13 @@ func (m *Manager) executeClean(instanceID string, deployLog *models.DeploymentLo
 
 	// Use a bounded context derived from the shutdown context so that
 	// operations are cancelled both on timeout and on server shutdown.
-	ctx, cancel := context.WithTimeout(m.shutdownCtx, m.helm.Timeout())
+	var timeout time.Duration
+	if helm != nil {
+		timeout = helm.Timeout()
+	} else {
+		timeout = 5 * time.Minute
+	}
+	ctx, cancel := context.WithTimeout(m.shutdownCtx, timeout)
 	defer cancel()
 
 	var uninstallErrors int
@@ -602,7 +678,7 @@ func (m *Manager) executeClean(instanceID string, deployLog *models.DeploymentLo
 			"namespace", namespace,
 		)
 
-		output, err := m.helm.Uninstall(ctx, UninstallRequest{
+		output, err := helm.Uninstall(ctx, UninstallRequest{
 			ReleaseName: releaseName,
 			Namespace:   namespace,
 		})
@@ -634,13 +710,13 @@ func (m *Manager) executeClean(instanceID string, deployLog *models.DeploymentLo
 
 	// Always attempt namespace deletion, even if some uninstalls failed.
 	// The namespace delete will clean up any remaining resources.
-	if m.k8sClient != nil {
+	if k8sClient != nil {
 		slog.Info("cleaning: deleting namespace",
 			"instance_id", instanceID,
 			"namespace", namespace,
 		)
 
-		if err := m.k8sClient.DeleteNamespace(ctx, namespace); err != nil {
+		if err := k8sClient.DeleteNamespace(ctx, namespace); err != nil {
 			cleanErr = fmt.Errorf("deleting namespace %q: %w", namespace, err)
 			allOutput += fmt.Sprintf("ERROR: %s\n", cleanErr.Error())
 		} else {

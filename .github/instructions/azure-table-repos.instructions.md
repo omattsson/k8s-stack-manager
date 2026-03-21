@@ -17,6 +17,7 @@ applyTo: "backend/internal/database/azure/**/*.go"
   - TemplateChartConfigs: PK=stack_template_id, RK=chart_config_id
   - APIKeys: PK=user_id, RK=key_id
   - DeploymentLogs: PK=instance_id, RK=reverse_timestamp+uuid
+  - Clusters: PK="clusters", RK=cluster_id
 - Always handle `azcore.ResponseError` and map to domain errors from `pkg/dberrors`
 - Entity JSON field names must be PascalCase for Azure Tables compatibility
 - Include `Timestamp` field for optimistic concurrency on updates

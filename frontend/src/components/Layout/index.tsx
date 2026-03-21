@@ -45,6 +45,9 @@ const Layout = ({ children }: LayoutProps) => {
                   <Button color="inherit" component={RouterLink} to="/admin/orphaned-namespaces">
                     Orphaned NS
                   </Button>
+                  <Button color="inherit" component={RouterLink} to="/admin/clusters">
+                    Clusters
+                  </Button>
                 </>
               )}
             </Box>

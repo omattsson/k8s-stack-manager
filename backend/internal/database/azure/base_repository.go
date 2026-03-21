@@ -118,6 +118,16 @@ func getString(m map[string]interface{}, key string) string {
 	return ""
 }
 
+// getStringDefault safely extracts a string value from a map, returning
+// defaultVal when the key is missing or the value is empty.
+func getStringDefault(m map[string]interface{}, key, defaultVal string) string {
+	s := getString(m, key)
+	if s == "" {
+		return defaultVal
+	}
+	return s
+}
+
 // getFloat64 safely extracts a float64 value from a map.
 func getFloat64(m map[string]interface{}, key string) float64 {
 	if v, ok := m[key]; ok {

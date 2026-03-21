@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"backend/internal/cluster"
 	"backend/internal/deployer"
 	"backend/internal/helm"
 	"backend/internal/k8s"
@@ -122,7 +123,7 @@ func setupDeployRouter(
 	tmplChartRepo *MockTemplateChartConfigRepository,
 	deployManager *deployer.Manager,
 	k8sWatcher *k8s.Watcher,
-	k8sClient *k8s.Client,
+	registry *cluster.Registry,
 	deployLogRepo models.DeploymentLogRepository,
 	callerID, callerUsername, callerRole string,
 ) *gin.Engine {
@@ -147,7 +148,7 @@ func setupDeployRouter(
 	h := NewInstanceHandlerWithDeployer(
 		instanceRepo, overrideRepo, defRepo, ccRepo,
 		tmplRepo, tmplChartRepo, valuesGen, userRepo,
-		deployManager, k8sWatcher, k8sClient, deployLogRepo,
+		deployManager, k8sWatcher, registry, deployLogRepo,
 	)
 
 	insts := r.Group("/api/v1/stack-instances")
@@ -161,11 +162,35 @@ func setupDeployRouter(
 	return r
 }
 
-// newTestManager creates a Manager with a non-functional helm binary for handler tests.
-// Uses a nonexistent binary path to avoid accidentally executing a real helm CLI.
+// noopHelmExecutor is a no-op HelmExecutor for handler tests that only verify
+// HTTP status codes and don't care about actual Helm output.
+type noopHelmExecutor struct{}
+
+func (n *noopHelmExecutor) Install(_ context.Context, _ deployer.InstallRequest) (string, error) {
+	return "", nil
+}
+
+func (n *noopHelmExecutor) Uninstall(_ context.Context, _ deployer.UninstallRequest) (string, error) {
+	return "", nil
+}
+
+func (n *noopHelmExecutor) Status(_ context.Context, name, _ string) (*deployer.ReleaseStatus, error) {
+	return &deployer.ReleaseStatus{Name: name}, nil
+}
+
+func (n *noopHelmExecutor) ListReleases(_ context.Context, _ string) ([]string, error) {
+	return nil, nil
+}
+
+func (n *noopHelmExecutor) Timeout() time.Duration {
+	return 30 * time.Second
+}
+
+// newTestManager creates a Manager with a test registry for handler tests.
 func newTestManager(instRepo models.StackInstanceRepository, logRepo models.DeploymentLogRepository) *deployer.Manager {
+	testRegistry := cluster.NewRegistryForTest("test-cluster", nil, &noopHelmExecutor{})
 	return deployer.NewManager(deployer.ManagerConfig{
-		HelmClient:    deployer.NewHelmClient("/nonexistent/helm", "", 1*time.Second),
+		Registry:      testRegistry,
 		InstanceRepo:  instRepo,
 		DeployLogRepo: logRepo,
 		Hub:           &MockBroadcastSender{},
@@ -601,12 +626,13 @@ func TestGetInstanceStatus(t *testing.T) {
 			ObjectMeta: metav1.ObjectMeta{Name: "stack-stack-a-owner"},
 		})
 		k8sClient := k8s.NewClientFromInterface(cs)
+		registry := cluster.NewRegistryForTest("default", k8sClient, nil)
 
 		router := setupDeployRouter(
 			instRepo, NewMockValueOverrideRepository(),
 			NewMockStackDefinitionRepository(), NewMockChartConfigRepository(),
 			NewMockStackTemplateRepository(), NewMockTemplateChartConfigRepository(),
-			nil, nil, k8sClient, NewMockDeploymentLogRepository(),
+			nil, nil, registry, NewMockDeploymentLogRepository(),
 			"uid-1", "alice", "user",
 		)
 

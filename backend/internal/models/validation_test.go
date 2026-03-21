@@ -373,3 +373,103 @@ func TestAuditLogValidate(t *testing.T) {
 		})
 	}
 }
+
+func TestClusterValidate(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		cluster Cluster
+		wantErr bool
+		errMsg  string
+	}{
+		{
+			name: "valid cluster with kubeconfig data",
+			cluster: Cluster{
+				ID:             "c1",
+				Name:           "prod-cluster",
+				APIServerURL:   "https://k8s.example.com",
+				KubeconfigData: "apiVersion: v1...",
+			},
+		},
+		{
+			name: "valid cluster with kubeconfig path",
+			cluster: Cluster{
+				ID:             "c2",
+				Name:           "dev-cluster",
+				APIServerURL:   "https://dev.k8s.example.com",
+				KubeconfigPath: "/etc/kubeconfig/dev",
+			},
+		},
+		{
+			name: "valid with explicit health status",
+			cluster: Cluster{
+				Name:           "cluster",
+				APIServerURL:   "https://k8s.example.com",
+				KubeconfigData: "data",
+				HealthStatus:   ClusterHealthy,
+			},
+		},
+		{
+			name: "missing name",
+			cluster: Cluster{
+				APIServerURL:   "https://k8s.example.com",
+				KubeconfigData: "data",
+			},
+			wantErr: true,
+			errMsg:  "name is required",
+		},
+		{
+			name: "missing api_server_url",
+			cluster: Cluster{
+				Name:           "cluster",
+				KubeconfigData: "data",
+			},
+			wantErr: true,
+			errMsg:  "api_server_url is required",
+		},
+		{
+			name: "both kubeconfig_data and kubeconfig_path set",
+			cluster: Cluster{
+				Name:           "cluster",
+				APIServerURL:   "https://k8s.example.com",
+				KubeconfigData: "data",
+				KubeconfigPath: "/path",
+			},
+			wantErr: true,
+			errMsg:  "only one of kubeconfig_data or kubeconfig_path must be set, not both",
+		},
+		{
+			name: "neither kubeconfig_data nor kubeconfig_path",
+			cluster: Cluster{
+				Name:         "cluster",
+				APIServerURL: "https://k8s.example.com",
+			},
+			wantErr: true,
+			errMsg:  "one of kubeconfig_data or kubeconfig_path is required",
+		},
+		{
+			name: "invalid health status",
+			cluster: Cluster{
+				Name:           "cluster",
+				APIServerURL:   "https://k8s.example.com",
+				KubeconfigData: "data",
+				HealthStatus:   "invalid",
+			},
+			wantErr: true,
+			errMsg:  "invalid health_status: invalid",
+		},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			err := tt.cluster.Validate()
+			if tt.wantErr {
+				assert.EqualError(t, err, tt.errMsg)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}

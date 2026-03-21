@@ -6,6 +6,7 @@ import (
 	_ "backend/docs"
 	"backend/internal/api/handlers"
 	"backend/internal/api/routes"
+	"backend/internal/cluster"
 	"backend/internal/config"
 	"backend/internal/database"
 	"backend/internal/database/azure"
@@ -14,6 +15,7 @@ import (
 	"backend/internal/health"
 	"backend/internal/helm"
 	"backend/internal/k8s"
+	"backend/internal/models"
 	"backend/internal/websocket"
 	"context"
 	"fmt"
@@ -25,8 +27,10 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	swaggerFiles "github.com/swaggo/files"
 	ginSwagger "github.com/swaggo/gin-swagger"
+	"k8s.io/client-go/tools/clientcmd"
 )
 
 const (
@@ -161,40 +165,46 @@ func main() {
 	// ------------------------------------------------------------------
 	// Phase 3: Create deployment services
 	// ------------------------------------------------------------------
-	helmClient := deployer.NewHelmClient(
-		cfg.Deployment.HelmBinary,
-		cfg.Deployment.KubeconfigPath,
-		cfg.Deployment.DeploymentTimeout,
-	)
 
-	// K8s client — optional, log warning if unavailable
-	var k8sClient *k8s.Client
-	var k8sWatcher *k8s.Watcher
-	k8sClient, err = k8s.NewClient(cfg.Deployment.KubeconfigPath)
+	// Create cluster repository
+	clusterRepo, err := azure.NewClusterRepository(azCfg.AccountName, azCfg.AccountKey, azCfg.Endpoint, azCfg.UseAzurite, cfg.Deployment.KubeconfigEncryptionKey)
 	if err != nil {
-		slog.Warn("K8s client unavailable — status monitoring disabled", "error", err)
-		k8sClient = nil
-	} else {
-		k8sWatcher = k8s.NewWatcher(k8sClient, instanceRepo, hub, 30*time.Second)
-		// Start already spawns an internal goroutine; no need for go here.
-		// Use a cancellable context so the watcher respects shutdown.
-		watcherCtx, watcherCancel := context.WithCancel(context.Background())
-		defer watcherCancel()
-		k8sWatcher.Start(watcherCtx)
-
-		// Add K8s health check
-		healthChecker.AddCheck("kubernetes", func(ctx context.Context) error {
-			_, err := k8sClient.Clientset().Discovery().ServerVersion()
-			return err
-		})
+		slog.Error("Failed to create cluster repository", "error", err)
+		os.Exit(1)
 	}
 
+	// Auto-create default cluster from KUBECONFIG_PATH for single-cluster migration
+	ensureDefaultCluster(clusterRepo, instanceRepo, cfg)
+
+	// Create cluster registry for multi-cluster client management
+	clusterRegistry := cluster.NewRegistry(cluster.RegistryConfig{
+		ClusterRepo: clusterRepo,
+		HelmBinary:  cfg.Deployment.HelmBinary,
+		HelmTimeout: cfg.Deployment.DeploymentTimeout,
+	})
+	defer clusterRegistry.Close()
+
+	// Start cluster health poller
+	healthPoller := cluster.NewHealthPoller(cluster.HealthPollerConfig{
+		ClusterRepo: clusterRepo,
+		Registry:    clusterRegistry,
+		Interval:    cfg.Deployment.ClusterHealthPollInterval,
+		Hub:         hub,
+	})
+	healthPoller.Start()
+
+	// K8s watcher — uses registry for multi-cluster monitoring
+	k8sWatcher := k8s.NewWatcher(clusterRegistry, instanceRepo, hub, 30*time.Second)
+	watcherCtx, watcherCancel := context.WithCancel(context.Background())
+	defer watcherCancel()
+	k8sWatcher.Start(watcherCtx)
+
+	// Deployment manager — uses registry for multi-cluster deploys
 	deployManager := deployer.NewManager(deployer.ManagerConfig{
-		HelmClient:    helmClient,
+		Registry:      clusterRegistry,
 		InstanceRepo:  instanceRepo,
 		DeployLogRepo: deployLogRepo,
 		Hub:           hub,
-		K8sClient:     k8sClient,
 		MaxConcurrent: int(cfg.Deployment.MaxConcurrentDeploys),
 	})
 
@@ -207,14 +217,15 @@ func main() {
 	instanceHandler := handlers.NewInstanceHandlerWithDeployer(
 		instanceRepo, overrideRepo, definitionRepo, chartConfigRepo,
 		templateRepo, templateChartRepo, valuesGen, userRepo,
-		deployManager, k8sWatcher, k8sClient, deployLogRepo,
+		deployManager, k8sWatcher, clusterRegistry, deployLogRepo,
 	)
 	gitHandler := handlers.NewGitHandler(gitRegistry)
 	auditLogHandler := handlers.NewAuditLogHandler(auditRepo)
 	userHandler := handlers.NewUserHandler(userRepo)
 	apiKeyHandler := handlers.NewAPIKeyHandler(apiKeyRepo, userRepo)
 
-	adminHandler := handlers.NewAdminHandler(k8sClient, helmClient, instanceRepo)
+	adminHandler := handlers.NewAdminHandler(clusterRegistry, instanceRepo)
+	clusterHandler := handlers.NewClusterHandler(clusterRepo, clusterRegistry, instanceRepo)
 
 	// Auto-create admin user on startup if ADMIN_PASSWORD is set.
 	authHandler.EnsureAdminUser()
@@ -236,6 +247,7 @@ func main() {
 		UserHandler:       userHandler,
 		APIKeyHandler:     apiKeyHandler,
 		AdminHandler:      adminHandler,
+		ClusterHandler:    clusterHandler,
 		UserRepo:          userRepo,
 		APIKeyRepo:        apiKeyRepo,
 	})
@@ -269,6 +281,9 @@ func main() {
 	// Cancel in-flight deploy/stop goroutines
 	deployManager.Shutdown()
 
+	// Stop cluster health poller
+	healthPoller.Stop()
+
 	// Stop K8s status watcher
 	if k8sWatcher != nil {
 		k8sWatcher.Stop()
@@ -298,4 +313,102 @@ func main() {
 	}
 
 	slog.Info("Server exited gracefully")
+}
+
+// ensureDefaultCluster auto-creates a default cluster from KUBECONFIG_PATH
+// when no clusters exist yet. This provides a migration path for existing
+// single-cluster setups.
+func ensureDefaultCluster(clusterRepo models.ClusterRepository, instanceRepo models.StackInstanceRepository, cfg *config.Config) {
+	clusters, err := clusterRepo.List()
+	if err != nil {
+		slog.Error("Failed to list clusters for default cluster check", "error", err)
+		return
+	}
+	if len(clusters) > 0 {
+		return
+	}
+	if cfg.Deployment.KubeconfigPath == "" {
+		return
+	}
+
+	// Extract the API server URL from the kubeconfig so the auto-created
+	// default cluster satisfies the Validate() requirement.
+	apiServerURL := extractAPIServerURL(cfg.Deployment.KubeconfigPath)
+	if apiServerURL == "" {
+		slog.Warn("Cannot auto-create default cluster: unable to determine API server URL from kubeconfig",
+			"kubeconfig_path", cfg.Deployment.KubeconfigPath)
+		return
+	}
+
+	defaultCluster := &models.Cluster{
+		ID:             uuid.New().String(),
+		Name:           "default",
+		Description:    "Auto-created from KUBECONFIG_PATH",
+		KubeconfigPath: cfg.Deployment.KubeconfigPath,
+		APIServerURL:   apiServerURL,
+		IsDefault:      true,
+		HealthStatus:   models.ClusterUnreachable,
+	}
+	if createErr := clusterRepo.Create(defaultCluster); createErr != nil {
+		slog.Error("Failed to auto-create default cluster", "error", createErr)
+		return
+	}
+	slog.Info("auto-created default cluster from KUBECONFIG_PATH",
+		"cluster_id", defaultCluster.ID,
+		"kubeconfig_path", cfg.Deployment.KubeconfigPath,
+		"api_server_url", apiServerURL,
+	)
+
+	// Backfill: persist the new default cluster ID onto any existing
+	// StackInstance records that have an empty ClusterID, so they won't
+	// implicitly follow whatever happens to be the default later.
+	backfillInstanceClusterIDs(instanceRepo, defaultCluster.ID)
+}
+
+// backfillInstanceClusterIDs sets the given clusterID on all stack instances
+// that currently have an empty ClusterID. It intentionally lists all instances
+// and filters in-memory so that storage backends where missing properties are
+// not equal to empty strings (e.g., Azure Table Storage) are handled correctly.
+func backfillInstanceClusterIDs(instanceRepo models.StackInstanceRepository, clusterID string) {
+	instances, err := instanceRepo.List()
+	if err != nil {
+		slog.Warn("Failed to list instances for cluster ID backfill", "error", err)
+		return
+	}
+
+	backfilledCount := 0
+	for i := range instances {
+		inst := &instances[i]
+		if inst.ClusterID != "" {
+			continue
+		}
+
+		inst.ClusterID = clusterID
+		if updateErr := instanceRepo.Update(inst); updateErr != nil {
+			slog.Error("Failed to backfill cluster ID on instance",
+				"instance_id", inst.ID,
+				"error", updateErr,
+			)
+			continue
+		}
+		backfilledCount++
+	}
+
+	if backfilledCount > 0 {
+		slog.Info("Backfilled default cluster ID on existing instances",
+			"cluster_id", clusterID,
+			"count", backfilledCount,
+		)
+	}
+}
+
+// extractAPIServerURL reads the kubeconfig file and returns the API server URL
+// from the current context. Returns empty string if the URL cannot be determined.
+func extractAPIServerURL(kubeconfigPath string) string {
+	restCfg, err := clientcmd.BuildConfigFromFlags("", kubeconfigPath)
+	if err != nil {
+		slog.Warn("Failed to parse kubeconfig for API server URL", "path", kubeconfigPath, "error", err)
+		return ""
+	}
+	return restCfg.Host
 }

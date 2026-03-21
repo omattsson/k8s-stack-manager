@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"backend/internal/api/middleware"
+	"backend/internal/cluster"
 	"backend/internal/deployer"
 	"backend/internal/k8s"
 	"backend/internal/models"
@@ -65,7 +66,11 @@ func setupAdminRouter(
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
 	r.Use(injectAuthContext("admin-user-id", callerRole))
-	h := NewAdminHandler(k8sClient, helmExec, instanceRepo)
+	var reg *cluster.Registry
+	if k8sClient != nil {
+		reg = cluster.NewRegistryForTest("default-cluster", k8sClient, helmExec)
+	}
+	h := NewAdminHandler(reg, instanceRepo)
 	adminMW := middleware.RequireAdmin()
 	admin := r.Group("/api/v1/admin")
 	admin.Use(adminMW)

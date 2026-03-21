@@ -14,6 +14,7 @@ test.describe('Navigation & Layout', () => {
     await expect(page.getByRole('link', { name: 'Audit Log' })).toBeVisible();
     // admin sees Users link
     await expect(page.getByRole('link', { name: 'Users' })).toBeVisible();
+    await expect(page.getByRole('link', { name: 'Clusters' })).toBeVisible();
   });
 
   test('displays logged-in user info', async ({ page }) => {
@@ -59,6 +60,14 @@ test.describe('Navigation & Layout', () => {
     await page.getByRole('link', { name: 'Users' }).click();
     await expect(page).toHaveURL('/admin/users');
     await expect(page.getByRole('heading', { level: 1 })).toBeVisible({ timeout: 10_000 });
+  });
+
+  test('Clusters link navigates to /admin/clusters', async ({ page }) => {
+    await page.getByRole('link', { name: 'Clusters' }).click();
+    await expect(page).toHaveURL('/admin/clusters');
+    await expect(page.getByRole('heading', { level: 1, name: 'Cluster Management' })).toBeVisible({
+      timeout: 10_000,
+    });
   });
 
   test('profile link navigates to /profile', async ({ page }) => {

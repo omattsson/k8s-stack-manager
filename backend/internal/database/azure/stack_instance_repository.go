@@ -3,7 +3,6 @@ package azure
 import (
 	"context"
 	"encoding/json"
-	"strings"
 	"time"
 
 	"backend/internal/models"
@@ -107,9 +106,7 @@ func (r *StackInstanceRepository) Delete(id string) error {
 func (r *StackInstanceRepository) FindByNamespace(namespace string) (*models.StackInstance, error) {
 	ctx := context.Background()
 
-	// Escape single quotes in OData string literals to prevent filter injection.
-	escaped := strings.ReplaceAll(namespace, "'", "''")
-	filter := "PartitionKey eq 'global' and Namespace eq '" + escaped + "'"
+	filter := "PartitionKey eq 'global' and Namespace eq '" + escapeODataString(namespace) + "'"
 	pager := r.client.NewListEntitiesPager(&aztables.ListEntitiesOptions{
 		Filter: &filter,
 	})
@@ -165,6 +162,49 @@ func (r *StackInstanceRepository) ListByOwner(ownerID string) ([]models.StackIns
 	return results, nil
 }
 
+func (r *StackInstanceRepository) FindByCluster(clusterID string) ([]models.StackInstance, error) {
+	ctx := context.Background()
+
+	// For empty clusterID, Azure Table OData 'ClusterID eq ""' will not match
+	// entities where the property is absent (pre-existing rows). Scan the full
+	// partition and filter in-memory instead.
+	if clusterID == "" {
+		filter := "PartitionKey eq 'global'"
+		pager := r.client.NewListEntitiesPager(&aztables.ListEntitiesOptions{
+			Filter: &filter,
+		})
+
+		entities, err := collectEntities(ctx, pager, func(e map[string]interface{}) bool {
+			return getString(e, "ClusterID") == ""
+		})
+		if err != nil {
+			return nil, mapAzureError("find_by_cluster", err)
+		}
+
+		results := make([]models.StackInstance, 0, len(entities))
+		for _, e := range entities {
+			results = append(results, *stackInstanceFromEntity(e))
+		}
+		return results, nil
+	}
+
+	filter := "PartitionKey eq 'global' and ClusterID eq '" + escapeODataString(clusterID) + "'"
+	pager := r.client.NewListEntitiesPager(&aztables.ListEntitiesOptions{
+		Filter: &filter,
+	})
+
+	entities, err := collectEntities(ctx, pager, nil)
+	if err != nil {
+		return nil, mapAzureError("find_by_cluster", err)
+	}
+
+	results := make([]models.StackInstance, 0, len(entities))
+	for _, e := range entities {
+		results = append(results, *stackInstanceFromEntity(e))
+	}
+	return results, nil
+}
+
 func stackInstanceToEntity(i *models.StackInstance) map[string]interface{} {
 	entity := map[string]interface{}{
 		"PartitionKey":      "global",
@@ -175,6 +215,7 @@ func stackInstanceToEntity(i *models.StackInstance) map[string]interface{} {
 		"Namespace":         i.Namespace,
 		"OwnerID":           i.OwnerID,
 		"Branch":            i.Branch,
+		"ClusterID":         i.ClusterID,
 		"Status":            i.Status,
 		"ErrorMessage":      i.ErrorMessage,
 		"CreatedAt":         i.CreatedAt.Format(time.RFC3339),
@@ -194,6 +235,7 @@ func stackInstanceFromEntity(e map[string]interface{}) *models.StackInstance {
 		Namespace:         getString(e, "Namespace"),
 		OwnerID:           getString(e, "OwnerID"),
 		Branch:            getString(e, "Branch"),
+		ClusterID:         getString(e, "ClusterID"),
 		Status:            getString(e, "Status"),
 		ErrorMessage:      getString(e, "ErrorMessage"),
 		CreatedAt:         parseTime(e, "CreatedAt"),
