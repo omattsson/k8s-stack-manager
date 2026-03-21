@@ -280,7 +280,8 @@ func main() {
 	router.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
 
 	// Start TTL reaper for auto-expiring stack instances.
-	reaper := ttl.NewReaper(instanceRepo, auditRepo, hub, 60*time.Second)
+	expiryStopper := deployer.NewExpiryStopper(deployManager, definitionRepo, chartConfigRepo)
+	reaper := ttl.NewReaper(instanceRepo, auditRepo, hub, expiryStopper, 60*time.Second)
 	go reaper.Start()
 
 	// Create server with timeouts

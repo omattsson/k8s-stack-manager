@@ -369,26 +369,38 @@ func (h *InstanceHandler) UpdateInstance(c *gin.Context) {
 		return
 	}
 
-	var update models.StackInstance
+	var update struct {
+		Name       *string `json:"name"`
+		Branch     *string `json:"branch"`
+		Namespace  *string `json:"namespace"`
+		TTLMinutes *int    `json:"ttl_minutes"`
+	}
 	if err := c.ShouldBindJSON(&update); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request format"})
 		return
 	}
 
-	existing.Name = update.Name
-	existing.Branch = update.Branch
-	existing.Namespace = update.Namespace
+	if update.Name != nil {
+		existing.Name = *update.Name
+	}
+	if update.Branch != nil {
+		existing.Branch = *update.Branch
+	}
+	if update.Namespace != nil {
+		existing.Namespace = *update.Namespace
+	}
 	existing.UpdatedAt = time.Now().UTC()
 
-	// Update TTL if changed.
-	if update.TTLMinutes != existing.TTLMinutes {
-		if update.TTLMinutes > MaxTTLMinutes {
+	// Update TTL only if the field was explicitly sent.
+	if update.TTLMinutes != nil {
+		ttl := *update.TTLMinutes
+		if ttl > MaxTTLMinutes {
 			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("TTL must not exceed %d minutes (30 days)", MaxTTLMinutes)})
 			return
 		}
-		existing.TTLMinutes = update.TTLMinutes
-		if existing.TTLMinutes > 0 {
-			exp := time.Now().UTC().Add(time.Duration(existing.TTLMinutes) * time.Minute)
+		existing.TTLMinutes = ttl
+		if ttl > 0 {
+			exp := time.Now().UTC().Add(time.Duration(ttl) * time.Minute)
 			existing.ExpiresAt = &exp
 		} else {
 			existing.ExpiresAt = nil
@@ -427,7 +439,11 @@ func (h *InstanceHandler) DeleteInstance(c *gin.Context) {
 
 	// Clean up per-chart branch overrides before deleting.
 	if h.branchOverrideRepo != nil {
-		_ = h.branchOverrideRepo.DeleteByInstance(id)
+		if err := h.branchOverrideRepo.DeleteByInstance(id); err != nil {
+			slog.Error("failed to delete branch overrides for stack instance", "instance_id", id, "error", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
+			return
+		}
 	}
 
 	if err := h.instanceRepo.Delete(id); err != nil {

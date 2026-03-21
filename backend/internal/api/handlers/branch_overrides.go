@@ -35,15 +35,25 @@ func NewBranchOverrideHandler(
 // @Produce     json
 // @Param       id  path     string true "Instance ID"
 // @Success     200 {array}  models.ChartBranchOverride
+// @Failure     403 {object} map[string]string
 // @Failure     404 {object} map[string]string
 // @Failure     500 {object} map[string]string
+// @Security    BearerAuth
 // @Router      /api/v1/stack-instances/{id}/branches [get]
 func (h *BranchOverrideHandler) ListBranchOverrides(c *gin.Context) {
 	instanceID := c.Param("id")
 
-	if _, err := h.instanceRepo.FindByID(instanceID); err != nil {
+	inst, err := h.instanceRepo.FindByID(instanceID)
+	if err != nil {
 		status, message := mapError(err, "Stack instance")
 		c.JSON(status, gin.H{"error": message})
+		return
+	}
+
+	userID := middleware.GetUserIDFromContext(c)
+	role := middleware.GetRoleFromContext(c)
+	if inst.OwnerID != userID && role != "admin" {
+		c.JSON(http.StatusForbidden, gin.H{"error": "You do not have permission to view this instance"})
 		return
 	}
 
@@ -68,8 +78,10 @@ func (h *BranchOverrideHandler) ListBranchOverrides(c *gin.Context) {
 // @Param       body    body     object true "Branch override (branch field required)"
 // @Success     200     {object} models.ChartBranchOverride
 // @Failure     400     {object} map[string]string
+// @Failure     403     {object} map[string]string
 // @Failure     404     {object} map[string]string
 // @Failure     500     {object} map[string]string
+// @Security    BearerAuth
 // @Router      /api/v1/stack-instances/{id}/branches/{chartId} [put]
 func (h *BranchOverrideHandler) SetBranchOverride(c *gin.Context) {
 	instanceID := c.Param("id")
@@ -133,8 +145,10 @@ func (h *BranchOverrideHandler) SetBranchOverride(c *gin.Context) {
 // @Param       id      path     string true "Instance ID"
 // @Param       chartId path     string true "Chart config ID"
 // @Success     204     "No Content"
+// @Failure     403     {object} map[string]string
 // @Failure     404     {object} map[string]string
 // @Failure     500     {object} map[string]string
+// @Security    BearerAuth
 // @Router      /api/v1/stack-instances/{id}/branches/{chartId} [delete]
 func (h *BranchOverrideHandler) DeleteBranchOverride(c *gin.Context) {
 	instanceID := c.Param("id")

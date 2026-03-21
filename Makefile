@@ -1,4 +1,4 @@
-.PHONY: dev seed dev-backend dev-frontend dev-local dev-local-backend dev-local-frontend prod prod-backend prod-frontend build clean prune test test-backend test-backend-integration test-backend-all test-frontend test-e2e integration-infra-start integration-infra-stop install docs fmt lint azurite-start azurite-stop loadtest loadtest-start loadtest-stop loadtest-backend loadtest-backend-run loadtest-frontend loadtest-frontend-run
+.PHONY: dev seed dev-backend dev-frontend dev-local dev-local-backend dev-local-frontend prod prod-backend prod-frontend build clean prune test test-backend test-backend-integration test-backend-all test-frontend test-e2e integration-infra-start integration-infra-stop install docs fmt lint azurite-start azurite-stop loadtest loadtest-start loadtest-start-backend loadtest-start-frontend loadtest-stop loadtest-stop-backend loadtest-stop-frontend loadtest-backend loadtest-backend-run loadtest-frontend loadtest-frontend-run
 
 # Development mode for both services
 dev:
@@ -185,19 +185,24 @@ LOADTEST_ENV = \
 	KUBECONFIG_PATH=$${KUBECONFIG_PATH:-$$HOME/.kube/config} \
 	RATE_LIMIT=10000 PORT=8081 GIN_MODE=release
 
-loadtest-start: azurite-start ## Build and start backend in release mode for load testing
+loadtest-start-backend: azurite-start ## Build and start backend in release mode for load testing
 	@echo "Building backend (release mode)..."
+	@cd backend && mkdir -p tmp
 	@cd backend && go build -o tmp/main ./api/main.go
 	@echo "Starting backend (GIN_MODE=release, RATE_LIMIT=10000)..."
 	@cd backend && ( $(LOADTEST_ENV) ./tmp/main > tmp/loadtest.log 2>&1 & echo $$! > tmp/loadtest-backend.pid )
 	@until curl -sf http://localhost:8081/health/live >/dev/null 2>&1; do sleep 1; done
 	@echo "Backend is ready on :8081 (logs: backend/tmp/loadtest.log)"
+
+loadtest-start-frontend: ## Start frontend dev server for load testing
 	@echo "Starting frontend dev server..."
 	@cd frontend && ( npm run dev > /tmp/loadtest-frontend.log 2>&1 & echo $$! > /tmp/loadtest-frontend.pid )
 	@until curl -sf http://localhost:3000 >/dev/null 2>&1; do sleep 1; done
 	@echo "Frontend is ready on :3000"
 
-loadtest-stop: ## Stop load test backend and frontend
+loadtest-start: loadtest-start-backend loadtest-start-frontend ## Start backend and frontend for load testing
+
+loadtest-stop-backend: ## Stop load test backend
 	@if [ -f backend/tmp/loadtest-backend.pid ]; then \
 		echo "Stopping backend (PID: $$(cat backend/tmp/loadtest-backend.pid))..."; \
 		kill $$(cat backend/tmp/loadtest-backend.pid) 2>/dev/null || true; \
@@ -205,6 +210,9 @@ loadtest-stop: ## Stop load test backend and frontend
 	else \
 		echo "No backend PID file found; skipping backend stop."; \
 	fi
+	@if [ -f backend/tmp/loadtest.log ]; then echo "Backend log: backend/tmp/loadtest.log"; fi
+
+loadtest-stop-frontend: ## Stop load test frontend
 	@if [ -f /tmp/loadtest-frontend.pid ]; then \
 		echo "Stopping frontend (PID: $$(cat /tmp/loadtest-frontend.pid))..."; \
 		kill $$(cat /tmp/loadtest-frontend.pid) 2>/dev/null || true; \
@@ -212,16 +220,17 @@ loadtest-stop: ## Stop load test backend and frontend
 	else \
 		echo "No frontend PID file found; skipping frontend stop."; \
 	fi
-	@if [ -f backend/tmp/loadtest.log ]; then echo "Backend log: backend/tmp/loadtest.log"; fi
+
+loadtest-stop: loadtest-stop-backend loadtest-stop-frontend ## Stop load test backend and frontend
 
 loadtest: loadtest-start ## Run all load tests (starts/stops backend automatically)
 	@$(MAKE) loadtest-backend-run || ($(MAKE) loadtest-stop; exit 1)
 	@$(MAKE) loadtest-frontend-run || ($(MAKE) loadtest-stop; exit 1)
 	@$(MAKE) loadtest-stop
 
-loadtest-backend: loadtest-start ## Run k6 backend load tests (starts/stops backend)
-	@$(MAKE) loadtest-backend-run || ($(MAKE) loadtest-stop; exit 1)
-	@$(MAKE) loadtest-stop
+loadtest-backend: loadtest-start-backend ## Run k6 backend load tests (starts/stops backend only)
+	@$(MAKE) loadtest-backend-run || ($(MAKE) loadtest-stop-backend; exit 1)
+	@$(MAKE) loadtest-stop-backend
 
 loadtest-backend-run: ## Run k6 tests (assumes backend already running)
 	@command -v k6 >/dev/null 2>&1 || { echo "k6 not found. Install: brew install k6"; exit 1; }

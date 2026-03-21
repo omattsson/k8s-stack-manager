@@ -143,6 +143,7 @@ type ServiceInfo struct {
 	Type         string   `json:"type"`
 	ClusterIP    string   `json:"cluster_ip"`
 	ExternalIP   string   `json:"external_ip,omitempty"`
+	Ports        []string `json:"ports,omitempty"`
 	NodePorts    []int32  `json:"node_ports,omitempty"`
 	IngressHosts []string `json:"ingress_hosts,omitempty"`
 }
@@ -273,6 +274,11 @@ func (c *Client) GetNamespaceStatus(ctx context.Context, namespace string) (*Nam
 			Name:      s.Name,
 			Type:      string(s.Spec.Type),
 			ClusterIP: s.Spec.ClusterIP,
+		}
+
+		// Populate service ports.
+		for _, p := range s.Spec.Ports {
+			si.Ports = append(si.Ports, fmt.Sprintf("%d/%s", p.Port, p.Protocol))
 		}
 
 		// Extract ExternalIP for LoadBalancer services.

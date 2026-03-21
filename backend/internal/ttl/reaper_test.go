@@ -164,7 +164,7 @@ func TestReaper_ExpiredInstancesGetStopped(t *testing.T) {
 	}
 	require.NoError(t, repo.Create(alreadyStopped))
 
-	reaper := NewReaper(repo, auditRepo, hub, 50*time.Millisecond)
+	reaper := NewReaper(repo, auditRepo, hub, nil, 50*time.Millisecond)
 	go reaper.Start()
 	time.Sleep(200 * time.Millisecond)
 	reaper.Stop()
@@ -200,7 +200,7 @@ func TestReaper_NoExpiredInstances(t *testing.T) {
 	}
 	require.NoError(t, repo.Create(inst))
 
-	reaper := NewReaper(repo, auditRepo, nil, 50*time.Millisecond)
+	reaper := NewReaper(repo, auditRepo, nil, nil, 50*time.Millisecond)
 	go reaper.Start()
 	time.Sleep(200 * time.Millisecond)
 	reaper.Stop()
@@ -214,7 +214,7 @@ func TestReaper_GracefulShutdown(t *testing.T) {
 	t.Parallel()
 
 	repo := newMockInstanceRepo()
-	reaper := NewReaper(repo, nil, nil, 1*time.Second)
+	reaper := NewReaper(repo, nil, nil, nil, 1*time.Second)
 	go reaper.Start()
 
 	done := make(chan struct{})
@@ -245,7 +245,7 @@ func TestReaper_NilOptionalDeps(t *testing.T) {
 	}
 	require.NoError(t, repo.Create(expired))
 
-	reaper := NewReaper(repo, nil, nil, 50*time.Millisecond)
+	reaper := NewReaper(repo, nil, nil, nil, 50*time.Millisecond)
 	go reaper.Start()
 	time.Sleep(200 * time.Millisecond)
 	reaper.Stop()
@@ -258,7 +258,7 @@ func TestReaper_DoubleStopDoesNotPanic(t *testing.T) {
 	t.Parallel()
 
 	repo := newMockInstanceRepo()
-	reaper := NewReaper(repo, nil, nil, 1*time.Second)
+	reaper := NewReaper(repo, nil, nil, nil, 1*time.Second)
 	go reaper.Start()
 
 	// First stop
@@ -297,7 +297,7 @@ func TestReaper_InitialCheckOnStart(t *testing.T) {
 	require.NoError(t, repo.Create(expired))
 
 	// Use a very long interval so only the initial check fires.
-	reaper := NewReaper(repo, auditRepo, hub, 10*time.Minute)
+	reaper := NewReaper(repo, auditRepo, hub, nil, 10*time.Minute)
 	go reaper.Start()
 
 	// Give Start() a moment to run the initial processExpired().

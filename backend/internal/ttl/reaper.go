@@ -2,6 +2,7 @@
 package ttl
 
 import (
+	"context"
 	"log/slog"
 	"sync"
 	"time"
@@ -10,11 +11,17 @@ import (
 	"backend/internal/websocket"
 )
 
+// InstanceStopper can stop a running stack instance (e.g. Helm uninstall).
+type InstanceStopper interface {
+	StopInstance(ctx context.Context, inst *models.StackInstance) error
+}
+
 // Reaper periodically checks for expired stack instances and marks them as stopped.
 type Reaper struct {
 	instanceRepo models.StackInstanceRepository
 	auditRepo    models.AuditLogRepository
 	hub          websocket.BroadcastSender
+	stopper      InstanceStopper
 	interval     time.Duration
 	stopCh       chan struct{}
 	doneCh       chan struct{}
@@ -22,17 +29,19 @@ type Reaper struct {
 }
 
 // NewReaper creates a new TTL reaper.
-// auditRepo and hub are optional (may be nil).
+// auditRepo, hub, and stopper are optional (may be nil).
 func NewReaper(
 	instanceRepo models.StackInstanceRepository,
 	auditRepo models.AuditLogRepository,
 	hub websocket.BroadcastSender,
+	stopper InstanceStopper,
 	interval time.Duration,
 ) *Reaper {
 	return &Reaper{
 		instanceRepo: instanceRepo,
 		auditRepo:    auditRepo,
 		hub:          hub,
+		stopper:      stopper,
 		interval:     interval,
 		stopCh:       make(chan struct{}),
 		doneCh:       make(chan struct{}),
@@ -77,6 +86,20 @@ func (r *Reaper) processExpired() {
 	}
 
 	for _, inst := range expired {
+		// Attempt Helm uninstall via stopper if available.
+		if r.stopper != nil {
+			if stopErr := r.stopper.StopInstance(context.Background(), inst); stopErr != nil {
+				slog.Error("Failed to initiate stop for expired instance, marking as stopped", "instance_id", inst.ID, "error", stopErr)
+				// Fall through to manual status update below.
+			} else {
+				// Stop initiated; async process handles status transitions.
+				slog.Info("Expired instance stop initiated via deployer", "instance_id", inst.ID)
+				r.logExpiry(inst)
+				continue
+			}
+		}
+
+		// No stopper or stop failed — mark as stopped directly.
 		inst.Status = models.StackStatusStopped
 		inst.ErrorMessage = "Expired (TTL)"
 		inst.UpdatedAt = time.Now().UTC()
@@ -85,31 +108,36 @@ func (r *Reaper) processExpired() {
 			continue
 		}
 
-		if r.auditRepo != nil {
-			auditEntry := &models.AuditLog{
-				UserID:     "system",
-				Username:   "system",
-				Action:     "expired",
-				EntityType: "stack_instance",
-				EntityID:   inst.ID,
-				Details:    "Instance expired after TTL",
-				Timestamp:  time.Now().UTC(),
-			}
-			if auditErr := r.auditRepo.Create(auditEntry); auditErr != nil {
-				slog.Error("Failed to create audit log for expired instance", "instance_id", inst.ID, "error", auditErr)
-			}
-		}
-
-		if r.hub != nil {
-			msg, msgErr := websocket.NewMessage("instance.expired", inst)
-			if msgErr == nil {
-				b, bErr := msg.Bytes()
-				if bErr == nil {
-					r.hub.Broadcast(b)
-				}
-			}
-		}
+		r.logExpiry(inst)
 
 		slog.Info("Instance expired and stopped", "instance_id", inst.ID)
+	}
+}
+
+// logExpiry creates an audit log entry and broadcasts a WebSocket message for an expired instance.
+func (r *Reaper) logExpiry(inst *models.StackInstance) {
+	if r.auditRepo != nil {
+		auditEntry := &models.AuditLog{
+			UserID:     "system",
+			Username:   "system",
+			Action:     "expired",
+			EntityType: "stack_instance",
+			EntityID:   inst.ID,
+			Details:    "Instance expired after TTL",
+			Timestamp:  time.Now().UTC(),
+		}
+		if auditErr := r.auditRepo.Create(auditEntry); auditErr != nil {
+			slog.Error("Failed to create audit log for expired instance", "instance_id", inst.ID, "error", auditErr)
+		}
+	}
+
+	if r.hub != nil {
+		msg, msgErr := websocket.NewMessage("instance.expired", inst)
+		if msgErr == nil {
+			b, bErr := msg.Bytes()
+			if bErr == nil {
+				r.hub.Broadcast(b)
+			}
+		}
 	}
 }
