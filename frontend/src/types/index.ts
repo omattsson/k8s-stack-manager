@@ -318,3 +318,11 @@ export interface ChartBranchOverride {
   branch: string;
   updated_at: string;
 }
+
+export interface UserFavorite {
+  id: string;
+  user_id: string;
+  entity_type: 'definition' | 'instance' | 'template';
+  entity_id: string;
+  created_at: string;
+}

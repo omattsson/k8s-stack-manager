@@ -1088,3 +1088,81 @@ func (m *MockClusterRepository) SetFetchError(err error) {
 
 // ensure unused import doesn't cause compile error
 var _ = fmt.Sprintf
+
+// ---- UserFavoriteRepository mock ----
+
+type MockUserFavoriteRepository struct {
+	mu    sync.RWMutex
+	items map[string]*models.UserFavorite // key = userID + ":" + entityType + ":" + entityID
+	err   error
+}
+
+func NewMockUserFavoriteRepository() *MockUserFavoriteRepository {
+	return &MockUserFavoriteRepository{items: make(map[string]*models.UserFavorite)}
+}
+
+func favKey(userID, entityType, entityID string) string {
+	return userID + ":" + entityType + ":" + entityID
+}
+
+func (m *MockUserFavoriteRepository) Add(fav *models.UserFavorite) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.err != nil {
+		return m.err
+	}
+	if fav.ID == "" {
+		fav.ID = fmt.Sprintf("fav-%d", len(m.items)+1)
+	}
+	key := favKey(fav.UserID, fav.EntityType, fav.EntityID)
+	// Idempotent — overwrite if exists.
+	m.items[key] = fav
+	return nil
+}
+
+func (m *MockUserFavoriteRepository) Remove(userID, entityType, entityID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.err != nil {
+		return m.err
+	}
+	key := favKey(userID, entityType, entityID)
+	if _, ok := m.items[key]; !ok {
+		return errors.New("not found")
+	}
+	delete(m.items, key)
+	return nil
+}
+
+func (m *MockUserFavoriteRepository) List(userID string) ([]*models.UserFavorite, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.err != nil {
+		return nil, m.err
+	}
+	var out []*models.UserFavorite
+	for _, fav := range m.items {
+		if fav.UserID == userID {
+			cp := *fav
+			out = append(out, &cp)
+		}
+	}
+	return out, nil
+}
+
+func (m *MockUserFavoriteRepository) IsFavorite(userID, entityType, entityID string) (bool, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.err != nil {
+		return false, m.err
+	}
+	key := favKey(userID, entityType, entityID)
+	_, ok := m.items[key]
+	return ok, nil
+}
+
+func (m *MockUserFavoriteRepository) SetError(err error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.err = err
+}

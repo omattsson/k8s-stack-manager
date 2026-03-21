@@ -236,6 +236,13 @@ func main() {
 	clusterHandler := handlers.NewClusterHandler(clusterRepo, clusterRegistry, instanceRepo)
 	branchOverrideHandler := handlers.NewBranchOverrideHandler(branchOverrideRepo, instanceRepo)
 
+	favoriteRepo, err := azure.NewUserFavoriteRepository(azCfg.AccountName, azCfg.AccountKey, azCfg.Endpoint, azCfg.UseAzurite)
+	if err != nil {
+		slog.Error("Failed to create user favorite repository", "error", err)
+		os.Exit(1)
+	}
+	favoriteHandler := handlers.NewFavoriteHandler(favoriteRepo)
+
 	// Auto-create admin user on startup if ADMIN_PASSWORD is set.
 	authHandler.EnsureAdminUser()
 
@@ -257,6 +264,7 @@ func main() {
 		APIKeyHandler:         apiKeyHandler,
 		AdminHandler:          adminHandler,
 		BranchOverrideHandler: branchOverrideHandler,
+		FavoriteHandler:       favoriteHandler,
 		ClusterHandler:        clusterHandler,
 		UserRepo:              userRepo,
 		APIKeyRepo:            apiKeyRepo,

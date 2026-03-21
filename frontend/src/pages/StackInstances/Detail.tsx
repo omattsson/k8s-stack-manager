@@ -27,6 +27,7 @@ import ConfirmDialog from '../../components/ConfirmDialog';
 import DeploymentLogViewer from '../../components/DeploymentLogViewer';
 import PodStatusDisplay from '../../components/PodStatusDisplay';
 import AccessUrls from '../../components/AccessUrls';
+import FavoriteButton from '../../components/FavoriteButton';
 import { instanceService, definitionService, branchOverrideService } from '../../api/client';
 import type { StackInstance, ChartConfig, ValueOverride, DeploymentLog, NamespaceStatus } from '../../types';
 import YamlEditor from '../../components/YamlEditor';
@@ -383,6 +384,7 @@ const Detail = () => {
               <Typography variant="h4" component="h1">
                 {instance.name}
               </Typography>
+              <FavoriteButton entityType="instance" entityId={instance.id} size="medium" />
               <StatusBadge status={instance.status} />
               {isExpiredByTtl && (
                 <Chip label="Expired" color="error" size="small" />

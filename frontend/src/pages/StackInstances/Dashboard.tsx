@@ -22,9 +22,10 @@ import {
 import SearchIcon from '@mui/icons-material/Search';
 import AddIcon from '@mui/icons-material/Add';
 import StatusBadge from '../../components/StatusBadge';
+import FavoriteButton from '../../components/FavoriteButton';
 import ExpiryChip from './ExpiryChip';
-import { instanceService, clusterService } from '../../api/client';
-import type { StackInstance, Cluster, NamespaceStatus } from '../../types';
+import { instanceService, clusterService, favoriteService } from '../../api/client';
+import type { StackInstance, Cluster, NamespaceStatus, UserFavorite } from '../../types';
 
 const STATUSES = ['All', 'draft', 'deploying', 'running', 'stopped', 'error'];
 
@@ -48,6 +49,8 @@ const getPrimaryUrl = (status: NamespaceStatus): string | null => {
 const Dashboard = () => {
   const [instances, setInstances] = useState<StackInstance[]>([]);
   const [clusters, setClusters] = useState<Cluster[]>([]);
+  const [favorites, setFavorites] = useState<UserFavorite[]>([]);
+  const [recentInstances, setRecentInstances] = useState<StackInstance[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
@@ -58,12 +61,16 @@ const Dashboard = () => {
   useEffect(() => {
     const fetchData = async () => {
       try {
-        const [instData, clsData] = await Promise.all([
+        const [instData, clsData, favData, recentData] = await Promise.all([
           instanceService.list(),
           clusterService.list().catch(() => [] as Cluster[]),
+          favoriteService.list().catch(() => [] as UserFavorite[]),
+          instanceService.recent().catch(() => [] as StackInstance[]),
         ]);
         setInstances(instData || []);
         setClusters(clsData || []);
+        setFavorites(favData || []);
+        setRecentInstances(recentData || []);
 
         // Fetch primary URL for running instances
         const running = (instData || []).filter((i: StackInstance) => i.status === 'running');
@@ -115,6 +122,18 @@ const Dashboard = () => {
     if (search && !inst.name.toLowerCase().includes(search.toLowerCase())) return false;
     return true;
   });
+
+  const favoriteInstanceIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const fav of favorites) {
+      if (fav.entity_type === 'instance') ids.add(fav.entity_id);
+    }
+    return ids;
+  }, [favorites]);
+
+  const favoritedInstances = useMemo(() => {
+    return instances.filter((inst) => favoriteInstanceIds.has(inst.id));
+  }, [instances, favoriteInstanceIds]);
 
   if (loading) {
     return (
@@ -170,6 +189,75 @@ const Dashboard = () => {
         </TextField>
       </Box>
 
+      {/* My Favorites section */}
+      <Box sx={{ mb: 3 }}>
+        <Typography variant="h6" gutterBottom>
+          My Favorites
+        </Typography>
+        {favoritedInstances.length === 0 ? (
+          <Typography variant="body2" color="text.secondary">
+            Star instances to add them here
+          </Typography>
+        ) : (
+          <Box sx={{ display: 'flex', overflowX: 'auto', gap: 2, pb: 1 }}>
+            {favoritedInstances.map((inst) => (
+              <Card
+                key={inst.id}
+                variant="outlined"
+                sx={{ minWidth: 200, maxWidth: 250, flexShrink: 0, cursor: 'pointer' }}
+                onClick={() => navigate(`/stack-instances/${inst.id}`)}
+              >
+                <CardContent sx={{ py: 1.5, px: 2, '&:last-child': { pb: 1.5 } }}>
+                  <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <Typography variant="subtitle2" noWrap sx={{ flex: 1 }}>
+                      {inst.name}
+                    </Typography>
+                    <FavoriteButton entityType="instance" entityId={inst.id} size="small" />
+                  </Box>
+                  <StatusBadge status={inst.status} />
+                </CardContent>
+              </Card>
+            ))}
+          </Box>
+        )}
+      </Box>
+
+      {/* Recent Stacks section */}
+      {recentInstances.length > 0 && (
+        <Box sx={{ mb: 3 }}>
+          <Typography variant="h6" gutterBottom>
+            Recent Stacks
+          </Typography>
+          <Box sx={{ display: 'flex', overflowX: 'auto', gap: 2, pb: 1 }}>
+            {recentInstances.map((inst) => (
+              <Card
+                key={inst.id}
+                variant="outlined"
+                sx={{ minWidth: 220, maxWidth: 280, flexShrink: 0, cursor: 'pointer' }}
+                onClick={() => navigate(`/stack-instances/${inst.id}`)}
+              >
+                <CardContent sx={{ py: 1.5, px: 2, '&:last-child': { pb: 1.5 } }}>
+                  <Typography variant="subtitle2" noWrap>
+                    {inst.name}
+                  </Typography>
+                  {inst.definition && (
+                    <Typography variant="caption" color="text.secondary" noWrap component="div">
+                      {inst.definition.name}
+                    </Typography>
+                  )}
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 0.5 }}>
+                    <StatusBadge status={inst.status} />
+                    <Typography variant="caption" color="text.secondary">
+                      {new Date(inst.updated_at).toLocaleDateString()}
+                    </Typography>
+                  </Box>
+                </CardContent>
+              </Card>
+            ))}
+          </Box>
+        </Box>
+      )}
+
       {clusters.length > 0 && (
         <Paper variant="outlined" sx={{ p: 1.5, mb: 3, display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
           <Typography variant="body2" color="text.secondary">
@@ -207,9 +295,12 @@ const Dashboard = () => {
               <Card sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
                 <CardContent sx={{ flex: 1 }}>
                   <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
-                    <Typography variant="h6" component="h2" noWrap>
-                      {instance.name}
-                    </Typography>
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, minWidth: 0 }}>
+                      <FavoriteButton entityType="instance" entityId={instance.id} size="small" />
+                      <Typography variant="h6" component="h2" noWrap>
+                        {instance.name}
+                      </Typography>
+                    </Box>
                     <StatusBadge status={instance.status} />
                   </Box>
                   <Typography variant="body2" color="text.secondary">

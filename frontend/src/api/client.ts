@@ -28,6 +28,7 @@ import type {
   UpdateClusterRequest,
   ClusterTestResult,
   ChartBranchOverride,
+  UserFavorite,
 } from '../types';
 
 const api = axios.create(axiosConfig);
@@ -410,6 +411,15 @@ export const instanceService = {
       throw error;
     }
   },
+  recent: async (): Promise<StackInstance[]> => {
+    try {
+      const response = await api.get('/api/v1/stack-instances/recent');
+      return response.data;
+    } catch (error) {
+      console.error('Failed to fetch recent instances:', error);
+      throw error;
+    }
+  },
 };
 
 export const gitService = {
@@ -599,6 +609,46 @@ export const clusterService = {
       return response.data;
     } catch (error) {
       console.error('Failed to set default cluster:', error);
+      throw error;
+    }
+  },
+};
+
+export const favoriteService = {
+  list: async (): Promise<UserFavorite[]> => {
+    try {
+      const response = await api.get('/api/v1/favorites');
+      return response.data;
+    } catch (error) {
+      console.error('Failed to fetch favorites:', error);
+      throw error;
+    }
+  },
+  add: async (entityType: string, entityId: string): Promise<UserFavorite> => {
+    try {
+      const response = await api.post('/api/v1/favorites', { entity_type: entityType, entity_id: entityId });
+      return response.data;
+    } catch (error) {
+      console.error('Failed to add favorite:', error);
+      throw error;
+    }
+  },
+  remove: async (entityType: string, entityId: string): Promise<void> => {
+    try {
+      await api.delete(`/api/v1/favorites/${entityType}/${entityId}`);
+    } catch (error) {
+      console.error('Failed to remove favorite:', error);
+      throw error;
+    }
+  },
+  check: async (entityType: string, entityId: string): Promise<boolean> => {
+    try {
+      const response = await api.get('/api/v1/favorites/check', {
+        params: { entity_type: entityType, entity_id: entityId },
+      });
+      return response.data.is_favorite;
+    } catch (error) {
+      console.error('Failed to check favorite:', error);
       throw error;
     }
   },

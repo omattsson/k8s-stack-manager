@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -179,6 +180,38 @@ func (h *InstanceHandler) ListInstances(c *gin.Context) {
 		status, message := mapError(err, "Stack instance")
 		c.JSON(status, gin.H{"error": message})
 		return
+	}
+
+	c.JSON(http.StatusOK, instances)
+}
+
+// GetRecentInstances godoc
+// @Summary     Get recent stack instances for the authenticated user
+// @Description Returns the 5 most recently updated stack instances owned by the current user
+// @Tags        stack-instances
+// @Produce     json
+// @Security    BearerAuth
+// @Success     200  {array}  models.StackInstance
+// @Failure     500  {object} map[string]string
+// @Router      /api/v1/stack-instances/recent [get]
+func (h *InstanceHandler) GetRecentInstances(c *gin.Context) {
+	userID := middleware.GetUserIDFromContext(c)
+
+	instances, err := h.instanceRepo.ListByOwner(userID)
+	if err != nil {
+		status, message := mapError(err, "Stack instance")
+		c.JSON(status, gin.H{"error": message})
+		return
+	}
+
+	// Sort by UpdatedAt descending.
+	sort.Slice(instances, func(i, j int) bool {
+		return instances[i].UpdatedAt.After(instances[j].UpdatedAt)
+	})
+
+	// Take at most 5.
+	if len(instances) > 5 {
+		instances = instances[:5]
 	}
 
 	c.JSON(http.StatusOK, instances)

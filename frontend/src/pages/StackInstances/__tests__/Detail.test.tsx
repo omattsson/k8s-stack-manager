@@ -57,6 +57,11 @@ vi.mock('../../../api/client', () => ({
     set: vi.fn(),
     delete: vi.fn(),
   },
+  favoriteService: {
+    check: vi.fn().mockResolvedValue(false),
+    add: vi.fn(),
+    remove: vi.fn(),
+  },
 }));
 
 vi.mock('../../../components/YamlEditor', () => ({

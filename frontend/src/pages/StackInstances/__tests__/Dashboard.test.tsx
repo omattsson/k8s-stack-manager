@@ -21,9 +21,16 @@ vi.mock('../../../hooks/useCountdown', () => ({
 vi.mock('../../../api/client', () => ({
   instanceService: {
     list: vi.fn(),
+    recent: vi.fn().mockResolvedValue([]),
   },
   clusterService: {
     list: vi.fn().mockResolvedValue([]),
+  },
+  favoriteService: {
+    list: vi.fn().mockResolvedValue([]),
+    check: vi.fn().mockResolvedValue(false),
+    add: vi.fn(),
+    remove: vi.fn(),
   },
 }));
 
@@ -37,7 +44,7 @@ vi.mock('../../../context/AuthContext', () => ({
   }),
 }));
 
-import { instanceService } from '../../../api/client';
+import { instanceService, favoriteService } from '../../../api/client';
 import useCountdown from '../../../hooks/useCountdown';
 
 describe('Dashboard', () => {
@@ -46,8 +53,15 @@ describe('Dashboard', () => {
     capturedWsHandler = null;
   });
 
+  // Reset default mocks that survive clearAllMocks
+  beforeEach(() => {
+    (instanceService.recent as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    (favoriteService.list as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+  });
+
   it('shows loading spinner initially', () => {
     (instanceService.list as ReturnType<typeof vi.fn>).mockReturnValue(new Promise(() => {}));
+    (instanceService.recent as ReturnType<typeof vi.fn>).mockReturnValue(new Promise(() => {}));
     render(
       <MemoryRouter>
         <Dashboard />
@@ -215,5 +229,69 @@ describe('Dashboard', () => {
 
     expect(screen.queryByText(/⏱/)).not.toBeInTheDocument();
     expect(screen.queryByText('Expired')).not.toBeInTheDocument();
+  });
+
+  it('renders favorites section with hint when no favorites', async () => {
+    (instanceService.list as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    render(
+      <MemoryRouter>
+        <Dashboard />
+      </MemoryRouter>
+    );
+    await waitFor(() => {
+      expect(screen.getByText('My Favorites')).toBeInTheDocument();
+      expect(screen.getByText('Star instances to add them here')).toBeInTheDocument();
+    });
+  });
+
+  it('renders favorited instances in favorites section', async () => {
+    (instanceService.list as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { id: 'inst-1', name: 'Fav Instance', status: 'running', branch: 'main', namespace: 'stack-fav', owner_id: '1', stack_definition_id: '1', created_at: '', updated_at: '' },
+    ]);
+    (favoriteService.list as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { id: 'fav-1', user_id: '1', entity_type: 'instance', entity_id: 'inst-1', created_at: '' },
+    ]);
+    render(
+      <MemoryRouter>
+        <Dashboard />
+      </MemoryRouter>
+    );
+    await waitFor(() => {
+      expect(screen.getByText('My Favorites')).toBeInTheDocument();
+      // Instance should appear in the favorites section (and also in the main list)
+      expect(screen.getAllByText('Fav Instance').length).toBeGreaterThanOrEqual(1);
+    });
+  });
+
+  it('renders recent stacks section when recent instances exist', async () => {
+    (instanceService.list as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    (instanceService.recent as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { id: 'r-1', name: 'Recent Stack', status: 'draft', branch: 'main', namespace: 'stack-rec', owner_id: '1', stack_definition_id: '1', created_at: '', updated_at: '2026-01-15T10:00:00Z' },
+    ]);
+    render(
+      <MemoryRouter>
+        <Dashboard />
+      </MemoryRouter>
+    );
+    await waitFor(() => {
+      expect(screen.getByText('Recent Stacks')).toBeInTheDocument();
+      expect(screen.getByText('Recent Stack')).toBeInTheDocument();
+    });
+  });
+
+  it('hides recent stacks section when empty', async () => {
+    (instanceService.list as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { id: '1', name: 'Some Instance', status: 'running', branch: 'main', namespace: 'stack-some', owner_id: '1', stack_definition_id: '1', created_at: '', updated_at: '' },
+    ]);
+    (instanceService.recent as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    render(
+      <MemoryRouter>
+        <Dashboard />
+      </MemoryRouter>
+    );
+    await waitFor(() => {
+      expect(screen.getByText('Some Instance')).toBeInTheDocument();
+    });
+    expect(screen.queryByText('Recent Stacks')).not.toBeInTheDocument();
   });
 });

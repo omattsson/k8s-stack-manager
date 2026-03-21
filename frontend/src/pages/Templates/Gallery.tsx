@@ -19,6 +19,7 @@ import {
 import SearchIcon from '@mui/icons-material/Search';
 import AddIcon from '@mui/icons-material/Add';
 import { templateService } from '../../api/client';
+import FavoriteButton from '../../components/FavoriteButton';
 import { useAuth } from '../../context/AuthContext';
 import type { StackTemplate } from '../../types';
 
@@ -132,9 +133,12 @@ const Gallery = () => {
               <Card sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
                 <CardContent sx={{ flex: 1 }}>
                   <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
-                    <Typography variant="h6" component="h2">
-                      {template.name}
-                    </Typography>
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                      <FavoriteButton entityType="template" entityId={template.id} size="small" />
+                      <Typography variant="h6" component="h2">
+                        {template.name}
+                      </Typography>
+                    </Box>
                     {!template.is_published && <Chip label="Draft" size="small" />}
                   </Box>
                   <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>

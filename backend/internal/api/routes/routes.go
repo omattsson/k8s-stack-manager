@@ -39,6 +39,9 @@ type Deps struct {
 	// Branch override handler.
 	BranchOverrideHandler *handlers.BranchOverrideHandler
 
+	// Favorites handler.
+	FavoriteHandler *handlers.FavoriteHandler
+
 	// Cluster management.
 	ClusterHandler *handlers.ClusterHandler
 	ClusterRepo    models.ClusterRepository
@@ -170,6 +173,7 @@ func SetupRoutes(router *gin.Engine, deps Deps) *handlers.RateLimiter {
 			{
 				instances.GET("", deps.InstanceHandler.ListInstances)
 				instances.POST("", deps.InstanceHandler.CreateInstance)
+				instances.GET("/recent", deps.InstanceHandler.GetRecentInstances)
 				instances.GET("/:id", deps.InstanceHandler.GetInstance)
 				instances.PUT("/:id", deps.InstanceHandler.UpdateInstance)
 				instances.DELETE("/:id", deps.InstanceHandler.DeleteInstance)
@@ -263,6 +267,17 @@ func SetupRoutes(router *gin.Engine, deps Deps) *handlers.RateLimiter {
 				clusters.DELETE("/:id", admin, clusterHandler.DeleteCluster)
 				clusters.POST("/:id/test", admin, clusterHandler.TestClusterConnection)
 				clusters.POST("/:id/default", admin, clusterHandler.SetDefaultCluster)
+			}
+		}
+
+		// Favorites
+		if deps.FavoriteHandler != nil {
+			favorites := authed.Group("/favorites")
+			{
+				favorites.GET("", deps.FavoriteHandler.ListFavorites)
+				favorites.POST("", deps.FavoriteHandler.AddFavorite)
+				favorites.DELETE("/:entityType/:entityId", deps.FavoriteHandler.RemoveFavorite)
+				favorites.GET("/check", deps.FavoriteHandler.CheckFavorite)
 			}
 		}
 	}

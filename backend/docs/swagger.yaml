@@ -137,6 +137,13 @@ definitions:
       region:
         type: string
     type: object
+  handlers.addFavoriteRequest:
+    properties:
+      entity_id:
+        type: string
+      entity_type:
+        type: string
+    type: object
   handlers.extendTTLRequest:
     properties:
       ttl_minutes:
@@ -532,6 +539,19 @@ definitions:
       updated_at:
         type: string
       username:
+        type: string
+    type: object
+  models.UserFavorite:
+    properties:
+      created_at:
+        type: string
+      entity_id:
+        type: string
+      entity_type:
+        type: string
+      id:
+        type: string
+      user_id:
         type: string
     type: object
   models.ValueOverride:
@@ -1056,6 +1076,164 @@ paths:
       summary: Test cluster connectivity
       tags:
       - clusters
+  /api/v1/favorites:
+    get:
+      description: Returns all favorited entities for the current user
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/models.UserFavorite'
+            type: array
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List favorites for the authenticated user
+      tags:
+      - favorites
+    post:
+      consumes:
+      - application/json
+      description: Add an entity to the user's favorites (idempotent)
+      parameters:
+      - description: Favorite entity reference
+        in: body
+        name: favorite
+        required: true
+        schema:
+          $ref: '#/definitions/handlers.addFavoriteRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/models.UserFavorite'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Add a favorite
+      tags:
+      - favorites
+  /api/v1/favorites/{entityType}/{entityId}:
+    delete:
+      description: Remove an entity from the user's favorites
+      parameters:
+      - description: Entity type (definition, instance, template)
+        in: path
+        name: entityType
+        required: true
+        type: string
+      - description: Entity ID
+        in: path
+        name: entityId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: Favorite removed
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Remove a favorite
+      tags:
+      - favorites
+  /api/v1/favorites/check:
+    get:
+      description: Check whether the authenticated user has favorited a specific entity
+      parameters:
+      - description: Entity type (definition, instance, template)
+        in: query
+        name: entity_type
+        required: true
+        type: string
+      - description: Entity ID
+        in: query
+        name: entity_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: boolean
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Check if an entity is favorited
+      tags:
+      - favorites
   /api/v1/git/branches:
     get:
       description: List branches for a given repository URL
@@ -2172,6 +2350,30 @@ paths:
               type: string
             type: object
       summary: Export chart values
+      tags:
+      - stack-instances
+  /api/v1/stack-instances/recent:
+    get:
+      description: Returns the 5 most recently updated stack instances owned by the
+        current user
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/models.StackInstance'
+            type: array
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get recent stack instances for the authenticated user
       tags:
       - stack-instances
   /api/v1/templates:
