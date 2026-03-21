@@ -128,6 +128,12 @@ func main() {
 		os.Exit(1)
 	}
 
+	branchOverrideRepo, err := azure.NewChartBranchOverrideRepository(azCfg.AccountName, azCfg.AccountKey, azCfg.Endpoint, azCfg.UseAzurite)
+	if err != nil {
+		slog.Error("Failed to create chart branch override repository", "error", err)
+		os.Exit(1)
+	}
+
 	auditRepo, err := azure.NewAuditLogRepository(azCfg.AccountName, azCfg.AccountKey, azCfg.Endpoint, azCfg.UseAzurite)
 	if err != nil {
 		slog.Error("Failed to create audit log repository", "error", err)
@@ -215,7 +221,7 @@ func main() {
 	templateHandler := handlers.NewTemplateHandler(templateRepo, templateChartRepo, definitionRepo, chartConfigRepo)
 	definitionHandler := handlers.NewDefinitionHandler(definitionRepo, chartConfigRepo, instanceRepo, templateRepo, templateChartRepo)
 	instanceHandler := handlers.NewInstanceHandlerWithDeployer(
-		instanceRepo, overrideRepo, definitionRepo, chartConfigRepo,
+		instanceRepo, overrideRepo, branchOverrideRepo, definitionRepo, chartConfigRepo,
 		templateRepo, templateChartRepo, valuesGen, userRepo,
 		deployManager, k8sWatcher, clusterRegistry, deployLogRepo,
 	)
@@ -226,6 +232,7 @@ func main() {
 
 	adminHandler := handlers.NewAdminHandler(clusterRegistry, instanceRepo)
 	clusterHandler := handlers.NewClusterHandler(clusterRepo, clusterRegistry, instanceRepo)
+	branchOverrideHandler := handlers.NewBranchOverrideHandler(branchOverrideRepo, instanceRepo)
 
 	// Auto-create admin user on startup if ADMIN_PASSWORD is set.
 	authHandler.EnsureAdminUser()
@@ -233,23 +240,24 @@ func main() {
 	// Setup router — use gin.New() since SetupRoutes registers its own Logger and Recovery middleware.
 	router := gin.New()
 	rateLimiter := routes.SetupRoutes(router, routes.Deps{
-		Repository:        repo,
-		HealthChecker:     healthChecker,
-		Config:            cfg,
-		Hub:               hub,
-		AuthHandler:       authHandler,
-		TemplateHandler:   templateHandler,
-		DefinitionHandler: definitionHandler,
-		InstanceHandler:   instanceHandler,
-		GitHandler:        gitHandler,
-		AuditLogHandler:   auditLogHandler,
-		AuditLogger:       auditRepo,
-		UserHandler:       userHandler,
-		APIKeyHandler:     apiKeyHandler,
-		AdminHandler:      adminHandler,
-		ClusterHandler:    clusterHandler,
-		UserRepo:          userRepo,
-		APIKeyRepo:        apiKeyRepo,
+		Repository:            repo,
+		HealthChecker:         healthChecker,
+		Config:                cfg,
+		Hub:                   hub,
+		AuthHandler:           authHandler,
+		TemplateHandler:       templateHandler,
+		DefinitionHandler:     definitionHandler,
+		InstanceHandler:       instanceHandler,
+		GitHandler:            gitHandler,
+		AuditLogHandler:       auditLogHandler,
+		AuditLogger:           auditRepo,
+		UserHandler:           userHandler,
+		APIKeyHandler:         apiKeyHandler,
+		AdminHandler:          adminHandler,
+		BranchOverrideHandler: branchOverrideHandler,
+		ClusterHandler:        clusterHandler,
+		UserRepo:              userRepo,
+		APIKeyRepo:            apiKeyRepo,
 	})
 	defer rateLimiter.Stop()
 	router.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))

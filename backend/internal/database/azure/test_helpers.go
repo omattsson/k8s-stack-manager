@@ -40,8 +40,9 @@ type testClient struct {
 	addEntity    func(context.Context, []byte, *aztables.AddEntityOptions) (aztables.AddEntityResponse, error)
 	getEntity    func(context.Context, string, string, *aztables.GetEntityOptions) (aztables.GetEntityResponse, error)
 	updateEntity func(context.Context, []byte, *aztables.UpdateEntityOptions) (aztables.UpdateEntityResponse, error)
+	upsertEntity func(context.Context, []byte, *aztables.UpsertEntityOptions) (aztables.UpsertEntityResponse, error)
 	deleteEntity func(context.Context, string, string, *aztables.DeleteEntityOptions) (aztables.DeleteEntityResponse, error)
-	pager       *testPager
+	pager        *testPager
 }
 
 func (m *testClient) AddEntity(ctx context.Context, entity []byte, options *aztables.AddEntityOptions) (aztables.AddEntityResponse, error) {
@@ -63,6 +64,13 @@ func (m *testClient) UpdateEntity(ctx context.Context, entity []byte, options *a
 		return m.updateEntity(ctx, entity, options)
 	}
 	return aztables.UpdateEntityResponse{}, nil
+}
+
+func (m *testClient) UpsertEntity(ctx context.Context, entity []byte, options *aztables.UpsertEntityOptions) (aztables.UpsertEntityResponse, error) {
+	if m.upsertEntity != nil {
+		return m.upsertEntity(ctx, entity, options)
+	}
+	return aztables.UpsertEntityResponse{}, nil
 }
 
 func (m *testClient) DeleteEntity(ctx context.Context, partitionKey, rowKey string, options *aztables.DeleteEntityOptions) (aztables.DeleteEntityResponse, error) {

@@ -53,6 +53,7 @@ type MockTableClient struct {
 	addEntityFn            func(ctx context.Context, entity []byte, options *aztables.AddEntityOptions) (aztables.AddEntityResponse, error)
 	getEntityFn            func(ctx context.Context, partitionKey, rowKey string, options *aztables.GetEntityOptions) (aztables.GetEntityResponse, error)
 	updateEntityFn         func(context.Context, []byte, *aztables.UpdateEntityOptions) (aztables.UpdateEntityResponse, error)
+	upsertEntityFn         func(context.Context, []byte, *aztables.UpsertEntityOptions) (aztables.UpsertEntityResponse, error)
 	deleteEntityFn         func(context.Context, string, string, *aztables.DeleteEntityOptions) (aztables.DeleteEntityResponse, error)
 	newListEntitiesPagerFn func(*aztables.ListEntitiesOptions) azure.ListEntitiesPager
 }
@@ -71,6 +72,9 @@ func NewMockTableClient() *MockTableClient {
 		},
 		updateEntityFn: func(ctx context.Context, entity []byte, options *aztables.UpdateEntityOptions) (aztables.UpdateEntityResponse, error) {
 			return aztables.UpdateEntityResponse{}, nil
+		},
+		upsertEntityFn: func(ctx context.Context, entity []byte, options *aztables.UpsertEntityOptions) (aztables.UpsertEntityResponse, error) {
+			return aztables.UpsertEntityResponse{}, nil
 		},
 		deleteEntityFn: func(ctx context.Context, partitionKey, rowKey string, options *aztables.DeleteEntityOptions) (aztables.DeleteEntityResponse, error) {
 			return aztables.DeleteEntityResponse{}, nil
@@ -105,6 +109,14 @@ func (m *MockTableClient) UpdateEntity(ctx context.Context, entity []byte, optio
 	return aztables.UpdateEntityResponse{}, nil
 }
 
+// UpsertEntity implements azure.AzureTableClient
+func (m *MockTableClient) UpsertEntity(ctx context.Context, entity []byte, options *aztables.UpsertEntityOptions) (aztables.UpsertEntityResponse, error) {
+	if m.upsertEntityFn != nil {
+		return m.upsertEntityFn(ctx, entity, options)
+	}
+	return aztables.UpsertEntityResponse{}, nil
+}
+
 // DeleteEntity implements azure.AzureTableClient
 func (m *MockTableClient) DeleteEntity(ctx context.Context, partitionKey, rowKey string, options *aztables.DeleteEntityOptions) (aztables.DeleteEntityResponse, error) {
 	if m.deleteEntityFn != nil {
@@ -133,6 +145,10 @@ func (m *MockTableClient) SetGetEntity(fn func(context.Context, string, string, 
 
 func (m *MockTableClient) SetUpdateEntity(fn func(context.Context, []byte, *aztables.UpdateEntityOptions) (aztables.UpdateEntityResponse, error)) {
 	m.updateEntityFn = fn
+}
+
+func (m *MockTableClient) SetUpsertEntity(fn func(context.Context, []byte, *aztables.UpsertEntityOptions) (aztables.UpsertEntityResponse, error)) {
+	m.upsertEntityFn = fn
 }
 
 func (m *MockTableClient) SetDeleteEntity(fn func(context.Context, string, string, *aztables.DeleteEntityOptions) (aztables.DeleteEntityResponse, error)) {

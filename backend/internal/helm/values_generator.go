@@ -26,6 +26,7 @@ type GenerateParams struct {
 	DefaultValues  string
 	LockedValues   string
 	OverrideValues string
+	ChartBranch    string // Per-chart branch override; if non-empty, overrides TemplateVars.Branch.
 	TemplateVars   TemplateVars
 }
 
@@ -74,8 +75,14 @@ func (g *ValuesGenerator) GenerateValues(_ context.Context, params GenerateParam
 	merged := deepMerge(defaults, overrides)
 	merged = deepMerge(merged, locked)
 
+	// Apply per-chart branch override if specified.
+	vars := params.TemplateVars
+	if params.ChartBranch != "" {
+		vars.Branch = params.ChartBranch
+	}
+
 	// Substitute template variables in all string values
-	merged, err = substituteVars(merged, params.TemplateVars)
+	merged, err = substituteVars(merged, vars)
 	if err != nil {
 		return nil, fmt.Errorf("substituting template variables: %w", err)
 	}

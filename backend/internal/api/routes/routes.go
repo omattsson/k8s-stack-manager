@@ -36,6 +36,9 @@ type Deps struct {
 	// Admin handlers.
 	AdminHandler *handlers.AdminHandler
 
+	// Branch override handler.
+	BranchOverrideHandler *handlers.BranchOverrideHandler
+
 	// Cluster management.
 	ClusterHandler *handlers.ClusterHandler
 	ClusterRepo    models.ClusterRepository
@@ -180,6 +183,13 @@ func SetupRoutes(router *gin.Engine, deps Deps) *handlers.RateLimiter {
 				instances.POST("/:id/clean", deps.InstanceHandler.CleanInstance)
 				instances.GET("/:id/deploy-log", deps.InstanceHandler.GetDeployLog)
 				instances.GET("/:id/status", deps.InstanceHandler.GetInstanceStatus)
+
+				// Per-chart branch overrides
+				if deps.BranchOverrideHandler != nil {
+					instances.GET("/:id/branches", deps.BranchOverrideHandler.ListBranchOverrides)
+					instances.PUT("/:id/branches/:chartId", deps.BranchOverrideHandler.SetBranchOverride)
+					instances.DELETE("/:id/branches/:chartId", deps.BranchOverrideHandler.DeleteBranchOverride)
+				}
 			}
 		}
 

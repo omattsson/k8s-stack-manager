@@ -164,3 +164,17 @@ func (a *AuditLog) Validate() error {
 	}
 	return nil
 }
+
+// Validate implements model validation for ChartBranchOverride.
+func (o *ChartBranchOverride) Validate() error {
+	if o.StackInstanceID == "" {
+		return errors.New("stack_instance_id is required")
+	}
+	if o.ChartConfigID == "" {
+		return errors.New("chart_config_id is required")
+	}
+	if o.Branch == "" {
+		return errors.New("branch is required")
+	}
+	return nil
+}

@@ -146,7 +146,7 @@ func setupDeployRouter(
 	userRepo := NewMockUserRepository()
 
 	h := NewInstanceHandlerWithDeployer(
-		instanceRepo, overrideRepo, defRepo, ccRepo,
+		instanceRepo, overrideRepo, nil, defRepo, ccRepo,
 		tmplRepo, tmplChartRepo, valuesGen, userRepo,
 		deployManager, k8sWatcher, registry, deployLogRepo,
 	)

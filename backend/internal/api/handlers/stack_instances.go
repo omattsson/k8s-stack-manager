@@ -79,6 +79,7 @@ func buildNamespace(instancePart, ownerPart string) string {
 type InstanceHandler struct {
 	instanceRepo      models.StackInstanceRepository
 	overrideRepo      models.ValueOverrideRepository
+	branchOverrideRepo models.ChartBranchOverrideRepository
 	definitionRepo    models.StackDefinitionRepository
 	chartConfigRepo   models.ChartConfigRepository
 	templateRepo      models.StackTemplateRepository
@@ -95,6 +96,7 @@ type InstanceHandler struct {
 func NewInstanceHandler(
 	instanceRepo models.StackInstanceRepository,
 	overrideRepo models.ValueOverrideRepository,
+	branchOverrideRepo models.ChartBranchOverrideRepository,
 	definitionRepo models.StackDefinitionRepository,
 	chartConfigRepo models.ChartConfigRepository,
 	templateRepo models.StackTemplateRepository,
@@ -103,14 +105,15 @@ func NewInstanceHandler(
 	userRepo models.UserRepository,
 ) *InstanceHandler {
 	return &InstanceHandler{
-		instanceRepo:      instanceRepo,
-		overrideRepo:      overrideRepo,
-		definitionRepo:    definitionRepo,
-		chartConfigRepo:   chartConfigRepo,
-		templateRepo:      templateRepo,
-		templateChartRepo: templateChartRepo,
-		valuesGen:         valuesGen,
-		userRepo:          userRepo,
+		instanceRepo:       instanceRepo,
+		overrideRepo:       overrideRepo,
+		branchOverrideRepo: branchOverrideRepo,
+		definitionRepo:     definitionRepo,
+		chartConfigRepo:    chartConfigRepo,
+		templateRepo:       templateRepo,
+		templateChartRepo:  templateChartRepo,
+		valuesGen:          valuesGen,
+		userRepo:           userRepo,
 	}
 }
 
@@ -118,6 +121,7 @@ func NewInstanceHandler(
 func NewInstanceHandlerWithDeployer(
 	instanceRepo models.StackInstanceRepository,
 	overrideRepo models.ValueOverrideRepository,
+	branchOverrideRepo models.ChartBranchOverrideRepository,
 	definitionRepo models.StackDefinitionRepository,
 	chartConfigRepo models.ChartConfigRepository,
 	templateRepo models.StackTemplateRepository,
@@ -130,18 +134,19 @@ func NewInstanceHandlerWithDeployer(
 	deployLogRepo models.DeploymentLogRepository,
 ) *InstanceHandler {
 	return &InstanceHandler{
-		instanceRepo:      instanceRepo,
-		overrideRepo:      overrideRepo,
-		definitionRepo:    definitionRepo,
-		chartConfigRepo:   chartConfigRepo,
-		templateRepo:      templateRepo,
-		templateChartRepo: templateChartRepo,
-		valuesGen:         valuesGen,
-		userRepo:          userRepo,
-		deployManager:     deployManager,
-		k8sWatcher:        k8sWatcher,
-		registry:          registry,
-		deployLogRepo:     deployLogRepo,
+		instanceRepo:       instanceRepo,
+		overrideRepo:       overrideRepo,
+		branchOverrideRepo: branchOverrideRepo,
+		definitionRepo:     definitionRepo,
+		chartConfigRepo:    chartConfigRepo,
+		templateRepo:       templateRepo,
+		templateChartRepo:  templateChartRepo,
+		valuesGen:          valuesGen,
+		userRepo:           userRepo,
+		deployManager:      deployManager,
+		k8sWatcher:         k8sWatcher,
+		registry:           registry,
+		deployLogRepo:      deployLogRepo,
 	}
 }
 
@@ -348,6 +353,11 @@ func (h *InstanceHandler) DeleteInstance(c *gin.Context) {
 	if id == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Instance ID is required"})
 		return
+	}
+
+	// Clean up per-chart branch overrides before deleting.
+	if h.branchOverrideRepo != nil {
+		_ = h.branchOverrideRepo.DeleteByInstance(id)
 	}
 
 	if err := h.instanceRepo.Delete(id); err != nil {
@@ -707,6 +717,23 @@ func (h *InstanceHandler) DeployInstance(c *gin.Context) {
 		overridesMap[ov.ChartConfigID] = ov.Values
 	}
 
+	// Build per-chart branch override map.
+	branchMap := make(map[string]string)
+	if h.branchOverrideRepo != nil {
+		branchOverrides, err := h.branchOverrideRepo.List(inst.ID)
+		if err != nil {
+			slog.Error("Failed to list branch overrides",
+				"instance_id", id,
+				"error", err,
+			)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
+			return
+		}
+		for _, bo := range branchOverrides {
+			branchMap[bo.ChartConfigID] = bo.Branch
+		}
+	}
+
 	if inst.Namespace == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Instance namespace is empty"})
 		return
@@ -730,6 +757,7 @@ func (h *InstanceHandler) DeployInstance(c *gin.Context) {
 			DefaultValues:  ch.DefaultValues,
 			LockedValues:   lockedMap[ch.ChartName],
 			OverrideValues: overridesMap[ch.ID],
+			ChartBranch:    branchMap[ch.ID],
 			TemplateVars:   templateVars,
 		}
 

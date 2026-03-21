@@ -39,6 +39,28 @@ definitions:
         description: sk_<hex> — shown once, store securely
         type: string
     type: object
+  handlers.CreateClusterRequest:
+    properties:
+      api_server_url:
+        type: string
+      description:
+        type: string
+      is_default:
+        type: boolean
+      kubeconfig_data:
+        type: string
+      kubeconfig_path:
+        type: string
+      max_namespaces:
+        type: integer
+      name:
+        type: string
+      region:
+        type: string
+    required:
+    - api_server_url
+    - name
+    type: object
   handlers.LoginRequest:
     properties:
       password:
@@ -95,6 +117,25 @@ definitions:
     required:
     - password
     - username
+    type: object
+  handlers.UpdateClusterRequest:
+    properties:
+      api_server_url:
+        type: string
+      description:
+        type: string
+      is_default:
+        type: boolean
+      kubeconfig_data:
+        type: string
+      kubeconfig_path:
+        type: string
+      max_namespaces:
+        type: integer
+      name:
+        type: string
+      region:
+        type: string
     type: object
   health.CheckStatus:
     properties:
@@ -229,6 +270,19 @@ definitions:
       username:
         type: string
     type: object
+  models.ChartBranchOverride:
+    properties:
+      branch:
+        type: string
+      chart_config_id:
+        type: string
+      id:
+        type: string
+      stack_instance_id:
+        type: string
+      updated_at:
+        type: string
+    type: object
   models.ChartConfig:
     properties:
       chart_name:
@@ -250,6 +304,29 @@ definitions:
       source_repo_url:
         type: string
       stack_definition_id:
+        type: string
+    type: object
+  models.Cluster:
+    properties:
+      api_server_url:
+        type: string
+      created_at:
+        type: string
+      description:
+        type: string
+      health_status:
+        type: string
+      id:
+        type: string
+      is_default:
+        type: boolean
+      max_namespaces:
+        type: integer
+      name:
+        type: string
+      region:
+        type: string
+      updated_at:
         type: string
     type: object
   models.DeploymentLog:
@@ -332,6 +409,8 @@ definitions:
   models.StackInstance:
     properties:
       branch:
+        type: string
+      cluster_id:
         type: string
       created_at:
         type: string
@@ -442,7 +521,13 @@ paths:
   /api/v1/admin/orphaned-namespaces:
     get:
       description: Lists all Kubernetes namespaces matching the stack-* pattern that
-        have no corresponding stack instance in the database
+        have no corresponding stack instance in the database. Pass ?details=true to
+        include resource counts and helm releases per namespace (expensive).
+      parameters:
+      - description: Include resource counts and helm releases (true/false)
+        in: query
+        name: details
+        type: string
       produces:
       - application/json
       responses:
@@ -675,6 +760,266 @@ paths:
       summary: Register a new user
       tags:
       - auth
+  /api/v1/clusters:
+    get:
+      description: Returns all registered clusters. Kubeconfig data is never included
+        in responses.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/models.Cluster'
+            type: array
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List all clusters
+      tags:
+      - clusters
+    post:
+      consumes:
+      - application/json
+      description: Registers a new Kubernetes cluster with the provided kubeconfig
+        data.
+      parameters:
+      - description: Cluster registration payload
+        in: body
+        name: cluster
+        required: true
+        schema:
+          $ref: '#/definitions/handlers.CreateClusterRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/models.Cluster'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "409":
+          description: Conflict
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Register a new cluster
+      tags:
+      - clusters
+  /api/v1/clusters/{id}:
+    delete:
+      description: Removes a cluster registration. Blocked if any stack instances
+        reference this cluster.
+      parameters:
+      - description: Cluster ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "409":
+          description: Conflict
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Delete a cluster
+      tags:
+      - clusters
+    get:
+      description: Returns a single cluster by ID. Kubeconfig data is never included.
+      parameters:
+      - description: Cluster ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.Cluster'
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get cluster details
+      tags:
+      - clusters
+    put:
+      consumes:
+      - application/json
+      description: Updates cluster metadata and/or kubeconfig. If kubeconfig is updated,
+        the cached client is invalidated.
+      parameters:
+      - description: Cluster ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Cluster update payload
+        in: body
+        name: cluster
+        required: true
+        schema:
+          $ref: '#/definitions/handlers.UpdateClusterRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.Cluster'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Update a cluster
+      tags:
+      - clusters
+  /api/v1/clusters/{id}/default:
+    post:
+      description: Sets the specified cluster as the default cluster for deployments.
+      parameters:
+      - description: Cluster ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Set a cluster as the default
+      tags:
+      - clusters
+  /api/v1/clusters/{id}/test:
+    post:
+      description: Tests connectivity to a cluster by attempting to reach the Kubernetes
+        API server.
+      parameters:
+      - description: Cluster ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "502":
+          description: Bad Gateway
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "503":
+          description: Service Unavailable
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Test cluster connectivity
+      tags:
+      - clusters
   /api/v1/git/branches:
     get:
       description: List branches for a given repository URL
@@ -1287,6 +1632,124 @@ paths:
       summary: Update a stack instance
       tags:
       - stack-instances
+  /api/v1/stack-instances/{id}/branches:
+    get:
+      description: List all per-chart branch overrides for a stack instance
+      parameters:
+      - description: Instance ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/models.ChartBranchOverride'
+            type: array
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: List branch overrides for an instance
+      tags:
+      - branch-overrides
+  /api/v1/stack-instances/{id}/branches/{chartId}:
+    delete:
+      description: Remove the per-chart branch override for a specific chart in a
+        stack instance
+      parameters:
+      - description: Instance ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Chart config ID
+        in: path
+        name: chartId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Delete branch override for a chart
+      tags:
+      - branch-overrides
+    put:
+      consumes:
+      - application/json
+      description: Upsert a per-chart branch override for a specific chart in a stack
+        instance
+      parameters:
+      - description: Instance ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Chart config ID
+        in: path
+        name: chartId
+        required: true
+        type: string
+      - description: Branch override (branch field required)
+        in: body
+        name: body
+        required: true
+        schema:
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.ChartBranchOverride'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Set or update branch override for a chart
+      tags:
+      - branch-overrides
   /api/v1/stack-instances/{id}/clean:
     post:
       description: Uninstall all Helm releases and delete the K8s namespace, returning
