@@ -248,7 +248,7 @@ loadtest-backend-run: ## Run k6 tests (assumes backend already running)
 	@echo "Running backend WebSocket load test..."
 	k6 run loadtest/backend/k6-websocket.js
 
-loadtest-frontend: loadtest-start ## Run Playwright frontend load tests (starts/stops backend)
+loadtest-frontend: loadtest-start ## Run Playwright frontend load tests (starts/stops backend + frontend)
 	@$(MAKE) loadtest-frontend-run || ($(MAKE) loadtest-stop; exit 1)
 	@$(MAKE) loadtest-stop
 

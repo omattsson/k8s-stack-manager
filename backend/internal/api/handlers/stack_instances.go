@@ -389,6 +389,14 @@ func (h *InstanceHandler) UpdateInstance(c *gin.Context) {
 		return
 	}
 
+	// Authorization: only the owner or an admin may update the instance.
+	userID := middleware.GetUserIDFromContext(c)
+	role := middleware.GetRoleFromContext(c)
+	if existing.OwnerID != userID && role != "admin" {
+		c.JSON(http.StatusForbidden, gin.H{"error": "You are not allowed to modify this stack instance"})
+		return
+	}
+
 	var update struct {
 		Name       *string `json:"name"`
 		Branch     *string `json:"branch"`

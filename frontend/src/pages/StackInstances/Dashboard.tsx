@@ -95,6 +95,8 @@ const Dashboard = () => {
     );
     if (newRunning.length === 0) return;
 
+    let cancelled = false;
+
     // Mark as in-flight to avoid duplicate requests during async window
     for (const inst of newRunning) {
       inFlightIdsRef.current.add(inst.id);
@@ -107,6 +109,7 @@ const Dashboard = () => {
         return { id: inst.id, url };
       }),
     ).then((settled) => {
+      if (cancelled) return;
       const newUrls: Record<string, string> = {};
       settled.forEach((r, idx) => {
         if (r.status === 'fulfilled') {
@@ -124,6 +127,8 @@ const Dashboard = () => {
         setInstanceUrls((prev) => ({ ...prev, ...newUrls }));
       }
     });
+
+    return () => { cancelled = true; };
   }, [instances]);
 
   // Live-update instance statuses via WebSocket.

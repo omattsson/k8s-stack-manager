@@ -2,7 +2,7 @@
 // Install: brew install k6  (or https://k6.io/docs/get-started/installation/)
 //
 // Usage:
-//   k6 run loadtest/backend/k6-api.js                          # default (10 VUs, 1m)
+//   k6 run loadtest/backend/k6-api.js                          # default scenarios (smoke + load)
 //   k6 run --vus 50 --duration 5m loadtest/backend/k6-api.js   # 50 VUs for 5 min
 //   k6 run --env API_URL=http://backend:8081 loadtest/backend/k6-api.js  # custom URL
 //

@@ -89,6 +89,9 @@ func (h *FavoriteHandler) AddFavorite(c *gin.Context) {
 
 	if err := h.favoriteRepo.Add(fav); err != nil {
 		status, message := mapError(err, "Favorite")
+		if status >= http.StatusInternalServerError {
+			slog.Error("Failed to add favorite", "error", err, "user_id", userID)
+		}
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
@@ -126,6 +129,9 @@ func (h *FavoriteHandler) RemoveFavorite(c *gin.Context) {
 
 	if err := h.favoriteRepo.Remove(userID, entityType, entityID); err != nil {
 		status, message := mapError(err, "Favorite")
+		if status >= http.StatusInternalServerError {
+			slog.Error("Failed to remove favorite", "error", err, "user_id", userID)
+		}
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
