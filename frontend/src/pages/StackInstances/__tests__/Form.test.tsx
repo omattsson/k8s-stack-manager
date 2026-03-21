@@ -20,9 +20,12 @@ vi.mock('../../../api/client', () => ({
   definitionService: {
     list: vi.fn(),
   },
+  clusterService: {
+    list: vi.fn().mockResolvedValue([]),
+  },
 }));
 
-import { instanceService, definitionService } from '../../../api/client';
+import { instanceService, definitionService, clusterService } from '../../../api/client';
 
 const mockDefinitions = [
   {
@@ -80,7 +83,7 @@ describe('StackInstances Form', () => {
     );
     await waitFor(() => {
       expect(screen.getByRole('alert')).toBeInTheDocument();
-      expect(screen.getByText('Failed to load definitions')).toBeInTheDocument();
+      expect(screen.getByText('Failed to load form data')).toBeInTheDocument();
     });
   });
 

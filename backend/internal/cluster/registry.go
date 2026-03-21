@@ -3,7 +3,6 @@
 package cluster
 
 import (
-	"encoding/base64"
 	"fmt"
 	"os"
 	"sync"
@@ -12,7 +11,6 @@ import (
 	"backend/internal/deployer"
 	"backend/internal/k8s"
 	"backend/internal/models"
-	"backend/pkg/crypto"
 )
 
 // K8sClientFactory creates a k8s.Client from a kubeconfig path.
@@ -278,17 +276,8 @@ func (r *Registry) buildClients(cluster *models.Cluster) (*ClusterClients, error
 		kubeconfigPath = cluster.KubeconfigPath
 
 	case cluster.KubeconfigData != "":
-		decoded, err := base64.StdEncoding.DecodeString(cluster.KubeconfigData)
-		if err != nil {
-			return nil, fmt.Errorf("decode kubeconfig data: %w", err)
-		}
-
-		key := crypto.DeriveKey(r.encryptionKey)
-		plaintext, err := crypto.Decrypt(decoded, key)
-		if err != nil {
-			return nil, fmt.Errorf("decrypt kubeconfig data: %w", err)
-		}
-
+		// KubeconfigData is already decrypted by the repository layer.
+		// Write it as-is to a temp file for client construction.
 		f, err := os.CreateTemp("", "k8s-stack-kubeconfig-*")
 		if err != nil {
 			return nil, fmt.Errorf("create temp kubeconfig file: %w", err)
@@ -300,7 +289,7 @@ func (r *Registry) buildClients(cluster *models.Cluster) (*ClusterClients, error
 			return nil, fmt.Errorf("set temp kubeconfig permissions: %w", err)
 		}
 
-		if _, err := f.Write(plaintext); err != nil {
+		if _, err := f.Write([]byte(cluster.KubeconfigData)); err != nil {
 			f.Close()
 			os.Remove(f.Name())
 			return nil, fmt.Errorf("write temp kubeconfig: %w", err)

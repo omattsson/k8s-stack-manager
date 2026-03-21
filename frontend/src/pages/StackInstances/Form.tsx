@@ -46,7 +46,7 @@ const Form = () => {
           setSelectedClusterId(defaultCluster.id);
         }
       } catch {
-        setError('Failed to load definitions');
+        setError('Failed to load form data');
       } finally {
         setLoading(false);
       }

@@ -1,7 +1,6 @@
 package cluster
 
 import (
-	"encoding/base64"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -12,7 +11,6 @@ import (
 	"backend/internal/deployer"
 	"backend/internal/k8s"
 	"backend/internal/models"
-	"backend/pkg/crypto"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -133,14 +131,6 @@ func newTestRegistry(repo models.ClusterRepository) *Registry {
 	r.k8sFactory = stubK8sFactory
 	r.helmFactory = stubHelmFactory
 	return r
-}
-
-func encryptKubeconfig(t *testing.T, data, passphrase string) string {
-	t.Helper()
-	key := crypto.DeriveKey(passphrase)
-	encrypted, err := crypto.Encrypt([]byte(data), key)
-	require.NoError(t, err)
-	return base64.StdEncoding.EncodeToString(encrypted)
 }
 
 // --- Tests ---
@@ -453,15 +443,13 @@ func TestBuildClients_KubeconfigPath(t *testing.T) {
 func TestBuildClients_KubeconfigData_TempFileLifecycle(t *testing.T) {
 	t.Parallel()
 
-	passphrase := "test-passphrase"
 	kubeconfigContent := "apiVersion: v1\nkind: Config\nclusters: []\n"
-	encryptedData := encryptKubeconfig(t, kubeconfigContent, passphrase)
 
 	repo := newMockClusterRepo()
 	repo.clusters["data-cluster"] = &models.Cluster{
 		ID:             "data-cluster",
 		Name:           "Data Cluster",
-		KubeconfigData: encryptedData,
+		KubeconfigData: kubeconfigContent,
 	}
 
 	reg := newTestRegistry(repo)
@@ -496,15 +484,13 @@ func TestBuildClients_KubeconfigData_TempFileLifecycle(t *testing.T) {
 func TestBuildClients_KubeconfigData_CleanupOnClose(t *testing.T) {
 	t.Parallel()
 
-	passphrase := "test-passphrase"
 	kubeconfigContent := "apiVersion: v1\nkind: Config\n"
-	encryptedData := encryptKubeconfig(t, kubeconfigContent, passphrase)
 
 	repo := newMockClusterRepo()
 	repo.clusters["data-cluster"] = &models.Cluster{
 		ID:             "data-cluster",
 		Name:           "Data Cluster",
-		KubeconfigData: encryptedData,
+		KubeconfigData: kubeconfigContent,
 	}
 
 	reg := newTestRegistry(repo)
@@ -527,52 +513,16 @@ func TestBuildClients_KubeconfigData_CleanupOnClose(t *testing.T) {
 	assert.True(t, os.IsNotExist(err), "temp file should be removed after Close")
 }
 
-func TestBuildClients_KubeconfigData_BadBase64(t *testing.T) {
-	t.Parallel()
-
-	repo := newMockClusterRepo()
-	repo.clusters["bad"] = &models.Cluster{
-		ID:             "bad",
-		Name:           "Bad Data",
-		KubeconfigData: "not-valid-base64!!!",
-	}
-
-	reg := newTestRegistry(repo)
-
-	_, err := reg.GetClients("bad")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "decode kubeconfig data")
-}
-
-func TestBuildClients_KubeconfigData_BadEncryption(t *testing.T) {
-	t.Parallel()
-
-	// Valid base64 but not valid encrypted data.
-	repo := newMockClusterRepo()
-	repo.clusters["bad"] = &models.Cluster{
-		ID:             "bad",
-		Name:           "Bad Encryption",
-		KubeconfigData: base64.StdEncoding.EncodeToString([]byte("not encrypted")),
-	}
-
-	reg := newTestRegistry(repo)
-
-	_, err := reg.GetClients("bad")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "decrypt kubeconfig data")
-}
-
 func TestBuildClients_K8sFactoryError_CleansUpTempFile(t *testing.T) {
 	t.Parallel()
 
-	passphrase := "test-passphrase"
-	encryptedData := encryptKubeconfig(t, "apiVersion: v1\n", passphrase)
+	kubeconfigContent := "apiVersion: v1\n"
 
 	repo := newMockClusterRepo()
 	repo.clusters["fail"] = &models.Cluster{
 		ID:             "fail",
 		Name:           "Fail Cluster",
-		KubeconfigData: encryptedData,
+		KubeconfigData: kubeconfigContent,
 	}
 
 	reg := newTestRegistry(repo)

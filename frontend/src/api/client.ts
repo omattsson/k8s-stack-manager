@@ -580,7 +580,7 @@ export const clusterService = {
       throw error;
     }
   },
-  setDefault: async (id: string): Promise<Cluster> => {
+  setDefault: async (id: string): Promise<{ message: string }> => {
     try {
       const response = await api.post(`/api/v1/clusters/${id}/default`);
       return response.data;

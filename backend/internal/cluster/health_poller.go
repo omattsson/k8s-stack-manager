@@ -133,13 +133,23 @@ func (p *HealthPoller) checkCluster(cl *models.Cluster) string {
 		return models.ClusterUnreachable
 	}
 
+	resultCh := make(chan error, 1)
 	ctx, cancel := context.WithTimeout(context.Background(), healthCheckTimeout)
 	defer cancel()
 
-	_, err = client.Clientset().Discovery().ServerVersion()
-	// Use the context deadline check — ServerVersion doesn't accept a context,
-	// so also verify that the context hasn't expired.
-	if err != nil || ctx.Err() != nil {
+	go func() {
+		_, sErr := client.Clientset().Discovery().ServerVersion()
+		resultCh <- sErr
+	}()
+
+	var versionErr error
+	select {
+	case versionErr = <-resultCh:
+	case <-ctx.Done():
+		versionErr = ctx.Err()
+	}
+
+	if versionErr != nil {
 		slog.Debug("health poller: cluster ping failed",
 			"cluster_id", cl.ID,
 			"error", err,

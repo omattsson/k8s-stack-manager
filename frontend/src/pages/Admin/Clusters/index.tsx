@@ -254,7 +254,7 @@ const Clusters = () => {
                       <Chip label="Default" icon={<StarIcon />} color="primary" size="small" variant="outlined" />
                     ) : (
                       <Tooltip title="Set as default">
-                        <IconButton size="small" onClick={() => handleSetDefault(cluster)}>
+                        <IconButton size="small" aria-label={`Set ${cluster.name} as default`} onClick={() => handleSetDefault(cluster)}>
                           <StarBorderIcon />
                         </IconButton>
                       </Tooltip>
@@ -262,17 +262,17 @@ const Clusters = () => {
                   </TableCell>
                   <TableCell align="right">
                     <Tooltip title="Test Connection">
-                      <IconButton size="small" onClick={() => handleTestConnection(cluster)}>
+                      <IconButton size="small" aria-label={`Test connection for ${cluster.name}`} onClick={() => handleTestConnection(cluster)}>
                         <CheckCircleIcon />
                       </IconButton>
                     </Tooltip>
                     <Tooltip title="Edit">
-                      <IconButton size="small" onClick={() => openEditDialog(cluster)}>
+                      <IconButton size="small" aria-label={`Edit ${cluster.name}`} onClick={() => openEditDialog(cluster)}>
                         <EditIcon />
                       </IconButton>
                     </Tooltip>
                     <Tooltip title="Delete">
-                      <IconButton size="small" onClick={() => setDeleteTarget(cluster)} color="error">
+                      <IconButton size="small" aria-label={`Delete ${cluster.name}`} onClick={() => setDeleteTarget(cluster)} color="error">
                         <DeleteIcon />
                       </IconButton>
                     </Tooltip>

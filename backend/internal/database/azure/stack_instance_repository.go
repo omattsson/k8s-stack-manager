@@ -3,7 +3,6 @@ package azure
 import (
 	"context"
 	"encoding/json"
-	"strings"
 	"time"
 
 	"backend/internal/models"
@@ -107,9 +106,7 @@ func (r *StackInstanceRepository) Delete(id string) error {
 func (r *StackInstanceRepository) FindByNamespace(namespace string) (*models.StackInstance, error) {
 	ctx := context.Background()
 
-	// Escape single quotes in OData string literals to prevent filter injection.
-	escaped := strings.ReplaceAll(namespace, "'", "''")
-	filter := "PartitionKey eq 'global' and Namespace eq '" + escaped + "'"
+	filter := "PartitionKey eq 'global' and Namespace eq '" + escapeODataString(namespace) + "'"
 	pager := r.client.NewListEntitiesPager(&aztables.ListEntitiesOptions{
 		Filter: &filter,
 	})
@@ -168,8 +165,7 @@ func (r *StackInstanceRepository) ListByOwner(ownerID string) ([]models.StackIns
 func (r *StackInstanceRepository) FindByCluster(clusterID string) ([]models.StackInstance, error) {
 	ctx := context.Background()
 
-	escaped := strings.ReplaceAll(clusterID, "'", "''")
-	filter := "PartitionKey eq 'global' and ClusterID eq '" + escaped + "'"
+	filter := "PartitionKey eq 'global' and ClusterID eq '" + escapeODataString(clusterID) + "'"
 	pager := r.client.NewListEntitiesPager(&aztables.ListEntitiesOptions{
 		Filter: &filter,
 	})
