@@ -3,6 +3,7 @@ package handlers
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -781,4 +782,47 @@ func TestExtendTTL(t *testing.T) {
 
 		assert.Equal(t, http.StatusNotFound, w.Code)
 	})
+
+	t.Run("returns 500 when repo update fails", func(t *testing.T) {
+		t.Parallel()
+		instRepo := NewMockStackInstanceRepository()
+		defRepo := NewMockStackDefinitionRepository()
+
+		past := time.Now().Add(-5 * time.Minute)
+		inst := &models.StackInstance{
+			ID:                "i-err",
+			StackDefinitionID: "d1",
+			Name:              "err-ttl",
+			Namespace:         "stack-err-ttl-alice",
+			OwnerID:           "uid-1",
+			Branch:            "master",
+			Status:            models.StackStatusRunning,
+			TTLMinutes:        60,
+			ExpiresAt:         &past,
+		}
+		require.NoError(t, instRepo.Create(inst))
+		instRepo.SetError(errors.New("db write failure"))
+
+		router := setupInstanceRouterWithTTL(instRepo, defRepo, 0, "uid-1", "alice")
+
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest(http.MethodPost, "/api/v1/stack-instances/i-err/extend", nil)
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusInternalServerError, w.Code)
+	})
+}
+
+// ---- GetRecentInstances repo error ----
+
+func TestGetRecentInstances_RepoError(t *testing.T) {
+	t.Parallel()
+	router, repo := setupRecentInstancesRouter()
+	repo.SetError(errors.New("db read failure"))
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/api/v1/stack-instances/recent", nil)
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
 }

@@ -12,6 +12,7 @@ import (
 	"backend/internal/deployer"
 	"backend/internal/helm"
 	"backend/internal/models"
+	"backend/pkg/dberrors"
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
@@ -421,4 +422,79 @@ func TestQuickDeploy_UsesTemplateDefaultBranch(t *testing.T) {
 	var resp quickDeployResponse
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	assert.Equal(t, "main", resp.Instance.Branch)
+}
+
+func TestQuickDeploy_InvalidJSON(t *testing.T) {
+	t.Parallel()
+
+	tmplRepo := NewMockStackTemplateRepository()
+	tmplChartRepo := NewMockTemplateChartConfigRepository()
+	defRepo := NewMockStackDefinitionRepository()
+	ccRepo := NewMockChartConfigRepository()
+	instRepo := NewMockStackInstanceRepository()
+	boRepo := NewMockChartBranchOverrideRepository()
+	ovRepo := NewMockValueOverrideRepository()
+	auditRepo := NewMockAuditLogRepository()
+
+	router := setupQuickDeployRouter(
+		tmplRepo, tmplChartRepo, defRepo, ccRepo, instRepo, boRepo, ovRepo, auditRepo,
+		nil, nil,
+		"uid-1", "alice", "user",
+		0,
+	)
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest(http.MethodPost, "/api/v1/templates/t1/quick-deploy",
+		bytes.NewReader([]byte("not valid json")))
+	req.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	var body map[string]string
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+	assert.Contains(t, body["error"], "Invalid request format")
+}
+
+func TestQuickDeploy_DuplicateInstanceName(t *testing.T) {
+	t.Parallel()
+
+	tmplRepo := NewMockStackTemplateRepository()
+	tmplChartRepo := NewMockTemplateChartConfigRepository()
+	defRepo := NewMockStackDefinitionRepository()
+	ccRepo := NewMockChartConfigRepository()
+	instRepo := NewMockStackInstanceRepository()
+	boRepo := NewMockChartBranchOverrideRepository()
+	ovRepo := NewMockValueOverrideRepository()
+	auditRepo := NewMockAuditLogRepository()
+
+	seedTemplate(t, tmplRepo, "t1", "My Template", "owner-1", true)
+	require.NoError(t, tmplChartRepo.Create(&models.TemplateChartConfig{
+		ID:              "tc1",
+		StackTemplateID: "t1",
+		ChartName:       "nginx",
+		RepositoryURL:   "oci://example.com/charts/nginx",
+		DeployOrder:     1,
+	}))
+
+	// Pre-create an instance with the same name to force a duplicate error.
+	instRepo.SetCreateError(dberrors.NewDatabaseError("create", dberrors.ErrDuplicateKey))
+
+	logRepo := NewMockDeploymentLogRepository()
+	mgr := newTestManager(instRepo, logRepo)
+	registry := cluster.NewRegistryForTest("test-cluster", nil, &noopHelmExecutor{})
+
+	router := setupQuickDeployRouter(
+		tmplRepo, tmplChartRepo, defRepo, ccRepo, instRepo, boRepo, ovRepo, auditRepo,
+		mgr, registry,
+		"uid-1", "alice", "user",
+		0,
+	)
+
+	body, _ := json.Marshal(quickDeployRequest{InstanceName: "duplicate-name"})
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest(http.MethodPost, "/api/v1/templates/t1/quick-deploy", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusConflict, w.Code)
 }

@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -410,4 +411,63 @@ func TestInstanceHandler_GetRecentInstances(t *testing.T) {
 			}
 		})
 	}
+}
+
+// ---- Error path tests for coverage ----
+
+func TestFavoriteHandler_ListFavorites_RepoError(t *testing.T) {
+	t.Parallel()
+	router, repo := setupFavoriteRouter()
+	repo.SetError(errors.New("db connection lost"))
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/api/v1/favorites", nil)
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
+	var body map[string]string
+	_ = json.Unmarshal(w.Body.Bytes(), &body)
+	assert.Equal(t, "Internal server error", body["error"])
+}
+
+func TestFavoriteHandler_AddFavorite_RepoError(t *testing.T) {
+	t.Parallel()
+	router, repo := setupFavoriteRouter()
+	repo.SetError(errors.New("write failure"))
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("POST", "/api/v1/favorites",
+		strings.NewReader(`{"entity_type":"instance","entity_id":"inst-1"}`))
+	req.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
+}
+
+func TestFavoriteHandler_RemoveFavorite_RepoError(t *testing.T) {
+	t.Parallel()
+	router, repo := setupFavoriteRouter()
+	_ = repo.Add(&models.UserFavorite{UserID: "user-1", EntityType: "instance", EntityID: "inst-1"})
+	repo.SetError(errors.New("delete failure"))
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("DELETE", "/api/v1/favorites/instance/inst-1", nil)
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
+}
+
+func TestFavoriteHandler_CheckFavorite_RepoError(t *testing.T) {
+	t.Parallel()
+	router, repo := setupFavoriteRouter()
+	repo.SetError(errors.New("read failure"))
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/api/v1/favorites/check?entity_type=instance&entity_id=inst-1", nil)
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
+	var body map[string]string
+	_ = json.Unmarshal(w.Body.Bytes(), &body)
+	assert.Equal(t, "Internal server error", body["error"])
 }

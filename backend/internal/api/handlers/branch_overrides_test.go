@@ -395,3 +395,43 @@ func TestDeleteBranchOverride(t *testing.T) {
 		})
 	}
 }
+
+// ---- ListBranchOverrides repo error on list ----
+
+func TestListBranchOverrides_RepoError(t *testing.T) {
+	t.Parallel()
+
+	instRepo := NewMockStackInstanceRepository()
+	overrideRepo := NewMockChartBranchOverrideRepository()
+
+	seedInstance(t, instRepo, "inst-1", "my-stack", "def-1", "uid-1", models.StackStatusDraft)
+	// Set error after instance exists so FindByID succeeds but List fails.
+	overrideRepo.SetError(errors.New("storage unavailable"))
+
+	router := setupBranchOverrideRouter(instRepo, overrideRepo, "uid-1", "user")
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest(http.MethodGet, "/api/v1/stack-instances/inst-1/branches", nil)
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
+}
+
+// ---- DeleteBranchOverride repo error ----
+
+func TestDeleteBranchOverride_RepoError(t *testing.T) {
+	t.Parallel()
+
+	instRepo := NewMockStackInstanceRepository()
+	overrideRepo := NewMockChartBranchOverrideRepository()
+
+	seedInstance(t, instRepo, "inst-1", "my-stack", "def-1", "uid-1", models.StackStatusDraft)
+	seedBranchOverride(t, overrideRepo, "bo-1", "inst-1", "chart-1", "feature/old")
+	overrideRepo.SetError(errors.New("storage error"))
+
+	router := setupBranchOverrideRouter(instRepo, overrideRepo, "uid-1", "user")
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest(http.MethodDelete, "/api/v1/stack-instances/inst-1/branches/chart-1", nil)
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
+}

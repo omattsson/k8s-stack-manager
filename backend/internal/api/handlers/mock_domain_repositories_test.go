@@ -512,10 +512,11 @@ func (m *MockChartConfigRepository) SetError(err error) {
 // ---- StackInstanceRepository mock ----
 
 type MockStackInstanceRepository struct {
-	mu       sync.RWMutex
-	items    map[string]*models.StackInstance
-	err      error
-	fetchErr error
+	mu        sync.RWMutex
+	items     map[string]*models.StackInstance
+	err       error
+	fetchErr  error
+	createErr error
 }
 
 func NewMockStackInstanceRepository() *MockStackInstanceRepository {
@@ -525,6 +526,9 @@ func NewMockStackInstanceRepository() *MockStackInstanceRepository {
 func (m *MockStackInstanceRepository) Create(i *models.StackInstance) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.createErr != nil {
+		return m.createErr
+	}
 	if m.err != nil {
 		return m.err
 	}
@@ -657,6 +661,12 @@ func (m *MockStackInstanceRepository) SetFetchError(err error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.fetchErr = err
+}
+
+func (m *MockStackInstanceRepository) SetCreateError(err error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.createErr = err
 }
 
 // ---- ValueOverrideRepository mock ----

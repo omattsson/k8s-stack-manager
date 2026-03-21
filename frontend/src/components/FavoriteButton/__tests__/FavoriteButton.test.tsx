@@ -80,4 +80,52 @@ describe('FavoriteButton', () => {
 
     expect(screen.getByRole('button')).toBeDisabled();
   });
+
+  it('keeps current state on add error', async () => {
+    const user = userEvent.setup();
+    (favoriteService.check as ReturnType<typeof vi.fn>).mockResolvedValue(false);
+    (favoriteService.add as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('Network error'));
+
+    render(<FavoriteButton entityType="instance" entityId="1" />);
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Add to favorites' })).not.toBeDisabled();
+    });
+
+    await user.click(screen.getByRole('button', { name: 'Add to favorites' }));
+
+    // Should still show "Add to favorites" (not toggled) because the API call failed.
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Add to favorites' })).not.toBeDisabled();
+    });
+  });
+
+  it('keeps current state on remove error', async () => {
+    const user = userEvent.setup();
+    (favoriteService.check as ReturnType<typeof vi.fn>).mockResolvedValue(true);
+    (favoriteService.remove as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('Network error'));
+
+    render(<FavoriteButton entityType="instance" entityId="1" />);
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Remove from favorites' })).not.toBeDisabled();
+    });
+
+    await user.click(screen.getByRole('button', { name: 'Remove from favorites' }));
+
+    // Should still show "Remove from favorites" (not toggled) because the API call failed.
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Remove from favorites' })).not.toBeDisabled();
+    });
+  });
+
+  it('handles check error gracefully — defaults to not favorited', async () => {
+    (favoriteService.check as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('Server error'));
+
+    render(<FavoriteButton entityType="definition" entityId="def-1" />);
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Add to favorites' })).not.toBeDisabled();
+    });
+  });
 });
