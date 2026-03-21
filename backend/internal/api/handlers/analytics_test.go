@@ -429,6 +429,17 @@ func TestAnalytics_RepoErrors(t *testing.T) {
 		assert.Equal(t, http.StatusInternalServerError, w.Code)
 	})
 
+	t.Run("overview - definition repo error", func(t *testing.T) {
+		t.Parallel()
+		defRepo := NewMockStackDefinitionRepository()
+		defRepo.SetError(assert.AnError)
+		router := setupAnalyticsRouter(NewMockStackTemplateRepository(), defRepo, NewMockStackInstanceRepository(), newMockDeployLogRepo(), NewMockUserRepository())
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest(http.MethodGet, "/api/v1/analytics/overview", nil)
+		router.ServeHTTP(w, req)
+		assert.Equal(t, http.StatusInternalServerError, w.Code)
+	})
+
 	t.Run("overview - instance repo error", func(t *testing.T) {
 		t.Parallel()
 		instRepo := NewMockStackInstanceRepository()
@@ -440,11 +451,47 @@ func TestAnalytics_RepoErrors(t *testing.T) {
 		assert.Equal(t, http.StatusInternalServerError, w.Code)
 	})
 
+	t.Run("overview - user repo error", func(t *testing.T) {
+		t.Parallel()
+		gin.SetMode(gin.TestMode)
+		r := gin.New()
+		r.Use(injectAuthContext("admin-1", "admin"))
+		failUser := &failingUserRepo{*NewMockUserRepository()}
+		h := NewAnalyticsHandler(NewMockStackTemplateRepository(), NewMockStackDefinitionRepository(), NewMockStackInstanceRepository(), newMockDeployLogRepo(), failUser)
+		r.GET("/api/v1/analytics/overview", h.GetOverview)
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest(http.MethodGet, "/api/v1/analytics/overview", nil)
+		r.ServeHTTP(w, req)
+		assert.Equal(t, http.StatusInternalServerError, w.Code)
+	})
+
 	t.Run("template stats - template repo error", func(t *testing.T) {
 		t.Parallel()
 		tmplRepo := NewMockStackTemplateRepository()
 		tmplRepo.SetError(assert.AnError)
 		router := setupAnalyticsRouter(tmplRepo, NewMockStackDefinitionRepository(), NewMockStackInstanceRepository(), newMockDeployLogRepo(), NewMockUserRepository())
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest(http.MethodGet, "/api/v1/analytics/templates", nil)
+		router.ServeHTTP(w, req)
+		assert.Equal(t, http.StatusInternalServerError, w.Code)
+	})
+
+	t.Run("template stats - definition repo error", func(t *testing.T) {
+		t.Parallel()
+		defRepo := NewMockStackDefinitionRepository()
+		defRepo.SetError(assert.AnError)
+		router := setupAnalyticsRouter(NewMockStackTemplateRepository(), defRepo, NewMockStackInstanceRepository(), newMockDeployLogRepo(), NewMockUserRepository())
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest(http.MethodGet, "/api/v1/analytics/templates", nil)
+		router.ServeHTTP(w, req)
+		assert.Equal(t, http.StatusInternalServerError, w.Code)
+	})
+
+	t.Run("template stats - instance repo error", func(t *testing.T) {
+		t.Parallel()
+		instRepo := NewMockStackInstanceRepository()
+		instRepo.SetError(assert.AnError)
+		router := setupAnalyticsRouter(NewMockStackTemplateRepository(), NewMockStackDefinitionRepository(), instRepo, newMockDeployLogRepo(), NewMockUserRepository())
 		w := httptest.NewRecorder()
 		req, _ := http.NewRequest(http.MethodGet, "/api/v1/analytics/templates", nil)
 		router.ServeHTTP(w, req)
@@ -462,6 +509,17 @@ func TestAnalytics_RepoErrors(t *testing.T) {
 		w := httptest.NewRecorder()
 		req, _ := http.NewRequest(http.MethodGet, "/api/v1/analytics/users", nil)
 		r.ServeHTTP(w, req)
+		assert.Equal(t, http.StatusInternalServerError, w.Code)
+	})
+
+	t.Run("user stats - instance repo error", func(t *testing.T) {
+		t.Parallel()
+		instRepo := NewMockStackInstanceRepository()
+		instRepo.SetError(assert.AnError)
+		router := setupAnalyticsRouter(NewMockStackTemplateRepository(), NewMockStackDefinitionRepository(), instRepo, newMockDeployLogRepo(), NewMockUserRepository())
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest(http.MethodGet, "/api/v1/analytics/users", nil)
+		router.ServeHTTP(w, req)
 		assert.Equal(t, http.StatusInternalServerError, w.Code)
 	})
 }

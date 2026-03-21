@@ -299,6 +299,29 @@ func TestUpdateSharedValues(t *testing.T) {
 			body:      map[string]interface{}{"name": "x", "values": "a: 1"},
 			wantStatus: http.StatusNotFound,
 		},
+		{
+			name:      "invalid JSON body",
+			clusterID: "cluster-1",
+			valueID:   "sv-1",
+			seed:      &models.SharedValues{ID: "sv-1", ClusterID: "cluster-1", Name: "old", Values: "a: 1"},
+			body:      "not json",
+			wantStatus: http.StatusBadRequest,
+		},
+		{
+			name:      "missing name validation error",
+			clusterID: "cluster-1",
+			valueID:   "sv-1",
+			seed:      &models.SharedValues{ID: "sv-1", ClusterID: "cluster-1", Name: "old", Values: "a: 1"},
+			body:      map[string]interface{}{"name": "", "values": "a: 1"},
+			wantStatus: http.StatusBadRequest,
+		},
+		{
+			name:       "cluster not found",
+			clusterID:  "nonexistent",
+			valueID:    "sv-1",
+			body:       map[string]interface{}{"name": "x", "values": "a: 1"},
+			wantStatus: http.StatusNotFound,
+		},
 	}
 
 	for _, tt := range tests {
@@ -311,7 +334,14 @@ func TestUpdateSharedValues(t *testing.T) {
 				svRepo.items[tt.seed.ID] = tt.seed
 			}
 
-			bodyBytes, _ := json.Marshal(tt.body)
+			var bodyBytes []byte
+			switch v := tt.body.(type) {
+			case string:
+				bodyBytes = []byte(v)
+			default:
+				bodyBytes, _ = json.Marshal(v)
+			}
+
 			w := httptest.NewRecorder()
 			req, _ := http.NewRequest("PUT", "/api/v1/clusters/"+tt.clusterID+"/shared-values/"+tt.valueID, bytes.NewReader(bodyBytes))
 			req.Header.Set("Content-Type", "application/json")

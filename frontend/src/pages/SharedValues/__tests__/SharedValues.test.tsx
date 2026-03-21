@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { render, screen, waitFor, within, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import SharedValuesPage from '../index';
@@ -135,16 +135,11 @@ describe('SharedValues Page', () => {
     // Dialog should be open
     expect(screen.getByRole('dialog')).toBeInTheDocument();
 
-    // Fill in the form
-    await user.type(screen.getByLabelText(/^Name/), 'New Config');
-    await user.type(screen.getByLabelText(/Description/), 'New desc');
-
-    // Clear default priority and type new value
-    const priorityField = screen.getByLabelText(/Priority/);
-    await user.clear(priorityField);
-    await user.type(priorityField, '5');
-
-    await user.type(screen.getByLabelText(/Values \(YAML\)/), 'key: value');
+    // Fill in the form using fireEvent.change (faster than userEvent.type for long strings)
+    fireEvent.change(screen.getByLabelText(/^Name/), { target: { value: 'New Config' } });
+    fireEvent.change(screen.getByLabelText(/Description/), { target: { value: 'New desc' } });
+    fireEvent.change(screen.getByLabelText(/Priority/), { target: { value: '5' } });
+    fireEvent.change(screen.getByLabelText(/Values \(YAML\)/), { target: { value: 'key: value' } });
 
     // After filling, re-mock list to return the new item
     (sharedValuesService.list as ReturnType<typeof vi.fn>).mockResolvedValue([{

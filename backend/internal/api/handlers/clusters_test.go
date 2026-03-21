@@ -987,6 +987,20 @@ func TestGetClusterNodes(t *testing.T) {
 		assert.Equal(t, http.StatusNotFound, w.Code)
 	})
 
+	t.Run("returns 500 when registry is nil", func(t *testing.T) {
+		t.Parallel()
+		clusterRepo := NewMockClusterRepository()
+		instanceRepo := NewMockStackInstanceRepository()
+		seedCluster(clusterRepo, "cl-1", "prod")
+
+		router := setupClusterRouter(clusterRepo, instanceRepo, nil, "admin")
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest(http.MethodGet, "/api/v1/clusters/cl-1/health/nodes", nil)
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusInternalServerError, w.Code)
+	})
+
 	t.Run("regular user gets 403", func(t *testing.T) {
 		t.Parallel()
 		clusterRepo := NewMockClusterRepository()
@@ -1042,6 +1056,20 @@ func TestGetClusterNamespaces(t *testing.T) {
 		router.ServeHTTP(w, req)
 
 		assert.Equal(t, http.StatusNotFound, w.Code)
+	})
+
+	t.Run("returns 500 when registry is nil", func(t *testing.T) {
+		t.Parallel()
+		clusterRepo := NewMockClusterRepository()
+		instanceRepo := NewMockStackInstanceRepository()
+		seedCluster(clusterRepo, "cl-1", "prod")
+
+		router := setupClusterRouter(clusterRepo, instanceRepo, nil, "admin")
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest(http.MethodGet, "/api/v1/clusters/cl-1/namespaces", nil)
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusInternalServerError, w.Code)
 	})
 
 	t.Run("regular user gets 403", func(t *testing.T) {
