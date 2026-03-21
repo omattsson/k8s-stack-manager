@@ -3,6 +3,7 @@
 package cluster
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"sync"
@@ -11,6 +12,7 @@ import (
 	"backend/internal/deployer"
 	"backend/internal/k8s"
 	"backend/internal/models"
+	"backend/pkg/dberrors"
 )
 
 // K8sClientFactory creates a k8s.Client from a kubeconfig path.
@@ -127,8 +129,12 @@ func (r *Registry) GetDefaultClients() (*ClusterClients, error) {
 
 	cluster, err := r.clusterRepo.FindDefault()
 	if err != nil {
-		r.defaultResolved = true
-		r.defaultID = ""
+		// Only cache the "no default" state for definitive not-found errors.
+		// Transient failures (DB down, network) should allow retries.
+		if isNotFoundError(err) {
+			r.defaultResolved = true
+			r.defaultID = ""
+		}
 		r.mu.Unlock()
 		return nil, fmt.Errorf("no default cluster configured: %w", err)
 	}
@@ -170,8 +176,10 @@ func (r *Registry) ResolveClusterID(clusterID string) (string, error) {
 
 	cluster, err := r.clusterRepo.FindDefault()
 	if err != nil {
-		r.defaultResolved = true
-		r.defaultID = ""
+		if isNotFoundError(err) {
+			r.defaultResolved = true
+			r.defaultID = ""
+		}
 		r.mu.Unlock()
 		return "", fmt.Errorf("no default cluster configured: %w", err)
 	}
@@ -326,4 +334,10 @@ func cleanupTempKubeconfig(cc *ClusterClients) {
 	if cc.kubeconfigPath != "" {
 		os.Remove(cc.kubeconfigPath)
 	}
+}
+
+// isNotFoundError returns true if the error wraps dberrors.ErrNotFound,
+// indicating the record definitively does not exist (vs a transient failure).
+func isNotFoundError(err error) bool {
+	return errors.Is(err, dberrors.ErrNotFound)
 }

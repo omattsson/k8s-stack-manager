@@ -203,15 +203,25 @@ func (h *InstanceHandler) CreateInstance(c *gin.Context) {
 		inst.Branch = "master"
 	}
 
-	// Resolve empty ClusterID to the current default cluster so the
-	// persisted value is explicit and won't shift if the default changes.
-	if inst.ClusterID == "" && h.registry != nil {
-		resolved, resolveErr := h.registry.ResolveClusterID("")
-		if resolveErr != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "No default cluster configured; specify cluster_id"})
-			return
+	// Resolve or validate ClusterID using the registry when available.
+	// - If empty, resolve to the current default cluster so the persisted
+	//   value is explicit and won't shift if the default changes.
+	// - If non-empty, validate that it refers to a known cluster to avoid
+	//   persisting invalid references that will only fail at deploy time.
+	if h.registry != nil {
+		if inst.ClusterID == "" {
+			resolved, resolveErr := h.registry.ResolveClusterID("")
+			if resolveErr != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "No default cluster configured; specify cluster_id"})
+				return
+			}
+			inst.ClusterID = resolved
+		} else {
+			if _, resolveErr := h.registry.ResolveClusterID(inst.ClusterID); resolveErr != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "Unknown cluster_id"})
+				return
+			}
 		}
-		inst.ClusterID = resolved
 	}
 
 	// Auto-generate namespace.

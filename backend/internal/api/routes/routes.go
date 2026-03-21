@@ -243,6 +243,8 @@ func SetupRoutes(router *gin.Engine, deps Deps) *handlers.RateLimiter {
 			admin := middleware.RequireAdmin()
 			clusters := authed.Group("/clusters")
 			{
+				// GET routes are intentionally open to all authenticated users
+				// so the instance-creation form can populate the cluster dropdown.
 				clusters.GET("", clusterHandler.ListClusters)
 				clusters.GET("/:id", clusterHandler.GetCluster)
 				clusters.POST("", admin, clusterHandler.CreateCluster)
