@@ -262,6 +262,7 @@ func SetupRoutes(router *gin.Engine, deps Deps) *handlers.RateLimiter {
 		}
 		if clusterHandler != nil {
 			admin := middleware.RequireAdmin()
+			devops := middleware.RequireDevOps()
 			clusters := authed.Group("/clusters")
 			{
 				// GET routes are intentionally open to all authenticated users
@@ -273,6 +274,11 @@ func SetupRoutes(router *gin.Engine, deps Deps) *handlers.RateLimiter {
 				clusters.DELETE("/:id", admin, clusterHandler.DeleteCluster)
 				clusters.POST("/:id/test", admin, clusterHandler.TestClusterConnection)
 				clusters.POST("/:id/default", admin, clusterHandler.SetDefaultCluster)
+
+				// Cluster health dashboard — requires DevOps or Admin role.
+				clusters.GET("/:id/health/summary", devops, clusterHandler.GetClusterHealthSummary)
+				clusters.GET("/:id/health/nodes", devops, clusterHandler.GetClusterNodes)
+				clusters.GET("/:id/namespaces", devops, clusterHandler.GetClusterNamespaces)
 			}
 		}
 

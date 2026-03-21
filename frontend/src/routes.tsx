@@ -14,6 +14,7 @@ import AuditLog from './pages/AuditLog';
 import AdminUsers from './pages/Admin/Users';
 import OrphanedNamespaces from './pages/Admin/OrphanedNamespaces';
 import Clusters from './pages/Admin/Clusters';
+import ClusterHealth from './pages/ClusterHealth';
 import Profile from './pages/Profile';
 
 const AppRoutes = () => {
@@ -35,6 +36,7 @@ const AppRoutes = () => {
       <Route path="/admin/users" element={<ProtectedRoute requiredRole="admin"><AdminUsers /></ProtectedRoute>} />
       <Route path="/admin/orphaned-namespaces" element={<ProtectedRoute requiredRole="admin"><OrphanedNamespaces /></ProtectedRoute>} />
       <Route path="/admin/clusters" element={<ProtectedRoute requiredRole="admin"><Clusters /></ProtectedRoute>} />
+      <Route path="/admin/cluster-health" element={<ProtectedRoute requiredRole="admin"><ClusterHealth /></ProtectedRoute>} />
       <Route path="/profile" element={<ProtectedRoute><Profile /></ProtectedRoute>} />
     </Routes>
   );

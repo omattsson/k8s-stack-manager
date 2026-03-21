@@ -31,6 +31,9 @@ import type {
   UserFavorite,
   QuickDeployRequest,
   QuickDeployResponse,
+  ClusterSummary,
+  NodeStatusInfo,
+  ClusterNamespaceInfo,
 } from '../types';
 
 const api = axios.create(axiosConfig);
@@ -620,6 +623,33 @@ export const clusterService = {
       return response.data;
     } catch (error) {
       console.error('Failed to set default cluster:', error);
+      throw error;
+    }
+  },
+  getHealthSummary: async (id: string): Promise<ClusterSummary> => {
+    try {
+      const response = await api.get(`/api/v1/clusters/${id}/health/summary`);
+      return response.data;
+    } catch (error) {
+      console.error('Failed to fetch cluster health summary:', error);
+      throw error;
+    }
+  },
+  getNodes: async (id: string): Promise<NodeStatusInfo[]> => {
+    try {
+      const response = await api.get(`/api/v1/clusters/${id}/health/nodes`);
+      return response.data;
+    } catch (error) {
+      console.error('Failed to fetch cluster nodes:', error);
+      throw error;
+    }
+  },
+  getNamespaces: async (id: string): Promise<ClusterNamespaceInfo[]> => {
+    try {
+      const response = await api.get(`/api/v1/clusters/${id}/namespaces`);
+      return response.data;
+    } catch (error) {
+      console.error('Failed to fetch cluster namespaces:', error);
       throw error;
     }
   },

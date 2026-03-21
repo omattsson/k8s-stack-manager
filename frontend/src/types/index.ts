@@ -341,3 +341,40 @@ export interface QuickDeployResponse {
   definition: StackDefinition;
   log_id: string;
 }
+
+export interface ClusterSummary {
+  node_count: number;
+  ready_node_count: number;
+  total_cpu: string;
+  total_memory: string;
+  allocatable_cpu: string;
+  allocatable_memory: string;
+  namespace_count: number;
+}
+
+export interface NodeStatusInfo {
+  name: string;
+  status: string;
+  conditions: NodeCondition[];
+  capacity: ResourceQuantityInfo;
+  allocatable: ResourceQuantityInfo;
+  pod_count: number;
+}
+
+export interface NodeCondition {
+  type: string;
+  status: string;
+  message?: string;
+}
+
+export interface ResourceQuantityInfo {
+  cpu: string;
+  memory: string;
+  pods?: string;
+}
+
+export interface ClusterNamespaceInfo {
+  name: string;
+  phase: string;
+  created_at: string;
+}

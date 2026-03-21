@@ -479,3 +479,172 @@ func appendUnique(slice []string, val string) []string {
 	}
 	return append(slice, val)
 }
+
+// ClusterSummary provides a high-level overview of cluster health and capacity.
+type ClusterSummary struct {
+	NodeCount         int    `json:"node_count"`
+	ReadyNodeCount    int    `json:"ready_node_count"`
+	TotalCPU          string `json:"total_cpu"`
+	TotalMemory       string `json:"total_memory"`
+	AllocatableCPU    string `json:"allocatable_cpu"`
+	AllocatableMemory string `json:"allocatable_memory"`
+	NamespaceCount    int    `json:"namespace_count"`
+}
+
+// NodeStatus represents the health and capacity of a single cluster node.
+type NodeStatus struct {
+	Name        string           `json:"name"`
+	Status      string           `json:"status"` // "Ready" or "NotReady"
+	Conditions  []NodeCondition  `json:"conditions"`
+	Capacity    ResourceQuantity `json:"capacity"`
+	Allocatable ResourceQuantity `json:"allocatable"`
+	PodCount    int              `json:"pod_count"`
+}
+
+// NodeCondition represents a single node condition (Ready, MemoryPressure, etc.).
+type NodeCondition struct {
+	Type    string `json:"type"`
+	Status  string `json:"status"` // "True", "False", "Unknown"
+	Message string `json:"message,omitempty"`
+}
+
+// ResourceQuantity holds CPU, memory, and pod capacity values as strings.
+type ResourceQuantity struct {
+	CPU    string `json:"cpu"`
+	Memory string `json:"memory"`
+	Pods   string `json:"pods,omitempty"`
+}
+
+// GetClusterSummary returns a high-level overview of cluster health and capacity.
+func (c *Client) GetClusterSummary(ctx context.Context) (*ClusterSummary, error) {
+	nodeList, err := c.clientset.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("list nodes: %w", err)
+	}
+
+	var readyCount int
+	var totalCPUMillis, allocatableCPUMillis int64
+	var totalMemBytes, allocatableMemBytes int64
+
+	for _, node := range nodeList.Items {
+		for _, cond := range node.Status.Conditions {
+			if cond.Type == corev1.NodeReady && cond.Status == corev1.ConditionTrue {
+				readyCount++
+				break
+			}
+		}
+
+		if cpu, ok := node.Status.Capacity[corev1.ResourceCPU]; ok {
+			totalCPUMillis += cpu.MilliValue()
+		}
+		if mem, ok := node.Status.Capacity[corev1.ResourceMemory]; ok {
+			totalMemBytes += mem.Value()
+		}
+		if cpu, ok := node.Status.Allocatable[corev1.ResourceCPU]; ok {
+			allocatableCPUMillis += cpu.MilliValue()
+		}
+		if mem, ok := node.Status.Allocatable[corev1.ResourceMemory]; ok {
+			allocatableMemBytes += mem.Value()
+		}
+	}
+
+	// Count stack-* namespaces.
+	nsList, err := c.clientset.CoreV1().Namespaces().List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("list namespaces: %w", err)
+	}
+	var nsCount int
+	for _, ns := range nsList.Items {
+		if strings.HasPrefix(ns.Name, "stack-") {
+			nsCount++
+		}
+	}
+
+	return &ClusterSummary{
+		NodeCount:         len(nodeList.Items),
+		ReadyNodeCount:    readyCount,
+		TotalCPU:          fmt.Sprintf("%dm", totalCPUMillis),
+		TotalMemory:       formatMemoryBytes(totalMemBytes),
+		AllocatableCPU:    fmt.Sprintf("%dm", allocatableCPUMillis),
+		AllocatableMemory: formatMemoryBytes(allocatableMemBytes),
+		NamespaceCount:    nsCount,
+	}, nil
+}
+
+// GetNodeStatuses returns per-node health, conditions, and capacity.
+func (c *Client) GetNodeStatuses(ctx context.Context) ([]NodeStatus, error) {
+	nodeList, err := c.clientset.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("list nodes: %w", err)
+	}
+
+	result := make([]NodeStatus, 0, len(nodeList.Items))
+	for _, node := range nodeList.Items {
+		status := "NotReady"
+		var conditions []NodeCondition
+		for _, cond := range node.Status.Conditions {
+			if cond.Type == corev1.NodeReady && cond.Status == corev1.ConditionTrue {
+				status = "Ready"
+			}
+			conditions = append(conditions, NodeCondition{
+				Type:    string(cond.Type),
+				Status:  string(cond.Status),
+				Message: cond.Message,
+			})
+		}
+
+		capacity := ResourceQuantity{
+			CPU:    node.Status.Capacity.Cpu().String(),
+			Memory: node.Status.Capacity.Memory().String(),
+			Pods:   node.Status.Capacity.Pods().String(),
+		}
+		allocatable := ResourceQuantity{
+			CPU:    node.Status.Allocatable.Cpu().String(),
+			Memory: node.Status.Allocatable.Memory().String(),
+			Pods:   node.Status.Allocatable.Pods().String(),
+		}
+
+		// Count pods on this node.
+		podList, err := c.clientset.CoreV1().Pods("").List(ctx, metav1.ListOptions{
+			FieldSelector: "spec.nodeName=" + node.Name,
+		})
+		podCount := 0
+		if err != nil {
+			slog.Warn("Failed to count pods on node", "node", node.Name, "error", err)
+		} else {
+			podCount = len(podList.Items)
+		}
+
+		result = append(result, NodeStatus{
+			Name:        node.Name,
+			Status:      status,
+			Conditions:  conditions,
+			Capacity:    capacity,
+			Allocatable: allocatable,
+			PodCount:    podCount,
+		})
+	}
+
+	// Sort by name for deterministic output.
+	sortNodeStatuses(result)
+	return result, nil
+}
+
+// sortNodeStatuses sorts node statuses by name in ascending order.
+func sortNodeStatuses(nodes []NodeStatus) {
+	for i := 1; i < len(nodes); i++ {
+		for j := i; j > 0 && nodes[j].Name < nodes[j-1].Name; j-- {
+			nodes[j], nodes[j-1] = nodes[j-1], nodes[j]
+		}
+	}
+}
+
+// formatMemoryBytes formats a byte count as a human-readable string (Mi or Gi).
+func formatMemoryBytes(bytes int64) string {
+	const gi = 1024 * 1024 * 1024
+	const mi = 1024 * 1024
+	if bytes >= gi {
+		return fmt.Sprintf("%.1fGi", float64(bytes)/float64(gi))
+	}
+	return fmt.Sprintf("%dMi", bytes/mi)
+}

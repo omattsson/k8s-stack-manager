@@ -20,6 +20,9 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
 )
 
@@ -56,6 +59,7 @@ func setupClusterRouter(
 
 	h := NewClusterHandler(clusterRepo, registry, instanceRepo)
 	adminMW := middleware.RequireAdmin()
+	devopsMW := middleware.RequireDevOps()
 	clusters := r.Group("/api/v1/clusters")
 	{
 		clusters.GET("", h.ListClusters)
@@ -65,6 +69,10 @@ func setupClusterRouter(
 		clusters.DELETE("/:id", adminMW, h.DeleteCluster)
 		clusters.POST("/:id/test", adminMW, h.TestClusterConnection)
 		clusters.POST("/:id/default", adminMW, h.SetDefaultCluster)
+
+		clusters.GET("/:id/health/summary", devopsMW, h.GetClusterHealthSummary)
+		clusters.GET("/:id/health/nodes", devopsMW, h.GetClusterNodes)
+		clusters.GET("/:id/namespaces", devopsMW, h.GetClusterNamespaces)
 	}
 	return r
 }
@@ -832,6 +840,219 @@ func TestSetDefaultCluster(t *testing.T) {
 		router := setupClusterRouter(clusterRepo, instanceRepo, nil, "user")
 		w := httptest.NewRecorder()
 		req, _ := http.NewRequest(http.MethodPost, "/api/v1/clusters/cl-1/default", nil)
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusForbidden, w.Code)
+	})
+}
+
+// --- Cluster Health Dashboard Handler Tests ---
+
+// makeTestNode creates a corev1.Node for handler tests.
+func makeTestNode(name string, ready bool) *corev1.Node {
+	readyStatus := corev1.ConditionFalse
+	if ready {
+		readyStatus = corev1.ConditionTrue
+	}
+	return &corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{Name: name},
+		Status: corev1.NodeStatus{
+			Conditions: []corev1.NodeCondition{
+				{Type: corev1.NodeReady, Status: readyStatus},
+			},
+			Capacity: corev1.ResourceList{
+				corev1.ResourceCPU:    resource.MustParse("4"),
+				corev1.ResourceMemory: resource.MustParse("16Gi"),
+				corev1.ResourcePods:   resource.MustParse("110"),
+			},
+			Allocatable: corev1.ResourceList{
+				corev1.ResourceCPU:    resource.MustParse("4"),
+				corev1.ResourceMemory: resource.MustParse("16Gi"),
+				corev1.ResourcePods:   resource.MustParse("110"),
+			},
+		},
+	}
+}
+
+func TestGetClusterHealthSummary(t *testing.T) {
+	t.Parallel()
+
+	t.Run("returns summary for valid cluster", func(t *testing.T) {
+		t.Parallel()
+		clusterRepo := NewMockClusterRepository()
+		instanceRepo := NewMockStackInstanceRepository()
+		seedCluster(clusterRepo, "cl-1", "prod")
+
+		fakeCS := fake.NewSimpleClientset(
+			makeTestNode("node-1", true),
+			&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "stack-app1"}},
+		)
+		k8sClient := k8s.NewClientFromInterface(fakeCS)
+		registry := cluster.NewRegistryForTest("cl-1", k8sClient, &mockClusterHelmExecutor{})
+
+		router := setupClusterRouter(clusterRepo, instanceRepo, registry, "devops")
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest(http.MethodGet, "/api/v1/clusters/cl-1/health/summary", nil)
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		var result k8s.ClusterSummary
+		err := json.Unmarshal(w.Body.Bytes(), &result)
+		require.NoError(t, err)
+		assert.Equal(t, 1, result.NodeCount)
+		assert.Equal(t, 1, result.ReadyNodeCount)
+		assert.Equal(t, 1, result.NamespaceCount)
+	})
+
+	t.Run("returns 404 for unknown cluster", func(t *testing.T) {
+		t.Parallel()
+		clusterRepo := NewMockClusterRepository()
+		instanceRepo := NewMockStackInstanceRepository()
+
+		router := setupClusterRouter(clusterRepo, instanceRepo, nil, "admin")
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest(http.MethodGet, "/api/v1/clusters/missing/health/summary", nil)
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusNotFound, w.Code)
+	})
+
+	t.Run("returns 500 when registry is nil", func(t *testing.T) {
+		t.Parallel()
+		clusterRepo := NewMockClusterRepository()
+		instanceRepo := NewMockStackInstanceRepository()
+		seedCluster(clusterRepo, "cl-1", "prod")
+
+		router := setupClusterRouter(clusterRepo, instanceRepo, nil, "admin")
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest(http.MethodGet, "/api/v1/clusters/cl-1/health/summary", nil)
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusInternalServerError, w.Code)
+	})
+
+	t.Run("regular user gets 403", func(t *testing.T) {
+		t.Parallel()
+		clusterRepo := NewMockClusterRepository()
+		instanceRepo := NewMockStackInstanceRepository()
+		seedCluster(clusterRepo, "cl-1", "prod")
+
+		router := setupClusterRouter(clusterRepo, instanceRepo, nil, "user")
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest(http.MethodGet, "/api/v1/clusters/cl-1/health/summary", nil)
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusForbidden, w.Code)
+	})
+}
+
+func TestGetClusterNodes(t *testing.T) {
+	t.Parallel()
+
+	t.Run("returns node statuses", func(t *testing.T) {
+		t.Parallel()
+		clusterRepo := NewMockClusterRepository()
+		instanceRepo := NewMockStackInstanceRepository()
+		seedCluster(clusterRepo, "cl-1", "prod")
+
+		fakeCS := fake.NewSimpleClientset(
+			makeTestNode("node-1", true),
+			makeTestNode("node-2", false),
+		)
+		k8sClient := k8s.NewClientFromInterface(fakeCS)
+		registry := cluster.NewRegistryForTest("cl-1", k8sClient, &mockClusterHelmExecutor{})
+
+		router := setupClusterRouter(clusterRepo, instanceRepo, registry, "admin")
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest(http.MethodGet, "/api/v1/clusters/cl-1/health/nodes", nil)
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		var result []k8s.NodeStatus
+		err := json.Unmarshal(w.Body.Bytes(), &result)
+		require.NoError(t, err)
+		assert.Len(t, result, 2)
+	})
+
+	t.Run("returns 404 for unknown cluster", func(t *testing.T) {
+		t.Parallel()
+		clusterRepo := NewMockClusterRepository()
+		instanceRepo := NewMockStackInstanceRepository()
+
+		router := setupClusterRouter(clusterRepo, instanceRepo, nil, "admin")
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest(http.MethodGet, "/api/v1/clusters/missing/health/nodes", nil)
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusNotFound, w.Code)
+	})
+
+	t.Run("regular user gets 403", func(t *testing.T) {
+		t.Parallel()
+		clusterRepo := NewMockClusterRepository()
+		instanceRepo := NewMockStackInstanceRepository()
+		seedCluster(clusterRepo, "cl-1", "prod")
+
+		router := setupClusterRouter(clusterRepo, instanceRepo, nil, "user")
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest(http.MethodGet, "/api/v1/clusters/cl-1/health/nodes", nil)
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusForbidden, w.Code)
+	})
+}
+
+func TestGetClusterNamespaces(t *testing.T) {
+	t.Parallel()
+
+	t.Run("returns stack namespaces", func(t *testing.T) {
+		t.Parallel()
+		clusterRepo := NewMockClusterRepository()
+		instanceRepo := NewMockStackInstanceRepository()
+		seedCluster(clusterRepo, "cl-1", "prod")
+
+		fakeCS := fake.NewSimpleClientset(
+			&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "stack-web"}},
+			&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "stack-api"}},
+			&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "kube-system"}},
+		)
+		k8sClient := k8s.NewClientFromInterface(fakeCS)
+		registry := cluster.NewRegistryForTest("cl-1", k8sClient, &mockClusterHelmExecutor{})
+
+		router := setupClusterRouter(clusterRepo, instanceRepo, registry, "devops")
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest(http.MethodGet, "/api/v1/clusters/cl-1/namespaces", nil)
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		var result []k8s.NamespaceInfo
+		err := json.Unmarshal(w.Body.Bytes(), &result)
+		require.NoError(t, err)
+		assert.Len(t, result, 2) // only stack-* namespaces
+	})
+
+	t.Run("returns 404 for unknown cluster", func(t *testing.T) {
+		t.Parallel()
+		clusterRepo := NewMockClusterRepository()
+		instanceRepo := NewMockStackInstanceRepository()
+
+		router := setupClusterRouter(clusterRepo, instanceRepo, nil, "admin")
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest(http.MethodGet, "/api/v1/clusters/missing/namespaces", nil)
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusNotFound, w.Code)
+	})
+
+	t.Run("regular user gets 403", func(t *testing.T) {
+		t.Parallel()
+		clusterRepo := NewMockClusterRepository()
+		instanceRepo := NewMockStackInstanceRepository()
+		seedCluster(clusterRepo, "cl-1", "prod")
+
+		router := setupClusterRouter(clusterRepo, instanceRepo, nil, "user")
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest(http.MethodGet, "/api/v1/clusters/cl-1/namespaces", nil)
 		router.ServeHTTP(w, req)
 
 		assert.Equal(t, http.StatusForbidden, w.Code)

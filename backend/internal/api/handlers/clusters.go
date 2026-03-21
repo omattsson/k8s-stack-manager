@@ -436,3 +436,144 @@ func (h *ClusterHandler) SetDefaultCluster(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{"message": "Default cluster updated"})
 }
+
+// GetClusterHealthSummary godoc
+// @Summary      Get cluster health summary
+// @Description  Returns node count, CPU/memory totals, and namespace count for a cluster.
+// @Tags         clusters
+// @Produce      json
+// @Security     BearerAuth
+// @Param        id  path  string  true  "Cluster ID"
+// @Success      200  {object}  k8s.ClusterSummary
+// @Failure      400  {object}  map[string]string
+// @Failure      404  {object}  map[string]string
+// @Failure      500  {object}  map[string]string
+// @Router       /api/v1/clusters/{id}/health/summary [get]
+func (h *ClusterHandler) GetClusterHealthSummary(c *gin.Context) {
+	id := c.Param("id")
+	if id == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Cluster ID is required"})
+		return
+	}
+
+	if _, err := h.clusterRepo.FindByID(id); err != nil {
+		status, message := mapError(err, "Cluster")
+		c.JSON(status, gin.H{"error": message})
+		return
+	}
+
+	if h.registry == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Cluster client registry is not available"})
+		return
+	}
+
+	k8sClient, err := h.registry.GetK8sClient(id)
+	if err != nil {
+		slog.Error("Failed to get K8s client", "error", err, "cluster_id", id)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to connect to cluster"})
+		return
+	}
+
+	summary, err := k8sClient.GetClusterSummary(c.Request.Context())
+	if err != nil {
+		slog.Error("Failed to get cluster summary", "error", err, "cluster_id", id)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to retrieve cluster health"})
+		return
+	}
+
+	c.JSON(http.StatusOK, summary)
+}
+
+// GetClusterNodes godoc
+// @Summary      Get cluster node statuses
+// @Description  Returns per-node health, conditions, and capacity for a cluster.
+// @Tags         clusters
+// @Produce      json
+// @Security     BearerAuth
+// @Param        id  path  string  true  "Cluster ID"
+// @Success      200  {array}   k8s.NodeStatus
+// @Failure      400  {object}  map[string]string
+// @Failure      404  {object}  map[string]string
+// @Failure      500  {object}  map[string]string
+// @Router       /api/v1/clusters/{id}/health/nodes [get]
+func (h *ClusterHandler) GetClusterNodes(c *gin.Context) {
+	id := c.Param("id")
+	if id == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Cluster ID is required"})
+		return
+	}
+
+	if _, err := h.clusterRepo.FindByID(id); err != nil {
+		status, message := mapError(err, "Cluster")
+		c.JSON(status, gin.H{"error": message})
+		return
+	}
+
+	if h.registry == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Cluster client registry is not available"})
+		return
+	}
+
+	k8sClient, err := h.registry.GetK8sClient(id)
+	if err != nil {
+		slog.Error("Failed to get K8s client", "error", err, "cluster_id", id)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to connect to cluster"})
+		return
+	}
+
+	nodes, err := k8sClient.GetNodeStatuses(c.Request.Context())
+	if err != nil {
+		slog.Error("Failed to get node statuses", "error", err, "cluster_id", id)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to retrieve node statuses"})
+		return
+	}
+
+	c.JSON(http.StatusOK, nodes)
+}
+
+// GetClusterNamespaces godoc
+// @Summary      Get cluster namespaces
+// @Description  Returns all stack-* namespaces in the cluster.
+// @Tags         clusters
+// @Produce      json
+// @Security     BearerAuth
+// @Param        id  path  string  true  "Cluster ID"
+// @Success      200  {array}   k8s.NamespaceInfo
+// @Failure      400  {object}  map[string]string
+// @Failure      404  {object}  map[string]string
+// @Failure      500  {object}  map[string]string
+// @Router       /api/v1/clusters/{id}/namespaces [get]
+func (h *ClusterHandler) GetClusterNamespaces(c *gin.Context) {
+	id := c.Param("id")
+	if id == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Cluster ID is required"})
+		return
+	}
+
+	if _, err := h.clusterRepo.FindByID(id); err != nil {
+		status, message := mapError(err, "Cluster")
+		c.JSON(status, gin.H{"error": message})
+		return
+	}
+
+	if h.registry == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Cluster client registry is not available"})
+		return
+	}
+
+	k8sClient, err := h.registry.GetK8sClient(id)
+	if err != nil {
+		slog.Error("Failed to get K8s client", "error", err, "cluster_id", id)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to connect to cluster"})
+		return
+	}
+
+	namespaces, err := k8sClient.ListStackNamespaces(c.Request.Context())
+	if err != nil {
+		slog.Error("Failed to list cluster namespaces", "error", err, "cluster_id", id)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to retrieve namespaces"})
+		return
+	}
+
+	c.JSON(http.StatusOK, namespaces)
+}
