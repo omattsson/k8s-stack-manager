@@ -26,6 +26,9 @@ import (
 // mockClusterHelmExecutor implements deployer.HelmExecutor for cluster tests.
 type mockClusterHelmExecutor struct{}
 
+// strPtr returns a pointer to s — helper for building UpdateClusterRequest in tests.
+func strPtr(s string) *string { return &s }
+
 func (m *mockClusterHelmExecutor) Install(_ context.Context, _ deployer.InstallRequest) (string, error) {
 	return "", nil
 }
@@ -273,8 +276,8 @@ func TestUpdateCluster(t *testing.T) {
 		router := setupClusterRouter(clusterRepo, instanceRepo, nil, "admin")
 
 		payload := UpdateClusterRequest{
-			Name:   "production-v2",
-			Region: "westus2",
+			Name:   strPtr("production-v2"),
+			Region: strPtr("westus2"),
 		}
 		body, _ := json.Marshal(payload)
 		w := httptest.NewRecorder()
@@ -297,7 +300,7 @@ func TestUpdateCluster(t *testing.T) {
 
 		router := setupClusterRouter(clusterRepo, instanceRepo, nil, "admin")
 
-		payload := UpdateClusterRequest{Name: "new-name"}
+		payload := UpdateClusterRequest{Name: strPtr("new-name")}
 		body, _ := json.Marshal(payload)
 		w := httptest.NewRecorder()
 		req, _ := http.NewRequest(http.MethodPut, "/api/v1/clusters/nonexistent", bytes.NewReader(body))
@@ -321,7 +324,7 @@ func TestUpdateCluster(t *testing.T) {
 		router := setupClusterRouter(clusterRepo, instanceRepo, reg, "admin")
 
 		payload := UpdateClusterRequest{
-			KubeconfigData: "new-kubeconfig",
+			KubeconfigData: strPtr("new-kubeconfig"),
 		}
 		body, _ := json.Marshal(payload)
 		w := httptest.NewRecorder()
@@ -342,7 +345,7 @@ func TestUpdateCluster(t *testing.T) {
 
 		router := setupClusterRouter(clusterRepo, instanceRepo, nil, "user")
 
-		payload := UpdateClusterRequest{Name: "new-name"}
+		payload := UpdateClusterRequest{Name: strPtr("new-name")}
 		body, _ := json.Marshal(payload)
 		w := httptest.NewRecorder()
 		req, _ := http.NewRequest(http.MethodPut, "/api/v1/clusters/cl-1", bytes.NewReader(body))
@@ -617,7 +620,7 @@ func TestUpdateCluster_ErrorPaths(t *testing.T) {
 
 		router := setupClusterRouter(clusterRepo, instanceRepo, nil, "admin")
 
-		payload := UpdateClusterRequest{Name: "new-name"}
+		payload := UpdateClusterRequest{Name: strPtr("new-name")}
 		body, _ := json.Marshal(payload)
 		w := httptest.NewRecorder()
 		req, _ := http.NewRequest(http.MethodPut, "/api/v1/clusters/cl-1", bytes.NewReader(body))
@@ -636,7 +639,7 @@ func TestUpdateCluster_ErrorPaths(t *testing.T) {
 		router := setupClusterRouter(clusterRepo, instanceRepo, nil, "admin")
 
 		payload := UpdateClusterRequest{
-			KubeconfigData: "super-secret-kubeconfig-value",
+			KubeconfigData: strPtr("super-secret-kubeconfig-value"),
 		}
 		body, _ := json.Marshal(payload)
 		w := httptest.NewRecorder()

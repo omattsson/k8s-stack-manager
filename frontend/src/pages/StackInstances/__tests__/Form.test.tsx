@@ -25,7 +25,7 @@ vi.mock('../../../api/client', () => ({
   },
 }));
 
-import { instanceService, definitionService, clusterService } from '../../../api/client';
+import { instanceService, definitionService } from '../../../api/client';
 
 const mockDefinitions = [
   {

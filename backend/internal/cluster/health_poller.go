@@ -152,7 +152,7 @@ func (p *HealthPoller) checkCluster(cl *models.Cluster) string {
 	if versionErr != nil {
 		slog.Debug("health poller: cluster ping failed",
 			"cluster_id", cl.ID,
-			"error", err,
+			"error", versionErr,
 		)
 		return models.ClusterUnreachable
 	}

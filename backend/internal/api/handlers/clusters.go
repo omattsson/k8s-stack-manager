@@ -15,7 +15,8 @@ type CreateClusterRequest struct {
 	Name           string `json:"name" binding:"required"`
 	Description    string `json:"description"`
 	APIServerURL   string `json:"api_server_url" binding:"required"`
-	KubeconfigData string `json:"kubeconfig_data" binding:"required"`
+	KubeconfigData string `json:"kubeconfig_data"`
+	KubeconfigPath string `json:"kubeconfig_path"`
 	Region         string `json:"region"`
 	MaxNamespaces  int    `json:"max_namespaces"`
 	IsDefault      bool   `json:"is_default"`
@@ -23,13 +24,13 @@ type CreateClusterRequest struct {
 
 // UpdateClusterRequest is the input payload for updating a cluster.
 type UpdateClusterRequest struct {
-	Name           string `json:"name"`
-	Description    string `json:"description"`
-	APIServerURL   string `json:"api_server_url"`
-	KubeconfigData string `json:"kubeconfig_data"`
-	Region         string `json:"region"`
-	MaxNamespaces  *int   `json:"max_namespaces,omitempty"`
-	IsDefault      *bool  `json:"is_default,omitempty"`
+	Name           *string `json:"name,omitempty"`
+	Description    *string `json:"description,omitempty"`
+	APIServerURL   *string `json:"api_server_url,omitempty"`
+	KubeconfigData *string `json:"kubeconfig_data,omitempty"`
+	Region         *string `json:"region,omitempty"`
+	MaxNamespaces  *int    `json:"max_namespaces,omitempty"`
+	IsDefault      *bool   `json:"is_default,omitempty"`
 }
 
 // ClusterHandler provides CRUD endpoints for cluster management.
@@ -97,6 +98,7 @@ func (h *ClusterHandler) CreateCluster(c *gin.Context) {
 		Description:    req.Description,
 		APIServerURL:   req.APIServerURL,
 		KubeconfigData: req.KubeconfigData,
+		KubeconfigPath: req.KubeconfigPath,
 		Region:         req.Region,
 		MaxNamespaces:  req.MaxNamespaces,
 		IsDefault:      false,
@@ -117,6 +119,8 @@ func (h *ClusterHandler) CreateCluster(c *gin.Context) {
 	if req.IsDefault {
 		if err := h.clusterRepo.SetDefault(cl.ID); err != nil {
 			slog.Error("Failed to set new cluster as default", "cluster_id", cl.ID, "error", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
+			return
 		}
 		cl.IsDefault = true
 	}
@@ -184,21 +188,21 @@ func (h *ClusterHandler) UpdateCluster(c *gin.Context) {
 	}
 
 	kubeconfigChanged := false
-	if req.Name != "" {
-		existing.Name = req.Name
+	if req.Name != nil {
+		existing.Name = *req.Name
 	}
-	if req.Description != "" {
-		existing.Description = req.Description
+	if req.Description != nil {
+		existing.Description = *req.Description
 	}
-	if req.APIServerURL != "" {
-		existing.APIServerURL = req.APIServerURL
+	if req.APIServerURL != nil {
+		existing.APIServerURL = *req.APIServerURL
 	}
-	if req.KubeconfigData != "" {
-		existing.KubeconfigData = req.KubeconfigData
+	if req.KubeconfigData != nil {
+		existing.KubeconfigData = *req.KubeconfigData
 		kubeconfigChanged = true
 	}
-	if req.Region != "" {
-		existing.Region = req.Region
+	if req.Region != nil {
+		existing.Region = *req.Region
 	}
 	if req.MaxNamespaces != nil {
 		existing.MaxNamespaces = *req.MaxNamespaces

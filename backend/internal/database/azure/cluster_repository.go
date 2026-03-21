@@ -254,7 +254,7 @@ func (r *ClusterRepository) clusterFromEntity(e map[string]interface{}) (*models
 		KubeconfigData: kubeconfigData,
 		KubeconfigPath: getString(e, "KubeconfigPath"),
 		Region:         getString(e, "Region"),
-		HealthStatus:   getString(e, "HealthStatus"),
+		HealthStatus:   getStringDefault(e, "HealthStatus", models.ClusterUnreachable),
 		MaxNamespaces:  getInt(e, "MaxNamespaces"),
 		IsDefault:      getBool(e, "IsDefault"),
 		CreatedAt:      parseTime(e, "CreatedAt"),

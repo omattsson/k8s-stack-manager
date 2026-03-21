@@ -139,6 +139,9 @@ func (c *Cluster) Validate() error {
 	if !hasData && !hasPath {
 		return errors.New("one of kubeconfig_data or kubeconfig_path is required")
 	}
+	if c.MaxNamespaces < 0 {
+		return errors.New("max_namespaces must be non-negative")
+	}
 	switch c.HealthStatus {
 	case "", ClusterHealthy, ClusterDegraded, ClusterUnreachable:
 		// valid

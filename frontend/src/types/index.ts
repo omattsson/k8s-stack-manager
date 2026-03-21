@@ -261,7 +261,7 @@ export interface Cluster {
   description: string;
   api_server_url: string;
   region: string;
-  health_status: 'healthy' | 'degraded' | 'unreachable';
+  health_status: 'healthy' | 'degraded' | 'unreachable' | '';
   max_namespaces: number;
   is_default: boolean;
   created_at: string;
@@ -272,7 +272,8 @@ export interface CreateClusterRequest {
   name: string;
   description: string;
   api_server_url: string;
-  kubeconfig_data: string;
+  kubeconfig_data?: string;
+  kubeconfig_path?: string;
   region: string;
   max_namespaces: number;
   is_default: boolean;

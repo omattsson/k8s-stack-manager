@@ -115,7 +115,7 @@ const Clusters = () => {
       setDialogError('Name and API Server URL are required');
       return;
     }
-    if (!editingCluster && !form.kubeconfig_data.trim()) {
+    if (!editingCluster && !(form.kubeconfig_data ?? '').trim()) {
       setDialogError('Kubeconfig is required when creating a cluster');
       return;
     }
@@ -132,7 +132,7 @@ const Clusters = () => {
           max_namespaces: form.max_namespaces,
           is_default: form.is_default,
         };
-        if (form.kubeconfig_data.trim()) {
+        if ((form.kubeconfig_data ?? '').trim()) {
           update.kubeconfig_data = form.kubeconfig_data;
         }
         await clusterService.update(editingCluster.id, update);
