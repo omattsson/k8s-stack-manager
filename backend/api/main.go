@@ -16,6 +16,7 @@ import (
 	"backend/internal/helm"
 	"backend/internal/k8s"
 	"backend/internal/models"
+	"backend/internal/ttl"
 	"backend/internal/websocket"
 	"context"
 	"fmt"
@@ -224,6 +225,7 @@ func main() {
 		instanceRepo, overrideRepo, branchOverrideRepo, definitionRepo, chartConfigRepo,
 		templateRepo, templateChartRepo, valuesGen, userRepo,
 		deployManager, k8sWatcher, clusterRegistry, deployLogRepo,
+		cfg.App.DefaultInstanceTTLMinutes,
 	)
 	gitHandler := handlers.NewGitHandler(gitRegistry)
 	auditLogHandler := handlers.NewAuditLogHandler(auditRepo)
@@ -262,6 +264,10 @@ func main() {
 	defer rateLimiter.Stop()
 	router.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
 
+	// Start TTL reaper for auto-expiring stack instances.
+	reaper := ttl.NewReaper(instanceRepo, auditRepo, hub, 60*time.Second)
+	go reaper.Start()
+
 	// Create server with timeouts
 	srv := &http.Server{
 		Addr:         fmt.Sprintf("%s:%s", cfg.Server.Host, cfg.Server.Port),
@@ -288,6 +294,9 @@ func main() {
 
 	// Cancel in-flight deploy/stop goroutines
 	deployManager.Shutdown()
+
+	// Stop TTL reaper
+	reaper.Stop()
 
 	// Stop cluster health poller
 	healthPoller.Stop()

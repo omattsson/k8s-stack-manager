@@ -205,6 +205,42 @@ func (r *StackInstanceRepository) FindByCluster(clusterID string) ([]models.Stac
 	return results, nil
 }
 
+func (r *StackInstanceRepository) ListExpired() ([]*models.StackInstance, error) {
+	ctx := context.Background()
+	now := time.Now().UTC()
+
+	// Azure Tables lack complex date comparison; scan all and filter in-memory.
+	filter := "PartitionKey eq 'global'"
+	pager := r.client.NewListEntitiesPager(&aztables.ListEntitiesOptions{
+		Filter: &filter,
+	})
+
+	entities, err := collectEntities(ctx, pager, func(e map[string]interface{}) bool {
+		status := getString(e, "Status")
+		if status != models.StackStatusRunning {
+			return false
+		}
+		expiresStr := getString(e, "ExpiresAt")
+		if expiresStr == "" {
+			return false
+		}
+		t, parseErr := time.Parse(time.RFC3339, expiresStr)
+		if parseErr != nil {
+			return false
+		}
+		return t.Before(now)
+	})
+	if err != nil {
+		return nil, mapAzureError("list_expired", err)
+	}
+
+	results := make([]*models.StackInstance, 0, len(entities))
+	for _, e := range entities {
+		results = append(results, stackInstanceFromEntity(e))
+	}
+	return results, nil
+}
+
 func stackInstanceToEntity(i *models.StackInstance) map[string]interface{} {
 	entity := map[string]interface{}{
 		"PartitionKey":      "global",
@@ -218,11 +254,15 @@ func stackInstanceToEntity(i *models.StackInstance) map[string]interface{} {
 		"ClusterID":         i.ClusterID,
 		"Status":            i.Status,
 		"ErrorMessage":      i.ErrorMessage,
+		"TTLMinutes":        int64(i.TTLMinutes),
 		"CreatedAt":         i.CreatedAt.Format(time.RFC3339),
 		"UpdatedAt":         i.UpdatedAt.Format(time.RFC3339),
 	}
 	if i.LastDeployedAt != nil {
 		entity["LastDeployedAt"] = i.LastDeployedAt.Format(time.RFC3339)
+	}
+	if i.ExpiresAt != nil {
+		entity["ExpiresAt"] = i.ExpiresAt.Format(time.RFC3339)
 	}
 	return entity
 }
@@ -238,12 +278,17 @@ func stackInstanceFromEntity(e map[string]interface{}) *models.StackInstance {
 		ClusterID:         getString(e, "ClusterID"),
 		Status:            getString(e, "Status"),
 		ErrorMessage:      getString(e, "ErrorMessage"),
+		TTLMinutes:        getInt(e, "TTLMinutes"),
 		CreatedAt:         parseTime(e, "CreatedAt"),
 		UpdatedAt:         parseTime(e, "UpdatedAt"),
 	}
 	if s := getString(e, "LastDeployedAt"); s != "" {
 		t := parseTime(e, "LastDeployedAt")
 		instance.LastDeployedAt = &t
+	}
+	if s := getString(e, "ExpiresAt"); s != "" {
+		t := parseTime(e, "ExpiresAt")
+		instance.ExpiresAt = &t
 	}
 	return instance
 }

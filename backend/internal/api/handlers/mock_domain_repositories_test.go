@@ -630,6 +630,23 @@ func (m *MockStackInstanceRepository) FindByCluster(clusterID string) ([]models.
 	return out, nil
 }
 
+func (m *MockStackInstanceRepository) ListExpired() ([]*models.StackInstance, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.err != nil {
+		return nil, m.err
+	}
+	now := time.Now()
+	var out []*models.StackInstance
+	for _, i := range m.items {
+		if i.Status == models.StackStatusRunning && i.ExpiresAt != nil && i.ExpiresAt.Before(now) {
+			cp := *i
+			out = append(out, &cp)
+		}
+	}
+	return out, nil
+}
+
 func (m *MockStackInstanceRepository) SetError(err error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

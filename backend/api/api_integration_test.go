@@ -87,7 +87,7 @@ func newIntegServer(t *testing.T) *integServer {
 	templateHandler := handlers.NewTemplateHandler(templateRepo, tplChartRepo, definitionRepo, chartConfigRepo)
 	definitionHandler := handlers.NewDefinitionHandler(definitionRepo, chartConfigRepo, instanceRepo, templateRepo, tplChartRepo)
 	valuesGen := helm.NewValuesGenerator()
-	instanceHandler := handlers.NewInstanceHandler(instanceRepo, overrideRepo, nil, definitionRepo, chartConfigRepo, templateRepo, tplChartRepo, valuesGen, userRepo)
+	instanceHandler := handlers.NewInstanceHandler(instanceRepo, overrideRepo, nil, definitionRepo, chartConfigRepo, templateRepo, tplChartRepo, valuesGen, userRepo, 0)
 	gitRegistry := gitprovider.NewRegistry(gitprovider.Config{})
 	gitHandler := handlers.NewGitHandler(gitRegistry)
 	auditLogHandler := handlers.NewAuditLogHandler(auditRepo)

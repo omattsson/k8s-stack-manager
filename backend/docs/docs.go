@@ -2093,6 +2093,64 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/stack-instances/{id}/extend": {
+            "post": {
+                "description": "Extend the expiry time of a stack instance. Uses provided ttl_minutes or the instance's existing TTLMinutes.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "stack-instances"
+                ],
+                "summary": "Extend instance TTL",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Instance ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Optional TTL override",
+                        "name": "body",
+                        "in": "body",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.extendTTLRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/models.StackInstance"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/stack-instances/{id}/overrides": {
             "get": {
                 "description": "List all value overrides for a stack instance",
@@ -3598,6 +3656,14 @@ const docTemplate = `{
                 }
             }
         },
+        "handlers.extendTTLRequest": {
+            "type": "object",
+            "properties": {
+                "ttl_minutes": {
+                    "type": "integer"
+                }
+            }
+        },
         "health.CheckStatus": {
             "type": "object",
             "properties": {
@@ -3678,6 +3744,26 @@ const docTemplate = `{
                 }
             }
         },
+        "k8s.IngressInfo": {
+            "type": "object",
+            "properties": {
+                "host": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "path": {
+                    "type": "string"
+                },
+                "tls": {
+                    "type": "boolean"
+                },
+                "url": {
+                    "type": "string"
+                }
+            }
+        },
         "k8s.NamespaceStatus": {
             "type": "object",
             "properties": {
@@ -3685,6 +3771,12 @@ const docTemplate = `{
                     "type": "array",
                     "items": {
                         "$ref": "#/definitions/k8s.ChartStatus"
+                    }
+                },
+                "ingresses": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/k8s.IngressInfo"
                     }
                 },
                 "last_checked": {
@@ -3738,8 +3830,23 @@ const docTemplate = `{
                 "cluster_ip": {
                     "type": "string"
                 },
+                "external_ip": {
+                    "type": "string"
+                },
+                "ingress_hosts": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
                 "name": {
                     "type": "string"
+                },
+                "node_ports": {
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
                 },
                 "type": {
                     "type": "string"
@@ -4021,6 +4128,9 @@ const docTemplate = `{
                 "error_message": {
                     "type": "string"
                 },
+                "expires_at": {
+                    "type": "string"
+                },
                 "id": {
                     "type": "string"
                 },
@@ -4041,6 +4151,9 @@ const docTemplate = `{
                 },
                 "status": {
                     "type": "string"
+                },
+                "ttl_minutes": {
+                    "type": "integer"
                 },
                 "updated_at": {
                     "type": "string"

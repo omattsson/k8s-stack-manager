@@ -90,6 +90,7 @@ type InstanceHandler struct {
 	k8sWatcher         *k8s.Watcher
 	registry           *cluster.Registry
 	deployLogRepo      models.DeploymentLogRepository
+	defaultTTLMinutes  int
 }
 
 // NewInstanceHandler creates a new InstanceHandler.
@@ -103,6 +104,7 @@ func NewInstanceHandler(
 	templateChartRepo models.TemplateChartConfigRepository,
 	valuesGen *helm.ValuesGenerator,
 	userRepo models.UserRepository,
+	defaultTTLMinutes int,
 ) *InstanceHandler {
 	return &InstanceHandler{
 		instanceRepo:       instanceRepo,
@@ -114,6 +116,7 @@ func NewInstanceHandler(
 		templateChartRepo:  templateChartRepo,
 		valuesGen:          valuesGen,
 		userRepo:           userRepo,
+		defaultTTLMinutes:  defaultTTLMinutes,
 	}
 }
 
@@ -132,6 +135,7 @@ func NewInstanceHandlerWithDeployer(
 	k8sWatcher *k8s.Watcher,
 	registry *cluster.Registry,
 	deployLogRepo models.DeploymentLogRepository,
+	defaultTTLMinutes int,
 ) *InstanceHandler {
 	return &InstanceHandler{
 		instanceRepo:       instanceRepo,
@@ -147,6 +151,7 @@ func NewInstanceHandlerWithDeployer(
 		k8sWatcher:         k8sWatcher,
 		registry:           registry,
 		deployLogRepo:      deployLogRepo,
+		defaultTTLMinutes:  defaultTTLMinutes,
 	}
 }
 
@@ -206,6 +211,16 @@ func (h *InstanceHandler) CreateInstance(c *gin.Context) {
 
 	if inst.Branch == "" {
 		inst.Branch = "master"
+	}
+
+	// Apply default TTL if not provided.
+	if inst.TTLMinutes == 0 && h.defaultTTLMinutes > 0 {
+		inst.TTLMinutes = h.defaultTTLMinutes
+	}
+	// Compute expiry timestamp from TTL.
+	if inst.TTLMinutes > 0 {
+		exp := now.Add(time.Duration(inst.TTLMinutes) * time.Minute)
+		inst.ExpiresAt = &exp
 	}
 
 	// Resolve or validate ClusterID using the registry when available.
@@ -324,6 +339,17 @@ func (h *InstanceHandler) UpdateInstance(c *gin.Context) {
 	existing.Branch = update.Branch
 	existing.Namespace = update.Namespace
 	existing.UpdatedAt = time.Now().UTC()
+
+	// Update TTL if changed.
+	if update.TTLMinutes != existing.TTLMinutes {
+		existing.TTLMinutes = update.TTLMinutes
+		if existing.TTLMinutes > 0 {
+			exp := time.Now().UTC().Add(time.Duration(existing.TTLMinutes) * time.Minute)
+			existing.ExpiresAt = &exp
+		} else {
+			existing.ExpiresAt = nil
+		}
+	}
 
 	if err := existing.Validate(); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -663,6 +689,13 @@ func (h *InstanceHandler) DeployInstance(c *gin.Context) {
 	default:
 		c.JSON(http.StatusConflict, gin.H{"error": fmt.Sprintf("Cannot deploy: instance is in state %s", inst.Status)})
 		return
+	}
+
+	// Reset TTL expiry clock on deploy.
+	if inst.TTLMinutes > 0 {
+		exp := time.Now().UTC().Add(time.Duration(inst.TTLMinutes) * time.Minute)
+		inst.ExpiresAt = &exp
+		_ = h.instanceRepo.Update(inst)
 	}
 
 	def, err := h.definitionRepo.FindByID(inst.StackDefinitionID)
@@ -1116,4 +1149,62 @@ func resolveOwnerName(userRepo models.UserRepository, ownerID string) string {
 		return ownerID
 	}
 	return user.Username
+}
+
+// extendTTLRequest is the optional request body for the ExtendTTL endpoint.
+type extendTTLRequest struct {
+	TTLMinutes int `json:"ttl_minutes"`
+}
+
+// ExtendTTL godoc
+// @Summary     Extend instance TTL
+// @Description Extend the expiry time of a stack instance. Uses provided ttl_minutes or the instance's existing TTLMinutes.
+// @Tags        stack-instances
+// @Accept      json
+// @Produce     json
+// @Param       id  path     string          true  "Instance ID"
+// @Param       body body    extendTTLRequest false "Optional TTL override"
+// @Success     200 {object} models.StackInstance
+// @Failure     400 {object} map[string]string
+// @Failure     404 {object} map[string]string
+// @Router      /api/v1/stack-instances/{id}/extend [post]
+func (h *InstanceHandler) ExtendTTL(c *gin.Context) {
+	id := c.Param("id")
+	if id == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Instance ID is required"})
+		return
+	}
+
+	inst, err := h.instanceRepo.FindByID(id)
+	if err != nil {
+		status, message := mapError(err, "Stack instance")
+		c.JSON(status, gin.H{"error": message})
+		return
+	}
+
+	var req extendTTLRequest
+	// Body is optional; ignore bind errors (defaults to zero value).
+	_ = c.ShouldBindJSON(&req)
+
+	ttl := req.TTLMinutes
+	if ttl == 0 {
+		ttl = inst.TTLMinutes
+	}
+	if ttl <= 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "No TTL configured for this instance"})
+		return
+	}
+
+	inst.TTLMinutes = ttl
+	exp := time.Now().UTC().Add(time.Duration(ttl) * time.Minute)
+	inst.ExpiresAt = &exp
+	inst.UpdatedAt = time.Now().UTC()
+
+	if err := h.instanceRepo.Update(inst); err != nil {
+		status, message := mapError(err, "Stack instance")
+		c.JSON(status, gin.H{"error": message})
+		return
+	}
+
+	c.JSON(http.StatusOK, inst)
 }

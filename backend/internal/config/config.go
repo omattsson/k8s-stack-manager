@@ -79,9 +79,10 @@ type Config struct {
 
 // AppConfig holds application-wide configuration
 type AppConfig struct {
-	Name        string
-	Environment string
-	Debug       bool
+	Name                      string
+	Environment               string
+	DefaultInstanceTTLMinutes int
+	Debug                     bool
 }
 
 // DatabaseConfig holds database-specific configuration
@@ -318,9 +319,10 @@ func LoadConfig() (*Config, error) {
 
 	cfg := &Config{
 		App: AppConfig{
-			Name:        getEnv("APP_NAME", "backend-api"),
-			Environment: getEnv("GO_ENV", "development"),
-			Debug:       getEnvBool("APP_DEBUG", true),
+			Name:                      getEnv("APP_NAME", "backend-api"),
+			Environment:               getEnv("GO_ENV", "development"),
+			DefaultInstanceTTLMinutes: int(getEnvInt32("DEFAULT_INSTANCE_TTL_MINUTES", 0)),
+			Debug:                     getEnvBool("APP_DEBUG", true),
 		},
 		Database: DatabaseConfig{
 			Host:            getEnv("DB_HOST", "localhost"),
