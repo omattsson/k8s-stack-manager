@@ -37,6 +37,7 @@ import type {
   OverviewStats,
   TemplateStats,
   UserStats,
+  SharedValues,
 } from '../types';
 
 const api = axios.create(axiosConfig);
@@ -782,6 +783,44 @@ export const analyticsService = {
       return response.data;
     } catch (error) {
       console.error('Failed to fetch user stats:', error);
+      throw error;
+    }
+  },
+};
+
+export const sharedValuesService = {
+  list: async (clusterId: string): Promise<SharedValues[]> => {
+    try {
+      const response = await api.get(`/api/v1/clusters/${encodeURIComponent(clusterId)}/shared-values`);
+      return response.data;
+    } catch (error) {
+      console.error('Failed to fetch shared values:', error);
+      throw error;
+    }
+  },
+  create: async (clusterId: string, sv: Partial<SharedValues>): Promise<SharedValues> => {
+    try {
+      const response = await api.post(`/api/v1/clusters/${encodeURIComponent(clusterId)}/shared-values`, sv);
+      return response.data;
+    } catch (error) {
+      console.error('Failed to create shared values:', error);
+      throw error;
+    }
+  },
+  update: async (clusterId: string, valueId: string, sv: Partial<SharedValues>): Promise<SharedValues> => {
+    try {
+      const response = await api.put(`/api/v1/clusters/${encodeURIComponent(clusterId)}/shared-values/${encodeURIComponent(valueId)}`, sv);
+      return response.data;
+    } catch (error) {
+      console.error('Failed to update shared values:', error);
+      throw error;
+    }
+  },
+  delete: async (clusterId: string, valueId: string): Promise<void> => {
+    try {
+      await api.delete(`/api/v1/clusters/${encodeURIComponent(clusterId)}/shared-values/${encodeURIComponent(valueId)}`);
+    } catch (error) {
+      console.error('Failed to delete shared values:', error);
       throw error;
     }
   },

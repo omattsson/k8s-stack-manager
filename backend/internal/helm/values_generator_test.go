@@ -588,3 +588,129 @@ func TestSubstituteVars(t *testing.T) {
 		})
 	}
 }
+
+func TestGenerateValuesWithSharedValues(t *testing.T) {
+	t.Parallel()
+
+	gen := NewValuesGenerator()
+	ctx := context.Background()
+
+	tests := []struct {
+		name     string
+		params   GenerateParams
+		wantYAML string
+		wantErr  string
+	}{
+		{
+			name: "shared values merged before defaults",
+			params: GenerateParams{
+				SharedValues:  []string{"env: shared\nreplicas: 1"},
+				DefaultValues: "replicas: 2\nimage: nginx",
+			},
+			wantYAML: "env: shared\nimage: nginx\nreplicas: 2\n",
+		},
+		{
+			name: "multiple shared values in priority order",
+			params: GenerateParams{
+				SharedValues: []string{
+					"env: base\ntier: free",    // priority 0 (lowest)
+					"env: override\nregion: us", // priority 10 (higher, wins)
+				},
+				DefaultValues: "image: nginx",
+			},
+			wantYAML: "env: override\nimage: nginx\nregion: us\ntier: free\n",
+		},
+		{
+			name: "locked values override shared values",
+			params: GenerateParams{
+				SharedValues:   []string{"replicas: 100\nenv: shared"},
+				DefaultValues:  "replicas: 2",
+				OverrideValues: "replicas: 5",
+				LockedValues:   "replicas: 1",
+			},
+			wantYAML: "env: shared\nreplicas: 1\n",
+		},
+		{
+			name: "empty shared values - backwards compatible",
+			params: GenerateParams{
+				SharedValues:  nil,
+				DefaultValues: "replicas: 1\nimage: nginx",
+			},
+			wantYAML: "image: nginx\nreplicas: 1\n",
+		},
+		{
+			name: "empty slice shared values - backwards compatible",
+			params: GenerateParams{
+				SharedValues:  []string{},
+				DefaultValues: "replicas: 1",
+			},
+			wantYAML: "replicas: 1\n",
+		},
+		{
+			name: "invalid shared values YAML is skipped",
+			params: GenerateParams{
+				SharedValues:  []string{"{{invalid yaml", "valid: true"},
+				DefaultValues: "replicas: 1",
+			},
+			wantYAML: "replicas: 1\nvalid: true\n",
+		},
+		{
+			name: "deep merge shared values with defaults",
+			params: GenerateParams{
+				SharedValues:  []string{"global:\n  env: production\n  region: us-east"},
+				DefaultValues: "global:\n  env: development\n  debug: false",
+			},
+			wantYAML: "global:\n  debug: false\n  env: development\n  region: us-east\n",
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			got, err := gen.GenerateValues(ctx, tt.params)
+
+			if tt.wantErr != "" {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.wantErr)
+				return
+			}
+
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantYAML, string(got))
+		})
+	}
+}
+
+func TestGenerateAllValuesWithSharedValues(t *testing.T) {
+	t.Parallel()
+
+	gen := NewValuesGenerator()
+	ctx := context.Background()
+
+	t.Run("shared values passed through to each chart", func(t *testing.T) {
+		t.Parallel()
+
+		shared := []string{"env: production"}
+		params := GenerateAllParams{
+			Charts: []ChartValues{
+				{
+					ChartName:     "frontend",
+					DefaultValues: "replicas: 1",
+					SharedValues:  shared,
+				},
+				{
+					ChartName:     "backend",
+					DefaultValues: "port: 8080",
+					SharedValues:  shared,
+				},
+			},
+		}
+
+		got, err := gen.GenerateAllValues(ctx, params)
+		require.NoError(t, err)
+		assert.Equal(t, "env: production\nreplicas: 1\n", string(got["frontend"]))
+		assert.Equal(t, "env: production\nport: 8080\n", string(got["backend"]))
+	})
+}

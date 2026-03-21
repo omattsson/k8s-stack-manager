@@ -153,6 +153,12 @@ func main() {
 		os.Exit(1)
 	}
 
+	sharedValuesRepo, err := azure.NewSharedValuesRepository(azCfg.AccountName, azCfg.AccountKey, azCfg.Endpoint, azCfg.UseAzurite)
+	if err != nil {
+		slog.Error("Failed to create shared values repository", "error", err)
+		os.Exit(1)
+	}
+
 	// ------------------------------------------------------------------
 	// Phase 1: Create domain services
 	// ------------------------------------------------------------------
@@ -233,6 +239,7 @@ func main() {
 	adminHandler := handlers.NewAdminHandler(clusterRegistry, instanceRepo)
 	clusterHandler := handlers.NewClusterHandler(clusterRepo, clusterRegistry, instanceRepo)
 	branchOverrideHandler := handlers.NewBranchOverrideHandler(branchOverrideRepo, instanceRepo)
+	sharedValuesHandler := handlers.NewSharedValuesHandler(sharedValuesRepo, clusterRepo)
 
 	favoriteRepo, err := azure.NewUserFavoriteRepository(azCfg.AccountName, azCfg.AccountKey, azCfg.Endpoint, azCfg.UseAzurite)
 	if err != nil {
@@ -276,6 +283,7 @@ func main() {
 		QuickDeployHandler:    quickDeployHandler,
 		AnalyticsHandler:      analyticsHandler,
 		ClusterHandler:        clusterHandler,
+		SharedValuesHandler:  sharedValuesHandler,
 		UserRepo:              userRepo,
 		APIKeyRepo:            apiKeyRepo,
 	})

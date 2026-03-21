@@ -49,10 +49,11 @@ type Deps struct {
 	AnalyticsHandler *handlers.AnalyticsHandler
 
 	// Cluster management.
-	ClusterHandler *handlers.ClusterHandler
-	ClusterRepo    models.ClusterRepository
-	Registry       *cluster.Registry
-	InstanceRepo   models.StackInstanceRepository
+	ClusterHandler      *handlers.ClusterHandler
+	SharedValuesHandler *handlers.SharedValuesHandler
+	ClusterRepo         models.ClusterRepository
+	Registry            *cluster.Registry
+	InstanceRepo        models.StackInstanceRepository
 
 	// Repos needed by combined JWT+API-key auth middleware.
 	UserRepo   models.UserRepository
@@ -286,6 +287,18 @@ func SetupRoutes(router *gin.Engine, deps Deps) *handlers.RateLimiter {
 				clusters.GET("/:id/health/summary", devops, clusterHandler.GetClusterHealthSummary)
 				clusters.GET("/:id/health/nodes", devops, clusterHandler.GetClusterNodes)
 				clusters.GET("/:id/namespaces", devops, clusterHandler.GetClusterNamespaces)
+			}
+
+			// Shared values (Phase 6.4)
+			if deps.SharedValuesHandler != nil {
+				sharedValues := clusters.Group("/:id/shared-values")
+				sharedValues.Use(admin)
+				{
+					sharedValues.GET("", deps.SharedValuesHandler.ListSharedValues)
+					sharedValues.POST("", deps.SharedValuesHandler.CreateSharedValues)
+					sharedValues.PUT("/:valueId", deps.SharedValuesHandler.UpdateSharedValues)
+					sharedValues.DELETE("/:valueId", deps.SharedValuesHandler.DeleteSharedValues)
+				}
 			}
 		}
 

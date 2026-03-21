@@ -4,6 +4,8 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+
+	"gopkg.in/yaml.v3"
 )
 
 var (
@@ -178,6 +180,26 @@ func (o *ChartBranchOverride) Validate() error {
 	}
 	if o.Branch == "" {
 		return errors.New("branch is required")
+	}
+	return nil
+}
+
+// Validate implements model validation for SharedValues.
+func (sv *SharedValues) Validate() error {
+	if sv.Name == "" {
+		return errors.New("name is required")
+	}
+	if sv.ClusterID == "" {
+		return errors.New("cluster_id is required")
+	}
+	if sv.Priority < 0 {
+		return errors.New("priority must be non-negative")
+	}
+	if sv.Values != "" {
+		var parsed interface{}
+		if err := yaml.Unmarshal([]byte(sv.Values), &parsed); err != nil {
+			return fmt.Errorf("values must be valid YAML: %w", err)
+		}
 	}
 	return nil
 }

@@ -54,6 +54,9 @@ const Layout = ({ children }: LayoutProps) => {
                   <Button color="inherit" component={RouterLink} to="/admin/analytics">
                     Analytics
                   </Button>
+                  <Button color="inherit" component={RouterLink} to="/admin/shared-values">
+                    Shared Values
+                  </Button>
                 </>
               )}
             </Box>

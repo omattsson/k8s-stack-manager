@@ -379,6 +379,17 @@ export interface ClusterNamespaceInfo {
   created_at: string;
 }
 
+export interface SharedValues {
+  id: string;
+  cluster_id: string;
+  name: string;
+  description: string;
+  values: string;
+  priority: number;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface OverviewStats {
   total_templates: number;
   total_definitions: number;
