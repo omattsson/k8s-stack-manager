@@ -174,7 +174,7 @@ func main() {
 	}
 
 	// Auto-create default cluster from KUBECONFIG_PATH for single-cluster migration
-	ensureDefaultCluster(clusterRepo, cfg)
+	ensureDefaultCluster(clusterRepo, instanceRepo, cfg)
 
 	// Create cluster registry for multi-cluster client management
 	clusterRegistry := cluster.NewRegistry(cluster.RegistryConfig{
@@ -318,7 +318,7 @@ func main() {
 // ensureDefaultCluster auto-creates a default cluster from KUBECONFIG_PATH
 // when no clusters exist yet. This provides a migration path for existing
 // single-cluster setups.
-func ensureDefaultCluster(clusterRepo models.ClusterRepository, cfg *config.Config) {
+func ensureDefaultCluster(clusterRepo models.ClusterRepository, instanceRepo models.StackInstanceRepository, cfg *config.Config) {
 	clusters, err := clusterRepo.List()
 	if err != nil {
 		slog.Error("Failed to list clusters for default cluster check", "error", err)
@@ -358,6 +358,37 @@ func ensureDefaultCluster(clusterRepo models.ClusterRepository, cfg *config.Conf
 		"kubeconfig_path", cfg.Deployment.KubeconfigPath,
 		"api_server_url", apiServerURL,
 	)
+
+	// Backfill: persist the new default cluster ID onto any existing
+	// StackInstance records that have an empty ClusterID, so they won't
+	// implicitly follow whatever happens to be the default later.
+	backfillInstanceClusterIDs(instanceRepo, defaultCluster.ID)
+}
+
+// backfillInstanceClusterIDs sets the given clusterID on all stack instances
+// that currently have an empty ClusterID.
+func backfillInstanceClusterIDs(instanceRepo models.StackInstanceRepository, clusterID string) {
+	instances, err := instanceRepo.FindByCluster("")
+	if err != nil {
+		slog.Warn("Failed to list instances for cluster ID backfill", "error", err)
+		return
+	}
+	for i := range instances {
+		inst := &instances[i]
+		inst.ClusterID = clusterID
+		if updateErr := instanceRepo.Update(inst); updateErr != nil {
+			slog.Error("Failed to backfill cluster ID on instance",
+				"instance_id", inst.ID,
+				"error", updateErr,
+			)
+		}
+	}
+	if len(instances) > 0 {
+		slog.Info("Backfilled default cluster ID on existing instances",
+			"cluster_id", clusterID,
+			"count", len(instances),
+		)
+	}
 }
 
 // extractAPIServerURL reads the kubeconfig file and returns the API server URL

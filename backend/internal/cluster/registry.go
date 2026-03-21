@@ -271,6 +271,13 @@ func (r *Registry) Close() error {
 	return nil
 }
 
+// ClusterExists checks whether a cluster with the given ID exists in the
+// underlying repository, without building any k8s/helm clients.
+func (r *Registry) ClusterExists(clusterID string) bool {
+	_, err := r.clusterRepo.FindByID(clusterID)
+	return err == nil
+}
+
 // buildClients creates k8s + helm clients for a cluster. Must be called under write lock.
 func (r *Registry) buildClients(cluster *models.Cluster) (*ClusterClients, error) {
 	var kubeconfigPath string

@@ -216,11 +216,9 @@ func (h *InstanceHandler) CreateInstance(c *gin.Context) {
 				return
 			}
 			inst.ClusterID = resolved
-		} else {
-			if _, resolveErr := h.registry.ResolveClusterID(inst.ClusterID); resolveErr != nil {
-				c.JSON(http.StatusBadRequest, gin.H{"error": "Unknown cluster_id"})
-				return
-			}
+		} else if !h.registry.ClusterExists(inst.ClusterID) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Unknown cluster_id"})
+			return
 		}
 	}
 

@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"backend/internal/models"
@@ -29,6 +31,8 @@ type HealthPoller struct {
 	hub         websocket.BroadcastSender
 	stopCh      chan struct{}
 	done        chan struct{}
+	stopOnce    sync.Once
+	started     atomic.Bool
 }
 
 // NewHealthPoller creates a HealthPoller with the given configuration.
@@ -49,13 +53,19 @@ func NewHealthPoller(cfg HealthPollerConfig) *HealthPoller {
 
 // Start begins the background polling goroutine.
 func (p *HealthPoller) Start() {
+	p.started.Store(true)
 	go p.run()
 }
 
 // Stop requests a graceful shutdown and waits for the poller goroutine to exit.
+// It is safe to call Stop multiple times or without calling Start.
 func (p *HealthPoller) Stop() {
-	close(p.stopCh)
-	<-p.done
+	p.stopOnce.Do(func() {
+		close(p.stopCh)
+	})
+	if p.started.Load() {
+		<-p.done
+	}
 }
 
 func (p *HealthPoller) run() {
@@ -133,28 +143,29 @@ func (p *HealthPoller) checkCluster(cl *models.Cluster) string {
 		return models.ClusterUnreachable
 	}
 
-	resultCh := make(chan error, 1)
 	ctx, cancel := context.WithTimeout(context.Background(), healthCheckTimeout)
 	defer cancel()
 
-	go func() {
-		_, sErr := client.Clientset().Discovery().ServerVersion()
-		resultCh <- sErr
-	}()
-
-	var versionErr error
-	select {
-	case versionErr = <-resultCh:
-	case <-ctx.Done():
-		versionErr = ctx.Err()
-	}
-
-	if versionErr != nil {
-		slog.Debug("health poller: cluster ping failed",
-			"cluster_id", cl.ID,
-			"error", versionErr,
-		)
-		return models.ClusterUnreachable
+	// Use a context-aware discovery request so the timeout actually cancels
+	// the underlying HTTP call, preventing stuck goroutines on hung networks.
+	// RESTClient() may be nil for fake/test clientsets, so fall back to ServerVersion().
+	if restClient := client.Clientset().Discovery().RESTClient(); restClient != nil {
+		result := restClient.Get().AbsPath("/version").Do(ctx)
+		if versionErr := result.Error(); versionErr != nil {
+			slog.Debug("health poller: cluster ping failed",
+				"cluster_id", cl.ID,
+				"error", versionErr,
+			)
+			return models.ClusterUnreachable
+		}
+	} else {
+		if _, versionErr := client.Clientset().Discovery().ServerVersion(); versionErr != nil {
+			slog.Debug("health poller: cluster ping failed",
+				"cluster_id", cl.ID,
+				"error", versionErr,
+			)
+			return models.ClusterUnreachable
+		}
 	}
 
 	return models.ClusterHealthy
