@@ -17,6 +17,7 @@ import Clusters from './pages/Admin/Clusters';
 import ClusterHealth from './pages/ClusterHealth';
 import Analytics from './pages/Analytics';
 import SharedValues from './pages/SharedValues';
+import CleanupPolicies from './pages/CleanupPolicies';
 import Profile from './pages/Profile';
 
 const AppRoutes = () => {
@@ -41,6 +42,7 @@ const AppRoutes = () => {
       <Route path="/admin/cluster-health" element={<ProtectedRoute requiredRole="admin"><ClusterHealth /></ProtectedRoute>} />
       <Route path="/admin/analytics" element={<ProtectedRoute requiredRole="admin"><Analytics /></ProtectedRoute>} />
       <Route path="/admin/shared-values" element={<ProtectedRoute requiredRole="admin"><SharedValues /></ProtectedRoute>} />
+      <Route path="/admin/cleanup-policies" element={<ProtectedRoute requiredRole="admin"><CleanupPolicies /></ProtectedRoute>} />
       <Route path="/profile" element={<ProtectedRoute><Profile /></ProtectedRoute>} />
     </Routes>
   );

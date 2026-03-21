@@ -7,6 +7,7 @@ import (
 	"backend/internal/config"
 	"backend/internal/health"
 	"backend/internal/models"
+	"backend/internal/scheduler"
 	"backend/internal/websocket"
 	"time"
 
@@ -47,6 +48,10 @@ type Deps struct {
 
 	// Analytics handler.
 	AnalyticsHandler *handlers.AnalyticsHandler
+
+	// Cleanup policy handler and scheduler.
+	CleanupPolicyHandler *handlers.CleanupPolicyHandler
+	CleanupScheduler     *scheduler.Scheduler
 
 	// Cluster management.
 	ClusterHandler      *handlers.ClusterHandler
@@ -259,6 +264,18 @@ func SetupRoutes(router *gin.Engine, deps Deps) *handlers.RateLimiter {
 			{
 				adminGroup.GET("/orphaned-namespaces", deps.AdminHandler.ListOrphanedNamespaces)
 				adminGroup.DELETE("/orphaned-namespaces/:namespace", deps.AdminHandler.DeleteOrphanedNamespace)
+			}
+
+			// Cleanup policies — nested in admin group
+			if deps.CleanupPolicyHandler != nil {
+				cleanupPolicies := adminGroup.Group("/cleanup-policies")
+				{
+					cleanupPolicies.GET("", deps.CleanupPolicyHandler.ListCleanupPolicies)
+					cleanupPolicies.POST("", deps.CleanupPolicyHandler.CreateCleanupPolicy)
+					cleanupPolicies.PUT("/:id", deps.CleanupPolicyHandler.UpdateCleanupPolicy)
+					cleanupPolicies.DELETE("/:id", deps.CleanupPolicyHandler.DeleteCleanupPolicy)
+					cleanupPolicies.POST("/:id/run", deps.CleanupPolicyHandler.RunCleanupPolicy)
+				}
 			}
 		}
 

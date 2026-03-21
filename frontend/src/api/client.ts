@@ -38,6 +38,8 @@ import type {
   TemplateStats,
   UserStats,
   SharedValues,
+  CleanupPolicy,
+  CleanupResult,
 } from '../types';
 
 const api = axios.create(axiosConfig);
@@ -821,6 +823,53 @@ export const sharedValuesService = {
       await api.delete(`/api/v1/clusters/${encodeURIComponent(clusterId)}/shared-values/${encodeURIComponent(valueId)}`);
     } catch (error) {
       console.error('Failed to delete shared values:', error);
+      throw error;
+    }
+  },
+};
+
+export const cleanupPolicyService = {
+  list: async (): Promise<CleanupPolicy[]> => {
+    try {
+      const response = await api.get('/api/v1/admin/cleanup-policies');
+      return response.data;
+    } catch (error) {
+      console.error('Failed to fetch cleanup policies:', error);
+      throw error;
+    }
+  },
+  create: async (policy: Partial<CleanupPolicy>): Promise<CleanupPolicy> => {
+    try {
+      const response = await api.post('/api/v1/admin/cleanup-policies', policy);
+      return response.data;
+    } catch (error) {
+      console.error('Failed to create cleanup policy:', error);
+      throw error;
+    }
+  },
+  update: async (id: string, policy: Partial<CleanupPolicy>): Promise<CleanupPolicy> => {
+    try {
+      const response = await api.put(`/api/v1/admin/cleanup-policies/${encodeURIComponent(id)}`, policy);
+      return response.data;
+    } catch (error) {
+      console.error('Failed to update cleanup policy:', error);
+      throw error;
+    }
+  },
+  delete: async (id: string): Promise<void> => {
+    try {
+      await api.delete(`/api/v1/admin/cleanup-policies/${encodeURIComponent(id)}`);
+    } catch (error) {
+      console.error('Failed to delete cleanup policy:', error);
+      throw error;
+    }
+  },
+  run: async (id: string, dryRun: boolean): Promise<CleanupResult[]> => {
+    try {
+      const response = await api.post(`/api/v1/admin/cleanup-policies/${encodeURIComponent(id)}/run?dry_run=${dryRun}`);
+      return response.data;
+    } catch (error) {
+      console.error('Failed to run cleanup policy:', error);
       throw error;
     }
   },

@@ -419,3 +419,26 @@ export interface UserStats {
   deploy_count: number;
   last_active: string | null;
 }
+
+export interface CleanupPolicy {
+  id: string;
+  name: string;
+  cluster_id: string;
+  action: string;
+  condition: string;
+  schedule: string;
+  enabled: boolean;
+  dry_run: boolean;
+  last_run_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CleanupResult {
+  instance_id: string;
+  instance_name: string;
+  namespace: string;
+  action: string;
+  status: string;
+  error?: string;
+}
