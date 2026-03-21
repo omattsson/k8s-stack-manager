@@ -30,6 +30,7 @@ import (
 	"github.com/google/uuid"
 	swaggerFiles "github.com/swaggo/files"
 	ginSwagger "github.com/swaggo/gin-swagger"
+	"k8s.io/client-go/tools/clientcmd"
 )
 
 const (
@@ -330,11 +331,21 @@ func ensureDefaultCluster(clusterRepo models.ClusterRepository, cfg *config.Conf
 		return
 	}
 
+	// Extract the API server URL from the kubeconfig so the auto-created
+	// default cluster satisfies the Validate() requirement.
+	apiServerURL := extractAPIServerURL(cfg.Deployment.KubeconfigPath)
+	if apiServerURL == "" {
+		slog.Warn("Cannot auto-create default cluster: unable to determine API server URL from kubeconfig",
+			"kubeconfig_path", cfg.Deployment.KubeconfigPath)
+		return
+	}
+
 	defaultCluster := &models.Cluster{
 		ID:             uuid.New().String(),
 		Name:           "default",
 		Description:    "Auto-created from KUBECONFIG_PATH",
 		KubeconfigPath: cfg.Deployment.KubeconfigPath,
+		APIServerURL:   apiServerURL,
 		IsDefault:      true,
 		HealthStatus:   models.ClusterUnreachable,
 	}
@@ -345,5 +356,17 @@ func ensureDefaultCluster(clusterRepo models.ClusterRepository, cfg *config.Conf
 	slog.Info("auto-created default cluster from KUBECONFIG_PATH",
 		"cluster_id", defaultCluster.ID,
 		"kubeconfig_path", cfg.Deployment.KubeconfigPath,
+		"api_server_url", apiServerURL,
 	)
+}
+
+// extractAPIServerURL reads the kubeconfig file and returns the API server URL
+// from the current context. Returns empty string if the URL cannot be determined.
+func extractAPIServerURL(kubeconfigPath string) string {
+	restCfg, err := clientcmd.BuildConfigFromFlags("", kubeconfigPath)
+	if err != nil {
+		slog.Warn("Failed to parse kubeconfig for API server URL", "path", kubeconfigPath, "error", err)
+		return ""
+	}
+	return restCfg.Host
 }

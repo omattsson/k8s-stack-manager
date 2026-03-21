@@ -203,6 +203,17 @@ func (h *InstanceHandler) CreateInstance(c *gin.Context) {
 		inst.Branch = "master"
 	}
 
+	// Resolve empty ClusterID to the current default cluster so the
+	// persisted value is explicit and won't shift if the default changes.
+	if inst.ClusterID == "" && h.registry != nil {
+		resolved, resolveErr := h.registry.ResolveClusterID("")
+		if resolveErr != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "No default cluster configured; specify cluster_id"})
+			return
+		}
+		inst.ClusterID = resolved
+	}
+
 	// Auto-generate namespace.
 	owner := middleware.GetUsernameFromContext(c)
 	if inst.Namespace == "" {
