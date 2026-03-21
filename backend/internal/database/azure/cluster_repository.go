@@ -247,9 +247,15 @@ func (r *ClusterRepository) clusterFromEntity(e map[string]interface{}) (*models
 		if err == nil {
 			decrypted, decErr := crypto.Decrypt(decoded, r.encryptionKey)
 			if decErr != nil {
-				return nil, dberrors.NewDatabaseError("decrypt", decErr)
+				slog.Error("failed to decrypt kubeconfig data",
+					"cluster_id", getString(e, "ID"),
+					"error", decErr,
+				)
+				// Avoid returning an opaque encrypted blob or corrupt data.
+				kubeconfigData = ""
+			} else {
+				kubeconfigData = string(decrypted)
 			}
-			kubeconfigData = string(decrypted)
 		}
 	}
 

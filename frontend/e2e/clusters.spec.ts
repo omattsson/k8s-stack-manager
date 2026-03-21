@@ -169,6 +169,6 @@ test.describe('Cluster Management', () => {
     // Try to create without kubeconfig
     await dialog.getByRole('button', { name: 'Create' }).click();
 
-    await expect(dialog.getByText('Kubeconfig is required when creating a cluster')).toBeVisible();
+    await expect(dialog.getByText('Either kubeconfig data or kubeconfig path is required when creating a cluster')).toBeVisible();
   });
 });

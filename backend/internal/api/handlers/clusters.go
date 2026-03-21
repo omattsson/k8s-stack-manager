@@ -3,12 +3,14 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"time"
 
 	"backend/internal/cluster"
 	"backend/internal/models"
+	"backend/pkg/dberrors"
 
 	"github.com/gin-gonic/gin"
 	apimachineryversion "k8s.io/apimachinery/pkg/version"
@@ -134,6 +136,21 @@ func (h *ClusterHandler) CreateCluster(c *gin.Context) {
 		cl.IsDefault = true
 		if h.registry != nil {
 			h.registry.InvalidateDefault()
+		}
+	} else {
+		// Auto-default: if no default cluster exists yet, make this one the default
+		// so that instance creation (which resolves empty cluster_id to the default)
+		// doesn't fail with a 400.
+		_, err := h.clusterRepo.FindDefault()
+		if err != nil && errors.Is(err, dberrors.ErrNotFound) {
+			if setErr := h.clusterRepo.SetDefault(cl.ID); setErr != nil {
+				slog.Error("Failed to auto-set first cluster as default", "cluster_id", cl.ID, "error", setErr)
+			} else {
+				cl.IsDefault = true
+				if h.registry != nil {
+					h.registry.InvalidateDefault()
+				}
+			}
 		}
 	}
 
