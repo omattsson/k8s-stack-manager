@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"time"
 
@@ -32,7 +33,7 @@ func NewClusterRepository(accountName, accountKey, endpoint string, useAzurite b
 	if encryptionKey != "" {
 		repo.encryptionKey = crypto.DeriveKey(encryptionKey)
 	} else {
-		slog.Warn("KUBECONFIG_ENCRYPTION_KEY is not set — kubeconfig data will be stored unencrypted")
+		slog.Warn("KUBECONFIG_ENCRYPTION_KEY is not set — clusters with kubeconfig_data will be rejected; use kubeconfig_path instead")
 	}
 	return repo, nil
 }
@@ -209,7 +210,10 @@ func (r *ClusterRepository) SetDefault(id string) error {
 
 func (r *ClusterRepository) clusterToEntity(c *models.Cluster) (map[string]interface{}, error) {
 	kubeconfigData := c.KubeconfigData
-	if kubeconfigData != "" && len(r.encryptionKey) > 0 {
+	if kubeconfigData != "" {
+		if len(r.encryptionKey) == 0 {
+			return nil, dberrors.NewDatabaseError("validation", fmt.Errorf("kubeconfig_data cannot be stored without KUBECONFIG_ENCRYPTION_KEY configured; use kubeconfig_path instead: %w", dberrors.ErrValidation))
+		}
 		encrypted, err := crypto.Encrypt([]byte(kubeconfigData), r.encryptionKey)
 		if err != nil {
 			return nil, dberrors.NewDatabaseError("encrypt", err)
@@ -247,15 +251,11 @@ func (r *ClusterRepository) clusterFromEntity(e map[string]interface{}) (*models
 		if err == nil {
 			decrypted, decErr := crypto.Decrypt(decoded, r.encryptionKey)
 			if decErr != nil {
-				slog.Error("failed to decrypt kubeconfig data",
-					"cluster_id", getString(e, "ID"),
-					"error", decErr,
-				)
-				// Avoid returning an opaque encrypted blob or corrupt data.
-				kubeconfigData = ""
-			} else {
-				kubeconfigData = string(decrypted)
+				// Treat decryption failure as a hard error so callers can surface
+				// a clear message and avoid leaving the cluster in an unusable state.
+				return nil, dberrors.NewDatabaseError("decrypt kubeconfig data", decErr)
 			}
+			kubeconfigData = string(decrypted)
 		}
 	}
 

@@ -30,7 +30,7 @@ func TestClusterRepository_Create(t *testing.T) {
 			cluster: &models.Cluster{
 				Name:           "prod-cluster",
 				APIServerURL:   "https://k8s.example.com",
-				KubeconfigData: "apiVersion: v1...",
+				KubeconfigPath: "/etc/kubeconfig/prod",
 				Region:         "westus2",
 			},
 			setupMock: func(m *testhelpers.MockTableClient) {
@@ -62,7 +62,7 @@ func TestClusterRepository_Create(t *testing.T) {
 			cluster: &models.Cluster{
 				Name:           "test",
 				APIServerURL:   "https://test.example.com",
-				KubeconfigData: "data",
+				KubeconfigPath: "/etc/kubeconfig/test",
 			},
 			setupMock: func(m *testhelpers.MockTableClient) {
 				m.SetAddEntity(func(ctx context.Context, entity []byte, opts *aztables.AddEntityOptions) (aztables.AddEntityResponse, error) {
@@ -78,7 +78,7 @@ func TestClusterRepository_Create(t *testing.T) {
 			cluster: &models.Cluster{
 				Name:           "new-cluster",
 				APIServerURL:   "https://k8s.example.com",
-				KubeconfigData: "data",
+				KubeconfigPath: "/etc/kubeconfig/new",
 			},
 			setupMock: func(m *testhelpers.MockTableClient) {
 				m.SetAddEntity(func(ctx context.Context, entity []byte, opts *aztables.AddEntityOptions) (aztables.AddEntityResponse, error) {
@@ -94,7 +94,7 @@ func TestClusterRepository_Create(t *testing.T) {
 			cluster: &models.Cluster{
 				Name:           "cluster",
 				APIServerURL:   "https://k8s.example.com",
-				KubeconfigData: "data",
+				KubeconfigPath: "/etc/kubeconfig/cluster",
 			},
 			setupMock: func(m *testhelpers.MockTableClient) {
 				m.SetAddEntity(func(ctx context.Context, entity []byte, opts *aztables.AddEntityOptions) (aztables.AddEntityResponse, error) {
@@ -349,16 +349,10 @@ func TestClusterRepository_Encryption(t *testing.T) {
 		assert.Equal(t, "super-secret-kubeconfig", found.KubeconfigData)
 	})
 
-	t.Run("no encryption when key is empty", func(t *testing.T) {
+	t.Run("rejects kubeconfig_data when encryption key is empty", func(t *testing.T) {
 		t.Parallel()
 		repo := azure.NewTestClusterRepository("")
 		mock := testhelpers.NewMockTableClient()
-		var storedEntity []byte
-
-		mock.SetAddEntity(func(ctx context.Context, entity []byte, opts *aztables.AddEntityOptions) (aztables.AddEntityResponse, error) {
-			storedEntity = entity
-			return aztables.AddEntityResponse{}, nil
-		})
 		repo.SetTestClient(mock)
 
 		cluster := &models.Cluster{
@@ -367,10 +361,7 @@ func TestClusterRepository_Encryption(t *testing.T) {
 			KubeconfigData: "plain-kubeconfig",
 		}
 		err := repo.Create(cluster)
-		require.NoError(t, err)
-
-		var e map[string]interface{}
-		require.NoError(t, json.Unmarshal(storedEntity, &e))
-		assert.Equal(t, "plain-kubeconfig", e["KubeconfigData"])
+		require.Error(t, err)
+		assert.ErrorIs(t, err, dberrors.ErrValidation)
 	})
 }
