@@ -45,6 +45,9 @@ type Deps struct {
 	// Quick deploy handler.
 	QuickDeployHandler *handlers.QuickDeployHandler
 
+	// Analytics handler.
+	AnalyticsHandler *handlers.AnalyticsHandler
+
 	// Cluster management.
 	ClusterHandler *handlers.ClusterHandler
 	ClusterRepo    models.ClusterRepository
@@ -283,6 +286,17 @@ func SetupRoutes(router *gin.Engine, deps Deps) *handlers.RateLimiter {
 				clusters.GET("/:id/health/summary", devops, clusterHandler.GetClusterHealthSummary)
 				clusters.GET("/:id/health/nodes", devops, clusterHandler.GetClusterNodes)
 				clusters.GET("/:id/namespaces", devops, clusterHandler.GetClusterNamespaces)
+			}
+		}
+
+		// Analytics
+		if deps.AnalyticsHandler != nil {
+			analytics := authed.Group("/analytics")
+			analytics.Use(devops)
+			{
+				analytics.GET("/overview", deps.AnalyticsHandler.GetOverview)
+				analytics.GET("/templates", deps.AnalyticsHandler.GetTemplateStats)
+				analytics.GET("/users", middleware.RequireAdmin(), deps.AnalyticsHandler.GetUserStats)
 			}
 		}
 

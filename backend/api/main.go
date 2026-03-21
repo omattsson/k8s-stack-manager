@@ -249,6 +249,8 @@ func main() {
 		cfg.App.DefaultInstanceTTLMinutes,
 	)
 
+	analyticsHandler := handlers.NewAnalyticsHandler(templateRepo, definitionRepo, instanceRepo, deployLogRepo, userRepo)
+
 	// Auto-create admin user on startup if ADMIN_PASSWORD is set.
 	authHandler.EnsureAdminUser()
 
@@ -272,6 +274,7 @@ func main() {
 		BranchOverrideHandler: branchOverrideHandler,
 		FavoriteHandler:       favoriteHandler,
 		QuickDeployHandler:    quickDeployHandler,
+		AnalyticsHandler:      analyticsHandler,
 		ClusterHandler:        clusterHandler,
 		UserRepo:              userRepo,
 		APIKeyRepo:            apiKeyRepo,

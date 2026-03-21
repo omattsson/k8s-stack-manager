@@ -51,6 +51,9 @@ const Layout = ({ children }: LayoutProps) => {
                   <Button color="inherit" component={RouterLink} to="/admin/cluster-health">
                     Cluster Health
                   </Button>
+                  <Button color="inherit" component={RouterLink} to="/admin/analytics">
+                    Analytics
+                  </Button>
                 </>
               )}
             </Box>

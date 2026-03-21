@@ -378,3 +378,33 @@ export interface ClusterNamespaceInfo {
   phase: string;
   created_at: string;
 }
+
+export interface OverviewStats {
+  total_templates: number;
+  total_definitions: number;
+  total_instances: number;
+  running_instances: number;
+  total_deploys: number;
+  total_users: number;
+}
+
+export interface TemplateStats {
+  template_id: string;
+  template_name: string;
+  category: string;
+  is_published: boolean;
+  definition_count: number;
+  instance_count: number;
+  deploy_count: number;
+  success_count: number;
+  error_count: number;
+  success_rate: number;
+}
+
+export interface UserStats {
+  user_id: string;
+  username: string;
+  instance_count: number;
+  deploy_count: number;
+  last_active: string | null;
+}

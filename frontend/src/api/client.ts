@@ -34,6 +34,9 @@ import type {
   ClusterSummary,
   NodeStatusInfo,
   ClusterNamespaceInfo,
+  OverviewStats,
+  TemplateStats,
+  UserStats,
 } from '../types';
 
 const api = axios.create(axiosConfig);
@@ -749,6 +752,36 @@ export const branchOverrideService = {
       await api.delete(`/api/v1/stack-instances/${instanceId}/branches/${chartId}`);
     } catch (error) {
       console.error('Failed to delete branch override:', error);
+      throw error;
+    }
+  },
+};
+
+export const analyticsService = {
+  getOverview: async (): Promise<OverviewStats> => {
+    try {
+      const response = await api.get('/api/v1/analytics/overview');
+      return response.data;
+    } catch (error) {
+      console.error('Failed to fetch analytics overview:', error);
+      throw error;
+    }
+  },
+  getTemplateStats: async (): Promise<TemplateStats[]> => {
+    try {
+      const response = await api.get('/api/v1/analytics/templates');
+      return response.data;
+    } catch (error) {
+      console.error('Failed to fetch template stats:', error);
+      throw error;
+    }
+  },
+  getUserStats: async (): Promise<UserStats[]> => {
+    try {
+      const response = await api.get('/api/v1/analytics/users');
+      return response.data;
+    } catch (error) {
+      console.error('Failed to fetch user stats:', error);
       throw error;
     }
   },
