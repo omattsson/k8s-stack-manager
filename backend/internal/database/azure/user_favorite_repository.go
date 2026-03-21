@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -48,7 +49,7 @@ func (r *UserFavoriteRepository) Add(fav *models.UserFavorite) error {
 	ctx := context.Background()
 
 	if err := fav.Validate(); err != nil {
-		return dberrors.NewDatabaseError("add", dberrors.ErrValidation)
+		return dberrors.NewDatabaseError("add", fmt.Errorf("%w: %s", dberrors.ErrValidation, err.Error()))
 	}
 
 	now := time.Now().UTC()

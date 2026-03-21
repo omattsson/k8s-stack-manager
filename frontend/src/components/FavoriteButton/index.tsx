@@ -17,6 +17,9 @@ const FavoriteButton = ({ entityType, entityId, size = 'small', initialFavorited
 
   useEffect(() => {
     if (initialFavorited !== undefined) return;
+    // Reset state when entity changes to avoid showing stale values
+    setLoading(true);
+    setIsFavorite(false);
     let cancelled = false;
     const check = async () => {
       try {
