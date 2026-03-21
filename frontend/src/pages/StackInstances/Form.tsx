@@ -69,7 +69,7 @@ const Form = () => {
         name,
         branch,
         ...(selectedClusterId ? { cluster_id: selectedClusterId } : {}),
-        ...(ttlMinutes > 0 ? { ttl_minutes: ttlMinutes } : {}),
+        ttl_minutes: ttlMinutes,
       });
       navigate(`/stack-instances/${instance.id}`);
     } catch (err) {

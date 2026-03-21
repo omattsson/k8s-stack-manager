@@ -86,7 +86,7 @@ type quickDeployRequest struct {
 	InstanceDescription string            `json:"instance_description"`
 	Branch              string            `json:"branch"`
 	ClusterID           string            `json:"cluster_id"`
-	TTLMinutes          int               `json:"ttl_minutes"`
+	TTLMinutes          *int              `json:"ttl_minutes"`
 	BranchOverrides     map[string]string `json:"branch_overrides"`
 }
 
@@ -245,10 +245,12 @@ func (h *QuickDeployHandler) QuickDeploy(c *gin.Context) {
 		UpdatedAt:         now,
 	}
 
-	// Apply TTL.
-	ttl := req.TTLMinutes
-	if ttl == 0 && h.defaultTTLMinutes > 0 {
+	// Apply TTL — nil means "use default", explicit 0 means "no expiry".
+	var ttl int
+	if req.TTLMinutes == nil && h.defaultTTLMinutes > 0 {
 		ttl = h.defaultTTLMinutes
+	} else if req.TTLMinutes != nil {
+		ttl = *req.TTLMinutes
 	}
 	if ttl < 0 {
 		cleanupAll()

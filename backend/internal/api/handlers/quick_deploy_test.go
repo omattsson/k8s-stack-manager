@@ -19,6 +19,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func intPtr(i int) *int { return &i }
+
 // setupQuickDeployRouter creates a test gin engine for the QuickDeploy endpoint.
 func setupQuickDeployRouter(
 	templateRepo *MockStackTemplateRepository,
@@ -235,7 +237,7 @@ func TestQuickDeploy(t *testing.T) {
 		{
 			name:       "with TTL — sets expiry",
 			templateID: "t1",
-			body:       quickDeployRequest{InstanceName: "ttl-test", TTLMinutes: 120},
+			body:       quickDeployRequest{InstanceName: "ttl-test", TTLMinutes: intPtr(120)},
 			setup: func(
 				tmplRepo *MockStackTemplateRepository,
 				tmplChartRepo *MockTemplateChartConfigRepository,

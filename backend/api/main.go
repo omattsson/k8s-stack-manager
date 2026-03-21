@@ -308,30 +308,7 @@ func main() {
 	<-quit
 	slog.Info("Shutting down server...")
 
-	// Cancel in-flight deploy/stop goroutines
-	deployManager.Shutdown()
-
-	// Stop TTL reaper
-	reaper.Stop()
-
-	// Stop cluster health poller
-	healthPoller.Stop()
-
-	// Stop K8s status watcher
-	if k8sWatcher != nil {
-		k8sWatcher.Stop()
-	}
-
-	// Shut down WebSocket hub (closes all client connections)
-	hub.Shutdown()
-
-	// Close cluster registry (releases per-cluster clients)
-	clusterRegistry.Close()
-
-	// Cancel the K8s watcher context (redundant safety — Stop() handles it)
-	watcherCancel()
-
-	// Give outstanding requests time to complete
+	// 1. Stop HTTP server — no new requests
 	shutdownTimeout := cfg.Server.ShutdownTimeout
 	if shutdownTimeout == 0 {
 		shutdownTimeout = defaultShutdownTimeout
@@ -339,16 +316,28 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	defer cancel()
 
-	err = srv.Shutdown(ctx)
-
-	// Close repository connections (database pool, etc.)
-	if closeErr := repo.Close(); closeErr != nil {
-		slog.Error("Failed to close repository", "error", closeErr)
+	if err := srv.Shutdown(ctx); err != nil {
+		slog.Error("Server forced to shutdown", "error", err)
 	}
 
-	if err != nil {
-		slog.Error("Server forced to shutdown", "error", err)
-		return
+	// 2. Stop producers of deploy work
+	reaper.Stop()
+
+	// 3. Now safe to wait for in-flight deploys
+	deployManager.Shutdown()
+
+	// 4. Stop remaining services
+	healthPoller.Stop()
+	if k8sWatcher != nil {
+		k8sWatcher.Stop()
+	}
+	hub.Shutdown()
+	clusterRegistry.Close()
+	watcherCancel()
+
+	// 5. Close data layer
+	if closeErr := repo.Close(); closeErr != nil {
+		slog.Error("Failed to close repository", "error", closeErr)
 	}
 
 	slog.Info("Server exited gracefully")

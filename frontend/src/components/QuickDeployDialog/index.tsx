@@ -74,7 +74,7 @@ const QuickDeployDialog = ({ open, onClose, template }: QuickDeployDialogProps) 
         instance_description: description.trim() || undefined,
         branch: branch.trim() || undefined,
         cluster_id: clusterId || undefined,
-        ttl_minutes: ttlMinutes || undefined,
+        ttl_minutes: ttlMinutes,
       });
       onClose();
       navigate(`/stack-instances/${result.instance.id}`);

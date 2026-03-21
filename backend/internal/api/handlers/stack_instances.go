@@ -231,12 +231,29 @@ func (h *InstanceHandler) GetRecentInstances(c *gin.Context) {
 // @Failure     400      {object} map[string]string
 // @Failure     409      {object} NamespaceConflictResponse "Namespace already exists"
 // @Router      /api/v1/stack-instances [post]
+// createInstanceRequest is the JSON-binding DTO for CreateInstance.
+// TTLMinutes is *int so we can distinguish "omitted" (nil → use default)
+// from an explicit 0 (meaning "no expiry").
+type createInstanceRequest struct {
+	StackDefinitionID string `json:"stack_definition_id"`
+	Name              string `json:"name"`
+	Branch            string `json:"branch"`
+	ClusterID         string `json:"cluster_id"`
+	TTLMinutes        *int   `json:"ttl_minutes"`
+}
+
 func (h *InstanceHandler) CreateInstance(c *gin.Context) {
-	var inst models.StackInstance
-	if err := c.ShouldBindJSON(&inst); err != nil {
+	var req createInstanceRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request format"})
 		return
 	}
+
+	var inst models.StackInstance
+	inst.StackDefinitionID = req.StackDefinitionID
+	inst.Name = req.Name
+	inst.Branch = req.Branch
+	inst.ClusterID = req.ClusterID
 
 	inst.ID = uuid.New().String()
 	inst.OwnerID = middleware.GetUserIDFromContext(c)
@@ -249,9 +266,12 @@ func (h *InstanceHandler) CreateInstance(c *gin.Context) {
 		inst.Branch = "master"
 	}
 
-	// Apply default TTL if not provided.
-	if inst.TTLMinutes == 0 && h.defaultTTLMinutes > 0 {
+	// Apply default TTL only when the field was omitted (nil).
+	// An explicit 0 means "no expiry".
+	if req.TTLMinutes == nil && h.defaultTTLMinutes > 0 {
 		inst.TTLMinutes = h.defaultTTLMinutes
+	} else if req.TTLMinutes != nil {
+		inst.TTLMinutes = *req.TTLMinutes
 	}
 	if inst.TTLMinutes > MaxTTLMinutes {
 		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("TTL must not exceed %d minutes (30 days)", MaxTTLMinutes)})
