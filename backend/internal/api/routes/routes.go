@@ -42,6 +42,9 @@ type Deps struct {
 	// Favorites handler.
 	FavoriteHandler *handlers.FavoriteHandler
 
+	// Quick deploy handler.
+	QuickDeployHandler *handlers.QuickDeployHandler
+
 	// Cluster management.
 	ClusterHandler *handlers.ClusterHandler
 	ClusterRepo    models.ClusterRepository
@@ -149,6 +152,9 @@ func SetupRoutes(router *gin.Engine, deps Deps) *handlers.RateLimiter {
 				templates.POST("/:id/charts", devops, deps.TemplateHandler.AddTemplateChart)
 				templates.PUT("/:id/charts/:chartId", devops, deps.TemplateHandler.UpdateTemplateChart)
 				templates.DELETE("/:id/charts/:chartId", devops, deps.TemplateHandler.DeleteTemplateChart)
+			}
+			if deps.QuickDeployHandler != nil {
+				templates.POST("/:id/quick-deploy", deps.QuickDeployHandler.QuickDeploy)
 			}
 		}
 

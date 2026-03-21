@@ -3258,6 +3258,79 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/templates/{id}/quick-deploy": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Instantiate a template, create an instance, set branch overrides, and trigger deployment in a single call",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "templates"
+                ],
+                "summary": "Quick deploy from a template",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Template ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Quick deploy options",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handlers.quickDeployRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "202": {
+                        "description": "Accepted",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.quickDeployResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/templates/{id}/unpublish": {
             "post": {
                 "description": "Hide a template from regular users (devops/admin only)",
@@ -3955,6 +4028,46 @@ const docTemplate = `{
             "properties": {
                 "ttl_minutes": {
                     "type": "integer"
+                }
+            }
+        },
+        "handlers.quickDeployRequest": {
+            "type": "object",
+            "properties": {
+                "branch": {
+                    "type": "string"
+                },
+                "branch_overrides": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                },
+                "cluster_id": {
+                    "type": "string"
+                },
+                "instance_description": {
+                    "type": "string"
+                },
+                "instance_name": {
+                    "type": "string"
+                },
+                "ttl_minutes": {
+                    "type": "integer"
+                }
+            }
+        },
+        "handlers.quickDeployResponse": {
+            "type": "object",
+            "properties": {
+                "definition": {
+                    "$ref": "#/definitions/models.StackDefinition"
+                },
+                "instance": {
+                    "$ref": "#/definitions/models.StackInstance"
+                },
+                "log_id": {
+                    "type": "string"
                 }
             }
         },

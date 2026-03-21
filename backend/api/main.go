@@ -243,6 +243,14 @@ func main() {
 	}
 	favoriteHandler := handlers.NewFavoriteHandler(favoriteRepo)
 
+	quickDeployHandler := handlers.NewQuickDeployHandler(
+		templateRepo, templateChartRepo, definitionRepo, chartConfigRepo,
+		instanceRepo, branchOverrideRepo, overrideRepo, valuesGen,
+		deployManager, userRepo, deployLogRepo, auditRepo,
+		hub, clusterRegistry, k8sWatcher,
+		cfg.App.DefaultInstanceTTLMinutes,
+	)
+
 	// Auto-create admin user on startup if ADMIN_PASSWORD is set.
 	authHandler.EnsureAdminUser()
 
@@ -265,6 +273,7 @@ func main() {
 		AdminHandler:          adminHandler,
 		BranchOverrideHandler: branchOverrideHandler,
 		FavoriteHandler:       favoriteHandler,
+		QuickDeployHandler:    quickDeployHandler,
 		ClusterHandler:        clusterHandler,
 		UserRepo:              userRepo,
 		APIKeyRepo:            apiKeyRepo,

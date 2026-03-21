@@ -149,6 +149,32 @@ definitions:
       ttl_minutes:
         type: integer
     type: object
+  handlers.quickDeployRequest:
+    properties:
+      branch:
+        type: string
+      branch_overrides:
+        additionalProperties:
+          type: string
+        type: object
+      cluster_id:
+        type: string
+      instance_description:
+        type: string
+      instance_name:
+        type: string
+      ttl_minutes:
+        type: integer
+    type: object
+  handlers.quickDeployResponse:
+    properties:
+      definition:
+        $ref: '#/definitions/models.StackDefinition'
+      instance:
+        $ref: '#/definitions/models.StackInstance'
+      log_id:
+        type: string
+    type: object
   health.CheckStatus:
     properties:
       message:
@@ -2714,6 +2740,54 @@ paths:
               type: string
             type: object
       summary: Publish a stack template
+      tags:
+      - templates
+  /api/v1/templates/{id}/quick-deploy:
+    post:
+      consumes:
+      - application/json
+      description: Instantiate a template, create an instance, set branch overrides,
+        and trigger deployment in a single call
+      parameters:
+      - description: Template ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Quick deploy options
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/handlers.quickDeployRequest'
+      produces:
+      - application/json
+      responses:
+        "202":
+          description: Accepted
+          schema:
+            $ref: '#/definitions/handlers.quickDeployResponse'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Quick deploy from a template
       tags:
       - templates
   /api/v1/templates/{id}/unpublish:
