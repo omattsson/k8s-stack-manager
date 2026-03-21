@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type MouseEvent } from 'react';
 import { IconButton, Tooltip } from '@mui/material';
 import StarIcon from '@mui/icons-material/Star';
 import StarBorderIcon from '@mui/icons-material/StarBorder';
@@ -32,7 +32,7 @@ const FavoriteButton = ({ entityType, entityId, size = 'small', initialFavorited
     return () => { cancelled = true; };
   }, [entityType, entityId, initialFavorited]);
 
-  const handleToggle = async (e: React.MouseEvent) => {
+  const handleToggle = async (e: MouseEvent) => {
     e.stopPropagation();
     setLoading(true);
     try {

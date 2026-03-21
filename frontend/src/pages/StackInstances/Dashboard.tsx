@@ -108,20 +108,18 @@ const Dashboard = () => {
       }),
     ).then((settled) => {
       const newUrls: Record<string, string> = {};
-      for (const r of settled) {
+      settled.forEach((r, idx) => {
         if (r.status === 'fulfilled') {
           inFlightIdsRef.current.delete(r.value.id);
           if (r.value.url) {
-            // Only mark as fetched when we got a URL; null URLs will be retried
             fetchedStatusIdsRef.current.add(r.value.id);
             newUrls[r.value.id] = r.value.url;
           }
         } else {
-          // On failure, clear in-flight so the instance can be retried
-          const id = newRunning[settled.indexOf(r)]?.id;
+          const id = newRunning[idx]?.id;
           if (id) inFlightIdsRef.current.delete(id);
         }
-      }
+      });
       if (Object.keys(newUrls).length > 0) {
         setInstanceUrls((prev) => ({ ...prev, ...newUrls }));
       }

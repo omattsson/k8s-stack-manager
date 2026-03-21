@@ -333,7 +333,9 @@ const Detail = () => {
 
   const countdown = useCountdown(instance?.expires_at);
 
-  const isExpiredByTtl = instance?.status === 'stopped' && instance?.error_message?.includes('Expired (TTL)');
+  const isExpiredByTtl = instance?.status === 'stopped' && 
+    instance?.expires_at != null && 
+    new Date(instance.expires_at) <= new Date();
 
   const handleExtend = async () => {
     if (!id) return;
