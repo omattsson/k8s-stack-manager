@@ -128,4 +128,30 @@ describe('FavoriteButton', () => {
       expect(screen.getByRole('button', { name: 'Add to favorites' })).not.toBeDisabled();
     });
   });
+
+  it('renders as favorited when initialFavorited={true} without API call', async () => {
+    render(<FavoriteButton entityType="instance" entityId="1" initialFavorited={true} />);
+
+    expect(screen.getByRole('button', { name: 'Remove from favorites' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Remove from favorites' })).not.toBeDisabled();
+    expect(favoriteService.check).not.toHaveBeenCalled();
+  });
+
+  it('renders as not-favorited when initialFavorited={false} without API call', async () => {
+    render(<FavoriteButton entityType="instance" entityId="1" initialFavorited={false} />);
+
+    expect(screen.getByRole('button', { name: 'Add to favorites' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Add to favorites' })).not.toBeDisabled();
+    expect(favoriteService.check).not.toHaveBeenCalled();
+  });
+
+  it('calls favoriteService.check on mount when initialFavorited is omitted', async () => {
+    (favoriteService.check as ReturnType<typeof vi.fn>).mockResolvedValue(true);
+
+    render(<FavoriteButton entityType="template" entityId="t1" />);
+
+    await waitFor(() => {
+      expect(favoriteService.check).toHaveBeenCalledWith('template', 't1');
+    });
+  });
 });

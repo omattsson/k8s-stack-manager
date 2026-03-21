@@ -21,6 +21,7 @@ const useCountdown = (expiresAt: string | undefined | null): CountdownResult | n
 
   useEffect(() => {
     if (!expiresAt) return;
+    setNow(Date.now());
     const interval = setInterval(() => setNow(Date.now()), 60_000);
     return () => clearInterval(interval);
   }, [expiresAt]);

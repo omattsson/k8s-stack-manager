@@ -101,6 +101,9 @@ func (si *StackInstance) Validate() error {
 	if si.OwnerID == "" {
 		return errors.New("owner_id is required")
 	}
+	if si.TTLMinutes < 0 {
+		return errors.New("ttl_minutes must be non-negative")
+	}
 	if si.Namespace != "" {
 		if len(si.Namespace) > MaxNamespaceLength {
 			return fmt.Errorf("namespace must be at most %d characters", MaxNamespaceLength)

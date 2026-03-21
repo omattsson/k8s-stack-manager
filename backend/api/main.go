@@ -189,7 +189,6 @@ func main() {
 		HelmBinary:  cfg.Deployment.HelmBinary,
 		HelmTimeout: cfg.Deployment.DeploymentTimeout,
 	})
-	defer clusterRegistry.Close()
 
 	// Start cluster health poller
 	healthPoller := cluster.NewHealthPoller(cluster.HealthPollerConfig{
@@ -203,7 +202,6 @@ func main() {
 	// K8s watcher — uses registry for multi-cluster monitoring
 	k8sWatcher := k8s.NewWatcher(clusterRegistry, instanceRepo, hub, 30*time.Second)
 	watcherCtx, watcherCancel := context.WithCancel(context.Background())
-	defer watcherCancel()
 	k8sWatcher.Start(watcherCtx)
 
 	// Deployment manager — uses registry for multi-cluster deploys
@@ -325,6 +323,12 @@ func main() {
 
 	// Shut down WebSocket hub (closes all client connections)
 	hub.Shutdown()
+
+	// Close cluster registry (releases per-cluster clients)
+	clusterRegistry.Close()
+
+	// Cancel the K8s watcher context (redundant safety — Stop() handles it)
+	watcherCancel()
 
 	// Give outstanding requests time to complete
 	shutdownTimeout := cfg.Server.ShutdownTimeout

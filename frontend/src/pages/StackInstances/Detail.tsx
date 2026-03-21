@@ -177,6 +177,7 @@ const Detail = () => {
       setBranchOverrides((prev) => ({ ...prev, [chartId]: newBranch }));
       try {
         await branchOverrideService.set(id, chartId, newBranch);
+        setSnackbar('Branch override saved');
       } catch {
         // Revert on failure
         setBranchOverrides((prev) => {
@@ -259,8 +260,9 @@ const Detail = () => {
       setSnackbar('Deployment started');
     } catch {
       setError('Failed to start deployment');
-      setDeploying(false);
       return;
+    } finally {
+      setDeploying(false);
     }
     // Best-effort refresh — don't surface errors to the user
     try {
@@ -342,7 +344,13 @@ const Detail = () => {
     setSaving(true);
     setError(null);
     try {
-      const updated = await instanceService.update(id, { ttl_minutes: ttlMinutes });
+      let updated: StackInstance;
+      if (ttlMinutes > 0) {
+        updated = await instanceService.extend(id, ttlMinutes);
+      } else {
+        // Clear TTL — send full instance so required fields are preserved
+        updated = await instanceService.update(id, { ...instance, ttl_minutes: 0 });
+      }
       setInstance(updated);
       setSnackbar('TTL updated');
     } catch {

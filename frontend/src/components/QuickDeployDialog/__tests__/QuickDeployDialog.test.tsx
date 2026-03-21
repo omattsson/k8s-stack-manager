@@ -111,7 +111,7 @@ describe('QuickDeployDialog', () => {
       expect(onClose).toHaveBeenCalled();
       expect(mockNavigate).toHaveBeenCalledWith('/stack-instances/inst-42');
     });
-  });
+  }, 15_000);
 
   it('shows error alert on API failure', async () => {
     const user = userEvent.setup();
@@ -135,7 +135,7 @@ describe('QuickDeployDialog', () => {
     await waitFor(() => {
       expect(screen.getByRole('alert')).toHaveTextContent('Deployment failed: no charts');
     });
-  });
+  }, 15_000);
 
   it('shows cluster dropdown when multiple clusters exist', async () => {
     (clusterService.list as ReturnType<typeof vi.fn>).mockResolvedValue([

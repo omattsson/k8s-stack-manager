@@ -3,6 +3,7 @@ package azure
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"time"
 
 	"backend/internal/models"
@@ -76,7 +77,7 @@ func (r *ChartBranchOverrideRepository) Set(override *models.ChartBranchOverride
 	ctx := context.Background()
 
 	if err := override.Validate(); err != nil {
-		return dberrors.NewDatabaseError("validate", dberrors.ErrValidation)
+		return dberrors.NewDatabaseError("validate", fmt.Errorf("%s: %w", err.Error(), dberrors.ErrValidation))
 	}
 
 	if override.ID == "" {

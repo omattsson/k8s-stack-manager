@@ -56,6 +56,11 @@ const healthLabel = (status: string): string => {
   return status;
 };
 
+const isValidClusterUrl = (url: string): boolean => {
+  if (!url.trim()) return true; // empty is handled by required check
+  return url.startsWith('https://');
+};
+
 const Clusters = () => {
   const [clusters, setClusters] = useState<Cluster[]>([]);
   const [loading, setLoading] = useState(true);
@@ -121,6 +126,10 @@ const Clusters = () => {
   const handleSave = async () => {
     if (!form.name.trim() || !form.api_server_url.trim()) {
       setDialogError('Name and API Server URL are required');
+      return;
+    }
+    if (!isValidClusterUrl(form.api_server_url)) {
+      setDialogError('API Server URL must start with https://');
       return;
     }
     if (!editingCluster && !(form.kubeconfig_data ?? '').trim() && !(form.kubeconfig_path ?? '').trim()) {
@@ -321,6 +330,8 @@ const Clusters = () => {
               required
               fullWidth
               placeholder="https://my-cluster.example.com:6443"
+              error={!!form.api_server_url.trim() && !isValidClusterUrl(form.api_server_url)}
+              helperText={form.api_server_url.trim() && !isValidClusterUrl(form.api_server_url) ? 'URL must start with https://' : ''}
             />
             <TextField
               label={editingCluster ? 'Kubeconfig Data (leave blank to keep current)' : 'Kubeconfig Data'}

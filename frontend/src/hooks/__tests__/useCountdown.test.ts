@@ -72,4 +72,21 @@ describe('useCountdown', () => {
 
     expect(result.current!.remaining).toBe('2h 0m');
   });
+
+  it('re-syncs when expiresAt changes', () => {
+    const future1 = new Date(Date.now() + 2 * 60 * 60_000).toISOString();
+    const { result, rerender } = renderHook(
+      ({ expiresAt }) => useCountdown(expiresAt),
+      { initialProps: { expiresAt: future1 } },
+    );
+
+    expect(result.current!.remaining).toBe('2h 0m');
+
+    // Change expiresAt to only 30 minutes from now.
+    const future2 = new Date(Date.now() + 30 * 60_000).toISOString();
+    rerender({ expiresAt: future2 });
+
+    expect(result.current!.remaining).toBe('30m');
+    expect(result.current!.isWarning).toBe(true);
+  });
 });

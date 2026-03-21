@@ -17,7 +17,7 @@ type StackInstance struct {
 	ClusterID         string     `json:"cluster_id,omitempty"`
 	Status            string     `json:"status"`
 	ErrorMessage      string     `json:"error_message,omitempty"`
-	TTLMinutes        int        `json:"ttl_minutes,omitempty"`
+	TTLMinutes        int        `json:"ttl_minutes"`
 }
 
 // Valid stack instance statuses.

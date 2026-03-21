@@ -891,11 +891,11 @@ describe('StackInstances Detail', () => {
     expect(screen.getByTestId('ttl-value')).toHaveTextContent('240');
   });
 
-  it('calls instanceService.update when TTL is changed', async () => {
+  it('calls instanceService.extend when TTL is changed', async () => {
     const user = userEvent.setup();
     (useCountdown as unknown as MockFn).mockReturnValue(null);
     const inst = setupMocks({ status: 'draft', ttl_minutes: 0 }, { deployLogReject: true });
-    (instanceService.update as MockFn).mockResolvedValue({ ...inst, ttl_minutes: 240 });
+    (instanceService.extend as MockFn).mockResolvedValue({ ...inst, ttl_minutes: 240 });
 
     renderDetail();
 
@@ -906,7 +906,7 @@ describe('StackInstances Detail', () => {
     await user.click(screen.getByTestId('ttl-change'));
 
     await waitFor(() => {
-      expect(instanceService.update).toHaveBeenCalledWith('123', { ttl_minutes: 240 });
+      expect(instanceService.extend).toHaveBeenCalledWith('123', 240);
     });
   });
 });

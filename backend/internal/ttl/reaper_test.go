@@ -253,3 +253,59 @@ func TestReaper_NilOptionalDeps(t *testing.T) {
 	got := repo.get("expired-1")
 	assert.Equal(t, models.StackStatusStopped, got.Status)
 }
+
+func TestReaper_DoubleStopDoesNotPanic(t *testing.T) {
+	t.Parallel()
+
+	repo := newMockInstanceRepo()
+	reaper := NewReaper(repo, nil, nil, 1*time.Second)
+	go reaper.Start()
+
+	// First stop
+	reaper.Stop()
+
+	// Second stop should not panic or hang.
+	done := make(chan struct{})
+	go func() {
+		reaper.Stop()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		// OK
+	case <-time.After(2 * time.Second):
+		t.Fatal("Second Stop() call did not return promptly")
+	}
+}
+
+func TestReaper_InitialCheckOnStart(t *testing.T) {
+	t.Parallel()
+
+	repo := newMockInstanceRepo()
+	auditRepo := &mockAuditRepo{}
+	hub := &mockHub{}
+
+	past := time.Now().Add(-10 * time.Minute)
+	expired := &models.StackInstance{
+		ID:         "expired-init",
+		Name:       "expired-init",
+		Status:     models.StackStatusRunning,
+		TTLMinutes: 60,
+		ExpiresAt:  &past,
+	}
+	require.NoError(t, repo.Create(expired))
+
+	// Use a very long interval so only the initial check fires.
+	reaper := NewReaper(repo, auditRepo, hub, 10*time.Minute)
+	go reaper.Start()
+
+	// Give Start() a moment to run the initial processExpired().
+	time.Sleep(100 * time.Millisecond)
+	reaper.Stop()
+
+	got := repo.get("expired-init")
+	assert.Equal(t, models.StackStatusStopped, got.Status)
+	assert.Equal(t, "Expired (TTL)", got.ErrorMessage)
+	assert.Equal(t, 1, auditRepo.count())
+}

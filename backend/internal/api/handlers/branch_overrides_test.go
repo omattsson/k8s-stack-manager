@@ -435,3 +435,112 @@ func TestDeleteBranchOverride_RepoError(t *testing.T) {
 
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
 }
+
+// ---- Authorization / Owner checks ----
+
+func TestSetBranchOverride_OwnerAuthorization(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		callerID   string
+		callerRole string
+		ownerID    string
+		wantStatus int
+	}{
+		{
+			name:       "owner can set override",
+			callerID:   "uid-1",
+			callerRole: "user",
+			ownerID:    "uid-1",
+			wantStatus: http.StatusOK,
+		},
+		{
+			name:       "non-owner gets 403",
+			callerID:   "uid-other",
+			callerRole: "user",
+			ownerID:    "uid-1",
+			wantStatus: http.StatusForbidden,
+		},
+		{
+			name:       "admin can set override on any instance",
+			callerID:   "uid-admin",
+			callerRole: "admin",
+			ownerID:    "uid-1",
+			wantStatus: http.StatusOK,
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			instRepo := NewMockStackInstanceRepository()
+			overrideRepo := NewMockChartBranchOverrideRepository()
+
+			seedInstance(t, instRepo, "inst-1", "my-stack", "def-1", tt.ownerID, models.StackStatusDraft)
+
+			router := setupBranchOverrideRouter(instRepo, overrideRepo, tt.callerID, tt.callerRole)
+			w := httptest.NewRecorder()
+			body, _ := json.Marshal(map[string]string{"branch": "feature/test"})
+			req, _ := http.NewRequest(http.MethodPut, "/api/v1/stack-instances/inst-1/branches/chart-1", bytes.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			router.ServeHTTP(w, req)
+
+			assert.Equal(t, tt.wantStatus, w.Code)
+		})
+	}
+}
+
+func TestDeleteBranchOverride_OwnerAuthorization(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		callerID   string
+		callerRole string
+		ownerID    string
+		wantStatus int
+	}{
+		{
+			name:       "owner can delete override",
+			callerID:   "uid-1",
+			callerRole: "user",
+			ownerID:    "uid-1",
+			wantStatus: http.StatusNoContent,
+		},
+		{
+			name:       "non-owner gets 403",
+			callerID:   "uid-other",
+			callerRole: "user",
+			ownerID:    "uid-1",
+			wantStatus: http.StatusForbidden,
+		},
+		{
+			name:       "admin can delete override on any instance",
+			callerID:   "uid-admin",
+			callerRole: "admin",
+			ownerID:    "uid-1",
+			wantStatus: http.StatusNoContent,
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			instRepo := NewMockStackInstanceRepository()
+			overrideRepo := NewMockChartBranchOverrideRepository()
+
+			seedInstance(t, instRepo, "inst-1", "my-stack", "def-1", tt.ownerID, models.StackStatusDraft)
+			seedBranchOverride(t, overrideRepo, "bo-1", "inst-1", "chart-1", "feature/old")
+
+			router := setupBranchOverrideRouter(instRepo, overrideRepo, tt.callerID, tt.callerRole)
+			w := httptest.NewRecorder()
+			req, _ := http.NewRequest(http.MethodDelete, "/api/v1/stack-instances/inst-1/branches/chart-1", nil)
+			router.ServeHTTP(w, req)
+
+			assert.Equal(t, tt.wantStatus, w.Code)
+		})
+	}
+}

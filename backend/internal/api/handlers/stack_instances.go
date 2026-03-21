@@ -29,6 +29,9 @@ type NamespaceConflictResponse struct {
 	Suggestions []string `json:"suggestions"`
 }
 
+// MaxTTLMinutes is the maximum allowed TTL value (30 days).
+const MaxTTLMinutes = 43200
+
 // rfc1123InvalidChars matches any character not allowed in an RFC1123 label.
 var rfc1123InvalidChars = regexp.MustCompile(`[^a-z0-9-]`)
 
@@ -250,6 +253,10 @@ func (h *InstanceHandler) CreateInstance(c *gin.Context) {
 	if inst.TTLMinutes == 0 && h.defaultTTLMinutes > 0 {
 		inst.TTLMinutes = h.defaultTTLMinutes
 	}
+	if inst.TTLMinutes > MaxTTLMinutes {
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("TTL must not exceed %d minutes (30 days)", MaxTTLMinutes)})
+		return
+	}
 	// Compute expiry timestamp from TTL.
 	if inst.TTLMinutes > 0 {
 		exp := now.Add(time.Duration(inst.TTLMinutes) * time.Minute)
@@ -375,6 +382,10 @@ func (h *InstanceHandler) UpdateInstance(c *gin.Context) {
 
 	// Update TTL if changed.
 	if update.TTLMinutes != existing.TTLMinutes {
+		if update.TTLMinutes > MaxTTLMinutes {
+			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("TTL must not exceed %d minutes (30 days)", MaxTTLMinutes)})
+			return
+		}
 		existing.TTLMinutes = update.TTLMinutes
 		if existing.TTLMinutes > 0 {
 			exp := time.Now().UTC().Add(time.Duration(existing.TTLMinutes) * time.Minute)
@@ -572,11 +583,21 @@ func (h *InstanceHandler) ExportChartValues(c *gin.Context) {
 	// Resolve owner username for template vars.
 	ownerName := resolveOwnerName(h.userRepo, inst.OwnerID)
 
+	// Resolve per-chart branch override.
+	var chartBranch string
+	if h.branchOverrideRepo != nil {
+		bo, boErr := h.branchOverrideRepo.Get(instanceID, chartID)
+		if boErr == nil && bo != nil {
+			chartBranch = bo.Branch
+		}
+	}
+
 	params := helm.GenerateParams{
 		ChartName:      chart.ChartName,
 		DefaultValues:  chart.DefaultValues,
 		LockedValues:   lockedValues,
 		OverrideValues: overrideValues,
+		ChartBranch:    chartBranch,
 		TemplateVars: helm.TemplateVars{
 			Branch:       inst.Branch,
 			Namespace:    inst.Namespace,
@@ -1225,6 +1246,10 @@ func (h *InstanceHandler) ExtendTTL(c *gin.Context) {
 	}
 	if ttl <= 0 {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "No TTL configured for this instance"})
+		return
+	}
+	if ttl > MaxTTLMinutes {
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("TTL must not exceed %d minutes (30 days)", MaxTTLMinutes)})
 		return
 	}
 

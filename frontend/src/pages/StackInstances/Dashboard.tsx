@@ -71,20 +71,6 @@ const Dashboard = () => {
         setClusters(clsData || []);
         setFavorites(favData || []);
         setRecentInstances(recentData || []);
-
-        // Fetch primary URL for running instances
-        const running = (instData || []).filter((i: StackInstance) => i.status === 'running');
-        const urlMap: Record<string, string> = {};
-        await Promise.all(
-          running.map(async (inst: StackInstance) => {
-            try {
-              const st: NamespaceStatus = await instanceService.getStatus(inst.id);
-              const url = getPrimaryUrl(st);
-              if (url) urlMap[inst.id] = url;
-            } catch { /* ignore */ }
-          })
-        );
-        setInstanceUrls(urlMap);
       } catch {
         setError('Failed to load stack instances');
       } finally {
@@ -93,6 +79,29 @@ const Dashboard = () => {
     };
     fetchData();
   }, []);
+
+  // Phase 2: fetch status/URLs for running instances after the list is loaded
+  useEffect(() => {
+    const running = instances.filter(
+      (i) => i.status === 'running' || i.status === 'deploying',
+    );
+    if (running.length === 0) return;
+    Promise.allSettled(
+      running.map(async (inst) => {
+        const st: NamespaceStatus = await instanceService.getStatus(inst.id);
+        const url = getPrimaryUrl(st);
+        return { id: inst.id, url };
+      }),
+    ).then((settled) => {
+      const urlMap: Record<string, string> = {};
+      for (const r of settled) {
+        if (r.status === 'fulfilled' && r.value.url) {
+          urlMap[r.value.id] = r.value.url;
+        }
+      }
+      setInstanceUrls(urlMap);
+    });
+  }, [instances]);
 
   // Live-update instance statuses via WebSocket.
   const handleWsMessage = useCallback((msg: WsMessage) => {
@@ -212,7 +221,7 @@ const Dashboard = () => {
                     <Typography variant="subtitle2" noWrap sx={{ flex: 1 }}>
                       {inst.name}
                     </Typography>
-                    <FavoriteButton entityType="instance" entityId={inst.id} size="small" />
+                    <FavoriteButton entityType="instance" entityId={inst.id} size="small" initialFavorited={true} />
                   </Box>
                   <StatusBadge status={inst.status} />
                 </CardContent>
@@ -296,7 +305,7 @@ const Dashboard = () => {
                 <CardContent sx={{ flex: 1 }}>
                   <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
                     <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, minWidth: 0 }}>
-                      <FavoriteButton entityType="instance" entityId={instance.id} size="small" />
+                      <FavoriteButton entityType="instance" entityId={instance.id} size="small" initialFavorited={favoriteInstanceIds.has(instance.id)} />
                       <Typography variant="h6" component="h2" noWrap>
                         {instance.name}
                       </Typography>

@@ -145,7 +145,7 @@ func (r *StackInstanceRepository) List() ([]models.StackInstance, error) {
 func (r *StackInstanceRepository) ListByOwner(ownerID string) ([]models.StackInstance, error) {
 	ctx := context.Background()
 
-	filter := "PartitionKey eq 'global' and OwnerID eq '" + ownerID + "'"
+	filter := "PartitionKey eq 'global' and OwnerID eq '" + escapeODataString(ownerID) + "'"
 	pager := r.client.NewListEntitiesPager(&aztables.ListEntitiesOptions{
 		Filter: &filter,
 	})
@@ -209,8 +209,8 @@ func (r *StackInstanceRepository) ListExpired() ([]*models.StackInstance, error)
 	ctx := context.Background()
 	now := time.Now().UTC()
 
-	// Azure Tables lack complex date comparison; scan all and filter in-memory.
-	filter := "PartitionKey eq 'global'"
+	// Pre-filter to running instances; only they can expire.
+	filter := "PartitionKey eq 'global' and Status eq 'running'"
 	pager := r.client.NewListEntitiesPager(&aztables.ListEntitiesOptions{
 		Filter: &filter,
 	})

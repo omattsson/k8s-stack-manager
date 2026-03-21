@@ -473,3 +473,153 @@ func TestClusterValidate(t *testing.T) {
 		})
 	}
 }
+
+func TestChartBranchOverrideValidate(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		override ChartBranchOverride
+		wantErr  bool
+		errMsg   string
+	}{
+		{
+			name: "valid override",
+			override: ChartBranchOverride{
+				ID:              "bo-1",
+				StackInstanceID: "i1",
+				ChartConfigID:   "c1",
+				Branch:          "feature/my-branch",
+			},
+			wantErr: false,
+		},
+		{
+			name: "missing stack_instance_id",
+			override: ChartBranchOverride{
+				ChartConfigID: "c1",
+				Branch:        "main",
+			},
+			wantErr: true,
+			errMsg:  "stack_instance_id is required",
+		},
+		{
+			name: "missing chart_config_id",
+			override: ChartBranchOverride{
+				StackInstanceID: "i1",
+				Branch:          "main",
+			},
+			wantErr: true,
+			errMsg:  "chart_config_id is required",
+		},
+		{
+			name: "missing branch",
+			override: ChartBranchOverride{
+				StackInstanceID: "i1",
+				ChartConfigID:   "c1",
+			},
+			wantErr: true,
+			errMsg:  "branch is required",
+		},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			err := tt.override.Validate()
+			if tt.wantErr {
+				assert.EqualError(t, err, tt.errMsg)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestUserFavoriteValidate(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		fav     UserFavorite
+		wantErr bool
+		errMsg  string
+	}{
+		{
+			name: "valid favorite",
+			fav: UserFavorite{
+				ID:         "f1",
+				UserID:     "uid-1",
+				EntityType: "definition",
+				EntityID:   "d1",
+			},
+			wantErr: false,
+		},
+		{
+			name: "valid favorite with instance type",
+			fav: UserFavorite{
+				UserID:     "uid-1",
+				EntityType: "instance",
+				EntityID:   "i1",
+			},
+			wantErr: false,
+		},
+		{
+			name: "valid favorite with template type",
+			fav: UserFavorite{
+				UserID:     "uid-1",
+				EntityType: "template",
+				EntityID:   "t1",
+			},
+			wantErr: false,
+		},
+		{
+			name:    "missing user_id",
+			fav:     UserFavorite{EntityType: "definition", EntityID: "d1"},
+			wantErr: true,
+			errMsg:  "user_id is required",
+		},
+		{
+			name:    "missing entity_type",
+			fav:     UserFavorite{UserID: "uid-1", EntityID: "d1"},
+			wantErr: true,
+			errMsg:  "entity_type is required",
+		},
+		{
+			name:    "invalid entity_type",
+			fav:     UserFavorite{UserID: "uid-1", EntityType: "cluster", EntityID: "c1"},
+			wantErr: true,
+			errMsg:  "entity_type must be one of: definition, instance, template",
+		},
+		{
+			name:    "missing entity_id",
+			fav:     UserFavorite{UserID: "uid-1", EntityType: "definition"},
+			wantErr: true,
+			errMsg:  "entity_id is required",
+		},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			err := tt.fav.Validate()
+			if tt.wantErr {
+				assert.EqualError(t, err, tt.errMsg)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestStackInstanceValidate_NegativeTTL(t *testing.T) {
+	t.Parallel()
+
+	inst := StackInstance{
+		StackDefinitionID: "d1",
+		Name:              "my-stack",
+		OwnerID:           "uid-1",
+		TTLMinutes:        -10,
+	}
+	err := inst.Validate()
+	assert.EqualError(t, err, "ttl_minutes must be non-negative")
+}

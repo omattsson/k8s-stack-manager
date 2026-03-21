@@ -8,13 +8,15 @@ interface FavoriteButtonProps {
   entityType: 'definition' | 'instance' | 'template';
   entityId: string;
   size?: 'small' | 'medium';
+  initialFavorited?: boolean;
 }
 
-const FavoriteButton = ({ entityType, entityId, size = 'small' }: FavoriteButtonProps) => {
-  const [isFavorite, setIsFavorite] = useState(false);
-  const [loading, setLoading] = useState(true);
+const FavoriteButton = ({ entityType, entityId, size = 'small', initialFavorited }: FavoriteButtonProps) => {
+  const [isFavorite, setIsFavorite] = useState(initialFavorited ?? false);
+  const [loading, setLoading] = useState(initialFavorited === undefined);
 
   useEffect(() => {
+    if (initialFavorited !== undefined) return;
     let cancelled = false;
     const check = async () => {
       try {
@@ -28,7 +30,7 @@ const FavoriteButton = ({ entityType, entityId, size = 'small' }: FavoriteButton
     };
     check();
     return () => { cancelled = true; };
-  }, [entityType, entityId]);
+  }, [entityType, entityId, initialFavorited]);
 
   const handleToggle = async (e: React.MouseEvent) => {
     e.stopPropagation();

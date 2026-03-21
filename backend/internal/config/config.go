@@ -5,6 +5,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"strconv"
 	"strings"
@@ -168,6 +169,10 @@ func (c *Config) Validate() error {
 		if err := c.Auth.Validate(); err != nil {
 			return fmt.Errorf("auth config: %w", err)
 		}
+	}
+
+	if c.Deployment.KubeconfigEncryptionKey == "" || len(c.Deployment.KubeconfigEncryptionKey) < 16 {
+		slog.Warn("KUBECONFIG_ENCRYPTION_KEY is not set or too short, kubeconfig data will not be encrypted at rest")
 	}
 
 	return nil

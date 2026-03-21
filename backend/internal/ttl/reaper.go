@@ -2,7 +2,8 @@
 package ttl
 
 import (
-	"log"
+	"log/slog"
+	"sync"
 	"time"
 
 	"backend/internal/models"
@@ -17,6 +18,7 @@ type Reaper struct {
 	interval     time.Duration
 	stopCh       chan struct{}
 	doneCh       chan struct{}
+	once         sync.Once
 }
 
 // NewReaper creates a new TTL reaper.
@@ -45,12 +47,15 @@ func (r *Reaper) Start() {
 	ticker := time.NewTicker(r.interval)
 	defer ticker.Stop()
 
-	log.Printf("[TTL] Reaper started (interval=%s)", r.interval)
+	slog.Info("TTL reaper started", "interval", r.interval)
+
+	// Perform an initial check immediately on startup.
+	r.processExpired()
 
 	for {
 		select {
 		case <-r.stopCh:
-			log.Printf("[TTL] Reaper stopped")
+			slog.Info("TTL reaper stopped")
 			return
 		case <-ticker.C:
 			r.processExpired()
@@ -60,14 +65,14 @@ func (r *Reaper) Start() {
 
 // Stop signals the reaper to shut down and waits for it to finish.
 func (r *Reaper) Stop() {
-	close(r.stopCh)
+	r.once.Do(func() { close(r.stopCh) })
 	<-r.doneCh
 }
 
 func (r *Reaper) processExpired() {
 	expired, err := r.instanceRepo.ListExpired()
 	if err != nil {
-		log.Printf("[TTL] Error listing expired instances: %v", err)
+		slog.Error("Failed to list expired instances", "error", err)
 		return
 	}
 
@@ -76,7 +81,7 @@ func (r *Reaper) processExpired() {
 		inst.ErrorMessage = "Expired (TTL)"
 		inst.UpdatedAt = time.Now().UTC()
 		if updateErr := r.instanceRepo.Update(inst); updateErr != nil {
-			log.Printf("[TTL] Error updating instance %s: %v", inst.ID, updateErr)
+			slog.Error("Failed to update expired instance", "instance_id", inst.ID, "error", updateErr)
 			continue
 		}
 
@@ -90,7 +95,9 @@ func (r *Reaper) processExpired() {
 				Details:    "Instance expired after TTL",
 				Timestamp:  time.Now().UTC(),
 			}
-			_ = r.auditRepo.Create(auditEntry)
+			if auditErr := r.auditRepo.Create(auditEntry); auditErr != nil {
+				slog.Error("Failed to create audit log for expired instance", "instance_id", inst.ID, "error", auditErr)
+			}
 		}
 
 		if r.hub != nil {
@@ -103,6 +110,6 @@ func (r *Reaper) processExpired() {
 			}
 		}
 
-		log.Printf("[TTL] Instance %s expired and stopped", inst.ID)
+		slog.Info("Instance expired and stopped", "instance_id", inst.ID)
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"time"
 
+	"backend/internal/api/middleware"
 	"backend/internal/models"
 
 	"github.com/gin-gonic/gin"
@@ -74,9 +75,17 @@ func (h *BranchOverrideHandler) SetBranchOverride(c *gin.Context) {
 	instanceID := c.Param("id")
 	chartID := c.Param("chartId")
 
-	if _, err := h.instanceRepo.FindByID(instanceID); err != nil {
+	inst, err := h.instanceRepo.FindByID(instanceID)
+	if err != nil {
 		status, message := mapError(err, "Stack instance")
 		c.JSON(status, gin.H{"error": message})
+		return
+	}
+
+	userID := middleware.GetUserIDFromContext(c)
+	role := middleware.GetRoleFromContext(c)
+	if inst.OwnerID != userID && role != "admin" {
+		c.JSON(http.StatusForbidden, gin.H{"error": "You do not have permission to modify this instance"})
 		return
 	}
 
@@ -131,9 +140,17 @@ func (h *BranchOverrideHandler) DeleteBranchOverride(c *gin.Context) {
 	instanceID := c.Param("id")
 	chartID := c.Param("chartId")
 
-	if _, err := h.instanceRepo.FindByID(instanceID); err != nil {
+	inst, err := h.instanceRepo.FindByID(instanceID)
+	if err != nil {
 		status, message := mapError(err, "Stack instance")
 		c.JSON(status, gin.H{"error": message})
+		return
+	}
+
+	userID := middleware.GetUserIDFromContext(c)
+	role := middleware.GetRoleFromContext(c)
+	if inst.OwnerID != userID && role != "admin" {
+		c.JSON(http.StatusForbidden, gin.H{"error": "You do not have permission to modify this instance"})
 		return
 	}
 

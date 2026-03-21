@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"sync"
 	"time"
 
 	"backend/internal/models"
@@ -21,6 +22,7 @@ type ClusterRepository struct {
 	client        AzureTableClient
 	tableName     string
 	encryptionKey []byte // nil or empty means encryption disabled
+	mu            sync.Mutex
 }
 
 // NewClusterRepository creates a new Azure Table Storage cluster repository.
@@ -172,6 +174,9 @@ func (r *ClusterRepository) FindDefault() (*models.Cluster, error) {
 }
 
 func (r *ClusterRepository) SetDefault(id string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
 	ctx := context.Background()
 
 	// Find the current default and unset it.

@@ -284,13 +284,13 @@ func (h *QuickDeployHandler) QuickDeploy(c *gin.Context) {
 			"error", deployErr,
 		)
 		inst.Status = models.StackStatusError
-		inst.ErrorMessage = truncate(deployErr.Error(), 256)
+		inst.ErrorMessage = "Deployment failed"
 		_ = h.instanceRepo.Update(inst)
 	}
 
 	// 6. Audit log.
 	if h.auditRepo != nil {
-		_ = h.auditRepo.Create(&models.AuditLog{
+		if auditErr := h.auditRepo.Create(&models.AuditLog{
 			ID:         uuid.New().String(),
 			UserID:     userID,
 			Username:   username,
@@ -299,7 +299,9 @@ func (h *QuickDeployHandler) QuickDeploy(c *gin.Context) {
 			EntityID:   inst.ID,
 			Details:    fmt.Sprintf("Quick deployed from template %s", tmpl.Name),
 			Timestamp:  now,
-		})
+		}); auditErr != nil {
+			slog.Error("Failed to create audit log for quick deploy", "instance_id", inst.ID, "error", auditErr)
+		}
 	}
 
 	c.JSON(http.StatusAccepted, quickDeployResponse{
@@ -394,10 +396,11 @@ func (h *QuickDeployHandler) triggerDeploy(
 	return h.deployManager.Deploy(c.Request.Context(), req)
 }
 
-// truncate shortens a string to maxLen characters.
+// truncate shortens a string to maxLen runes, preserving UTF-8 boundaries.
 func truncate(s string, maxLen int) string {
-	if len(s) <= maxLen {
+	runes := []rune(s)
+	if len(runes) <= maxLen {
 		return s
 	}
-	return s[:maxLen]
+	return string(runes[:maxLen])
 }

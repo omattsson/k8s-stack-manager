@@ -36,6 +36,7 @@ type ChartValues struct {
 	DefaultValues  string
 	LockedValues   string
 	OverrideValues string
+	ChartBranch    string // Per-chart branch override; passed through to GenerateParams.ChartBranch.
 }
 
 // GenerateAllParams holds parameters for multi-chart values generation.
@@ -100,6 +101,7 @@ func (g *ValuesGenerator) GenerateAllValues(ctx context.Context, params Generate
 			DefaultValues:  chart.DefaultValues,
 			LockedValues:   chart.LockedValues,
 			OverrideValues: chart.OverrideValues,
+			ChartBranch:    chart.ChartBranch,
 			TemplateVars:   params.TemplateVars,
 		})
 		if err != nil {
