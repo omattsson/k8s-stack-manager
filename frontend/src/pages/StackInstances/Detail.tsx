@@ -17,13 +17,16 @@ import {
   Step,
   StepLabel,
   Grid,
+  Chip,
+  Tooltip,
 } from '@mui/material';
+import CloseIcon from '@mui/icons-material/Close';
 import StatusBadge from '../../components/StatusBadge';
 import BranchSelector from '../../components/BranchSelector';
 import ConfirmDialog from '../../components/ConfirmDialog';
 import DeploymentLogViewer from '../../components/DeploymentLogViewer';
 import PodStatusDisplay from '../../components/PodStatusDisplay';
-import { instanceService, definitionService } from '../../api/client';
+import { instanceService, definitionService, branchOverrideService } from '../../api/client';
 import type { StackInstance, ChartConfig, ValueOverride, DeploymentLog, NamespaceStatus } from '../../types';
 import YamlEditor from '../../components/YamlEditor';
 
@@ -35,6 +38,7 @@ const Detail = () => {
   const [charts, setCharts] = useState<ChartConfig[]>([]);
   const [, setOverrides] = useState<ValueOverride[]>([]);
   const [branch, setBranch] = useState('');
+  const [branchOverrides, setBranchOverrides] = useState<Record<string, string>>({});
   const [activeTab, setActiveTab] = useState(0);
   const [editedOverrides, setEditedOverrides] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
@@ -60,12 +64,20 @@ const Detail = () => {
         setInstance(inst);
         setBranch(inst.branch);
 
-        const [defData, overrideData] = await Promise.all([
+        const [defData, overrideData, branchOverrideData] = await Promise.all([
           definitionService.get(inst.stack_definition_id),
           instanceService.getOverrides(id),
+          branchOverrideService.list(id),
         ]);
         setCharts(defData.charts || []);
         setOverrides(overrideData || []);
+
+        // Pre-populate branch overrides map (chartConfigId → branch)
+        const boMap: Record<string, string> = {};
+        (branchOverrideData || []).forEach((bo) => {
+          boMap[bo.chart_config_id] = bo.branch;
+        });
+        setBranchOverrides(boMap);
 
         // Pre-populate edited overrides with existing values
         const overrideMap: Record<string, string> = {};
@@ -140,6 +152,37 @@ const Detail = () => {
   }, [id]);
 
   useWebSocket(handleWsMessage);
+
+  const handleChartBranchChange = async (chartId: string, newBranch: string) => {
+    if (!id) return;
+    // If the new branch matches the instance-level branch (or is empty), remove the override
+    if (!newBranch || newBranch === branch) {
+      setBranchOverrides((prev) => {
+        const next = { ...prev };
+        delete next[chartId];
+        return next;
+      });
+      try {
+        await branchOverrideService.delete(id, chartId);
+      } catch {
+        console.error('Failed to remove branch override');
+      }
+    } else {
+      // Optimistic update
+      setBranchOverrides((prev) => ({ ...prev, [chartId]: newBranch }));
+      try {
+        await branchOverrideService.set(id, chartId, newBranch);
+      } catch {
+        // Revert on failure
+        setBranchOverrides((prev) => {
+          const next = { ...prev };
+          delete next[chartId];
+          return next;
+        });
+        setError('Failed to set branch override');
+      }
+    }
+  };
 
   const handleSave = async () => {
     if (!id || !instance) return;
@@ -406,6 +449,32 @@ const Detail = () => {
                   {chart.chart_path && ` | Path: ${chart.chart_path}`}
                   {chart.chart_version && ` | Version: ${chart.chart_version}`}
                 </Typography>
+
+                <Box sx={{ mb: 2, display: 'flex', alignItems: 'center', gap: 2 }}>
+                  <Box sx={{ maxWidth: 300, flex: 1 }}>
+                    <BranchSelector
+                      repoUrl={chart.source_repo_url || getRepoUrl()}
+                      value={branchOverrides[chart.id] || branch}
+                      onChange={(newBranch) => handleChartBranchChange(chart.id, newBranch)}
+                      label="Chart Branch"
+                    />
+                  </Box>
+                  {branchOverrides[chart.id] ? (
+                    <Chip
+                      label={`Override: ${branchOverrides[chart.id]}`}
+                      color="warning"
+                      size="small"
+                      onDelete={() => handleChartBranchChange(chart.id, '')}
+                      deleteIcon={
+                        <Tooltip title="Reset to instance branch">
+                          <CloseIcon />
+                        </Tooltip>
+                      }
+                    />
+                  ) : (
+                    <Chip label="Using instance branch" size="small" variant="outlined" />
+                  )}
+                </Box>
 
                 <Grid container spacing={2}>
                   <Grid size={{ xs: 12, md: 6 }}>

@@ -295,3 +295,11 @@ export interface ClusterTestResult {
   message: string;
   server_version?: string;
 }
+
+export interface ChartBranchOverride {
+  id: string;
+  stack_instance_id: string;
+  chart_config_id: string;
+  branch: string;
+  updated_at: string;
+}

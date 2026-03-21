@@ -77,19 +77,19 @@ func buildNamespace(instancePart, ownerPart string) string {
 
 // InstanceHandler handles stack instance, value override, and values export endpoints.
 type InstanceHandler struct {
-	instanceRepo      models.StackInstanceRepository
-	overrideRepo      models.ValueOverrideRepository
+	instanceRepo       models.StackInstanceRepository
+	overrideRepo       models.ValueOverrideRepository
 	branchOverrideRepo models.ChartBranchOverrideRepository
-	definitionRepo    models.StackDefinitionRepository
-	chartConfigRepo   models.ChartConfigRepository
-	templateRepo      models.StackTemplateRepository
-	templateChartRepo models.TemplateChartConfigRepository
-	valuesGen         *helm.ValuesGenerator
-	userRepo          models.UserRepository
-	deployManager     *deployer.Manager
-	k8sWatcher        *k8s.Watcher
-	registry          *cluster.Registry
-	deployLogRepo     models.DeploymentLogRepository
+	definitionRepo     models.StackDefinitionRepository
+	chartConfigRepo    models.ChartConfigRepository
+	templateRepo       models.StackTemplateRepository
+	templateChartRepo  models.TemplateChartConfigRepository
+	valuesGen          *helm.ValuesGenerator
+	userRepo           models.UserRepository
+	deployManager      *deployer.Manager
+	k8sWatcher         *k8s.Watcher
+	registry           *cluster.Registry
+	deployLogRepo      models.DeploymentLogRepository
 }
 
 // NewInstanceHandler creates a new InstanceHandler.

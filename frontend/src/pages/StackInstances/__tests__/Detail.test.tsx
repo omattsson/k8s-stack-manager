@@ -38,6 +38,11 @@ vi.mock('../../../api/client', () => ({
   gitService: {
     branches: vi.fn(),
   },
+  branchOverrideService: {
+    list: vi.fn(),
+    set: vi.fn(),
+    delete: vi.fn(),
+  },
 }));
 
 vi.mock('../../../components/YamlEditor', () => ({
@@ -91,15 +96,16 @@ vi.mock('../../../components/ConfirmDialog', () => ({
   ) : null,
 }));
 
-import { instanceService, definitionService } from '../../../api/client';
+import { instanceService, definitionService, branchOverrideService } from '../../../api/client';
 
 type MockFn = ReturnType<typeof vi.fn>;
 
-const setupMocks = (instanceOverrides: Partial<typeof mockInstance> = {}, opts: { logs?: unknown[]; status?: unknown; deployLogReject?: boolean; statusReject?: boolean } = {}) => {
+const setupMocks = (instanceOverrides: Partial<typeof mockInstance> = {}, opts: { logs?: unknown[]; status?: unknown; deployLogReject?: boolean; statusReject?: boolean; branchOverrides?: unknown[] } = {}) => {
   const inst = { ...mockInstance, ...instanceOverrides };
   (instanceService.get as MockFn).mockResolvedValue(inst);
   (definitionService.get as MockFn).mockResolvedValue(mockDefinition);
   (instanceService.getOverrides as MockFn).mockResolvedValue([]);
+  (branchOverrideService.list as MockFn).mockResolvedValue(opts.branchOverrides ?? []);
   if (opts.deployLogReject) {
     (instanceService.getDeployLog as MockFn).mockRejectedValue(new Error('no logs'));
   } else {
@@ -669,5 +675,47 @@ describe('StackInstances Detail', () => {
       expect(screen.getByText('Test Instance')).toBeInTheDocument();
     });
     expect(screen.getByRole('button', { name: /clean namespace/i })).toBeInTheDocument();
+  });
+
+  it('shows "Using instance branch" chip when no branch override exists', async () => {
+    setupMocks({ status: 'draft' }, { deployLogReject: true });
+    renderDetail();
+
+    await waitFor(() => {
+      expect(screen.getByText('Test Instance')).toBeInTheDocument();
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText('Using instance branch')).toBeInTheDocument();
+    });
+  });
+
+  it('shows override chip when branch override exists for a chart', async () => {
+    setupMocks({ status: 'draft' }, {
+      deployLogReject: true,
+      branchOverrides: [
+        { id: 'bo1', stack_instance_id: '123', chart_config_id: 'chart1', branch: 'feature/test', updated_at: '2025-01-01' },
+      ],
+    });
+    renderDetail();
+
+    await waitFor(() => {
+      expect(screen.getByText('Test Instance')).toBeInTheDocument();
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText('Override: feature/test')).toBeInTheDocument();
+    });
+  });
+
+  it('fetches branch overrides on load', async () => {
+    setupMocks({ status: 'draft' }, { deployLogReject: true });
+    renderDetail();
+
+    await waitFor(() => {
+      expect(screen.getByText('Test Instance')).toBeInTheDocument();
+    });
+
+    expect(branchOverrideService.list).toHaveBeenCalledWith('123');
   });
 });

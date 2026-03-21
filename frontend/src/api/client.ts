@@ -27,6 +27,7 @@ import type {
   CreateClusterRequest,
   UpdateClusterRequest,
   ClusterTestResult,
+  ChartBranchOverride,
 } from '../types';
 
 const api = axios.create(axiosConfig);
@@ -586,6 +587,35 @@ export const clusterService = {
       return response.data;
     } catch (error) {
       console.error('Failed to set default cluster:', error);
+      throw error;
+    }
+  },
+};
+
+export const branchOverrideService = {
+  list: async (instanceId: string): Promise<ChartBranchOverride[]> => {
+    try {
+      const response = await api.get(`/api/v1/stack-instances/${instanceId}/branches`);
+      return response.data;
+    } catch (error) {
+      console.error('Failed to fetch branch overrides:', error);
+      throw error;
+    }
+  },
+  set: async (instanceId: string, chartId: string, branch: string): Promise<ChartBranchOverride> => {
+    try {
+      const response = await api.put(`/api/v1/stack-instances/${instanceId}/branches/${chartId}`, { branch });
+      return response.data;
+    } catch (error) {
+      console.error('Failed to set branch override:', error);
+      throw error;
+    }
+  },
+  delete: async (instanceId: string, chartId: string): Promise<void> => {
+    try {
+      await api.delete(`/api/v1/stack-instances/${instanceId}/branches/${chartId}`);
+    } catch (error) {
+      console.error('Failed to delete branch override:', error);
       throw error;
     }
   },
