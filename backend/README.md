@@ -28,7 +28,7 @@ backend/
 │   ├── models/                         # Domain models + repository interfaces + validation
 │   └── websocket/                      # Real-time event broadcasting (hub + clients)
 ├── pkg/
-│   ├── crypto/                         # AES-GCM encryption/decryption for kubeconfig at rest
+│   ├── crypto/                         # AES-GCM encryption/decryption for kubeconfig at rest (key derived via SHA-256)
 │   └── dberrors/                       # Canonical error types
 └── docs/                               # Swagger/OpenAPI (auto-generated)
 ```
@@ -83,7 +83,7 @@ Key environment variables (see `docker-compose.yml` for full list):
 | `AZURE_DEVOPS_PAT` | | Azure DevOps personal access token |
 | `GITLAB_TOKEN` | | GitLab access token |
 | `DEFAULT_BRANCH` | `master` | Default Git branch |
-| `KUBECONFIG_ENCRYPTION_KEY` | | 32-byte hex key for encrypting kubeconfig data at rest |
+| `KUBECONFIG_ENCRYPTION_KEY` | | Passphrase for deriving AES-256 key (SHA-256) to encrypt kubeconfig data at rest |
 | `RATE_LIMIT` | `100` | Requests per minute per IP |
 | `CORS_ALLOWED_ORIGINS` | `*` | Allowed CORS origins |
 

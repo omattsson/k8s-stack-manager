@@ -43,7 +43,7 @@ All API calls go through service objects defined in `client.ts`:
 | `auditService` | `/api/v1/audit-logs` | Filterable audit log |
 | `userService` | `/api/v1/users` | User management (admin) |
 | `apiKeyService` | `/api/v1/users/:id/api-keys` | Per-user API key management |
-| `clusterService` | `/api/v1/clusters/*` | Multi-cluster registration, health, test-connection |
+| `clusterService` | `/api/v1/clusters/*` | Multi-cluster registration, test-connection, set-default |
 
 ## Usage
 

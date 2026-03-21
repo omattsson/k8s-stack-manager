@@ -74,7 +74,7 @@ All services are defined in `src/api/client.ts`:
 | `auditService` | list |
 | `userService` | list, create, delete |
 | `apiKeyService` | list, create, delete |
-| `clusterService` | list, get, create, update, delete, testConnection, health |
+| `clusterService` | list, get, create, update, delete, testConnection, setDefault |
 
 ## Development
 

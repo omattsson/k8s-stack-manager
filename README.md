@@ -86,7 +86,7 @@ cd frontend && npm install && npm run dev
 │   │   ├── k8s/               # Cluster client + status monitoring
 │   │   ├── models/            # Domain models + interfaces
 │   │   └── websocket/         # Real-time event broadcasting
-│   └── pkg/crypto/            # AES-GCM encryption for kubeconfig at rest
+│   └── pkg/crypto/            # AES-GCM encryption for kubeconfig at rest (key derived via SHA-256)
 │   └── docs/                  # Swagger/OpenAPI
 ├── frontend/                   # React SPA
 │   └── src/
@@ -126,7 +126,7 @@ Key environment variables (see `docker-compose.yml` for full list):
 | `AZURE_DEVOPS_PAT` | No | Azure DevOps personal access token |
 | `GITLAB_TOKEN` | No | GitLab access token |
 | `DEFAULT_BRANCH` | No | Default Git branch (default: `master`) |
-| `KUBECONFIG_ENCRYPTION_KEY` | No | 32-byte hex key for encrypting kubeconfig data at rest |
+| `KUBECONFIG_ENCRYPTION_KEY` | No | Passphrase for deriving AES-256 key (SHA-256) to encrypt kubeconfig data at rest |
 
 ## Testing
 

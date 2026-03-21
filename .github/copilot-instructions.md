@@ -48,7 +48,7 @@ backend/
     helm/                        # Values deep-merge, template variable substitution
     websocket/                   # WebSocket hub, client, message types
   pkg/dberrors/errors.go         # Canonical error types: ErrNotFound, ErrDuplicateKey, ErrValidation
-  pkg/crypto/                    # AES-GCM encryption/decryption for kubeconfig data at rest
+  pkg/crypto/                    # AES-GCM encryption/decryption for kubeconfig data at rest (key derived via SHA-256)
 ```
 
 ## Key Backend Patterns
