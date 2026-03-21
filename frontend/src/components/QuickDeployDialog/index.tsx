@@ -59,6 +59,7 @@ const QuickDeployDialog = ({ open, onClose, template }: QuickDeployDialogProps) 
   }, [open, template]);
 
   const handleDeploy = async () => {
+    if (!template) return;
     if (!instanceName.trim()) {
       setNameError('Instance name is required');
       return;
@@ -68,7 +69,7 @@ const QuickDeployDialog = ({ open, onClose, template }: QuickDeployDialogProps) 
     setDeploying(true);
 
     try {
-      const result = await templateService.quickDeploy(template!.id, {
+      const result = await templateService.quickDeploy(template.id, {
         instance_name: instanceName.trim(),
         instance_description: description.trim() || undefined,
         branch: branch.trim() || undefined,

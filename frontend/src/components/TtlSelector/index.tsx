@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Box, MenuItem, TextField } from '@mui/material';
 
 interface TtlSelectorProps {
@@ -21,6 +21,10 @@ const CUSTOM_SENTINEL = -1;
 const TtlSelector = ({ value, onChange, disabled }: TtlSelectorProps) => {
   const isCustom = value > 0 && !PRESET_VALUES.has(value);
   const [showCustom, setShowCustom] = useState(isCustom);
+
+  useEffect(() => {
+    setShowCustom(value > 0 && !PRESET_VALUES.has(value));
+  }, [value]);
 
   const selectValue = showCustom || isCustom ? CUSTOM_SENTINEL : value;
 

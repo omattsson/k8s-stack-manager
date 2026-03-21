@@ -100,12 +100,11 @@ const typeColor = (type: string): 'primary' | 'success' | 'warning' | 'default' 
 
 const AccessUrls = ({ status }: AccessUrlsProps) => {
   const [copied, setCopied] = useState(false);
+  const [copyError, setCopyError] = useState(false);
 
   const entries = buildEntries(status);
 
   if (entries.length === 0) return null;
-
-  const [copyError, setCopyError] = useState(false);
 
   const handleCopy = async (text: string) => {
     try {

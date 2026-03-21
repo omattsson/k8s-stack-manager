@@ -67,6 +67,11 @@ func (h *BranchOverrideHandler) ListBranchOverrides(c *gin.Context) {
 	c.JSON(http.StatusOK, overrides)
 }
 
+// setBranchOverrideRequest is the request body for setting a branch override.
+type setBranchOverrideRequest struct {
+	Branch string `json:"branch" example:"feature/my-branch"`
+}
+
 // SetBranchOverride godoc
 // @Summary     Set or update branch override for a chart
 // @Description Upsert a per-chart branch override for a specific chart in a stack instance
@@ -75,7 +80,7 @@ func (h *BranchOverrideHandler) ListBranchOverrides(c *gin.Context) {
 // @Produce     json
 // @Param       id      path     string true "Instance ID"
 // @Param       chartId path     string true "Chart config ID"
-// @Param       body    body     object true "Branch override (branch field required)"
+// @Param       body    body     setBranchOverrideRequest true "Branch override"
 // @Success     200     {object} models.ChartBranchOverride
 // @Failure     400     {object} map[string]string
 // @Failure     403     {object} map[string]string
@@ -101,9 +106,7 @@ func (h *BranchOverrideHandler) SetBranchOverride(c *gin.Context) {
 		return
 	}
 
-	var input struct {
-		Branch string `json:"branch"`
-	}
+	var input setBranchOverrideRequest
 	if err := c.ShouldBindJSON(&input); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request format"})
 		return

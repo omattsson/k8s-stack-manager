@@ -175,11 +175,11 @@ azurite-stop:
 # Env vars for load test backend (release mode, high rate limit, no debug logging)
 LOADTEST_ENV = \
 	USE_AZURE_TABLE=true USE_AZURITE=true \
-	AZURE_TABLE_ACCOUNT_NAME=devstoreaccount1 \
-	AZURE_TABLE_ACCOUNT_KEY="Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==" \
-	AZURE_TABLE_ENDPOINT=127.0.0.1:10002 \
-	JWT_SECRET="dev-secret-change-in-production-minimum-16-chars" \
-	ADMIN_USERNAME=admin ADMIN_PASSWORD=admin \
+	AZURE_TABLE_ACCOUNT_NAME=$${AZURE_TABLE_ACCOUNT_NAME:-devstoreaccount1} \
+	AZURE_TABLE_ACCOUNT_KEY=$${AZURE_TABLE_ACCOUNT_KEY:-Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==} \
+	AZURE_TABLE_ENDPOINT=$${AZURE_TABLE_ENDPOINT:-127.0.0.1:10002} \
+	JWT_SECRET=$${JWT_SECRET:-dev-secret-change-in-production-minimum-16-chars} \
+	ADMIN_USERNAME=$${ADMIN_USERNAME:-admin} ADMIN_PASSWORD=$${ADMIN_PASSWORD:-admin} \
 	SELF_REGISTRATION=true \
 	HELM_BINARY=$${HELM_BINARY:-helm} \
 	KUBECONFIG_PATH=$${KUBECONFIG_PATH:-$$HOME/.kube/config} \
