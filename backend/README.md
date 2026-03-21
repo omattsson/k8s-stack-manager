@@ -1,6 +1,6 @@
 # K8s Stack Manager — Backend
 
-Go backend for the K8s Stack Manager, built with the Gin framework. Provides REST API for managing Helm-based application stack definitions, instances, templates, and value overrides. Supports JWT authentication, audit logging, Git provider integration (Azure DevOps + GitLab), and Helm values generation.
+Go backend for the K8s Stack Manager, built with the Gin framework. Provides REST API for managing Helm-based application stack definitions, instances, templates, and value overrides. Supports JWT authentication, audit logging, Git provider integration (Azure DevOps + GitLab), Helm values generation, and multi-cluster management with encrypted kubeconfig storage.
 
 ## Project Structure
 
@@ -9,10 +9,11 @@ backend/
 ├── api/main.go                         # Bootstrap: config → repos → handlers → server
 ├── internal/
 │   ├── api/
-│   │   ├── handlers/                   # HTTP handlers (auth, templates, definitions, instances, etc.)
+│   │   ├── handlers/                   # HTTP handlers (auth, templates, definitions, instances, clusters, etc.)
 │   │   ├── middleware/                  # Auth (JWT + API key), CORS, audit logging, rate limiting, recovery
 │   │   └── routes/                     # Route registration
 │   ├── config/                         # Environment-based configuration
+│   ├── cluster/                        # Multi-cluster registry + health poller
 │   ├── database/
 │   │   ├── azure/                      # Azure Table Storage repositories
 │   │   ├── factory.go                  # MySQL connection with retry
@@ -22,9 +23,13 @@ backend/
 │   ├── gitprovider/                    # Azure DevOps + GitLab branch listing
 │   ├── health/                         # Liveness + readiness checks
 │   ├── helm/                           # Values deep-merge + template substitution
+│   ├── deployer/                       # Helm CLI wrapper for deploy/undeploy (multi-cluster)
+│   ├── k8s/                            # Cluster client + status monitoring
 │   ├── models/                         # Domain models + repository interfaces + validation
 │   └── websocket/                      # Real-time event broadcasting (hub + clients)
-├── pkg/dberrors/                       # Canonical error types
+├── pkg/
+│   ├── crypto/                         # AES-GCM encryption/decryption for kubeconfig at rest
+│   └── dberrors/                       # Canonical error types
 └── docs/                               # Swagger/OpenAPI (auto-generated)
 ```
 
@@ -41,6 +46,7 @@ backend/
 | Audit Logs | `/api/v1/audit-logs` | Yes | Filterable audit trail |
 | Users | `/api/v1/users` | Admin | List and delete users |
 | API Keys | `/api/v1/users/:id/api-keys` | Yes | Per-user API key management |
+| Clusters | `/api/v1/clusters` | Admin | Multi-cluster registration, health, test-connection |
 
 ## Prerequisites
 
@@ -77,12 +83,13 @@ Key environment variables (see `docker-compose.yml` for full list):
 | `AZURE_DEVOPS_PAT` | | Azure DevOps personal access token |
 | `GITLAB_TOKEN` | | GitLab access token |
 | `DEFAULT_BRANCH` | `master` | Default Git branch |
+| `KUBECONFIG_ENCRYPTION_KEY` | | 32-byte hex key for encrypting kubeconfig data at rest |
 | `RATE_LIMIT` | `100` | Requests per minute per IP |
 | `CORS_ALLOWED_ORIGINS` | `*` | Allowed CORS origins |
 
 ## Data Storage
 
-- **Azure Table Storage** (via Azurite locally): Users, Templates, Definitions, Instances, Overrides, ChartConfigs, APIKeys, AuditLogs
+- **Azure Table Storage** (via Azurite locally): Users, Templates, Definitions, Instances, Overrides, ChartConfigs, APIKeys, AuditLogs, Clusters
 - **MySQL** (GORM): Legacy Items table only
 
 ## Testing

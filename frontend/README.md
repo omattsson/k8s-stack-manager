@@ -27,7 +27,7 @@ frontend/
     │   └── Layout/      # AppBar + nav + footer shell
     ├── context/         # Auth + WebSocket context providers
     ├── pages/
-    │   ├── Admin/       # User management (admin only)
+    │   ├── Admin/       # User management + cluster management (admin only)
     │   ├── AuditLog/    # Audit log viewer
     │   ├── Login/       # Login page
     │   ├── Profile/     # User profile
@@ -57,6 +57,7 @@ frontend/
 | `/stack-instances/:id` | Instance detail | Authenticated |
 | `/audit-log` | Audit log viewer | Authenticated |
 | `/admin/users` | User management | Admin |
+| `/admin/clusters` | Cluster management | Admin |
 | `/profile` | User profile | Authenticated |
 
 ## API Services
@@ -73,6 +74,7 @@ All services are defined in `src/api/client.ts`:
 | `auditService` | list |
 | `userService` | list, create, delete |
 | `apiKeyService` | list, create, delete |
+| `clusterService` | list, get, create, update, delete, testConnection, health |
 
 ## Development
 

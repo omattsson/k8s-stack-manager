@@ -1,6 +1,6 @@
 # K8s Stack Manager
 
-A web application for configuring, storing, and managing multi-service Helm-based application stacks for deployment to a shared Kubernetes cluster.
+A web application for configuring, storing, and managing multi-service Helm-based application stacks for deployment to one or more Kubernetes clusters.
 
 Developers create **stack definitions** (collections of Helm charts with configuration), launch **stack instances** (per-developer copies with branch and value overrides), and manage everything through an audit-logged UI with Git provider integration.
 
@@ -15,6 +15,7 @@ Backend (Go + Gin)
   ├── Azure Table Storage (Azurite for local dev)
   ├── Git Provider (Azure DevOps + GitLab)
   ├── Helm Values (deep merge + template substitution)
+  ├── Multi-cluster support (kubeconfig encrypted at rest)
   └── Audit Logging
 ```
 
@@ -80,10 +81,12 @@ cd frontend && npm install && npm run dev
 │   │   ├── database/azure/    # Azure Table Storage repositories
 │   │   ├── gitprovider/       # Azure DevOps + GitLab integration
 │   │   ├── helm/              # Values merge + template substitution
-│   │   ├── deployer/          # Helm CLI wrapper for deploy/undeploy
-│   │   ├── k8s/               # Cluster status monitoring
+│   │   ├── cluster/           # Multi-cluster registry + health poller
+│   │   ├── deployer/          # Helm CLI wrapper for deploy/undeploy (multi-cluster)
+│   │   ├── k8s/               # Cluster client + status monitoring
 │   │   ├── models/            # Domain models + interfaces
 │   │   └── websocket/         # Real-time event broadcasting
+│   └── pkg/crypto/            # AES-GCM encryption for kubeconfig at rest
 │   └── docs/                  # Swagger/OpenAPI
 ├── frontend/                   # React SPA
 │   └── src/
@@ -107,6 +110,7 @@ cd frontend && npm install && npm run dev
 | Git | `/api/v1/git` | Branch listing, validation |
 | Audit Logs | `/api/v1/audit-logs` | Filterable audit trail |
 | Admin | `/api/v1/admin` | Orphaned namespace detection and cleanup |
+| Clusters | `/api/v1/clusters` | Multi-cluster registration, health, test-connection |
 | Health | `/health/*` | Liveness + readiness |
 
 ## Configuration
@@ -122,6 +126,7 @@ Key environment variables (see `docker-compose.yml` for full list):
 | `AZURE_DEVOPS_PAT` | No | Azure DevOps personal access token |
 | `GITLAB_TOKEN` | No | GitLab access token |
 | `DEFAULT_BRANCH` | No | Default Git branch (default: `master`) |
+| `KUBECONFIG_ENCRYPTION_KEY` | No | 32-byte hex key for encrypting kubeconfig data at rest |
 
 ## Testing
 

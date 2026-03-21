@@ -25,6 +25,7 @@ backend/
       stack_instances.go         # InstanceHandler: CRUD + clone + deploy/stop/clean
       stack_templates.go         # TemplateHandler: CRUD + publish + instantiate
       admin.go                   # AdminHandler: orphaned namespace detection/cleanup
+      clusters.go                # ClusterHandler: CRUD + test-connection + health
       git.go                     # GitHandler: branch listing, validation
       mock_repository.go         # In-memory mock for Item tests (same package)
     api/middleware/
@@ -40,12 +41,14 @@ backend/
     database/errors.go           # Re-exports from pkg/dberrors (single source of truth)
     models/                      # Domain models, repository interfaces, validation
     health/health.go             # Dependency health checks (liveness/readiness)
-    deployer/                    # Helm CLI wrapper for deploy/undeploy/status
+    cluster/                     # ClusterRegistry (multi-cluster coordination) + health poller
+    deployer/                    # Helm CLI wrapper for deploy/undeploy/status (multi-cluster via registry)
     k8s/                         # Kubernetes cluster client and status monitoring
     gitprovider/                 # Azure DevOps + GitLab branch listing, URL detection
     helm/                        # Values deep-merge, template variable substitution
     websocket/                   # WebSocket hub, client, message types
   pkg/dberrors/errors.go         # Canonical error types: ErrNotFound, ErrDuplicateKey, ErrValidation
+  pkg/crypto/                    # AES-GCM encryption/decryption for kubeconfig data at rest
 ```
 
 ## Key Backend Patterns
@@ -120,9 +123,10 @@ This application enables developers to configure, store, and deploy multi-servic
 
 ```
 backend/internal/
+  cluster/               # ClusterRegistry: multi-cluster client management, health poller
   gitprovider/           # Azure DevOps + GitLab branch listing, URL detection, caching
   helm/                  # Values deep-merge, template variable substitution, YAML export
-  deployer/              # Helm CLI wrapper for deploy/undeploy/status
+  deployer/              # Helm CLI wrapper for deploy/undeploy/status (multi-cluster via registry)
   k8s/                   # Kubernetes cluster client and status monitoring
 ```
 
@@ -131,6 +135,7 @@ backend/internal/
 - **Audit trail**: Every mutating API endpoint (POST, PUT, DELETE) must create an AuditLog entry with user, action, entity type, entity ID, and details
 - **Branch default**: "master" unless overridden per stack definition's `DefaultBranch` field
 - **Namespace naming**: Auto-generated as `stack-{instance-name}-{owner}` to prevent collisions in the shared cluster
+- **Multi-cluster**: Clusters are registered via `/api/v1/clusters` with kubeconfig data (encrypted at rest via `pkg/crypto`) or kubeconfig path. `ClusterRegistry` manages per-cluster K8s/Helm clients. Health poller monitors cluster status. Stack instances target a specific cluster (or the default).
 - **Git provider detection**: URL-based — `dev.azure.com` or `visualstudio.com` → Azure DevOps; `gitlab.com` or custom configured domain → GitLab
 - **Helm values merge**: Deep-merge chart defaults + instance overrides; substitute template vars `{{.Branch}}`, `{{.Namespace}}`, `{{.InstanceName}}`, `{{.StackName}}`, `{{.Owner}}`
 - **Auth**: JWT with `Authorization: Bearer <token>` header; middleware injects `userID`, `username`, `role` into Gin context
@@ -150,6 +155,7 @@ backend/internal/
 | Users | `/api/v1/users` | User management (admin) |
 | API Keys | `/api/v1/users/:id/api-keys` | API key management |
 | Admin | `/api/v1/admin` | Orphaned namespace detection and cleanup |
+| Clusters | `/api/v1/clusters` | Multi-cluster registration, health, test-connection |
 
 ### New Frontend Pages
 
@@ -162,6 +168,7 @@ backend/internal/
 | Stack Instance Detail | `/stack-instances/:id` | Values editor, branch selector, deploy/stop/clean |
 | Audit Log | `/audit-log` | Filterable audit log viewer |
 | Admin | `/admin/users` | User management (admin only) |
+| Clusters | `/admin/clusters` | Cluster registration and health (admin only) |
 | Profile | `/profile` | User profile and API key management |
 
 ### Project Plan

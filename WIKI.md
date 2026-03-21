@@ -21,6 +21,9 @@ Per-chart configuration overrides on a stack instance. Deep-merged with chart de
 ### Audit Log
 Every mutating API call (POST, PUT, DELETE) is recorded with user, action, entity type, entity ID, and timestamp.
 
+### Cluster
+A registered Kubernetes cluster that stack instances can be deployed to. Each cluster stores connection details (kubeconfig path or encrypted kubeconfig data) and is monitored via periodic health checks. One cluster can be designated as the **default** target. Clusters are managed by admins through `/admin/clusters`.
+
 ## Architecture
 
 ### Data Flow
@@ -36,6 +39,13 @@ Template → (instantiate) → Definition + ChartConfigs → (create instance) �
 - JWT-based with `Authorization: Bearer <token>` header
 - Role hierarchy: `admin` > `devops` > `user`
 - Admin can register users; self-registration is configurable
+
+### Multi-Cluster
+- Clusters are registered via the API with a kubeconfig path or kubeconfig data (encrypted at rest with AES-GCM)
+- `ClusterRegistry` manages per-cluster Kubernetes and Helm clients
+- A health poller periodically checks cluster connectivity and updates status
+- Stack instances target a specific cluster (or the default cluster)
+- The `deployer` package routes deploy/undeploy/status operations through the registry to the correct cluster
 
 ### Git Integration
 - Auto-detects provider from repository URL (`dev.azure.com` → Azure DevOps, `gitlab.com` → GitLab)
@@ -76,3 +86,4 @@ See `.github/instructions/api-extension.instructions.md` for the step-by-step gu
 - **JWT errors**: Ensure `JWT_SECRET` is set and at least 16 characters.
 - **Database connection errors (MySQL)**: Only affects legacy Items. Ensure MySQL is running if `USE_AZURE_TABLE=false`.
 - **Git provider errors**: Check `AZURE_DEVOPS_PAT` or `GITLAB_TOKEN` are set correctly. Empty tokens are valid (provider just won't be available).
+- **Cluster connection errors**: Verify the kubeconfig path or data is valid. Use the "Test Connection" button on the Clusters admin page. If `KUBECONFIG_ENCRYPTION_KEY` is set, all kubeconfig data is encrypted at rest — changing the key will make existing encrypted data unreadable.
