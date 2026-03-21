@@ -43,10 +43,16 @@ const emptyCreateForm: CreateClusterRequest = {
   is_default: false,
 };
 
-const healthColor = (status: string): 'success' | 'warning' | 'error' => {
+const healthColor = (status: string): 'success' | 'warning' | 'error' | 'default' => {
   if (status === 'healthy') return 'success';
   if (status === 'degraded') return 'warning';
-  return 'error';
+  if (status === 'unreachable') return 'error';
+  return 'default';
+};
+
+const healthLabel = (status: string): string => {
+  if (!status || status === '') return 'unknown';
+  return status;
 };
 
 const Clusters = () => {
@@ -244,7 +250,7 @@ const Clusters = () => {
                   </TableCell>
                   <TableCell>
                     <Chip
-                      label={cluster.health_status}
+                      label={healthLabel(cluster.health_status)}
                       color={healthColor(cluster.health_status)}
                       size="small"
                     />

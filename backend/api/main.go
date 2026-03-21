@@ -177,10 +177,9 @@ func main() {
 
 	// Create cluster registry for multi-cluster client management
 	clusterRegistry := cluster.NewRegistry(cluster.RegistryConfig{
-		ClusterRepo:   clusterRepo,
-		EncryptionKey: cfg.Deployment.KubeconfigEncryptionKey,
-		HelmBinary:    cfg.Deployment.HelmBinary,
-		HelmTimeout:   cfg.Deployment.DeploymentTimeout,
+		ClusterRepo: clusterRepo,
+		HelmBinary:  cfg.Deployment.HelmBinary,
+		HelmTimeout: cfg.Deployment.DeploymentTimeout,
 	})
 	defer clusterRegistry.Close()
 
@@ -335,10 +334,9 @@ func ensureDefaultCluster(clusterRepo models.ClusterRepository, cfg *config.Conf
 		ID:             uuid.New().String(),
 		Name:           "default",
 		Description:    "Auto-created from KUBECONFIG_PATH",
-		APIServerURL:   "https://localhost:6443",
 		KubeconfigPath: cfg.Deployment.KubeconfigPath,
 		IsDefault:      true,
-		HealthStatus:   models.ClusterHealthy,
+		HealthStatus:   models.ClusterUnreachable,
 	}
 	if createErr := clusterRepo.Create(defaultCluster); createErr != nil {
 		slog.Error("Failed to auto-create default cluster", "error", createErr)

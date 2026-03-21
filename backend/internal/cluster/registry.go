@@ -30,10 +30,9 @@ type ClusterClients struct {
 
 // RegistryConfig holds constructor dependencies.
 type RegistryConfig struct {
-	ClusterRepo   models.ClusterRepository
-	EncryptionKey string
-	HelmBinary    string
-	HelmTimeout   time.Duration
+	ClusterRepo models.ClusterRepository
+	HelmBinary  string
+	HelmTimeout time.Duration
 }
 
 // Registry manages per-cluster Kubernetes and Helm clients.
@@ -43,7 +42,6 @@ type Registry struct {
 	mu              sync.RWMutex
 	clients         map[string]*ClusterClients // cluster ID → clients
 	clusterRepo     models.ClusterRepository
-	encryptionKey   string
 	helmBinary      string
 	helmTimeout     time.Duration
 	defaultID       string // cached default cluster ID (empty = not resolved yet)
@@ -57,12 +55,11 @@ type Registry struct {
 // NewRegistry creates a Registry with the given configuration.
 func NewRegistry(cfg RegistryConfig) *Registry {
 	return &Registry{
-		clients:       make(map[string]*ClusterClients),
-		clusterRepo:   cfg.ClusterRepo,
-		encryptionKey: cfg.EncryptionKey,
-		helmBinary:    cfg.HelmBinary,
-		helmTimeout:   cfg.HelmTimeout,
-		k8sFactory:    k8s.NewClient,
+		clients:     make(map[string]*ClusterClients),
+		clusterRepo: cfg.ClusterRepo,
+		helmBinary:  cfg.HelmBinary,
+		helmTimeout: cfg.HelmTimeout,
+		k8sFactory:  k8s.NewClient,
 		helmFactory: func(binaryPath, kubeconfig string, timeout time.Duration) deployer.HelmExecutor {
 			return deployer.NewHelmClient(binaryPath, kubeconfig, timeout)
 		},

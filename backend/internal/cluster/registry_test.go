@@ -123,10 +123,9 @@ func failingK8sFactory(_ string) (*k8s.Client, error) {
 
 func newTestRegistry(repo models.ClusterRepository) *Registry {
 	r := NewRegistry(RegistryConfig{
-		ClusterRepo:   repo,
-		EncryptionKey: "test-passphrase",
-		HelmBinary:    "helm",
-		HelmTimeout:   5 * time.Minute,
+		ClusterRepo: repo,
+		HelmBinary:  "helm",
+		HelmTimeout: 5 * time.Minute,
 	})
 	r.k8sFactory = stubK8sFactory
 	r.helmFactory = stubHelmFactory

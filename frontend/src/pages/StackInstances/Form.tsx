@@ -189,9 +189,9 @@ const Form = () => {
                       <Chip label={c.region} size="small" variant="outlined" />
                     )}
                     <Chip
-                      label={c.health_status}
+                      label={c.health_status || 'unknown'}
                       size="small"
-                      color={c.health_status === 'healthy' ? 'success' : c.health_status === 'degraded' ? 'warning' : 'error'}
+                      color={c.health_status === 'healthy' ? 'success' : c.health_status === 'degraded' ? 'warning' : c.health_status === 'unreachable' ? 'error' : 'default'}
                     />
                     {c.is_default && (
                       <Chip label="Default" size="small" variant="outlined" color="primary" />

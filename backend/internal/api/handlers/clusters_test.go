@@ -72,11 +72,12 @@ func setupClusterRouter(
 // seedCluster is a helper to add a cluster to the mock repository.
 func seedCluster(repo *MockClusterRepository, id, name string) *models.Cluster {
 	cl := &models.Cluster{
-		ID:           id,
-		Name:         name,
-		APIServerURL: "https://k8s.example.com",
-		Region:       "eastus",
-		HealthStatus: models.ClusterHealthy,
+		ID:             id,
+		Name:           name,
+		APIServerURL:   "https://k8s.example.com",
+		KubeconfigPath: "/path/to/kubeconfig",
+		Region:         "eastus",
+		HealthStatus:   models.ClusterHealthy,
 	}
 	_ = repo.Create(cl)
 	return cl
@@ -768,10 +769,9 @@ func TestTestClusterConnection_ErrorPaths(t *testing.T) {
 		// so GetK8sClient will fail to build.
 		emptyClusterRepo := NewMockClusterRepository()
 		reg := cluster.NewRegistry(cluster.RegistryConfig{
-			ClusterRepo:   emptyClusterRepo,
-			EncryptionKey: "test-key",
-			HelmBinary:    "helm",
-			HelmTimeout:   5 * time.Minute,
+			ClusterRepo: emptyClusterRepo,
+			HelmBinary:  "helm",
+			HelmTimeout: 5 * time.Minute,
 		})
 
 		router := setupClusterRouter(clusterRepo, instanceRepo, reg, "admin")

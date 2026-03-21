@@ -28,6 +28,7 @@ type UpdateClusterRequest struct {
 	Description    *string `json:"description,omitempty"`
 	APIServerURL   *string `json:"api_server_url,omitempty"`
 	KubeconfigData *string `json:"kubeconfig_data,omitempty"`
+	KubeconfigPath *string `json:"kubeconfig_path,omitempty"`
 	Region         *string `json:"region,omitempty"`
 	MaxNamespaces  *int    `json:"max_namespaces,omitempty"`
 	IsDefault      *bool   `json:"is_default,omitempty"`
@@ -119,7 +120,14 @@ func (h *ClusterHandler) CreateCluster(c *gin.Context) {
 	if req.IsDefault {
 		if err := h.clusterRepo.SetDefault(cl.ID); err != nil {
 			slog.Error("Failed to set new cluster as default", "cluster_id", cl.ID, "error", err)
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
+			// Cluster was created successfully but could not be set as default.
+			// Return 201 with a warning to avoid duplicate creations on client retry.
+			cl.KubeconfigData = ""
+			cl.KubeconfigPath = ""
+			c.JSON(http.StatusCreated, gin.H{
+				"cluster": cl,
+				"warning": "Cluster created but could not be set as default; it remains non-default",
+			})
 			return
 		}
 		cl.IsDefault = true
@@ -199,6 +207,12 @@ func (h *ClusterHandler) UpdateCluster(c *gin.Context) {
 	}
 	if req.KubeconfigData != nil {
 		existing.KubeconfigData = *req.KubeconfigData
+		existing.KubeconfigPath = "" // mutual exclusion
+		kubeconfigChanged = true
+	}
+	if req.KubeconfigPath != nil {
+		existing.KubeconfigPath = *req.KubeconfigPath
+		existing.KubeconfigData = "" // mutual exclusion
 		kubeconfigChanged = true
 	}
 	if req.Region != nil {
@@ -220,6 +234,12 @@ func (h *ClusterHandler) UpdateCluster(c *gin.Context) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "Cannot unset default cluster via update; use SetDefault to change the default cluster"})
 			return
 		}
+	}
+
+	// Re-validate after applying updates (e.g. kubeconfig mutual exclusion).
+	if err := existing.Validate(); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
 	}
 
 	if err := h.clusterRepo.Update(existing); err != nil {

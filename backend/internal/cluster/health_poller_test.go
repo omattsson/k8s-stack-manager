@@ -37,10 +37,9 @@ func (m *mockBroadcastSender) messageCount() int {
 // a client backed by a fake clientset (Discovery().ServerVersion() succeeds).
 func healthPollerTestRegistry(repo models.ClusterRepository) *Registry {
 	r := NewRegistry(RegistryConfig{
-		ClusterRepo:   repo,
-		EncryptionKey: "test-passphrase",
-		HelmBinary:    "helm",
-		HelmTimeout:   5 * time.Minute,
+		ClusterRepo: repo,
+		HelmBinary:  "helm",
+		HelmTimeout: 5 * time.Minute,
 	})
 	r.k8sFactory = func(_ string) (*k8s.Client, error) {
 		return k8s.NewClientFromInterface(fake.NewSimpleClientset()), nil
@@ -52,10 +51,9 @@ func healthPollerTestRegistry(repo models.ClusterRepository) *Registry {
 // healthPollerFailingRegistry creates a Registry whose k8s factory always fails.
 func healthPollerFailingRegistry(repo models.ClusterRepository) *Registry {
 	r := NewRegistry(RegistryConfig{
-		ClusterRepo:   repo,
-		EncryptionKey: "test-passphrase",
-		HelmBinary:    "helm",
-		HelmTimeout:   5 * time.Minute,
+		ClusterRepo: repo,
+		HelmBinary:  "helm",
+		HelmTimeout: 5 * time.Minute,
 	})
 	r.k8sFactory = func(_ string) (*k8s.Client, error) {
 		return nil, fmt.Errorf("connection refused")
