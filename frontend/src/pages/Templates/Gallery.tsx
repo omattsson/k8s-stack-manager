@@ -18,8 +18,10 @@ import {
 } from '@mui/material';
 import SearchIcon from '@mui/icons-material/Search';
 import AddIcon from '@mui/icons-material/Add';
+import RocketLaunchIcon from '@mui/icons-material/RocketLaunch';
 import { templateService } from '../../api/client';
 import FavoriteButton from '../../components/FavoriteButton';
+import QuickDeployDialog from '../../components/QuickDeployDialog';
 import { useAuth } from '../../context/AuthContext';
 import type { StackTemplate } from '../../types';
 
@@ -34,6 +36,7 @@ const Gallery = () => {
   const [tab, setTab] = useState(0);
   const { user } = useAuth();
   const navigate = useNavigate();
+  const [quickDeployTemplate, setQuickDeployTemplate] = useState<StackTemplate | null>(null);
 
   const isDevOps = user?.role === 'devops' || user?.role === 'admin';
 
@@ -161,7 +164,17 @@ const Gallery = () => {
                     View
                   </Button>
                   {template.is_published && (
-                    <Button size="small" color="primary" onClick={() => navigate(`/templates/${template.id}/use`)}>
+                    <Button
+                      size="small"
+                      color="primary"
+                      startIcon={<RocketLaunchIcon />}
+                      onClick={() => setQuickDeployTemplate(template)}
+                    >
+                      Quick Deploy
+                    </Button>
+                  )}
+                  {template.is_published && (
+                    <Button size="small" onClick={() => navigate(`/templates/${template.id}/use`)}>
                       Use Template
                     </Button>
                   )}
@@ -176,6 +189,11 @@ const Gallery = () => {
           ))}
         </Grid>
       )}
+      <QuickDeployDialog
+        open={!!quickDeployTemplate}
+        onClose={() => setQuickDeployTemplate(null)}
+        template={quickDeployTemplate}
+      />
     </Box>
   );
 };

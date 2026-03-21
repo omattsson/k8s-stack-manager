@@ -326,3 +326,18 @@ export interface UserFavorite {
   entity_id: string;
   created_at: string;
 }
+
+export interface QuickDeployRequest {
+  instance_name: string;
+  instance_description?: string;
+  branch?: string;
+  cluster_id?: string;
+  ttl_minutes?: number;
+  branch_overrides?: Record<string, string>;
+}
+
+export interface QuickDeployResponse {
+  instance: StackInstance;
+  definition: StackDefinition;
+  log_id: string;
+}

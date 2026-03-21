@@ -29,6 +29,8 @@ import type {
   ClusterTestResult,
   ChartBranchOverride,
   UserFavorite,
+  QuickDeployRequest,
+  QuickDeployResponse,
 } from '../types';
 
 const api = axios.create(axiosConfig);
@@ -193,6 +195,15 @@ export const templateService = {
       await api.delete(`/api/v1/templates/${id}/charts/${chartId}`);
     } catch (error) {
       console.error('Failed to delete template chart:', error);
+      throw error;
+    }
+  },
+  quickDeploy: async (id: string, data: QuickDeployRequest): Promise<QuickDeployResponse> => {
+    try {
+      const response = await api.post(`/api/v1/templates/${id}/quick-deploy`, data);
+      return response.data;
+    } catch (error) {
+      console.error('Failed to quick deploy template:', error);
       throw error;
     }
   },
