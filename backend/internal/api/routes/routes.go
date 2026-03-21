@@ -216,7 +216,11 @@ func SetupRoutes(router *gin.Engine, deps Deps) *handlers.RateLimiter {
 
 		// Audit Logs
 		if deps.AuditLogHandler != nil {
-			authed.GET("/audit-logs", deps.AuditLogHandler.ListAuditLogs)
+			auditLogs := authed.Group("/audit-logs")
+			{
+				auditLogs.GET("/export", middleware.RequireAdmin(), deps.AuditLogHandler.ExportAuditLogs)
+				auditLogs.GET("", deps.AuditLogHandler.ListAuditLogs)
+			}
 		}
 
 		// User management (admin only)

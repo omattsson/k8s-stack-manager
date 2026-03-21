@@ -483,6 +483,36 @@ export const auditService = {
       throw error;
     }
   },
+  export: async (filters: AuditLogFilters, format: 'csv' | 'json' = 'json'): Promise<void> => {
+    const params = new URLSearchParams();
+    params.set('format', format);
+    if (filters.user_id) params.set('user_id', filters.user_id);
+    if (filters.entity_type) params.set('entity_type', filters.entity_type);
+    if (filters.action) params.set('action', filters.action);
+    if (filters.start_date) params.set('start_date', filters.start_date);
+    if (filters.end_date) params.set('end_date', filters.end_date);
+
+    const response = await api.get('/api/v1/audit-logs/export', {
+      params,
+      responseType: 'blob',
+    });
+
+    const contentDisposition = response.headers['content-disposition'];
+    let filename = `audit-logs.${format}`;
+    if (contentDisposition) {
+      const match = contentDisposition.match(/filename=([^;]+)/);
+      if (match) filename = match[1].trim();
+    }
+
+    const url = window.URL.createObjectURL(new Blob([response.data]));
+    const link = document.createElement('a');
+    link.href = url;
+    link.setAttribute('download', filename);
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.URL.revokeObjectURL(url);
+  },
 };
 
 export const userService = {

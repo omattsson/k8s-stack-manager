@@ -15,7 +15,10 @@ import {
   MenuItem,
   Button,
   TablePagination,
+  Menu,
+  ListItemText,
 } from '@mui/material';
+import FileDownloadIcon from '@mui/icons-material/FileDownload';
 import { auditService } from '../../api/client';
 import type { AuditLog as AuditLogType } from '../../types';
 import EntityLink from '../../components/EntityLink';
@@ -33,6 +36,7 @@ const AuditLog = () => {
   const [username, setUsername] = useState('');
   const [page, setPage] = useState(0);
   const [rowsPerPage, setRowsPerPage] = useState(25);
+  const [exportAnchor, setExportAnchor] = useState<null | HTMLElement>(null);
 
   const fetchLogs = useCallback(async () => {
     setLoading(true);
@@ -63,6 +67,19 @@ const AuditLog = () => {
   const handleFilter = () => {
     setPage(0);
     fetchLogs();
+  };
+
+  const handleExport = async (format: 'csv' | 'json') => {
+    setExportAnchor(null);
+    try {
+      const filters: Record<string, string> = {};
+      if (entityType !== 'All') filters.entity_type = entityType;
+      if (action !== 'All') filters.action = action;
+      if (username) filters.user_id = username;
+      await auditService.export(filters, format);
+    } catch {
+      setError('Failed to export audit logs');
+    }
   };
 
   return (
@@ -107,6 +124,25 @@ const AuditLog = () => {
           <Button variant="outlined" onClick={handleFilter}>
             Filter
           </Button>
+          <Button
+            variant="outlined"
+            startIcon={<FileDownloadIcon />}
+            onClick={(e) => setExportAnchor(e.currentTarget)}
+          >
+            Export
+          </Button>
+          <Menu
+            anchorEl={exportAnchor}
+            open={Boolean(exportAnchor)}
+            onClose={() => setExportAnchor(null)}
+          >
+            <MenuItem onClick={() => handleExport('json')}>
+              <ListItemText>Export as JSON</ListItemText>
+            </MenuItem>
+            <MenuItem onClick={() => handleExport('csv')}>
+              <ListItemText>Export as CSV</ListItemText>
+            </MenuItem>
+          </Menu>
         </Box>
       </Paper>
 
