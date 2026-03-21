@@ -26,9 +26,12 @@ import BranchSelector from '../../components/BranchSelector';
 import ConfirmDialog from '../../components/ConfirmDialog';
 import DeploymentLogViewer from '../../components/DeploymentLogViewer';
 import PodStatusDisplay from '../../components/PodStatusDisplay';
+import AccessUrls from '../../components/AccessUrls';
 import { instanceService, definitionService, branchOverrideService } from '../../api/client';
 import type { StackInstance, ChartConfig, ValueOverride, DeploymentLog, NamespaceStatus } from '../../types';
 import YamlEditor from '../../components/YamlEditor';
+import TtlSelector from '../../components/TtlSelector';
+import useCountdown from '../../hooks/useCountdown';
 
 const Detail = () => {
   const { id } = useParams<{ id: string }>();
@@ -53,6 +56,7 @@ const Detail = () => {
   const [deployLogs, setDeployLogs] = useState<DeploymentLog[]>([]);
   const [k8sStatus, setK8sStatus] = useState<NamespaceStatus | null>(null);
   const [statusLoading, setStatusLoading] = useState(false);
+  const [extending, setExtending] = useState(false);
 
   useEffect(() => {
     if (!id) return;
@@ -314,6 +318,39 @@ const Detail = () => {
     } catch (e) { console.error('Failed to refresh deploy logs after clean', e); }
   };
 
+  const countdown = useCountdown(instance?.expires_at);
+
+  const isExpiredByTtl = instance?.status === 'stopped' && instance?.error_message?.includes('Expired (TTL)');
+
+  const handleExtend = async () => {
+    if (!id) return;
+    setExtending(true);
+    try {
+      const updated = await instanceService.extend(id);
+      setInstance(updated);
+      setSnackbar('TTL extended');
+    } catch {
+      setError('Failed to extend TTL');
+    } finally {
+      setExtending(false);
+    }
+  };
+
+  const handleTtlChange = async (ttlMinutes: number) => {
+    if (!id || !instance) return;
+    setSaving(true);
+    setError(null);
+    try {
+      const updated = await instanceService.update(id, { ttl_minutes: ttlMinutes });
+      setInstance(updated);
+      setSnackbar('TTL updated');
+    } catch {
+      setError('Failed to update TTL');
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const getRepoUrl = (): string => {
     if (charts.length > 0 && charts[0].source_repo_url) {
       return charts[0].source_repo_url;
@@ -347,6 +384,9 @@ const Detail = () => {
                 {instance.name}
               </Typography>
               <StatusBadge status={instance.status} />
+              {isExpiredByTtl && (
+                <Chip label="Expired" color="error" size="small" />
+              )}
             </Box>
             <Typography variant="body2" color="text.secondary">
               Namespace: {instance.namespace}
@@ -354,6 +394,24 @@ const Detail = () => {
             <Typography variant="body2" color="text.secondary">
               Owner: {instance.owner_id}
             </Typography>
+            {countdown && !countdown.isExpired && instance.status === 'running' && (
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 0.5 }}>
+                <Chip
+                  label={`Expires in ${countdown.remaining}`}
+                  size="small"
+                  color={countdown.isCritical ? 'error' : countdown.isWarning ? 'warning' : 'success'}
+                  icon={<span>⏱</span>}
+                />
+                <Button
+                  variant="outlined"
+                  size="small"
+                  onClick={handleExtend}
+                  disabled={extending}
+                >
+                  {extending ? 'Extending...' : 'Extend'}
+                </Button>
+              </Box>
+            )}
           </Box>
           <Box sx={{ display: 'flex', gap: 1 }}>
             {(instance.status === 'draft' || instance.status === 'stopped' || instance.status === 'error') && (
@@ -424,12 +482,25 @@ const Detail = () => {
           </Box>
         )}
 
+        {k8sStatus && instance.status === 'running' && (
+          <AccessUrls status={k8sStatus} />
+        )}
+
         <Box sx={{ maxWidth: 400 }}>
           <Typography variant="subtitle2" gutterBottom>Branch</Typography>
           <BranchSelector
             repoUrl={getRepoUrl()}
             value={branch}
             onChange={setBranch}
+          />
+        </Box>
+
+        <Box sx={{ mt: 2 }}>
+          <Typography variant="subtitle2" gutterBottom>TTL (Time to Live)</Typography>
+          <TtlSelector
+            value={instance.ttl_minutes ?? 0}
+            onChange={handleTtlChange}
+            disabled={saving}
           />
         </Box>
       </Paper>

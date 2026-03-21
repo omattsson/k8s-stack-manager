@@ -96,6 +96,8 @@ export interface StackInstance {
   status: string;
   error_message?: string;
   last_deployed_at?: string;
+  ttl_minutes?: number;
+  expires_at?: string;
   created_at: string;
   updated_at: string;
   definition?: StackDefinition;
@@ -141,12 +143,25 @@ export interface ServiceInfo {
   name: string;
   type: string;
   cluster_ip: string;
+  ports?: string[];
+  external_ip?: string;
+  node_ports?: number[];
+  ingress_hosts?: string[];
+}
+
+export interface IngressInfo {
+  name: string;
+  host: string;
+  path: string;
+  tls: boolean;
+  url: string;
 }
 
 export interface NamespaceStatus {
   namespace: string;
   status: 'healthy' | 'degraded' | 'error' | 'not_found';
   charts: ChartStatus[];
+  ingresses?: IngressInfo[];
   last_checked: string;
 }
 

@@ -102,11 +102,11 @@ type IngressInfo struct {
 
 // NamespaceStatus represents the health of all resources in a namespace.
 type NamespaceStatus struct {
-	LastChecked time.Time      `json:"last_checked"`
-	Namespace   string         `json:"namespace"`
-	Status      string         `json:"status"`
-	Charts      []ChartStatus  `json:"charts"`
-	Ingresses   []IngressInfo  `json:"ingresses,omitempty"`
+	LastChecked time.Time     `json:"last_checked"`
+	Namespace   string        `json:"namespace"`
+	Status      string        `json:"status"`
+	Charts      []ChartStatus `json:"charts"`
+	Ingresses   []IngressInfo `json:"ingresses,omitempty"`
 }
 
 // ChartStatus represents the status of a single Helm release's resources.

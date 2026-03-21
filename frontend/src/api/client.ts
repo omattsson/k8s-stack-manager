@@ -398,6 +398,18 @@ export const instanceService = {
       throw error;
     }
   },
+  extend: async (id: string, ttlMinutes?: number): Promise<StackInstance> => {
+    try {
+      const response = await api.post(
+        `/api/v1/stack-instances/${id}/extend`,
+        ttlMinutes ? { ttl_minutes: ttlMinutes } : {},
+      );
+      return response.data;
+    } catch (error) {
+      console.error('Failed to extend TTL:', error);
+      throw error;
+    }
+  },
 };
 
 export const gitService = {

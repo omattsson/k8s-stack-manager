@@ -17,6 +17,19 @@ vi.mock('../../../hooks/useWebSocket', () => ({
   useWebSocket: () => ({ send: vi.fn() }),
 }));
 
+vi.mock('../../../hooks/useCountdown', () => ({
+  default: vi.fn().mockReturnValue(null),
+}));
+
+vi.mock('../../../components/TtlSelector', () => ({
+  default: ({ value, onChange }: { value: number; onChange: (v: number) => void }) => (
+    <div data-testid="ttl-selector">
+      <span data-testid="ttl-value">{value}</span>
+      <button data-testid="ttl-change" onClick={() => onChange(240)}>Change TTL</button>
+    </div>
+  ),
+}));
+
 vi.mock('../../../api/client', () => ({
   instanceService: {
     get: vi.fn(),
@@ -31,6 +44,7 @@ vi.mock('../../../api/client', () => ({
     clean: vi.fn(),
     getDeployLog: vi.fn(),
     getStatus: vi.fn(),
+    extend: vi.fn(),
   },
   definitionService: {
     get: vi.fn(),
@@ -70,6 +84,16 @@ vi.mock('../../../components/PodStatusDisplay', () => ({
   ),
 }));
 
+vi.mock('../../../components/AccessUrls', () => ({
+  default: ({ status }: { status: { ingresses?: { url: string }[] } }) => (
+    <div data-testid="access-urls">
+      {(status.ingresses || []).map((ing: { url: string }, i: number) => (
+        <span key={i}>{ing.url}</span>
+      ))}
+    </div>
+  ),
+}));
+
 vi.mock('../../../components/StatusBadge', () => ({
   default: ({ status }: { status: string }) => (
     <span data-testid="status-badge">{status}</span>
@@ -97,6 +121,7 @@ vi.mock('../../../components/ConfirmDialog', () => ({
 }));
 
 import { instanceService, definitionService, branchOverrideService } from '../../../api/client';
+import useCountdown from '../../../hooks/useCountdown';
 
 type MockFn = ReturnType<typeof vi.fn>;
 
@@ -138,6 +163,9 @@ const mockInstance = {
   stack_definition_id: 'def1',
   created_at: '2025-01-01',
   updated_at: '2025-01-02',
+  ttl_minutes: 0,
+  expires_at: undefined as string | undefined,
+  error_message: undefined as string | undefined,
 };
 
 const mockDefinition = {
@@ -717,5 +745,163 @@ describe('StackInstances Detail', () => {
     });
 
     expect(branchOverrideService.list).toHaveBeenCalledWith('123');
+  });
+
+  it('shows Access URLs section for running instance with k8s status', async () => {
+    const mockStatus = {
+      namespace: 'stack-test',
+      status: 'healthy',
+      charts: [],
+      ingresses: [{ name: 'web', host: 'app.example.com', path: '/', tls: true, url: 'https://app.example.com' }],
+      last_checked: '2025-01-01T00:00:00Z',
+    };
+    setupMocks({ status: 'running' }, { status: mockStatus });
+    renderDetail();
+
+    await waitFor(() => {
+      expect(screen.getByTestId('access-urls')).toBeInTheDocument();
+    });
+    expect(screen.getByText('https://app.example.com')).toBeInTheDocument();
+  });
+
+  it('does not show Access URLs section for draft instance', async () => {
+    setupMocks({ status: 'draft' }, { deployLogReject: true });
+    renderDetail();
+
+    await waitFor(() => {
+      expect(screen.getByText('Test Instance')).toBeInTheDocument();
+    });
+
+    expect(screen.queryByTestId('access-urls')).not.toBeInTheDocument();
+  });
+
+  it('does not show Access URLs for running instance without k8s status', async () => {
+    setupMocks({ status: 'running' }, { statusReject: true });
+    renderDetail();
+
+    await waitFor(() => {
+      expect(screen.getByText('Test Instance')).toBeInTheDocument();
+    });
+
+    expect(screen.queryByTestId('access-urls')).not.toBeInTheDocument();
+  });
+
+  it('shows countdown chip when instance is running with expiry', async () => {
+    (useCountdown as unknown as MockFn).mockReturnValue({
+      remaining: '3h 42m',
+      isWarning: false,
+      isCritical: false,
+      isExpired: false,
+    });
+    setupMocks({ status: 'running', expires_at: '2026-01-01T12:00:00Z' });
+    renderDetail();
+
+    await waitFor(() => {
+      expect(screen.getByText('Test Instance')).toBeInTheDocument();
+    });
+
+    expect(screen.getByText(/Expires in 3h 42m/)).toBeInTheDocument();
+  });
+
+  it('shows Extend button next to countdown', async () => {
+    (useCountdown as unknown as MockFn).mockReturnValue({
+      remaining: '3h 42m',
+      isWarning: false,
+      isCritical: false,
+      isExpired: false,
+    });
+    setupMocks({ status: 'running', expires_at: '2026-01-01T12:00:00Z' });
+    renderDetail();
+
+    await waitFor(() => {
+      expect(screen.getByText('Test Instance')).toBeInTheDocument();
+    });
+
+    expect(screen.getByRole('button', { name: /extend/i })).toBeInTheDocument();
+  });
+
+  it('calls instanceService.extend when Extend is clicked', async () => {
+    const user = userEvent.setup();
+    (useCountdown as unknown as MockFn).mockReturnValue({
+      remaining: '1h 0m',
+      isWarning: false,
+      isCritical: false,
+      isExpired: false,
+    });
+    const inst = setupMocks({ status: 'running', expires_at: '2026-01-01T12:00:00Z' });
+    (instanceService.extend as MockFn).mockResolvedValue({ ...inst, expires_at: '2026-01-01T16:00:00Z' });
+
+    renderDetail();
+
+    await waitFor(() => {
+      expect(screen.getByText('Test Instance')).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole('button', { name: /extend/i }));
+
+    await waitFor(() => {
+      expect(instanceService.extend).toHaveBeenCalledWith('123');
+    });
+  });
+
+  it('shows Expired chip when instance stopped by TTL', async () => {
+    (useCountdown as unknown as MockFn).mockReturnValue(null);
+    setupMocks({ status: 'stopped', error_message: 'Expired (TTL)' }, { deployLogReject: true });
+    renderDetail();
+
+    await waitFor(() => {
+      expect(screen.getByText('Test Instance')).toBeInTheDocument();
+    });
+
+    expect(screen.getByText('Expired')).toBeInTheDocument();
+  });
+
+  it('does not show countdown for draft instance', async () => {
+    (useCountdown as unknown as MockFn).mockReturnValue({
+      remaining: '3h 0m',
+      isWarning: false,
+      isCritical: false,
+      isExpired: false,
+    });
+    setupMocks({ status: 'draft', expires_at: '2026-01-01T12:00:00Z' }, { deployLogReject: true });
+    renderDetail();
+
+    await waitFor(() => {
+      expect(screen.getByText('Test Instance')).toBeInTheDocument();
+    });
+
+    expect(screen.queryByText(/Expires in/)).not.toBeInTheDocument();
+  });
+
+  it('renders TTL selector on detail page', async () => {
+    (useCountdown as unknown as MockFn).mockReturnValue(null);
+    setupMocks({ status: 'draft', ttl_minutes: 240 }, { deployLogReject: true });
+    renderDetail();
+
+    await waitFor(() => {
+      expect(screen.getByText('Test Instance')).toBeInTheDocument();
+    });
+
+    expect(screen.getByTestId('ttl-selector')).toBeInTheDocument();
+    expect(screen.getByTestId('ttl-value')).toHaveTextContent('240');
+  });
+
+  it('calls instanceService.update when TTL is changed', async () => {
+    const user = userEvent.setup();
+    (useCountdown as unknown as MockFn).mockReturnValue(null);
+    const inst = setupMocks({ status: 'draft', ttl_minutes: 0 }, { deployLogReject: true });
+    (instanceService.update as MockFn).mockResolvedValue({ ...inst, ttl_minutes: 240 });
+
+    renderDetail();
+
+    await waitFor(() => {
+      expect(screen.getByText('Test Instance')).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByTestId('ttl-change'));
+
+    await waitFor(() => {
+      expect(instanceService.update).toHaveBeenCalledWith('123', { ttl_minutes: 240 });
+    });
   });
 });

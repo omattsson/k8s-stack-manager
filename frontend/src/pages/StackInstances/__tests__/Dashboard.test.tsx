@@ -14,6 +14,10 @@ vi.mock('../../../hooks/useWebSocket', () => ({
   },
 }));
 
+vi.mock('../../../hooks/useCountdown', () => ({
+  default: vi.fn().mockReturnValue(null),
+}));
+
 vi.mock('../../../api/client', () => ({
   instanceService: {
     list: vi.fn(),
@@ -34,6 +38,7 @@ vi.mock('../../../context/AuthContext', () => ({
 }));
 
 import { instanceService } from '../../../api/client';
+import useCountdown from '../../../hooks/useCountdown';
 
 describe('Dashboard', () => {
   afterEach(() => {
@@ -144,5 +149,71 @@ describe('Dashboard', () => {
 
     // Status should remain unchanged.
     expect(screen.getByText('running')).toBeInTheDocument();
+  });
+
+  it('shows countdown chip for running instance with expiry', async () => {
+    const mockUseCountdown = useCountdown as unknown as ReturnType<typeof vi.fn>;
+    mockUseCountdown.mockReturnValue({
+      remaining: '3h 42m',
+      isWarning: false,
+      isCritical: false,
+      isExpired: false,
+    });
+
+    (instanceService.list as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { id: '1', name: 'TTL Instance', status: 'running', branch: 'main', namespace: 'stack-ttl', owner_id: '1', stack_definition_id: '1', created_at: '', updated_at: '', expires_at: '2026-01-01T12:00:00Z', ttl_minutes: 240 },
+    ]);
+    render(
+      <MemoryRouter>
+        <Dashboard />
+      </MemoryRouter>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('TTL Instance')).toBeInTheDocument();
+    });
+
+    expect(screen.getByText(/3h 42m/)).toBeInTheDocument();
+  });
+
+  it('shows Expired chip for TTL-expired stopped instance', async () => {
+    const mockUseCountdown = useCountdown as unknown as ReturnType<typeof vi.fn>;
+    mockUseCountdown.mockReturnValue(null);
+
+    (instanceService.list as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { id: '1', name: 'Expired Instance', status: 'stopped', branch: 'main', namespace: 'stack-exp', owner_id: '1', stack_definition_id: '1', created_at: '', updated_at: '', error_message: 'Expired (TTL)' },
+    ]);
+    render(
+      <MemoryRouter>
+        <Dashboard />
+      </MemoryRouter>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('Expired Instance')).toBeInTheDocument();
+    });
+
+    expect(screen.getByText('Expired')).toBeInTheDocument();
+  });
+
+  it('does not show countdown chip for instance without expiry', async () => {
+    const mockUseCountdown = useCountdown as unknown as ReturnType<typeof vi.fn>;
+    mockUseCountdown.mockReturnValue(null);
+
+    (instanceService.list as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { id: '1', name: 'No TTL Instance', status: 'running', branch: 'main', namespace: 'stack-nottl', owner_id: '1', stack_definition_id: '1', created_at: '', updated_at: '' },
+    ]);
+    render(
+      <MemoryRouter>
+        <Dashboard />
+      </MemoryRouter>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('No TTL Instance')).toBeInTheDocument();
+    });
+
+    expect(screen.queryByText(/⏱/)).not.toBeInTheDocument();
+    expect(screen.queryByText('Expired')).not.toBeInTheDocument();
   });
 });

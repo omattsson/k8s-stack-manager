@@ -17,14 +17,33 @@ import {
   InputAdornment,
   Chip,
   Paper,
+  Link,
 } from '@mui/material';
 import SearchIcon from '@mui/icons-material/Search';
 import AddIcon from '@mui/icons-material/Add';
 import StatusBadge from '../../components/StatusBadge';
+import ExpiryChip from './ExpiryChip';
 import { instanceService, clusterService } from '../../api/client';
-import type { StackInstance, Cluster } from '../../types';
+import type { StackInstance, Cluster, NamespaceStatus } from '../../types';
 
 const STATUSES = ['All', 'draft', 'deploying', 'running', 'stopped', 'error'];
+
+const getPrimaryUrl = (status: NamespaceStatus): string | null => {
+  // First ingress URL
+  if (status.ingresses?.length) {
+    return status.ingresses[0].url;
+  }
+  // First LoadBalancer external IP
+  for (const chart of status.charts || []) {
+    for (const svc of chart.services || []) {
+      if (svc.type === 'LoadBalancer' && svc.external_ip) {
+        const port = (svc.ports || [])[0]?.replace(/\/.*/, '') || '';
+        return `http://${svc.external_ip}${port ? `:${port}` : ''}`;
+      }
+    }
+  }
+  return null;
+};
 
 const Dashboard = () => {
   const [instances, setInstances] = useState<StackInstance[]>([]);
@@ -33,6 +52,7 @@ const Dashboard = () => {
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('All');
+  const [instanceUrls, setInstanceUrls] = useState<Record<string, string>>({});
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -44,6 +64,20 @@ const Dashboard = () => {
         ]);
         setInstances(instData || []);
         setClusters(clsData || []);
+
+        // Fetch primary URL for running instances
+        const running = (instData || []).filter((i: StackInstance) => i.status === 'running');
+        const urlMap: Record<string, string> = {};
+        await Promise.all(
+          running.map(async (inst: StackInstance) => {
+            try {
+              const st: NamespaceStatus = await instanceService.getStatus(inst.id);
+              const url = getPrimaryUrl(st);
+              if (url) urlMap[inst.id] = url;
+            } catch { /* ignore */ }
+          })
+        );
+        setInstanceUrls(urlMap);
       } catch {
         setError('Failed to load stack instances');
       } finally {
@@ -197,6 +231,19 @@ const Dashboard = () => {
                       </Typography>
                     ) : null;
                   })()}
+                  {instanceUrls[instance.id] && (
+                    <Link
+                      href={instanceUrls[instance.id]}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      variant="body2"
+                      sx={{ display: 'block', mt: 0.5, fontFamily: 'monospace', fontSize: '0.75rem' }}
+                      noWrap
+                    >
+                      {instanceUrls[instance.id]}
+                    </Link>
+                  )}
+                  <ExpiryChip instance={instance} />
                 </CardContent>
                 <CardActions>
                   <Button size="small" onClick={() => navigate(`/stack-instances/${instance.id}`)}>
