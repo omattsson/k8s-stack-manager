@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -13,6 +14,7 @@ import (
 	"backend/internal/k8s"
 	"backend/internal/models"
 	"backend/internal/websocket"
+	"backend/pkg/dberrors"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -172,9 +174,18 @@ func (h *QuickDeployHandler) QuickDeploy(c *gin.Context) {
 		return
 	}
 
+	// cleanupDefinition removes the definition created above (best-effort).
+	cleanupDefinition := func() {
+		if delErr := h.definitionRepo.Delete(def.ID); delErr != nil {
+			slog.Error("Quick deploy rollback: failed to delete definition",
+				"definition_id", def.ID, "error", delErr)
+		}
+	}
+
 	// Copy template charts → chart configs.
 	templateCharts, err := h.templateChartRepo.ListByTemplate(tmpl.ID)
 	if err != nil {
+		cleanupDefinition()
 		status, message := mapError(err, "Template charts")
 		c.JSON(status, gin.H{"error": message})
 		return
@@ -195,11 +206,30 @@ func (h *QuickDeployHandler) QuickDeploy(c *gin.Context) {
 			CreatedAt:         now,
 		}
 		if err := h.chartConfigRepo.Create(&cc); err != nil {
+			// Clean up already-created chart configs + the definition.
+			for _, created := range chartConfigs {
+				if delErr := h.chartConfigRepo.Delete(created.ID); delErr != nil {
+					slog.Error("Quick deploy rollback: failed to delete chart config",
+						"chart_config_id", created.ID, "error", delErr)
+				}
+			}
+			cleanupDefinition()
 			status, message := mapError(err, "Chart config")
 			c.JSON(status, gin.H{"error": message})
 			return
 		}
 		chartConfigs = append(chartConfigs, cc)
+	}
+
+	// cleanupAll removes all resources created so far (best-effort).
+	cleanupAll := func() {
+		for _, cc := range chartConfigs {
+			if delErr := h.chartConfigRepo.Delete(cc.ID); delErr != nil {
+				slog.Error("Quick deploy rollback: failed to delete chart config",
+					"chart_config_id", cc.ID, "error", delErr)
+			}
+		}
+		cleanupDefinition()
 	}
 
 	// 3. Create stack instance.
@@ -220,6 +250,16 @@ func (h *QuickDeployHandler) QuickDeploy(c *gin.Context) {
 	if ttl == 0 && h.defaultTTLMinutes > 0 {
 		ttl = h.defaultTTLMinutes
 	}
+	if ttl < 0 {
+		cleanupAll()
+		c.JSON(http.StatusBadRequest, gin.H{"error": "TTL must not be negative"})
+		return
+	}
+	if ttl > MaxTTLMinutes {
+		cleanupAll()
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("TTL must not exceed %d minutes (30 days)", MaxTTLMinutes)})
+		return
+	}
 	inst.TTLMinutes = ttl
 	if ttl > 0 {
 		exp := now.Add(time.Duration(ttl) * time.Minute)
@@ -231,11 +271,13 @@ func (h *QuickDeployHandler) QuickDeploy(c *gin.Context) {
 		if inst.ClusterID == "" {
 			resolved, resolveErr := h.registry.ResolveClusterID("")
 			if resolveErr != nil {
+				cleanupAll()
 				c.JSON(http.StatusBadRequest, gin.H{"error": "No default cluster configured; specify cluster_id"})
 				return
 			}
 			inst.ClusterID = resolved
 		} else if !h.registry.ClusterExists(inst.ClusterID) {
+			cleanupAll()
 			c.JSON(http.StatusBadRequest, gin.H{"error": "Unknown cluster_id"})
 			return
 		}
@@ -245,11 +287,35 @@ func (h *QuickDeployHandler) QuickDeploy(c *gin.Context) {
 	inst.Namespace = buildNamespace(inst.Name, username)
 
 	if err := inst.Validate(); err != nil {
+		cleanupAll()
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
+	// Check namespace uniqueness.
+	existingInst, nsErr := h.instanceRepo.FindByNamespace(inst.Namespace)
+	if nsErr != nil && !errors.Is(nsErr, dberrors.ErrNotFound) {
+		cleanupAll()
+		slog.Error("Failed to check namespace uniqueness",
+			"namespace", inst.Namespace,
+			"error", nsErr,
+		)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
+		return
+	}
+	if existingInst != nil {
+		cleanupAll()
+		suggestions := generateNameSuggestions(inst.Name)
+		c.JSON(http.StatusConflict, NamespaceConflictResponse{
+			Error:       "namespace already exists",
+			Message:     fmt.Sprintf("Namespace %q is already in use", inst.Namespace),
+			Suggestions: suggestions,
+		})
+		return
+	}
+
 	if err := h.instanceRepo.Create(inst); err != nil {
+		cleanupAll()
 		status, message := mapError(err, "Stack instance")
 		c.JSON(status, gin.H{"error": message})
 		return

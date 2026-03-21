@@ -162,6 +162,7 @@ const Detail = () => {
     if (!id) return;
     // If the new branch matches the instance-level branch (or is empty), remove the override
     if (!newBranch || newBranch === branch) {
+      const previousValue = branchOverrides[chartId];
       setBranchOverrides((prev) => {
         const next = { ...prev };
         delete next[chartId];
@@ -170,21 +171,30 @@ const Detail = () => {
       try {
         await branchOverrideService.delete(id, chartId);
       } catch {
-        console.error('Failed to remove branch override');
+        // Restore previous override on failure
+        if (previousValue !== undefined) {
+          setBranchOverrides((prev) => ({ ...prev, [chartId]: previousValue }));
+        }
+        setError('Failed to remove branch override');
       }
     } else {
+      const previousValue = branchOverrides[chartId];
       // Optimistic update
       setBranchOverrides((prev) => ({ ...prev, [chartId]: newBranch }));
       try {
         await branchOverrideService.set(id, chartId, newBranch);
         setSnackbar('Branch override saved');
       } catch {
-        // Revert on failure
-        setBranchOverrides((prev) => {
-          const next = { ...prev };
-          delete next[chartId];
-          return next;
-        });
+        // Revert to previous value on failure
+        if (previousValue !== undefined) {
+          setBranchOverrides((prev) => ({ ...prev, [chartId]: previousValue }));
+        } else {
+          setBranchOverrides((prev) => {
+            const next = { ...prev };
+            delete next[chartId];
+            return next;
+          });
+        }
         setError('Failed to set branch override');
       }
     }

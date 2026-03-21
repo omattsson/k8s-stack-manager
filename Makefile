@@ -189,19 +189,29 @@ loadtest-start: azurite-start ## Build and start backend in release mode for loa
 	@echo "Building backend (release mode)..."
 	@cd backend && go build -o tmp/main ./api/main.go
 	@echo "Starting backend (GIN_MODE=release, RATE_LIMIT=10000)..."
-	@cd backend && $(LOADTEST_ENV) ./tmp/main > tmp/loadtest.log 2>&1 &
+	@cd backend && ( $(LOADTEST_ENV) ./tmp/main > tmp/loadtest.log 2>&1 & echo $$! > tmp/loadtest-backend.pid )
 	@until curl -sf http://localhost:8081/health/live >/dev/null 2>&1; do sleep 1; done
 	@echo "Backend is ready on :8081 (logs: backend/tmp/loadtest.log)"
 	@echo "Starting frontend dev server..."
-	@cd frontend && npm run dev > /tmp/loadtest-frontend.log 2>&1 &
+	@cd frontend && ( npm run dev > /tmp/loadtest-frontend.log 2>&1 & echo $$! > /tmp/loadtest-frontend.pid )
 	@until curl -sf http://localhost:3000 >/dev/null 2>&1; do sleep 1; done
 	@echo "Frontend is ready on :3000"
 
 loadtest-stop: ## Stop load test backend and frontend
-	@echo "Stopping backend..."
-	@kill $$(lsof -ti:8081) 2>/dev/null || true
-	@echo "Stopping frontend..."
-	@kill $$(lsof -ti:3000) 2>/dev/null || true
+	@if [ -f backend/tmp/loadtest-backend.pid ]; then \
+		echo "Stopping backend (PID: $$(cat backend/tmp/loadtest-backend.pid))..."; \
+		kill $$(cat backend/tmp/loadtest-backend.pid) 2>/dev/null || true; \
+		rm -f backend/tmp/loadtest-backend.pid; \
+	else \
+		echo "No backend PID file found; skipping backend stop."; \
+	fi
+	@if [ -f /tmp/loadtest-frontend.pid ]; then \
+		echo "Stopping frontend (PID: $$(cat /tmp/loadtest-frontend.pid))..."; \
+		kill $$(cat /tmp/loadtest-frontend.pid) 2>/dev/null || true; \
+		rm -f /tmp/loadtest-frontend.pid; \
+	else \
+		echo "No frontend PID file found; skipping frontend stop."; \
+	fi
 	@if [ -f backend/tmp/loadtest.log ]; then echo "Backend log: backend/tmp/loadtest.log"; fi
 
 loadtest: loadtest-start ## Run all load tests (starts/stops backend automatically)

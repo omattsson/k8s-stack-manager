@@ -1236,9 +1236,22 @@ func (h *InstanceHandler) ExtendTTL(c *gin.Context) {
 		return
 	}
 
+	// Authorization: only the owner or an admin may extend the TTL.
+	userID := middleware.GetUserIDFromContext(c)
+	role := middleware.GetRoleFromContext(c)
+	if inst.OwnerID != userID && role != "admin" {
+		c.JSON(http.StatusForbidden, gin.H{"error": "You are not allowed to modify this stack instance"})
+		return
+	}
+
 	var req extendTTLRequest
-	// Body is optional; ignore bind errors (defaults to zero value).
-	_ = c.ShouldBindJSON(&req)
+	// Body is optional — only bind if the client sent content.
+	if c.Request.ContentLength != 0 {
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request format"})
+			return
+		}
+	}
 
 	ttl := req.TTLMinutes
 	if ttl == 0 {

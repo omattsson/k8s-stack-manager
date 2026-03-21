@@ -105,9 +105,15 @@ const AccessUrls = ({ status }: AccessUrlsProps) => {
 
   if (entries.length === 0) return null;
 
-  const handleCopy = (text: string) => {
-    navigator.clipboard.writeText(text);
-    setCopied(true);
+  const [copyError, setCopyError] = useState(false);
+
+  const handleCopy = async (text: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+    } catch {
+      setCopyError(true);
+    }
   };
 
   return (
@@ -174,6 +180,12 @@ const AccessUrls = ({ status }: AccessUrlsProps) => {
         autoHideDuration={2000}
         onClose={() => setCopied(false)}
         message="Copied to clipboard"
+      />
+      <Snackbar
+        open={copyError}
+        autoHideDuration={3000}
+        onClose={() => setCopyError(false)}
+        message="Failed to copy to clipboard"
       />
     </Box>
   );

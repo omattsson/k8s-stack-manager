@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useMemo } from 'react';
+import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useWebSocket } from '../../hooks/useWebSocket';
 import type { WsMessage } from '../../hooks/useWebSocket';
@@ -80,26 +80,38 @@ const Dashboard = () => {
     fetchData();
   }, []);
 
-  // Phase 2: fetch status/URLs for running instances after the list is loaded
+  // Track which instance IDs we've already fetched status for
+  const fetchedStatusIdsRef = useRef<Set<string>>(new Set());
+
+  // Phase 2: fetch status/URLs for newly running/deploying instances
   useEffect(() => {
     const running = instances.filter(
       (i) => i.status === 'running' || i.status === 'deploying',
     );
-    if (running.length === 0) return;
+    const newRunning = running.filter((i) => !fetchedStatusIdsRef.current.has(i.id));
+    if (newRunning.length === 0) return;
+
+    // Mark as fetched immediately to avoid duplicate requests
+    for (const inst of newRunning) {
+      fetchedStatusIdsRef.current.add(inst.id);
+    }
+
     Promise.allSettled(
-      running.map(async (inst) => {
+      newRunning.map(async (inst) => {
         const st: NamespaceStatus = await instanceService.getStatus(inst.id);
         const url = getPrimaryUrl(st);
         return { id: inst.id, url };
       }),
     ).then((settled) => {
-      const urlMap: Record<string, string> = {};
+      const newUrls: Record<string, string> = {};
       for (const r of settled) {
         if (r.status === 'fulfilled' && r.value.url) {
-          urlMap[r.value.id] = r.value.url;
+          newUrls[r.value.id] = r.value.url;
         }
       }
-      setInstanceUrls(urlMap);
+      if (Object.keys(newUrls).length > 0) {
+        setInstanceUrls((prev) => ({ ...prev, ...newUrls }));
+      }
     });
   }, [instances]);
 

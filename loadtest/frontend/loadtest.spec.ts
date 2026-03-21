@@ -9,7 +9,7 @@
 //   - Application running: make dev
 //   - Seed data loaded: make seed
 
-import { test, expect } from '@playwright/test';
+import { test, expect, Page } from '@playwright/test';
 
 const BASE_URL = process.env.FRONTEND_URL || 'http://localhost:3000';
 const API_URL = process.env.API_URL || 'http://localhost:8081';
@@ -17,7 +17,7 @@ const USERNAME = process.env.ADMIN_USERNAME || 'admin';
 const PASSWORD = process.env.ADMIN_PASSWORD || 'admin';
 
 // Helper: login and store auth state
-async function loginUser(page: ReturnType<typeof test['info']> extends never ? never : Awaited<ReturnType<Parameters<typeof test>[1] extends (args: infer A, ...rest: unknown[]) => unknown ? () => A : never>['page']>, username = USERNAME, password = PASSWORD) {
+async function loginUser(page: Page, username = USERNAME, password = PASSWORD) {
   await page.goto(`${BASE_URL}/login`);
   await page.getByLabel(/username/i).fill(username);
   await page.getByLabel(/password/i).fill(password);
