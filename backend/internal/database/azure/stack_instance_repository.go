@@ -165,6 +165,27 @@ func (r *StackInstanceRepository) ListByOwner(ownerID string) ([]models.StackIns
 	return results, nil
 }
 
+func (r *StackInstanceRepository) FindByCluster(clusterID string) ([]models.StackInstance, error) {
+	ctx := context.Background()
+
+	escaped := strings.ReplaceAll(clusterID, "'", "''")
+	filter := "PartitionKey eq 'global' and ClusterID eq '" + escaped + "'"
+	pager := r.client.NewListEntitiesPager(&aztables.ListEntitiesOptions{
+		Filter: &filter,
+	})
+
+	entities, err := collectEntities(ctx, pager, nil)
+	if err != nil {
+		return nil, mapAzureError("find_by_cluster", err)
+	}
+
+	results := make([]models.StackInstance, 0, len(entities))
+	for _, e := range entities {
+		results = append(results, *stackInstanceFromEntity(e))
+	}
+	return results, nil
+}
+
 func stackInstanceToEntity(i *models.StackInstance) map[string]interface{} {
 	entity := map[string]interface{}{
 		"PartitionKey":      "global",
@@ -175,6 +196,7 @@ func stackInstanceToEntity(i *models.StackInstance) map[string]interface{} {
 		"Namespace":         i.Namespace,
 		"OwnerID":           i.OwnerID,
 		"Branch":            i.Branch,
+		"ClusterID":         i.ClusterID,
 		"Status":            i.Status,
 		"ErrorMessage":      i.ErrorMessage,
 		"CreatedAt":         i.CreatedAt.Format(time.RFC3339),
@@ -194,6 +216,7 @@ func stackInstanceFromEntity(e map[string]interface{}) *models.StackInstance {
 		Namespace:         getString(e, "Namespace"),
 		OwnerID:           getString(e, "OwnerID"),
 		Branch:            getString(e, "Branch"),
+		ClusterID:         getString(e, "ClusterID"),
 		Status:            getString(e, "Status"),
 		ErrorMessage:      getString(e, "ErrorMessage"),
 		CreatedAt:         parseTime(e, "CreatedAt"),

@@ -48,6 +48,7 @@ type integServer struct {
 	overrideRepo    *azure.ValueOverrideRepository
 	auditRepo       *azure.AuditLogRepository
 	apiKeyRepo      *azure.APIKeyRepository
+	clusterRepo     *azure.ClusterRepository
 }
 
 func newIntegServer(t *testing.T) *integServer {
@@ -73,6 +74,8 @@ func newIntegServer(t *testing.T) *integServer {
 	auditRepo, err := azure.NewAuditLogRepository(azAccountName, azAccountKey, azEndpoint, true)
 	require.NoError(t, err)
 	apiKeyRepo, err := azure.NewAPIKeyRepository(azAccountName, azAccountKey, azEndpoint, true)
+	require.NoError(t, err)
+	clusterRepo, err := azure.NewClusterRepository(azAccountName, azAccountKey, azEndpoint, true, "test-encryption-key-for-integ!!")
 	require.NoError(t, err)
 
 	authCfg := &config.AuthConfig{
@@ -117,6 +120,8 @@ func newIntegServer(t *testing.T) *integServer {
 		APIKeyHandler:     apiKeyHandler,
 		UserRepo:          userRepo,
 		APIKeyRepo:        apiKeyRepo,
+		ClusterRepo:       clusterRepo,
+		InstanceRepo:      instanceRepo,
 	})
 	t.Cleanup(func() { rl.Stop() })
 
@@ -131,6 +136,7 @@ func newIntegServer(t *testing.T) *integServer {
 		overrideRepo:    overrideRepo,
 		auditRepo:       auditRepo,
 		apiKeyRepo:      apiKeyRepo,
+		clusterRepo:     clusterRepo,
 	}
 }
 
@@ -831,5 +837,145 @@ func TestAPIIntegration_HealthEndpoints(t *testing.T) {
 	t.Run("health check returns 200", func(t *testing.T) {
 		w := s.do("GET", "/health", nil, "")
 		assert.Equal(t, http.StatusOK, w.Code)
+	})
+}
+
+// ---------------------------------------------------------------------------
+// TestAPIIntegration_ClusterLifecycle
+// ---------------------------------------------------------------------------
+
+func TestAPIIntegration_ClusterLifecycle(t *testing.T) {
+	s := newIntegServer(t)
+	adminToken := s.createAdminAndLogin(t)
+
+	var clusterID string
+	var secondClusterID string
+
+	t.Run("create cluster", func(t *testing.T) {
+		body := map[string]interface{}{
+			"name":            uniqueName("cluster"),
+			"description":     "integration test cluster",
+			"api_server_url":  "https://k8s.example.com:6443",
+			"kubeconfig_data": "apiVersion: v1\nkind: Config\nclusters: []",
+			"region":          "northeurope",
+		}
+		w := s.do("POST", "/api/v1/clusters", body, adminToken)
+		require.Equal(t, http.StatusCreated, w.Code, "create cluster: %s", w.Body.String())
+		resp := parseBody(t, w)
+		clusterID = resp["id"].(string)
+		assert.NotEmpty(t, clusterID)
+		assert.Equal(t, "integration test cluster", resp["description"])
+		assert.Equal(t, "https://k8s.example.com:6443", resp["api_server_url"])
+		assert.Equal(t, "northeurope", resp["region"])
+	})
+
+	t.Run("get cluster", func(t *testing.T) {
+		w := s.do("GET", "/api/v1/clusters/"+clusterID, nil, adminToken)
+		require.Equal(t, http.StatusOK, w.Code, "get cluster: %s", w.Body.String())
+		resp := parseBody(t, w)
+		assert.Equal(t, clusterID, resp["id"])
+		assert.Equal(t, "https://k8s.example.com:6443", resp["api_server_url"])
+		// kubeconfig_data must NOT be in the response (json:"-")
+		_, hasKubeconfig := resp["kubeconfig_data"]
+		assert.False(t, hasKubeconfig, "kubeconfig_data should not be in JSON response")
+		_, hasKubeconfigPath := resp["kubeconfig_path"]
+		assert.False(t, hasKubeconfigPath, "kubeconfig_path should not be in JSON response")
+	})
+
+	t.Run("list clusters includes created cluster", func(t *testing.T) {
+		w := s.do("GET", "/api/v1/clusters", nil, adminToken)
+		require.Equal(t, http.StatusOK, w.Code, "list clusters: %s", w.Body.String())
+		arr := parseArray(t, w)
+		found := false
+		for _, item := range arr {
+			m := item.(map[string]interface{})
+			if m["id"] == clusterID {
+				found = true
+				break
+			}
+		}
+		assert.True(t, found, "created cluster not found in list")
+	})
+
+	t.Run("update cluster", func(t *testing.T) {
+		body := map[string]interface{}{
+			"name":        uniqueName("updated-cluster"),
+			"description": "updated description",
+		}
+		w := s.do("PUT", "/api/v1/clusters/"+clusterID, body, adminToken)
+		require.Equal(t, http.StatusOK, w.Code, "update cluster: %s", w.Body.String())
+	})
+
+	t.Run("get updated cluster", func(t *testing.T) {
+		w := s.do("GET", "/api/v1/clusters/"+clusterID, nil, adminToken)
+		require.Equal(t, http.StatusOK, w.Code, "get updated cluster: %s", w.Body.String())
+		resp := parseBody(t, w)
+		assert.Equal(t, "updated description", resp["description"])
+	})
+
+	t.Run("set default cluster", func(t *testing.T) {
+		w := s.do("POST", "/api/v1/clusters/"+clusterID+"/default", nil, adminToken)
+		require.Equal(t, http.StatusOK, w.Code, "set default: %s", w.Body.String())
+
+		w = s.do("GET", "/api/v1/clusters/"+clusterID, nil, adminToken)
+		require.Equal(t, http.StatusOK, w.Code)
+		resp := parseBody(t, w)
+		assert.Equal(t, true, resp["is_default"])
+	})
+
+	t.Run("create second cluster", func(t *testing.T) {
+		body := map[string]interface{}{
+			"name":            uniqueName("cluster2"),
+			"description":     "second cluster",
+			"api_server_url":  "https://k8s2.example.com:6443",
+			"kubeconfig_data": "apiVersion: v1\nkind: Config\nclusters: []",
+			"region":          "westeurope",
+		}
+		w := s.do("POST", "/api/v1/clusters", body, adminToken)
+		require.Equal(t, http.StatusCreated, w.Code, "create second cluster: %s", w.Body.String())
+		resp := parseBody(t, w)
+		secondClusterID = resp["id"].(string)
+		assert.NotEmpty(t, secondClusterID)
+	})
+
+	t.Run("set default to second cluster removes first default", func(t *testing.T) {
+		w := s.do("POST", "/api/v1/clusters/"+secondClusterID+"/default", nil, adminToken)
+		require.Equal(t, http.StatusOK, w.Code, "set default second: %s", w.Body.String())
+
+		// First cluster should no longer be default
+		w = s.do("GET", "/api/v1/clusters/"+clusterID, nil, adminToken)
+		require.Equal(t, http.StatusOK, w.Code)
+		resp := parseBody(t, w)
+		assert.Equal(t, false, resp["is_default"])
+
+		// Second cluster should be default
+		w = s.do("GET", "/api/v1/clusters/"+secondClusterID, nil, adminToken)
+		require.Equal(t, http.StatusOK, w.Code)
+		resp = parseBody(t, w)
+		assert.Equal(t, true, resp["is_default"])
+	})
+
+	t.Run("delete cluster", func(t *testing.T) {
+		w := s.do("DELETE", "/api/v1/clusters/"+clusterID, nil, adminToken)
+		require.Equal(t, http.StatusNoContent, w.Code, "delete cluster: %s", w.Body.String())
+	})
+
+	t.Run("get deleted cluster returns 404", func(t *testing.T) {
+		w := s.do("GET", "/api/v1/clusters/"+clusterID, nil, adminToken)
+		assert.Equal(t, http.StatusNotFound, w.Code)
+	})
+
+	t.Run("create cluster without required fields returns 400", func(t *testing.T) {
+		body := map[string]interface{}{
+			"description": "missing required fields",
+		}
+		w := s.do("POST", "/api/v1/clusters", body, adminToken)
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+	})
+
+	// Clean up second cluster
+	t.Run("delete second cluster", func(t *testing.T) {
+		w := s.do("DELETE", "/api/v1/clusters/"+secondClusterID, nil, adminToken)
+		require.Equal(t, http.StatusNoContent, w.Code, "delete second cluster: %s", w.Body.String())
 	})
 }

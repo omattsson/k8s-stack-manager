@@ -123,6 +123,31 @@ func (v *ValueOverride) Validate() error {
 	return nil
 }
 
+// Validate implements model validation for Cluster.
+func (c *Cluster) Validate() error {
+	if c.Name == "" {
+		return errors.New("name is required")
+	}
+	if c.APIServerURL == "" {
+		return errors.New("api_server_url is required")
+	}
+	hasData := c.KubeconfigData != ""
+	hasPath := c.KubeconfigPath != ""
+	if hasData && hasPath {
+		return errors.New("only one of kubeconfig_data or kubeconfig_path must be set, not both")
+	}
+	if !hasData && !hasPath {
+		return errors.New("one of kubeconfig_data or kubeconfig_path is required")
+	}
+	switch c.HealthStatus {
+	case "", ClusterHealthy, ClusterDegraded, ClusterUnreachable:
+		// valid
+	default:
+		return fmt.Errorf("invalid health_status: %s", c.HealthStatus)
+	}
+	return nil
+}
+
 // Validate implements model validation for AuditLog.
 func (a *AuditLog) Validate() error {
 	if a.UserID == "" {

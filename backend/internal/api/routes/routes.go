@@ -3,6 +3,7 @@ package routes
 import (
 	"backend/internal/api/handlers"
 	"backend/internal/api/middleware"
+	"backend/internal/cluster"
 	"backend/internal/config"
 	"backend/internal/health"
 	"backend/internal/models"
@@ -34,6 +35,12 @@ type Deps struct {
 
 	// Admin handlers.
 	AdminHandler *handlers.AdminHandler
+
+	// Cluster management.
+	ClusterHandler *handlers.ClusterHandler
+	ClusterRepo    models.ClusterRepository
+	Registry       *cluster.Registry
+	InstanceRepo   models.StackInstanceRepository
 
 	// Repos needed by combined JWT+API-key auth middleware.
 	UserRepo   models.UserRepository
@@ -223,6 +230,25 @@ func SetupRoutes(router *gin.Engine, deps Deps) *handlers.RateLimiter {
 			{
 				adminGroup.GET("/orphaned-namespaces", deps.AdminHandler.ListOrphanedNamespaces)
 				adminGroup.DELETE("/orphaned-namespaces/:namespace", deps.AdminHandler.DeleteOrphanedNamespace)
+			}
+		}
+
+		// Cluster management
+		clusterHandler := deps.ClusterHandler
+		if clusterHandler == nil && deps.ClusterRepo != nil {
+			clusterHandler = handlers.NewClusterHandler(deps.ClusterRepo, deps.Registry, deps.InstanceRepo)
+		}
+		if clusterHandler != nil {
+			admin := middleware.RequireAdmin()
+			clusters := authed.Group("/clusters")
+			{
+				clusters.GET("", clusterHandler.ListClusters)
+				clusters.GET("/:id", clusterHandler.GetCluster)
+				clusters.POST("", admin, clusterHandler.CreateCluster)
+				clusters.PUT("/:id", admin, clusterHandler.UpdateCluster)
+				clusters.DELETE("/:id", admin, clusterHandler.DeleteCluster)
+				clusters.POST("/:id/test", admin, clusterHandler.TestClusterConnection)
+				clusters.POST("/:id/default", admin, clusterHandler.SetDefaultCluster)
 			}
 		}
 	}

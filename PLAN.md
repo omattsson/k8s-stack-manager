@@ -639,60 +639,546 @@ Optional enhancement to branch selection:
 
 ---
 
-## Phase 4: Value-Add Features
+## Phase 4: Multi-Cluster Support
 
-### Step 4.1 — Stack Comparison / Diff
+Phase 4 adds support for multiple Kubernetes clusters — the foundation for multi-team usage and environment separation.
+
+### Step 4.1 — Multi-Cluster Support
+
+The current architecture is hardcoded to a single kubeconfig — `k8s.NewClient(kubeconfigPath)` and `HelmClient` both take one kubeconfig path. Multi-cluster requires a cluster registry and per-operation cluster routing.
+
+**New model** — `Cluster`:
+
+| Field | Type | Notes |
+|-------|------|-------|
+| ID | string (UUID) | |
+| Name | string | Unique display name (e.g., "dev-aks-westeu", "staging-arc") |
+| Description | string | |
+| APIServerURL | string | K8s API server endpoint (for display/health checks) |
+| KubeconfigData | string | Encrypted kubeconfig content (stored encrypted at rest) |
+| KubeconfigPath | string | Alternative: path on server filesystem (for mounted secrets) |
+| IsDefault | bool | Default cluster for new instances (exactly one) |
+| Region | string | Geographic/logical grouping |
+| HealthStatus | string | healthy/degraded/unreachable (updated by health poller) |
+| MaxNamespaces | int | Capacity limit (0 = unlimited) |
+| CreatedAt | time.Time | |
+| UpdatedAt | time.Time | |
+
+**Architecture changes**:
+
+- **ClusterRegistry** — New package `backend/internal/cluster/` with a `Registry` that manages multiple `*k8s.Client` and `*HelmClient` instances keyed by cluster ID. Lazy-initializes clients on first use, caches them, and handles reconnection.
+- **StackInstance gets ClusterID** — Add `ClusterID string` field to `StackInstance`. When creating an instance, user picks a cluster (or uses the default). The deployer, k8s watcher, and admin handler all resolve the cluster ID to the correct k8s client/helm client.
+- **HelmClient per cluster** — `NewHelmClient()` already takes a kubeconfig path. The registry creates one `HelmClient` per cluster. `deployer.Manager` gets a `ClusterRegistry` instead of a single `*k8s.Client` + `HelmExecutor`.
+- **K8s Watcher per cluster** — The watcher polls all active clusters. `GetNamespaceStatus()` routes to the correct client by cluster ID.
+- **Kubeconfig security** — Kubeconfig data is encrypted at rest using AES-256-GCM with a server-side key (`KUBECONFIG_ENCRYPTION_KEY` env var). Never exposed via API — only cluster name, URL, health, and region are returned to clients.
+- **Health poller** — Background goroutine pings each cluster's API server periodically, updates `HealthStatus`, and broadcasts changes via WebSocket.
+
+**API additions** (`/api/v1/clusters`):
+
+| Method | Path | Description | Auth |
+|--------|------|-------------|------|
+| GET | `/` | List clusters (name, URL, region, health — no kubeconfig) | User |
+| POST | `/` | Register cluster (with kubeconfig data or path) | Admin |
+| GET | `/:id` | Cluster detail + resource summary | User |
+| PUT | `/:id` | Update cluster metadata/kubeconfig | Admin |
+| DELETE | `/:id` | Remove cluster (only if no running instances) | Admin |
+| POST | `/:id/test` | Test connectivity to cluster | Admin |
+| GET | `/:id/health` | Detailed cluster health (nodes, capacity) | DevOps/Admin |
+
+**Frontend changes**:
+
+- Cluster selector dropdown in instance create/edit form
+- Cluster health indicators in dashboard sidebar
+- Admin page: cluster management CRUD
+- Instance detail shows which cluster it's deployed to
+
+**Migration path**: Existing instances without `ClusterID` are assigned to a "default" cluster auto-created from the current `KUBECONFIG_PATH` env var on first startup.
+
+**Implementation order**:
+1. `Cluster` model + repository + migration
+2. `ClusterRegistry` package (client pool with lazy init)
+3. Refactor `deployer.Manager` and `k8s.Watcher` to accept registry
+4. Add `ClusterID` to `StackInstance` + migration
+5. Cluster CRUD handlers + routes
+6. Health poller background goroutine
+7. Frontend: cluster selector, admin page, health indicators
+8. Tests: registry unit tests, handler tests, migration test
+
+---
+
+## Phase 5: Developer Experience
+
+Features that make the daily developer workflow faster — deploy branches, see results, clean up automatically.
+
+### Step 5.1 — Per-Chart Branch Override
+
+Currently `StackInstance.Branch` is a single field applied to all charts. A developer working on one microservice wants `feature/my-branch` for that service and `master` for everything else.
+
+**Model changes**:
+
+- New model `ChartBranchOverride`:
+
+| Field | Type | Notes |
+|-------|------|-------|
+| ID | string (UUID) | |
+| StackInstanceID | string | FK → StackInstance |
+| ChartConfigID | string | FK → ChartConfig |
+| Branch | string | Overrides instance-level branch for this chart |
+| UpdatedAt | time.Time | |
+
+**Values generation change**: `ValuesGenerator` already substitutes `{{.Branch}}`. Change to per-chart: if a `ChartBranchOverride` exists for the chart, use it; otherwise fall back to `StackInstance.Branch`.
+
+**API additions**:
+
+| Method | Path | Description | Auth |
+|--------|------|-------------|------|
+| GET | `/api/v1/stack-instances/:id/branches` | Get all branch overrides for instance | User |
+| PUT | `/api/v1/stack-instances/:id/branches/:chartId` | Set branch for specific chart | User |
+| DELETE | `/api/v1/stack-instances/:id/branches/:chartId` | Reset to instance default | User |
+
+**Frontend changes**:
+
+- Instance detail page: each chart row shows its effective branch
+- Branch selector per chart (editable inline or in a popover)
+- Visual indicator when a chart uses a non-default branch
+
+**Implementation order**:
+1. `ChartBranchOverride` model + repository + migration
+2. Update `ValuesGenerator` to accept per-chart branches
+3. Handler + routes for branch overrides
+4. Update deploy handler to pass per-chart branches to values generation
+5. Frontend: per-chart branch selector
+6. Tests
+
+### Step 5.2 — Instance TTL / Auto-Expiry
+
+Developers spin up stacks for demos and forget about them. TTL prevents stale stacks from consuming cluster resources.
+
+**Model changes**:
+
+- `StackInstance` gets new fields: `ExpiresAt *time.Time`, `TTLMinutes int` (0 = no expiry)
+- Default TTL configurable per-cluster or globally via `DEFAULT_INSTANCE_TTL_MINUTES` env var
+
+**Background worker**: New `ttl.Reaper` goroutine that runs every minute:
+1. Queries instances where `ExpiresAt < now` and `Status` is `running`
+2. Calls `deployer.Manager.StopWithCharts()` for each expired instance
+3. Updates status to `stopped` with message "Expired (TTL)"
+4. Broadcasts WebSocket notification
+
+**API changes**:
+
+- Create/update instance accepts `ttl_minutes` field
+- `GET /api/v1/stack-instances/:id` returns `expires_at` and `ttl_minutes`
+- `POST /api/v1/stack-instances/:id/extend` — extend TTL by configured increment
+
+**Frontend changes**:
+
+- TTL selector when creating/deploying an instance (e.g., "4h", "8h", "24h", "No expiry")
+- Countdown badge on running instances approaching expiry
+- "Extend" button on instance detail and dashboard cards
+- Toast notification 30 minutes before expiry (via WebSocket)
+
+### Step 5.3 — Service URL / Ingress Display
+
+After deploy, the developer needs to know how to reach their stack without running `kubectl`.
+
+**Implementation**: Extend `k8s.GetNamespaceStatus()` to include:
+- Ingress resources with host/path rules and URLs
+- Services of type `LoadBalancer` with external IPs
+- Services of type `NodePort` with node port numbers
+- Constructed access URLs based on ingress rules
+
+**Model changes**:
+
+- `ServiceInfo` in `k8s/status.go` gets: `ExternalIP string`, `NodePort int32`, `IngressHosts []string`
+- New `IngressInfo` struct: `Host`, `Path`, `TLS bool`, `URL string`
+- `NamespaceStatus` gets `Ingresses []IngressInfo`
+
+**API changes**: Existing `GET /api/v1/stack-instances/:id/status` response extended with ingress and URL data. No new endpoints needed.
+
+**Frontend changes**:
+
+- Instance detail "Access" section: clickable URLs for each exposed service
+- Dashboard cards show primary URL as a quick-link
+- Copy-to-clipboard for URLs and `kubectl port-forward` commands
+
+### Step 5.4 — Quick Deploy (One-Click Flow)
+
+Reduce the steps from "I want to test my branch" to a running stack.
+
+**New API endpoint**:
+
+| Method | Path | Description | Auth |
+|--------|------|-------------|------|
+| POST | `/api/v1/quick-deploy` | Create instance from template + deploy in one step | User |
+
+**Request body**:
+```json
+{
+  "template_id": "...",
+  "branch": "feature/my-branch",
+  "cluster_id": "...",       // optional, uses default
+  "ttl_minutes": 240,        // optional, uses default
+  "name": "my-feature-test", // optional, auto-generated from branch
+  "chart_branches": {        // optional, per-chart overrides
+    "chart-config-id": "other-branch"
+  }
+}
+```
+
+**Backend flow**:
+1. Instantiate template → create definition (transient, linked to template)
+2. Create instance from definition with branch + optional per-chart overrides
+3. Trigger deploy immediately
+4. Return instance ID + log ID (HTTP 202)
+
+**Frontend changes**:
+
+- "Quick Deploy" button on template gallery cards
+- Streamlined modal: pick template → enter branch → optional cluster/TTL → deploy
+- Redirects to instance detail page showing live deploy log
+
+### Step 5.5 — Favorites & Recent Stacks
+
+Quick access to frequently-used definitions and instances.
+
+**Model changes**:
+
+- New model `UserFavorite`: `UserID`, `EntityType` (definition/instance/template), `EntityID`, `CreatedAt`
+- Recent stacks: no model needed — query instances by `OwnerID` + `ORDER BY updated_at DESC LIMIT 5`
+
+**API additions**:
+
+| Method | Path | Description | Auth |
+|--------|------|-------------|------|
+| GET | `/api/v1/favorites` | List user's favorites | User |
+| POST | `/api/v1/favorites` | Add favorite | User |
+| DELETE | `/api/v1/favorites/:id` | Remove favorite | User |
+| GET | `/api/v1/stack-instances/recent` | Recently used instances (top 5) | User |
+
+**Frontend changes**:
+
+- Star/heart toggle on cards (definitions, instances, templates)
+- Dashboard: "My Favorites" and "Recent" sections above the full list
+- Persisted via API, not localStorage (works across devices)
+
+---
+
+## Phase 6: Operations & Observability
+
+Features for DevOps and admins to manage the platform at scale.
+
+### Step 6.1 — Cluster Health Dashboard
+
+DevOps needs a cluster-wide view beyond per-stack status.
+
+**New K8s status methods** in `k8s/status.go`:
+- `GetClusterSummary()` — node count, total/allocatable CPU/memory, namespace count
+- `GetNodeStatuses()` — per-node: conditions, capacity, allocatable, pods running
+
+**API additions** (`/api/v1/clusters/:id`):
+
+| Method | Path | Description | Auth |
+|--------|------|-------------|------|
+| GET | `/health/summary` | Node count, total CPU/mem, namespace count | DevOps/Admin |
+| GET | `/health/nodes` | Per-node status detail | DevOps/Admin |
+| GET | `/namespaces` | All stack-* namespaces with resource usage | DevOps/Admin |
+
+**Frontend changes**:
+
+- New "Cluster Health" page (DevOps/Admin only)
+- Per-cluster cards: node count, CPU/memory utilization bars, instance count
+- Node list with status indicators (Ready, NotReady, MemoryPressure, DiskPressure)
+- Namespace table with resource consumption per stack
+
+### Step 6.2 — Namespace Cleanup Policies
+
+Beyond manual orphan detection — automated scheduled cleanup.
+
+**New model** — `CleanupPolicy`:
+
+| Field | Type | Notes |
+|-------|------|-------|
+| ID | string (UUID) | |
+| Name | string | e.g., "Auto-stop idle stacks" |
+| ClusterID | string | FK → Cluster (or "all") |
+| Action | string | "stop" / "clean" / "delete" |
+| Condition | string | "idle_days:7" / "status:stopped,age_days:14" / "ttl_expired" |
+| Schedule | string | Cron expression (e.g., "0 2 * * *" = daily 2am) |
+| Enabled | bool | |
+| LastRunAt | *time.Time | |
+| CreatedAt | time.Time | |
+
+**Background scheduler**: Uses a cron-style runner (e.g., `robfig/cron/v3`) to evaluate policies on schedule. Each policy run:
+1. Queries instances matching the condition on the target cluster(s)
+2. Executes the action (stop/clean/delete)
+3. Creates audit log entries for each affected instance
+4. Updates `LastRunAt`
+
+**API additions** (`/api/v1/admin/cleanup-policies`):
+
+| Method | Path | Description | Auth |
+|--------|------|-------------|------|
+| GET | `/` | List cleanup policies | Admin |
+| POST | `/` | Create policy | Admin |
+| PUT | `/:id` | Update policy | Admin |
+| DELETE | `/:id` | Delete policy | Admin |
+| POST | `/:id/run` | Trigger policy manually (dry-run option) | Admin |
+
+### Step 6.3 — Template Usage Analytics
+
+Help DevOps understand which templates are effective and which charts cause problems.
+
+**Implementation**: Aggregation queries over existing data — no new models needed.
+
+- **Template popularity**: Count of definitions derived from each template
+- **Deploy success rate**: Count of success/error deployment logs per template/chart
+- **Most-used charts**: Frequency across all definitions
+- **Failure hotspots**: Charts with highest error rate in deployments
+
+**API additions** (`/api/v1/analytics`):
+
+| Method | Path | Description | Auth |
+|--------|------|-------------|------|
+| GET | `/templates` | Template usage stats (instance count, deploy success rate) | DevOps/Admin |
+| GET | `/charts` | Chart deploy stats (success/failure count, avg deploy time) | DevOps/Admin |
+| GET | `/users` | Per-user instance count and resource usage | Admin |
+
+**Frontend changes**:
+
+- Analytics tab on template detail page (usage count, success rate, etc.)
+- Admin dashboard: charts showing template adoption and deploy health over time
+
+### Step 6.4 — Shared Values & Environment Variables
+
+Common values (registry URLs, database endpoints, monitoring config) that apply across all stacks in a cluster, maintained in one place instead of duplicated per template.
+
+**New model** — `SharedValues`:
+
+| Field | Type | Notes |
+|-------|------|-------|
+| ID | string (UUID) | |
+| ClusterID | string | FK → Cluster (or "global") |
+| Name | string | e.g., "registry-config", "monitoring-defaults" |
+| Description | string | |
+| Values | string | YAML content |
+| Priority | int | Merge order (lower = applied first, overridden by higher) |
+| CreatedAt | time.Time | |
+| UpdatedAt | time.Time | |
+
+**Values merge order** (lowest to highest priority):
+1. Shared values (by priority within cluster)
+2. Template default values
+3. Template locked values (cannot be overridden by anything below)
+4. Definition default values
+5. Instance value overrides
+
+**API additions** (`/api/v1/clusters/:id/shared-values`):
+
+| Method | Path | Description | Auth |
+|--------|------|-------------|------|
+| GET | `/` | List shared values for cluster | DevOps/Admin |
+| POST | `/` | Create shared values set | Admin |
+| PUT | `/:valueId` | Update shared values | Admin |
+| DELETE | `/:valueId` | Delete shared values set | Admin |
+
+### Step 6.5 — Audit Log Export & Alerting
+
+Enterprise audit requirements — export to external systems and alert on anomalies.
+
+**Export**: New endpoint `GET /api/v1/audit-logs/export?format=csv&from=...&to=...` returns audit logs as CSV or JSON download. Supports same filters as the list endpoint.
+
+**Webhook alerting**: New model `AuditWebhook` — URL, events filter, secret for HMAC signature. On matching audit events, POST the event payload to the configured URL (async, best-effort with retry). Supports Slack-compatible webhook format.
+
+**API additions**:
+
+| Method | Path | Description | Auth |
+|--------|------|-------------|------|
+| GET | `/api/v1/audit-logs/export` | Download audit logs as CSV/JSON | Admin |
+| GET | `/api/v1/admin/webhooks` | List configured webhooks | Admin |
+| POST | `/api/v1/admin/webhooks` | Create webhook | Admin |
+| DELETE | `/api/v1/admin/webhooks/:id` | Delete webhook | Admin |
+| POST | `/api/v1/admin/webhooks/:id/test` | Send test event | Admin |
+
+---
+
+## Phase 7: Polish & Ecosystem
+
+### Step 7.1 — Stack Comparison / Diff
 
 - Compare two stack instances side-by-side
 - Per-chart YAML diff with syntax highlighting
 - Show which values differ from definition defaults
 - Useful for debugging "why does my stack behave differently?"
 
-### Step 4.2 — ~~Stack Templates & Presets~~ (Promoted to Core)
+### Step 7.2 — Resource Quotas
 
-> **This feature has been promoted to Phase 1 (backend) and Phase 2 (frontend).**
-> See: Step 1.1 (StackTemplate + TemplateChartConfig models), Step 1.2 (template repos),
-> Step 1.3 (template API endpoints), Step 2.2 (Template Gallery/Builder/Instantiate pages).
->
-> Remaining **Phase 4 enhancements** for templates:
-> - Template versioning with diff between versions
-> - Template upgrade workflow: detect newer template version, show diff, one-click upgrade
-> - Template marketplace: share templates across organizations
+Important for shared clusters:
 
-### Step 4.3 — Resource Quotas
-
-Important for shared cluster:
-
-- Admin-configurable per-namespace resource limits (CPU, memory)
-- Enforce maximum stacks per user (configurable)
+- Admin-configurable per-namespace resource limits (CPU, memory) via K8s `ResourceQuota` and `LimitRange`
+- Enforce maximum stacks per user (configurable per cluster)
 - Warning UI when approaching limits
-- Dashboard widget showing cluster utilization
+- Dashboard widget showing cluster utilization vs. quotas
 
-### Step 4.4 — Notifications
+### Step 7.3 — Notifications
 
-- WebSocket-based toasts for deployment status changes
-- Notification center (bell icon) with unread count
+- WebSocket-based toasts for deployment status changes (already partially implemented via `deployment.status` messages)
+- Notification center (bell icon) with unread count and notification history
 - Per-user notification preferences (which events to notify)
-- Optional webhook/Slack integration endpoint for external notifications
+- Optional webhook/Slack integration endpoint for external notifications (shares infra with Step 6.5 webhooks)
 
-### Step 4.5 — Bulk Operations
+### Step 7.4 — Bulk Operations
 
 - Multi-select stacks on dashboard
-- Bulk start/stop/delete with confirmation
+- Bulk start/stop/delete with confirmation dialog
 - "Cleanup" button: delete all stopped stacks older than N days
-- Scheduled cleanup via cron-style background job
+- Integrates with cleanup policies from Step 6.2 for scheduled automation
 
-### Step 4.6 — Environment Promotion
-
-- Promote a stack instance's configuration from dev → staging → production
-- Diff values between environments before promotion
-- Approval workflow for production promotions (admin-only)
-
-### Step 4.7 — Import/Export
+### Step 7.5 — Import/Export
 
 - Export stack definition + all chart configs as a portable JSON/YAML bundle
 - Import bundle to recreate stack definition in another environment
 - Useful for sharing configurations across organizations
+- Include per-chart branch overrides and value overrides in export
+
+### Step 7.6 — Template Versioning & Upgrades
+
+- Template versioning with diff between versions
+- Template upgrade workflow: detect newer template version, show diff, one-click upgrade for derived definitions
+- Template marketplace: share templates across organizations (optional)
+
+---
+
+## Phase 8: External Authentication (OIDC / Entra ID)
+
+The current auth is username/password with bcrypt hashing and JWT tokens (`middleware/auth.go`). External SSO extends this without replacing it — local accounts remain available as fallback. This is the last phase because the existing JWT auth works well for internal teams; OIDC is needed when onboarding external users or enforcing corporate SSO policies.
+
+**Design**: OpenID Connect (OIDC) — works with Entra ID (Azure AD), Okta, Google Workspace, Keycloak, and any OIDC-compliant provider. The backend is the OIDC Relying Party; the frontend initiates the Authorization Code Flow with PKCE.
+
+### Step 8.1 — OIDC Backend
+
+**New config** — `OIDCConfig`:
+
+```go
+type OIDCConfig struct {
+    Enabled      bool   // OIDC_ENABLED (default: false)
+    ProviderURL  string // OIDC_PROVIDER_URL (e.g., https://login.microsoftonline.com/{tenant}/v2.0)
+    ClientID     string // OIDC_CLIENT_ID
+    ClientSecret string // OIDC_CLIENT_SECRET (empty for public clients with PKCE)
+    RedirectURL  string // OIDC_REDIRECT_URL (e.g., https://app.example.com/auth/callback)
+    Scopes       string // OIDC_SCOPES (default: "openid profile email")
+    RoleClaim    string // OIDC_ROLE_CLAIM (default: "roles" — claim path for role mapping)
+    AdminRoles   string // OIDC_ADMIN_ROLES (comma-sep, e.g., "k8s-stack-admin")
+    DevOpsRoles  string // OIDC_DEVOPS_ROLES (comma-sep, e.g., "k8s-stack-devops")
+    AutoProvision bool  // OIDC_AUTO_PROVISION (default: true — create user on first login)
+    LocalAuth    bool   // OIDC_LOCAL_AUTH (default: true — keep local login available)
+}
+```
+
+**Auth flow (Authorization Code with PKCE)**:
+
+1. Frontend calls `GET /api/v1/auth/oidc/authorize` → backend returns redirect URL with PKCE `code_challenge` and `state` nonce (stored server-side with short TTL)
+2. Browser redirects to IdP login page
+3. IdP redirects back to `GET /api/v1/auth/oidc/callback?code=...&state=...`
+4. Backend exchanges code for tokens at IdP's token endpoint
+5. Backend validates ID token, extracts claims (sub, email, name, roles)
+6. Backend provisions or updates the local `User` record (JIT provisioning)
+7. Backend maps IdP roles → app roles (admin/devops/user) via configured claim + role mappings
+8. Backend issues a local JWT (same format as today) and redirects to frontend with token
+
+**Model changes**:
+
+- `User` gets new fields: `AuthProvider string` ("local" or "oidc"), `ExternalID string` (IdP subject claim), `Email string`
+- New model `AuthState` (short-lived, for CSRF/replay protection): `State string`, `CodeVerifier string`, `ExpiresAt time.Time`
+
+**API additions** (`/api/v1/auth`):
+
+| Method | Path | Description | Auth |
+|--------|------|-------------|------|
+| GET | `/oidc/authorize` | Start OIDC flow, return redirect URL | None |
+| GET | `/oidc/callback` | Exchange code, provision user, return JWT | None |
+| GET | `/oidc/config` | Public OIDC config (enabled, provider name) for frontend | None |
+
+**Security considerations**:
+
+- PKCE prevents authorization code interception (mandatory even with client secret)
+- State parameter prevents CSRF on the callback
+- ID token signature verified against IdP's JWKS endpoint
+- Nonce in ID token prevents replay attacks
+- Token exchange happens server-side — authorization code never processed in browser
+- Auto-provisioned users get "user" role unless IdP roles match configured admin/devops mappings
+
+### Step 8.2 — OIDC Frontend
+
+**Frontend changes**:
+
+- Login page shows "Sign in with [Provider Name]" button when OIDC is enabled
+- Local login form shown when `LocalAuth` is true (side-by-side or tabbed)
+- New route `/auth/callback` to receive the redirect and store the JWT
+- Auth context updated to handle both flows
+
+**Implementation order**:
+1. `OIDCConfig` in config.go + env var loading
+2. OIDC provider package (`backend/internal/auth/oidc.go`) — uses `coreos/go-oidc/v3` library
+3. User model changes + migration (add `AuthProvider`, `ExternalID`, `Email`)
+4. Auth state storage (in-memory with TTL or Azure Table with short partition expiry)
+5. OIDC handlers (authorize, callback, config)
+6. Update `AuthRequired` middleware to continue accepting local JWTs unchanged
+7. Frontend: login page OIDC button, callback route, auth context
+8. Tests: mock OIDC provider, token exchange, user provisioning, role mapping
+
+---
+
+## Implementation Order — Phases 4–8
+
+### Dependency graph
+
+```
+Phase 4.1 (Multi-Cluster) ──────────────────────────────────────────────┐
+  └─ Phase 5.2 (Instance TTL) requires cluster-aware reaper            │
+  └─ Phase 6.1 (Cluster Health) requires cluster registry              │
+  └─ Phase 6.2 (Cleanup Policies) requires cluster-aware scheduler     │
+  └─ Phase 6.4 (Shared Values) requires cluster scoping                │
+                                                                        │
+Phase 5.1 (Per-Chart Branch) ── independent, no cluster dependency      │
+Phase 5.3 (Service URLs) ── extends existing k8s status, minimal deps  │
+Phase 5.4 (Quick Deploy) ── depends on 5.1 (per-chart branch)          │
+Phase 5.5 (Favorites) ── independent, pure CRUD                        │
+                                                                        │
+Phase 6.3 (Analytics) ── independent, read-only aggregation             │
+Phase 6.5 (Audit Export) ── independent                                 │
+                                                                        │
+Phase 7.* ── all depend on phases 4–6 being stable                     │
+                                                                        │
+Phase 8 (OIDC Auth) ── fully independent, no deps on other phases      │
+```
+
+### Recommended execution order
+
+**Wave 1** (foundation — do first, cluster features depend on this):
+1. **4.1 Multi-Cluster** — Cluster model, registry, refactor deployer/k8s client
+
+**Wave 2** (developer experience — high daily impact):
+2. **5.1 Per-Chart Branch Override** — Unblocks the core "test my branch" use case
+3. **5.3 Service URL Display** — Eliminates `kubectl` after deploy
+4. **5.2 Instance TTL** — Prevents stale stacks on shared clusters
+
+**Wave 3** (developer convenience):
+5. **5.4 Quick Deploy** — Depends on 5.1
+6. **5.5 Favorites & Recent**
+
+**Wave 4** (operations — DevOps/admin tooling):
+7. **6.1 Cluster Health Dashboard**
+8. **6.2 Cleanup Policies**
+9. **6.4 Shared Values**
+10. **6.3 Analytics**
+11. **6.5 Audit Export & Webhooks**
+
+**Wave 5** (polish):
+12. **7.1–7.6** in any order based on demand
+
+**Wave 6** (enterprise auth — when corporate SSO is required):
+13. **8.1–8.2 OIDC Auth** — Entra ID / Okta / Keycloak integration
 
 ---
 
@@ -701,12 +1187,13 @@ Important for shared cluster:
 | Agent | Primary Phase | Steps |
 |-------|--------------|-------|
 | Orchestrator | All | Coordinates multi-step features |
-| Data Layer | Phase 1 | 1.1 (models incl. templates), 1.2 (repositories incl. template repos) |
-| Backend API | Phase 1 | 1.3 (endpoints incl. template CRUD + instantiate), 1.4 (middleware incl. devops role) |
+| Data Layer | Phase 1, 4 | 1.1 (models incl. templates), 1.2 (repositories), 4.1 (Cluster model/repo), 8.1 (User model changes) |
+| Backend API | Phase 1, 4–6, 8 | 1.3 (endpoints), 1.4 (middleware), 4.1 (cluster API), 5.x (dev features), 6.x (ops APIs), 8.1 (OIDC handlers) |
 | Git Provider | Phase 1 | 1.6 (AzDO + GitLab integration) |
-| Helm Values | Phase 1, 3 | 1.5 (generation with locked values), 3.1 (deployment) |
-| Frontend API | Phase 2 | 2.1 (auth), services for all endpoints incl. templates |
-| Frontend UI | Phase 2 | 2.2–2.6 (all pages: template gallery/builder, definitions, instances, audit) |
+| Helm Values | Phase 1, 3, 5 | 1.5 (generation), 3.1 (deployment), 5.1 (per-chart branches), 6.4 (shared values merge) |
+| Frontend API | Phase 2, 5, 6, 8 | 2.1 (auth), 5.x (dev UX), 6.x (admin pages), 8.2 (OIDC login) |
+| Frontend UI | Phase 2, 5–8 | 2.2–2.6 (core pages), 5.x (dev features), 6.1 (cluster health), 7.x (polish), 8.2 (OIDC login) |
+| DevOps Engineer | Phase 4 | 4.1 (cluster registry, kubeconfig security) |
 | Test Writer | All | Tests after each feature is built |
 
 ## Implementation Order

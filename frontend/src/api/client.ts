@@ -23,6 +23,10 @@ import type {
   DeploymentLog,
   NamespaceStatus,
   OrphanedNamespace,
+  Cluster,
+  CreateClusterRequest,
+  UpdateClusterRequest,
+  ClusterTestResult,
 } from '../types';
 
 const api = axios.create(axiosConfig);
@@ -517,6 +521,71 @@ export const adminService = {
       await api.delete(`/api/v1/admin/orphaned-namespaces/${namespace}`);
     } catch (error) {
       console.error('Failed to delete orphaned namespace:', error);
+      throw error;
+    }
+  },
+};
+
+export const clusterService = {
+  list: async (): Promise<Cluster[]> => {
+    try {
+      const response = await api.get('/api/v1/clusters');
+      return response.data;
+    } catch (error) {
+      console.error('Failed to fetch clusters:', error);
+      throw error;
+    }
+  },
+  get: async (id: string): Promise<Cluster> => {
+    try {
+      const response = await api.get(`/api/v1/clusters/${id}`);
+      return response.data;
+    } catch (error) {
+      console.error('Failed to fetch cluster:', error);
+      throw error;
+    }
+  },
+  create: async (data: CreateClusterRequest): Promise<Cluster> => {
+    try {
+      const response = await api.post('/api/v1/clusters', data);
+      return response.data;
+    } catch (error) {
+      console.error('Failed to create cluster:', error);
+      throw error;
+    }
+  },
+  update: async (id: string, data: UpdateClusterRequest): Promise<Cluster> => {
+    try {
+      const response = await api.put(`/api/v1/clusters/${id}`, data);
+      return response.data;
+    } catch (error) {
+      console.error('Failed to update cluster:', error);
+      throw error;
+    }
+  },
+  delete: async (id: string): Promise<void> => {
+    try {
+      await api.delete(`/api/v1/clusters/${id}`);
+    } catch (error) {
+      console.error('Failed to delete cluster:', error);
+      throw error;
+    }
+  },
+  testConnection: async (id: string): Promise<ClusterTestResult> => {
+    try {
+      const response = await api.post(`/api/v1/clusters/${id}/test`);
+      return response.data;
+    } catch (error) {
+      console.error('Failed to test cluster connection:', error);
+      throw error;
+    }
+  },
+  setDefault: async (id: string): Promise<Cluster> => {
+    try {
+      const response = await api.post(`/api/v1/clusters/${id}/default`);
+      return response.data;
+    } catch (error) {
+      console.error('Failed to set default cluster:', error);
       throw error;
     }
   },

@@ -10,6 +10,12 @@ import (
 	"backend/internal/websocket"
 )
 
+// ClientProvider resolves a k8s Client for a given cluster ID.
+// When clusterID is empty, it should return the default cluster's client.
+type ClientProvider interface {
+	GetK8sClient(clusterID string) (*Client, error)
+}
+
 // statusPayload is the WebSocket message payload for status broadcasts.
 type statusPayload struct {
 	InstanceID      string           `json:"instance_id"`
@@ -20,12 +26,12 @@ type statusPayload struct {
 // Watcher periodically polls Kubernetes for namespace status and broadcasts
 // changes via WebSocket.
 type Watcher struct {
-	client       *Client
-	instanceRepo models.StackInstanceRepository
-	hub          websocket.BroadcastSender
-	interval     time.Duration
-	cancel       context.CancelFunc
-	wg           sync.WaitGroup
+	clientProvider ClientProvider
+	instanceRepo   models.StackInstanceRepository
+	hub            websocket.BroadcastSender
+	interval       time.Duration
+	cancel         context.CancelFunc
+	wg             sync.WaitGroup
 
 	// mu protects lastStatus.
 	mu         sync.RWMutex
@@ -34,17 +40,17 @@ type Watcher struct {
 
 // NewWatcher creates a new status watcher.
 func NewWatcher(
-	client *Client,
+	provider ClientProvider,
 	instanceRepo models.StackInstanceRepository,
 	hub websocket.BroadcastSender,
 	interval time.Duration,
 ) *Watcher {
 	return &Watcher{
-		client:       client,
-		instanceRepo: instanceRepo,
-		hub:          hub,
-		interval:     interval,
-		lastStatus:   make(map[string]*NamespaceStatus),
+		clientProvider: provider,
+		instanceRepo:   instanceRepo,
+		hub:            hub,
+		interval:       interval,
+		lastStatus:     make(map[string]*NamespaceStatus),
 	}
 }
 
@@ -114,9 +120,20 @@ func (w *Watcher) poll(ctx context.Context) {
 			continue
 		}
 
+		// Resolve the k8s client for this instance's cluster.
+		client, clientErr := w.clientProvider.GetK8sClient(inst.ClusterID)
+		if clientErr != nil {
+			slog.Warn("Failed to get k8s client for instance",
+				"instance_id", inst.ID,
+				"cluster_id", inst.ClusterID,
+				"error", clientErr,
+			)
+			continue
+		}
+
 		// Use a per-namespace timeout to avoid one slow check blocking others.
 		checkCtx, checkCancel := context.WithTimeout(ctx, 5*time.Second)
-		nsStatus, err := w.client.GetNamespaceStatus(checkCtx, inst.Namespace)
+		nsStatus, err := client.GetNamespaceStatus(checkCtx, inst.Namespace)
 		checkCancel()
 
 		if err != nil {

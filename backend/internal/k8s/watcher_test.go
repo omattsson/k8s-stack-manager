@@ -98,6 +98,21 @@ func (m *mockInstanceRepo) ListByOwner(_ string) ([]models.StackInstance, error)
 	return m.List()
 }
 
+func (m *mockInstanceRepo) FindByCluster(clusterID string) ([]models.StackInstance, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.listErr != nil {
+		return nil, m.listErr
+	}
+	var out []models.StackInstance
+	for _, inst := range m.instances {
+		if inst.ClusterID == clusterID {
+			out = append(out, *inst)
+		}
+	}
+	return out, nil
+}
+
 func (m *mockInstanceRepo) getStatus(id string) string {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -135,6 +150,19 @@ func (m *mockBroadcaster) getMessages() [][]byte {
 	return out
 }
 
+// mockClientProvider implements ClientProvider for tests.
+type mockClientProvider struct {
+	client *Client
+	err    error
+}
+
+func (m *mockClientProvider) GetK8sClient(_ string) (*Client, error) {
+	if m.err != nil {
+		return nil, m.err
+	}
+	return m.client, nil
+}
+
 // ---- tests ----
 
 func TestNewWatcher(t *testing.T) {
@@ -146,10 +174,10 @@ func TestNewWatcher(t *testing.T) {
 	hub := &mockBroadcaster{}
 	interval := 30 * time.Second
 
-	w := NewWatcher(client, repo, hub, interval)
+	w := NewWatcher(&mockClientProvider{client: client}, repo, hub, interval)
 
 	assert.NotNil(t, w)
-	assert.Equal(t, client, w.client)
+	assert.NotNil(t, w.clientProvider)
 	assert.Equal(t, interval, w.interval)
 	assert.NotNil(t, w.lastStatus)
 	assert.Empty(t, w.lastStatus)
@@ -162,7 +190,7 @@ func TestNewWatcher_NilHub(t *testing.T) {
 	client := NewClientFromInterface(cs)
 	repo := newMockInstanceRepo()
 
-	w := NewWatcher(client, repo, nil, 10*time.Second)
+	w := NewWatcher(&mockClientProvider{client: client}, repo, nil, 10*time.Second)
 	assert.NotNil(t, w)
 	assert.Nil(t, w.hub)
 }
@@ -175,7 +203,7 @@ func TestWatcherStartStop(t *testing.T) {
 	repo := newMockInstanceRepo()
 	hub := &mockBroadcaster{}
 
-	w := NewWatcher(client, repo, hub, 50*time.Millisecond)
+	w := NewWatcher(&mockClientProvider{client: client}, repo, hub, 50*time.Millisecond)
 
 	ctx := context.Background()
 	w.Start(ctx)
@@ -194,7 +222,7 @@ func TestWatcherStartStop_Idempotent(t *testing.T) {
 	client := NewClientFromInterface(cs)
 	repo := newMockInstanceRepo()
 
-	w := NewWatcher(client, repo, nil, 50*time.Millisecond)
+	w := NewWatcher(&mockClientProvider{client: client}, repo, nil, 50*time.Millisecond)
 
 	ctx := context.Background()
 	w.Start(ctx)
@@ -212,7 +240,7 @@ func TestWatcherGetStatus_NoCache(t *testing.T) {
 	client := NewClientFromInterface(cs)
 	repo := newMockInstanceRepo()
 
-	w := NewWatcher(client, repo, nil, 1*time.Second)
+	w := NewWatcher(&mockClientProvider{client: client}, repo, nil, 1*time.Second)
 
 	status, ok := w.GetStatus("nonexistent")
 	assert.False(t, ok)
@@ -255,7 +283,7 @@ func TestWatcherGetStatus_ReturnsCachedStatus(t *testing.T) {
 	}
 	require.NoError(t, repo.Create(inst))
 
-	w := NewWatcher(client, repo, nil, 100*time.Millisecond)
+	w := NewWatcher(&mockClientProvider{client: client}, repo, nil, 100*time.Millisecond)
 
 	ctx := context.Background()
 	w.Start(ctx)
@@ -288,7 +316,7 @@ func TestWatcherPoll_SkipsNonActiveInstances(t *testing.T) {
 		}))
 	}
 
-	w := NewWatcher(client, repo, nil, 100*time.Millisecond)
+	w := NewWatcher(&mockClientProvider{client: client}, repo, nil, 100*time.Millisecond)
 
 	ctx := context.Background()
 	w.Start(ctx)
@@ -315,7 +343,7 @@ func TestWatcherPoll_SkipsEmptyNamespace(t *testing.T) {
 		Status:    models.StackStatusRunning,
 	}))
 
-	w := NewWatcher(client, repo, nil, 100*time.Millisecond)
+	w := NewWatcher(&mockClientProvider{client: client}, repo, nil, 100*time.Millisecond)
 
 	ctx := context.Background()
 	w.Start(ctx)
@@ -334,7 +362,7 @@ func TestWatcherPoll_ListError(t *testing.T) {
 	repo := newMockInstanceRepo()
 	repo.listErr = errors.New("db down")
 
-	w := NewWatcher(client, repo, nil, 100*time.Millisecond)
+	w := NewWatcher(&mockClientProvider{client: client}, repo, nil, 100*time.Millisecond)
 
 	ctx := context.Background()
 	w.Start(ctx)
@@ -369,7 +397,7 @@ func TestWatcherPoll_MonitorsRunningAndDeployingInstances(t *testing.T) {
 		Status:    models.StackStatusDeploying,
 	}))
 
-	w := NewWatcher(client, repo, nil, 100*time.Millisecond)
+	w := NewWatcher(&mockClientProvider{client: client}, repo, nil, 100*time.Millisecond)
 
 	ctx := context.Background()
 	w.Start(ctx)
@@ -402,7 +430,7 @@ func TestWatcherBroadcast_SendsMessageOnStatusChange(t *testing.T) {
 		Status:    models.StackStatusRunning,
 	}))
 
-	w := NewWatcher(client, repo, hub, 100*time.Millisecond)
+	w := NewWatcher(&mockClientProvider{client: client}, repo, hub, 100*time.Millisecond)
 
 	ctx := context.Background()
 	w.Start(ctx)
@@ -444,7 +472,7 @@ func TestWatcherBroadcast_NilHub(t *testing.T) {
 	}))
 
 	// nil hub should not panic.
-	w := NewWatcher(client, repo, nil, 100*time.Millisecond)
+	w := NewWatcher(&mockClientProvider{client: client}, repo, nil, 100*time.Millisecond)
 
 	ctx := context.Background()
 	w.Start(ctx)
@@ -474,7 +502,7 @@ func TestWatcherBroadcast_NoDuplicateOnSameStatus(t *testing.T) {
 		Status:    models.StackStatusRunning,
 	}))
 
-	w := NewWatcher(client, repo, hub, 50*time.Millisecond)
+	w := NewWatcher(&mockClientProvider{client: client}, repo, hub, 50*time.Millisecond)
 
 	ctx := context.Background()
 	w.Start(ctx)
@@ -519,7 +547,7 @@ func TestWatcherHandleStatusTransition_ErrorStatus(t *testing.T) {
 		Status:    models.StackStatusRunning,
 	}))
 
-	w := NewWatcher(client, repo, hub, 100*time.Millisecond)
+	w := NewWatcher(&mockClientProvider{client: client}, repo, hub, 100*time.Millisecond)
 
 	ctx := context.Background()
 	w.Start(ctx)
@@ -571,7 +599,7 @@ func TestWatcherHandleStatusTransition_DegradedDoesNotChangeRepoStatus(t *testin
 		Status:    models.StackStatusRunning,
 	}))
 
-	w := NewWatcher(client, repo, nil, 100*time.Millisecond)
+	w := NewWatcher(&mockClientProvider{client: client}, repo, nil, 100*time.Millisecond)
 
 	ctx := context.Background()
 	w.Start(ctx)
@@ -633,7 +661,7 @@ func TestWatcherHandleStatusTransition_ErrorAlreadyInErrorState(t *testing.T) {
 		ErrorMessage: "",
 	}))
 
-	w := NewWatcher(client, repo, nil, 100*time.Millisecond)
+	w := NewWatcher(&mockClientProvider{client: client}, repo, nil, 100*time.Millisecond)
 
 	ctx := context.Background()
 	w.Start(ctx)
@@ -679,7 +707,7 @@ func TestWatcherHandleStatusTransition_UpdateError(t *testing.T) {
 	// Set update to fail — watcher should handle the error gracefully (log it).
 	repo.updateErr = errors.New("db write failed")
 
-	w := NewWatcher(client, repo, nil, 100*time.Millisecond)
+	w := NewWatcher(&mockClientProvider{client: client}, repo, nil, 100*time.Millisecond)
 
 	ctx := context.Background()
 	w.Start(ctx)
@@ -706,7 +734,7 @@ func TestWatcherPoll_NamespaceNotFound(t *testing.T) {
 		Status:    models.StackStatusRunning,
 	}))
 
-	w := NewWatcher(client, repo, hub, 100*time.Millisecond)
+	w := NewWatcher(&mockClientProvider{client: client}, repo, hub, 100*time.Millisecond)
 
 	ctx := context.Background()
 	w.Start(ctx)
@@ -727,7 +755,7 @@ func TestWatcherContextCancellation(t *testing.T) {
 	client := NewClientFromInterface(cs)
 	repo := newMockInstanceRepo()
 
-	w := NewWatcher(client, repo, nil, 1*time.Second)
+	w := NewWatcher(&mockClientProvider{client: client}, repo, nil, 1*time.Second)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	w.Start(ctx)

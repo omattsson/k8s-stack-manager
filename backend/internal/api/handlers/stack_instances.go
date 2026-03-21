@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"backend/internal/api/middleware"
+	"backend/internal/cluster"
 	"backend/internal/deployer"
 	"backend/internal/helm"
 	"backend/internal/k8s"
@@ -86,7 +87,7 @@ type InstanceHandler struct {
 	userRepo          models.UserRepository
 	deployManager     *deployer.Manager
 	k8sWatcher        *k8s.Watcher
-	k8sClient         *k8s.Client
+	registry          *cluster.Registry
 	deployLogRepo     models.DeploymentLogRepository
 }
 
@@ -125,7 +126,7 @@ func NewInstanceHandlerWithDeployer(
 	userRepo models.UserRepository,
 	deployManager *deployer.Manager,
 	k8sWatcher *k8s.Watcher,
-	k8sClient *k8s.Client,
+	registry *cluster.Registry,
 	deployLogRepo models.DeploymentLogRepository,
 ) *InstanceHandler {
 	return &InstanceHandler{
@@ -139,7 +140,7 @@ func NewInstanceHandlerWithDeployer(
 		userRepo:          userRepo,
 		deployManager:     deployManager,
 		k8sWatcher:        k8sWatcher,
-		k8sClient:         k8sClient,
+		registry:          registry,
 		deployLogRepo:     deployLogRepo,
 	}
 }
@@ -969,20 +970,28 @@ func (h *InstanceHandler) GetInstanceStatus(c *gin.Context) {
 		}
 	}
 
-	// Fall back to direct query if we have a K8s client.
-	if h.k8sClient != nil {
-		nsStatus, err := h.k8sClient.GetNamespaceStatus(c.Request.Context(), inst.Namespace)
-		if err != nil {
-			slog.Error("Failed to get namespace status",
-				"instance_id", id,
-				"namespace", inst.Namespace,
-				"error", err,
-			)
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
+	// Fall back to direct query if we have a cluster registry.
+	if h.registry != nil {
+		client, err := h.registry.GetK8sClient(inst.ClusterID)
+		if err == nil {
+			nsStatus, err := client.GetNamespaceStatus(c.Request.Context(), inst.Namespace)
+			if err != nil {
+				slog.Error("Failed to get namespace status",
+					"instance_id", id,
+					"namespace", inst.Namespace,
+					"error", err,
+				)
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
+				return
+			}
+			c.JSON(http.StatusOK, nsStatus)
 			return
 		}
-		c.JSON(http.StatusOK, nsStatus)
-		return
+		slog.Warn("Failed to get k8s client for instance status",
+			"instance_id", id,
+			"cluster_id", inst.ClusterID,
+			"error", err,
+		)
 	}
 
 	c.JSON(http.StatusServiceUnavailable, gin.H{"error": "K8s monitoring not configured"})

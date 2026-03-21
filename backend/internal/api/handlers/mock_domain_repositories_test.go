@@ -615,6 +615,21 @@ func (m *MockStackInstanceRepository) ListByOwner(ownerID string) ([]models.Stac
 	return out, nil
 }
 
+func (m *MockStackInstanceRepository) FindByCluster(clusterID string) ([]models.StackInstance, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.err != nil {
+		return nil, m.err
+	}
+	var out []models.StackInstance
+	for _, i := range m.items {
+		if i.ClusterID == clusterID {
+			out = append(out, *i)
+		}
+	}
+	return out, nil
+}
+
 func (m *MockStackInstanceRepository) SetError(err error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -921,6 +936,135 @@ func (m *MockAPIKeyRepository) SetListError(err error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.listErr = err
+}
+
+// ---- ClusterRepository mock ----
+
+type MockClusterRepository struct {
+	mu         sync.RWMutex
+	clusters   map[string]*models.Cluster
+	defaultID  string
+	err        error
+	fetchErr   error
+	defaultErr error
+}
+
+func NewMockClusterRepository() *MockClusterRepository {
+	return &MockClusterRepository{clusters: make(map[string]*models.Cluster)}
+}
+
+func (m *MockClusterRepository) Create(cl *models.Cluster) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.err != nil {
+		return m.err
+	}
+	if cl.ID == "" {
+		cl.ID = fmt.Sprintf("cluster-%d", len(m.clusters)+1)
+	}
+	cl.CreatedAt = time.Now()
+	cl.UpdatedAt = time.Now()
+	m.clusters[cl.ID] = cl
+	if cl.IsDefault {
+		m.defaultID = cl.ID
+	}
+	return nil
+}
+
+func (m *MockClusterRepository) FindByID(id string) (*models.Cluster, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.fetchErr != nil {
+		return nil, m.fetchErr
+	}
+	cl, ok := m.clusters[id]
+	if !ok {
+		return nil, dberrors.NewDatabaseError("FindByID", dberrors.ErrNotFound)
+	}
+	cp := *cl
+	return &cp, nil
+}
+
+func (m *MockClusterRepository) Update(cl *models.Cluster) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.err != nil {
+		return m.err
+	}
+	if _, ok := m.clusters[cl.ID]; !ok {
+		return dberrors.NewDatabaseError("Update", dberrors.ErrNotFound)
+	}
+	cl.UpdatedAt = time.Now()
+	m.clusters[cl.ID] = cl
+	return nil
+}
+
+func (m *MockClusterRepository) Delete(id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.err != nil {
+		return m.err
+	}
+	if _, ok := m.clusters[id]; !ok {
+		return dberrors.NewDatabaseError("Delete", dberrors.ErrNotFound)
+	}
+	delete(m.clusters, id)
+	return nil
+}
+
+func (m *MockClusterRepository) List() ([]models.Cluster, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.err != nil {
+		return nil, m.err
+	}
+	out := make([]models.Cluster, 0, len(m.clusters))
+	for _, cl := range m.clusters {
+		out = append(out, *cl)
+	}
+	return out, nil
+}
+
+func (m *MockClusterRepository) FindDefault() (*models.Cluster, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.defaultErr != nil {
+		return nil, m.defaultErr
+	}
+	if m.defaultID == "" {
+		return nil, dberrors.NewDatabaseError("FindDefault", dberrors.ErrNotFound)
+	}
+	cl, ok := m.clusters[m.defaultID]
+	if !ok {
+		return nil, dberrors.NewDatabaseError("FindDefault", dberrors.ErrNotFound)
+	}
+	cp := *cl
+	return &cp, nil
+}
+
+func (m *MockClusterRepository) SetDefault(id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.err != nil {
+		return m.err
+	}
+	if _, ok := m.clusters[id]; !ok {
+		return dberrors.NewDatabaseError("SetDefault", dberrors.ErrNotFound)
+	}
+	m.defaultID = id
+	return nil
+}
+
+func (m *MockClusterRepository) SetError(err error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.err = err
+}
+
+func (m *MockClusterRepository) SetFetchError(err error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.fetchErr = err
 }
 
 // ---- helpers ----

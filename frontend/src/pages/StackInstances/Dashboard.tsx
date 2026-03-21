@@ -15,17 +15,20 @@ import {
   TextField,
   MenuItem,
   InputAdornment,
+  Chip,
+  Paper,
 } from '@mui/material';
 import SearchIcon from '@mui/icons-material/Search';
 import AddIcon from '@mui/icons-material/Add';
 import StatusBadge from '../../components/StatusBadge';
-import { instanceService } from '../../api/client';
-import type { StackInstance } from '../../types';
+import { instanceService, clusterService } from '../../api/client';
+import type { StackInstance, Cluster } from '../../types';
 
 const STATUSES = ['All', 'draft', 'deploying', 'running', 'stopped', 'error'];
 
 const Dashboard = () => {
   const [instances, setInstances] = useState<StackInstance[]>([]);
+  const [clusters, setClusters] = useState<Cluster[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
@@ -33,17 +36,21 @@ const Dashboard = () => {
   const navigate = useNavigate();
 
   useEffect(() => {
-    const fetchInstances = async () => {
+    const fetchData = async () => {
       try {
-        const data = await instanceService.list();
-        setInstances(data || []);
+        const [instData, clsData] = await Promise.all([
+          instanceService.list(),
+          clusterService.list().catch(() => [] as Cluster[]),
+        ]);
+        setInstances(instData || []);
+        setClusters(clsData || []);
       } catch {
         setError('Failed to load stack instances');
       } finally {
         setLoading(false);
       }
     };
-    fetchInstances();
+    fetchData();
   }, []);
 
   // Live-update instance statuses via WebSocket.
@@ -121,6 +128,27 @@ const Dashboard = () => {
         </TextField>
       </Box>
 
+      {clusters.length > 0 && (
+        <Paper variant="outlined" sx={{ p: 1.5, mb: 3, display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
+          <Typography variant="body2" color="text.secondary">
+            {clusters.length} cluster{clusters.length !== 1 ? 's' : ''}:
+          </Typography>
+          {(['healthy', 'degraded', 'unreachable'] as const).map((status) => {
+            const count = clusters.filter((c) => c.health_status === status).length;
+            if (count === 0) return null;
+            return (
+              <Chip
+                key={status}
+                label={`${count} ${status}`}
+                size="small"
+                color={status === 'healthy' ? 'success' : status === 'degraded' ? 'warning' : 'error'}
+                variant="outlined"
+              />
+            );
+          })}
+        </Paper>
+      )}
+
       {filtered.length === 0 ? (
         <Box sx={{ textAlign: 'center', mt: 4 }}>
           <Typography color="text.secondary" gutterBottom>
@@ -153,6 +181,14 @@ const Dashboard = () => {
                       Definition: {instance.definition.name}
                     </Typography>
                   )}
+                  {instance.cluster_id && clusters.length > 0 && (() => {
+                    const cluster = clusters.find((c) => c.id === instance.cluster_id);
+                    return cluster ? (
+                      <Typography variant="body2" color="text.secondary">
+                        Cluster: {cluster.name}
+                      </Typography>
+                    ) : null;
+                  })()}
                 </CardContent>
                 <CardActions>
                   <Button size="small" onClick={() => navigate(`/stack-instances/${instance.id}`)}>
