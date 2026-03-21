@@ -512,10 +512,11 @@ func (m *MockChartConfigRepository) SetError(err error) {
 // ---- StackInstanceRepository mock ----
 
 type MockStackInstanceRepository struct {
-	mu       sync.RWMutex
-	items    map[string]*models.StackInstance
-	err      error
-	fetchErr error
+	mu        sync.RWMutex
+	items     map[string]*models.StackInstance
+	err       error
+	fetchErr  error
+	createErr error
 }
 
 func NewMockStackInstanceRepository() *MockStackInstanceRepository {
@@ -525,6 +526,9 @@ func NewMockStackInstanceRepository() *MockStackInstanceRepository {
 func (m *MockStackInstanceRepository) Create(i *models.StackInstance) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.createErr != nil {
+		return m.createErr
+	}
 	if m.err != nil {
 		return m.err
 	}
@@ -630,6 +634,23 @@ func (m *MockStackInstanceRepository) FindByCluster(clusterID string) ([]models.
 	return out, nil
 }
 
+func (m *MockStackInstanceRepository) ListExpired() ([]*models.StackInstance, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.err != nil {
+		return nil, m.err
+	}
+	now := time.Now()
+	var out []*models.StackInstance
+	for _, i := range m.items {
+		if i.Status == models.StackStatusRunning && i.ExpiresAt != nil && i.ExpiresAt.Before(now) {
+			cp := *i
+			out = append(out, &cp)
+		}
+	}
+	return out, nil
+}
+
 func (m *MockStackInstanceRepository) SetError(err error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -640,6 +661,12 @@ func (m *MockStackInstanceRepository) SetFetchError(err error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.fetchErr = err
+}
+
+func (m *MockStackInstanceRepository) SetCreateError(err error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.createErr = err
 }
 
 // ---- ValueOverrideRepository mock ----
@@ -1071,3 +1098,81 @@ func (m *MockClusterRepository) SetFetchError(err error) {
 
 // ensure unused import doesn't cause compile error
 var _ = fmt.Sprintf
+
+// ---- UserFavoriteRepository mock ----
+
+type MockUserFavoriteRepository struct {
+	mu    sync.RWMutex
+	items map[string]*models.UserFavorite // key = userID + ":" + entityType + ":" + entityID
+	err   error
+}
+
+func NewMockUserFavoriteRepository() *MockUserFavoriteRepository {
+	return &MockUserFavoriteRepository{items: make(map[string]*models.UserFavorite)}
+}
+
+func favKey(userID, entityType, entityID string) string {
+	return userID + ":" + entityType + ":" + entityID
+}
+
+func (m *MockUserFavoriteRepository) Add(fav *models.UserFavorite) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.err != nil {
+		return m.err
+	}
+	if fav.ID == "" {
+		fav.ID = fmt.Sprintf("fav-%d", len(m.items)+1)
+	}
+	key := favKey(fav.UserID, fav.EntityType, fav.EntityID)
+	// Idempotent — overwrite if exists.
+	m.items[key] = fav
+	return nil
+}
+
+func (m *MockUserFavoriteRepository) Remove(userID, entityType, entityID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.err != nil {
+		return m.err
+	}
+	key := favKey(userID, entityType, entityID)
+	if _, ok := m.items[key]; !ok {
+		return errors.New("not found")
+	}
+	delete(m.items, key)
+	return nil
+}
+
+func (m *MockUserFavoriteRepository) List(userID string) ([]*models.UserFavorite, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.err != nil {
+		return nil, m.err
+	}
+	var out []*models.UserFavorite
+	for _, fav := range m.items {
+		if fav.UserID == userID {
+			cp := *fav
+			out = append(out, &cp)
+		}
+	}
+	return out, nil
+}
+
+func (m *MockUserFavoriteRepository) IsFavorite(userID, entityType, entityID string) (bool, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.err != nil {
+		return false, m.err
+	}
+	key := favKey(userID, entityType, entityID)
+	_, ok := m.items[key]
+	return ok, nil
+}
+
+func (m *MockUserFavoriteRepository) SetError(err error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.err = err
+}

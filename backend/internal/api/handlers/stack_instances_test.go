@@ -3,6 +3,7 @@ package handlers
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -43,7 +44,7 @@ func setupInstanceRouter(
 
 	valuesGen := helm.NewValuesGenerator()
 	userRepo := NewMockUserRepository()
-	h := NewInstanceHandler(instanceRepo, overrideRepo, defRepo, ccRepo, tmplRepo, tmplChartRepo, valuesGen, userRepo)
+	h := NewInstanceHandler(instanceRepo, overrideRepo, nil, defRepo, ccRepo, tmplRepo, tmplChartRepo, valuesGen, userRepo, 0)
 
 	insts := r.Group("/api/v1/stack-instances")
 	{
@@ -54,6 +55,7 @@ func setupInstanceRouter(
 		insts.DELETE("/:id", h.DeleteInstance)
 		insts.POST("/:id/clone", h.CloneInstance)
 		insts.GET("/:id/values/:chartId", h.ExportChartValues)
+		insts.POST("/:id/extend", h.ExtendTTL)
 	}
 	return r
 }
@@ -275,13 +277,13 @@ func TestUpdateInstance(t *testing.T) {
 			wantStatus: http.StatusNotFound,
 		},
 		{
-			name: "partial update with only branch fails validation (PUT requires all fields)",
+			name: "partial update with only branch succeeds",
 			id:   "i1",
 			body: `{"branch":"develop"}`,
 			setup: func(repo *MockStackInstanceRepository) {
 				seedInstance(t, repo, "i1", "stack-a", "d1", "uid-1", models.StackStatusDraft)
 			},
-			wantStatus: http.StatusBadRequest,
+			wantStatus: http.StatusOK,
 		},
 		{
 			name: "invalid JSON returns 400",
@@ -571,4 +573,334 @@ func TestExportChartValues(t *testing.T) {
 		router.ServeHTTP(w, req)
 		assert.Equal(t, http.StatusNotFound, w.Code)
 	})
+}
+
+// ---- TTL / Expiry Tests ----
+
+// setupInstanceRouterWithTTL creates a test gin engine with a default TTL configured.
+func setupInstanceRouterWithTTL(
+	instanceRepo *MockStackInstanceRepository,
+	defRepo *MockStackDefinitionRepository,
+	defaultTTL int,
+	callerID, callerUsername string,
+) *gin.Engine {
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.Use(func(c *gin.Context) {
+		c.Set("userID", callerID)
+		c.Set("username", callerUsername)
+		c.Set("role", "user")
+		c.Next()
+	})
+	valuesGen := helm.NewValuesGenerator()
+	userRepo := NewMockUserRepository()
+	h := NewInstanceHandler(instanceRepo, NewMockValueOverrideRepository(), nil, defRepo, NewMockChartConfigRepository(), NewMockStackTemplateRepository(), NewMockTemplateChartConfigRepository(), valuesGen, userRepo, defaultTTL)
+	insts := r.Group("/api/v1/stack-instances")
+	{
+		insts.POST("", h.CreateInstance)
+		insts.PUT("/:id", h.UpdateInstance)
+		insts.POST("/:id/extend", h.ExtendTTL)
+	}
+	return r
+}
+
+func TestCreateInstance_WithTTL(t *testing.T) {
+	t.Parallel()
+
+	t.Run("TTL from request sets ExpiresAt", func(t *testing.T) {
+		t.Parallel()
+		instRepo := NewMockStackInstanceRepository()
+		defRepo := NewMockStackDefinitionRepository()
+		defRepo.Create(&models.StackDefinition{ID: "d1", Name: "def1", OwnerID: "uid-1"})
+
+		router := setupInstanceRouterWithTTL(instRepo, defRepo, 0, "uid-1", "alice")
+
+		body := `{"name":"ttl-test","stack_definition_id":"d1","ttl_minutes":120}`
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest(http.MethodPost, "/api/v1/stack-instances", bytes.NewBufferString(body))
+		req.Header.Set("Content-Type", "application/json")
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusCreated, w.Code)
+		var inst models.StackInstance
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &inst))
+		assert.Equal(t, 120, inst.TTLMinutes)
+		assert.NotNil(t, inst.ExpiresAt)
+		assert.True(t, inst.ExpiresAt.After(time.Now().Add(119*time.Minute)))
+	})
+
+	t.Run("default TTL applied when request has 0", func(t *testing.T) {
+		t.Parallel()
+		instRepo := NewMockStackInstanceRepository()
+		defRepo := NewMockStackDefinitionRepository()
+		defRepo.Create(&models.StackDefinition{ID: "d1", Name: "def1", OwnerID: "uid-1"})
+
+		router := setupInstanceRouterWithTTL(instRepo, defRepo, 60, "uid-1", "alice")
+
+		body := `{"name":"ttl-default","stack_definition_id":"d1"}`
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest(http.MethodPost, "/api/v1/stack-instances", bytes.NewBufferString(body))
+		req.Header.Set("Content-Type", "application/json")
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusCreated, w.Code)
+		var inst models.StackInstance
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &inst))
+		assert.Equal(t, 60, inst.TTLMinutes)
+		assert.NotNil(t, inst.ExpiresAt)
+	})
+
+	t.Run("no TTL results in nil ExpiresAt", func(t *testing.T) {
+		t.Parallel()
+		instRepo := NewMockStackInstanceRepository()
+		defRepo := NewMockStackDefinitionRepository()
+		defRepo.Create(&models.StackDefinition{ID: "d1", Name: "def1", OwnerID: "uid-1"})
+
+		router := setupInstanceRouterWithTTL(instRepo, defRepo, 0, "uid-1", "alice")
+
+		body := `{"name":"no-ttl","stack_definition_id":"d1"}`
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest(http.MethodPost, "/api/v1/stack-instances", bytes.NewBufferString(body))
+		req.Header.Set("Content-Type", "application/json")
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusCreated, w.Code)
+		var inst models.StackInstance
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &inst))
+		assert.Equal(t, 0, inst.TTLMinutes)
+		assert.Nil(t, inst.ExpiresAt)
+	})
+}
+
+func TestExtendTTL(t *testing.T) {
+	t.Parallel()
+
+	t.Run("extends with request body ttl_minutes", func(t *testing.T) {
+		t.Parallel()
+		instRepo := NewMockStackInstanceRepository()
+		defRepo := NewMockStackDefinitionRepository()
+
+		past := time.Now().Add(-5 * time.Minute)
+		inst := &models.StackInstance{
+			ID:                "i1",
+			StackDefinitionID: "d1",
+			Name:              "test",
+			Namespace:         "stack-test-alice",
+			OwnerID:           "uid-1",
+			Branch:            "master",
+			Status:            models.StackStatusRunning,
+			TTLMinutes:        60,
+			ExpiresAt:         &past,
+		}
+		require.NoError(t, instRepo.Create(inst))
+
+		router := setupInstanceRouterWithTTL(instRepo, defRepo, 0, "uid-1", "alice")
+
+		body := `{"ttl_minutes":240}`
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest(http.MethodPost, "/api/v1/stack-instances/i1/extend", bytes.NewBufferString(body))
+		req.Header.Set("Content-Type", "application/json")
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		var result models.StackInstance
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &result))
+		assert.Equal(t, 240, result.TTLMinutes)
+		assert.NotNil(t, result.ExpiresAt)
+		assert.True(t, result.ExpiresAt.After(time.Now().Add(239*time.Minute)))
+	})
+
+	t.Run("extends using existing TTLMinutes when body omitted", func(t *testing.T) {
+		t.Parallel()
+		instRepo := NewMockStackInstanceRepository()
+		defRepo := NewMockStackDefinitionRepository()
+
+		past := time.Now().Add(-5 * time.Minute)
+		inst := &models.StackInstance{
+			ID:                "i2",
+			StackDefinitionID: "d1",
+			Name:              "test2",
+			Namespace:         "stack-test2-alice",
+			OwnerID:           "uid-1",
+			Branch:            "master",
+			Status:            models.StackStatusRunning,
+			TTLMinutes:        120,
+			ExpiresAt:         &past,
+		}
+		require.NoError(t, instRepo.Create(inst))
+
+		router := setupInstanceRouterWithTTL(instRepo, defRepo, 0, "uid-1", "alice")
+
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest(http.MethodPost, "/api/v1/stack-instances/i2/extend", nil)
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		var result models.StackInstance
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &result))
+		assert.Equal(t, 120, result.TTLMinutes)
+		assert.NotNil(t, result.ExpiresAt)
+		assert.True(t, result.ExpiresAt.After(time.Now().Add(119*time.Minute)))
+	})
+
+	t.Run("returns 400 when no TTL configured", func(t *testing.T) {
+		t.Parallel()
+		instRepo := NewMockStackInstanceRepository()
+		defRepo := NewMockStackDefinitionRepository()
+
+		inst := &models.StackInstance{
+			ID:                "i3",
+			StackDefinitionID: "d1",
+			Name:              "no-ttl",
+			Namespace:         "stack-no-ttl-alice",
+			OwnerID:           "uid-1",
+			Branch:            "master",
+			Status:            models.StackStatusRunning,
+			TTLMinutes:        0,
+		}
+		require.NoError(t, instRepo.Create(inst))
+
+		router := setupInstanceRouterWithTTL(instRepo, defRepo, 0, "uid-1", "alice")
+
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest(http.MethodPost, "/api/v1/stack-instances/i3/extend", nil)
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+	})
+
+	t.Run("returns 404 for missing instance", func(t *testing.T) {
+		t.Parallel()
+		instRepo := NewMockStackInstanceRepository()
+		defRepo := NewMockStackDefinitionRepository()
+
+		router := setupInstanceRouterWithTTL(instRepo, defRepo, 0, "uid-1", "alice")
+
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest(http.MethodPost, "/api/v1/stack-instances/missing/extend", nil)
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusNotFound, w.Code)
+	})
+
+	t.Run("returns 500 when repo update fails", func(t *testing.T) {
+		t.Parallel()
+		instRepo := NewMockStackInstanceRepository()
+		defRepo := NewMockStackDefinitionRepository()
+
+		past := time.Now().Add(-5 * time.Minute)
+		inst := &models.StackInstance{
+			ID:                "i-err",
+			StackDefinitionID: "d1",
+			Name:              "err-ttl",
+			Namespace:         "stack-err-ttl-alice",
+			OwnerID:           "uid-1",
+			Branch:            "master",
+			Status:            models.StackStatusRunning,
+			TTLMinutes:        60,
+			ExpiresAt:         &past,
+		}
+		require.NoError(t, instRepo.Create(inst))
+		instRepo.SetError(errors.New("db write failure"))
+
+		router := setupInstanceRouterWithTTL(instRepo, defRepo, 0, "uid-1", "alice")
+
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest(http.MethodPost, "/api/v1/stack-instances/i-err/extend", nil)
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusInternalServerError, w.Code)
+	})
+}
+
+// ---- GetRecentInstances repo error ----
+
+func TestGetRecentInstances_RepoError(t *testing.T) {
+	t.Parallel()
+	router, repo := setupRecentInstancesRouter()
+	repo.SetError(errors.New("db read failure"))
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/api/v1/stack-instances/recent", nil)
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
+}
+
+// ---- MaxTTLMinutes enforcement ----
+
+func TestCreateInstance_MaxTTLExceeded(t *testing.T) {
+	t.Parallel()
+
+	instRepo := NewMockStackInstanceRepository()
+	defRepo := NewMockStackDefinitionRepository()
+	defRepo.Create(&models.StackDefinition{ID: "d1", Name: "def1", OwnerID: "uid-1"})
+
+	router := setupInstanceRouterWithTTL(instRepo, defRepo, 0, "uid-1", "alice")
+
+	body := `{"name":"ttl-big","stack_definition_id":"d1","ttl_minutes":99999}`
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest(http.MethodPost, "/api/v1/stack-instances", bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	var resp map[string]string
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Contains(t, resp["error"], "TTL must not exceed")
+}
+
+func TestUpdateInstance_MaxTTLExceeded(t *testing.T) {
+	t.Parallel()
+
+	instRepo := NewMockStackInstanceRepository()
+	defRepo := NewMockStackDefinitionRepository()
+	seedInstance(t, instRepo, "i1", "stack-a", "d1", "uid-1", models.StackStatusDraft)
+
+	router := setupInstanceRouterWithTTL(instRepo, defRepo, 0, "uid-1", "alice")
+
+	body := `{"name":"stack-a","branch":"master","ttl_minutes":99999}`
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest(http.MethodPut, "/api/v1/stack-instances/i1", bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	var resp map[string]string
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Contains(t, resp["error"], "TTL must not exceed")
+}
+
+func TestExtendTTL_MaxTTLExceeded(t *testing.T) {
+	t.Parallel()
+
+	instRepo := NewMockStackInstanceRepository()
+	defRepo := NewMockStackDefinitionRepository()
+
+	past := time.Now().Add(-5 * time.Minute)
+	inst := &models.StackInstance{
+		ID:                "i-max",
+		StackDefinitionID: "d1",
+		Name:              "max-ttl",
+		Namespace:         "stack-max-ttl-alice",
+		OwnerID:           "uid-1",
+		Branch:            "master",
+		Status:            models.StackStatusRunning,
+		TTLMinutes:        60,
+		ExpiresAt:         &past,
+	}
+	require.NoError(t, instRepo.Create(inst))
+
+	router := setupInstanceRouterWithTTL(instRepo, defRepo, 0, "uid-1", "alice")
+
+	body := `{"ttl_minutes":99999}`
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest(http.MethodPost, "/api/v1/stack-instances/i-max/extend", bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	var resp map[string]string
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Contains(t, resp["error"], "TTL must not exceed")
 }

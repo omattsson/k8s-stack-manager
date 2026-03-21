@@ -32,7 +32,7 @@ func setupValueOverrideRouter(
 
 	valuesGen := helm.NewValuesGenerator()
 	userRepo := NewMockUserRepository()
-	h := NewInstanceHandler(instanceRepo, overrideRepo, defRepo, ccRepo, tmplRepo, tmplChartRepo, valuesGen, userRepo)
+	h := NewInstanceHandler(instanceRepo, overrideRepo, nil, defRepo, ccRepo, tmplRepo, tmplChartRepo, valuesGen, userRepo, 0)
 
 	insts := r.Group("/api/v1/stack-instances")
 	{

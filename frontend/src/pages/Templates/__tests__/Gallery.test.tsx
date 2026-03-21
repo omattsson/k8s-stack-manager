@@ -1,11 +1,16 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import Gallery from '../Gallery';
 
 vi.mock('../../../api/client', () => ({
   templateService: {
     list: vi.fn(),
+    quickDeploy: vi.fn(),
+  },
+  clusterService: {
+    list: vi.fn().mockResolvedValue([]),
   },
 }));
 
@@ -72,6 +77,40 @@ describe('Template Gallery', () => {
     );
     await waitFor(() => {
       expect(screen.getByText(/no templates found/i)).toBeInTheDocument();
+    });
+  });
+
+  it('shows Quick Deploy button on published templates', async () => {
+    (templateService.list as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { id: '1', name: 'Published Template', description: 'Desc', category: 'Web', version: '1.0', is_published: true, owner_id: '1', default_branch: 'main', created_at: '', updated_at: '' },
+    ]);
+    render(
+      <MemoryRouter>
+        <Gallery />
+      </MemoryRouter>
+    );
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /quick deploy/i })).toBeInTheDocument();
+    });
+  });
+
+  it('opens Quick Deploy dialog when button is clicked', async () => {
+    const user = userEvent.setup();
+    (templateService.list as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { id: '1', name: 'Deploy Me', description: 'Desc', category: 'Web', version: '1.0', is_published: true, owner_id: '1', default_branch: 'main', created_at: '', updated_at: '' },
+    ]);
+    render(
+      <MemoryRouter>
+        <Gallery />
+      </MemoryRouter>
+    );
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /quick deploy/i })).toBeInTheDocument();
+    });
+    await user.click(screen.getByRole('button', { name: /quick deploy/i }));
+    await waitFor(() => {
+      expect(screen.getByText(/quick deploy: deploy me/i)).toBeInTheDocument();
+      expect(screen.getByLabelText(/instance name/i)).toBeInTheDocument();
     });
   });
 });

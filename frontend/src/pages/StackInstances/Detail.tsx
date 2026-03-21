@@ -17,15 +17,22 @@ import {
   Step,
   StepLabel,
   Grid,
+  Chip,
+  Tooltip,
 } from '@mui/material';
+import CloseIcon from '@mui/icons-material/Close';
 import StatusBadge from '../../components/StatusBadge';
 import BranchSelector from '../../components/BranchSelector';
 import ConfirmDialog from '../../components/ConfirmDialog';
 import DeploymentLogViewer from '../../components/DeploymentLogViewer';
 import PodStatusDisplay from '../../components/PodStatusDisplay';
-import { instanceService, definitionService } from '../../api/client';
+import AccessUrls from '../../components/AccessUrls';
+import FavoriteButton from '../../components/FavoriteButton';
+import { instanceService, definitionService, branchOverrideService } from '../../api/client';
 import type { StackInstance, ChartConfig, ValueOverride, DeploymentLog, NamespaceStatus } from '../../types';
 import YamlEditor from '../../components/YamlEditor';
+import TtlSelector from '../../components/TtlSelector';
+import useCountdown from '../../hooks/useCountdown';
 
 const Detail = () => {
   const { id } = useParams<{ id: string }>();
@@ -35,6 +42,7 @@ const Detail = () => {
   const [charts, setCharts] = useState<ChartConfig[]>([]);
   const [, setOverrides] = useState<ValueOverride[]>([]);
   const [branch, setBranch] = useState('');
+  const [branchOverrides, setBranchOverrides] = useState<Record<string, string>>({});
   const [activeTab, setActiveTab] = useState(0);
   const [editedOverrides, setEditedOverrides] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
@@ -49,6 +57,7 @@ const Detail = () => {
   const [deployLogs, setDeployLogs] = useState<DeploymentLog[]>([]);
   const [k8sStatus, setK8sStatus] = useState<NamespaceStatus | null>(null);
   const [statusLoading, setStatusLoading] = useState(false);
+  const [extending, setExtending] = useState(false);
 
   useEffect(() => {
     if (!id) return;
@@ -60,12 +69,20 @@ const Detail = () => {
         setInstance(inst);
         setBranch(inst.branch);
 
-        const [defData, overrideData] = await Promise.all([
+        const [defData, overrideData, branchOverrideData] = await Promise.all([
           definitionService.get(inst.stack_definition_id),
           instanceService.getOverrides(id),
+          branchOverrideService.list(id),
         ]);
         setCharts(defData.charts || []);
         setOverrides(overrideData || []);
+
+        // Pre-populate branch overrides map (chartConfigId → branch)
+        const boMap: Record<string, string> = {};
+        (branchOverrideData || []).forEach((bo) => {
+          boMap[bo.chart_config_id] = bo.branch;
+        });
+        setBranchOverrides(boMap);
 
         // Pre-populate edited overrides with existing values
         const overrideMap: Record<string, string> = {};
@@ -141,6 +158,48 @@ const Detail = () => {
 
   useWebSocket(handleWsMessage);
 
+  const handleChartBranchChange = async (chartId: string, newBranch: string) => {
+    if (!id) return;
+    // If the new branch matches the instance-level branch (or is empty), remove the override
+    if (!newBranch || newBranch === branch) {
+      const previousValue = branchOverrides[chartId];
+      setBranchOverrides((prev) => {
+        const next = { ...prev };
+        delete next[chartId];
+        return next;
+      });
+      try {
+        await branchOverrideService.delete(id, chartId);
+      } catch {
+        // Restore previous override on failure
+        if (previousValue !== undefined) {
+          setBranchOverrides((prev) => ({ ...prev, [chartId]: previousValue }));
+        }
+        setError('Failed to remove branch override');
+      }
+    } else {
+      const previousValue = branchOverrides[chartId];
+      // Optimistic update
+      setBranchOverrides((prev) => ({ ...prev, [chartId]: newBranch }));
+      try {
+        await branchOverrideService.set(id, chartId, newBranch);
+        setSnackbar('Branch override saved');
+      } catch {
+        // Revert to previous value on failure
+        if (previousValue !== undefined) {
+          setBranchOverrides((prev) => ({ ...prev, [chartId]: previousValue }));
+        } else {
+          setBranchOverrides((prev) => {
+            const next = { ...prev };
+            delete next[chartId];
+            return next;
+          });
+        }
+        setError('Failed to set branch override');
+      }
+    }
+  };
+
   const handleSave = async () => {
     if (!id || !instance) return;
     setSaving(true);
@@ -211,8 +270,9 @@ const Detail = () => {
       setSnackbar('Deployment started');
     } catch {
       setError('Failed to start deployment');
-      setDeploying(false);
       return;
+    } finally {
+      setDeploying(false);
     }
     // Best-effort refresh — don't surface errors to the user
     try {
@@ -271,6 +331,48 @@ const Detail = () => {
     } catch (e) { console.error('Failed to refresh deploy logs after clean', e); }
   };
 
+  const countdown = useCountdown(instance?.expires_at);
+
+  const isExpiredByTtl = instance?.status === 'stopped' && (
+    (instance?.expires_at != null && new Date(instance.expires_at) <= new Date()) ||
+    instance?.error_message?.includes('Expired (TTL)')
+  );
+
+  const handleExtend = async () => {
+    if (!id) return;
+    setExtending(true);
+    try {
+      const updated = await instanceService.extend(id);
+      setInstance(updated);
+      setSnackbar('TTL extended');
+    } catch {
+      setError('Failed to extend TTL');
+    } finally {
+      setExtending(false);
+    }
+  };
+
+  const handleTtlChange = async (ttlMinutes: number) => {
+    if (!id || !instance) return;
+    setSaving(true);
+    setError(null);
+    try {
+      let updated: StackInstance;
+      if (ttlMinutes > 0) {
+        updated = await instanceService.extend(id, ttlMinutes);
+      } else {
+        // Clear TTL — send full instance so required fields are preserved
+        updated = await instanceService.update(id, { ...instance, ttl_minutes: 0 });
+      }
+      setInstance(updated);
+      setSnackbar('TTL updated');
+    } catch {
+      setError('Failed to update TTL');
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const getRepoUrl = (): string => {
     if (charts.length > 0 && charts[0].source_repo_url) {
       return charts[0].source_repo_url;
@@ -303,7 +405,11 @@ const Detail = () => {
               <Typography variant="h4" component="h1">
                 {instance.name}
               </Typography>
+              <FavoriteButton entityType="instance" entityId={instance.id} size="medium" />
               <StatusBadge status={instance.status} />
+              {isExpiredByTtl && (
+                <Chip label="Expired" color="error" size="small" />
+              )}
             </Box>
             <Typography variant="body2" color="text.secondary">
               Namespace: {instance.namespace}
@@ -311,6 +417,24 @@ const Detail = () => {
             <Typography variant="body2" color="text.secondary">
               Owner: {instance.owner_id}
             </Typography>
+            {countdown && !countdown.isExpired && instance.status === 'running' && (
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 0.5 }}>
+                <Chip
+                  label={`Expires in ${countdown.remaining}`}
+                  size="small"
+                  color={countdown.isCritical ? 'error' : countdown.isWarning ? 'warning' : 'success'}
+                  icon={<span>⏱</span>}
+                />
+                <Button
+                  variant="outlined"
+                  size="small"
+                  onClick={handleExtend}
+                  disabled={extending}
+                >
+                  {extending ? 'Extending...' : 'Extend'}
+                </Button>
+              </Box>
+            )}
           </Box>
           <Box sx={{ display: 'flex', gap: 1 }}>
             {(instance.status === 'draft' || instance.status === 'stopped' || instance.status === 'error') && (
@@ -381,12 +505,25 @@ const Detail = () => {
           </Box>
         )}
 
+        {k8sStatus && instance.status === 'running' && (
+          <AccessUrls status={k8sStatus} />
+        )}
+
         <Box sx={{ maxWidth: 400 }}>
           <Typography variant="subtitle2" gutterBottom>Branch</Typography>
           <BranchSelector
             repoUrl={getRepoUrl()}
             value={branch}
             onChange={setBranch}
+          />
+        </Box>
+
+        <Box sx={{ mt: 2 }}>
+          <Typography variant="subtitle2" gutterBottom>TTL (Time to Live)</Typography>
+          <TtlSelector
+            value={instance.ttl_minutes ?? 0}
+            onChange={handleTtlChange}
+            disabled={saving}
           />
         </Box>
       </Paper>
@@ -406,6 +543,32 @@ const Detail = () => {
                   {chart.chart_path && ` | Path: ${chart.chart_path}`}
                   {chart.chart_version && ` | Version: ${chart.chart_version}`}
                 </Typography>
+
+                <Box sx={{ mb: 2, display: 'flex', alignItems: 'center', gap: 2 }}>
+                  <Box sx={{ maxWidth: 300, flex: 1 }}>
+                    <BranchSelector
+                      repoUrl={chart.source_repo_url || getRepoUrl()}
+                      value={branchOverrides[chart.id] || branch}
+                      onChange={(newBranch) => handleChartBranchChange(chart.id, newBranch)}
+                      label="Chart Branch"
+                    />
+                  </Box>
+                  {branchOverrides[chart.id] ? (
+                    <Chip
+                      label={`Override: ${branchOverrides[chart.id]}`}
+                      color="warning"
+                      size="small"
+                      onDelete={() => handleChartBranchChange(chart.id, '')}
+                      deleteIcon={
+                        <Tooltip title="Reset to instance branch">
+                          <CloseIcon />
+                        </Tooltip>
+                      }
+                    />
+                  ) : (
+                    <Chip label="Using instance branch" size="small" variant="outlined" />
+                  )}
+                </Box>
 
                 <Grid container spacing={2}>
                   <Grid size={{ xs: 12, md: 6 }}>

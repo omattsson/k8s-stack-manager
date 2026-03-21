@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"backend/internal/k8s"
@@ -47,6 +49,8 @@ type Manager struct {
 	semaphore      chan struct{}
 	shutdownCtx    context.Context
 	shutdownCancel context.CancelFunc
+	wg             sync.WaitGroup
+	shuttingDown   atomic.Bool
 }
 
 // ManagerConfig holds the dependencies for creating a Manager.
@@ -95,7 +99,9 @@ func NewManager(cfg ManagerConfig) *Manager {
 // Shutdown cancels the context used by background deploy/stop goroutines,
 // signalling them to abort at the next cancellation check point.
 func (m *Manager) Shutdown() {
+	m.shuttingDown.Store(true)
 	m.shutdownCancel()
+	m.wg.Wait()
 }
 
 // Deploy starts an async deployment. Returns the deployment log ID immediately.
@@ -109,6 +115,11 @@ func (m *Manager) Deploy(ctx context.Context, req DeployRequest) (string, error)
 	// Short-circuit if the request context is already cancelled.
 	if err := ctx.Err(); err != nil {
 		return "", fmt.Errorf("request cancelled: %w", err)
+	}
+
+	// Reject new work if shutting down.
+	if m.shuttingDown.Load() {
+		return "", fmt.Errorf("server is shutting down")
 	}
 
 	// Resolve cluster clients before starting the async goroutine so that
@@ -161,6 +172,7 @@ func (m *Manager) Deploy(ctx context.Context, req DeployRequest) (string, error)
 	})
 
 	// Launch async deployment, passing the deployLog to avoid re-fetching.
+	m.wg.Add(1)
 	go m.executeDeploy(helmExec, req.Instance.ID, deployLog, req.Instance.Namespace, charts)
 
 	return logID, nil
@@ -169,6 +181,7 @@ func (m *Manager) Deploy(ctx context.Context, req DeployRequest) (string, error)
 // executeDeploy runs the helm install for each chart sequentially within
 // a concurrency-limited goroutine.
 func (m *Manager) executeDeploy(helm HelmExecutor, instanceID string, deployLog *models.DeploymentLog, namespace string, charts []ChartDeployInfo) {
+	defer m.wg.Done()
 	// Acquire semaphore.
 	m.semaphore <- struct{}{}
 	defer func() { <-m.semaphore }()
@@ -384,6 +397,11 @@ func (m *Manager) StopWithCharts(ctx context.Context, instance *models.StackInst
 		return "", fmt.Errorf("request cancelled: %w", err)
 	}
 
+	// Reject new work if shutting down.
+	if m.shuttingDown.Load() {
+		return "", fmt.Errorf("server is shutting down")
+	}
+
 	// Resolve cluster clients before starting the async goroutine.
 	if m.registry == nil {
 		return "", fmt.Errorf("cluster registry is not configured")
@@ -430,6 +448,7 @@ func (m *Manager) StopWithCharts(ctx context.Context, instance *models.StackInst
 	})
 
 	// Pass deployLog into the goroutine to avoid a partition-scanning re-fetch.
+	m.wg.Add(1)
 	go m.executeStopWithCharts(helmExec, instance.ID, deployLog, instance.Namespace, sortedCharts)
 
 	return logID, nil
@@ -437,6 +456,7 @@ func (m *Manager) StopWithCharts(ctx context.Context, instance *models.StackInst
 
 // executeStopWithCharts runs helm uninstall for each chart in reverse order.
 func (m *Manager) executeStopWithCharts(helm HelmExecutor, instanceID string, deployLog *models.DeploymentLog, namespace string, charts []ChartDeployInfo) {
+	defer m.wg.Done()
 	m.semaphore <- struct{}{}
 	defer func() { <-m.semaphore }()
 
@@ -591,6 +611,11 @@ func (m *Manager) Clean(ctx context.Context, instance *models.StackInstance, cha
 		return "", fmt.Errorf("request cancelled: %w", err)
 	}
 
+	// Reject new work if shutting down.
+	if m.shuttingDown.Load() {
+		return "", fmt.Errorf("server is shutting down")
+	}
+
 	// Resolve cluster clients before starting the async goroutine.
 	if m.registry == nil {
 		return "", fmt.Errorf("cluster registry is not configured")
@@ -642,6 +667,7 @@ func (m *Manager) Clean(ctx context.Context, instance *models.StackInstance, cha
 		return sortedCharts[i].ChartConfig.DeployOrder > sortedCharts[j].ChartConfig.DeployOrder
 	})
 
+	m.wg.Add(1)
 	go m.executeClean(helmExec, k8sClient, instance.ID, deployLog, instance.Namespace, sortedCharts)
 
 	return logID, nil
@@ -650,6 +676,7 @@ func (m *Manager) Clean(ctx context.Context, instance *models.StackInstance, cha
 // executeClean runs helm uninstall for each chart in reverse order, then
 // deletes the Kubernetes namespace.
 func (m *Manager) executeClean(helm HelmExecutor, k8sClient *k8s.Client, instanceID string, deployLog *models.DeploymentLog, namespace string, charts []ChartDeployInfo) {
+	defer m.wg.Done()
 	m.semaphore <- struct{}{}
 	defer func() { <-m.semaphore }()
 

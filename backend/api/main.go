@@ -16,6 +16,7 @@ import (
 	"backend/internal/helm"
 	"backend/internal/k8s"
 	"backend/internal/models"
+	"backend/internal/ttl"
 	"backend/internal/websocket"
 	"context"
 	"fmt"
@@ -128,6 +129,12 @@ func main() {
 		os.Exit(1)
 	}
 
+	branchOverrideRepo, err := azure.NewChartBranchOverrideRepository(azCfg.AccountName, azCfg.AccountKey, azCfg.Endpoint, azCfg.UseAzurite)
+	if err != nil {
+		slog.Error("Failed to create chart branch override repository", "error", err)
+		os.Exit(1)
+	}
+
 	auditRepo, err := azure.NewAuditLogRepository(azCfg.AccountName, azCfg.AccountKey, azCfg.Endpoint, azCfg.UseAzurite)
 	if err != nil {
 		slog.Error("Failed to create audit log repository", "error", err)
@@ -182,7 +189,6 @@ func main() {
 		HelmBinary:  cfg.Deployment.HelmBinary,
 		HelmTimeout: cfg.Deployment.DeploymentTimeout,
 	})
-	defer clusterRegistry.Close()
 
 	// Start cluster health poller
 	healthPoller := cluster.NewHealthPoller(cluster.HealthPollerConfig{
@@ -196,7 +202,6 @@ func main() {
 	// K8s watcher — uses registry for multi-cluster monitoring
 	k8sWatcher := k8s.NewWatcher(clusterRegistry, instanceRepo, hub, 30*time.Second)
 	watcherCtx, watcherCancel := context.WithCancel(context.Background())
-	defer watcherCancel()
 	k8sWatcher.Start(watcherCtx)
 
 	// Deployment manager — uses registry for multi-cluster deploys
@@ -215,9 +220,10 @@ func main() {
 	templateHandler := handlers.NewTemplateHandler(templateRepo, templateChartRepo, definitionRepo, chartConfigRepo)
 	definitionHandler := handlers.NewDefinitionHandler(definitionRepo, chartConfigRepo, instanceRepo, templateRepo, templateChartRepo)
 	instanceHandler := handlers.NewInstanceHandlerWithDeployer(
-		instanceRepo, overrideRepo, definitionRepo, chartConfigRepo,
+		instanceRepo, overrideRepo, branchOverrideRepo, definitionRepo, chartConfigRepo,
 		templateRepo, templateChartRepo, valuesGen, userRepo,
 		deployManager, k8sWatcher, clusterRegistry, deployLogRepo,
+		cfg.App.DefaultInstanceTTLMinutes,
 	)
 	gitHandler := handlers.NewGitHandler(gitRegistry)
 	auditLogHandler := handlers.NewAuditLogHandler(auditRepo)
@@ -226,6 +232,22 @@ func main() {
 
 	adminHandler := handlers.NewAdminHandler(clusterRegistry, instanceRepo)
 	clusterHandler := handlers.NewClusterHandler(clusterRepo, clusterRegistry, instanceRepo)
+	branchOverrideHandler := handlers.NewBranchOverrideHandler(branchOverrideRepo, instanceRepo)
+
+	favoriteRepo, err := azure.NewUserFavoriteRepository(azCfg.AccountName, azCfg.AccountKey, azCfg.Endpoint, azCfg.UseAzurite)
+	if err != nil {
+		slog.Error("Failed to create user favorite repository", "error", err)
+		os.Exit(1)
+	}
+	favoriteHandler := handlers.NewFavoriteHandler(favoriteRepo)
+
+	quickDeployHandler := handlers.NewQuickDeployHandler(
+		templateRepo, templateChartRepo, definitionRepo, chartConfigRepo,
+		instanceRepo, branchOverrideRepo, overrideRepo, valuesGen,
+		deployManager, userRepo, deployLogRepo, auditRepo,
+		hub, clusterRegistry, k8sWatcher,
+		cfg.App.DefaultInstanceTTLMinutes,
+	)
 
 	// Auto-create admin user on startup if ADMIN_PASSWORD is set.
 	authHandler.EnsureAdminUser()
@@ -233,26 +255,34 @@ func main() {
 	// Setup router — use gin.New() since SetupRoutes registers its own Logger and Recovery middleware.
 	router := gin.New()
 	rateLimiter := routes.SetupRoutes(router, routes.Deps{
-		Repository:        repo,
-		HealthChecker:     healthChecker,
-		Config:            cfg,
-		Hub:               hub,
-		AuthHandler:       authHandler,
-		TemplateHandler:   templateHandler,
-		DefinitionHandler: definitionHandler,
-		InstanceHandler:   instanceHandler,
-		GitHandler:        gitHandler,
-		AuditLogHandler:   auditLogHandler,
-		AuditLogger:       auditRepo,
-		UserHandler:       userHandler,
-		APIKeyHandler:     apiKeyHandler,
-		AdminHandler:      adminHandler,
-		ClusterHandler:    clusterHandler,
-		UserRepo:          userRepo,
-		APIKeyRepo:        apiKeyRepo,
+		Repository:            repo,
+		HealthChecker:         healthChecker,
+		Config:                cfg,
+		Hub:                   hub,
+		AuthHandler:           authHandler,
+		TemplateHandler:       templateHandler,
+		DefinitionHandler:     definitionHandler,
+		InstanceHandler:       instanceHandler,
+		GitHandler:            gitHandler,
+		AuditLogHandler:       auditLogHandler,
+		AuditLogger:           auditRepo,
+		UserHandler:           userHandler,
+		APIKeyHandler:         apiKeyHandler,
+		AdminHandler:          adminHandler,
+		BranchOverrideHandler: branchOverrideHandler,
+		FavoriteHandler:       favoriteHandler,
+		QuickDeployHandler:    quickDeployHandler,
+		ClusterHandler:        clusterHandler,
+		UserRepo:              userRepo,
+		APIKeyRepo:            apiKeyRepo,
 	})
 	defer rateLimiter.Stop()
 	router.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
+
+	// Start TTL reaper for auto-expiring stack instances.
+	expiryStopper := deployer.NewExpiryStopper(deployManager, definitionRepo, chartConfigRepo)
+	reaper := ttl.NewReaper(instanceRepo, auditRepo, hub, expiryStopper, 60*time.Second)
+	go reaper.Start()
 
 	// Create server with timeouts
 	srv := &http.Server{
@@ -278,21 +308,7 @@ func main() {
 	<-quit
 	slog.Info("Shutting down server...")
 
-	// Cancel in-flight deploy/stop goroutines
-	deployManager.Shutdown()
-
-	// Stop cluster health poller
-	healthPoller.Stop()
-
-	// Stop K8s status watcher
-	if k8sWatcher != nil {
-		k8sWatcher.Stop()
-	}
-
-	// Shut down WebSocket hub (closes all client connections)
-	hub.Shutdown()
-
-	// Give outstanding requests time to complete
+	// 1. Stop HTTP server — no new requests
 	shutdownTimeout := cfg.Server.ShutdownTimeout
 	if shutdownTimeout == 0 {
 		shutdownTimeout = defaultShutdownTimeout
@@ -300,16 +316,28 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	defer cancel()
 
-	err = srv.Shutdown(ctx)
-
-	// Close repository connections (database pool, etc.)
-	if closeErr := repo.Close(); closeErr != nil {
-		slog.Error("Failed to close repository", "error", closeErr)
+	if err := srv.Shutdown(ctx); err != nil {
+		slog.Error("Server forced to shutdown", "error", err)
 	}
 
-	if err != nil {
-		slog.Error("Server forced to shutdown", "error", err)
-		return
+	// 2. Stop producers of deploy work
+	reaper.Stop()
+
+	// 3. Now safe to wait for in-flight deploys
+	deployManager.Shutdown()
+
+	// 4. Stop remaining services
+	healthPoller.Stop()
+	if k8sWatcher != nil {
+		k8sWatcher.Stop()
+	}
+	hub.Shutdown()
+	clusterRegistry.Close()
+	watcherCancel()
+
+	// 5. Close data layer
+	if closeErr := repo.Close(); closeErr != nil {
+		slog.Error("Failed to close repository", "error", closeErr)
 	}
 
 	slog.Info("Server exited gracefully")

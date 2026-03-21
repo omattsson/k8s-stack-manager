@@ -14,6 +14,7 @@ import {
 import axios from 'axios';
 import { instanceService, definitionService, clusterService } from '../../api/client';
 import type { StackDefinition, Cluster } from '../../types';
+import TtlSelector from '../../components/TtlSelector';
 
 interface ConflictResponse {
   error: string;
@@ -31,6 +32,7 @@ const Form = () => {
   const [name, setName] = useState('');
   const [branch, setBranch] = useState('master');
   const [loading, setLoading] = useState(true);
+  const [ttlMinutes, setTtlMinutes] = useState(0);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [suggestions, setSuggestions] = useState<string[]>([]);
@@ -67,6 +69,7 @@ const Form = () => {
         name,
         branch,
         ...(selectedClusterId ? { cluster_id: selectedClusterId } : {}),
+        ttl_minutes: ttlMinutes,
       });
       navigate(`/stack-instances/${instance.id}`);
     } catch (err) {
@@ -164,6 +167,8 @@ const Form = () => {
             onChange={(e) => setBranch(e.target.value)}
             fullWidth
           />
+
+          <TtlSelector value={ttlMinutes} onChange={setTtlMinutes} />
 
           {clusters.length > 0 && (
             <TextField

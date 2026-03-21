@@ -96,6 +96,8 @@ export interface StackInstance {
   status: string;
   error_message?: string;
   last_deployed_at?: string;
+  ttl_minutes?: number;
+  expires_at?: string;
   created_at: string;
   updated_at: string;
   definition?: StackDefinition;
@@ -141,12 +143,25 @@ export interface ServiceInfo {
   name: string;
   type: string;
   cluster_ip: string;
+  ports?: string[];
+  external_ip?: string;
+  node_ports?: number[];
+  ingress_hosts?: string[];
+}
+
+export interface IngressInfo {
+  name: string;
+  host: string;
+  path: string;
+  tls: boolean;
+  url: string;
 }
 
 export interface NamespaceStatus {
   namespace: string;
   status: 'healthy' | 'degraded' | 'error' | 'not_found';
   charts: ChartStatus[];
+  ingresses?: IngressInfo[];
   last_checked: string;
 }
 
@@ -294,4 +309,35 @@ export interface ClusterTestResult {
   status: string;
   message: string;
   server_version?: string;
+}
+
+export interface ChartBranchOverride {
+  id: string;
+  stack_instance_id: string;
+  chart_config_id: string;
+  branch: string;
+  updated_at: string;
+}
+
+export interface UserFavorite {
+  id: string;
+  user_id: string;
+  entity_type: 'definition' | 'instance' | 'template';
+  entity_id: string;
+  created_at: string;
+}
+
+export interface QuickDeployRequest {
+  instance_name: string;
+  instance_description?: string;
+  branch?: string;
+  cluster_id?: string;
+  ttl_minutes?: number;
+  branch_overrides?: Record<string, string>;
+}
+
+export interface QuickDeployResponse {
+  instance: StackInstance;
+  definition: StackDefinition;
+  log_id: string;
 }

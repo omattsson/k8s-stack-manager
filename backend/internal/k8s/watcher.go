@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"backend/internal/models"
@@ -32,6 +33,7 @@ type Watcher struct {
 	interval       time.Duration
 	cancel         context.CancelFunc
 	wg             sync.WaitGroup
+	started        atomic.Bool
 
 	// mu protects lastStatus.
 	mu         sync.RWMutex
@@ -56,6 +58,10 @@ func NewWatcher(
 
 // Start begins the polling loop in a goroutine.
 func (w *Watcher) Start(ctx context.Context) {
+	if !w.started.CompareAndSwap(false, true) {
+		slog.Warn("K8s status watcher already started, ignoring duplicate Start call")
+		return
+	}
 	ctx, w.cancel = context.WithCancel(ctx)
 	w.wg.Add(1)
 	go w.run(ctx)

@@ -165,6 +165,29 @@ func TestGenerateValues(t *testing.T) {
 			},
 			wantYAML: "enabled: false\nreplicas: 5\ntags:\n  - v1\nweight: 1.5\n",
 		},
+		{
+			name: "ChartBranch overrides TemplateVars.Branch",
+			params: GenerateParams{
+				DefaultValues: "branch: \"{{.Branch}}\"\nnamespace: \"{{.Namespace}}\"\n",
+				ChartBranch:   "feature/per-chart",
+				TemplateVars: TemplateVars{
+					Branch:    "master",
+					Namespace: "stack-test-alice",
+				},
+			},
+			wantYAML: "branch: feature/per-chart\nnamespace: stack-test-alice\n",
+		},
+		{
+			name: "empty ChartBranch uses TemplateVars.Branch",
+			params: GenerateParams{
+				DefaultValues: "branch: \"{{.Branch}}\"\n",
+				ChartBranch:   "",
+				TemplateVars: TemplateVars{
+					Branch: "master",
+				},
+			},
+			wantYAML: "branch: master\n",
+		},
 	}
 
 	for _, tt := range tests {

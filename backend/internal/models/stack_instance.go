@@ -7,6 +7,7 @@ type StackInstance struct {
 	CreatedAt         time.Time  `json:"created_at"`
 	UpdatedAt         time.Time  `json:"updated_at"`
 	LastDeployedAt    *time.Time `json:"last_deployed_at,omitempty"`
+	ExpiresAt         *time.Time `json:"expires_at,omitempty"`
 	ID                string     `json:"id"`
 	StackDefinitionID string     `json:"stack_definition_id"`
 	Name              string     `json:"name"`
@@ -16,6 +17,7 @@ type StackInstance struct {
 	ClusterID         string     `json:"cluster_id,omitempty"`
 	Status            string     `json:"status"`
 	ErrorMessage      string     `json:"error_message,omitempty"`
+	TTLMinutes        int        `json:"ttl_minutes"`
 }
 
 // Valid stack instance statuses.
@@ -40,4 +42,5 @@ type StackInstanceRepository interface {
 	List() ([]StackInstance, error)
 	ListByOwner(ownerID string) ([]StackInstance, error)
 	FindByCluster(clusterID string) ([]StackInstance, error)
+	ListExpired() ([]*StackInstance, error)
 }

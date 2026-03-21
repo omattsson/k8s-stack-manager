@@ -2,7 +2,6 @@ package cluster
 
 import (
 	"context"
-	"encoding/json"
 	"log/slog"
 	"sync"
 	"sync/atomic"
@@ -189,7 +188,7 @@ func (p *HealthPoller) broadcastChange(cl *models.Cluster) {
 		return
 	}
 
-	data, err := json.Marshal(msg)
+	data, err := msg.Bytes()
 	if err != nil {
 		slog.Error("health poller: failed to marshal broadcast message", "error", err)
 		return

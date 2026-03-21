@@ -18,7 +18,10 @@ import {
 } from '@mui/material';
 import SearchIcon from '@mui/icons-material/Search';
 import AddIcon from '@mui/icons-material/Add';
+import RocketLaunchIcon from '@mui/icons-material/RocketLaunch';
 import { templateService } from '../../api/client';
+import FavoriteButton from '../../components/FavoriteButton';
+import QuickDeployDialog from '../../components/QuickDeployDialog';
 import { useAuth } from '../../context/AuthContext';
 import type { StackTemplate } from '../../types';
 
@@ -33,6 +36,7 @@ const Gallery = () => {
   const [tab, setTab] = useState(0);
   const { user } = useAuth();
   const navigate = useNavigate();
+  const [quickDeployTemplate, setQuickDeployTemplate] = useState<StackTemplate | null>(null);
 
   const isDevOps = user?.role === 'devops' || user?.role === 'admin';
 
@@ -132,9 +136,12 @@ const Gallery = () => {
               <Card sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
                 <CardContent sx={{ flex: 1 }}>
                   <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
-                    <Typography variant="h6" component="h2">
-                      {template.name}
-                    </Typography>
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                      <FavoriteButton entityType="template" entityId={template.id} size="small" />
+                      <Typography variant="h6" component="h2">
+                        {template.name}
+                      </Typography>
+                    </Box>
                     {!template.is_published && <Chip label="Draft" size="small" />}
                   </Box>
                   <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
@@ -157,7 +164,17 @@ const Gallery = () => {
                     View
                   </Button>
                   {template.is_published && (
-                    <Button size="small" color="primary" onClick={() => navigate(`/templates/${template.id}/use`)}>
+                    <Button
+                      size="small"
+                      color="primary"
+                      startIcon={<RocketLaunchIcon />}
+                      onClick={() => setQuickDeployTemplate(template)}
+                    >
+                      Quick Deploy
+                    </Button>
+                  )}
+                  {template.is_published && (
+                    <Button size="small" onClick={() => navigate(`/templates/${template.id}/use`)}>
                       Use Template
                     </Button>
                   )}
@@ -172,6 +189,11 @@ const Gallery = () => {
           ))}
         </Grid>
       )}
+      <QuickDeployDialog
+        open={!!quickDeployTemplate}
+        onClose={() => setQuickDeployTemplate(null)}
+        template={quickDeployTemplate}
+      />
     </Box>
   );
 };

@@ -17,6 +17,7 @@ import {
 } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
 import { definitionService, templateService } from '../../api/client';
+import FavoriteButton from '../../components/FavoriteButton';
 import type { StackDefinition, StackTemplate } from '../../types';
 
 const List = () => {
@@ -105,9 +106,12 @@ const List = () => {
                   onClick={() => navigate(`/stack-definitions/${def.id}/edit`)}
                 >
                   <TableCell>
-                    <Typography variant="body2" fontWeight="bold">
-                      {def.name}
-                    </Typography>
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                      <FavoriteButton entityType="definition" entityId={def.id} size="small" />
+                      <Typography variant="body2" fontWeight="bold">
+                        {def.name}
+                      </Typography>
+                    </Box>
                   </TableCell>
                   <TableCell>
                     <Typography variant="body2" color="text.secondary" noWrap sx={{ maxWidth: 300 }}>

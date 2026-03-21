@@ -91,12 +91,22 @@ func (c *Client) GetResourceCounts(ctx context.Context, namespace string) (*Reso
 	}, nil
 }
 
+// IngressInfo represents a discovered Ingress resource with constructed access URL.
+type IngressInfo struct {
+	Name string `json:"name"`
+	Host string `json:"host"`
+	Path string `json:"path"`
+	URL  string `json:"url"`
+	TLS  bool   `json:"tls"`
+}
+
 // NamespaceStatus represents the health of all resources in a namespace.
 type NamespaceStatus struct {
 	LastChecked time.Time     `json:"last_checked"`
 	Namespace   string        `json:"namespace"`
 	Status      string        `json:"status"`
 	Charts      []ChartStatus `json:"charts"`
+	Ingresses   []IngressInfo `json:"ingresses,omitempty"`
 }
 
 // ChartStatus represents the status of a single Helm release's resources.
@@ -129,9 +139,13 @@ type PodInfo struct {
 
 // ServiceInfo summarizes a Kubernetes Service.
 type ServiceInfo struct {
-	Name      string `json:"name"`
-	Type      string `json:"type"`
-	ClusterIP string `json:"cluster_ip"`
+	Name         string   `json:"name"`
+	Type         string   `json:"type"`
+	ClusterIP    string   `json:"cluster_ip"`
+	ExternalIP   string   `json:"external_ip,omitempty"`
+	Ports        []string `json:"ports,omitempty"`
+	NodePorts    []int32  `json:"node_ports,omitempty"`
+	IngressHosts []string `json:"ingress_hosts,omitempty"`
 }
 
 // GetNamespaceStatus queries the K8s API for the status of all resources in a namespace.
@@ -256,11 +270,90 @@ func (c *Client) GetNamespaceStatus(ctx context.Context, namespace string) (*Nam
 		}
 		cr := ensureChart(release)
 
-		cr.services = append(cr.services, ServiceInfo{
+		si := ServiceInfo{
 			Name:      s.Name,
 			Type:      string(s.Spec.Type),
 			ClusterIP: s.Spec.ClusterIP,
-		})
+		}
+
+		// Populate service ports.
+		for _, p := range s.Spec.Ports {
+			si.Ports = append(si.Ports, fmt.Sprintf("%d/%s", p.Port, p.Protocol))
+		}
+
+		// Extract ExternalIP for LoadBalancer services.
+		if s.Spec.Type == corev1.ServiceTypeLoadBalancer && len(s.Status.LoadBalancer.Ingress) > 0 {
+			lbIngress := s.Status.LoadBalancer.Ingress[0]
+			if lbIngress.IP != "" {
+				si.ExternalIP = lbIngress.IP
+			} else if lbIngress.Hostname != "" {
+				si.ExternalIP = lbIngress.Hostname
+			}
+		}
+
+		// Extract NodePorts for NodePort services.
+		if s.Spec.Type == corev1.ServiceTypeNodePort || s.Spec.Type == corev1.ServiceTypeLoadBalancer {
+			for _, port := range s.Spec.Ports {
+				if port.NodePort != 0 {
+					si.NodePorts = append(si.NodePorts, port.NodePort)
+				}
+			}
+		}
+
+		cr.services = append(cr.services, si)
+	}
+
+	// Fetch Ingresses (non-fatal on failure).
+	var ingresses []IngressInfo
+	ingressList, err := c.clientset.NetworkingV1().Ingresses(namespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		slog.Warn("Failed to list ingresses, skipping", "namespace", namespace, "error", err)
+	} else {
+		// Build a set of TLS hosts for quick lookups.
+		tlsHosts := make(map[string]bool)
+		// Map from backend service name → ingress hosts that reference it.
+		svcIngressHosts := make(map[string][]string)
+
+		for _, ing := range ingressList.Items {
+			for _, tlsEntry := range ing.Spec.TLS {
+				for _, h := range tlsEntry.Hosts {
+					tlsHosts[h] = true
+				}
+			}
+
+			for _, rule := range ing.Spec.Rules {
+				host := rule.Host
+				if rule.HTTP == nil {
+					continue
+				}
+				for _, p := range rule.HTTP.Paths {
+					tls := tlsHosts[host]
+					path := p.Path
+					ingresses = append(ingresses, IngressInfo{
+						Name: ing.Name,
+						Host: host,
+						Path: path,
+						TLS:  tls,
+						URL:  constructIngressURL(host, path, tls),
+					})
+
+					// Track which services are referenced by ingress rules.
+					if p.Backend.Service != nil {
+						svcName := p.Backend.Service.Name
+						svcIngressHosts[svcName] = appendUnique(svcIngressHosts[svcName], host)
+					}
+				}
+			}
+		}
+
+		// Attach ingress hosts to matching service entries.
+		for release, cr := range charts {
+			for i, svc := range cr.services {
+				if hosts, ok := svcIngressHosts[svc.Name]; ok {
+					charts[release].services[i].IngressHosts = hosts
+				}
+			}
+		}
 	}
 
 	// Build chart statuses.
@@ -289,6 +382,7 @@ func (c *Client) GetNamespaceStatus(ctx context.Context, namespace string) (*Nam
 		Namespace:   namespace,
 		Status:      overall,
 		Charts:      chartStatuses,
+		Ingresses:   ingresses,
 		LastChecked: time.Now().UTC(),
 	}, nil
 }
@@ -362,4 +456,26 @@ func ptrInt32OrDefault(p *int32, def int32) int32 {
 		return def
 	}
 	return *p
+}
+
+// constructIngressURL builds a full URL from an Ingress rule's host and path.
+func constructIngressURL(host, path string, tls bool) string {
+	scheme := "http"
+	if tls {
+		scheme = "https"
+	}
+	if path == "" || path == "/" {
+		return fmt.Sprintf("%s://%s", scheme, host)
+	}
+	return fmt.Sprintf("%s://%s%s", scheme, host, path)
+}
+
+// appendUnique appends val to slice only if it is not already present.
+func appendUnique(slice []string, val string) []string {
+	for _, s := range slice {
+		if s == val {
+			return slice
+		}
+	}
+	return append(slice, val)
 }

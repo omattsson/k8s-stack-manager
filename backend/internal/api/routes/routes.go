@@ -36,6 +36,15 @@ type Deps struct {
 	// Admin handlers.
 	AdminHandler *handlers.AdminHandler
 
+	// Branch override handler.
+	BranchOverrideHandler *handlers.BranchOverrideHandler
+
+	// Favorites handler.
+	FavoriteHandler *handlers.FavoriteHandler
+
+	// Quick deploy handler.
+	QuickDeployHandler *handlers.QuickDeployHandler
+
 	// Cluster management.
 	ClusterHandler *handlers.ClusterHandler
 	ClusterRepo    models.ClusterRepository
@@ -144,6 +153,9 @@ func SetupRoutes(router *gin.Engine, deps Deps) *handlers.RateLimiter {
 				templates.PUT("/:id/charts/:chartId", devops, deps.TemplateHandler.UpdateTemplateChart)
 				templates.DELETE("/:id/charts/:chartId", devops, deps.TemplateHandler.DeleteTemplateChart)
 			}
+			if deps.QuickDeployHandler != nil {
+				templates.POST("/:id/quick-deploy", deps.QuickDeployHandler.QuickDeploy)
+			}
 		}
 
 		// Stack Definitions
@@ -167,6 +179,7 @@ func SetupRoutes(router *gin.Engine, deps Deps) *handlers.RateLimiter {
 			{
 				instances.GET("", deps.InstanceHandler.ListInstances)
 				instances.POST("", deps.InstanceHandler.CreateInstance)
+				instances.GET("/recent", deps.InstanceHandler.GetRecentInstances)
 				instances.GET("/:id", deps.InstanceHandler.GetInstance)
 				instances.PUT("/:id", deps.InstanceHandler.UpdateInstance)
 				instances.DELETE("/:id", deps.InstanceHandler.DeleteInstance)
@@ -178,8 +191,16 @@ func SetupRoutes(router *gin.Engine, deps Deps) *handlers.RateLimiter {
 				instances.POST("/:id/deploy", deps.InstanceHandler.DeployInstance)
 				instances.POST("/:id/stop", deps.InstanceHandler.StopInstance)
 				instances.POST("/:id/clean", deps.InstanceHandler.CleanInstance)
+				instances.POST("/:id/extend", deps.InstanceHandler.ExtendTTL)
 				instances.GET("/:id/deploy-log", deps.InstanceHandler.GetDeployLog)
 				instances.GET("/:id/status", deps.InstanceHandler.GetInstanceStatus)
+
+				// Per-chart branch overrides
+				if deps.BranchOverrideHandler != nil {
+					instances.GET("/:id/branches", deps.BranchOverrideHandler.ListBranchOverrides)
+					instances.PUT("/:id/branches/:chartId", deps.BranchOverrideHandler.SetBranchOverride)
+					instances.DELETE("/:id/branches/:chartId", deps.BranchOverrideHandler.DeleteBranchOverride)
+				}
 			}
 		}
 
@@ -252,6 +273,17 @@ func SetupRoutes(router *gin.Engine, deps Deps) *handlers.RateLimiter {
 				clusters.DELETE("/:id", admin, clusterHandler.DeleteCluster)
 				clusters.POST("/:id/test", admin, clusterHandler.TestClusterConnection)
 				clusters.POST("/:id/default", admin, clusterHandler.SetDefaultCluster)
+			}
+		}
+
+		// Favorites
+		if deps.FavoriteHandler != nil {
+			favorites := authed.Group("/favorites")
+			{
+				favorites.GET("", deps.FavoriteHandler.ListFavorites)
+				favorites.POST("", deps.FavoriteHandler.AddFavorite)
+				favorites.DELETE("/:entityType/:entityId", deps.FavoriteHandler.RemoveFavorite)
+				favorites.GET("/check", deps.FavoriteHandler.CheckFavorite)
 			}
 		}
 	}

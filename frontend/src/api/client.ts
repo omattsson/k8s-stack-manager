@@ -27,6 +27,10 @@ import type {
   CreateClusterRequest,
   UpdateClusterRequest,
   ClusterTestResult,
+  ChartBranchOverride,
+  UserFavorite,
+  QuickDeployRequest,
+  QuickDeployResponse,
 } from '../types';
 
 const api = axios.create(axiosConfig);
@@ -191,6 +195,15 @@ export const templateService = {
       await api.delete(`/api/v1/templates/${id}/charts/${chartId}`);
     } catch (error) {
       console.error('Failed to delete template chart:', error);
+      throw error;
+    }
+  },
+  quickDeploy: async (id: string, data: QuickDeployRequest): Promise<QuickDeployResponse> => {
+    try {
+      const response = await api.post(`/api/v1/templates/${id}/quick-deploy`, data);
+      return response.data;
+    } catch (error) {
+      console.error('Failed to quick deploy template:', error);
       throw error;
     }
   },
@@ -397,6 +410,27 @@ export const instanceService = {
       throw error;
     }
   },
+  extend: async (id: string, ttlMinutes?: number): Promise<StackInstance> => {
+    try {
+      const response = await api.post(
+        `/api/v1/stack-instances/${id}/extend`,
+        ttlMinutes ? { ttl_minutes: ttlMinutes } : {},
+      );
+      return response.data;
+    } catch (error) {
+      console.error('Failed to extend TTL:', error);
+      throw error;
+    }
+  },
+  recent: async (): Promise<StackInstance[]> => {
+    try {
+      const response = await api.get('/api/v1/stack-instances/recent');
+      return response.data;
+    } catch (error) {
+      console.error('Failed to fetch recent instances:', error);
+      throw error;
+    }
+  },
 };
 
 export const gitService = {
@@ -586,6 +620,75 @@ export const clusterService = {
       return response.data;
     } catch (error) {
       console.error('Failed to set default cluster:', error);
+      throw error;
+    }
+  },
+};
+
+export const favoriteService = {
+  list: async (): Promise<UserFavorite[]> => {
+    try {
+      const response = await api.get('/api/v1/favorites');
+      return response.data;
+    } catch (error) {
+      console.error('Failed to fetch favorites:', error);
+      throw error;
+    }
+  },
+  add: async (entityType: string, entityId: string): Promise<UserFavorite> => {
+    try {
+      const response = await api.post('/api/v1/favorites', { entity_type: entityType, entity_id: entityId });
+      return response.data;
+    } catch (error) {
+      console.error('Failed to add favorite:', error);
+      throw error;
+    }
+  },
+  remove: async (entityType: string, entityId: string): Promise<void> => {
+    try {
+      await api.delete(`/api/v1/favorites/${entityType}/${entityId}`);
+    } catch (error) {
+      console.error('Failed to remove favorite:', error);
+      throw error;
+    }
+  },
+  check: async (entityType: string, entityId: string): Promise<boolean> => {
+    try {
+      const response = await api.get('/api/v1/favorites/check', {
+        params: { entity_type: entityType, entity_id: entityId },
+      });
+      return response.data.is_favorite;
+    } catch (error) {
+      console.error('Failed to check favorite:', error);
+      throw error;
+    }
+  },
+};
+
+export const branchOverrideService = {
+  list: async (instanceId: string): Promise<ChartBranchOverride[]> => {
+    try {
+      const response = await api.get(`/api/v1/stack-instances/${instanceId}/branches`);
+      return response.data;
+    } catch (error) {
+      console.error('Failed to fetch branch overrides:', error);
+      throw error;
+    }
+  },
+  set: async (instanceId: string, chartId: string, branch: string): Promise<ChartBranchOverride> => {
+    try {
+      const response = await api.put(`/api/v1/stack-instances/${instanceId}/branches/${chartId}`, { branch });
+      return response.data;
+    } catch (error) {
+      console.error('Failed to set branch override:', error);
+      throw error;
+    }
+  },
+  delete: async (instanceId: string, chartId: string): Promise<void> => {
+    try {
+      await api.delete(`/api/v1/stack-instances/${instanceId}/branches/${chartId}`);
+    } catch (error) {
+      console.error('Failed to delete branch override:', error);
       throw error;
     }
   },

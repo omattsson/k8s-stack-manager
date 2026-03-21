@@ -226,7 +226,7 @@ func (h *AdminHandler) DeleteOrphanedNamespace(c *gin.Context) {
 	if err := k8sClient.DeleteNamespace(ctx, namespace); err != nil {
 		slog.Error("Failed to delete orphaned namespace", "namespace", namespace, "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": fmt.Sprintf("Failed to delete namespace %q", namespace),
+			"error": "Failed to delete namespace",
 		})
 		return
 	}

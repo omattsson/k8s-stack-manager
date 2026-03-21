@@ -101,6 +101,9 @@ func (si *StackInstance) Validate() error {
 	if si.OwnerID == "" {
 		return errors.New("owner_id is required")
 	}
+	if si.TTLMinutes < 0 {
+		return errors.New("ttl_minutes must be non-negative")
+	}
 	if si.Namespace != "" {
 		if len(si.Namespace) > MaxNamespaceLength {
 			return fmt.Errorf("namespace must be at most %d characters", MaxNamespaceLength)
@@ -161,6 +164,20 @@ func (a *AuditLog) Validate() error {
 	}
 	if a.EntityType == "" {
 		return errors.New("entity_type is required")
+	}
+	return nil
+}
+
+// Validate implements model validation for ChartBranchOverride.
+func (o *ChartBranchOverride) Validate() error {
+	if o.StackInstanceID == "" {
+		return errors.New("stack_instance_id is required")
+	}
+	if o.ChartConfigID == "" {
+		return errors.New("chart_config_id is required")
+	}
+	if o.Branch == "" {
+		return errors.New("branch is required")
 	}
 	return nil
 }

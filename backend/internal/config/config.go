@@ -5,6 +5,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"strconv"
 	"strings"
@@ -79,9 +80,10 @@ type Config struct {
 
 // AppConfig holds application-wide configuration
 type AppConfig struct {
-	Name        string
-	Environment string
-	Debug       bool
+	Name                      string
+	Environment               string
+	DefaultInstanceTTLMinutes int
+	Debug                     bool
 }
 
 // DatabaseConfig holds database-specific configuration
@@ -167,6 +169,10 @@ func (c *Config) Validate() error {
 		if err := c.Auth.Validate(); err != nil {
 			return fmt.Errorf("auth config: %w", err)
 		}
+	}
+
+	if c.Deployment.KubeconfigEncryptionKey == "" || len(c.Deployment.KubeconfigEncryptionKey) < 16 {
+		slog.Warn("KUBECONFIG_ENCRYPTION_KEY is not set or too short, kubeconfig data will not be encrypted at rest")
 	}
 
 	return nil
@@ -318,9 +324,10 @@ func LoadConfig() (*Config, error) {
 
 	cfg := &Config{
 		App: AppConfig{
-			Name:        getEnv("APP_NAME", "backend-api"),
-			Environment: getEnv("GO_ENV", "development"),
-			Debug:       getEnvBool("APP_DEBUG", true),
+			Name:                      getEnv("APP_NAME", "backend-api"),
+			Environment:               getEnv("GO_ENV", "development"),
+			DefaultInstanceTTLMinutes: int(getEnvInt32("DEFAULT_INSTANCE_TTL_MINUTES", 0)),
+			Debug:                     getEnvBool("APP_DEBUG", true),
 		},
 		Database: DatabaseConfig{
 			Host:            getEnv("DB_HOST", "localhost"),

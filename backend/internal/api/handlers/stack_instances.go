@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -27,6 +28,9 @@ type NamespaceConflictResponse struct {
 	Message     string   `json:"message"`
 	Suggestions []string `json:"suggestions"`
 }
+
+// MaxTTLMinutes is the maximum allowed TTL value (30 days).
+const MaxTTLMinutes = 43200
 
 // rfc1123InvalidChars matches any character not allowed in an RFC1123 label.
 var rfc1123InvalidChars = regexp.MustCompile(`[^a-z0-9-]`)
@@ -77,40 +81,46 @@ func buildNamespace(instancePart, ownerPart string) string {
 
 // InstanceHandler handles stack instance, value override, and values export endpoints.
 type InstanceHandler struct {
-	instanceRepo      models.StackInstanceRepository
-	overrideRepo      models.ValueOverrideRepository
-	definitionRepo    models.StackDefinitionRepository
-	chartConfigRepo   models.ChartConfigRepository
-	templateRepo      models.StackTemplateRepository
-	templateChartRepo models.TemplateChartConfigRepository
-	valuesGen         *helm.ValuesGenerator
-	userRepo          models.UserRepository
-	deployManager     *deployer.Manager
-	k8sWatcher        *k8s.Watcher
-	registry          *cluster.Registry
-	deployLogRepo     models.DeploymentLogRepository
+	instanceRepo       models.StackInstanceRepository
+	overrideRepo       models.ValueOverrideRepository
+	branchOverrideRepo models.ChartBranchOverrideRepository
+	definitionRepo     models.StackDefinitionRepository
+	chartConfigRepo    models.ChartConfigRepository
+	templateRepo       models.StackTemplateRepository
+	templateChartRepo  models.TemplateChartConfigRepository
+	valuesGen          *helm.ValuesGenerator
+	userRepo           models.UserRepository
+	deployManager      *deployer.Manager
+	k8sWatcher         *k8s.Watcher
+	registry           *cluster.Registry
+	deployLogRepo      models.DeploymentLogRepository
+	defaultTTLMinutes  int
 }
 
 // NewInstanceHandler creates a new InstanceHandler.
 func NewInstanceHandler(
 	instanceRepo models.StackInstanceRepository,
 	overrideRepo models.ValueOverrideRepository,
+	branchOverrideRepo models.ChartBranchOverrideRepository,
 	definitionRepo models.StackDefinitionRepository,
 	chartConfigRepo models.ChartConfigRepository,
 	templateRepo models.StackTemplateRepository,
 	templateChartRepo models.TemplateChartConfigRepository,
 	valuesGen *helm.ValuesGenerator,
 	userRepo models.UserRepository,
+	defaultTTLMinutes int,
 ) *InstanceHandler {
 	return &InstanceHandler{
-		instanceRepo:      instanceRepo,
-		overrideRepo:      overrideRepo,
-		definitionRepo:    definitionRepo,
-		chartConfigRepo:   chartConfigRepo,
-		templateRepo:      templateRepo,
-		templateChartRepo: templateChartRepo,
-		valuesGen:         valuesGen,
-		userRepo:          userRepo,
+		instanceRepo:       instanceRepo,
+		overrideRepo:       overrideRepo,
+		branchOverrideRepo: branchOverrideRepo,
+		definitionRepo:     definitionRepo,
+		chartConfigRepo:    chartConfigRepo,
+		templateRepo:       templateRepo,
+		templateChartRepo:  templateChartRepo,
+		valuesGen:          valuesGen,
+		userRepo:           userRepo,
+		defaultTTLMinutes:  defaultTTLMinutes,
 	}
 }
 
@@ -118,6 +128,7 @@ func NewInstanceHandler(
 func NewInstanceHandlerWithDeployer(
 	instanceRepo models.StackInstanceRepository,
 	overrideRepo models.ValueOverrideRepository,
+	branchOverrideRepo models.ChartBranchOverrideRepository,
 	definitionRepo models.StackDefinitionRepository,
 	chartConfigRepo models.ChartConfigRepository,
 	templateRepo models.StackTemplateRepository,
@@ -128,20 +139,23 @@ func NewInstanceHandlerWithDeployer(
 	k8sWatcher *k8s.Watcher,
 	registry *cluster.Registry,
 	deployLogRepo models.DeploymentLogRepository,
+	defaultTTLMinutes int,
 ) *InstanceHandler {
 	return &InstanceHandler{
-		instanceRepo:      instanceRepo,
-		overrideRepo:      overrideRepo,
-		definitionRepo:    definitionRepo,
-		chartConfigRepo:   chartConfigRepo,
-		templateRepo:      templateRepo,
-		templateChartRepo: templateChartRepo,
-		valuesGen:         valuesGen,
-		userRepo:          userRepo,
-		deployManager:     deployManager,
-		k8sWatcher:        k8sWatcher,
-		registry:          registry,
-		deployLogRepo:     deployLogRepo,
+		instanceRepo:       instanceRepo,
+		overrideRepo:       overrideRepo,
+		branchOverrideRepo: branchOverrideRepo,
+		definitionRepo:     definitionRepo,
+		chartConfigRepo:    chartConfigRepo,
+		templateRepo:       templateRepo,
+		templateChartRepo:  templateChartRepo,
+		valuesGen:          valuesGen,
+		userRepo:           userRepo,
+		deployManager:      deployManager,
+		k8sWatcher:         k8sWatcher,
+		registry:           registry,
+		deployLogRepo:      deployLogRepo,
+		defaultTTLMinutes:  defaultTTLMinutes,
 	}
 }
 
@@ -174,6 +188,38 @@ func (h *InstanceHandler) ListInstances(c *gin.Context) {
 	c.JSON(http.StatusOK, instances)
 }
 
+// GetRecentInstances godoc
+// @Summary     Get recent stack instances for the authenticated user
+// @Description Returns the 5 most recently updated stack instances owned by the current user
+// @Tags        stack-instances
+// @Produce     json
+// @Security    BearerAuth
+// @Success     200  {array}  models.StackInstance
+// @Failure     500  {object} map[string]string
+// @Router      /api/v1/stack-instances/recent [get]
+func (h *InstanceHandler) GetRecentInstances(c *gin.Context) {
+	userID := middleware.GetUserIDFromContext(c)
+
+	instances, err := h.instanceRepo.ListByOwner(userID)
+	if err != nil {
+		status, message := mapError(err, "Stack instance")
+		c.JSON(status, gin.H{"error": message})
+		return
+	}
+
+	// Sort by UpdatedAt descending.
+	sort.Slice(instances, func(i, j int) bool {
+		return instances[i].UpdatedAt.After(instances[j].UpdatedAt)
+	})
+
+	// Take at most 5.
+	if len(instances) > 5 {
+		instances = instances[:5]
+	}
+
+	c.JSON(http.StatusOK, instances)
+}
+
 // CreateInstance godoc
 // @Summary     Create a stack instance
 // @Description Create a new stack instance from a definition
@@ -185,12 +231,29 @@ func (h *InstanceHandler) ListInstances(c *gin.Context) {
 // @Failure     400      {object} map[string]string
 // @Failure     409      {object} NamespaceConflictResponse "Namespace already exists"
 // @Router      /api/v1/stack-instances [post]
+// createInstanceRequest is the JSON-binding DTO for CreateInstance.
+// TTLMinutes is *int so we can distinguish "omitted" (nil → use default)
+// from an explicit 0 (meaning "no expiry").
+type createInstanceRequest struct {
+	StackDefinitionID string `json:"stack_definition_id"`
+	Name              string `json:"name"`
+	Branch            string `json:"branch"`
+	ClusterID         string `json:"cluster_id"`
+	TTLMinutes        *int   `json:"ttl_minutes"`
+}
+
 func (h *InstanceHandler) CreateInstance(c *gin.Context) {
-	var inst models.StackInstance
-	if err := c.ShouldBindJSON(&inst); err != nil {
+	var req createInstanceRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request format"})
 		return
 	}
+
+	var inst models.StackInstance
+	inst.StackDefinitionID = req.StackDefinitionID
+	inst.Name = req.Name
+	inst.Branch = req.Branch
+	inst.ClusterID = req.ClusterID
 
 	inst.ID = uuid.New().String()
 	inst.OwnerID = middleware.GetUserIDFromContext(c)
@@ -201,6 +264,23 @@ func (h *InstanceHandler) CreateInstance(c *gin.Context) {
 
 	if inst.Branch == "" {
 		inst.Branch = "master"
+	}
+
+	// Apply default TTL only when the field was omitted (nil).
+	// An explicit 0 means "no expiry".
+	if req.TTLMinutes == nil && h.defaultTTLMinutes > 0 {
+		inst.TTLMinutes = h.defaultTTLMinutes
+	} else if req.TTLMinutes != nil {
+		inst.TTLMinutes = *req.TTLMinutes
+	}
+	if inst.TTLMinutes > MaxTTLMinutes {
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("TTL must not exceed %d minutes (30 days)", MaxTTLMinutes)})
+		return
+	}
+	// Compute expiry timestamp from TTL.
+	if inst.TTLMinutes > 0 {
+		exp := now.Add(time.Duration(inst.TTLMinutes) * time.Minute)
+		inst.ExpiresAt = &exp
 	}
 
 	// Resolve or validate ClusterID using the registry when available.
@@ -309,16 +389,51 @@ func (h *InstanceHandler) UpdateInstance(c *gin.Context) {
 		return
 	}
 
-	var update models.StackInstance
+	// Authorization: only the owner or an admin may update the instance.
+	userID := middleware.GetUserIDFromContext(c)
+	role := middleware.GetRoleFromContext(c)
+	if existing.OwnerID != userID && role != "admin" {
+		c.JSON(http.StatusForbidden, gin.H{"error": "You are not allowed to modify this stack instance"})
+		return
+	}
+
+	var update struct {
+		Name       *string `json:"name"`
+		Branch     *string `json:"branch"`
+		Namespace  *string `json:"namespace"`
+		TTLMinutes *int    `json:"ttl_minutes"`
+	}
 	if err := c.ShouldBindJSON(&update); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request format"})
 		return
 	}
 
-	existing.Name = update.Name
-	existing.Branch = update.Branch
-	existing.Namespace = update.Namespace
+	if update.Name != nil {
+		existing.Name = *update.Name
+	}
+	if update.Branch != nil {
+		existing.Branch = *update.Branch
+	}
+	if update.Namespace != nil {
+		existing.Namespace = *update.Namespace
+	}
 	existing.UpdatedAt = time.Now().UTC()
+
+	// Update TTL only if the field was explicitly sent.
+	if update.TTLMinutes != nil {
+		ttl := *update.TTLMinutes
+		if ttl > MaxTTLMinutes {
+			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("TTL must not exceed %d minutes (30 days)", MaxTTLMinutes)})
+			return
+		}
+		existing.TTLMinutes = ttl
+		if ttl > 0 {
+			exp := time.Now().UTC().Add(time.Duration(ttl) * time.Minute)
+			existing.ExpiresAt = &exp
+		} else {
+			existing.ExpiresAt = nil
+		}
+	}
 
 	if err := existing.Validate(); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -348,6 +463,15 @@ func (h *InstanceHandler) DeleteInstance(c *gin.Context) {
 	if id == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Instance ID is required"})
 		return
+	}
+
+	// Clean up per-chart branch overrides before deleting.
+	if h.branchOverrideRepo != nil {
+		if err := h.branchOverrideRepo.DeleteByInstance(id); err != nil {
+			slog.Error("failed to delete branch overrides for stack instance", "instance_id", id, "error", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
+			return
+		}
 	}
 
 	if err := h.instanceRepo.Delete(id); err != nil {
@@ -503,11 +627,21 @@ func (h *InstanceHandler) ExportChartValues(c *gin.Context) {
 	// Resolve owner username for template vars.
 	ownerName := resolveOwnerName(h.userRepo, inst.OwnerID)
 
+	// Resolve per-chart branch override.
+	var chartBranch string
+	if h.branchOverrideRepo != nil {
+		bo, boErr := h.branchOverrideRepo.Get(instanceID, chartID)
+		if boErr == nil && bo != nil {
+			chartBranch = bo.Branch
+		}
+	}
+
 	params := helm.GenerateParams{
 		ChartName:      chart.ChartName,
 		DefaultValues:  chart.DefaultValues,
 		LockedValues:   lockedValues,
 		OverrideValues: overrideValues,
+		ChartBranch:    chartBranch,
 		TemplateVars: helm.TemplateVars{
 			Branch:       inst.Branch,
 			Namespace:    inst.Namespace,
@@ -655,6 +789,13 @@ func (h *InstanceHandler) DeployInstance(c *gin.Context) {
 		return
 	}
 
+	// Reset TTL expiry clock on deploy.
+	if inst.TTLMinutes > 0 {
+		exp := time.Now().UTC().Add(time.Duration(inst.TTLMinutes) * time.Minute)
+		inst.ExpiresAt = &exp
+		_ = h.instanceRepo.Update(inst)
+	}
+
 	def, err := h.definitionRepo.FindByID(inst.StackDefinitionID)
 	if err != nil {
 		status, message := mapError(err, "Stack definition")
@@ -707,6 +848,23 @@ func (h *InstanceHandler) DeployInstance(c *gin.Context) {
 		overridesMap[ov.ChartConfigID] = ov.Values
 	}
 
+	// Build per-chart branch override map.
+	branchMap := make(map[string]string)
+	if h.branchOverrideRepo != nil {
+		branchOverrides, err := h.branchOverrideRepo.List(inst.ID)
+		if err != nil {
+			slog.Error("Failed to list branch overrides",
+				"instance_id", id,
+				"error", err,
+			)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
+			return
+		}
+		for _, bo := range branchOverrides {
+			branchMap[bo.ChartConfigID] = bo.Branch
+		}
+	}
+
 	if inst.Namespace == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Instance namespace is empty"})
 		return
@@ -730,6 +888,7 @@ func (h *InstanceHandler) DeployInstance(c *gin.Context) {
 			DefaultValues:  ch.DefaultValues,
 			LockedValues:   lockedMap[ch.ChartName],
 			OverrideValues: overridesMap[ch.ID],
+			ChartBranch:    branchMap[ch.ID],
 			TemplateVars:   templateVars,
 		}
 
@@ -1088,4 +1247,79 @@ func resolveOwnerName(userRepo models.UserRepository, ownerID string) string {
 		return ownerID
 	}
 	return user.Username
+}
+
+// extendTTLRequest is the optional request body for the ExtendTTL endpoint.
+type extendTTLRequest struct {
+	TTLMinutes int `json:"ttl_minutes"`
+}
+
+// ExtendTTL godoc
+// @Summary     Extend instance TTL
+// @Description Extend the expiry time of a stack instance. Uses provided ttl_minutes or the instance's existing TTLMinutes.
+// @Tags        stack-instances
+// @Accept      json
+// @Produce     json
+// @Param       id  path     string          true  "Instance ID"
+// @Param       body body    extendTTLRequest false "Optional TTL override"
+// @Success     200 {object} models.StackInstance
+// @Failure     400 {object} map[string]string
+// @Failure     404 {object} map[string]string
+// @Router      /api/v1/stack-instances/{id}/extend [post]
+func (h *InstanceHandler) ExtendTTL(c *gin.Context) {
+	id := c.Param("id")
+	if id == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Instance ID is required"})
+		return
+	}
+
+	inst, err := h.instanceRepo.FindByID(id)
+	if err != nil {
+		status, message := mapError(err, "Stack instance")
+		c.JSON(status, gin.H{"error": message})
+		return
+	}
+
+	// Authorization: only the owner or an admin may extend the TTL.
+	userID := middleware.GetUserIDFromContext(c)
+	role := middleware.GetRoleFromContext(c)
+	if inst.OwnerID != userID && role != "admin" {
+		c.JSON(http.StatusForbidden, gin.H{"error": "You are not allowed to modify this stack instance"})
+		return
+	}
+
+	var req extendTTLRequest
+	// Body is optional — only bind if the client sent content.
+	if c.Request.ContentLength != 0 {
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request format"})
+			return
+		}
+	}
+
+	ttl := req.TTLMinutes
+	if ttl == 0 {
+		ttl = inst.TTLMinutes
+	}
+	if ttl <= 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "No TTL configured for this instance"})
+		return
+	}
+	if ttl > MaxTTLMinutes {
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("TTL must not exceed %d minutes (30 days)", MaxTTLMinutes)})
+		return
+	}
+
+	inst.TTLMinutes = ttl
+	exp := time.Now().UTC().Add(time.Duration(ttl) * time.Minute)
+	inst.ExpiresAt = &exp
+	inst.UpdatedAt = time.Now().UTC()
+
+	if err := h.instanceRepo.Update(inst); err != nil {
+		status, message := mapError(err, "Stack instance")
+		c.JSON(status, gin.H{"error": message})
+		return
+	}
+
+	c.JSON(http.StatusOK, inst)
 }
