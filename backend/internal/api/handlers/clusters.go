@@ -1,13 +1,17 @@
 package handlers
 
 import (
+	"context"
+	"encoding/json"
 	"log/slog"
 	"net/http"
+	"time"
 
 	"backend/internal/cluster"
 	"backend/internal/models"
 
 	"github.com/gin-gonic/gin"
+	apimachineryversion "k8s.io/apimachinery/pkg/version"
 )
 
 // CreateClusterRequest is the input payload for creating a cluster.
@@ -348,20 +352,45 @@ func (h *ClusterHandler) TestClusterConnection(c *gin.Context) {
 		return
 	}
 
-	// Attempt a lightweight API call to verify connectivity.
-	version, err := k8sClient.Clientset().Discovery().ServerVersion()
-	if err != nil {
-		slog.Error("Cluster connectivity test failed", "cluster_id", id, "error", err)
-		// Invalidate the client since it failed.
-		h.registry.InvalidateClient(id)
-		c.JSON(http.StatusBadGateway, gin.H{"status": "error", "message": "Cluster is unreachable"})
-		return
+	// Attempt a lightweight API call to verify connectivity with a timeout
+	// so that hung network calls don't block the request goroutine indefinitely.
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
+	defer cancel()
+
+	var version *apimachineryversion.Info
+	if restClient := k8sClient.Clientset().Discovery().RESTClient(); restClient != nil {
+		result := restClient.Get().AbsPath("/version").Do(ctx)
+		if err := result.Error(); err != nil {
+			slog.Error("Cluster connectivity test failed", "cluster_id", id, "error", err)
+			h.registry.InvalidateClient(id)
+			c.JSON(http.StatusBadGateway, gin.H{"status": "error", "message": "Cluster is unreachable"})
+			return
+		}
+		raw, _ := result.Raw()
+		v := &apimachineryversion.Info{}
+		if jsonErr := json.Unmarshal(raw, v); jsonErr == nil {
+			version = v
+		}
+	} else {
+		// Fallback for test fakes that don't implement RESTClient.
+		v, err := k8sClient.Clientset().Discovery().ServerVersion()
+		if err != nil {
+			slog.Error("Cluster connectivity test failed", "cluster_id", id, "error", err)
+			h.registry.InvalidateClient(id)
+			c.JSON(http.StatusBadGateway, gin.H{"status": "error", "message": "Cluster is unreachable"})
+			return
+		}
+		version = v
 	}
 
 	// Invalidate so next access rebuilds from (possibly updated) kubeconfig.
 	h.registry.InvalidateClient(id)
 
-	c.JSON(http.StatusOK, gin.H{"status": "success", "message": "Connection successful", "server_version": version.GitVersion})
+	gitVersion := ""
+	if version != nil {
+		gitVersion = version.GitVersion
+	}
+	c.JSON(http.StatusOK, gin.H{"status": "success", "message": "Connection successful", "server_version": gitVersion})
 }
 
 // SetDefaultCluster godoc

@@ -52,8 +52,11 @@ func NewHealthPoller(cfg HealthPollerConfig) *HealthPoller {
 }
 
 // Start begins the background polling goroutine.
+// It is safe to call Start multiple times; only the first call launches the goroutine.
 func (p *HealthPoller) Start() {
-	p.started.Store(true)
+	if !p.started.CompareAndSwap(false, true) {
+		return
+	}
 	go p.run()
 }
 

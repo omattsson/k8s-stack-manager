@@ -165,6 +165,29 @@ func (r *StackInstanceRepository) ListByOwner(ownerID string) ([]models.StackIns
 func (r *StackInstanceRepository) FindByCluster(clusterID string) ([]models.StackInstance, error) {
 	ctx := context.Background()
 
+	// For empty clusterID, Azure Table OData 'ClusterID eq ""' will not match
+	// entities where the property is absent (pre-existing rows). Scan the full
+	// partition and filter in-memory instead.
+	if clusterID == "" {
+		filter := "PartitionKey eq 'global'"
+		pager := r.client.NewListEntitiesPager(&aztables.ListEntitiesOptions{
+			Filter: &filter,
+		})
+
+		entities, err := collectEntities(ctx, pager, func(e map[string]interface{}) bool {
+			return getString(e, "ClusterID") == ""
+		})
+		if err != nil {
+			return nil, mapAzureError("find_by_cluster", err)
+		}
+
+		results := make([]models.StackInstance, 0, len(entities))
+		for _, e := range entities {
+			results = append(results, *stackInstanceFromEntity(e))
+		}
+		return results, nil
+	}
+
 	filter := "PartitionKey eq 'global' and ClusterID eq '" + escapeODataString(clusterID) + "'"
 	pager := r.client.NewListEntitiesPager(&aztables.ListEntitiesOptions{
 		Filter: &filter,

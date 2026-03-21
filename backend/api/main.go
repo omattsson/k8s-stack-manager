@@ -366,27 +366,38 @@ func ensureDefaultCluster(clusterRepo models.ClusterRepository, instanceRepo mod
 }
 
 // backfillInstanceClusterIDs sets the given clusterID on all stack instances
-// that currently have an empty ClusterID.
+// that currently have an empty ClusterID. It intentionally lists all instances
+// and filters in-memory so that storage backends where missing properties are
+// not equal to empty strings (e.g., Azure Table Storage) are handled correctly.
 func backfillInstanceClusterIDs(instanceRepo models.StackInstanceRepository, clusterID string) {
-	instances, err := instanceRepo.FindByCluster("")
+	instances, err := instanceRepo.List()
 	if err != nil {
 		slog.Warn("Failed to list instances for cluster ID backfill", "error", err)
 		return
 	}
+
+	backfilledCount := 0
 	for i := range instances {
 		inst := &instances[i]
+		if inst.ClusterID != "" {
+			continue
+		}
+
 		inst.ClusterID = clusterID
 		if updateErr := instanceRepo.Update(inst); updateErr != nil {
 			slog.Error("Failed to backfill cluster ID on instance",
 				"instance_id", inst.ID,
 				"error", updateErr,
 			)
+			continue
 		}
+		backfilledCount++
 	}
-	if len(instances) > 0 {
+
+	if backfilledCount > 0 {
 		slog.Info("Backfilled default cluster ID on existing instances",
 			"cluster_id", clusterID,
-			"count", len(instances),
+			"count", backfilledCount,
 		)
 	}
 }

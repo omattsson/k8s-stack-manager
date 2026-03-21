@@ -991,26 +991,34 @@ func (h *InstanceHandler) GetInstanceStatus(c *gin.Context) {
 
 	// Fall back to direct query if we have a cluster registry.
 	if h.registry != nil {
-		client, err := h.registry.GetK8sClient(inst.ClusterID)
-		if err == nil {
-			nsStatus, err := client.GetNamespaceStatus(c.Request.Context(), inst.Namespace)
-			if err != nil {
-				slog.Error("Failed to get namespace status",
-					"instance_id", id,
-					"namespace", inst.Namespace,
-					"error", err,
-				)
-				c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
-				return
+		client, clientErr := h.registry.GetK8sClient(inst.ClusterID)
+		if clientErr != nil {
+			slog.Warn("Failed to get k8s client for instance status",
+				"instance_id", id,
+				"cluster_id", inst.ClusterID,
+				"error", clientErr,
+			)
+			// Distinguish unknown cluster from connectivity/internal errors.
+			var dbErr *dberrors.DatabaseError
+			if errors.As(clientErr, &dbErr) && errors.Is(dbErr.Unwrap(), dberrors.ErrNotFound) {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "Unknown cluster_id"})
+			} else {
+				c.JSON(http.StatusBadGateway, gin.H{"error": "Failed to connect to cluster"})
 			}
-			c.JSON(http.StatusOK, nsStatus)
 			return
 		}
-		slog.Warn("Failed to get k8s client for instance status",
-			"instance_id", id,
-			"cluster_id", inst.ClusterID,
-			"error", err,
-		)
+		nsStatus, err := client.GetNamespaceStatus(c.Request.Context(), inst.Namespace)
+		if err != nil {
+			slog.Error("Failed to get namespace status",
+				"instance_id", id,
+				"namespace", inst.Namespace,
+				"error", err,
+			)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
+			return
+		}
+		c.JSON(http.StatusOK, nsStatus)
+		return
 	}
 
 	c.JSON(http.StatusServiceUnavailable, gin.H{"error": "K8s monitoring not configured"})

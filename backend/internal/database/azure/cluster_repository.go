@@ -235,13 +235,18 @@ func (r *ClusterRepository) clusterToEntity(c *models.Cluster) (map[string]inter
 func (r *ClusterRepository) clusterFromEntity(e map[string]interface{}) (*models.Cluster, error) {
 	kubeconfigData := getString(e, "KubeconfigData")
 	if kubeconfigData != "" && len(r.encryptionKey) > 0 {
-		// Attempt to decode+decrypt. If this fails the data may have been
-		// stored before encryption was enabled — fall back to plaintext so
-		// existing rows remain readable after enabling or rotating keys.
-		if decoded, err := base64.StdEncoding.DecodeString(kubeconfigData); err == nil {
-			if decrypted, err := crypto.Decrypt(decoded, r.encryptionKey); err == nil {
-				kubeconfigData = string(decrypted)
+		// Attempt to decode+decrypt.
+		// - If base64 decoding fails, assume this is legacy plaintext data stored
+		//   before encryption was enabled and fall back to the raw value.
+		// - If decoding succeeds but decryption fails, treat this as a hard error
+		//   rather than propagating an encrypted blob as if it were kubeconfig YAML.
+		decoded, err := base64.StdEncoding.DecodeString(kubeconfigData)
+		if err == nil {
+			decrypted, decErr := crypto.Decrypt(decoded, r.encryptionKey)
+			if decErr != nil {
+				return nil, dberrors.NewDatabaseError("decrypt", decErr)
 			}
+			kubeconfigData = string(decrypted)
 		}
 	}
 

@@ -41,10 +41,6 @@ const Form = () => {
         const [defs, cls] = await Promise.all([definitionService.list(), clusterService.list()]);
         setDefinitions(defs || []);
         setClusters(cls || []);
-        const defaultCluster = (cls || []).find((c) => c.is_default);
-        if (defaultCluster) {
-          setSelectedClusterId(defaultCluster.id);
-        }
       } catch {
         setError('Failed to load form data');
       } finally {
@@ -176,7 +172,7 @@ const Form = () => {
               onChange={(e) => setSelectedClusterId(e.target.value)}
               select
               fullWidth
-              helperText="Leave empty to use the default cluster"
+              helperText="Select a cluster or leave empty to use the default cluster"
             >
               <MenuItem value="">
                 <em>Default cluster</em>

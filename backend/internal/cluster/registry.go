@@ -78,26 +78,31 @@ func (r *Registry) GetClients(clusterID string) (*ClusterClients, error) {
 	}
 	r.mu.RUnlock()
 
-	// Slow path: write lock for cache miss.
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	// Double-check after acquiring write lock.
-	if cc, ok := r.clients[clusterID]; ok {
-		return cc, nil
-	}
-
-	cluster, err := r.clusterRepo.FindByID(clusterID)
+	// Fetch cluster metadata and build clients outside the lock to avoid
+	// blocking concurrent readers/writers during potentially slow I/O
+	// (DB fetch, kubeconfig parsing, temp-file creation).
+	clusterModel, err := r.clusterRepo.FindByID(clusterID)
 	if err != nil {
 		return nil, fmt.Errorf("cluster %s: %w", clusterID, err)
 	}
 
-	cc, err := r.buildClients(cluster)
+	cc, err := r.buildClients(clusterModel)
 	if err != nil {
 		return nil, fmt.Errorf("cluster %s: build clients: %w", clusterID, err)
 	}
 
+	// Brief write lock to populate the cache. Re-check in case another
+	// goroutine built the same clients concurrently — use the first one
+	// and clean up our duplicate.
+	r.mu.Lock()
+	if existing, ok := r.clients[clusterID]; ok {
+		r.mu.Unlock()
+		cleanupTempKubeconfig(cc)
+		return existing, nil
+	}
 	r.clients[clusterID] = cc
+	r.mu.Unlock()
+
 	return cc, nil
 }
 
