@@ -11,6 +11,7 @@ import (
 	"backend/internal/health"
 	"backend/internal/helm"
 	"backend/internal/models"
+	"backend/internal/scheduler"
 	"backend/internal/websocket"
 	"bytes"
 	"encoding/json"
@@ -38,17 +39,22 @@ func uniqueName(prefix string) string {
 }
 
 type integServer struct {
-	router          *gin.Engine
-	userRepo        *azure.UserRepository
-	templateRepo    *azure.StackTemplateRepository
-	tplChartRepo    *azure.TemplateChartConfigRepository
-	definitionRepo  *azure.StackDefinitionRepository
-	chartConfigRepo *azure.ChartConfigRepository
-	instanceRepo    *azure.StackInstanceRepository
-	overrideRepo    *azure.ValueOverrideRepository
-	auditRepo       *azure.AuditLogRepository
-	apiKeyRepo      *azure.APIKeyRepository
-	clusterRepo     *azure.ClusterRepository
+	router           *gin.Engine
+	userRepo         *azure.UserRepository
+	templateRepo     *azure.StackTemplateRepository
+	tplChartRepo     *azure.TemplateChartConfigRepository
+	definitionRepo   *azure.StackDefinitionRepository
+	chartConfigRepo  *azure.ChartConfigRepository
+	instanceRepo     *azure.StackInstanceRepository
+	overrideRepo     *azure.ValueOverrideRepository
+	auditRepo        *azure.AuditLogRepository
+	apiKeyRepo       *azure.APIKeyRepository
+	clusterRepo      *azure.ClusterRepository
+	branchRepo       *azure.ChartBranchOverrideRepository
+	cleanupRepo      *azure.CleanupPolicyRepository
+	sharedValuesRepo *azure.SharedValuesRepository
+	favoriteRepo     *azure.UserFavoriteRepository
+	deployLogRepo    *azure.DeploymentLogRepository
 }
 
 func newIntegServer(t *testing.T) *integServer {
@@ -77,6 +83,16 @@ func newIntegServer(t *testing.T) *integServer {
 	require.NoError(t, err)
 	clusterRepo, err := azure.NewClusterRepository(azAccountName, azAccountKey, azEndpoint, true, "test-encryption-key-for-integ!!")
 	require.NoError(t, err)
+	branchRepo, err := azure.NewChartBranchOverrideRepository(azAccountName, azAccountKey, azEndpoint, true)
+	require.NoError(t, err)
+	cleanupRepo, err := azure.NewCleanupPolicyRepository(azAccountName, azAccountKey, azEndpoint, true)
+	require.NoError(t, err)
+	sharedValuesRepo, err := azure.NewSharedValuesRepository(azAccountName, azAccountKey, azEndpoint, true)
+	require.NoError(t, err)
+	favoriteRepo, err := azure.NewUserFavoriteRepository(azAccountName, azAccountKey, azEndpoint, true)
+	require.NoError(t, err)
+	deployLogRepo, err := azure.NewDeploymentLogRepository(azAccountName, azAccountKey, azEndpoint, true)
+	require.NoError(t, err)
 
 	authCfg := &config.AuthConfig{
 		JWTSecret:        integJWTSecret,
@@ -88,6 +104,11 @@ func newIntegServer(t *testing.T) *integServer {
 	definitionHandler := handlers.NewDefinitionHandler(definitionRepo, chartConfigRepo, instanceRepo, templateRepo, tplChartRepo)
 	valuesGen := helm.NewValuesGenerator()
 	instanceHandler := handlers.NewInstanceHandler(instanceRepo, overrideRepo, nil, definitionRepo, chartConfigRepo, templateRepo, tplChartRepo, valuesGen, userRepo, 0)
+	branchOverrideHandler := handlers.NewBranchOverrideHandler(branchRepo, instanceRepo)
+	cleanupPolicyHandler := handlers.NewCleanupPolicyHandler(cleanupRepo, (*scheduler.Scheduler)(nil))
+	sharedValuesHandler := handlers.NewSharedValuesHandler(sharedValuesRepo, clusterRepo)
+	favoriteHandler := handlers.NewFavoriteHandler(favoriteRepo)
+	analyticsHandler := handlers.NewAnalyticsHandler(templateRepo, definitionRepo, instanceRepo, deployLogRepo, userRepo)
 	gitRegistry := gitprovider.NewRegistry(gitprovider.Config{})
 	gitHandler := handlers.NewGitHandler(gitRegistry)
 	auditLogHandler := handlers.NewAuditLogHandler(auditRepo)
@@ -106,37 +127,47 @@ func newIntegServer(t *testing.T) *integServer {
 	}
 	router := gin.New()
 	rl := routes.SetupRoutes(router, routes.Deps{
-		HealthChecker:     healthChecker,
-		Config:            cfg,
-		Hub:               hub,
-		AuthHandler:       authHandler,
-		TemplateHandler:   templateHandler,
-		DefinitionHandler: definitionHandler,
-		InstanceHandler:   instanceHandler,
-		GitHandler:        gitHandler,
-		AuditLogHandler:   auditLogHandler,
-		AuditLogger:       auditRepo,
-		UserHandler:       userHandler,
-		APIKeyHandler:     apiKeyHandler,
-		UserRepo:          userRepo,
-		APIKeyRepo:        apiKeyRepo,
-		ClusterRepo:       clusterRepo,
-		InstanceRepo:      instanceRepo,
+		HealthChecker:         healthChecker,
+		Config:                cfg,
+		Hub:                   hub,
+		AuthHandler:           authHandler,
+		TemplateHandler:       templateHandler,
+		DefinitionHandler:     definitionHandler,
+		InstanceHandler:       instanceHandler,
+		GitHandler:            gitHandler,
+		AuditLogHandler:       auditLogHandler,
+		AuditLogger:           auditRepo,
+		UserHandler:           userHandler,
+		APIKeyHandler:         apiKeyHandler,
+		UserRepo:              userRepo,
+		APIKeyRepo:            apiKeyRepo,
+		ClusterRepo:           clusterRepo,
+		InstanceRepo:          instanceRepo,
+		BranchOverrideHandler: branchOverrideHandler,
+		CleanupPolicyHandler:  cleanupPolicyHandler,
+		SharedValuesHandler:   sharedValuesHandler,
+		FavoriteHandler:       favoriteHandler,
+		AnalyticsHandler:      analyticsHandler,
 	})
 	t.Cleanup(func() { rl.Stop() })
 
 	return &integServer{
-		router:          router,
-		userRepo:        userRepo,
-		templateRepo:    templateRepo,
-		tplChartRepo:    tplChartRepo,
-		definitionRepo:  definitionRepo,
-		chartConfigRepo: chartConfigRepo,
-		instanceRepo:    instanceRepo,
-		overrideRepo:    overrideRepo,
-		auditRepo:       auditRepo,
-		apiKeyRepo:      apiKeyRepo,
-		clusterRepo:     clusterRepo,
+		router:           router,
+		userRepo:         userRepo,
+		templateRepo:     templateRepo,
+		tplChartRepo:     tplChartRepo,
+		definitionRepo:   definitionRepo,
+		chartConfigRepo:  chartConfigRepo,
+		instanceRepo:     instanceRepo,
+		overrideRepo:     overrideRepo,
+		auditRepo:        auditRepo,
+		apiKeyRepo:       apiKeyRepo,
+		clusterRepo:      clusterRepo,
+		branchRepo:       branchRepo,
+		cleanupRepo:      cleanupRepo,
+		sharedValuesRepo: sharedValuesRepo,
+		favoriteRepo:     favoriteRepo,
+		deployLogRepo:    deployLogRepo,
 	}
 }
 
@@ -977,5 +1008,563 @@ func TestAPIIntegration_ClusterLifecycle(t *testing.T) {
 	t.Run("delete second cluster", func(t *testing.T) {
 		w := s.do("DELETE", "/api/v1/clusters/"+secondClusterID, nil, adminToken)
 		require.Equal(t, http.StatusNoContent, w.Code, "delete second cluster: %s", w.Body.String())
+	})
+}
+
+// ---------------------------------------------------------------------------
+// TestAPIIntegration_BranchOverrides
+// ---------------------------------------------------------------------------
+
+func TestAPIIntegration_BranchOverrides(t *testing.T) {
+	s := newIntegServer(t)
+
+	// Setup: template → chart → publish → instantiate → create instance.
+	adminToken := s.createAdminAndLogin(t)
+	devopsToken, _ := s.registerAndLogin(t, uniqueName("devops"), "pass", "devops", adminToken)
+	userToken, _ := s.registerAndLogin(t, uniqueName("bruser"), "pass", "user", adminToken)
+
+	tpl := map[string]interface{}{
+		"name":           uniqueName("brtpl"),
+		"description":    "Template for branch override test",
+		"category":       "test",
+		"version":        "1.0.0",
+		"default_branch": "main",
+	}
+	w := s.do("POST", "/api/v1/templates", tpl, devopsToken)
+	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+	tplID := parseBody(t, w)["id"].(string)
+
+	chart := map[string]interface{}{
+		"chart_name":     "api",
+		"repository_url": "https://charts.example.com",
+		"chart_version":  "1.0.0",
+		"default_values": "replicas: 1",
+	}
+	w = s.do("POST", fmt.Sprintf("/api/v1/templates/%s/charts", tplID), chart, devopsToken)
+	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+
+	w = s.do("POST", fmt.Sprintf("/api/v1/templates/%s/publish", tplID), nil, devopsToken)
+	require.Equal(t, http.StatusOK, w.Code)
+
+	instBody := map[string]interface{}{"name": uniqueName("brdef"), "description": "def for branch overrides"}
+	w = s.do("POST", fmt.Sprintf("/api/v1/templates/%s/instantiate", tplID), instBody, userToken)
+	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+	instResp := parseBody(t, w)
+	defID := instResp["definition"].(map[string]interface{})["id"].(string)
+	charts := instResp["charts"].([]interface{})
+	require.NotEmpty(t, charts)
+	chartConfigID := charts[0].(map[string]interface{})["id"].(string)
+
+	var instID string
+	instName := uniqueName("brinst")
+
+	t.Run("create instance", func(t *testing.T) {
+		inst := map[string]interface{}{
+			"stack_definition_id": defID,
+			"name":                instName,
+			"branch":              "main",
+		}
+		w := s.do("POST", "/api/v1/stack-instances", inst, userToken)
+		require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+		body := parseBody(t, w)
+		instID = body["id"].(string)
+		assert.NotEmpty(t, instID)
+	})
+
+	t.Run("list branch overrides initially empty", func(t *testing.T) {
+		w := s.do("GET", fmt.Sprintf("/api/v1/stack-instances/%s/branches", instID), nil, userToken)
+		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+		arr := parseArray(t, w)
+		assert.Empty(t, arr)
+	})
+
+	t.Run("set branch override", func(t *testing.T) {
+		body := map[string]string{"branch": "feature/test"}
+		w := s.do("PUT", fmt.Sprintf("/api/v1/stack-instances/%s/branches/%s", instID, chartConfigID), body, userToken)
+		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+		resp := parseBody(t, w)
+		assert.Equal(t, "feature/test", resp["branch"])
+		assert.Equal(t, chartConfigID, resp["chart_config_id"])
+	})
+
+	t.Run("list branch overrides returns one", func(t *testing.T) {
+		w := s.do("GET", fmt.Sprintf("/api/v1/stack-instances/%s/branches", instID), nil, userToken)
+		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+		arr := parseArray(t, w)
+		assert.Len(t, arr, 1)
+		first := arr[0].(map[string]interface{})
+		assert.Equal(t, "feature/test", first["branch"])
+	})
+
+	t.Run("update branch override", func(t *testing.T) {
+		body := map[string]string{"branch": "develop"}
+		w := s.do("PUT", fmt.Sprintf("/api/v1/stack-instances/%s/branches/%s", instID, chartConfigID), body, userToken)
+		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+		resp := parseBody(t, w)
+		assert.Equal(t, "develop", resp["branch"])
+	})
+
+	t.Run("non-owner cannot list branch overrides", func(t *testing.T) {
+		otherToken, _ := s.registerAndLogin(t, uniqueName("other"), "pass", "user", adminToken)
+		w := s.do("GET", fmt.Sprintf("/api/v1/stack-instances/%s/branches", instID), nil, otherToken)
+		assert.Equal(t, http.StatusForbidden, w.Code)
+	})
+
+	t.Run("delete branch override", func(t *testing.T) {
+		w := s.do("DELETE", fmt.Sprintf("/api/v1/stack-instances/%s/branches/%s", instID, chartConfigID), nil, userToken)
+		assert.Equal(t, http.StatusNoContent, w.Code)
+	})
+
+	t.Run("list after delete is empty", func(t *testing.T) {
+		w := s.do("GET", fmt.Sprintf("/api/v1/stack-instances/%s/branches", instID), nil, userToken)
+		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+		arr := parseArray(t, w)
+		assert.Empty(t, arr)
+	})
+}
+
+// ---------------------------------------------------------------------------
+// TestAPIIntegration_CleanupPolicies
+// ---------------------------------------------------------------------------
+
+func TestAPIIntegration_CleanupPolicies(t *testing.T) {
+	s := newIntegServer(t)
+	adminToken := s.createAdminAndLogin(t)
+
+	var policyID string
+
+	t.Run("create cleanup policy", func(t *testing.T) {
+		body := map[string]interface{}{
+			"name":       uniqueName("policy"),
+			"action":     "stop",
+			"condition":  "idle_days:7",
+			"schedule":   "0 2 * * *",
+			"cluster_id": "all",
+			"enabled":    true,
+			"dry_run":    false,
+		}
+		w := s.do("POST", "/api/v1/admin/cleanup-policies", body, adminToken)
+		require.Equal(t, http.StatusCreated, w.Code, "create policy: %s", w.Body.String())
+		resp := parseBody(t, w)
+		policyID = resp["id"].(string)
+		assert.NotEmpty(t, policyID)
+		assert.Equal(t, "stop", resp["action"])
+		assert.Equal(t, "idle_days:7", resp["condition"])
+	})
+
+	t.Run("list cleanup policies", func(t *testing.T) {
+		w := s.do("GET", "/api/v1/admin/cleanup-policies", nil, adminToken)
+		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+		arr := parseArray(t, w)
+		found := false
+		for _, item := range arr {
+			m := item.(map[string]interface{})
+			if m["id"] == policyID {
+				found = true
+				break
+			}
+		}
+		assert.True(t, found, "policy %s not found in list", policyID)
+	})
+
+	t.Run("update cleanup policy", func(t *testing.T) {
+		body := map[string]interface{}{
+			"name":       uniqueName("updated-policy"),
+			"action":     "clean",
+			"condition":  "status:stopped,age_days:14",
+			"schedule":   "0 3 * * *",
+			"cluster_id": "all",
+			"enabled":    false,
+		}
+		w := s.do("PUT", fmt.Sprintf("/api/v1/admin/cleanup-policies/%s", policyID), body, adminToken)
+		require.Equal(t, http.StatusOK, w.Code, "update policy: %s", w.Body.String())
+		resp := parseBody(t, w)
+		assert.Equal(t, "clean", resp["action"])
+		assert.Equal(t, false, resp["enabled"])
+	})
+
+	t.Run("non-admin cannot access cleanup policies", func(t *testing.T) {
+		userToken, _ := s.registerAndLogin(t, uniqueName("cpuser"), "pass", "user", adminToken)
+		w := s.do("GET", "/api/v1/admin/cleanup-policies", nil, userToken)
+		assert.Equal(t, http.StatusForbidden, w.Code)
+
+		w = s.do("POST", "/api/v1/admin/cleanup-policies", map[string]interface{}{
+			"name":       "forbidden",
+			"action":     "stop",
+			"condition":  "idle_days:1",
+			"schedule":   "0 0 * * *",
+			"cluster_id": "all",
+		}, userToken)
+		assert.Equal(t, http.StatusForbidden, w.Code)
+	})
+
+	t.Run("devops cannot access cleanup policies", func(t *testing.T) {
+		devopsToken, _ := s.registerAndLogin(t, uniqueName("cpdevops"), "pass", "devops", adminToken)
+		w := s.do("GET", "/api/v1/admin/cleanup-policies", nil, devopsToken)
+		assert.Equal(t, http.StatusForbidden, w.Code)
+	})
+
+	t.Run("create invalid policy returns 400", func(t *testing.T) {
+		body := map[string]interface{}{
+			"name":   "no-action",
+			"action": "invalid",
+		}
+		w := s.do("POST", "/api/v1/admin/cleanup-policies", body, adminToken)
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+	})
+
+	t.Run("delete cleanup policy", func(t *testing.T) {
+		w := s.do("DELETE", fmt.Sprintf("/api/v1/admin/cleanup-policies/%s", policyID), nil, adminToken)
+		assert.Equal(t, http.StatusNoContent, w.Code)
+	})
+
+	t.Run("list after delete excludes removed policy", func(t *testing.T) {
+		w := s.do("GET", "/api/v1/admin/cleanup-policies", nil, adminToken)
+		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+		arr := parseArray(t, w)
+		for _, item := range arr {
+			m := item.(map[string]interface{})
+			assert.NotEqual(t, policyID, m["id"], "deleted policy should not appear in list")
+		}
+	})
+}
+
+// ---------------------------------------------------------------------------
+// TestAPIIntegration_SharedValues
+// ---------------------------------------------------------------------------
+
+func TestAPIIntegration_SharedValues(t *testing.T) {
+	s := newIntegServer(t)
+	adminToken := s.createAdminAndLogin(t)
+
+	// Create a cluster first.
+	clusterBody := map[string]interface{}{
+		"name":            uniqueName("svcluster"),
+		"description":     "cluster for shared values test",
+		"api_server_url":  "https://k8s.example.com:6443",
+		"kubeconfig_data": "apiVersion: v1\nkind: Config\nclusters: []",
+		"region":          "northeurope",
+	}
+	w := s.do("POST", "/api/v1/clusters", clusterBody, adminToken)
+	require.Equal(t, http.StatusCreated, w.Code, "create cluster: %s", w.Body.String())
+	clusterID := parseBody(t, w)["id"].(string)
+
+	var svID1, svID2 string
+
+	t.Run("create shared values", func(t *testing.T) {
+		body := map[string]interface{}{
+			"name":        "global-defaults",
+			"description": "Global default values",
+			"values":      "env: production\nregion: eu-west",
+			"priority":    10,
+		}
+		w := s.do("POST", fmt.Sprintf("/api/v1/clusters/%s/shared-values", clusterID), body, adminToken)
+		require.Equal(t, http.StatusCreated, w.Code, "create shared values: %s", w.Body.String())
+		resp := parseBody(t, w)
+		svID1 = resp["id"].(string)
+		assert.NotEmpty(t, svID1)
+		assert.Equal(t, "global-defaults", resp["name"])
+		assert.Equal(t, float64(10), resp["priority"])
+	})
+
+	t.Run("create second shared values with higher priority", func(t *testing.T) {
+		body := map[string]interface{}{
+			"name":        "team-overrides",
+			"description": "Team-specific overrides",
+			"values":      "team: platform\nscaling: enabled",
+			"priority":    20,
+		}
+		w := s.do("POST", fmt.Sprintf("/api/v1/clusters/%s/shared-values", clusterID), body, adminToken)
+		require.Equal(t, http.StatusCreated, w.Code, "create second shared values: %s", w.Body.String())
+		resp := parseBody(t, w)
+		svID2 = resp["id"].(string)
+		assert.NotEmpty(t, svID2)
+	})
+
+	t.Run("list shared values returns both sorted by priority", func(t *testing.T) {
+		w := s.do("GET", fmt.Sprintf("/api/v1/clusters/%s/shared-values", clusterID), nil, adminToken)
+		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+		arr := parseArray(t, w)
+		require.Len(t, arr, 2)
+		// Lower priority should come first.
+		first := arr[0].(map[string]interface{})
+		second := arr[1].(map[string]interface{})
+		assert.Equal(t, svID1, first["id"])
+		assert.Equal(t, svID2, second["id"])
+	})
+
+	t.Run("update shared values", func(t *testing.T) {
+		body := map[string]interface{}{
+			"name":        "global-defaults-updated",
+			"description": "Updated global defaults",
+			"values":      "env: staging\nregion: eu-north",
+			"priority":    5,
+		}
+		w := s.do("PUT", fmt.Sprintf("/api/v1/clusters/%s/shared-values/%s", clusterID, svID1), body, adminToken)
+		require.Equal(t, http.StatusOK, w.Code, "update shared values: %s", w.Body.String())
+		resp := parseBody(t, w)
+		assert.Equal(t, "global-defaults-updated", resp["name"])
+		assert.Equal(t, float64(5), resp["priority"])
+	})
+
+	t.Run("non-admin cannot access shared values", func(t *testing.T) {
+		userToken, _ := s.registerAndLogin(t, uniqueName("svuser"), "pass", "user", adminToken)
+		w := s.do("GET", fmt.Sprintf("/api/v1/clusters/%s/shared-values", clusterID), nil, userToken)
+		assert.Equal(t, http.StatusForbidden, w.Code)
+	})
+
+	t.Run("shared values for non-existent cluster returns 404", func(t *testing.T) {
+		w := s.do("GET", "/api/v1/clusters/nonexistent/shared-values", nil, adminToken)
+		assert.Equal(t, http.StatusNotFound, w.Code)
+	})
+
+	t.Run("delete shared values", func(t *testing.T) {
+		w := s.do("DELETE", fmt.Sprintf("/api/v1/clusters/%s/shared-values/%s", clusterID, svID2), nil, adminToken)
+		assert.Equal(t, http.StatusNoContent, w.Code)
+	})
+
+	t.Run("list after delete returns one", func(t *testing.T) {
+		w := s.do("GET", fmt.Sprintf("/api/v1/clusters/%s/shared-values", clusterID), nil, adminToken)
+		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+		arr := parseArray(t, w)
+		assert.Len(t, arr, 1)
+		assert.Equal(t, svID1, arr[0].(map[string]interface{})["id"])
+	})
+}
+
+// ---------------------------------------------------------------------------
+// TestAPIIntegration_Favorites
+// ---------------------------------------------------------------------------
+
+func TestAPIIntegration_Favorites(t *testing.T) {
+	s := newIntegServer(t)
+
+	adminToken := s.createAdminAndLogin(t)
+	userToken, _ := s.registerAndLogin(t, uniqueName("favuser"), "pass", "user", adminToken)
+	devopsToken, _ := s.registerAndLogin(t, uniqueName("favdevops"), "pass", "devops", adminToken)
+
+	// Create a template to favorite.
+	tpl := map[string]interface{}{
+		"name":           uniqueName("favtpl"),
+		"description":    "Template for favorites test",
+		"category":       "test",
+		"version":        "1.0.0",
+		"default_branch": "main",
+	}
+	w := s.do("POST", "/api/v1/templates", tpl, devopsToken)
+	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+	tplID := parseBody(t, w)["id"].(string)
+
+	// Create template → chart → publish → instantiate to get a definition + instance.
+	chart := map[string]interface{}{
+		"chart_name":     "webapp",
+		"repository_url": "https://charts.example.com",
+		"chart_version":  "1.0.0",
+		"default_values": "replicas: 1",
+	}
+	w = s.do("POST", fmt.Sprintf("/api/v1/templates/%s/charts", tplID), chart, devopsToken)
+	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+
+	w = s.do("POST", fmt.Sprintf("/api/v1/templates/%s/publish", tplID), nil, devopsToken)
+	require.Equal(t, http.StatusOK, w.Code)
+
+	instBody := map[string]interface{}{"name": uniqueName("favdef"), "description": "def for favorites"}
+	w = s.do("POST", fmt.Sprintf("/api/v1/templates/%s/instantiate", tplID), instBody, userToken)
+	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+	instResp := parseBody(t, w)
+	defID := instResp["definition"].(map[string]interface{})["id"].(string)
+
+	t.Run("list favorites initially empty", func(t *testing.T) {
+		w := s.do("GET", "/api/v1/favorites", nil, userToken)
+		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+		arr := parseArray(t, w)
+		assert.Empty(t, arr)
+	})
+
+	t.Run("add template to favorites", func(t *testing.T) {
+		body := map[string]string{"entity_type": "template", "entity_id": tplID}
+		w := s.do("POST", "/api/v1/favorites", body, userToken)
+		require.Equal(t, http.StatusCreated, w.Code, "add favorite: %s", w.Body.String())
+		resp := parseBody(t, w)
+		assert.Equal(t, "template", resp["entity_type"])
+		assert.Equal(t, tplID, resp["entity_id"])
+	})
+
+	t.Run("add definition to favorites", func(t *testing.T) {
+		body := map[string]string{"entity_type": "definition", "entity_id": defID}
+		w := s.do("POST", "/api/v1/favorites", body, userToken)
+		require.Equal(t, http.StatusCreated, w.Code, "add favorite: %s", w.Body.String())
+	})
+
+	t.Run("list favorites returns two", func(t *testing.T) {
+		w := s.do("GET", "/api/v1/favorites", nil, userToken)
+		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+		arr := parseArray(t, w)
+		assert.Len(t, arr, 2)
+	})
+
+	t.Run("check favorite returns true", func(t *testing.T) {
+		w := s.do("GET", fmt.Sprintf("/api/v1/favorites/check?entity_type=template&entity_id=%s", tplID), nil, userToken)
+		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+		resp := parseBody(t, w)
+		assert.Equal(t, true, resp["is_favorite"])
+	})
+
+	t.Run("check non-favorited returns false", func(t *testing.T) {
+		w := s.do("GET", "/api/v1/favorites/check?entity_type=instance&entity_id=nonexistent", nil, userToken)
+		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+		resp := parseBody(t, w)
+		assert.Equal(t, false, resp["is_favorite"])
+	})
+
+	t.Run("other user favorites are isolated", func(t *testing.T) {
+		otherToken, _ := s.registerAndLogin(t, uniqueName("favother"), "pass", "user", adminToken)
+		w := s.do("GET", "/api/v1/favorites", nil, otherToken)
+		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+		arr := parseArray(t, w)
+		assert.Empty(t, arr)
+	})
+
+	t.Run("invalid entity_type returns 400", func(t *testing.T) {
+		body := map[string]string{"entity_type": "invalid", "entity_id": "xyz"}
+		w := s.do("POST", "/api/v1/favorites", body, userToken)
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+	})
+
+	t.Run("missing entity_id returns 400", func(t *testing.T) {
+		body := map[string]string{"entity_type": "template"}
+		w := s.do("POST", "/api/v1/favorites", body, userToken)
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+	})
+
+	t.Run("remove template favorite", func(t *testing.T) {
+		w := s.do("DELETE", fmt.Sprintf("/api/v1/favorites/template/%s", tplID), nil, userToken)
+		assert.Equal(t, http.StatusNoContent, w.Code)
+	})
+
+	t.Run("check removed favorite returns false", func(t *testing.T) {
+		w := s.do("GET", fmt.Sprintf("/api/v1/favorites/check?entity_type=template&entity_id=%s", tplID), nil, userToken)
+		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+		resp := parseBody(t, w)
+		assert.Equal(t, false, resp["is_favorite"])
+	})
+
+	t.Run("list after removal returns one", func(t *testing.T) {
+		w := s.do("GET", "/api/v1/favorites", nil, userToken)
+		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+		arr := parseArray(t, w)
+		assert.Len(t, arr, 1)
+	})
+}
+
+// ---------------------------------------------------------------------------
+// TestAPIIntegration_Analytics
+// ---------------------------------------------------------------------------
+
+func TestAPIIntegration_Analytics(t *testing.T) {
+	s := newIntegServer(t)
+
+	adminToken := s.createAdminAndLogin(t)
+	devopsToken, _ := s.registerAndLogin(t, uniqueName("andevops"), "pass", "devops", adminToken)
+	userToken, _ := s.registerAndLogin(t, uniqueName("anuser"), "pass", "user", adminToken)
+
+	// Create some data: template → chart → publish → instantiate → instance.
+	tpl := map[string]interface{}{
+		"name":           uniqueName("antpl"),
+		"description":    "Template for analytics test",
+		"category":       "test",
+		"version":        "1.0.0",
+		"default_branch": "main",
+	}
+	w := s.do("POST", "/api/v1/templates", tpl, devopsToken)
+	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+	tplID := parseBody(t, w)["id"].(string)
+
+	chart := map[string]interface{}{
+		"chart_name":     "analytics-svc",
+		"repository_url": "https://charts.example.com",
+		"chart_version":  "1.0.0",
+		"default_values": "replicas: 1",
+	}
+	w = s.do("POST", fmt.Sprintf("/api/v1/templates/%s/charts", tplID), chart, devopsToken)
+	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+
+	w = s.do("POST", fmt.Sprintf("/api/v1/templates/%s/publish", tplID), nil, devopsToken)
+	require.Equal(t, http.StatusOK, w.Code)
+
+	instBody := map[string]interface{}{"name": uniqueName("andef"), "description": "def for analytics"}
+	w = s.do("POST", fmt.Sprintf("/api/v1/templates/%s/instantiate", tplID), instBody, userToken)
+	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+	instResp := parseBody(t, w)
+	defID := instResp["definition"].(map[string]interface{})["id"].(string)
+
+	inst := map[string]interface{}{
+		"stack_definition_id": defID,
+		"name":                uniqueName("aninst"),
+		"branch":              "main",
+	}
+	w = s.do("POST", "/api/v1/stack-instances", inst, userToken)
+	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+
+	t.Run("overview returns stats", func(t *testing.T) {
+		w := s.do("GET", "/api/v1/analytics/overview", nil, devopsToken)
+		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+		resp := parseBody(t, w)
+		// Should have at least the data we created.
+		assert.GreaterOrEqual(t, resp["total_templates"].(float64), float64(1))
+		assert.GreaterOrEqual(t, resp["total_definitions"].(float64), float64(1))
+		assert.GreaterOrEqual(t, resp["total_instances"].(float64), float64(1))
+		assert.GreaterOrEqual(t, resp["total_users"].(float64), float64(1))
+		// Verify all expected keys are present.
+		assert.Contains(t, resp, "running_instances")
+		assert.Contains(t, resp, "total_deploys")
+	})
+
+	t.Run("template stats returns array", func(t *testing.T) {
+		w := s.do("GET", "/api/v1/analytics/templates", nil, devopsToken)
+		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+		arr := parseArray(t, w)
+		assert.NotEmpty(t, arr)
+		// Find our template.
+		found := false
+		for _, item := range arr {
+			m := item.(map[string]interface{})
+			if m["template_id"] == tplID {
+				found = true
+				assert.Contains(t, m, "template_name")
+				assert.Contains(t, m, "definition_count")
+				assert.Contains(t, m, "instance_count")
+				assert.Contains(t, m, "deploy_count")
+				break
+			}
+		}
+		assert.True(t, found, "template %s not found in analytics", tplID)
+	})
+
+	t.Run("user stats requires admin", func(t *testing.T) {
+		w := s.do("GET", "/api/v1/analytics/users", nil, devopsToken)
+		assert.Equal(t, http.StatusForbidden, w.Code)
+	})
+
+	t.Run("user stats accessible by admin", func(t *testing.T) {
+		w := s.do("GET", "/api/v1/analytics/users", nil, adminToken)
+		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+		arr := parseArray(t, w)
+		assert.NotEmpty(t, arr)
+		first := arr[0].(map[string]interface{})
+		assert.Contains(t, first, "user_id")
+		assert.Contains(t, first, "username")
+		assert.Contains(t, first, "instance_count")
+		assert.Contains(t, first, "deploy_count")
+	})
+
+	t.Run("regular user cannot access analytics", func(t *testing.T) {
+		w := s.do("GET", "/api/v1/analytics/overview", nil, userToken)
+		assert.Equal(t, http.StatusForbidden, w.Code)
+	})
+
+	t.Run("unauthenticated request returns 401", func(t *testing.T) {
+		w := s.do("GET", "/api/v1/analytics/overview", nil, "")
+		assert.Equal(t, http.StatusUnauthorized, w.Code)
 	})
 }

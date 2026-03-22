@@ -1,0 +1,200 @@
+import { test, expect } from '@playwright/test';
+import { loginAsAdmin, uniqueName } from './helpers';
+
+const API_BASE = 'http://localhost:8081';
+
+/**
+ * Helper: login via API and return the JWT token.
+ */
+async function apiLogin(request: import('@playwright/test').APIRequestContext): Promise<string> {
+  const res = await request.post(`${API_BASE}/api/v1/auth/login`, {
+    data: { username: 'admin', password: 'admin' },
+  });
+  expect(res.ok()).toBe(true);
+  const body = await res.json();
+  return body.token;
+}
+
+/**
+ * Helper: create a user via API and return their ID.
+ */
+async function apiCreateUser(
+  request: import('@playwright/test').APIRequestContext,
+  token: string,
+  username: string,
+  role: string = 'user',
+): Promise<string> {
+  const res = await request.post(`${API_BASE}/api/v1/auth/register`, {
+    headers: { Authorization: `Bearer ${token}` },
+    data: { username, password: 'testpass123', role, display_name: `E2E ${username}` },
+  });
+  expect(res.ok()).toBe(true);
+  const body = await res.json();
+  return body.id;
+}
+
+/**
+ * Helper: delete a user via API.
+ */
+async function apiDeleteUser(
+  request: import('@playwright/test').APIRequestContext,
+  token: string,
+  id: string,
+): Promise<void> {
+  await request.delete(`${API_BASE}/api/v1/users/${id}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+test.describe('Admin User Management', () => {
+  test.beforeEach(async ({ page }) => {
+    await loginAsAdmin(page);
+    await page.goto('/admin/users');
+    await expect(page.getByRole('heading', { level: 1, name: 'User Management' })).toBeVisible({
+      timeout: 10_000,
+    });
+  });
+
+  test('page loads with heading and table', async ({ page }) => {
+    await expect(page.getByRole('heading', { level: 1, name: 'User Management' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Add User' })).toBeVisible();
+  });
+
+  test('shows current users in table', async ({ page }) => {
+    // Column headers
+    await expect(page.getByRole('columnheader', { name: 'Username' })).toBeVisible();
+    await expect(page.getByRole('columnheader', { name: 'Display Name' })).toBeVisible();
+    await expect(page.getByRole('columnheader', { name: 'Role' })).toBeVisible();
+    await expect(page.getByRole('columnheader', { name: 'Actions' })).toBeVisible();
+
+    // Admin user should be visible
+    await expect(page.getByRole('cell', { name: 'admin' }).first()).toBeVisible();
+  });
+
+  test('create a new user via dialog', async ({ page }) => {
+    const username = uniqueName('user');
+
+    await page.getByRole('button', { name: 'Add User' }).click();
+
+    const dialog = page.getByRole('dialog');
+    await expect(dialog.getByText('Add User')).toBeVisible();
+
+    await dialog.getByLabel('Username').fill(username);
+    await dialog.getByLabel('Password').fill('testpass123');
+    await dialog.getByLabel('Display Name').fill(`Test ${username}`);
+
+    // Select role
+    await dialog.getByLabel('Role').click();
+    await page.getByRole('option', { name: 'user' }).click();
+
+    await dialog.getByRole('button', { name: 'Create' }).click();
+
+    // Dialog closes and user appears
+    await expect(dialog).not.toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText(username)).toBeVisible({ timeout: 10_000 });
+
+    // Cleanup via API
+    const token = await page.evaluate(() => localStorage.getItem('token'));
+    const usersResp = await page.request.get(`${API_BASE}/api/v1/users`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const users = await usersResp.json();
+    const created = users.find((u: { username: string }) => u.username === username);
+    if (created) {
+      await apiDeleteUser(page.request, token!, created.id);
+    }
+  });
+
+  test('create user with specific role', async ({ page }) => {
+    const username = uniqueName('devops-user');
+
+    await page.getByRole('button', { name: 'Add User' }).click();
+
+    const dialog = page.getByRole('dialog');
+    await dialog.getByLabel('Username').fill(username);
+    await dialog.getByLabel('Password').fill('testpass123');
+
+    // Select devops role
+    await dialog.getByLabel('Role').click();
+    await page.getByRole('option', { name: 'devops' }).click();
+
+    await dialog.getByRole('button', { name: 'Create' }).click();
+    await expect(dialog).not.toBeVisible({ timeout: 10_000 });
+
+    // User should appear with devops role chip
+    await expect(page.getByText(username)).toBeVisible({ timeout: 10_000 });
+    const row = page.getByRole('row').filter({ hasText: username });
+    await expect(row.getByText('devops')).toBeVisible();
+
+    // Cleanup
+    const token = await page.evaluate(() => localStorage.getItem('token'));
+    const usersResp = await page.request.get(`${API_BASE}/api/v1/users`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const users = await usersResp.json();
+    const created = users.find((u: { username: string }) => u.username === username);
+    if (created) {
+      await apiDeleteUser(page.request, token!, created.id);
+    }
+  });
+
+  test('delete a user via confirmation dialog', async ({ page, request }) => {
+    // Create user via API first
+    const token = await apiLogin(request);
+    const username = uniqueName('user-del');
+    const userId = await apiCreateUser(request, token, username);
+
+    // Reload to see the user
+    await page.reload();
+    await expect(page.getByRole('heading', { level: 1, name: 'User Management' })).toBeVisible({
+      timeout: 10_000,
+    });
+    await expect(page.getByText(username)).toBeVisible({ timeout: 10_000 });
+
+    // Click delete button
+    await page.getByRole('button', { name: `Delete user ${username}` }).click();
+
+    const dialog = page.getByRole('dialog');
+    await expect(dialog.getByText('Delete User')).toBeVisible();
+    await dialog.getByRole('button', { name: 'Delete' }).click();
+
+    // Dialog closes and user disappears
+    await expect(dialog).not.toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText(username)).not.toBeVisible({ timeout: 10_000 });
+
+    // Already deleted, try cleanup just in case
+    await apiDeleteUser(request, token, userId).catch(() => {});
+  });
+
+  test('non-admin users cannot access user management', async ({ page, request }) => {
+    // Create a regular user
+    const token = await apiLogin(request);
+    const username = uniqueName('nonadmin');
+    await apiCreateUser(request, token, username, 'user');
+
+    // Login as the regular user
+    await page.goto('/login');
+    await page.getByLabel('Username').fill(username);
+    await page.getByLabel('Password').fill('testpass123');
+    await page.getByRole('button', { name: 'Sign In' }).click();
+    await page.waitForURL('/', { timeout: 10_000 });
+
+    // Navigate to admin users page
+    await page.goto('/admin/users');
+
+    // Should see permission error
+    await expect(page.getByText('You do not have permission to access this page.')).toBeVisible({
+      timeout: 10_000,
+    });
+
+    // Cleanup
+    const usersResp = await request.get(`${API_BASE}/api/v1/users`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const users = await usersResp.json();
+    const created = users.find((u: { username: string }) => u.username === username);
+    if (created) {
+      await apiDeleteUser(request, token, created.id);
+    }
+  });
+});
