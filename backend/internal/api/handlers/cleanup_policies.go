@@ -64,6 +64,12 @@ func (h *CleanupPolicyHandler) CreateCleanupPolicy(c *gin.Context) {
 		return
 	}
 
+
+	if _, err := scheduler.ParseCondition(policy.Condition); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
 	if err := h.repo.Create(&policy); err != nil {
 		status, msg := mapError(err, "Cleanup policy")
 		c.JSON(status, gin.H{"error": msg})
@@ -118,6 +124,12 @@ func (h *CleanupPolicyHandler) UpdateCleanupPolicy(c *gin.Context) {
 	policy.LastRunAt = existing.LastRunAt
 
 	if err := policy.Validate(); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+
+	if _, err := scheduler.ParseCondition(policy.Condition); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}

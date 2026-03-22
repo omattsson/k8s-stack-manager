@@ -11,7 +11,7 @@ type SharedValues struct {
 	ClusterID   string    `json:"cluster_id"`
 	Name        string    `json:"name"`
 	Description string    `json:"description"`
-	Values      string    `json:"values"` // YAML content
+	Values      string    `json:"values"`   // YAML content
 	Priority    int       `json:"priority"` // Lower = applied first
 }
 

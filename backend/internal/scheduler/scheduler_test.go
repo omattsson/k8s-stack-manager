@@ -83,7 +83,7 @@ type mockInstanceRepo struct {
 	instances []models.StackInstance
 }
 
-func (r *mockInstanceRepo) Create(inst *models.StackInstance) error   { return nil }
+func (r *mockInstanceRepo) Create(inst *models.StackInstance) error { return nil }
 func (r *mockInstanceRepo) FindByID(id string) (*models.StackInstance, error) {
 	for i := range r.instances {
 		if r.instances[i].ID == id {
@@ -96,7 +96,7 @@ func (r *mockInstanceRepo) FindByNamespace(ns string) (*models.StackInstance, er
 	return nil, errors.New("not found")
 }
 func (r *mockInstanceRepo) Update(inst *models.StackInstance) error { return nil }
-func (r *mockInstanceRepo) Delete(id string) error                 { return nil }
+func (r *mockInstanceRepo) Delete(id string) error                  { return nil }
 func (r *mockInstanceRepo) List() ([]models.StackInstance, error) {
 	return r.instances, nil
 }

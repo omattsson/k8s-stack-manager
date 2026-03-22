@@ -297,9 +297,9 @@ func main() {
 		QuickDeployHandler:    quickDeployHandler,
 		AnalyticsHandler:      analyticsHandler,
 		CleanupPolicyHandler:  cleanupPolicyHandler,
-		CleanupScheduler:     cleanupScheduler,
+		CleanupScheduler:      cleanupScheduler,
 		ClusterHandler:        clusterHandler,
-		SharedValuesHandler:  sharedValuesHandler,
+		SharedValuesHandler:   sharedValuesHandler,
 		UserRepo:              userRepo,
 		APIKeyRepo:            apiKeyRepo,
 	})

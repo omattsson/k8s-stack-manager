@@ -188,7 +188,6 @@ func TestListCleanupPoliciesError(t *testing.T) {
 
 	router := setupCleanupPolicyRouter(&failingCleanupPolicyRepo{}, nil)
 
-
 	w := httptest.NewRecorder()
 	req, _ := http.NewRequest("GET", "/api/v1/admin/cleanup-policies", nil)
 	router.ServeHTTP(w, req)
@@ -490,13 +489,19 @@ type cleanupMockInstanceRepo struct {
 	instances []models.StackInstance
 }
 
-func (r *cleanupMockInstanceRepo) Create(_ *models.StackInstance) error                       { return nil }
-func (r *cleanupMockInstanceRepo) FindByID(id string) (*models.StackInstance, error)          { return nil, errors.New("not found") }
-func (r *cleanupMockInstanceRepo) FindByNamespace(_ string) (*models.StackInstance, error)    { return nil, errors.New("not found") }
-func (r *cleanupMockInstanceRepo) Update(_ *models.StackInstance) error                       { return nil }
-func (r *cleanupMockInstanceRepo) Delete(_ string) error                                      { return nil }
-func (r *cleanupMockInstanceRepo) List() ([]models.StackInstance, error)                      { return r.instances, nil }
-func (r *cleanupMockInstanceRepo) ListByOwner(_ string) ([]models.StackInstance, error)       { return nil, nil }
+func (r *cleanupMockInstanceRepo) Create(_ *models.StackInstance) error { return nil }
+func (r *cleanupMockInstanceRepo) FindByID(id string) (*models.StackInstance, error) {
+	return nil, errors.New("not found")
+}
+func (r *cleanupMockInstanceRepo) FindByNamespace(_ string) (*models.StackInstance, error) {
+	return nil, errors.New("not found")
+}
+func (r *cleanupMockInstanceRepo) Update(_ *models.StackInstance) error  { return nil }
+func (r *cleanupMockInstanceRepo) Delete(_ string) error                 { return nil }
+func (r *cleanupMockInstanceRepo) List() ([]models.StackInstance, error) { return r.instances, nil }
+func (r *cleanupMockInstanceRepo) ListByOwner(_ string) ([]models.StackInstance, error) {
+	return nil, nil
+}
 func (r *cleanupMockInstanceRepo) FindByCluster(id string) ([]models.StackInstance, error) {
 	var result []models.StackInstance
 	for _, inst := range r.instances {

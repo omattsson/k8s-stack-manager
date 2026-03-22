@@ -613,7 +613,7 @@ func TestGenerateValuesWithSharedValues(t *testing.T) {
 			name: "multiple shared values in priority order",
 			params: GenerateParams{
 				SharedValues: []string{
-					"env: base\ntier: free",    // priority 0 (lowest)
+					"env: base\ntier: free",     // priority 0 (lowest)
 					"env: override\nregion: us", // priority 10 (higher, wins)
 				},
 				DefaultValues: "image: nginx",

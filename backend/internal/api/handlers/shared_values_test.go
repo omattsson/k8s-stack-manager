@@ -135,9 +135,9 @@ func TestListSharedValues(t *testing.T) {
 		wantLen    int
 	}{
 		{
-			name:       "success - returns values sorted by priority",
-			clusterID:  "cluster-1",
-			seed:       []*models.SharedValues{
+			name:      "success - returns values sorted by priority",
+			clusterID: "cluster-1",
+			seed: []*models.SharedValues{
 				{ID: "sv-1", ClusterID: "cluster-1", Name: "env", Values: "env: prod", Priority: 10},
 				{ID: "sv-2", ClusterID: "cluster-1", Name: "base", Values: "env: base", Priority: 1},
 			},
@@ -277,11 +277,11 @@ func TestUpdateSharedValues(t *testing.T) {
 		wantStatus int
 	}{
 		{
-			name:      "success",
-			clusterID: "cluster-1",
-			valueID:   "sv-1",
-			seed:      &models.SharedValues{ID: "sv-1", ClusterID: "cluster-1", Name: "old", Values: "a: 1", Priority: 0},
-			body:      map[string]interface{}{"name": "updated", "values": "a: 2", "priority": 5},
+			name:       "success",
+			clusterID:  "cluster-1",
+			valueID:    "sv-1",
+			seed:       &models.SharedValues{ID: "sv-1", ClusterID: "cluster-1", Name: "old", Values: "a: 1", Priority: 0},
+			body:       map[string]interface{}{"name": "updated", "values": "a: 2", "priority": 5},
 			wantStatus: http.StatusOK,
 		},
 		{
@@ -292,27 +292,27 @@ func TestUpdateSharedValues(t *testing.T) {
 			wantStatus: http.StatusNotFound,
 		},
 		{
-			name:      "cluster mismatch",
-			clusterID: "cluster-1",
-			valueID:   "sv-other",
-			seed:      &models.SharedValues{ID: "sv-other", ClusterID: "other-cluster", Name: "x", Values: "a: 1"},
-			body:      map[string]interface{}{"name": "x", "values": "a: 1"},
+			name:       "cluster mismatch",
+			clusterID:  "cluster-1",
+			valueID:    "sv-other",
+			seed:       &models.SharedValues{ID: "sv-other", ClusterID: "other-cluster", Name: "x", Values: "a: 1"},
+			body:       map[string]interface{}{"name": "x", "values": "a: 1"},
 			wantStatus: http.StatusNotFound,
 		},
 		{
-			name:      "invalid JSON body",
-			clusterID: "cluster-1",
-			valueID:   "sv-1",
-			seed:      &models.SharedValues{ID: "sv-1", ClusterID: "cluster-1", Name: "old", Values: "a: 1"},
-			body:      "not json",
+			name:       "invalid JSON body",
+			clusterID:  "cluster-1",
+			valueID:    "sv-1",
+			seed:       &models.SharedValues{ID: "sv-1", ClusterID: "cluster-1", Name: "old", Values: "a: 1"},
+			body:       "not json",
 			wantStatus: http.StatusBadRequest,
 		},
 		{
-			name:      "missing name validation error",
-			clusterID: "cluster-1",
-			valueID:   "sv-1",
-			seed:      &models.SharedValues{ID: "sv-1", ClusterID: "cluster-1", Name: "old", Values: "a: 1"},
-			body:      map[string]interface{}{"name": "", "values": "a: 1"},
+			name:       "missing name validation error",
+			clusterID:  "cluster-1",
+			valueID:    "sv-1",
+			seed:       &models.SharedValues{ID: "sv-1", ClusterID: "cluster-1", Name: "old", Values: "a: 1"},
+			body:       map[string]interface{}{"name": "", "values": "a: 1"},
 			wantStatus: http.StatusBadRequest,
 		},
 		{

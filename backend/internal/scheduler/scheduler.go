@@ -2,6 +2,7 @@ package scheduler
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -208,13 +209,19 @@ func (s *Scheduler) createAuditEntry(policy *models.CleanupPolicy, inst *models.
 	if s.auditRepo == nil {
 		return
 	}
+	details, _ := json.Marshal(map[string]string{
+		"policy_id":   policy.ID,
+		"policy_name": policy.Name,
+		"action":      policy.Action,
+		"status":      result.Status,
+	})
 	entry := &models.AuditLog{
 		UserID:     "system",
 		Username:   "system",
 		Action:     "cleanup_policy_executed",
 		EntityType: "stack_instance",
 		EntityID:   inst.ID,
-		Details:    fmt.Sprintf(`{"policy_id":"%s","policy_name":"%s","action":"%s","status":"%s"}`, policy.ID, policy.Name, policy.Action, result.Status),
+		Details:    string(details),
 	}
 	if err := s.auditRepo.Create(entry); err != nil {
 		slog.Error("Failed to create audit log for cleanup", "error", err)
