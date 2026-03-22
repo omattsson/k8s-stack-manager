@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"bytes"
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
@@ -156,13 +157,11 @@ func (h *AuditLogHandler) ExportAuditLogs(c *gin.Context) {
 
 	switch format {
 	case "csv":
-		filename := fmt.Sprintf("audit-logs-%s.csv", timestamp)
-		c.Header("Content-Type", "text/csv")
-		c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=%s", filename))
-
-		w := csv.NewWriter(c.Writer)
+		var buf bytes.Buffer
+		w := csv.NewWriter(&buf)
 		if err := w.Write([]string{"ID", "Timestamp", "UserID", "Username", "Action", "EntityType", "EntityID", "Details"}); err != nil {
 			slog.Error("failed to write CSV header", "error", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
 			return
 		}
 		for _, l := range logs {
@@ -177,13 +176,21 @@ func (h *AuditLogHandler) ExportAuditLogs(c *gin.Context) {
 				l.Details,
 			}); err != nil {
 				slog.Error("failed to write CSV row", "error", err)
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
 				return
 			}
 		}
 		w.Flush()
 		if err := w.Error(); err != nil {
 			slog.Error("CSV flush error", "error", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
+			return
 		}
+
+		filename := fmt.Sprintf("audit-logs-%s.csv", timestamp)
+		c.Header("Content-Type", "text/csv")
+		c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=%s", filename))
+		c.Data(http.StatusOK, "text/csv", buf.Bytes())
 	default: // json
 		filename := fmt.Sprintf("audit-logs-%s.json", timestamp)
 		c.Header("Content-Type", "application/json")

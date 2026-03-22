@@ -314,6 +314,7 @@ func main() {
 	// Start cleanup scheduler.
 	if err := cleanupScheduler.Start(); err != nil {
 		slog.Error("Failed to start cleanup scheduler", "error", err)
+		os.Exit(1)
 	}
 
 	// Create server with timeouts

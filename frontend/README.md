@@ -28,10 +28,10 @@ frontend/
     ├── context/         # Auth + WebSocket context providers
     ├── pages/
     │   ├── Admin/       # User management + cluster management (admin only)
-    │   ├── Analytics/   # Usage stats and deployment metrics (admin only)
+    │   ├── Analytics/   # Usage stats and deployment metrics (DevOps+)
     │   ├── AuditLog/    # Audit log viewer + CSV/JSON export
     │   ├── CleanupPolicies/  # Cron-based cleanup policy editor (admin only)
-    │   ├── ClusterHealth/    # Cluster health dashboard (admin only)
+    │   ├── ClusterHealth/    # Cluster health dashboard (DevOps+)
     │   ├── Login/       # Login page
     │   ├── Profile/     # User profile + API key management
     │   ├── SharedValues/     # Per-cluster shared Helm values (admin only)

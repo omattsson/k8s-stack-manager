@@ -201,8 +201,8 @@ backend/internal/
 | Admin Users | `/admin/users` | User management (admin only) |
 | Orphaned Namespaces | `/admin/orphaned-namespaces` | Namespace cleanup (admin only) |
 | Clusters | `/admin/clusters` | Cluster registration and health (admin only) |
-| Cluster Health | `/admin/cluster-health` | Cluster health dashboard (admin only) |
-| Analytics | `/admin/analytics` | Usage stats and deployment metrics (admin only) |
+| Cluster Health | `/admin/cluster-health` | Cluster health dashboard (DevOps+) |
+| Analytics | `/admin/analytics` | Usage stats and deployment metrics (DevOps+) |
 | Shared Values | `/admin/shared-values` | Per-cluster shared Helm values (admin only) |
 | Cleanup Policies | `/admin/cleanup-policies` | Cron-based cleanup policy editor (admin only) |
 | Profile | `/profile` | User profile and API key management |
