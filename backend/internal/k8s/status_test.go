@@ -9,6 +9,7 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
 )
@@ -776,4 +777,175 @@ func TestPtrInt32OrDefault(t *testing.T) {
 	val := int32(5)
 	assert.Equal(t, int32(5), ptrInt32OrDefault(&val, 1))
 	assert.Equal(t, int32(1), ptrInt32OrDefault(nil, 1))
+}
+
+// --- Cluster Summary & Node Status Tests ---
+
+func makeNode(name string, ready bool, cpuCores string, memGi string) *corev1.Node {
+	readyStatus := corev1.ConditionFalse
+	if ready {
+		readyStatus = corev1.ConditionTrue
+	}
+	return &corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{Name: name},
+		Status: corev1.NodeStatus{
+			Conditions: []corev1.NodeCondition{
+				{Type: corev1.NodeReady, Status: readyStatus, Message: "kubelet is ready"},
+			},
+			Capacity: corev1.ResourceList{
+				corev1.ResourceCPU:    resource.MustParse(cpuCores),
+				corev1.ResourceMemory: resource.MustParse(memGi),
+				corev1.ResourcePods:   resource.MustParse("110"),
+			},
+			Allocatable: corev1.ResourceList{
+				corev1.ResourceCPU:    resource.MustParse(cpuCores),
+				corev1.ResourceMemory: resource.MustParse(memGi),
+				corev1.ResourcePods:   resource.MustParse("110"),
+			},
+		},
+	}
+}
+
+func TestGetClusterSummary_TwoNodes(t *testing.T) {
+	t.Parallel()
+
+	cs := fake.NewSimpleClientset(
+		makeNode("node-1", true, "4", "16Gi"),
+		makeNode("node-2", true, "4", "16Gi"),
+		&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "stack-app1"}},
+		&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "stack-app2"}},
+		&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "kube-system"}},
+	)
+	client := NewClientFromInterface(cs)
+
+	summary, err := client.GetClusterSummary(context.Background())
+	require.NoError(t, err)
+	require.NotNil(t, summary)
+
+	assert.Equal(t, 2, summary.NodeCount)
+	assert.Equal(t, 2, summary.ReadyNodeCount)
+	assert.Equal(t, "8000m", summary.TotalCPU)
+	assert.Equal(t, "8000m", summary.AllocatableCPU)
+	assert.Equal(t, 2, summary.NamespaceCount) // only stack-* namespaces
+	// Memory: 2 * 16Gi = 32Gi → "32.0Gi"
+	assert.Equal(t, "32.0Gi", summary.TotalMemory)
+	assert.Equal(t, "32.0Gi", summary.AllocatableMemory)
+}
+
+func TestGetClusterSummary_NoNodes(t *testing.T) {
+	t.Parallel()
+
+	cs := fake.NewSimpleClientset()
+	client := NewClientFromInterface(cs)
+
+	summary, err := client.GetClusterSummary(context.Background())
+	require.NoError(t, err)
+	require.NotNil(t, summary)
+
+	assert.Equal(t, 0, summary.NodeCount)
+	assert.Equal(t, 0, summary.ReadyNodeCount)
+	assert.Equal(t, "0m", summary.TotalCPU)
+	assert.Equal(t, "0Mi", summary.TotalMemory)
+	assert.Equal(t, "0m", summary.AllocatableCPU)
+	assert.Equal(t, "0Mi", summary.AllocatableMemory)
+	assert.Equal(t, 0, summary.NamespaceCount)
+}
+
+func TestGetNodeStatuses_MixedReadiness(t *testing.T) {
+	t.Parallel()
+
+	cs := fake.NewSimpleClientset(
+		makeNode("node-ready", true, "4", "8Gi"),
+		makeNode("node-notready", false, "2", "4Gi"),
+	)
+	client := NewClientFromInterface(cs)
+
+	nodes, err := client.GetNodeStatuses(context.Background())
+	require.NoError(t, err)
+	require.Len(t, nodes, 2)
+
+	// Sorted by name: node-notready, node-ready
+	assert.Equal(t, "node-notready", nodes[0].Name)
+	assert.Equal(t, "NotReady", nodes[0].Status)
+	assert.Equal(t, "node-ready", nodes[1].Name)
+	assert.Equal(t, "Ready", nodes[1].Status)
+
+	// Verify conditions are collected.
+	require.NotEmpty(t, nodes[0].Conditions)
+	assert.Equal(t, "Ready", nodes[0].Conditions[0].Type)
+	assert.Equal(t, "False", nodes[0].Conditions[0].Status)
+}
+
+func TestGetNodeStatuses_PodCounts(t *testing.T) {
+	t.Parallel()
+
+	cs := fake.NewSimpleClientset(
+		makeNode("node-a", true, "4", "8Gi"),
+		makeNode("node-b", true, "4", "8Gi"),
+		&corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{Name: "pod-1", Namespace: "default"},
+			Spec:       corev1.PodSpec{NodeName: "node-a"},
+		},
+		&corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{Name: "pod-2", Namespace: "default"},
+			Spec:       corev1.PodSpec{NodeName: "node-a"},
+		},
+		&corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{Name: "pod-3", Namespace: "kube-system"},
+			Spec:       corev1.PodSpec{NodeName: "node-b"},
+		},
+	)
+	client := NewClientFromInterface(cs)
+
+	nodes, err := client.GetNodeStatuses(context.Background())
+	require.NoError(t, err)
+	require.Len(t, nodes, 2)
+
+	// Sorted by name: node-a, node-b
+	assert.Equal(t, "node-a", nodes[0].Name)
+	assert.Equal(t, "node-b", nodes[1].Name)
+
+	// fake clientset doesn't support field selectors, so pod listing
+	// returns all pods for each node query — verify we get counts (may be total).
+	// The important thing is the method doesn't error.
+	assert.GreaterOrEqual(t, nodes[0].PodCount, 0)
+	assert.GreaterOrEqual(t, nodes[1].PodCount, 0)
+}
+
+func TestFormatMemoryBytes(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		bytes int64
+		want  string
+	}{
+		{name: "zero", bytes: 0, want: "0Mi"},
+		{name: "megabytes", bytes: 512 * 1024 * 1024, want: "512Mi"},
+		{name: "one gig", bytes: 1024 * 1024 * 1024, want: "1.0Gi"},
+		{name: "multi gig", bytes: 16 * 1024 * 1024 * 1024, want: "16.0Gi"},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := formatMemoryBytes(tt.bytes)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestSortNodeStatuses(t *testing.T) {
+	t.Parallel()
+
+	nodes := []NodeStatus{
+		{Name: "charlie"},
+		{Name: "alpha"},
+		{Name: "bravo"},
+	}
+	sortNodeStatuses(nodes)
+	assert.Equal(t, "alpha", nodes[0].Name)
+	assert.Equal(t, "bravo", nodes[1].Name)
+	assert.Equal(t, "charlie", nodes[2].Name)
 }

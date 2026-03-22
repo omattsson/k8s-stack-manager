@@ -16,6 +16,7 @@ import (
 	"backend/internal/helm"
 	"backend/internal/k8s"
 	"backend/internal/models"
+	"backend/internal/scheduler"
 	"backend/internal/ttl"
 	"backend/internal/websocket"
 	"context"
@@ -153,6 +154,12 @@ func main() {
 		os.Exit(1)
 	}
 
+	sharedValuesRepo, err := azure.NewSharedValuesRepository(azCfg.AccountName, azCfg.AccountKey, azCfg.Endpoint, azCfg.UseAzurite)
+	if err != nil {
+		slog.Error("Failed to create shared values repository", "error", err)
+		os.Exit(1)
+	}
+
 	// ------------------------------------------------------------------
 	// Phase 1: Create domain services
 	// ------------------------------------------------------------------
@@ -233,6 +240,7 @@ func main() {
 	adminHandler := handlers.NewAdminHandler(clusterRegistry, instanceRepo)
 	clusterHandler := handlers.NewClusterHandler(clusterRepo, clusterRegistry, instanceRepo)
 	branchOverrideHandler := handlers.NewBranchOverrideHandler(branchOverrideRepo, instanceRepo)
+	sharedValuesHandler := handlers.NewSharedValuesHandler(sharedValuesRepo, clusterRepo)
 
 	favoriteRepo, err := azure.NewUserFavoriteRepository(azCfg.AccountName, azCfg.AccountKey, azCfg.Endpoint, azCfg.UseAzurite)
 	if err != nil {
@@ -248,6 +256,21 @@ func main() {
 		hub, clusterRegistry, k8sWatcher,
 		cfg.App.DefaultInstanceTTLMinutes,
 	)
+
+	analyticsHandler := handlers.NewAnalyticsHandler(templateRepo, definitionRepo, instanceRepo, deployLogRepo, userRepo)
+
+	// ------------------------------------------------------------------
+	// Phase 6.2: Cleanup policies
+	// ------------------------------------------------------------------
+	cleanupPolicyRepo, err := azure.NewCleanupPolicyRepository(azCfg.AccountName, azCfg.AccountKey, azCfg.Endpoint, azCfg.UseAzurite)
+	if err != nil {
+		slog.Error("Failed to create cleanup policy repository", "error", err)
+		os.Exit(1)
+	}
+
+	cleanupExecutor := deployer.NewCleanupExecutor(deployManager, definitionRepo, chartConfigRepo, instanceRepo)
+	cleanupScheduler := scheduler.NewScheduler(cleanupPolicyRepo, instanceRepo, auditRepo, cleanupExecutor)
+	cleanupPolicyHandler := handlers.NewCleanupPolicyHandler(cleanupPolicyRepo, cleanupScheduler)
 
 	// Auto-create admin user on startup if ADMIN_PASSWORD is set.
 	authHandler.EnsureAdminUser()
@@ -272,7 +295,11 @@ func main() {
 		BranchOverrideHandler: branchOverrideHandler,
 		FavoriteHandler:       favoriteHandler,
 		QuickDeployHandler:    quickDeployHandler,
+		AnalyticsHandler:      analyticsHandler,
+		CleanupPolicyHandler:  cleanupPolicyHandler,
+		CleanupScheduler:      cleanupScheduler,
 		ClusterHandler:        clusterHandler,
+		SharedValuesHandler:   sharedValuesHandler,
 		UserRepo:              userRepo,
 		APIKeyRepo:            apiKeyRepo,
 	})
@@ -283,6 +310,12 @@ func main() {
 	expiryStopper := deployer.NewExpiryStopper(deployManager, definitionRepo, chartConfigRepo)
 	reaper := ttl.NewReaper(instanceRepo, auditRepo, hub, expiryStopper, 60*time.Second)
 	go reaper.Start()
+
+	// Start cleanup scheduler.
+	if err := cleanupScheduler.Start(); err != nil {
+		slog.Error("Failed to start cleanup scheduler", "error", err)
+		os.Exit(1)
+	}
 
 	// Create server with timeouts
 	srv := &http.Server{
@@ -322,6 +355,7 @@ func main() {
 
 	// 2. Stop producers of deploy work
 	reaper.Stop()
+	cleanupScheduler.Stop()
 
 	// 3. Now safe to wait for in-flight deploys
 	deployManager.Shutdown()

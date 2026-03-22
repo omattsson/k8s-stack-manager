@@ -1,9 +1,8 @@
 import { Navigate } from 'react-router-dom';
 import { Box, CircularProgress, Alert } from '@mui/material';
 import { useAuth } from '../../context/AuthContext';
+import { hasAtLeastRole } from '../../utils/roles';
 import type { ReactNode } from 'react';
-
-const ROLE_RANK: Record<string, number> = { user: 1, devops: 2, admin: 3 };
 
 interface ProtectedRouteProps {
   children: ReactNode;
@@ -26,9 +25,7 @@ const ProtectedRoute = ({ children, requiredRole }: ProtectedRouteProps) => {
   }
 
   if (requiredRole && user) {
-    const userRank = ROLE_RANK[user.role] ?? 0;
-    const required = ROLE_RANK[requiredRole] ?? 999;
-    if (userRank < required) {
+    if (!hasAtLeastRole(user.role, requiredRole)) {
       return (
         <Box sx={{ mt: 4 }}>
           <Alert severity="error">You do not have permission to access this page.</Alert>

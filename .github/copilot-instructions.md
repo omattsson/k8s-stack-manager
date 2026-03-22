@@ -20,13 +20,26 @@ backend/
       handlers.go                # Health handlers (closure-injection, not Handler struct)
       rate_limiter.go            # Per-IP sliding window, returned from SetupRoutes for shutdown
       errors.go                  # handleDBError() maps repo errors to HTTP status
+      admin.go                   # AdminHandler: orphaned namespace detection/cleanup
+      analytics.go               # AnalyticsHandler: overview, template, user stats
+      api_keys.go                # APIKeyHandler: API key management
+      audit_logs.go              # AuditLogHandler: filterable audit log viewer + export
       auth.go                    # AuthHandler: login, register, current user
+      branch_overrides.go        # BranchOverrideHandler: per-chart branch overrides
+      chart_configs.go           # Chart config management (nested under definitions)
+      cleanup_policies.go        # CleanupPolicyHandler: CRUD + manual run
+      clusters.go                # ClusterHandler: CRUD + test-connection + health
+      favorites.go               # FavoriteHandler: user bookmark management
+      git.go                     # GitHandler: branch listing, validation
+      quick_deploy.go            # QuickDeployHandler: template quick-deploy
+      shared_values.go           # SharedValuesHandler: per-cluster shared values
       stack_definitions.go       # DefinitionHandler: CRUD + chart management
       stack_instances.go         # InstanceHandler: CRUD + clone + deploy/stop/clean
       stack_templates.go         # TemplateHandler: CRUD + publish + instantiate
-      admin.go                   # AdminHandler: orphaned namespace detection/cleanup
-      clusters.go                # ClusterHandler: CRUD + test-connection + health
-      git.go                     # GitHandler: branch listing, validation
+      template_charts.go         # Template chart config management
+      users.go                   # UserHandler: user management
+      value_overrides.go         # Per-chart value overrides
+      websocket.go               # WebSocket upgrade handler
       mock_repository.go         # In-memory mock for Item tests (same package)
     api/middleware/
       middleware.go              # CORS, Logger, Recovery, RequestID, MaxBodySize
@@ -47,6 +60,8 @@ backend/
     gitprovider/                 # Azure DevOps + GitLab branch listing, URL detection
     helm/                        # Values deep-merge, template variable substitution
     websocket/                   # WebSocket hub, client, message types
+    scheduler/                   # Cron-based cleanup policy execution
+    ttl/                         # TTL reaper for auto-expiring stack instances
   pkg/dberrors/errors.go         # Canonical error types: ErrNotFound, ErrDuplicateKey, ErrValidation
   pkg/crypto/                    # AES-GCM encryption/decryption for kubeconfig data at rest (key derived via SHA-256)
 ```
@@ -63,7 +78,7 @@ backend/
 
 **Filter whitelist**: `GenericRepository` has `allowedFilterFields` map. `NewRepository()` hardcodes Item fields ("name", "price"). New entities need `NewRepositoryWithFilterFields()` or the existing repo must be extended.
 
-**Routes registration**: `SetupRoutes()` returns `*RateLimiter` (caller must call `Stop()` on shutdown). Middleware order: RequestID → Logger → Recovery → CORS → MaxBodySize (1MB). WebSocket at `/ws` (no rate limit), health at `/health/*` (no rate limit), API at `/api/v1/*` (100 req/min per IP).
+**Routes registration**: `SetupRoutes()` accepts a `Deps` struct with all handler and repository dependencies. Returns `*RateLimiter` (caller must call `Stop()` on shutdown). Middleware order: RequestID → Logger → Recovery → CORS → MaxBodySize (1MB). Auth uses `CombinedAuth` middleware (JWT + API key). Role-based access via `RequireAdmin()`/`RequireDevOps()`. Audit logging via `NewAuditMiddleware()` on route groups. WebSocket at `/ws`, health at `/health/*`, API at `/api/v1/*` (100 req/min per IP).
 
 ## Frontend Structure
 
@@ -76,7 +91,7 @@ frontend/src/
   pages/{Name}/index.tsx # Page components (one dir per page)
 ```
 
-**Patterns**: MUI components (no raw HTML), `sx` prop for styling, functional components only, `useState`/`useEffect` for state, service objects with async methods for API calls. New pages: create `pages/{Name}/index.tsx`, register in `routes.tsx`, add nav in `Layout/index.tsx`.
+**Patterns**: MUI components (no raw HTML), `sx` prop for styling, functional components only, `useState`/`useEffect` for state, service objects with async methods for API calls. All service objects and methods in `api/client.ts` must have TSDoc comments with `@param`, `@returns`, and `@see` (HTTP method + route). New pages: create `pages/{Name}/index.tsx`, register in `routes.tsx`, add nav in `Layout/index.tsx`.
 
 ## Development Commands
 
@@ -119,7 +134,7 @@ See `.github/instructions/api-extension.instructions.md` for detailed examples.
 
 This application enables developers to configure, store, and deploy multi-service Helm-based application stacks to a shared AKS Arc cluster.
 
-### Domain Packages (new)
+### Domain Packages
 
 ```
 backend/internal/
@@ -128,6 +143,8 @@ backend/internal/
   helm/                  # Values deep-merge, template variable substitution, YAML export
   deployer/              # Helm CLI wrapper for deploy/undeploy/status (multi-cluster via registry)
   k8s/                   # Kubernetes cluster client and status monitoring
+  scheduler/             # Cron-based cleanup policy execution with condition parsing
+  ttl/                   # TTL reaper: background goroutine auto-expiring instances
 ```
 
 ### Domain Conventions
@@ -140,8 +157,15 @@ backend/internal/
 - **Helm values merge**: Deep-merge chart defaults + instance overrides; substitute template vars `{{.Branch}}`, `{{.Namespace}}`, `{{.InstanceName}}`, `{{.StackName}}`, `{{.Owner}}`
 - **Auth**: JWT with `Authorization: Bearer <token>` header; middleware injects `userID`, `username`, `role` into Gin context
 - **Generic design**: No company-specific hardcoding; all branding and configurable values via environment variables
+- **Cleanup policies**: Cron-scheduled actions (stop/clean/delete) on instances matching a condition. Policies target a cluster (or "all"). Scheduler reloads on policy changes. Manual run supported with dry-run mode.
+- **TTL auto-expiry**: Instances with `TTLMinutes > 0` get `ExpiresAt` set on deploy. Background reaper checks every minute and stops expired instances.
+- **Favorites**: Users can bookmark templates and instances. Stored as `UserFavorite` entities.
+- **Shared values**: Per-cluster Helm values applied to all instances in that cluster, merged by priority (lowest first) before instance-specific overrides.
+- **Analytics**: Read-only aggregation of instance counts, deployment stats, template usage, and user activity.
+- **Quick deploy**: One-click flow: template → new instance → deploy. Generates instance name and namespace automatically.
+- **Per-chart branch overrides**: Instances can override the branch per chart (default uses the definition's `DefaultBranch`). Substituted in Helm values via `{{.Branch}}`.
 
-### New API Route Groups
+### API Route Groups
 
 | Group | Prefix | Description |
 |-------|--------|-------------|
@@ -150,14 +174,21 @@ backend/internal/
 | Stack Definitions | `/api/v1/stack-definitions` | CRUD + nested chart management |
 | Stack Instances | `/api/v1/stack-instances` | CRUD + clone, deploy, stop, clean, status, logs |
 | Value Overrides | `/api/v1/stack-instances/:id/overrides` | Per-chart value overrides |
+| Branch Overrides | `/api/v1/stack-instances/:id/branches` | Per-chart branch overrides |
 | Git | `/api/v1/git` | Branch listing, validation, provider status |
-| Audit Logs | `/api/v1/audit-logs` | Filterable audit log viewer |
+| Audit Logs | `/api/v1/audit-logs` | Filterable audit log viewer + export |
 | Users | `/api/v1/users` | User management (admin) |
 | API Keys | `/api/v1/users/:id/api-keys` | API key management |
 | Admin | `/api/v1/admin` | Orphaned namespace detection and cleanup |
 | Clusters | `/api/v1/clusters` | Multi-cluster registration, health, test-connection |
+| Cleanup Policies | `/api/v1/admin/cleanup-policies` | Cron-based cleanup policy management |
+| Shared Values | `/api/v1/clusters/:id/shared-values` | Per-cluster shared Helm values |
+| Analytics | `/api/v1/analytics` | Usage overview, template stats, user stats |
+| Favorites | `/api/v1/favorites` | User bookmark management |
+| Quick Deploy | `/api/v1/templates/:id/quick-deploy` | One-click template deployment |
+| Health | `/health/*` | Liveness + readiness |
 
-### New Frontend Pages
+### Frontend Pages
 
 | Page | Route | Description |
 |------|-------|-------------|
@@ -166,9 +197,14 @@ backend/internal/
 | Stack Definitions | `/stack-definitions` | List, create, edit definitions |
 | Templates | `/templates` | Template gallery with publish/instantiate |
 | Stack Instance Detail | `/stack-instances/:id` | Values editor, branch selector, deploy/stop/clean |
-| Audit Log | `/audit-log` | Filterable audit log viewer |
-| Admin | `/admin/users` | User management (admin only) |
+| Audit Log | `/audit-log` | Filterable audit log viewer + export |
+| Admin Users | `/admin/users` | User management (admin only) |
+| Orphaned Namespaces | `/admin/orphaned-namespaces` | Namespace cleanup (admin only) |
 | Clusters | `/admin/clusters` | Cluster registration and health (admin only) |
+| Cluster Health | `/admin/cluster-health` | Cluster health dashboard (DevOps+) |
+| Analytics | `/admin/analytics` | Usage stats and deployment metrics (DevOps+) |
+| Shared Values | `/admin/shared-values` | Per-cluster shared Helm values (admin only) |
+| Cleanup Policies | `/admin/cleanup-policies` | Cron-based cleanup policy editor (admin only) |
 | Profile | `/profile` | User profile and API key management |
 
 ### Project Plan

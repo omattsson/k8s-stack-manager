@@ -2,6 +2,7 @@ import type { ReactNode } from 'react';
 import { Box, AppBar, Toolbar, Typography, Container, Button, Chip } from '@mui/material';
 import { Link as RouterLink } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
+import { hasAtLeastRole } from '../../utils/roles';
 
 interface LayoutProps {
   children: ReactNode;
@@ -37,6 +38,16 @@ const Layout = ({ children }: LayoutProps) => {
               <Button color="inherit" component={RouterLink} to="/audit-log">
                 Audit Log
               </Button>
+              {hasAtLeastRole(user?.role, 'devops') && (
+                <>
+                  <Button color="inherit" component={RouterLink} to="/admin/cluster-health">
+                    Cluster Health
+                  </Button>
+                  <Button color="inherit" component={RouterLink} to="/admin/analytics">
+                    Analytics
+                  </Button>
+                </>
+              )}
               {user?.role === 'admin' && (
                 <>
                   <Button color="inherit" component={RouterLink} to="/admin/users">
@@ -47,6 +58,12 @@ const Layout = ({ children }: LayoutProps) => {
                   </Button>
                   <Button color="inherit" component={RouterLink} to="/admin/clusters">
                     Clusters
+                  </Button>
+                  <Button color="inherit" component={RouterLink} to="/admin/shared-values">
+                    Shared Values
+                  </Button>
+                  <Button color="inherit" component={RouterLink} to="/admin/cleanup-policies">
+                    Cleanup Policies
                   </Button>
                 </>
               )}

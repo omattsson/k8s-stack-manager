@@ -7,6 +7,7 @@ import (
 	"backend/internal/config"
 	"backend/internal/health"
 	"backend/internal/models"
+	"backend/internal/scheduler"
 	"backend/internal/websocket"
 	"time"
 
@@ -45,11 +46,19 @@ type Deps struct {
 	// Quick deploy handler.
 	QuickDeployHandler *handlers.QuickDeployHandler
 
+	// Analytics handler.
+	AnalyticsHandler *handlers.AnalyticsHandler
+
+	// Cleanup policy handler and scheduler.
+	CleanupPolicyHandler *handlers.CleanupPolicyHandler
+	CleanupScheduler     *scheduler.Scheduler
+
 	// Cluster management.
-	ClusterHandler *handlers.ClusterHandler
-	ClusterRepo    models.ClusterRepository
-	Registry       *cluster.Registry
-	InstanceRepo   models.StackInstanceRepository
+	ClusterHandler      *handlers.ClusterHandler
+	SharedValuesHandler *handlers.SharedValuesHandler
+	ClusterRepo         models.ClusterRepository
+	Registry            *cluster.Registry
+	InstanceRepo        models.StackInstanceRepository
 
 	// Repos needed by combined JWT+API-key auth middleware.
 	UserRepo   models.UserRepository
@@ -216,7 +225,11 @@ func SetupRoutes(router *gin.Engine, deps Deps) *handlers.RateLimiter {
 
 		// Audit Logs
 		if deps.AuditLogHandler != nil {
-			authed.GET("/audit-logs", deps.AuditLogHandler.ListAuditLogs)
+			auditLogs := authed.Group("/audit-logs")
+			{
+				auditLogs.GET("/export", middleware.RequireAdmin(), deps.AuditLogHandler.ExportAuditLogs)
+				auditLogs.GET("", deps.AuditLogHandler.ListAuditLogs)
+			}
 		}
 
 		// User management (admin only)
@@ -252,6 +265,18 @@ func SetupRoutes(router *gin.Engine, deps Deps) *handlers.RateLimiter {
 				adminGroup.GET("/orphaned-namespaces", deps.AdminHandler.ListOrphanedNamespaces)
 				adminGroup.DELETE("/orphaned-namespaces/:namespace", deps.AdminHandler.DeleteOrphanedNamespace)
 			}
+
+			// Cleanup policies — nested in admin group
+			if deps.CleanupPolicyHandler != nil {
+				cleanupPolicies := adminGroup.Group("/cleanup-policies")
+				{
+					cleanupPolicies.GET("", deps.CleanupPolicyHandler.ListCleanupPolicies)
+					cleanupPolicies.POST("", deps.CleanupPolicyHandler.CreateCleanupPolicy)
+					cleanupPolicies.PUT("/:id", deps.CleanupPolicyHandler.UpdateCleanupPolicy)
+					cleanupPolicies.DELETE("/:id", deps.CleanupPolicyHandler.DeleteCleanupPolicy)
+					cleanupPolicies.POST("/:id/run", deps.CleanupPolicyHandler.RunCleanupPolicy)
+				}
+			}
 		}
 
 		// Cluster management
@@ -273,6 +298,34 @@ func SetupRoutes(router *gin.Engine, deps Deps) *handlers.RateLimiter {
 				clusters.DELETE("/:id", admin, clusterHandler.DeleteCluster)
 				clusters.POST("/:id/test", admin, clusterHandler.TestClusterConnection)
 				clusters.POST("/:id/default", admin, clusterHandler.SetDefaultCluster)
+
+				// Cluster health dashboard — requires DevOps or Admin role.
+				clusters.GET("/:id/health/summary", devops, clusterHandler.GetClusterHealthSummary)
+				clusters.GET("/:id/health/nodes", devops, clusterHandler.GetClusterNodes)
+				clusters.GET("/:id/namespaces", devops, clusterHandler.GetClusterNamespaces)
+			}
+
+			// Shared values (Phase 6.4)
+			if deps.SharedValuesHandler != nil {
+				sharedValues := clusters.Group("/:id/shared-values")
+				sharedValues.Use(admin)
+				{
+					sharedValues.GET("", deps.SharedValuesHandler.ListSharedValues)
+					sharedValues.POST("", deps.SharedValuesHandler.CreateSharedValues)
+					sharedValues.PUT("/:valueId", deps.SharedValuesHandler.UpdateSharedValues)
+					sharedValues.DELETE("/:valueId", deps.SharedValuesHandler.DeleteSharedValues)
+				}
+			}
+		}
+
+		// Analytics
+		if deps.AnalyticsHandler != nil {
+			analytics := authed.Group("/analytics")
+			analytics.Use(devops)
+			{
+				analytics.GET("/overview", deps.AnalyticsHandler.GetOverview)
+				analytics.GET("/templates", deps.AnalyticsHandler.GetTemplateStats)
+				analytics.GET("/users", middleware.RequireAdmin(), deps.AnalyticsHandler.GetUserStats)
 			}
 		}
 

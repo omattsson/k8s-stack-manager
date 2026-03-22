@@ -4,6 +4,9 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+
+	"github.com/robfig/cron/v3"
+	"gopkg.in/yaml.v3"
 )
 
 var (
@@ -178,6 +181,56 @@ func (o *ChartBranchOverride) Validate() error {
 	}
 	if o.Branch == "" {
 		return errors.New("branch is required")
+	}
+	return nil
+}
+
+// Validate implements model validation for SharedValues.
+func (sv *SharedValues) Validate() error {
+	if sv.Name == "" {
+		return errors.New("name is required")
+	}
+	if sv.ClusterID == "" {
+		return errors.New("cluster_id is required")
+	}
+	if sv.Priority < 0 {
+		return errors.New("priority must be non-negative")
+	}
+	if sv.Values != "" {
+		var parsed map[string]interface{}
+		if err := yaml.Unmarshal([]byte(sv.Values), &parsed); err != nil {
+			return fmt.Errorf("values must be a valid YAML mapping: %w", err)
+		}
+	}
+	return nil
+}
+
+// Valid cleanup policy actions.
+var validCleanupActions = map[string]bool{
+	"stop":   true,
+	"clean":  true,
+	"delete": true,
+}
+
+// Validate implements model validation for CleanupPolicy.
+func (cp *CleanupPolicy) Validate() error {
+	if cp.Name == "" {
+		return errors.New("name is required")
+	}
+	if !validCleanupActions[cp.Action] {
+		return errors.New("action must be one of: stop, clean, delete")
+	}
+	if cp.Condition == "" {
+		return errors.New("condition is required")
+	}
+	if cp.Schedule == "" {
+		return errors.New("schedule is required")
+	}
+	if _, err := cron.ParseStandard(cp.Schedule); err != nil {
+		return fmt.Errorf("invalid cron schedule: %w", err)
+	}
+	if cp.ClusterID == "" {
+		return errors.New("cluster_id is required")
 	}
 	return nil
 }

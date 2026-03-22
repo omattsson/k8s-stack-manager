@@ -26,7 +26,8 @@ type GenerateParams struct {
 	DefaultValues  string
 	LockedValues   string
 	OverrideValues string
-	ChartBranch    string // Per-chart branch override; if non-empty, overrides TemplateVars.Branch.
+	SharedValues   []string // YAML strings, already sorted by priority (low→high)
+	ChartBranch    string   // Per-chart branch override; if non-empty, overrides TemplateVars.Branch.
 	TemplateVars   TemplateVars
 }
 
@@ -36,7 +37,8 @@ type ChartValues struct {
 	DefaultValues  string
 	LockedValues   string
 	OverrideValues string
-	ChartBranch    string // Per-chart branch override; passed through to GenerateParams.ChartBranch.
+	SharedValues   []string // YAML strings, already sorted by priority (low→high)
+	ChartBranch    string   // Per-chart branch override; passed through to GenerateParams.ChartBranch.
 }
 
 // GenerateAllParams holds parameters for multi-chart values generation.
@@ -54,9 +56,19 @@ func NewValuesGenerator() *ValuesGenerator {
 }
 
 // GenerateValues produces a merged values.yaml for a single chart.
-// Merge order: defaults ← overrides ← locked (locked always wins).
+// Merge order: shared values ← defaults ← overrides ← locked (locked always wins).
 // Template variables are substituted after merging.
 func (g *ValuesGenerator) GenerateValues(_ context.Context, params GenerateParams) ([]byte, error) {
+	// Start with shared values (lowest priority, applied first).
+	merged := make(map[string]interface{})
+	for _, sv := range params.SharedValues {
+		parsed, err := parseYAML(sv)
+		if err != nil {
+			continue // skip invalid shared values YAML
+		}
+		merged = deepMerge(merged, parsed)
+	}
+
 	defaults, err := parseYAML(params.DefaultValues)
 	if err != nil {
 		return nil, fmt.Errorf("parsing default values: %w", err)
@@ -72,8 +84,9 @@ func (g *ValuesGenerator) GenerateValues(_ context.Context, params GenerateParam
 		return nil, fmt.Errorf("parsing locked values: %w", err)
 	}
 
-	// Merge: defaults ← overrides ← locked
-	merged := deepMerge(defaults, overrides)
+	// Merge: shared ← defaults ← overrides ← locked
+	merged = deepMerge(merged, defaults)
+	merged = deepMerge(merged, overrides)
 	merged = deepMerge(merged, locked)
 
 	// Apply per-chart branch override if specified.
@@ -101,6 +114,7 @@ func (g *ValuesGenerator) GenerateAllValues(ctx context.Context, params Generate
 			DefaultValues:  chart.DefaultValues,
 			LockedValues:   chart.LockedValues,
 			OverrideValues: chart.OverrideValues,
+			SharedValues:   chart.SharedValues,
 			ChartBranch:    chart.ChartBranch,
 			TemplateVars:   params.TemplateVars,
 		})

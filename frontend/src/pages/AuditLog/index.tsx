@@ -15,24 +15,30 @@ import {
   MenuItem,
   Button,
   TablePagination,
+  Menu,
+  ListItemText,
 } from '@mui/material';
+import FileDownloadIcon from '@mui/icons-material/FileDownload';
 import { auditService } from '../../api/client';
 import type { AuditLog as AuditLogType } from '../../types';
 import EntityLink from '../../components/EntityLink';
+import { useAuth } from '../../context/AuthContext';
 
 const ENTITY_TYPES = ['All', 'stack_template', 'stack_definition', 'stack_instance', 'value_override', 'user'];
 const ACTIONS = ['All', 'create', 'update', 'delete', 'publish', 'unpublish', 'clone', 'instantiate'];
 
 const AuditLog = () => {
+  const { user } = useAuth();
   const [logs, setLogs] = useState<AuditLogType[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [entityType, setEntityType] = useState('All');
   const [action, setAction] = useState('All');
-  const [username, setUsername] = useState('');
+  const [userID, setUserID] = useState('');
   const [page, setPage] = useState(0);
   const [rowsPerPage, setRowsPerPage] = useState(25);
+  const [exportAnchor, setExportAnchor] = useState<null | HTMLElement>(null);
 
   const fetchLogs = useCallback(async () => {
     setLoading(true);
@@ -44,7 +50,7 @@ const AuditLog = () => {
       };
       if (entityType !== 'All') filters.entity_type = entityType;
       if (action !== 'All') filters.action = action;
-      if (username) filters.user_id = username;
+      if (userID) filters.user_id = userID;
 
       const response = await auditService.list(filters);
       setLogs(response.data || []);
@@ -54,7 +60,7 @@ const AuditLog = () => {
     } finally {
       setLoading(false);
     }
-  }, [entityType, action, username, page, rowsPerPage]);
+  }, [entityType, action, userID, page, rowsPerPage]);
 
   useEffect(() => {
     fetchLogs();
@@ -63,6 +69,19 @@ const AuditLog = () => {
   const handleFilter = () => {
     setPage(0);
     fetchLogs();
+  };
+
+  const handleExport = async (format: 'csv' | 'json') => {
+    setExportAnchor(null);
+    try {
+      const filters: Record<string, string> = {};
+      if (entityType !== 'All') filters.entity_type = entityType;
+      if (action !== 'All') filters.action = action;
+      if (userID) filters.user_id = userID;
+      await auditService.export(filters, format);
+    } catch {
+      setError('Failed to export audit logs');
+    }
   };
 
   return (
@@ -74,9 +93,9 @@ const AuditLog = () => {
       <Paper sx={{ p: 2, mb: 3 }}>
         <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap', alignItems: 'flex-end' }}>
           <TextField
-            label="Username"
-            value={username}
-            onChange={(e) => setUsername(e.target.value)}
+            label="User ID"
+            value={userID}
+            onChange={(e) => setUserID(e.target.value)}
             size="small"
             sx={{ minWidth: 150 }}
           />
@@ -107,6 +126,29 @@ const AuditLog = () => {
           <Button variant="outlined" onClick={handleFilter}>
             Filter
           </Button>
+          {user?.role === 'admin' && (
+            <>
+              <Button
+                variant="outlined"
+                startIcon={<FileDownloadIcon />}
+                onClick={(e) => setExportAnchor(e.currentTarget)}
+              >
+                Export
+              </Button>
+              <Menu
+                anchorEl={exportAnchor}
+                open={Boolean(exportAnchor)}
+                onClose={() => setExportAnchor(null)}
+              >
+                <MenuItem onClick={() => handleExport('json')}>
+                  <ListItemText>Export as JSON</ListItemText>
+                </MenuItem>
+                <MenuItem onClick={() => handleExport('csv')}>
+                  <ListItemText>Export as CSV</ListItemText>
+                </MenuItem>
+              </Menu>
+            </>
+          )}
         </Box>
       </Paper>
 

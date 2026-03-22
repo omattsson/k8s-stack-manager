@@ -104,6 +104,21 @@ definitions:
       resource_counts:
         $ref: '#/definitions/k8s.ResourceCounts'
     type: object
+  handlers.OverviewStats:
+    properties:
+      running_instances:
+        type: integer
+      total_definitions:
+        type: integer
+      total_deploys:
+        type: integer
+      total_instances:
+        type: integer
+      total_templates:
+        type: integer
+      total_users:
+        type: integer
+    type: object
   handlers.RegisterRequest:
     properties:
       display_name:
@@ -117,6 +132,29 @@ definitions:
     required:
     - password
     - username
+    type: object
+  handlers.TemplateStats:
+    properties:
+      category:
+        type: string
+      definition_count:
+        type: integer
+      deploy_count:
+        type: integer
+      error_count:
+        type: integer
+      instance_count:
+        type: integer
+      is_published:
+        type: boolean
+      success_count:
+        type: integer
+      success_rate:
+        type: number
+      template_id:
+        type: string
+      template_name:
+        type: string
     type: object
   handlers.UpdateClusterRequest:
     properties:
@@ -135,6 +173,19 @@ definitions:
       name:
         type: string
       region:
+        type: string
+    type: object
+  handlers.UserStats:
+    properties:
+      deploy_count:
+        type: integer
+      instance_count:
+        type: integer
+      last_active:
+        type: string
+      user_id:
+        type: string
+      username:
         type: string
     type: object
   handlers.addFavoriteRequest:
@@ -173,6 +224,12 @@ definitions:
       instance:
         $ref: '#/definitions/models.StackInstance'
       log_id:
+        type: string
+    type: object
+  handlers.setBranchOverrideRequest:
+    properties:
+      branch:
+        example: feature/my-branch
         type: string
     type: object
   health.CheckStatus:
@@ -214,6 +271,23 @@ definitions:
       status:
         type: string
     type: object
+  k8s.ClusterSummary:
+    properties:
+      allocatable_cpu:
+        type: string
+      allocatable_memory:
+        type: string
+      namespace_count:
+        type: integer
+      node_count:
+        type: integer
+      ready_node_count:
+        type: integer
+      total_cpu:
+        type: string
+      total_memory:
+        type: string
+    type: object
   k8s.DeploymentInfo:
     properties:
       available:
@@ -240,6 +314,15 @@ definitions:
       url:
         type: string
     type: object
+  k8s.NamespaceInfo:
+    properties:
+      created_at:
+        type: string
+      name:
+        type: string
+      phase:
+        type: string
+    type: object
   k8s.NamespaceStatus:
     properties:
       charts:
@@ -255,6 +338,34 @@ definitions:
       namespace:
         type: string
       status:
+        type: string
+    type: object
+  k8s.NodeCondition:
+    properties:
+      message:
+        type: string
+      status:
+        description: '"True", "False", "Unknown"'
+        type: string
+      type:
+        type: string
+    type: object
+  k8s.NodeStatus:
+    properties:
+      allocatable:
+        $ref: '#/definitions/k8s.ResourceQuantity'
+      capacity:
+        $ref: '#/definitions/k8s.ResourceQuantity'
+      conditions:
+        items:
+          $ref: '#/definitions/k8s.NodeCondition'
+        type: array
+      name:
+        type: string
+      pod_count:
+        type: integer
+      status:
+        description: '"Ready" or "NotReady"'
         type: string
     type: object
   k8s.PodInfo:
@@ -279,6 +390,15 @@ definitions:
       services:
         type: integer
     type: object
+  k8s.ResourceQuantity:
+    properties:
+      cpu:
+        type: string
+      memory:
+        type: string
+      pods:
+        type: string
+    type: object
   k8s.ServiceInfo:
     properties:
       cluster_ip:
@@ -294,6 +414,10 @@ definitions:
       node_ports:
         items:
           type: integer
+        type: array
+      ports:
+        items:
+          type: string
         type: array
       type:
         type: string
@@ -369,6 +493,36 @@ definitions:
       source_repo_url:
         type: string
       stack_definition_id:
+        type: string
+    type: object
+  models.CleanupPolicy:
+    properties:
+      action:
+        description: '"stop", "clean", "delete"'
+        type: string
+      cluster_id:
+        description: or "all" for all clusters
+        type: string
+      condition:
+        description: e.g. "idle_days:7", "status:stopped,age_days:14", "ttl_expired"
+        type: string
+      created_at:
+        type: string
+      dry_run:
+        description: If true, only report matches without acting
+        type: boolean
+      enabled:
+        type: boolean
+      id:
+        type: string
+      last_run_at:
+        type: string
+      name:
+        type: string
+      schedule:
+        description: Cron expression, e.g. "0 2 * * *"
+        type: string
+      updated_at:
         type: string
     type: object
   models.Cluster:
@@ -449,6 +603,27 @@ definitions:
         type: integer
       total:
         type: integer
+    type: object
+  models.SharedValues:
+    properties:
+      cluster_id:
+        type: string
+      created_at:
+        type: string
+      description:
+        type: string
+      id:
+        type: string
+      name:
+        type: string
+      priority:
+        description: Lower = applied first
+        type: integer
+      updated_at:
+        type: string
+      values:
+        description: YAML content
+        type: string
     type: object
   models.StackDefinition:
     properties:
@@ -593,6 +768,22 @@ definitions:
       values:
         type: string
     type: object
+  scheduler.CleanupResult:
+    properties:
+      action:
+        type: string
+      error:
+        type: string
+      instance_id:
+        type: string
+      instance_name:
+        type: string
+      namespace:
+        type: string
+      status:
+        description: '"success", "error", "dry_run"'
+        type: string
+    type: object
 host: localhost:8081
 info:
   contact: {}
@@ -600,6 +791,185 @@ info:
   title: Backend API
   version: "1.0"
 paths:
+  /api/v1/admin/cleanup-policies:
+    get:
+      description: Returns all cleanup policies
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/models.CleanupPolicy'
+            type: array
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List all cleanup policies
+      tags:
+      - cleanup-policies
+    post:
+      consumes:
+      - application/json
+      description: Creates a new cleanup policy and reloads the scheduler
+      parameters:
+      - description: Cleanup policy
+        in: body
+        name: policy
+        required: true
+        schema:
+          $ref: '#/definitions/models.CleanupPolicy'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/models.CleanupPolicy'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Create a cleanup policy
+      tags:
+      - cleanup-policies
+  /api/v1/admin/cleanup-policies/{id}:
+    delete:
+      description: Deletes a cleanup policy and reloads the scheduler
+      parameters:
+      - description: Policy ID
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "204":
+          description: No Content
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Delete a cleanup policy
+      tags:
+      - cleanup-policies
+    put:
+      consumes:
+      - application/json
+      description: Updates an existing cleanup policy and reloads the scheduler
+      parameters:
+      - description: Policy ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Cleanup policy
+        in: body
+        name: policy
+        required: true
+        schema:
+          $ref: '#/definitions/models.CleanupPolicy'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.CleanupPolicy'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Update a cleanup policy
+      tags:
+      - cleanup-policies
+  /api/v1/admin/cleanup-policies/{id}/run:
+    post:
+      description: Executes a cleanup policy immediately. Use ?dry_run=true to preview
+        matches without acting.
+      parameters:
+      - description: Policy ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Dry run mode
+        in: query
+        name: dry_run
+        type: boolean
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/scheduler.CleanupResult'
+            type: array
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Run a cleanup policy manually
+      tags:
+      - cleanup-policies
   /api/v1/admin/orphaned-namespaces:
     get:
       description: Lists all Kubernetes namespaces matching the stack-* pattern that
@@ -684,6 +1054,70 @@ paths:
       summary: Delete an orphaned namespace
       tags:
       - Admin
+  /api/v1/analytics/overview:
+    get:
+      description: Returns high-level aggregate counts (templates, definitions, instances,
+        deploys, users)
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handlers.OverviewStats'
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Get platform overview statistics
+      tags:
+      - analytics
+  /api/v1/analytics/templates:
+    get:
+      description: Returns usage analytics for each template including definition
+        count, instance count, deploy counts, and success rate
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/handlers.TemplateStats'
+            type: array
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Get per-template usage statistics
+      tags:
+      - analytics
+  /api/v1/analytics/users:
+    get:
+      description: Returns usage analytics per user including instance count, deploy
+        count, and last active time (admin only)
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/handlers.UserStats'
+            type: array
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Get per-user usage statistics
+      tags:
+      - analytics
   /api/v1/audit-logs:
     get:
       description: List audit logs with optional filters and pagination
@@ -740,6 +1174,62 @@ paths:
               type: string
             type: object
       summary: List audit logs
+      tags:
+      - audit-logs
+  /api/v1/audit-logs/export:
+    get:
+      description: Export audit logs as CSV or JSON file download
+      parameters:
+      - description: 'Export format: csv or json (default: json)'
+        in: query
+        name: format
+        type: string
+      - description: Filter by user ID
+        in: query
+        name: user_id
+        type: string
+      - description: Filter by entity type
+        in: query
+        name: entity_type
+        type: string
+      - description: Filter by entity ID
+        in: query
+        name: entity_id
+        type: string
+      - description: Filter by action
+        in: query
+        name: action
+        type: string
+      - description: Start date (RFC3339)
+        in: query
+        name: start_date
+        type: string
+      - description: End date (RFC3339)
+        in: query
+        name: end_date
+        type: string
+      produces:
+      - application/octet-stream
+      responses:
+        "200":
+          description: OK
+          schema:
+            type: file
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Export audit logs
       tags:
       - audit-logs
   /api/v1/auth/login:
@@ -1060,6 +1550,295 @@ paths:
       summary: Set a cluster as the default
       tags:
       - clusters
+  /api/v1/clusters/{id}/health/nodes:
+    get:
+      description: Returns per-node health, conditions, and capacity for a cluster.
+      parameters:
+      - description: Cluster ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/k8s.NodeStatus'
+            type: array
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get cluster node statuses
+      tags:
+      - clusters
+  /api/v1/clusters/{id}/health/summary:
+    get:
+      description: Returns node count, CPU/memory totals, and namespace count for
+        a cluster.
+      parameters:
+      - description: Cluster ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/k8s.ClusterSummary'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get cluster health summary
+      tags:
+      - clusters
+  /api/v1/clusters/{id}/namespaces:
+    get:
+      description: Returns all stack-* namespaces in the cluster.
+      parameters:
+      - description: Cluster ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/k8s.NamespaceInfo'
+            type: array
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get cluster namespaces
+      tags:
+      - clusters
+  /api/v1/clusters/{id}/shared-values:
+    get:
+      description: Returns all shared values for the specified cluster, sorted by
+        priority (lowest first).
+      parameters:
+      - description: Cluster ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/models.SharedValues'
+            type: array
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List shared values for a cluster
+      tags:
+      - shared-values
+    post:
+      consumes:
+      - application/json
+      description: Creates a new shared values entry for the specified cluster.
+      parameters:
+      - description: Cluster ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Shared values payload
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/models.SharedValues'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/models.SharedValues'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Create shared values for a cluster
+      tags:
+      - shared-values
+  /api/v1/clusters/{id}/shared-values/{valueId}:
+    delete:
+      description: Deletes a shared values entry from the specified cluster.
+      parameters:
+      - description: Cluster ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Shared values ID
+        in: path
+        name: valueId
+        required: true
+        type: string
+      responses:
+        "204":
+          description: No Content
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Delete shared values
+      tags:
+      - shared-values
+    put:
+      consumes:
+      - application/json
+      description: Updates an existing shared values entry for the specified cluster.
+      parameters:
+      - description: Cluster ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Shared values ID
+        in: path
+        name: valueId
+        required: true
+        type: string
+      - description: Shared values payload
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/models.SharedValues'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.SharedValues'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Update shared values
+      tags:
+      - shared-values
   /api/v1/clusters/{id}/test:
     post:
       description: Tests connectivity to a cluster by attempting to reach the Kubernetes
@@ -1756,37 +2535,6 @@ paths:
       summary: List stack instances
       tags:
       - stack-instances
-    post:
-      consumes:
-      - application/json
-      description: Create a new stack instance from a definition
-      parameters:
-      - description: Instance object
-        in: body
-        name: instance
-        required: true
-        schema:
-          $ref: '#/definitions/models.StackInstance'
-      produces:
-      - application/json
-      responses:
-        "201":
-          description: Created
-          schema:
-            $ref: '#/definitions/models.StackInstance'
-        "400":
-          description: Bad Request
-          schema:
-            additionalProperties:
-              type: string
-            type: object
-        "409":
-          description: Namespace already exists
-          schema:
-            $ref: '#/definitions/handlers.NamespaceConflictResponse'
-      summary: Create a stack instance
-      tags:
-      - stack-instances
   /api/v1/stack-instances/{id}:
     delete:
       description: Delete a stack instance
@@ -1890,6 +2638,12 @@ paths:
             items:
               $ref: '#/definitions/models.ChartBranchOverride'
             type: array
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
         "404":
           description: Not Found
           schema:
@@ -1902,6 +2656,8 @@ paths:
             additionalProperties:
               type: string
             type: object
+      security:
+      - BearerAuth: []
       summary: List branch overrides for an instance
       tags:
       - branch-overrides
@@ -1925,6 +2681,12 @@ paths:
       responses:
         "204":
           description: No Content
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
         "404":
           description: Not Found
           schema:
@@ -1937,6 +2699,8 @@ paths:
             additionalProperties:
               type: string
             type: object
+      security:
+      - BearerAuth: []
       summary: Delete branch override for a chart
       tags:
       - branch-overrides
@@ -1956,12 +2720,12 @@ paths:
         name: chartId
         required: true
         type: string
-      - description: Branch override (branch field required)
+      - description: Branch override
         in: body
         name: body
         required: true
         schema:
-          type: object
+          $ref: '#/definitions/handlers.setBranchOverrideRequest'
       produces:
       - application/json
       responses:
@@ -1971,6 +2735,12 @@ paths:
             $ref: '#/definitions/models.ChartBranchOverride'
         "400":
           description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
           schema:
             additionalProperties:
               type: string
@@ -1987,6 +2757,8 @@ paths:
             additionalProperties:
               type: string
             type: object
+      security:
+      - BearerAuth: []
       summary: Set or update branch override for a chart
       tags:
       - branch-overrides

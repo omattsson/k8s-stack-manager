@@ -1129,7 +1129,144 @@ type OIDCConfig struct {
 
 ---
 
-## Implementation Order — Phases 4–8
+## Phase 9: UX & Accessibility
+
+Findings from the UX Designer audit of the entire frontend. Addresses critical usability gaps, WCAG 2.1 AA compliance, responsive design, and visual polish.
+
+### Step 9.1 — Responsive Navigation Overhaul (Critical)
+
+The current top navigation bar is a flat horizontal list that breaks entirely on mobile/tablet. With 15+ nav items across role tiers, it's unusable below ~1200px.
+
+**Changes**:
+
+- Replace horizontal `Toolbar` nav with a **persistent sidebar drawer** (desktop) and **collapsible hamburger drawer** (mobile)
+- Group navigation items with section headers: "Main" (Dashboard, Templates, Definitions), "Admin" (Users, Clusters, Cleanup Policies, etc.)
+- Active route highlighting with `useLocation()` matching
+- Collapsible sidebar with mini-variant (icons only) for more content space
+- Reference: MUI Official CRUD Dashboard sidebar pattern
+
+**Files modified**:
+- `frontend/src/components/Layout/index.tsx` — Full rewrite to sidebar layout
+- `frontend/src/App.tsx` — Adjust theme with drawer width tokens
+- All pages — Remove any hard-coded width assumptions
+
+### Step 9.2 — Theme Hardening
+
+The current theme is minimal (two colors, no typography scale, no component defaults). Inconsistent spacing, font sizes, and color usage across pages.
+
+**Changes**:
+
+- Extract theme to dedicated `frontend/src/theme/` directory with `palette.ts`, `typography.ts`, `components.ts`
+- Define a complete typography scale (h1–h6, body1/2, subtitle1/2, caption, overline)
+- Add MUI component default overrides (Card elevation, Button border-radius, TextField variant, Table density)
+- Add dark mode support via `useMediaQuery('(prefers-color-scheme: dark)')` with toggle in AppBar
+- Define semantic color tokens: `success`, `warning`, `error`, `info` with consistent usage
+- Standardize spacing using theme `spacing()` function (eliminate magic pixel values)
+
+### Step 9.3 — Table Responsiveness (Critical)
+
+All data tables (Dashboard, Definitions, Audit Log, Users, Clusters, Cleanup Policies) overflow horizontally on small screens with no scroll affordance.
+
+**Changes**:
+
+- Wrap all `<Table>` components in `<TableContainer>` with horizontal scroll
+- Add responsive column hiding: hide low-priority columns (timestamps, IDs) on `xs`/`sm` breakpoints via `sx={{ display: { xs: 'none', md: 'table-cell' } }}`
+- Consider card-based layout for mobile on the Dashboard (stack instance cards instead of table rows)
+- Add `stickyHeader` prop to tables with many rows
+
+### Step 9.4 — Global Notification System
+
+Currently uses scattered `window.alert()`, inline error text, and no success feedback for many operations. Inconsistent error display patterns across pages.
+
+**Changes**:
+
+- Create `NotificationContext` provider with `useNotification()` hook
+- MUI `Snackbar` + `Alert` for success/error/warning/info toasts
+- Auto-dismiss success (4s), persist errors until dismissed
+- Replace all `window.alert()` and inline error `<Typography>` with notification calls
+- Standardize API error handling: catch in service layer, surface via notification
+
+### Step 9.5 — Accessibility (WCAG 2.1 AA)
+
+The UX audit found 10+ accessibility violations across the application.
+
+**Changes**:
+
+- Add skip-to-content link (`<a href="#main-content">`) as first focusable element in Layout
+- Add `<nav>` landmark with `aria-label="Main navigation"` to sidebar
+- Add `<main id="main-content">` landmark wrapping page content
+- Add `aria-label` to all icon-only buttons (deploy, stop, delete, refresh, edit, etc.)
+- Replace all `window.confirm()` with a reusable `ConfirmDialog` component (already exists but underused)
+- Ensure all form inputs have associated `<label>` elements (or `aria-label`)
+- Add visible focus indicators (`:focus-visible` outline) for keyboard navigation
+- Ensure minimum 4.5:1 color contrast ratio for all text (audit with axe-core)
+- Add `aria-live="polite"` regions for dynamic content updates (deploy status changes, loading states)
+
+### Step 9.6 — Loading & Empty States
+
+Missing or inconsistent loading indicators and no empty state illustrations/guidance.
+
+**Changes**:
+
+- Create shared `LoadingState` component (centered `CircularProgress` with optional label)
+- Create shared `EmptyState` component (icon + message + optional action button)
+- Apply consistently to all list/table views: show `LoadingState` during fetch, `EmptyState` when results are empty
+- Add skeleton loading for Dashboard cards (MUI `Skeleton` component)
+- Ensure all loading states are announced to screen readers
+
+### Step 9.7 — Form UX Improvements
+
+Forms across the application lack field-level validation feedback and have inconsistent layouts.
+
+**Changes**:
+
+- Add client-side validation with error messages below fields (use MUI `TextField` `error` + `helperText` props)
+- Add unsaved changes warning (prompt before navigating away from dirty forms)
+- Consistent form layout: labels above fields, required field indicators (`*`), consistent button placement (Cancel left, Submit right)
+- Add character count for text fields with limits (template descriptions, policy names)
+- Date range picker for Audit Log filtering (replace free-text date input)
+
+### Step 9.8 — Page-Specific Fixes
+
+Individual page improvements identified in the audit:
+
+**Dashboard**:
+- Add search/filter bar above the instances table
+- Status filter chips (Running, Stopped, Error, All)
+- Sort by last deployed date by default
+
+**Templates Gallery**:
+- Add search within gallery
+- Show template usage count on cards
+- "No templates" empty state with admin guidance
+
+**Instance Detail**:
+- Deployment log auto-scroll to bottom
+- Collapsible per-chart sections in Values tab
+- Visual diff when values change from definition defaults
+
+**Audit Log**:
+- Date range picker (currently no time-based filtering)
+- Quick filter presets ("Last 24h", "Last 7 days", "Last 30 days")
+
+**Admin pages**:
+- Consistent "back" navigation breadcrumbs
+- Confirmation dialogs for all destructive actions (some use `window.confirm`)
+
+### Step 9.9 — 404 Route & Error Boundaries
+
+No catch-all route exists — navigating to an unknown URL shows a blank page.
+
+**Changes**:
+
+- Add wildcard route (`path="*"`) in `routes.tsx` rendering a `NotFound` page
+- Create `NotFound` page with "Page not found" message and navigation link back to Dashboard
+- Add React `ErrorBoundary` wrapper around route content to catch render crashes gracefully
+- Error boundary shows friendly "Something went wrong" message with retry button
+
+---
+
+## Implementation Order — Phases 4–9
 
 ### Dependency graph
 
@@ -1151,6 +1288,13 @@ Phase 6.5 (Audit Export) ── independent                                 │
 Phase 7.* ── all depend on phases 4–6 being stable                     │
                                                                         │
 Phase 8 (OIDC Auth) ── fully independent, no deps on other phases      │
+                                                                        │
+Phase 9.1 (Nav Overhaul) ── independent, frontend-only                 │
+Phase 9.2 (Theme) ── independent, pairs well with 9.1                  │
+Phase 9.3 (Tables) ── independent, frontend-only                       │
+Phase 9.4 (Notifications) ── independent, replaces ad-hoc patterns     │
+Phase 9.5 (Accessibility) ── depends on 9.1 (nav landmarks)            │
+Phase 9.6–9.9 ── independent, incremental improvements                 │
 ```
 
 ### Recommended execution order
@@ -1174,11 +1318,19 @@ Phase 8 (OIDC Auth) ── fully independent, no deps on other phases      │
 10. **6.3 Analytics**
 11. **6.5 Audit Export & Webhooks**
 
-**Wave 5** (polish):
-12. **7.1–7.6** in any order based on demand
+**Wave 5** (UX & accessibility — critical usability fixes):
+12. **9.1 Responsive Nav Overhaul** — Sidebar drawer, grouped nav, mobile support
+13. **9.2 Theme Hardening** — Typography scale, component defaults, dark mode
+14. **9.3 Table Responsiveness** — Horizontal scroll, column hiding
+15. **9.4 Global Notifications** — Replace window.alert, consistent toast system
+16. **9.5 Accessibility** — WCAG 2.1 AA, landmarks, aria-labels, focus management
 
-**Wave 6** (enterprise auth — when corporate SSO is required):
-13. **8.1–8.2 OIDC Auth** — Entra ID / Okta / Keycloak integration
+**Wave 6** (polish):
+17. **9.6–9.9** — Loading states, form UX, page-specific fixes, 404 route
+18. **7.1–7.6** in any order based on demand
+
+**Wave 7** (enterprise auth — when corporate SSO is required):
+19. **8.1–8.2 OIDC Auth** — Entra ID / Okta / Keycloak integration
 
 ---
 
@@ -1191,8 +1343,9 @@ Phase 8 (OIDC Auth) ── fully independent, no deps on other phases      │
 | Backend API | Phase 1, 4–6, 8 | 1.3 (endpoints), 1.4 (middleware), 4.1 (cluster API), 5.x (dev features), 6.x (ops APIs), 8.1 (OIDC handlers) |
 | Git Provider | Phase 1 | 1.6 (AzDO + GitLab integration) |
 | Helm Values | Phase 1, 3, 5 | 1.5 (generation), 3.1 (deployment), 5.1 (per-chart branches), 6.4 (shared values merge) |
-| Frontend API | Phase 2, 5, 6, 8 | 2.1 (auth), 5.x (dev UX), 6.x (admin pages), 8.2 (OIDC login) |
-| Frontend UI | Phase 2, 5–8 | 2.2–2.6 (core pages), 5.x (dev features), 6.1 (cluster health), 7.x (polish), 8.2 (OIDC login) |
+| Frontend API | Phase 2, 5, 6, 8, 9 | 2.1 (auth), 5.x (dev UX), 6.x (admin pages), 8.2 (OIDC login), 9.4 (notifications) |
+| Frontend UI | Phase 2, 5–9 | 2.2–2.6 (core pages), 5.x (dev features), 6.1 (cluster health), 7.x (polish), 8.2 (OIDC login), 9.x (UX overhaul) |
+| UX Designer | Phase 9 | 9.1 (nav), 9.2 (theme), 9.3 (tables), 9.5 (accessibility), 9.8 (page fixes) |
 | DevOps Engineer | Phase 4 | 4.1 (cluster registry, kubeconfig security) |
 | Test Writer | All | Tests after each feature is built |
 

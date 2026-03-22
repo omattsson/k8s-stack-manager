@@ -341,3 +341,104 @@ export interface QuickDeployResponse {
   definition: StackDefinition;
   log_id: string;
 }
+
+export interface ClusterSummary {
+  node_count: number;
+  ready_node_count: number;
+  total_cpu: string;
+  total_memory: string;
+  allocatable_cpu: string;
+  allocatable_memory: string;
+  namespace_count: number;
+}
+
+export interface NodeStatusInfo {
+  name: string;
+  status: string;
+  conditions: NodeCondition[];
+  capacity: ResourceQuantityInfo;
+  allocatable: ResourceQuantityInfo;
+  pod_count: number;
+}
+
+export interface NodeCondition {
+  type: string;
+  status: string;
+  message?: string;
+}
+
+export interface ResourceQuantityInfo {
+  cpu: string;
+  memory: string;
+  pods?: string;
+}
+
+export interface ClusterNamespaceInfo {
+  name: string;
+  phase: string;
+  created_at: string;
+}
+
+export interface SharedValues {
+  id: string;
+  cluster_id: string;
+  name: string;
+  description: string;
+  values: string;
+  priority: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface OverviewStats {
+  total_templates: number;
+  total_definitions: number;
+  total_instances: number;
+  running_instances: number;
+  total_deploys: number;
+  total_users: number;
+}
+
+export interface TemplateStats {
+  template_id: string;
+  template_name: string;
+  category: string;
+  is_published: boolean;
+  definition_count: number;
+  instance_count: number;
+  deploy_count: number;
+  success_count: number;
+  error_count: number;
+  success_rate: number;
+}
+
+export interface UserStats {
+  user_id: string;
+  username: string;
+  instance_count: number;
+  deploy_count: number;
+  last_active: string | null;
+}
+
+export interface CleanupPolicy {
+  id: string;
+  name: string;
+  cluster_id: string;
+  action: string;
+  condition: string;
+  schedule: string;
+  enabled: boolean;
+  dry_run: boolean;
+  last_run_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CleanupResult {
+  instance_id: string;
+  instance_name: string;
+  namespace: string;
+  action: string;
+  status: string;
+  error?: string;
+}

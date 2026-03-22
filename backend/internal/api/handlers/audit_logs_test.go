@@ -1,10 +1,12 @@
 package handlers
 
 import (
+	"encoding/csv"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -20,6 +22,7 @@ func setupAuditLogRouter(auditRepo *MockAuditLogRepository) *gin.Engine {
 	r := gin.New()
 	h := NewAuditLogHandler(auditRepo)
 	r.GET("/api/v1/audit-logs", h.ListAuditLogs)
+	r.GET("/api/v1/audit-logs/export", h.ExportAuditLogs)
 	return r
 }
 
@@ -202,5 +205,163 @@ func TestListAuditLogs(t *testing.T) {
 		req, _ := http.NewRequest(http.MethodGet, "/api/v1/audit-logs?offset=-1", nil)
 		router.ServeHTTP(w, req)
 		assert.Equal(t, http.StatusBadRequest, w.Code)
+	})
+}
+
+func TestExportAuditLogs(t *testing.T) {
+	t.Parallel()
+
+	t.Run("export as JSON returns valid JSON array", func(t *testing.T) {
+		t.Parallel()
+		repo := NewMockAuditLogRepository()
+		seedAuditLog(t, repo, "log-1", "uid-1", "create", "stack_definition", "def-1")
+		seedAuditLog(t, repo, "log-2", "uid-2", "delete", "stack_instance", "inst-1")
+
+		router := setupAuditLogRouter(repo)
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest(http.MethodGet, "/api/v1/audit-logs/export?format=json", nil)
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		assert.Equal(t, "application/json", w.Header().Get("Content-Type"))
+		assert.Contains(t, w.Header().Get("Content-Disposition"), "attachment; filename=audit-logs-")
+		assert.Contains(t, w.Header().Get("Content-Disposition"), ".json")
+
+		var logs []models.AuditLog
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &logs))
+		assert.Len(t, logs, 2)
+	})
+
+	t.Run("export defaults to JSON when format omitted", func(t *testing.T) {
+		t.Parallel()
+		repo := NewMockAuditLogRepository()
+		seedAuditLog(t, repo, "log-1", "uid-1", "create", "stack_definition", "def-1")
+
+		router := setupAuditLogRouter(repo)
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest(http.MethodGet, "/api/v1/audit-logs/export", nil)
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		assert.Equal(t, "application/json", w.Header().Get("Content-Type"))
+
+		var logs []models.AuditLog
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &logs))
+		assert.Len(t, logs, 1)
+	})
+
+	t.Run("export as CSV returns valid CSV with headers", func(t *testing.T) {
+		t.Parallel()
+		repo := NewMockAuditLogRepository()
+		seedAuditLog(t, repo, "log-1", "uid-1", "create", "stack_definition", "def-1")
+
+		router := setupAuditLogRouter(repo)
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest(http.MethodGet, "/api/v1/audit-logs/export?format=csv", nil)
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		assert.Equal(t, "text/csv", w.Header().Get("Content-Type"))
+		assert.Contains(t, w.Header().Get("Content-Disposition"), "attachment; filename=audit-logs-")
+		assert.Contains(t, w.Header().Get("Content-Disposition"), ".csv")
+
+		reader := csv.NewReader(strings.NewReader(w.Body.String()))
+		records, err := reader.ReadAll()
+		require.NoError(t, err)
+		assert.Len(t, records, 2) // 1 header + 1 data row
+		assert.Equal(t, []string{"ID", "Timestamp", "UserID", "Username", "Action", "EntityType", "EntityID", "Details"}, records[0])
+		assert.Equal(t, "log-1", records[1][0])
+		assert.Equal(t, "uid-1", records[1][2])
+		assert.Equal(t, "create", records[1][4])
+	})
+
+	t.Run("export with filters passes filters to repo", func(t *testing.T) {
+		t.Parallel()
+		repo := NewMockAuditLogRepository()
+		seedAuditLog(t, repo, "log-1", "uid-1", "create", "stack_definition", "def-1")
+		seedAuditLog(t, repo, "log-2", "uid-2", "delete", "stack_instance", "inst-1")
+
+		router := setupAuditLogRouter(repo)
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest(http.MethodGet, "/api/v1/audit-logs/export?format=json&user_id=uid-1", nil)
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		var logs []models.AuditLog
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &logs))
+		assert.Len(t, logs, 1)
+		assert.Equal(t, "uid-1", logs[0].UserID)
+	})
+
+	t.Run("export with invalid format returns 400", func(t *testing.T) {
+		t.Parallel()
+		repo := NewMockAuditLogRepository()
+		router := setupAuditLogRouter(repo)
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest(http.MethodGet, "/api/v1/audit-logs/export?format=xml", nil)
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+		var resp map[string]string
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+		assert.Contains(t, resp["error"], "Invalid format")
+	})
+
+	t.Run("export with invalid start_date returns 400", func(t *testing.T) {
+		t.Parallel()
+		repo := NewMockAuditLogRepository()
+		router := setupAuditLogRouter(repo)
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest(http.MethodGet, "/api/v1/audit-logs/export?start_date=not-a-date", nil)
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+	})
+
+	t.Run("export with invalid end_date returns 400", func(t *testing.T) {
+		t.Parallel()
+		repo := NewMockAuditLogRepository()
+		router := setupAuditLogRouter(repo)
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest(http.MethodGet, "/api/v1/audit-logs/export?end_date=2024-01-99", nil)
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+	})
+
+	t.Run("export with repository error returns 500", func(t *testing.T) {
+		t.Parallel()
+		repo := NewMockAuditLogRepository()
+		repo.SetError(errInternal)
+
+		router := setupAuditLogRouter(repo)
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest(http.MethodGet, "/api/v1/audit-logs/export", nil)
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusInternalServerError, w.Code)
+		var resp map[string]string
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+		assert.Equal(t, "Internal server error", resp["error"])
+	})
+
+	t.Run("export respects hard max limit", func(t *testing.T) {
+		t.Parallel()
+		repo := NewMockAuditLogRepository()
+		for i := 0; i < 5; i++ {
+			seedAuditLog(t, repo, fmt.Sprintf("log-%d", i), "uid-1", "create", "stack_definition", fmt.Sprintf("def-%d", i))
+		}
+
+		router := setupAuditLogRouter(repo)
+		w := httptest.NewRecorder()
+		// Client-provided limit/offset should be overridden for export
+		req, _ := http.NewRequest(http.MethodGet, "/api/v1/audit-logs/export?format=json&limit=2&offset=3", nil)
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		var logs []models.AuditLog
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &logs))
+		// All 5 logs should be returned, not just 2 starting at offset 3
+		assert.Len(t, logs, 5)
 	})
 }
