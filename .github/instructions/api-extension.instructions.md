@@ -104,11 +104,29 @@ Create `internal/api/handlers/orders_test.go` following the pattern in `items_te
 - Use `setupTestRouter()` pattern with `gin.TestMode` and `httptest.NewRecorder()`
 
 ### 8. Frontend Integration
-Add API service methods in `frontend/src/api/client.ts`:
+Add API service methods in `frontend/src/api/client.ts` with TSDoc comments on the service object and every method:
 ```typescript
+/** Order management service. Maps to `/api/v1/orders`. */
 export const orderService = {
+  /**
+   * Fetch all orders.
+   * @returns Array of orders
+   * @see GET /api/v1/orders
+   */
   list: async () => (await api.get('/api/v1/orders')).data,
+  /**
+   * Fetch a single order by ID.
+   * @param id - The order ID
+   * @returns The order object
+   * @see GET /api/v1/orders/:id
+   */
   get: async (id: number) => (await api.get(`/api/v1/orders/${id}`)).data,
+  /**
+   * Create a new order.
+   * @param order - The order data
+   * @returns The created order
+   * @see POST /api/v1/orders
+   */
   create: async (order: Order) => (await api.post('/api/v1/orders', order)).data,
 };
 ```

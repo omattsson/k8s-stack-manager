@@ -105,7 +105,7 @@ frontend/src/
   pages/{Name}/index.tsx # Page components (one dir per page)
 ```
 
-**Patterns**: MUI components (no raw HTML), `sx` prop for styling, functional components only, `useState`/`useEffect` for state, service objects with async methods for API calls.
+**Patterns**: MUI components (no raw HTML), `sx` prop for styling, functional components only, `useState`/`useEffect` for state, service objects with async methods for API calls. All service objects and methods in `api/client.ts` must have TSDoc comments with `@param`, `@returns`, and `@see` (HTTP method + route).
 
 ## Testing Conventions
 

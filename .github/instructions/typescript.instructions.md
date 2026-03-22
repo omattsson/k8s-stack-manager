@@ -33,9 +33,15 @@ And add navigation in `src/components/Layout/index.tsx`.
 `src/components/Layout/index.tsx` provides the shared shell (AppBar, nav links, footer). All pages render inside this layout. Add new nav links as MUI `Button` with `component={RouterLink}`.
 
 ### API Services
-Define service objects in `src/api/client.ts` alongside the axios instance:
+Define service objects in `src/api/client.ts` alongside the axios instance. Every service object and method must have TSDoc comments with `@param`, `@returns`, and `@see` (HTTP method + route):
 ```typescript
+/** Health service for liveness and readiness checks. Maps to `/health`. */
 export const healthService = {
+  /**
+   * Check API server liveness.
+   * @returns Health status object
+   * @see GET /health/live
+   */
   checkLiveness: async () => {
     const response = await api.get('/health/live');
     return response.data;
@@ -66,3 +72,4 @@ Currently uses React hooks (`useState`, `useEffect`) for local state. No global 
 - Interfaces for component props and API response types (defined in the component file)
 - MUI `sx` prop for styling, no separate CSS files
 - Async operations in `useEffect` with cleanup for intervals/subscriptions
+- **TSDoc on API services**: Every service object and method in `api/client.ts` must have TSDoc comments documenting description, params, return type, and the backend route (`@see`)
