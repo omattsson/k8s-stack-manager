@@ -623,3 +623,234 @@ func TestStackInstanceValidate_NegativeTTL(t *testing.T) {
 	err := inst.Validate()
 	assert.EqualError(t, err, "ttl_minutes must be non-negative")
 }
+
+func TestSharedValuesValidate(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		sv      SharedValues
+		wantErr bool
+		errMsg  string
+	}{
+		{
+			name: "valid shared values without YAML",
+			sv: SharedValues{
+				ID:        "sv-1",
+				Name:      "global-defaults",
+				ClusterID: "c1",
+				Priority:  0,
+			},
+			wantErr: false,
+		},
+		{
+			name: "valid shared values with YAML",
+			sv: SharedValues{
+				Name:      "global-defaults",
+				ClusterID: "c1",
+				Priority:  10,
+				Values:    "key: value\nnested:\n  foo: bar",
+			},
+			wantErr: false,
+		},
+		{
+			name: "missing name",
+			sv: SharedValues{
+				ClusterID: "c1",
+			},
+			wantErr: true,
+			errMsg:  "name is required",
+		},
+		{
+			name: "missing cluster_id",
+			sv: SharedValues{
+				Name: "global-defaults",
+			},
+			wantErr: true,
+			errMsg:  "cluster_id is required",
+		},
+		{
+			name: "negative priority",
+			sv: SharedValues{
+				Name:      "global-defaults",
+				ClusterID: "c1",
+				Priority:  -1,
+			},
+			wantErr: true,
+			errMsg:  "priority must be non-negative",
+		},
+		{
+			name: "invalid YAML values",
+			sv: SharedValues{
+				Name:      "global-defaults",
+				ClusterID: "c1",
+				Values:    ":::invalid yaml{{{",
+			},
+			wantErr: true,
+		},
+		{
+			name: "empty values string is valid",
+			sv: SharedValues{
+				Name:      "global-defaults",
+				ClusterID: "c1",
+				Values:    "",
+			},
+			wantErr: false,
+		},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			err := tt.sv.Validate()
+			if tt.wantErr {
+				assert.Error(t, err)
+				if tt.errMsg != "" {
+					assert.EqualError(t, err, tt.errMsg)
+				}
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestCleanupPolicyValidate(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		cp      CleanupPolicy
+		wantErr bool
+		errMsg  string
+	}{
+		{
+			name: "valid cleanup policy - stop",
+			cp: CleanupPolicy{
+				ID:        "cp-1",
+				Name:      "nightly-stop",
+				Action:    "stop",
+				Condition: "idle_days:7",
+				Schedule:  "0 2 * * *",
+				ClusterID: "c1",
+			},
+			wantErr: false,
+		},
+		{
+			name: "valid cleanup policy - clean",
+			cp: CleanupPolicy{
+				Name:      "weekly-clean",
+				Action:    "clean",
+				Condition: "status:stopped,age_days:14",
+				Schedule:  "0 3 * * 0",
+				ClusterID: "all",
+			},
+			wantErr: false,
+		},
+		{
+			name: "valid cleanup policy - delete",
+			cp: CleanupPolicy{
+				Name:      "delete-old",
+				Action:    "delete",
+				Condition: "ttl_expired",
+				Schedule:  "*/30 * * * *",
+				ClusterID: "c1",
+			},
+			wantErr: false,
+		},
+		{
+			name: "missing name",
+			cp: CleanupPolicy{
+				Action:    "stop",
+				Condition: "idle_days:7",
+				Schedule:  "0 2 * * *",
+				ClusterID: "c1",
+			},
+			wantErr: true,
+			errMsg:  "name is required",
+		},
+		{
+			name: "invalid action",
+			cp: CleanupPolicy{
+				Name:      "bad-action",
+				Action:    "restart",
+				Condition: "idle_days:7",
+				Schedule:  "0 2 * * *",
+				ClusterID: "c1",
+			},
+			wantErr: true,
+			errMsg:  "action must be one of: stop, clean, delete",
+		},
+		{
+			name: "empty action",
+			cp: CleanupPolicy{
+				Name:      "empty-action",
+				Action:    "",
+				Condition: "idle_days:7",
+				Schedule:  "0 2 * * *",
+				ClusterID: "c1",
+			},
+			wantErr: true,
+			errMsg:  "action must be one of: stop, clean, delete",
+		},
+		{
+			name: "missing condition",
+			cp: CleanupPolicy{
+				Name:      "no-condition",
+				Action:    "stop",
+				Schedule:  "0 2 * * *",
+				ClusterID: "c1",
+			},
+			wantErr: true,
+			errMsg:  "condition is required",
+		},
+		{
+			name: "missing schedule",
+			cp: CleanupPolicy{
+				Name:      "no-schedule",
+				Action:    "stop",
+				Condition: "idle_days:7",
+				ClusterID: "c1",
+			},
+			wantErr: true,
+			errMsg:  "schedule is required",
+		},
+		{
+			name: "invalid cron schedule",
+			cp: CleanupPolicy{
+				Name:      "bad-cron",
+				Action:    "stop",
+				Condition: "idle_days:7",
+				Schedule:  "not-a-cron",
+				ClusterID: "c1",
+			},
+			wantErr: true,
+		},
+		{
+			name: "missing cluster_id",
+			cp: CleanupPolicy{
+				Name:      "no-cluster",
+				Action:    "stop",
+				Condition: "idle_days:7",
+				Schedule:  "0 2 * * *",
+			},
+			wantErr: true,
+			errMsg:  "cluster_id is required",
+		},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			err := tt.cp.Validate()
+			if tt.wantErr {
+				assert.Error(t, err)
+				if tt.errMsg != "" {
+					assert.EqualError(t, err, tt.errMsg)
+				}
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
