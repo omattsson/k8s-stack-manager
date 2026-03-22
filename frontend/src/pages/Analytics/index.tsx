@@ -2,7 +2,6 @@ import { useEffect, useState, useCallback } from 'react';
 import {
   Box,
   Typography,
-  CircularProgress,
   Alert,
   Card,
   CardContent,
@@ -17,10 +16,15 @@ import {
   Paper,
   Button,
   LinearProgress,
+  Breadcrumbs,
+  Link as MuiLink,
 } from '@mui/material';
 import RefreshIcon from '@mui/icons-material/Refresh';
+import NavigateNextIcon from '@mui/icons-material/NavigateNext';
 import { analyticsService } from '../../api/client';
 import type { OverviewStats, TemplateStats, UserStats } from '../../types';
+import LoadingState from '../../components/LoadingState';
+import { Link } from 'react-router-dom';
 
 const formatRelativeTime = (dateStr: string | null): string => {
   if (!dateStr) return 'N/A';
@@ -79,6 +83,10 @@ const Analytics = () => {
 
   return (
     <Box>
+      <Breadcrumbs separator={<NavigateNextIcon fontSize="small" />} sx={{ mb: 2 }}>
+        <MuiLink component={Link} to="/" underline="hover" color="inherit">Home</MuiLink>
+        <Typography color="text.primary">Analytics</Typography>
+      </Breadcrumbs>
       <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 3 }}>
         <Typography variant="h4" component="h1">
           Analytics
@@ -95,11 +103,7 @@ const Analytics = () => {
 
       {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
 
-      {loading && (
-        <Box sx={{ display: 'flex', justifyContent: 'center', mt: 4 }}>
-          <CircularProgress />
-        </Box>
-      )}
+      {loading && <LoadingState label="Loading analytics..." />}
 
       {!loading && overview && (
         <>

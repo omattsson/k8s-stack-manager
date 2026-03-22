@@ -1,4 +1,3 @@
-import { useState } from 'react';
 import {
   Box,
   Typography,
@@ -6,12 +5,12 @@ import {
   Chip,
   IconButton,
   Link,
-  Snackbar,
   Tooltip,
   List,
   ListItem,
   ListItemText,
 } from '@mui/material';
+import { useNotification } from '../../context/NotificationContext';
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import OpenInNewIcon from '@mui/icons-material/OpenInNew';
 import LanguageIcon from '@mui/icons-material/Language';
@@ -99,8 +98,7 @@ const typeColor = (type: string): 'primary' | 'success' | 'warning' | 'default' 
 };
 
 const AccessUrls = ({ status }: AccessUrlsProps) => {
-  const [copied, setCopied] = useState(false);
-  const [copyError, setCopyError] = useState(false);
+  const { showSuccess, showError } = useNotification();
 
   const entries = buildEntries(status);
 
@@ -109,9 +107,9 @@ const AccessUrls = ({ status }: AccessUrlsProps) => {
   const handleCopy = async (text: string) => {
     try {
       await navigator.clipboard.writeText(text);
-      setCopied(true);
+      showSuccess('Copied to clipboard');
     } catch {
-      setCopyError(true);
+      showError('Failed to copy to clipboard');
     }
   };
 
@@ -174,18 +172,6 @@ const AccessUrls = ({ status }: AccessUrlsProps) => {
           ))}
         </List>
       </Paper>
-      <Snackbar
-        open={copied}
-        autoHideDuration={2000}
-        onClose={() => setCopied(false)}
-        message="Copied to clipboard"
-      />
-      <Snackbar
-        open={copyError}
-        autoHideDuration={3000}
-        onClose={() => setCopyError(false)}
-        message="Failed to copy to clipboard"
-      />
     </Box>
   );
 };

@@ -3,6 +3,7 @@ import { render, screen, waitFor, within, fireEvent } from '@testing-library/rea
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import SharedValuesPage from '../index';
+import { NotificationProvider } from '../../../context/NotificationContext';
 
 vi.mock('../../../api/client', () => ({
   clusterService: {
@@ -66,11 +67,13 @@ describe('SharedValues Page', () => {
 
     render(
       <MemoryRouter>
-        <SharedValuesPage />
+        <NotificationProvider>
+          <SharedValuesPage />
+        </NotificationProvider>
       </MemoryRouter>,
     );
 
-    expect(screen.getByText('Shared Values')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Shared Values' })).toBeInTheDocument();
     expect(screen.getByRole('progressbar')).toBeInTheDocument();
   });
 
@@ -80,7 +83,9 @@ describe('SharedValues Page', () => {
 
     render(
       <MemoryRouter>
-        <SharedValuesPage />
+        <NotificationProvider>
+          <SharedValuesPage />
+        </NotificationProvider>
       </MemoryRouter>,
     );
 
@@ -120,7 +125,9 @@ describe('SharedValues Page', () => {
 
     render(
       <MemoryRouter>
-        <SharedValuesPage />
+        <NotificationProvider>
+          <SharedValuesPage />
+        </NotificationProvider>
       </MemoryRouter>,
     );
 
@@ -171,7 +178,9 @@ describe('SharedValues Page', () => {
 
     render(
       <MemoryRouter>
-        <SharedValuesPage />
+        <NotificationProvider>
+          <SharedValuesPage />
+        </NotificationProvider>
       </MemoryRouter>,
     );
 
@@ -185,7 +194,9 @@ describe('SharedValues Page', () => {
 
     render(
       <MemoryRouter>
-        <SharedValuesPage />
+        <NotificationProvider>
+          <SharedValuesPage />
+        </NotificationProvider>
       </MemoryRouter>,
     );
 

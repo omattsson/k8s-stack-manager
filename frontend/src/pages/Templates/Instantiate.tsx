@@ -6,7 +6,6 @@ import {
   TextField,
   Button,
   Paper,
-  CircularProgress,
   Alert,
   Chip,
   Switch,
@@ -16,6 +15,7 @@ import {
 import { templateService } from '../../api/client';
 import type { StackTemplate, TemplateChartConfig } from '../../types';
 import YamlEditor from '../../components/YamlEditor';
+import LoadingState from '../../components/LoadingState';
 
 interface ChartOverride {
   chart: TemplateChartConfig;
@@ -34,6 +34,7 @@ const Instantiate = () => {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [touched, setTouched] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
     if (!id) return;
@@ -105,11 +106,7 @@ const Instantiate = () => {
   };
 
   if (loading) {
-    return (
-      <Box display="flex" justifyContent="center" alignItems="center" minHeight="200px">
-        <CircularProgress />
-      </Box>
-    );
+    return <LoadingState label="Loading template..." />;
   }
 
   if (error && !template) {
@@ -131,8 +128,11 @@ const Instantiate = () => {
             label="Definition Name"
             value={defName}
             onChange={(e) => setDefName(e.target.value)}
+            onBlur={() => setTouched((prev) => ({ ...prev, defName: true }))}
             required
             fullWidth
+            error={touched.defName === true && !defName.trim()}
+            helperText={touched.defName === true && !defName.trim() ? 'Definition name is required' : undefined}
           />
           <TextField
             label="Description"
@@ -141,6 +141,9 @@ const Instantiate = () => {
             fullWidth
             multiline
             rows={2}
+            helperText={`${defDescription.length}/200`}
+            error={defDescription.length > 200}
+            slotProps={{ htmlInput: { maxLength: 200 } }}
           />
         </Box>
       </Paper>
@@ -190,12 +193,12 @@ const Instantiate = () => {
         </Paper>
       ))}
 
-      <Box sx={{ display: 'flex', gap: 2, mt: 2 }}>
-        <Button variant="contained" onClick={handleInstantiate} disabled={saving || !defName}>
-          {saving ? 'Creating...' : 'Create Stack Definition'}
-        </Button>
+      <Box sx={{ display: 'flex', gap: 2, mt: 2, justifyContent: 'flex-end' }}>
         <Button variant="outlined" onClick={() => navigate(`/templates/${id}`)}>
           Cancel
+        </Button>
+        <Button variant="contained" onClick={handleInstantiate} disabled={saving || !defName.trim()}>
+          {saving ? 'Creating...' : 'Create Stack Definition'}
         </Button>
       </Box>
     </Box>

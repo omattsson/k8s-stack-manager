@@ -17,14 +17,19 @@ import {
   DialogTitle,
   DialogContent,
   DialogActions,
-  Snackbar,
   Tooltip,
+  Breadcrumbs,
+  Link as MuiLink,
 } from '@mui/material';
 import DeleteIcon from '@mui/icons-material/Delete';
 import RefreshIcon from '@mui/icons-material/Refresh';
+import NavigateNextIcon from '@mui/icons-material/NavigateNext';
 import { adminService } from '../../../api/client';
 import { useAuth } from '../../../context/AuthContext';
+import { useNotification } from '../../../context/NotificationContext';
 import type { OrphanedNamespace } from '../../../types';
+import LoadingState from '../../../components/LoadingState';
+import { Link } from 'react-router-dom';
 
 const formatAge = (dateStr: string): string => {
   const created = new Date(dateStr);
@@ -46,11 +51,7 @@ const OrphanedNamespaces = () => {
   const [error, setError] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<OrphanedNamespace | null>(null);
   const [deleteLoading, setDeleteLoading] = useState(false);
-  const [snackbar, setSnackbar] = useState<{ open: boolean; message: string; severity: 'success' | 'error' }>({
-    open: false,
-    message: '',
-    severity: 'success',
-  });
+  const { showSuccess, showError } = useNotification();
 
   const fetchNamespaces = useCallback(async () => {
     setLoading(true);
@@ -76,11 +77,11 @@ const OrphanedNamespaces = () => {
     setDeleteLoading(true);
     try {
       await adminService.deleteOrphanedNamespace(deleteTarget.name);
-      setSnackbar({ open: true, message: `Namespace "${deleteTarget.name}" deleted successfully`, severity: 'success' });
+      showSuccess(`Namespace "${deleteTarget.name}" deleted successfully`);
       setDeleteTarget(null);
       await fetchNamespaces();
     } catch {
-      setSnackbar({ open: true, message: `Failed to delete namespace "${deleteTarget.name}"`, severity: 'error' });
+      showError(`Failed to delete namespace "${deleteTarget.name}"`);
       setDeleteTarget(null);
     } finally {
       setDeleteLoading(false);
@@ -98,6 +99,10 @@ const OrphanedNamespaces = () => {
 
   return (
     <Box>
+      <Breadcrumbs separator={<NavigateNextIcon fontSize="small" />} sx={{ mb: 2 }}>
+        <MuiLink component={Link} to="/" underline="hover" color="inherit">Home</MuiLink>
+        <Typography color="text.primary">Orphaned Namespaces</Typography>
+      </Breadcrumbs>
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
         <Typography variant="h4" component="h1">
           Orphaned Namespaces
@@ -120,9 +125,7 @@ const OrphanedNamespaces = () => {
       {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
 
       {loading ? (
-        <Box display="flex" justifyContent="center" alignItems="center" minHeight="200px">
-          <CircularProgress />
-        </Box>
+        <LoadingState label="Loading namespaces..." />
       ) : namespaces.length === 0 ? (
         <Paper sx={{ p: 4, textAlign: 'center' }}>
           <Typography color="text.secondary">
@@ -228,20 +231,7 @@ const OrphanedNamespaces = () => {
         </DialogActions>
       </Dialog>
 
-      {/* Snackbar for feedback */}
-      <Snackbar
-        open={snackbar.open}
-        autoHideDuration={5000}
-        onClose={() => setSnackbar((prev) => ({ ...prev, open: false }))}
-      >
-        <Alert
-          onClose={() => setSnackbar((prev) => ({ ...prev, open: false }))}
-          severity={snackbar.severity}
-          variant="filled"
-        >
-          {snackbar.message}
-        </Alert>
-      </Snackbar>
+
     </Box>
   );
 };

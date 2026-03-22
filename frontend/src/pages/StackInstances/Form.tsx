@@ -7,7 +7,6 @@ import {
   Button,
   Paper,
   MenuItem,
-  CircularProgress,
   Alert,
   Chip,
 } from '@mui/material';
@@ -15,6 +14,7 @@ import axios from 'axios';
 import { instanceService, definitionService, clusterService } from '../../api/client';
 import type { StackDefinition, Cluster } from '../../types';
 import TtlSelector from '../../components/TtlSelector';
+import LoadingState from '../../components/LoadingState';
 
 interface ConflictResponse {
   error: string;
@@ -94,11 +94,7 @@ const Form = () => {
   };
 
   if (loading) {
-    return (
-      <Box display="flex" justifyContent="center" alignItems="center" minHeight="200px">
-        <CircularProgress />
-      </Box>
-    );
+    return <LoadingState label="Loading..." />;
   }
 
   return (
@@ -204,16 +200,16 @@ const Form = () => {
           )}
         </Box>
 
-        <Box sx={{ display: 'flex', gap: 2, mt: 3 }}>
+        <Box sx={{ display: 'flex', gap: 2, mt: 3, justifyContent: 'flex-end' }}>
+          <Button variant="outlined" onClick={() => navigate('/')}>
+            Cancel
+          </Button>
           <Button
             variant="contained"
             onClick={handleCreate}
             disabled={saving || !name || !selectedDefId || name.length > 50}
           >
             {saving ? 'Creating...' : 'Create Instance'}
-          </Button>
-          <Button variant="outlined" onClick={() => navigate('/')}>
-            Cancel
           </Button>
         </Box>
       </Paper>

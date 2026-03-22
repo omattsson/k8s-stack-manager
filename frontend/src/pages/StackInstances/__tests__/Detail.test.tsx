@@ -3,6 +3,7 @@ import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import Detail from '../Detail';
+import { NotificationProvider } from '../../../context/NotificationContext';
 
 const mockNavigate = vi.fn();
 vi.mock('react-router-dom', async () => {
@@ -15,6 +16,10 @@ vi.mock('react-router-dom', async () => {
 
 vi.mock('../../../hooks/useWebSocket', () => ({
   useWebSocket: () => ({ send: vi.fn() }),
+}));
+
+vi.mock('../../../hooks/useUnsavedChanges', () => ({
+  useUnsavedChanges: vi.fn(),
 }));
 
 vi.mock('../../../hooks/useCountdown', () => ({
@@ -152,9 +157,11 @@ const setupMocks = (instanceOverrides: Partial<typeof mockInstance> = {}, opts: 
 const renderDetail = () =>
   render(
     <MemoryRouter initialEntries={['/stack-instances/123']}>
-      <Routes>
-        <Route path="/stack-instances/:id" element={<Detail />} />
-      </Routes>
+      <NotificationProvider>
+        <Routes>
+          <Route path="/stack-instances/:id" element={<Detail />} />
+        </Routes>
+      </NotificationProvider>
     </MemoryRouter>
   );
 
@@ -203,9 +210,11 @@ describe('StackInstances Detail', () => {
     (instanceService.get as ReturnType<typeof vi.fn>).mockReturnValue(new Promise(() => {}));
     render(
       <MemoryRouter initialEntries={['/stack-instances/123']}>
-        <Routes>
-          <Route path="/stack-instances/:id" element={<Detail />} />
-        </Routes>
+        <NotificationProvider>
+          <Routes>
+            <Route path="/stack-instances/:id" element={<Detail />} />
+          </Routes>
+        </NotificationProvider>
       </MemoryRouter>
     );
     expect(screen.getByRole('progressbar')).toBeInTheDocument();
@@ -227,9 +236,11 @@ describe('StackInstances Detail', () => {
 
     render(
       <MemoryRouter initialEntries={['/stack-instances/123']}>
-        <Routes>
-          <Route path="/stack-instances/:id" element={<Detail />} />
-        </Routes>
+        <NotificationProvider>
+          <Routes>
+            <Route path="/stack-instances/:id" element={<Detail />} />
+          </Routes>
+        </NotificationProvider>
       </MemoryRouter>
     );
 

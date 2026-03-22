@@ -1,33 +1,26 @@
-import { CssBaseline, ThemeProvider, createTheme } from '@mui/material';
 import { BrowserRouter } from 'react-router-dom';
 import AppRoutes from './routes';
 import Layout from './components/Layout';
+import ErrorBoundary from './components/ErrorBoundary';
 import { AuthProvider } from './context/AuthContext';
-
-const theme = createTheme({
-  palette: {
-    mode: 'light',
-    primary: {
-      main: '#1976d2',
-    },
-    secondary: {
-      main: '#dc004e',
-    },
-  },
-});
+import { NotificationProvider } from './context/NotificationContext';
+import { ThemeModeProvider } from './context/ThemeContext';
 
 function App() {
   return (
-    <ThemeProvider theme={theme}>
-      <CssBaseline />
+    <ThemeModeProvider>
       <BrowserRouter>
+        <NotificationProvider>
         <AuthProvider>
           <Layout>
-            <AppRoutes />
+            <ErrorBoundary>
+              <AppRoutes />
+            </ErrorBoundary>
           </Layout>
         </AuthProvider>
+        </NotificationProvider>
       </BrowserRouter>
-    </ThemeProvider>
+    </ThemeModeProvider>
   );
 }
 

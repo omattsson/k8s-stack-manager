@@ -10,10 +10,8 @@ import {
   CardContent,
   CardActions,
   Button,
-  CircularProgress,
   Alert,
   TextField,
-  MenuItem,
   InputAdornment,
   Chip,
   Paper,
@@ -26,6 +24,8 @@ import FavoriteButton from '../../components/FavoriteButton';
 import ExpiryChip from './ExpiryChip';
 import { instanceService, clusterService, favoriteService } from '../../api/client';
 import type { StackInstance, Cluster, NamespaceStatus, UserFavorite } from '../../types';
+import LoadingState from '../../components/LoadingState';
+import EmptyState from '../../components/EmptyState';
 
 const STATUSES = ['All', 'draft', 'deploying', 'running', 'stopped', 'error'];
 
@@ -158,7 +158,7 @@ const Dashboard = () => {
     if (statusFilter !== 'All' && inst.status !== statusFilter) return false;
     if (search && !inst.name.toLowerCase().includes(search.toLowerCase())) return false;
     return true;
-  });
+  }).sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime());
 
   const favoriteInstanceIds = useMemo(() => {
     const ids = new Set<string>();
@@ -173,11 +173,7 @@ const Dashboard = () => {
   }, [instances, favoriteInstanceIds]);
 
   if (loading) {
-    return (
-      <Box display="flex" justifyContent="center" alignItems="center" minHeight="200px">
-        <CircularProgress />
-      </Box>
-    );
+    return <LoadingState label="Loading instances..." />;
   }
 
   if (error) {
@@ -195,7 +191,7 @@ const Dashboard = () => {
         </Button>
       </Box>
 
-      <Box sx={{ display: 'flex', gap: 2, mb: 3 }}>
+      <Box sx={{ display: 'flex', gap: 2, mb: 3, alignItems: 'center', flexWrap: 'wrap' }}>
         <TextField
           size="small"
           placeholder="Search instances..."
@@ -212,18 +208,17 @@ const Dashboard = () => {
           }}
           sx={{ minWidth: 250 }}
         />
-        <TextField
-          size="small"
-          select
-          label="Status"
-          value={statusFilter}
-          onChange={(e) => setStatusFilter(e.target.value)}
-          sx={{ minWidth: 150 }}
-        >
+        <Box sx={{ display: 'flex', gap: 1 }}>
           {STATUSES.map((s) => (
-            <MenuItem key={s} value={s}>{s === 'All' ? 'All Statuses' : s}</MenuItem>
+            <Chip
+              key={s}
+              label={s === 'All' ? 'All Statuses' : s}
+              onClick={() => setStatusFilter(s)}
+              color={statusFilter === s ? 'primary' : 'default'}
+              variant={statusFilter === s ? 'filled' : 'outlined'}
+            />
           ))}
-        </TextField>
+        </Box>
       </Box>
 
       {/* My Favorites section */}
@@ -317,16 +312,17 @@ const Dashboard = () => {
       )}
 
       {filtered.length === 0 ? (
-        <Box sx={{ textAlign: 'center', mt: 4 }}>
-          <Typography color="text.secondary" gutterBottom>
-            No stack instances found.
-          </Typography>
-          <Button variant="outlined" onClick={() => navigate('/stack-instances/new')}>
-            Create your first instance
-          </Button>
-        </Box>
+        <EmptyState
+          title="No stack instances found"
+          description="Create a new instance to get started."
+          action={
+            <Button variant="outlined" onClick={() => navigate('/stack-instances/new')}>
+              Create your first instance
+            </Button>
+          }
+        />
       ) : (
-        <Grid container spacing={3}>
+        <Grid container spacing={3} aria-live="polite">
           {filtered.map((instance) => (
             <Grid key={instance.id} size={{ xs: 12, sm: 6, md: 4 }}>
               <Card sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import {
   Box,
@@ -8,7 +8,6 @@ import {
   Paper,
   IconButton,
   Alert,
-  CircularProgress,
   Chip,
   Divider,
   Tooltip,
@@ -19,6 +18,8 @@ import LockIcon from '@mui/icons-material/Lock';
 import { definitionService, templateService } from '../../api/client';
 import type { StackDefinition, ChartConfig, TemplateChartConfig } from '../../types';
 import YamlEditor from '../../components/YamlEditor';
+import LoadingState from '../../components/LoadingState';
+import { useUnsavedChanges } from '../../hooks/useUnsavedChanges';
 
 interface ChartFormData {
   id?: string;
@@ -56,6 +57,14 @@ const Form = () => {
   const [loading, setLoading] = useState(isEdit);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [touched, setTouched] = useState<Record<string, boolean>>({});
+  const initialValuesRef = useRef({ name: '', description: '', defaultBranch: 'master', charts: [] as ChartFormData[] });
+  const isDirty = name !== initialValuesRef.current.name
+    || description !== initialValuesRef.current.description
+    || defaultBranch !== initialValuesRef.current.defaultBranch
+    || JSON.stringify(charts) !== JSON.stringify(initialValuesRef.current.charts);
+
+  useUnsavedChanges(isDirty);
 
   useEffect(() => {
     if (!id) return;
@@ -87,6 +96,21 @@ const Form = () => {
             // Template fetch is best-effort
           }
         }
+        initialValuesRef.current = {
+          name: data.name,
+          description: data.description,
+          defaultBranch: data.default_branch,
+          charts: data.charts ? data.charts.map((c: ChartConfig) => ({
+            id: c.id,
+            chart_name: c.chart_name,
+            repository_url: c.repository_url,
+            source_repo_url: c.source_repo_url,
+            chart_path: c.chart_path,
+            chart_version: c.chart_version,
+            default_values: c.default_values,
+            deploy_order: c.deploy_order,
+          })) : [],
+        };
       } catch {
         setError('Failed to load definition');
       } finally {
@@ -158,11 +182,7 @@ const Form = () => {
   };
 
   if (loading) {
-    return (
-      <Box display="flex" justifyContent="center" alignItems="center" minHeight="200px">
-        <CircularProgress />
-      </Box>
-    );
+    return <LoadingState label="Loading definition..." />;
   }
 
   return (
@@ -189,8 +209,27 @@ const Form = () => {
       <Paper sx={{ p: 3, mb: 3 }}>
         <Typography variant="h6" gutterBottom>Definition Details</Typography>
         <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-          <TextField label="Name" value={name} onChange={(e) => setName(e.target.value)} required fullWidth />
-          <TextField label="Description" value={description} onChange={(e) => setDescription(e.target.value)} fullWidth multiline rows={2} />
+          <TextField
+            label="Name"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            onBlur={() => setTouched((prev) => ({ ...prev, name: true }))}
+            required
+            fullWidth
+            error={touched.name === true && !name.trim()}
+            helperText={touched.name === true && !name.trim() ? 'Name is required' : undefined}
+          />
+          <TextField
+            label="Description"
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            fullWidth
+            multiline
+            rows={2}
+            helperText={`${description.length}/200`}
+            error={description.length > 200}
+            slotProps={{ htmlInput: { maxLength: 200 } }}
+          />
           <TextField label="Default Branch" value={defaultBranch} onChange={(e) => setDefaultBranch(e.target.value)} sx={{ maxWidth: 300 }} />
         </Box>
       </Paper>
@@ -224,7 +263,7 @@ const Form = () => {
                 )}
               </Box>
               {!isRequired && (
-              <IconButton onClick={() => removeChart(index)} size="small" color="error">
+              <IconButton onClick={() => removeChart(index)} size="small" color="error" aria-label={`Remove chart ${charts[index]?.chart_name || index + 1}`}>
                 <DeleteIcon />
               </IconButton>
               )}
@@ -264,12 +303,12 @@ const Form = () => {
         })}
       </Paper>
 
-      <Box sx={{ display: 'flex', gap: 2 }}>
-        <Button variant="contained" onClick={handleSave} disabled={saving || !name}>
-          {saving ? 'Saving...' : 'Save Definition'}
-        </Button>
+      <Box sx={{ display: 'flex', gap: 2, justifyContent: 'flex-end' }}>
         <Button variant="outlined" onClick={() => navigate('/stack-definitions')}>
           Cancel
+        </Button>
+        <Button variant="contained" onClick={handleSave} disabled={saving || !name.trim()}>
+          {saving ? 'Saving...' : 'Save Definition'}
         </Button>
       </Box>
     </Box>

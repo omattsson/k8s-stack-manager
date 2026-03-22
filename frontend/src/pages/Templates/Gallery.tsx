@@ -10,7 +10,6 @@ import {
   Button,
   TextField,
   Chip,
-  CircularProgress,
   Alert,
   Tabs,
   Tab,
@@ -24,6 +23,8 @@ import FavoriteButton from '../../components/FavoriteButton';
 import QuickDeployDialog from '../../components/QuickDeployDialog';
 import { useAuth } from '../../context/AuthContext';
 import type { StackTemplate } from '../../types';
+import LoadingState from '../../components/LoadingState';
+import EmptyState from '../../components/EmptyState';
 
 const CATEGORIES = ['All', 'Web', 'API', 'Data', 'Infrastructure', 'Other'];
 
@@ -64,11 +65,7 @@ const Gallery = () => {
   });
 
   if (loading) {
-    return (
-      <Box display="flex" justifyContent="center" alignItems="center" minHeight="200px">
-        <CircularProgress />
-      </Box>
-    );
+    return <LoadingState label="Loading templates..." />;
   }
 
   if (error) {
@@ -126,9 +123,10 @@ const Gallery = () => {
       </Box>
 
       {filtered.length === 0 ? (
-        <Typography color="text.secondary" sx={{ textAlign: 'center', mt: 4 }}>
-          No templates found.
-        </Typography>
+        <EmptyState
+          title="No templates found"
+          description="Try adjusting your search or filters."
+        />
       ) : (
         <Grid container spacing={3}>
           {filtered.map((template) => (

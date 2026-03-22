@@ -28,6 +28,7 @@ import CheckIcon from '@mui/icons-material/Check';
 import { apiKeyService } from '../../api/client';
 import { useAuth } from '../../context/AuthContext';
 import type { APIKey, CreateAPIKeyRequest, CreateAPIKeyResponse } from '../../types';
+import LoadingState from '../../components/LoadingState';
 
 const getRoleChipColor = (role: string): 'error' | 'warning' | 'default' => {
   if (role === 'admin') return 'error';
@@ -166,9 +167,7 @@ const Profile = () => {
       {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
 
       {loading ? (
-        <Box display="flex" justifyContent="center" alignItems="center" minHeight="200px">
-          <CircularProgress />
-        </Box>
+        <LoadingState label="Loading API keys..." />
       ) : (
         <Paper>
           {apiKeys.length === 0 ? (
@@ -243,6 +242,9 @@ const Profile = () => {
               fullWidth
               size="small"
               autoFocus
+              helperText={`${generateKeyForm.name.length}/50`}
+              error={generateKeyForm.name.length > 50}
+              slotProps={{ htmlInput: { maxLength: 50 } }}
             />
             <TextField
               label="Expires At (optional)"

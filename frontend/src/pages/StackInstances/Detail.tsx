@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useWebSocket } from '../../hooks/useWebSocket';
 import type { WsMessage } from '../../hooks/useWebSocket';
@@ -7,12 +7,10 @@ import {
   Typography,
   Button,
   Paper,
-  CircularProgress,
   Alert,
   Tabs,
   Tab,
   Divider,
-  Snackbar,
   Stepper,
   Step,
   StepLabel,
@@ -33,6 +31,9 @@ import type { StackInstance, ChartConfig, ValueOverride, DeploymentLog, Namespac
 import YamlEditor from '../../components/YamlEditor';
 import TtlSelector from '../../components/TtlSelector';
 import useCountdown from '../../hooks/useCountdown';
+import { useNotification } from '../../context/NotificationContext';
+import LoadingState from '../../components/LoadingState';
+import { useUnsavedChanges } from '../../hooks/useUnsavedChanges';
 
 const Detail = () => {
   const { id } = useParams<{ id: string }>();
@@ -48,7 +49,7 @@ const Detail = () => {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [snackbar, setSnackbar] = useState<string | null>(null);
+  const { showSuccess } = useNotification();
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deploying, setDeploying] = useState(false);
   const [stopping, setStopping] = useState(false);
@@ -58,6 +59,12 @@ const Detail = () => {
   const [k8sStatus, setK8sStatus] = useState<NamespaceStatus | null>(null);
   const [statusLoading, setStatusLoading] = useState(false);
   const [extending, setExtending] = useState(false);
+  const initialOverridesRef = useRef<Record<string, string>>({});
+  const initialBranchRef = useRef('');
+  const isDirty = branch !== initialBranchRef.current
+    || JSON.stringify(editedOverrides) !== JSON.stringify(initialOverridesRef.current);
+
+  useUnsavedChanges(isDirty);
 
   useEffect(() => {
     if (!id) return;
@@ -90,6 +97,8 @@ const Detail = () => {
           overrideMap[o.chart_config_id] = o.values;
         });
         setEditedOverrides(overrideMap);
+        initialOverridesRef.current = { ...overrideMap };
+        initialBranchRef.current = inst.branch;
 
         // Fetch deployment logs
         try {
@@ -183,7 +192,7 @@ const Detail = () => {
       setBranchOverrides((prev) => ({ ...prev, [chartId]: newBranch }));
       try {
         await branchOverrideService.set(id, chartId, newBranch);
-        setSnackbar('Branch override saved');
+        showSuccess('Branch override saved');
       } catch {
         // Revert to previous value on failure
         if (previousValue !== undefined) {
@@ -216,7 +225,7 @@ const Detail = () => {
         await instanceService.setOverride(id, chartConfigId, { values });
       }
 
-      setSnackbar('Changes saved successfully');
+      showSuccess('Changes saved successfully');
     } catch {
       setError('Failed to save changes');
     } finally {
@@ -267,7 +276,7 @@ const Detail = () => {
     setError(null);
     try {
       await instanceService.deploy(id);
-      setSnackbar('Deployment started');
+      showSuccess('Deployment started');
     } catch {
       setError('Failed to start deployment');
       return;
@@ -291,7 +300,7 @@ const Detail = () => {
     setError(null);
     try {
       await instanceService.stop(id);
-      setSnackbar('Stop initiated');
+      showSuccess('Stop initiated');
     } catch {
       setError('Failed to stop instance');
       setStopping(false);
@@ -314,7 +323,7 @@ const Detail = () => {
     setError(null);
     try {
       await instanceService.clean(id);
-      setSnackbar('Namespace cleanup initiated');
+      showSuccess('Namespace cleanup initiated');
     } catch {
       setError('Failed to clean namespace');
       setCleaning(false);
@@ -344,7 +353,7 @@ const Detail = () => {
     try {
       const updated = await instanceService.extend(id);
       setInstance(updated);
-      setSnackbar('TTL extended');
+      showSuccess('TTL extended');
     } catch {
       setError('Failed to extend TTL');
     } finally {
@@ -365,7 +374,7 @@ const Detail = () => {
         updated = await instanceService.update(id, { ...instance, ttl_minutes: 0 });
       }
       setInstance(updated);
-      setSnackbar('TTL updated');
+      showSuccess('TTL updated');
     } catch {
       setError('Failed to update TTL');
     } finally {
@@ -381,11 +390,7 @@ const Detail = () => {
   };
 
   if (loading) {
-    return (
-      <Box display="flex" justifyContent="center" alignItems="center" minHeight="200px">
-        <CircularProgress />
-      </Box>
-    );
+    return <LoadingState label="Loading instance..." />;
   }
 
   if (error && !instance) {
@@ -406,7 +411,9 @@ const Detail = () => {
                 {instance.name}
               </Typography>
               <FavoriteButton entityType="instance" entityId={instance.id} size="medium" />
-              <StatusBadge status={instance.status} />
+              <Box component="span" aria-live="polite">
+                <StatusBadge status={instance.status} />
+              </Box>
               {isExpiredByTtl && (
                 <Chip label="Expired" color="error" size="small" />
               )}
@@ -604,12 +611,12 @@ const Detail = () => {
         </Box>
       )}
 
-      <Box sx={{ display: 'flex', gap: 2 }}>
-        <Button variant="contained" onClick={handleSave} disabled={saving}>
-          {saving ? 'Saving...' : 'Save Changes'}
-        </Button>
+      <Box sx={{ display: 'flex', gap: 2, justifyContent: 'flex-end' }}>
         <Button variant="outlined" onClick={() => navigate('/')}>
           Back to Dashboard
+        </Button>
+        <Button variant="contained" onClick={handleSave} disabled={saving}>
+          {saving ? 'Saving...' : 'Save Changes'}
         </Button>
       </Box>
 
@@ -631,12 +638,6 @@ const Detail = () => {
         confirmText="Clean"
       />
 
-      <Snackbar
-        open={Boolean(snackbar)}
-        autoHideDuration={3000}
-        onClose={() => setSnackbar(null)}
-        message={snackbar}
-      />
     </Box>
   );
 };

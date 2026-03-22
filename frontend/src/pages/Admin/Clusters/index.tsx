@@ -23,6 +23,8 @@ import {
   FormControlLabel,
   Checkbox,
   Snackbar,
+  Breadcrumbs,
+  Link as MuiLink,
 } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
 import EditIcon from '@mui/icons-material/Edit';
@@ -30,8 +32,11 @@ import DeleteIcon from '@mui/icons-material/Delete';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import StarIcon from '@mui/icons-material/Star';
 import StarBorderIcon from '@mui/icons-material/StarBorder';
+import NavigateNextIcon from '@mui/icons-material/NavigateNext';
 import { clusterService } from '../../../api/client';
 import type { Cluster, CreateClusterRequest, UpdateClusterRequest, ClusterTestResult } from '../../../types';
+import LoadingState from '../../../components/LoadingState';
+import { Link } from 'react-router-dom';
 
 const emptyCreateForm: CreateClusterRequest = {
   name: '',
@@ -204,11 +209,7 @@ const Clusters = () => {
   };
 
   if (loading) {
-    return (
-      <Box display="flex" justifyContent="center" alignItems="center" minHeight="200px">
-        <CircularProgress />
-      </Box>
-    );
+    return <LoadingState label="Loading clusters..." />;
   }
 
   if (error) {
@@ -217,6 +218,10 @@ const Clusters = () => {
 
   return (
     <Box>
+      <Breadcrumbs separator={<NavigateNextIcon fontSize="small" />} sx={{ mb: 2 }}>
+        <MuiLink component={Link} to="/" underline="hover" color="inherit">Home</MuiLink>
+        <Typography color="text.primary">Clusters</Typography>
+      </Breadcrumbs>
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
         <Typography variant="h4" component="h1">
           Cluster Management
@@ -231,8 +236,8 @@ const Clusters = () => {
           <TableHead>
             <TableRow>
               <TableCell>Name</TableCell>
-              <TableCell>Region</TableCell>
-              <TableCell>API Server URL</TableCell>
+              <TableCell sx={{ display: { xs: 'none', md: 'table-cell' } }}>Region</TableCell>
+              <TableCell sx={{ display: { xs: 'none', md: 'table-cell' } }}>API Server URL</TableCell>
               <TableCell>Health Status</TableCell>
               <TableCell>Default</TableCell>
               <TableCell align="right">Actions</TableCell>
@@ -256,8 +261,8 @@ const Clusters = () => {
                       <Typography variant="body2" color="text.secondary">{cluster.description}</Typography>
                     )}
                   </TableCell>
-                  <TableCell>{cluster.region || '—'}</TableCell>
-                  <TableCell>
+                  <TableCell sx={{ display: { xs: 'none', md: 'table-cell' } }}>{cluster.region || '—'}</TableCell>
+                  <TableCell sx={{ display: { xs: 'none', md: 'table-cell' } }}>
                     <Typography variant="body2" sx={{ fontFamily: 'monospace', fontSize: '0.8rem' }}>
                       {cluster.api_server_url}
                     </Typography>

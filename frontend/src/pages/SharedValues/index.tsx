@@ -2,7 +2,6 @@ import { useEffect, useState, useCallback } from 'react';
 import {
   Box,
   Typography,
-  CircularProgress,
   Alert,
   Table,
   TableBody,
@@ -24,13 +23,18 @@ import {
   TextField,
   Snackbar,
   Tooltip,
+  Breadcrumbs,
+  Link as MuiLink,
 } from '@mui/material';
 import type { SelectChangeEvent } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
 import EditIcon from '@mui/icons-material/Edit';
 import DeleteIcon from '@mui/icons-material/Delete';
+import NavigateNextIcon from '@mui/icons-material/NavigateNext';
 import { clusterService, sharedValuesService } from '../../api/client';
 import type { Cluster, SharedValues } from '../../types';
+import LoadingState from '../../components/LoadingState';
+import { Link } from 'react-router-dom';
 
 interface FormState {
   name: string;
@@ -215,6 +219,10 @@ const SharedValuesPage = () => {
   if (clusters.length === 0 && !loading && !error) {
     return (
       <Box>
+        <Breadcrumbs separator={<NavigateNextIcon fontSize="small" />} sx={{ mb: 2 }}>
+          <MuiLink component={Link} to="/" underline="hover" color="inherit">Home</MuiLink>
+          <Typography color="text.primary">Shared Values</Typography>
+        </Breadcrumbs>
         <Typography variant="h4" component="h1" gutterBottom>
           Shared Values
         </Typography>
@@ -225,6 +233,10 @@ const SharedValuesPage = () => {
 
   return (
     <Box>
+      <Breadcrumbs separator={<NavigateNextIcon fontSize="small" />} sx={{ mb: 2 }}>
+        <MuiLink component={Link} to="/" underline="hover" color="inherit">Home</MuiLink>
+        <Typography color="text.primary">Shared Values</Typography>
+      </Breadcrumbs>
       <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 3 }}>
         <Typography variant="h4" component="h1">
           Shared Values
@@ -260,11 +272,7 @@ const SharedValuesPage = () => {
 
       {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
 
-      {(loading || valuesLoading) && (
-        <Box sx={{ display: 'flex', justifyContent: 'center', my: 4 }}>
-          <CircularProgress />
-        </Box>
-      )}
+      {(loading || valuesLoading) && <LoadingState label="Loading shared values..." />}
 
       {!loading && !valuesLoading && !error && sharedValues.length === 0 && selectedCluster && (
         <Alert severity="info">No shared values configured for this cluster.</Alert>
@@ -331,6 +339,9 @@ const SharedValuesPage = () => {
             fullWidth
             margin="normal"
             required
+            helperText={`${form.name.length}/100`}
+            error={form.name.length > 100}
+            slotProps={{ htmlInput: { maxLength: 100 } }}
           />
           <TextField
             label="Description"
@@ -338,6 +349,9 @@ const SharedValuesPage = () => {
             onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
             fullWidth
             margin="normal"
+            helperText={`${form.description.length}/200`}
+            error={form.description.length > 200}
+            slotProps={{ htmlInput: { maxLength: 200 } }}
           />
           <TextField
             label="Priority"

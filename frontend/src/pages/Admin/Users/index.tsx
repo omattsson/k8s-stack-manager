@@ -22,6 +22,8 @@ import {
   DialogActions,
   TextField,
   MenuItem,
+  Breadcrumbs,
+  Link as MuiLink,
 } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
 import DeleteIcon from '@mui/icons-material/Delete';
@@ -30,9 +32,12 @@ import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import ExpandLessIcon from '@mui/icons-material/ExpandLess';
 import CheckIcon from '@mui/icons-material/Check';
+import NavigateNextIcon from '@mui/icons-material/NavigateNext';
 import { userService, apiKeyService } from '../../../api/client';
 import { useAuth } from '../../../context/AuthContext';
 import type { User, APIKey, CreateUserRequest, CreateAPIKeyRequest, CreateAPIKeyResponse } from '../../../types';
+import LoadingState from '../../../components/LoadingState';
+import { Link } from 'react-router-dom';
 
 const getRoleChipColor = (role: string): 'error' | 'warning' | 'default' => {
   if (role === 'admin') return 'error';
@@ -226,6 +231,10 @@ const AdminUsers = () => {
 
   return (
     <Box>
+      <Breadcrumbs separator={<NavigateNextIcon fontSize="small" />} sx={{ mb: 2 }}>
+        <MuiLink component={Link} to="/" underline="hover" color="inherit">Home</MuiLink>
+        <Typography color="text.primary">Users</Typography>
+      </Breadcrumbs>
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
         <Typography variant="h4" component="h1">
           User Management
@@ -238,19 +247,17 @@ const AdminUsers = () => {
       {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
 
       {loading ? (
-        <Box display="flex" justifyContent="center" alignItems="center" minHeight="200px">
-          <CircularProgress />
-        </Box>
+        <LoadingState label="Loading users..." />
       ) : (
-        <TableContainer component={Paper}>
-          <Table>
+        <TableContainer component={Paper} sx={{ maxHeight: 600 }}>
+          <Table stickyHeader>
             <TableHead>
               <TableRow>
                 <TableCell width={48} />
                 <TableCell>Username</TableCell>
                 <TableCell>Display Name</TableCell>
                 <TableCell>Role</TableCell>
-                <TableCell>Created At</TableCell>
+                <TableCell sx={{ display: { xs: 'none', md: 'table-cell' } }}>Created At</TableCell>
                 <TableCell>Actions</TableCell>
               </TableRow>
             </TableHead>
@@ -285,7 +292,7 @@ const AdminUsers = () => {
                       <TableCell>
                         <Chip label={u.role} size="small" color={getRoleChipColor(u.role)} />
                       </TableCell>
-                      <TableCell>{new Date(u.created_at).toLocaleDateString()}</TableCell>
+                      <TableCell sx={{ display: { xs: 'none', md: 'table-cell' } }}>{new Date(u.created_at).toLocaleDateString()}</TableCell>
                       <TableCell>
                         <Tooltip title={u.id === currentUser.id ? 'Cannot delete your own account' : 'Delete user'}>
                           <span>

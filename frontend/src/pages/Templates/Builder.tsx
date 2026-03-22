@@ -11,7 +11,6 @@ import {
   Switch,
   FormControlLabel,
   Alert,
-  CircularProgress,
   Divider,
 } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
@@ -19,6 +18,7 @@ import DeleteIcon from '@mui/icons-material/Delete';
 import { templateService } from '../../api/client';
 import type { StackTemplate, TemplateChartConfig } from '../../types';
 import YamlEditor from '../../components/YamlEditor';
+import LoadingState from '../../components/LoadingState';
 
 const CATEGORIES = ['Web', 'API', 'Data', 'Infrastructure', 'Other'];
 
@@ -182,11 +182,7 @@ const Builder = () => {
   };
 
   if (loading) {
-    return (
-      <Box display="flex" justifyContent="center" alignItems="center" minHeight="200px">
-        <CircularProgress />
-      </Box>
-    );
+    return <LoadingState label="Loading template..." />;
   }
 
   return (
@@ -242,7 +238,7 @@ const Builder = () => {
           <Box key={index} sx={{ mb: 3, p: 2, border: 1, borderColor: 'divider', borderRadius: 1 }}>
             <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
               <Typography variant="subtitle1">Chart #{index + 1}</Typography>
-              <IconButton onClick={() => removeChart(index)} size="small" color="error">
+              <IconButton onClick={() => removeChart(index)} size="small" color="error" aria-label={`Remove chart ${index + 1}`}>
                 <DeleteIcon />
               </IconButton>
             </Box>

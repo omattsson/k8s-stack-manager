@@ -2,6 +2,7 @@ import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import OrphanedNamespaces from '../index';
+import { NotificationProvider } from '../../../../context/NotificationContext';
 
 vi.mock('../../../../api/client', () => ({
   adminService: {
@@ -65,7 +66,9 @@ describe('OrphanedNamespaces Page', () => {
 
     render(
       <MemoryRouter>
-        <OrphanedNamespaces />
+        <NotificationProvider>
+          <OrphanedNamespaces />
+        </NotificationProvider>
       </MemoryRouter>
     );
 
@@ -77,7 +80,9 @@ describe('OrphanedNamespaces Page', () => {
 
     render(
       <MemoryRouter>
-        <OrphanedNamespaces />
+        <NotificationProvider>
+          <OrphanedNamespaces />
+        </NotificationProvider>
       </MemoryRouter>
     );
 
@@ -95,7 +100,9 @@ describe('OrphanedNamespaces Page', () => {
 
     render(
       <MemoryRouter>
-        <OrphanedNamespaces />
+        <NotificationProvider>
+          <OrphanedNamespaces />
+        </NotificationProvider>
       </MemoryRouter>
     );
 
@@ -111,7 +118,9 @@ describe('OrphanedNamespaces Page', () => {
 
     render(
       <MemoryRouter>
-        <OrphanedNamespaces />
+        <NotificationProvider>
+          <OrphanedNamespaces />
+        </NotificationProvider>
       </MemoryRouter>
     );
 
@@ -131,7 +140,9 @@ describe('OrphanedNamespaces Page', () => {
 
     render(
       <MemoryRouter>
-        <OrphanedNamespaces />
+        <NotificationProvider>
+          <OrphanedNamespaces />
+        </NotificationProvider>
       </MemoryRouter>
     );
 

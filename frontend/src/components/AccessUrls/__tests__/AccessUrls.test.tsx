@@ -3,6 +3,7 @@ import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import AccessUrls from '../index';
 import type { NamespaceStatus } from '../../../types';
+import { NotificationProvider } from '../../../context/NotificationContext';
 
 describe('AccessUrls', () => {
   beforeEach(() => {
@@ -28,7 +29,7 @@ describe('AccessUrls', () => {
       last_checked: '2025-01-01T00:00:00Z',
     };
 
-    render(<AccessUrls status={status} />);
+    render(<NotificationProvider><AccessUrls status={status} /></NotificationProvider>);
 
     expect(screen.getByText('Access URLs')).toBeInTheDocument();
     expect(screen.getByText('https://app.example.com')).toBeInTheDocument();
@@ -65,7 +66,7 @@ describe('AccessUrls', () => {
       last_checked: '2025-01-01T00:00:00Z',
     };
 
-    render(<AccessUrls status={status} />);
+    render(<NotificationProvider><AccessUrls status={status} /></NotificationProvider>);
 
     expect(screen.getByText('LoadBalancer')).toBeInTheDocument();
     expect(screen.getByText('http://20.1.2.3:8080')).toBeInTheDocument();
@@ -96,7 +97,7 @@ describe('AccessUrls', () => {
       last_checked: '2025-01-01T00:00:00Z',
     };
 
-    render(<AccessUrls status={status} />);
+    render(<NotificationProvider><AccessUrls status={status} /></NotificationProvider>);
 
     expect(screen.getByText('ClusterIP')).toBeInTheDocument();
     expect(screen.getByText('kubectl port-forward svc/database 5432:5432 -n stack-my-app')).toBeInTheDocument();
@@ -128,7 +129,7 @@ describe('AccessUrls', () => {
       last_checked: '2025-01-01T00:00:00Z',
     };
 
-    render(<AccessUrls status={status} />);
+    render(<NotificationProvider><AccessUrls status={status} /></NotificationProvider>);
 
     expect(screen.getByText('NodePort')).toBeInTheDocument();
     expect(screen.getByText('NodePort: 30080')).toBeInTheDocument();
@@ -142,7 +143,7 @@ describe('AccessUrls', () => {
       last_checked: '2025-01-01T00:00:00Z',
     };
 
-    const { container } = render(<AccessUrls status={status} />);
+    const { container } = render(<NotificationProvider><AccessUrls status={status} /></NotificationProvider>);
     expect(container.firstChild).toBeNull();
   });
 
@@ -174,7 +175,7 @@ describe('AccessUrls', () => {
       last_checked: '2025-01-01T00:00:00Z',
     };
 
-    render(<AccessUrls status={status} />);
+    render(<NotificationProvider><AccessUrls status={status} /></NotificationProvider>);
 
     // Should show the ingress but not a separate ClusterIP entry
     expect(screen.getByText('Ingress')).toBeInTheDocument();
@@ -194,7 +195,7 @@ describe('AccessUrls', () => {
       last_checked: '2025-01-01T00:00:00Z',
     };
 
-    render(<AccessUrls status={status} />);
+    render(<NotificationProvider><AccessUrls status={status} /></NotificationProvider>);
 
     await user.click(screen.getByRole('button', { name: /copy my-ingress/i }));
     expect(writeTextSpy).toHaveBeenCalledWith('https://app.example.com');

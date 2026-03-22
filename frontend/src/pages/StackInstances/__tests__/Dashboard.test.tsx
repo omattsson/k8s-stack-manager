@@ -2,6 +2,7 @@ import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import { render, screen, waitFor, act } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import Dashboard from '../Dashboard';
+import { NotificationProvider } from '../../../context/NotificationContext';
 import type { WsMessage } from '../../../hooks/useWebSocket';
 
 type MessageHandler = (msg: WsMessage) => void;
@@ -64,7 +65,9 @@ describe('Dashboard', () => {
     (instanceService.recent as ReturnType<typeof vi.fn>).mockReturnValue(new Promise(() => {}));
     render(
       <MemoryRouter>
-        <Dashboard />
+        <NotificationProvider>
+          <Dashboard />
+        </NotificationProvider>
       </MemoryRouter>
     );
     expect(screen.getByRole('progressbar')).toBeInTheDocument();
@@ -76,7 +79,9 @@ describe('Dashboard', () => {
     ]);
     render(
       <MemoryRouter>
-        <Dashboard />
+        <NotificationProvider>
+          <Dashboard />
+        </NotificationProvider>
       </MemoryRouter>
     );
     await waitFor(() => {
@@ -88,7 +93,9 @@ describe('Dashboard', () => {
     (instanceService.list as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('Network error'));
     render(
       <MemoryRouter>
-        <Dashboard />
+        <NotificationProvider>
+          <Dashboard />
+        </NotificationProvider>
       </MemoryRouter>
     );
     await waitFor(() => {
@@ -100,7 +107,9 @@ describe('Dashboard', () => {
     (instanceService.list as ReturnType<typeof vi.fn>).mockResolvedValue([]);
     render(
       <MemoryRouter>
-        <Dashboard />
+        <NotificationProvider>
+          <Dashboard />
+        </NotificationProvider>
       </MemoryRouter>
     );
     await waitFor(() => {
@@ -114,7 +123,9 @@ describe('Dashboard', () => {
     ]);
     render(
       <MemoryRouter>
-        <Dashboard />
+        <NotificationProvider>
+          <Dashboard />
+        </NotificationProvider>
       </MemoryRouter>
     );
 
@@ -122,7 +133,8 @@ describe('Dashboard', () => {
     await waitFor(() => {
       expect(screen.getByText('WS Instance')).toBeInTheDocument();
     });
-    expect(screen.getByText('draft')).toBeInTheDocument();
+    // 'draft' appears in both status filter chip and instance badge
+    expect(screen.getAllByText('draft').length).toBeGreaterThanOrEqual(2);
 
     // Simulate a WebSocket deployment.status message.
     act(() => {
@@ -133,9 +145,11 @@ describe('Dashboard', () => {
     });
 
     await waitFor(() => {
-      expect(screen.getByText('deploying')).toBeInTheDocument();
+      // 'deploying' should now appear in both filter chip and badge
+      expect(screen.getAllByText('deploying').length).toBeGreaterThanOrEqual(2);
     });
-    expect(screen.queryByText('draft')).not.toBeInTheDocument();
+    // 'draft' should now only appear in the status filter chip
+    expect(screen.getAllByText('draft')).toHaveLength(1);
   });
 
   it('ignores WebSocket messages for unknown instance IDs', async () => {
@@ -144,14 +158,17 @@ describe('Dashboard', () => {
     ]);
     render(
       <MemoryRouter>
-        <Dashboard />
+        <NotificationProvider>
+          <Dashboard />
+        </NotificationProvider>
       </MemoryRouter>
     );
 
     await waitFor(() => {
       expect(screen.getByText('My Instance')).toBeInTheDocument();
     });
-    expect(screen.getByText('running')).toBeInTheDocument();
+    // 'running' appears in both status filter chip and instance badge
+    expect(screen.getAllByText('running').length).toBeGreaterThanOrEqual(2);
 
     // Send a message for a different instance.
     act(() => {
@@ -162,7 +179,7 @@ describe('Dashboard', () => {
     });
 
     // Status should remain unchanged.
-    expect(screen.getByText('running')).toBeInTheDocument();
+    expect(screen.getAllByText('running').length).toBeGreaterThanOrEqual(2);
   });
 
   it('shows countdown chip for running instance with expiry', async () => {
@@ -179,7 +196,9 @@ describe('Dashboard', () => {
     ]);
     render(
       <MemoryRouter>
-        <Dashboard />
+        <NotificationProvider>
+          <Dashboard />
+        </NotificationProvider>
       </MemoryRouter>
     );
 
@@ -199,7 +218,9 @@ describe('Dashboard', () => {
     ]);
     render(
       <MemoryRouter>
-        <Dashboard />
+        <NotificationProvider>
+          <Dashboard />
+        </NotificationProvider>
       </MemoryRouter>
     );
 
@@ -219,7 +240,9 @@ describe('Dashboard', () => {
     ]);
     render(
       <MemoryRouter>
-        <Dashboard />
+        <NotificationProvider>
+          <Dashboard />
+        </NotificationProvider>
       </MemoryRouter>
     );
 
@@ -235,7 +258,9 @@ describe('Dashboard', () => {
     (instanceService.list as ReturnType<typeof vi.fn>).mockResolvedValue([]);
     render(
       <MemoryRouter>
-        <Dashboard />
+        <NotificationProvider>
+          <Dashboard />
+        </NotificationProvider>
       </MemoryRouter>
     );
     await waitFor(() => {
@@ -253,7 +278,9 @@ describe('Dashboard', () => {
     ]);
     render(
       <MemoryRouter>
-        <Dashboard />
+        <NotificationProvider>
+          <Dashboard />
+        </NotificationProvider>
       </MemoryRouter>
     );
     await waitFor(() => {
@@ -270,7 +297,9 @@ describe('Dashboard', () => {
     ]);
     render(
       <MemoryRouter>
-        <Dashboard />
+        <NotificationProvider>
+          <Dashboard />
+        </NotificationProvider>
       </MemoryRouter>
     );
     await waitFor(() => {
@@ -286,7 +315,9 @@ describe('Dashboard', () => {
     (instanceService.recent as ReturnType<typeof vi.fn>).mockResolvedValue([]);
     render(
       <MemoryRouter>
-        <Dashboard />
+        <NotificationProvider>
+          <Dashboard />
+        </NotificationProvider>
       </MemoryRouter>
     );
     await waitFor(() => {

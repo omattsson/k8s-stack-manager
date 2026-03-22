@@ -3,6 +3,7 @@ import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import Form from '../Form';
+import { NotificationProvider } from '../../../context/NotificationContext';
 
 const mockNavigate = vi.fn();
 vi.mock('react-router-dom', async () => {
@@ -12,6 +13,10 @@ vi.mock('react-router-dom', async () => {
     useNavigate: () => mockNavigate,
   };
 });
+
+vi.mock('../../../hooks/useUnsavedChanges', () => ({
+  useUnsavedChanges: vi.fn(),
+}));
 
 vi.mock('../../../api/client', () => ({
   definitionService: {
@@ -46,9 +51,11 @@ describe('StackDefinitions Form', () => {
   it('shows Create Stack Definition heading in create mode', () => {
     render(
       <MemoryRouter initialEntries={['/stack-definitions/new']}>
-        <Routes>
-          <Route path="/stack-definitions/new" element={<Form />} />
-        </Routes>
+        <NotificationProvider>
+          <Routes>
+            <Route path="/stack-definitions/new" element={<Form />} />
+          </Routes>
+        </NotificationProvider>
       </MemoryRouter>
     );
     expect(screen.getByText('Create Stack Definition')).toBeInTheDocument();
@@ -58,9 +65,11 @@ describe('StackDefinitions Form', () => {
     (definitionService.get as ReturnType<typeof vi.fn>).mockReturnValue(new Promise(() => {}));
     render(
       <MemoryRouter initialEntries={['/stack-definitions/123/edit']}>
-        <Routes>
-          <Route path="/stack-definitions/:id/edit" element={<Form />} />
-        </Routes>
+        <NotificationProvider>
+          <Routes>
+            <Route path="/stack-definitions/:id/edit" element={<Form />} />
+          </Routes>
+        </NotificationProvider>
       </MemoryRouter>
     );
     expect(screen.getByRole('progressbar')).toBeInTheDocument();
@@ -76,9 +85,11 @@ describe('StackDefinitions Form', () => {
     });
     render(
       <MemoryRouter initialEntries={['/stack-definitions/123/edit']}>
-        <Routes>
-          <Route path="/stack-definitions/:id/edit" element={<Form />} />
-        </Routes>
+        <NotificationProvider>
+          <Routes>
+            <Route path="/stack-definitions/:id/edit" element={<Form />} />
+          </Routes>
+        </NotificationProvider>
       </MemoryRouter>
     );
     await waitFor(() => {
@@ -93,9 +104,11 @@ describe('StackDefinitions Form', () => {
     (definitionService.get as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('Not found'));
     render(
       <MemoryRouter initialEntries={['/stack-definitions/123/edit']}>
-        <Routes>
-          <Route path="/stack-definitions/:id/edit" element={<Form />} />
-        </Routes>
+        <NotificationProvider>
+          <Routes>
+            <Route path="/stack-definitions/:id/edit" element={<Form />} />
+          </Routes>
+        </NotificationProvider>
       </MemoryRouter>
     );
     await waitFor(() => {
@@ -112,9 +125,11 @@ describe('StackDefinitions Form', () => {
     });
     render(
       <MemoryRouter initialEntries={['/stack-definitions/new']}>
-        <Routes>
-          <Route path="/stack-definitions/new" element={<Form />} />
-        </Routes>
+        <NotificationProvider>
+          <Routes>
+            <Route path="/stack-definitions/new" element={<Form />} />
+          </Routes>
+        </NotificationProvider>
       </MemoryRouter>
     );
 
@@ -136,9 +151,11 @@ describe('StackDefinitions Form', () => {
     const user = userEvent.setup();
     render(
       <MemoryRouter initialEntries={['/stack-definitions/new']}>
-        <Routes>
-          <Route path="/stack-definitions/new" element={<Form />} />
-        </Routes>
+        <NotificationProvider>
+          <Routes>
+            <Route path="/stack-definitions/new" element={<Form />} />
+          </Routes>
+        </NotificationProvider>
       </MemoryRouter>
     );
 
@@ -150,9 +167,11 @@ describe('StackDefinitions Form', () => {
     const user = userEvent.setup();
     render(
       <MemoryRouter initialEntries={['/stack-definitions/new']}>
-        <Routes>
-          <Route path="/stack-definitions/new" element={<Form />} />
-        </Routes>
+        <NotificationProvider>
+          <Routes>
+            <Route path="/stack-definitions/new" element={<Form />} />
+          </Routes>
+        </NotificationProvider>
       </MemoryRouter>
     );
 

@@ -1,5 +1,6 @@
 import { Navigate } from 'react-router-dom';
-import { Box, CircularProgress, Alert } from '@mui/material';
+import { Box, Alert } from '@mui/material';
+import LoadingState from '../LoadingState';
 import { useAuth } from '../../context/AuthContext';
 import { hasAtLeastRole } from '../../utils/roles';
 import type { ReactNode } from 'react';
@@ -13,11 +14,7 @@ const ProtectedRoute = ({ children, requiredRole }: ProtectedRouteProps) => {
   const { user, isAuthenticated, isLoading } = useAuth();
 
   if (isLoading) {
-    return (
-      <Box display="flex" justifyContent="center" alignItems="center" minHeight="200px">
-        <CircularProgress />
-      </Box>
-    );
+    return <LoadingState />;
   }
 
   if (!isAuthenticated) {

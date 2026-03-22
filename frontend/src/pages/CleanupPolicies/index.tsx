@@ -2,7 +2,6 @@ import { useEffect, useState, useCallback } from 'react';
 import {
   Box,
   Typography,
-  CircularProgress,
   Alert,
   Table,
   TableBody,
@@ -28,14 +27,19 @@ import {
   FormControlLabel,
   Snackbar,
   Tooltip,
+  Breadcrumbs,
+  Link as MuiLink,
 } from '@mui/material';
 import type { SelectChangeEvent } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
 import EditIcon from '@mui/icons-material/Edit';
 import DeleteIcon from '@mui/icons-material/Delete';
 import PlayArrowIcon from '@mui/icons-material/PlayArrow';
+import NavigateNextIcon from '@mui/icons-material/NavigateNext';
 import { cleanupPolicyService, clusterService } from '../../api/client';
 import type { CleanupPolicy, CleanupResult, Cluster } from '../../types';
+import LoadingState from '../../components/LoadingState';
+import { Link } from 'react-router-dom';
 
 type ConditionPreset = 'idle_days' | 'stopped_age' | 'ttl_expired' | 'custom';
 
@@ -153,6 +157,7 @@ const CleanupPolicies = () => {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState<PolicyFormState>(emptyForm);
   const [formError, setFormError] = useState<string | null>(null);
+  const [formTouched, setFormTouched] = useState<Record<string, boolean>>({});
   const [saving, setSaving] = useState(false);
 
   // Delete confirmation
@@ -201,6 +206,7 @@ const CleanupPolicies = () => {
     setEditingId(null);
     setForm(emptyForm);
     setFormError(null);
+    setFormTouched({});
     setDialogOpen(true);
   };
 
@@ -217,6 +223,7 @@ const CleanupPolicies = () => {
       dry_run: policy.dry_run,
     });
     setFormError(null);
+    setFormTouched({});
     setDialogOpen(true);
   };
 
@@ -224,6 +231,7 @@ const CleanupPolicies = () => {
     setDialogOpen(false);
     setEditingId(null);
     setFormError(null);
+    setFormTouched({});
   };
 
   const handleSave = async () => {
@@ -337,6 +345,10 @@ const CleanupPolicies = () => {
 
   return (
     <Box>
+      <Breadcrumbs separator={<NavigateNextIcon fontSize="small" />} sx={{ mb: 2 }}>
+        <MuiLink component={Link} to="/" underline="hover" color="inherit">Home</MuiLink>
+        <Typography color="text.primary">Cleanup Policies</Typography>
+      </Breadcrumbs>
       <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 3 }}>
         <Typography variant="h4" component="h1">
           Cleanup Policies
@@ -348,11 +360,7 @@ const CleanupPolicies = () => {
 
       {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
 
-      {loading && (
-        <Box sx={{ display: 'flex', justifyContent: 'center', my: 4 }}>
-          <CircularProgress />
-        </Box>
-      )}
+      {loading && <LoadingState label="Loading policies..." />}
 
       {!loading && !error && policies.length === 0 && (
         <Alert severity="info">No cleanup policies configured. Create one to automate instance lifecycle management.</Alert>
@@ -364,13 +372,13 @@ const CleanupPolicies = () => {
             <TableHead>
               <TableRow>
                 <TableCell>Name</TableCell>
-                <TableCell>Cluster</TableCell>
+                <TableCell sx={{ display: { xs: 'none', md: 'table-cell' } }}>Cluster</TableCell>
                 <TableCell>Action</TableCell>
                 <TableCell>Condition</TableCell>
                 <TableCell>Schedule</TableCell>
                 <TableCell>Enabled</TableCell>
                 <TableCell>Dry Run</TableCell>
-                <TableCell>Last Run</TableCell>
+                <TableCell sx={{ display: { xs: 'none', md: 'table-cell' } }}>Last Run</TableCell>
                 <TableCell align="right">Actions</TableCell>
               </TableRow>
             </TableHead>
@@ -378,7 +386,7 @@ const CleanupPolicies = () => {
               {policies.map((policy) => (
                 <TableRow key={policy.id}>
                   <TableCell>{policy.name}</TableCell>
-                  <TableCell>
+                  <TableCell sx={{ display: { xs: 'none', md: 'table-cell' } }}>
                     {policy.cluster_id === 'all' ? (
                       <Chip label="All Clusters" size="small" variant="outlined" />
                     ) : (
@@ -409,7 +417,7 @@ const CleanupPolicies = () => {
                   <TableCell>
                     <Checkbox checked={policy.dry_run} disabled size="small" />
                   </TableCell>
-                  <TableCell>
+                  <TableCell sx={{ display: { xs: 'none', md: 'table-cell' } }}>
                     {policy.last_run_at ? timeAgo(policy.last_run_at) : 'Never'}
                   </TableCell>
                   <TableCell align="right">
@@ -446,8 +454,12 @@ const CleanupPolicies = () => {
               label="Name"
               value={form.name}
               onChange={(e) => setForm({ ...form, name: e.target.value })}
+              onBlur={() => setFormTouched((prev) => ({ ...prev, name: true }))}
               fullWidth
               required
+              helperText={formTouched.name === true && !form.name.trim() ? 'Name is required' : `${form.name.length}/100`}
+              error={(formTouched.name === true && !form.name.trim()) || form.name.length > 100}
+              slotProps={{ htmlInput: { maxLength: 100 } }}
             />
             <FormControl fullWidth>
               <InputLabel id="cluster-label">Cluster</InputLabel>
@@ -538,9 +550,11 @@ const CleanupPolicies = () => {
               label="Schedule (Cron)"
               value={form.schedule}
               onChange={(e) => setForm({ ...form, schedule: e.target.value })}
+              onBlur={() => setFormTouched((prev) => ({ ...prev, schedule: true }))}
               fullWidth
               required
-              helperText={`${describeCron(form.schedule)} — Format: minute hour day month weekday`}
+              error={formTouched.schedule === true && !form.schedule.trim()}
+              helperText={formTouched.schedule === true && !form.schedule.trim() ? 'Schedule is required' : `${describeCron(form.schedule)} — Format: minute hour day month weekday`}
             />
 
             <Box sx={{ display: 'flex', gap: 2 }}>
@@ -607,11 +621,7 @@ const CleanupPolicies = () => {
             </Box>
           )}
 
-          {running && (
-            <Box sx={{ display: 'flex', justifyContent: 'center', my: 4 }}>
-              <CircularProgress />
-            </Box>
-          )}
+          {running && <LoadingState label="Running policy..." />}
 
           {runError && <Alert severity="error" sx={{ mt: 1 }}>{runError}</Alert>}
 

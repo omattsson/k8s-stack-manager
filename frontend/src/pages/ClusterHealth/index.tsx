@@ -2,7 +2,6 @@ import { useEffect, useState, useCallback, useRef } from 'react';
 import {
   Box,
   Typography,
-  CircularProgress,
   Alert,
   Card,
   CardContent,
@@ -31,6 +30,7 @@ import type {
   NodeStatusInfo,
   ClusterNamespaceInfo,
 } from '../../types';
+import LoadingState from '../../components/LoadingState';
 
 const AUTO_REFRESH_INTERVAL = 30000;
 
@@ -204,11 +204,7 @@ const ClusterHealth = () => {
 
       {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
 
-      {loading && (
-        <Box sx={{ display: 'flex', justifyContent: 'center', mt: 4 }}>
-          <CircularProgress />
-        </Box>
-      )}
+      {loading && <LoadingState label="Loading health data..." />}
 
       {!loading && summary && (
         <>

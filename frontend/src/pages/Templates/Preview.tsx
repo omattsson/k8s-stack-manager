@@ -6,13 +6,13 @@ import {
   Paper,
   Chip,
   Button,
-  CircularProgress,
   Alert,
   Divider,
 } from '@mui/material';
 import { templateService } from '../../api/client';
 import { useAuth } from '../../context/AuthContext';
 import type { StackTemplate } from '../../types';
+import LoadingState from '../../components/LoadingState';
 
 const Preview = () => {
   const { id } = useParams<{ id: string }>();
@@ -50,11 +50,7 @@ const Preview = () => {
   };
 
   if (loading) {
-    return (
-      <Box display="flex" justifyContent="center" alignItems="center" minHeight="200px">
-        <CircularProgress />
-      </Box>
-    );
+    return <LoadingState label="Loading template..." />;
   }
 
   if (error || !template) {

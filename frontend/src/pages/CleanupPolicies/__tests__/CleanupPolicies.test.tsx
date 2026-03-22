@@ -3,6 +3,7 @@ import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import CleanupPolicies from '../index';
+import { NotificationProvider } from '../../../context/NotificationContext';
 
 vi.mock('../../../api/client', () => ({
   cleanupPolicyService: {
@@ -74,11 +75,13 @@ describe('CleanupPolicies Page', () => {
 
     render(
       <MemoryRouter>
-        <CleanupPolicies />
+        <NotificationProvider>
+          <CleanupPolicies />
+        </NotificationProvider>
       </MemoryRouter>,
     );
 
-    expect(screen.getByText('Cleanup Policies')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Cleanup Policies' })).toBeInTheDocument();
     expect(screen.getByRole('progressbar')).toBeInTheDocument();
   });
 
@@ -88,7 +91,9 @@ describe('CleanupPolicies Page', () => {
 
     render(
       <MemoryRouter>
-        <CleanupPolicies />
+        <NotificationProvider>
+          <CleanupPolicies />
+        </NotificationProvider>
       </MemoryRouter>,
     );
 
@@ -113,7 +118,9 @@ describe('CleanupPolicies Page', () => {
 
     render(
       <MemoryRouter>
-        <CleanupPolicies />
+        <NotificationProvider>
+          <CleanupPolicies />
+        </NotificationProvider>
       </MemoryRouter>,
     );
 
@@ -143,7 +150,9 @@ describe('CleanupPolicies Page', () => {
 
     render(
       <MemoryRouter>
-        <CleanupPolicies />
+        <NotificationProvider>
+          <CleanupPolicies />
+        </NotificationProvider>
       </MemoryRouter>,
     );
 
@@ -172,7 +181,9 @@ describe('CleanupPolicies Page', () => {
 
     render(
       <MemoryRouter>
-        <CleanupPolicies />
+        <NotificationProvider>
+          <CleanupPolicies />
+        </NotificationProvider>
       </MemoryRouter>,
     );
 

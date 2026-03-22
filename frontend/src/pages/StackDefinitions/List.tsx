@@ -4,7 +4,6 @@ import {
   Box,
   Typography,
   Button,
-  CircularProgress,
   Alert,
   Table,
   TableBody,
@@ -19,6 +18,8 @@ import AddIcon from '@mui/icons-material/Add';
 import { definitionService, templateService } from '../../api/client';
 import FavoriteButton from '../../components/FavoriteButton';
 import type { StackDefinition, StackTemplate } from '../../types';
+import LoadingState from '../../components/LoadingState';
+import EmptyState from '../../components/EmptyState';
 
 const List = () => {
   const [definitions, setDefinitions] = useState<StackDefinition[]>([]);
@@ -53,11 +54,7 @@ const List = () => {
   }, []);
 
   if (loading) {
-    return (
-      <Box display="flex" justifyContent="center" alignItems="center" minHeight="200px">
-        <CircularProgress />
-      </Box>
-    );
+    return <LoadingState label="Loading definitions..." />;
   }
 
   if (error) {
@@ -76,14 +73,15 @@ const List = () => {
       </Box>
 
       {definitions.length === 0 ? (
-        <Paper sx={{ p: 4, textAlign: 'center' }}>
-          <Typography color="text.secondary" gutterBottom>
-            No stack definitions yet.
-          </Typography>
-          <Button variant="outlined" onClick={() => navigate('/templates')}>
-            Browse Templates
-          </Button>
-        </Paper>
+        <EmptyState
+          title="No stack definitions yet"
+          description="Create a definition from a template to get started."
+          action={
+            <Button variant="outlined" onClick={() => navigate('/templates')}>
+              Browse Templates
+            </Button>
+          }
+        />
       ) : (
         <TableContainer component={Paper}>
           <Table>
@@ -94,7 +92,7 @@ const List = () => {
                 <TableCell>Default Branch</TableCell>
                 <TableCell>Charts</TableCell>
                 <TableCell>Source Template</TableCell>
-                <TableCell>Created</TableCell>
+                <TableCell sx={{ display: { xs: 'none', md: 'table-cell' } }}>Created</TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
@@ -146,7 +144,7 @@ const List = () => {
                       '—'
                     )}
                   </TableCell>
-                  <TableCell>
+                  <TableCell sx={{ display: { xs: 'none', md: 'table-cell' } }}>
                     {new Date(def.created_at).toLocaleDateString()}
                   </TableCell>
                 </TableRow>

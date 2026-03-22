@@ -2,7 +2,6 @@ import { useEffect, useState, useCallback } from 'react';
 import {
   Box,
   Typography,
-  CircularProgress,
   Alert,
   Table,
   TableBody,
@@ -17,12 +16,14 @@ import {
   TablePagination,
   Menu,
   ListItemText,
+  Chip,
 } from '@mui/material';
 import FileDownloadIcon from '@mui/icons-material/FileDownload';
 import { auditService } from '../../api/client';
 import type { AuditLog as AuditLogType } from '../../types';
 import EntityLink from '../../components/EntityLink';
 import { useAuth } from '../../context/AuthContext';
+import LoadingState from '../../components/LoadingState';
 
 const ENTITY_TYPES = ['All', 'stack_template', 'stack_definition', 'stack_instance', 'value_override', 'user'];
 const ACTIONS = ['All', 'create', 'update', 'delete', 'publish', 'unpublish', 'clone', 'instantiate'];
@@ -39,6 +40,8 @@ const AuditLog = () => {
   const [page, setPage] = useState(0);
   const [rowsPerPage, setRowsPerPage] = useState(25);
   const [exportAnchor, setExportAnchor] = useState<null | HTMLElement>(null);
+  const [startDate, setStartDate] = useState('');
+  const [endDate, setEndDate] = useState('');
 
   const fetchLogs = useCallback(async () => {
     setLoading(true);
@@ -51,6 +54,8 @@ const AuditLog = () => {
       if (entityType !== 'All') filters.entity_type = entityType;
       if (action !== 'All') filters.action = action;
       if (userID) filters.user_id = userID;
+      if (startDate) filters.start_date = startDate;
+      if (endDate) filters.end_date = endDate;
 
       const response = await auditService.list(filters);
       setLogs(response.data || []);
@@ -60,7 +65,7 @@ const AuditLog = () => {
     } finally {
       setLoading(false);
     }
-  }, [entityType, action, userID, page, rowsPerPage]);
+  }, [entityType, action, userID, page, rowsPerPage, startDate, endDate]);
 
   useEffect(() => {
     fetchLogs();
@@ -78,6 +83,8 @@ const AuditLog = () => {
       if (entityType !== 'All') filters.entity_type = entityType;
       if (action !== 'All') filters.action = action;
       if (userID) filters.user_id = userID;
+      if (startDate) filters.start_date = startDate;
+      if (endDate) filters.end_date = endDate;
       await auditService.export(filters, format);
     } catch {
       setError('Failed to export audit logs');
@@ -123,6 +130,24 @@ const AuditLog = () => {
               <MenuItem key={a} value={a}>{a === 'All' ? 'All Actions' : a}</MenuItem>
             ))}
           </TextField>
+          <TextField
+            label="From"
+            type="date"
+            value={startDate}
+            onChange={(e) => { setStartDate(e.target.value); setPage(0); }}
+            size="small"
+            slotProps={{ inputLabel: { shrink: true } }}
+            sx={{ minWidth: 150 }}
+          />
+          <TextField
+            label="To"
+            type="date"
+            value={endDate}
+            onChange={(e) => { setEndDate(e.target.value); setPage(0); }}
+            size="small"
+            slotProps={{ inputLabel: { shrink: true } }}
+            sx={{ minWidth: 150 }}
+          />
           <Button variant="outlined" onClick={handleFilter}>
             Filter
           </Button>
@@ -150,25 +175,60 @@ const AuditLog = () => {
             </>
           )}
         </Box>
+        <Box sx={{ display: 'flex', gap: 1, mt: 1, alignItems: 'center' }}>
+          <Typography variant="body2" color="text.secondary">Quick:</Typography>
+          {[
+            { label: 'Last 24h', days: 1 },
+            { label: 'Last 7 days', days: 7 },
+            { label: 'Last 30 days', days: 30 },
+          ].map(({ label, days }) => {
+            const now = new Date();
+            const expectedStart = new Date(now.getTime() - days * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+            const expectedEnd = now.toISOString().split('T')[0];
+            const isActive = startDate === expectedStart && endDate === expectedEnd;
+            return (
+              <Chip
+                key={label}
+                label={label}
+                size="small"
+                onClick={() => {
+                  const n = new Date();
+                  const s = new Date(n.getTime() - days * 24 * 60 * 60 * 1000);
+                  setStartDate(s.toISOString().split('T')[0]);
+                  setEndDate(n.toISOString().split('T')[0]);
+                  setPage(0);
+                }}
+                color={isActive ? 'primary' : 'default'}
+                variant={isActive ? 'filled' : 'outlined'}
+              />
+            );
+          })}
+          {(startDate || endDate) && (
+            <Chip
+              label="Clear dates"
+              size="small"
+              variant="outlined"
+              onDelete={() => { setStartDate(''); setEndDate(''); setPage(0); }}
+            />
+          )}
+        </Box>
       </Paper>
 
       {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
 
       {loading ? (
-        <Box display="flex" justifyContent="center" alignItems="center" minHeight="200px">
-          <CircularProgress />
-        </Box>
+        <LoadingState label="Loading audit logs..." />
       ) : (
         <Paper>
-          <TableContainer>
-            <Table size="small">
+          <TableContainer sx={{ maxHeight: 600 }}>
+            <Table size="small" stickyHeader>
               <TableHead>
                 <TableRow>
                   <TableCell>Timestamp</TableCell>
                   <TableCell>User</TableCell>
                   <TableCell>Action</TableCell>
                   <TableCell>Entity Type</TableCell>
-                  <TableCell>Entity ID</TableCell>
+                  <TableCell sx={{ display: { xs: 'none', md: 'table-cell' } }}>Entity ID</TableCell>
                   <TableCell>Details</TableCell>
                 </TableRow>
               </TableHead>
@@ -190,7 +250,7 @@ const AuditLog = () => {
                       <TableCell>{log.username}</TableCell>
                       <TableCell>{log.action}</TableCell>
                       <TableCell>{log.entity_type}</TableCell>
-                      <TableCell>
+                      <TableCell sx={{ display: { xs: 'none', md: 'table-cell' } }}>
                         <EntityLink entityType={log.entity_type} entityId={log.entity_id} />
                       </TableCell>
                       <TableCell sx={{ maxWidth: 300 }}>
