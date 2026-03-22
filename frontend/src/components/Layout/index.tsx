@@ -3,6 +3,8 @@ import { Box, AppBar, Toolbar, Typography, Container, Button, Chip } from '@mui/
 import { Link as RouterLink } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 
+const ROLE_RANK: Record<string, number> = { user: 1, devops: 2, admin: 3 };
+
 interface LayoutProps {
   children: ReactNode;
 }
@@ -37,6 +39,16 @@ const Layout = ({ children }: LayoutProps) => {
               <Button color="inherit" component={RouterLink} to="/audit-log">
                 Audit Log
               </Button>
+              {(ROLE_RANK[user?.role ?? ''] ?? 0) >= ROLE_RANK.devops && (
+                <>
+                  <Button color="inherit" component={RouterLink} to="/admin/cluster-health">
+                    Cluster Health
+                  </Button>
+                  <Button color="inherit" component={RouterLink} to="/admin/analytics">
+                    Analytics
+                  </Button>
+                </>
+              )}
               {user?.role === 'admin' && (
                 <>
                   <Button color="inherit" component={RouterLink} to="/admin/users">
@@ -47,12 +59,6 @@ const Layout = ({ children }: LayoutProps) => {
                   </Button>
                   <Button color="inherit" component={RouterLink} to="/admin/clusters">
                     Clusters
-                  </Button>
-                  <Button color="inherit" component={RouterLink} to="/admin/cluster-health">
-                    Cluster Health
-                  </Button>
-                  <Button color="inherit" component={RouterLink} to="/admin/analytics">
-                    Analytics
                   </Button>
                   <Button color="inherit" component={RouterLink} to="/admin/shared-values">
                     Shared Values

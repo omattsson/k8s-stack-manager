@@ -22,11 +22,13 @@ import FileDownloadIcon from '@mui/icons-material/FileDownload';
 import { auditService } from '../../api/client';
 import type { AuditLog as AuditLogType } from '../../types';
 import EntityLink from '../../components/EntityLink';
+import { useAuth } from '../../context/AuthContext';
 
 const ENTITY_TYPES = ['All', 'stack_template', 'stack_definition', 'stack_instance', 'value_override', 'user'];
 const ACTIONS = ['All', 'create', 'update', 'delete', 'publish', 'unpublish', 'clone', 'instantiate'];
 
 const AuditLog = () => {
+  const { user } = useAuth();
   const [logs, setLogs] = useState<AuditLogType[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -124,25 +126,29 @@ const AuditLog = () => {
           <Button variant="outlined" onClick={handleFilter}>
             Filter
           </Button>
-          <Button
-            variant="outlined"
-            startIcon={<FileDownloadIcon />}
-            onClick={(e) => setExportAnchor(e.currentTarget)}
-          >
-            Export
-          </Button>
-          <Menu
-            anchorEl={exportAnchor}
-            open={Boolean(exportAnchor)}
-            onClose={() => setExportAnchor(null)}
-          >
-            <MenuItem onClick={() => handleExport('json')}>
-              <ListItemText>Export as JSON</ListItemText>
-            </MenuItem>
-            <MenuItem onClick={() => handleExport('csv')}>
-              <ListItemText>Export as CSV</ListItemText>
-            </MenuItem>
-          </Menu>
+          {user?.role === 'admin' && (
+            <>
+              <Button
+                variant="outlined"
+                startIcon={<FileDownloadIcon />}
+                onClick={(e) => setExportAnchor(e.currentTarget)}
+              >
+                Export
+              </Button>
+              <Menu
+                anchorEl={exportAnchor}
+                open={Boolean(exportAnchor)}
+                onClose={() => setExportAnchor(null)}
+              >
+                <MenuItem onClick={() => handleExport('json')}>
+                  <ListItemText>Export as JSON</ListItemText>
+                </MenuItem>
+                <MenuItem onClick={() => handleExport('csv')}>
+                  <ListItemText>Export as CSV</ListItemText>
+                </MenuItem>
+              </Menu>
+            </>
+          )}
         </Box>
       </Paper>
 

@@ -111,14 +111,11 @@ func (h *AnalyticsHandler) GetOverview(c *gin.Context) {
 		return
 	}
 
-	totalDeploys := 0
 	ctx := c.Request.Context()
-	for _, inst := range instances {
-		logs, err := h.deployLogRepo.ListByInstance(ctx, inst.ID)
-		if err != nil {
-			slog.Error("analytics: failed to list deploy logs", "instance_id", inst.ID, "error", err)
-			continue
-		}
+	logsByInstance := h.collectDeployLogs(ctx, instances)
+
+	totalDeploys := 0
+	for _, logs := range logsByInstance {
 		for _, l := range logs {
 			if l.Action == models.DeployActionDeploy {
 				totalDeploys++
