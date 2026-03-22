@@ -63,8 +63,8 @@ frontend/
 | `/admin/users` | User management | Admin |
 | `/admin/orphaned-namespaces` | Namespace cleanup | Admin |
 | `/admin/clusters` | Cluster management | Admin |
-| `/admin/cluster-health` | Cluster health dashboard | Admin |
-| `/admin/analytics` | Usage stats and metrics | Admin |
+| `/admin/cluster-health` | Cluster health dashboard | DevOps+ |
+| `/admin/analytics` | Usage stats and metrics | DevOps+ |
 | `/admin/shared-values` | Per-cluster shared Helm values | Admin |
 | `/admin/cleanup-policies` | Cleanup policy editor | Admin |
 | `/profile` | User profile + API keys | Authenticated |

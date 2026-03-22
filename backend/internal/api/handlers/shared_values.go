@@ -126,15 +126,10 @@ func (h *SharedValuesHandler) UpdateSharedValues(c *gin.Context) {
 		return
 	}
 
-	existing, err := h.repo.FindByID(valueID)
+	existing, err := h.repo.FindByClusterAndID(clusterID, valueID)
 	if err != nil {
 		status, message := mapError(err, "Shared values")
 		c.JSON(status, gin.H{"error": message})
-		return
-	}
-
-	if existing.ClusterID != clusterID {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Shared values not found"})
 		return
 	}
 
@@ -179,15 +174,9 @@ func (h *SharedValuesHandler) DeleteSharedValues(c *gin.Context) {
 	clusterID := c.Param("id")
 	valueID := c.Param("valueId")
 
-	existing, err := h.repo.FindByID(valueID)
-	if err != nil {
+	if _, err := h.repo.FindByClusterAndID(clusterID, valueID); err != nil {
 		status, message := mapError(err, "Shared values")
 		c.JSON(status, gin.H{"error": message})
-		return
-	}
-
-	if existing.ClusterID != clusterID {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Shared values not found"})
 		return
 	}
 

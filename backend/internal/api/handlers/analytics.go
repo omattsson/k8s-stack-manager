@@ -319,6 +319,9 @@ func (h *AnalyticsHandler) GetUserStats(c *gin.Context) {
 }
 
 // collectDeployLogs fetches deploy logs for each instance and returns them indexed by instance ID.
+// TODO: This performs O(N) queries — one per instance. For large deployments consider
+// adding a bulk ListByInstances(ids) repository method, time-bounded queries, or
+// pre-aggregated per-template deployment counters to avoid the N+1 pattern.
 func (h *AnalyticsHandler) collectDeployLogs(ctx context.Context, instances []models.StackInstance) map[string][]models.DeploymentLog {
 	result := make(map[string][]models.DeploymentLog, len(instances))
 	for _, inst := range instances {

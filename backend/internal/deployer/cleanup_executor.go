@@ -55,13 +55,15 @@ func (e *CleanupExecutor) CleanInstance(ctx context.Context, inst *models.StackI
 	return err
 }
 
-// DeleteInstance stops/cleans if needed, then deletes the instance from the database.
+// DeleteInstance deletes the instance from the database.
+// It refuses deletion while the instance is running or in the middle of an async
+// stop/clean operation, because those workflows need to read/update the record.
+// Callers should ensure the instance is stopped/cleaned before requesting deletion.
 func (e *CleanupExecutor) DeleteInstance(ctx context.Context, inst *models.StackInstance) error {
-	// If the instance is running, stop it first.
-	if inst.Status == models.StackStatusRunning || inst.Status == models.StackStatusDeploying {
-		if err := e.StopInstance(ctx, inst); err != nil {
-			return fmt.Errorf("stopping before delete: %w", err)
-		}
+	switch inst.Status {
+	case models.StackStatusRunning, models.StackStatusDeploying,
+		models.StackStatusStopping, models.StackStatusCleaning:
+		return fmt.Errorf("cannot delete instance %s while status is %s; stop/clean must complete first", inst.ID, inst.Status)
 	}
 	return e.instanceRepo.Delete(inst.ID)
 }

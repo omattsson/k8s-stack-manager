@@ -579,6 +579,19 @@ func (c *Client) GetNodeStatuses(ctx context.Context) ([]NodeStatus, error) {
 		return nil, fmt.Errorf("list nodes: %w", err)
 	}
 
+	// List all pods once and count per node to avoid N+1 API calls.
+	podCountByNode := make(map[string]int, len(nodeList.Items))
+	allPods, err := c.clientset.CoreV1().Pods("").List(ctx, metav1.ListOptions{})
+	if err != nil {
+		slog.Warn("Failed to list pods for node counts", "error", err)
+	} else {
+		for _, p := range allPods.Items {
+			if p.Spec.NodeName != "" {
+				podCountByNode[p.Spec.NodeName]++
+			}
+		}
+	}
+
 	result := make([]NodeStatus, 0, len(nodeList.Items))
 	for _, node := range nodeList.Items {
 		status := "NotReady"
@@ -605,24 +618,13 @@ func (c *Client) GetNodeStatuses(ctx context.Context) ([]NodeStatus, error) {
 			Pods:   node.Status.Allocatable.Pods().String(),
 		}
 
-		// Count pods on this node.
-		podList, err := c.clientset.CoreV1().Pods("").List(ctx, metav1.ListOptions{
-			FieldSelector: "spec.nodeName=" + node.Name,
-		})
-		podCount := 0
-		if err != nil {
-			slog.Warn("Failed to count pods on node", "node", node.Name, "error", err)
-		} else {
-			podCount = len(podList.Items)
-		}
-
 		result = append(result, NodeStatus{
 			Name:        node.Name,
 			Status:      status,
 			Conditions:  conditions,
 			Capacity:    capacity,
 			Allocatable: allocatable,
-			PodCount:    podCount,
+			PodCount:    podCountByNode[node.Name],
 		})
 	}
 

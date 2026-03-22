@@ -19,6 +19,7 @@ type SharedValues struct {
 type SharedValuesRepository interface {
 	Create(sv *SharedValues) error
 	FindByID(id string) (*SharedValues, error)
+	FindByClusterAndID(clusterID, id string) (*SharedValues, error)
 	Update(sv *SharedValues) error
 	Delete(id string) error
 	ListByCluster(clusterID string) ([]SharedValues, error)

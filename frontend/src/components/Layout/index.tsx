@@ -2,8 +2,7 @@ import type { ReactNode } from 'react';
 import { Box, AppBar, Toolbar, Typography, Container, Button, Chip } from '@mui/material';
 import { Link as RouterLink } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
-
-const ROLE_RANK: Record<string, number> = { user: 1, devops: 2, admin: 3 };
+import { hasAtLeastRole } from '../../utils/roles';
 
 interface LayoutProps {
   children: ReactNode;
@@ -39,7 +38,7 @@ const Layout = ({ children }: LayoutProps) => {
               <Button color="inherit" component={RouterLink} to="/audit-log">
                 Audit Log
               </Button>
-              {(ROLE_RANK[user?.role ?? ''] ?? 0) >= ROLE_RANK.devops && (
+              {hasAtLeastRole(user?.role, 'devops') && (
                 <>
                   <Button color="inherit" component={RouterLink} to="/admin/cluster-health">
                     Cluster Health

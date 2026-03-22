@@ -52,7 +52,7 @@ func NewScheduler(
 ) *Scheduler {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &Scheduler{
-		cron:         cron.New(),
+		cron:         cron.New(cron.WithLocation(time.UTC)),
 		policyRepo:   policyRepo,
 		instanceRepo: instanceRepo,
 		auditRepo:    auditRepo,

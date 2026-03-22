@@ -44,6 +44,14 @@ func (m *mockSharedValuesRepo) FindByID(id string) (*models.SharedValues, error)
 	return sv, nil
 }
 
+func (m *mockSharedValuesRepo) FindByClusterAndID(clusterID, id string) (*models.SharedValues, error) {
+	sv, ok := m.items[id]
+	if !ok || sv.ClusterID != clusterID {
+		return nil, dberrors.NewDatabaseError("find_by_cluster_and_id", dberrors.ErrNotFound)
+	}
+	return sv, nil
+}
+
 func (m *mockSharedValuesRepo) Update(sv *models.SharedValues) error {
 	if _, ok := m.items[sv.ID]; !ok {
 		return dberrors.NewDatabaseError("update", dberrors.ErrNotFound)

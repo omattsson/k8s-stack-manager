@@ -68,7 +68,7 @@ func (r *SharedValuesRepository) Create(sv *models.SharedValues) error {
 func (r *SharedValuesRepository) FindByID(id string) (*models.SharedValues, error) {
 	ctx := context.Background()
 
-	// ID is the RowKey but we don't know the PartitionKey, so scan by ID property.
+	// ID is the RowKey but we don't know the PartitionKey, so scan by RowKey.
 	filter := "RowKey eq '" + escapeODataString(id) + "'"
 	pager := r.client.NewListEntitiesPager(&aztables.ListEntitiesOptions{
 		Filter: &filter,
@@ -83,6 +83,22 @@ func (r *SharedValuesRepository) FindByID(id string) (*models.SharedValues, erro
 	}
 
 	return sharedValuesFromEntity(entities[0]), nil
+}
+
+func (r *SharedValuesRepository) FindByClusterAndID(clusterID, id string) (*models.SharedValues, error) {
+	ctx := context.Background()
+
+	resp, err := r.client.GetEntity(ctx, clusterID, id, nil)
+	if err != nil {
+		return nil, mapAzureError("find_by_cluster_and_id", err)
+	}
+
+	var entity map[string]interface{}
+	if err := json.Unmarshal(resp.Value, &entity); err != nil {
+		return nil, dberrors.NewDatabaseError("unmarshal", err)
+	}
+
+	return sharedValuesFromEntity(entity), nil
 }
 
 func (r *SharedValuesRepository) Update(sv *models.SharedValues) error {
