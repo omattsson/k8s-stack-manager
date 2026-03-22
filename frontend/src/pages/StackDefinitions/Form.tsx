@@ -67,7 +67,7 @@ const Form = () => {
     [name, description, defaultBranch, charts]
   );
 
-  useUnsavedChanges(isDirty);
+  useUnsavedChanges(isDirty && !saving);
 
   useEffect(() => {
     if (!id) return;

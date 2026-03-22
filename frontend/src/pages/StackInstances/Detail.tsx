@@ -228,6 +228,8 @@ const Detail = () => {
         await instanceService.setOverride(id, chartConfigId, { values });
       }
 
+      initialBranchRef.current = branch;
+      initialOverridesRef.current = { ...editedOverrides };
       showSuccess('Changes saved successfully');
     } catch {
       setError('Failed to save changes');
