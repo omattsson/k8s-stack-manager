@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState, useRef, useMemo } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import {
   Box,
@@ -59,12 +59,15 @@ const Form = () => {
   const [error, setError] = useState<string | null>(null);
   const [touched, setTouched] = useState<Record<string, boolean>>({});
   const initialValuesRef = useRef({ name: '', description: '', defaultBranch: 'master', charts: [] as ChartFormData[] });
-  const isDirty = name !== initialValuesRef.current.name
+  const isDirty = useMemo(() =>
+    name !== initialValuesRef.current.name
     || description !== initialValuesRef.current.description
     || defaultBranch !== initialValuesRef.current.defaultBranch
-    || JSON.stringify(charts) !== JSON.stringify(initialValuesRef.current.charts);
+    || JSON.stringify(charts) !== JSON.stringify(initialValuesRef.current.charts),
+    [name, description, defaultBranch, charts]
+  );
 
-  useUnsavedChanges(isDirty);
+  useUnsavedChanges(isDirty && !saving);
 
   useEffect(() => {
     if (!id) return;

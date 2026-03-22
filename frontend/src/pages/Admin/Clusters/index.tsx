@@ -22,7 +22,6 @@ import {
   TextField,
   FormControlLabel,
   Checkbox,
-  Snackbar,
   Breadcrumbs,
   Link as MuiLink,
 } from '@mui/material';
@@ -37,6 +36,7 @@ import { clusterService } from '../../../api/client';
 import type { Cluster, CreateClusterRequest, UpdateClusterRequest, ClusterTestResult } from '../../../types';
 import LoadingState from '../../../components/LoadingState';
 import { Link } from 'react-router-dom';
+import { useNotification } from '../../../context/NotificationContext';
 
 const emptyCreateForm: CreateClusterRequest = {
   name: '',
@@ -80,13 +80,7 @@ const Clusters = () => {
 
   // Delete confirm
   const [deleteTarget, setDeleteTarget] = useState<Cluster | null>(null);
-
-  // Snackbar
-  const [snackbar, setSnackbar] = useState<{ open: boolean; message: string; severity: 'success' | 'error' }>({
-    open: false,
-    message: '',
-    severity: 'success',
-  });
+  const { showSuccess, showError } = useNotification();
 
   const fetchClusters = useCallback(async () => {
     setLoading(true);
@@ -161,10 +155,10 @@ const Clusters = () => {
           update.kubeconfig_path = form.kubeconfig_path;
         }
         await clusterService.update(editingCluster.id, update);
-        setSnackbar({ open: true, message: 'Cluster updated', severity: 'success' });
+        showSuccess('Cluster updated');
       } else {
         await clusterService.create(form);
-        setSnackbar({ open: true, message: 'Cluster created', severity: 'success' });
+        showSuccess('Cluster created');
       }
       setDialogOpen(false);
       await fetchClusters();
@@ -180,10 +174,10 @@ const Clusters = () => {
     try {
       await clusterService.delete(deleteTarget.id);
       setDeleteTarget(null);
-      setSnackbar({ open: true, message: 'Cluster deleted', severity: 'success' });
+      showSuccess('Cluster deleted');
       await fetchClusters();
     } catch {
-      setSnackbar({ open: true, message: 'Failed to delete cluster. It may still have instances.', severity: 'error' });
+      showError('Failed to delete cluster. It may still have instances.');
       setDeleteTarget(null);
     }
   };
@@ -192,19 +186,24 @@ const Clusters = () => {
     try {
       const result: ClusterTestResult = await clusterService.testConnection(cluster.id);
       const version = result.server_version ? ` (${result.server_version})` : '';
-      setSnackbar({ open: true, message: `${cluster.name}: ${result.message}${version}`, severity: result.status === 'success' ? 'success' : 'error' });
+      const message = `${cluster.name}: ${result.message}${version}`;
+      if (result.status === 'success') {
+        showSuccess(message);
+      } else {
+        showError(message);
+      }
     } catch {
-      setSnackbar({ open: true, message: `Failed to test connection for ${cluster.name}`, severity: 'error' });
+      showError(`Failed to test connection for ${cluster.name}`);
     }
   };
 
   const handleSetDefault = async (cluster: Cluster) => {
     try {
       await clusterService.setDefault(cluster.id);
-      setSnackbar({ open: true, message: `${cluster.name} set as default`, severity: 'success' });
+      showSuccess(`${cluster.name} set as default`);
       await fetchClusters();
     } catch {
-      setSnackbar({ open: true, message: 'Failed to set default cluster', severity: 'error' });
+      showError('Failed to set default cluster');
     }
   };
 
@@ -412,21 +411,6 @@ const Clusters = () => {
         </DialogActions>
       </Dialog>
 
-      {/* Snackbar */}
-      <Snackbar
-        open={snackbar.open}
-        autoHideDuration={5000}
-        onClose={() => setSnackbar((prev) => ({ ...prev, open: false }))}
-        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
-      >
-        <Alert
-          onClose={() => setSnackbar((prev) => ({ ...prev, open: false }))}
-          severity={snackbar.severity}
-          variant="filled"
-        >
-          {snackbar.message}
-        </Alert>
-      </Snackbar>
     </Box>
   );
 };

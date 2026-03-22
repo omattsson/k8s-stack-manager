@@ -21,7 +21,6 @@ import {
   DialogContent,
   DialogActions,
   TextField,
-  Snackbar,
   Tooltip,
   Breadcrumbs,
   Link as MuiLink,
@@ -35,6 +34,7 @@ import { clusterService, sharedValuesService } from '../../api/client';
 import type { Cluster, SharedValues } from '../../types';
 import LoadingState from '../../components/LoadingState';
 import { Link } from 'react-router-dom';
+import { useNotification } from '../../context/NotificationContext';
 
 interface FormState {
   name: string;
@@ -68,13 +68,7 @@ const SharedValuesPage = () => {
   // Delete confirmation
   const [deleteTarget, setDeleteTarget] = useState<SharedValues | null>(null);
   const [deleting, setDeleting] = useState(false);
-
-  // Snackbar
-  const [snackbar, setSnackbar] = useState<{ open: boolean; message: string; severity: 'success' | 'error' }>({
-    open: false,
-    message: '',
-    severity: 'success',
-  });
+  const { showSuccess, showError } = useNotification();
 
   // Fetch clusters on mount
   useEffect(() => {
@@ -169,10 +163,10 @@ const SharedValuesPage = () => {
 
       if (editingId) {
         await sharedValuesService.update(selectedCluster, editingId, payload);
-        setSnackbar({ open: true, message: 'Shared values updated', severity: 'success' });
+        showSuccess('Shared values updated');
       } else {
         await sharedValuesService.create(selectedCluster, payload);
-        setSnackbar({ open: true, message: 'Shared values created', severity: 'success' });
+        showSuccess('Shared values created');
       }
       setDialogOpen(false);
       setEditingId(null);
@@ -193,11 +187,11 @@ const SharedValuesPage = () => {
     setDeleting(true);
     try {
       await sharedValuesService.delete(selectedCluster, deleteTarget.id);
-      setSnackbar({ open: true, message: 'Shared values deleted', severity: 'success' });
+      showSuccess('Shared values deleted');
       setDeleteTarget(null);
       await fetchSharedValues();
     } catch {
-      setSnackbar({ open: true, message: 'Failed to delete shared values', severity: 'error' });
+      showError('Failed to delete shared values');
     } finally {
       setDeleting(false);
     }
@@ -397,21 +391,6 @@ const SharedValuesPage = () => {
         </DialogActions>
       </Dialog>
 
-      {/* Snackbar */}
-      <Snackbar
-        open={snackbar.open}
-        autoHideDuration={4000}
-        onClose={() => setSnackbar((s) => ({ ...s, open: false }))}
-      >
-        <Alert
-          onClose={() => setSnackbar((s) => ({ ...s, open: false }))}
-          severity={snackbar.severity}
-          variant="filled"
-          sx={{ width: '100%' }}
-        >
-          {snackbar.message}
-        </Alert>
-      </Snackbar>
     </Box>
   );
 };

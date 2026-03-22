@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useRef } from 'react';
+import { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useWebSocket } from '../../hooks/useWebSocket';
 import type { WsMessage } from '../../hooks/useWebSocket';
@@ -61,8 +61,11 @@ const Detail = () => {
   const [extending, setExtending] = useState(false);
   const initialOverridesRef = useRef<Record<string, string>>({});
   const initialBranchRef = useRef('');
-  const isDirty = branch !== initialBranchRef.current
-    || JSON.stringify(editedOverrides) !== JSON.stringify(initialOverridesRef.current);
+  const isDirty = useMemo(() =>
+    branch !== initialBranchRef.current
+    || JSON.stringify(editedOverrides) !== JSON.stringify(initialOverridesRef.current),
+    [branch, editedOverrides]
+  );
 
   useUnsavedChanges(isDirty);
 
@@ -225,6 +228,8 @@ const Detail = () => {
         await instanceService.setOverride(id, chartConfigId, { values });
       }
 
+      initialBranchRef.current = branch;
+      initialOverridesRef.current = { ...editedOverrides };
       showSuccess('Changes saved successfully');
     } catch {
       setError('Failed to save changes');

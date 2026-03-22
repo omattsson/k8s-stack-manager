@@ -25,7 +25,6 @@ import {
   Select,
   MenuItem,
   FormControlLabel,
-  Snackbar,
   Tooltip,
   Breadcrumbs,
   Link as MuiLink,
@@ -40,6 +39,7 @@ import { cleanupPolicyService, clusterService } from '../../api/client';
 import type { CleanupPolicy, CleanupResult, Cluster } from '../../types';
 import LoadingState from '../../components/LoadingState';
 import { Link } from 'react-router-dom';
+import { useNotification } from '../../context/NotificationContext';
 
 type ConditionPreset = 'idle_days' | 'stopped_age' | 'ttl_expired' | 'custom';
 
@@ -169,13 +169,7 @@ const CleanupPolicies = () => {
   const [runResults, setRunResults] = useState<CleanupResult[] | null>(null);
   const [running, setRunning] = useState(false);
   const [runError, setRunError] = useState<string | null>(null);
-
-  // Snackbar
-  const [snackbar, setSnackbar] = useState<{ open: boolean; message: string; severity: 'success' | 'error' }>({
-    open: false,
-    message: '',
-    severity: 'success',
-  });
+  const { showSuccess, showError } = useNotification();
 
   const fetchData = useCallback(async () => {
     setError(null);
@@ -263,10 +257,10 @@ const CleanupPolicies = () => {
       };
       if (editingId) {
         await cleanupPolicyService.update(editingId, payload);
-        setSnackbar({ open: true, message: 'Policy updated', severity: 'success' });
+        showSuccess('Policy updated');
       } else {
         await cleanupPolicyService.create(payload);
-        setSnackbar({ open: true, message: 'Policy created', severity: 'success' });
+        showSuccess('Policy created');
       }
       setDialogOpen(false);
       setEditingId(null);
@@ -285,7 +279,7 @@ const CleanupPolicies = () => {
         prev.map((p) => (p.id === policy.id ? { ...p, enabled: !p.enabled } : p)),
       );
     } catch {
-      setSnackbar({ open: true, message: 'Failed to toggle policy', severity: 'error' });
+      showError('Failed to toggle policy');
     }
   };
 
@@ -298,11 +292,11 @@ const CleanupPolicies = () => {
     setDeleting(true);
     try {
       await cleanupPolicyService.delete(deleteTarget.id);
-      setSnackbar({ open: true, message: 'Policy deleted', severity: 'success' });
+      showSuccess('Policy deleted');
       setDeleteTarget(null);
       await fetchData();
     } catch {
-      setSnackbar({ open: true, message: 'Failed to delete policy', severity: 'error' });
+      showError('Failed to delete policy');
     } finally {
       setDeleting(false);
     }
@@ -675,13 +669,6 @@ const CleanupPolicies = () => {
         </DialogActions>
       </Dialog>
 
-      {/* Snackbar */}
-      <Snackbar
-        open={snackbar.open}
-        autoHideDuration={4000}
-        onClose={() => setSnackbar({ ...snackbar, open: false })}
-        message={snackbar.message}
-      />
     </Box>
   );
 };
