@@ -28,9 +28,13 @@ frontend/
     ├── context/         # Auth + WebSocket context providers
     ├── pages/
     │   ├── Admin/       # User management + cluster management (admin only)
-    │   ├── AuditLog/    # Audit log viewer
+    │   ├── Analytics/   # Usage stats and deployment metrics (admin only)
+    │   ├── AuditLog/    # Audit log viewer + CSV/JSON export
+    │   ├── CleanupPolicies/  # Cron-based cleanup policy editor (admin only)
+    │   ├── ClusterHealth/    # Cluster health dashboard (admin only)
     │   ├── Login/       # Login page
-    │   ├── Profile/     # User profile
+    │   ├── Profile/     # User profile + API key management
+    │   ├── SharedValues/     # Per-cluster shared Helm values (admin only)
     │   ├── StackDefinitions/  # Definition list + form
     │   ├── StackInstances/    # Instance dashboard + detail + form
     │   └── Templates/         # Template gallery, builder, preview
@@ -55,10 +59,15 @@ frontend/
 | `/stack-definitions/:id/edit` | Definition editor | Authenticated |
 | `/stack-instances/new` | Instance form | Authenticated |
 | `/stack-instances/:id` | Instance detail | Authenticated |
-| `/audit-log` | Audit log viewer | Authenticated |
+| `/audit-log` | Audit log viewer + export | Authenticated |
 | `/admin/users` | User management | Admin |
+| `/admin/orphaned-namespaces` | Namespace cleanup | Admin |
 | `/admin/clusters` | Cluster management | Admin |
-| `/profile` | User profile | Authenticated |
+| `/admin/cluster-health` | Cluster health dashboard | Admin |
+| `/admin/analytics` | Usage stats and metrics | Admin |
+| `/admin/shared-values` | Per-cluster shared Helm values | Admin |
+| `/admin/cleanup-policies` | Cleanup policy editor | Admin |
+| `/profile` | User profile + API keys | Authenticated |
 
 ## API Services
 
@@ -69,12 +78,18 @@ All services are defined in `src/api/client.ts`:
 | `authService` | login, register, me |
 | `templateService` | list, get, create, update, delete, publish, unpublish, instantiate, clone, addChart, updateChart, deleteChart |
 | `definitionService` | list, get, create, update, delete, addChart, updateChart, deleteChart |
-| `instanceService` | list, get, create, update, delete, clone, getOverrides, setOverride, exportValues |
+| `instanceService` | list, get, create, update, delete, clone, getOverrides, setOverride, exportValues, deploy, stop, clean, extend, recentInstances, getStatus, getDeployLog |
 | `gitService` | branches, validateBranch, providers |
-| `auditService` | list |
+| `auditService` | list, export |
 | `userService` | list, create, delete |
 | `apiKeyService` | list, create, delete |
-| `clusterService` | list, get, create, update, delete, testConnection, setDefault |
+| `adminService` | listOrphanedNamespaces, deleteOrphanedNamespace |
+| `clusterService` | list, get, create, update, delete, testConnection, setDefault, getHealthSummary, getNodes, getNamespaces |
+| `favoriteService` | list, add, remove, check |
+| `branchOverrideService` | list, set, delete |
+| `analyticsService` | overview, templateStats, userStats |
+| `sharedValuesService` | list, create, update, delete |
+| `cleanupPolicyService` | list, create, update, delete, run |
 
 ## Development
 

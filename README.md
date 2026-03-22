@@ -85,6 +85,8 @@ cd frontend && npm install && npm run dev
 │   │   ├── deployer/          # Helm CLI wrapper for deploy/undeploy (multi-cluster)
 │   │   ├── k8s/               # Cluster client + status monitoring
 │   │   ├── models/            # Domain models + interfaces
+│   │   ├── scheduler/         # Cron-based cleanup policy execution
+│   │   ├── ttl/               # TTL reaper for auto-expiring stack instances
 │   │   └── websocket/         # Real-time event broadcasting
 │   └── pkg/crypto/            # AES-GCM encryption for kubeconfig at rest (key derived via SHA-256)
 │   └── docs/                  # Swagger/OpenAPI
@@ -105,12 +107,18 @@ cd frontend && npm install && npm run dev
 | Auth | `/api/v1/auth` | Login, register, current user |
 | Templates | `/api/v1/templates` | Stack template CRUD, publish, instantiate |
 | Definitions | `/api/v1/stack-definitions` | Stack definition CRUD, chart configs |
-| Instances | `/api/v1/stack-instances` | Stack instance CRUD, clone, export |
+| Instances | `/api/v1/stack-instances` | Stack instance CRUD, clone, deploy, stop, clean, status |
 | Overrides | `/api/v1/stack-instances/:id/overrides` | Per-chart value overrides |
+| Branch Overrides | `/api/v1/stack-instances/:id/branches` | Per-chart branch overrides |
 | Git | `/api/v1/git` | Branch listing, validation |
-| Audit Logs | `/api/v1/audit-logs` | Filterable audit trail |
+| Audit Logs | `/api/v1/audit-logs` | Filterable audit trail + export |
 | Admin | `/api/v1/admin` | Orphaned namespace detection and cleanup |
 | Clusters | `/api/v1/clusters` | Multi-cluster registration, health, test-connection |
+| Shared Values | `/api/v1/clusters/:id/shared-values` | Per-cluster shared Helm values |
+| Cleanup Policies | `/api/v1/admin/cleanup-policies` | Cron-based cleanup policy management |
+| Analytics | `/api/v1/analytics` | Usage overview, template stats, user stats |
+| Favorites | `/api/v1/favorites` | User bookmark management |
+| Quick Deploy | `/api/v1/templates/:id/quick-deploy` | One-click template deployment |
 | Health | `/health/*` | Liveness + readiness |
 
 ## Configuration

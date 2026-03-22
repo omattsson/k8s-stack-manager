@@ -9,7 +9,7 @@ backend/
 ├── api/main.go                         # Bootstrap: config → repos → handlers → server
 ├── internal/
 │   ├── api/
-│   │   ├── handlers/                   # HTTP handlers (auth, templates, definitions, instances, clusters, etc.)
+│   │   ├── handlers/                   # HTTP handlers (auth, templates, definitions, instances, clusters, analytics, etc.)
 │   │   ├── middleware/                  # Auth (JWT + API key), CORS, audit logging, rate limiting, recovery
 │   │   └── routes/                     # Route registration
 │   ├── config/                         # Environment-based configuration
@@ -26,6 +26,8 @@ backend/
 │   ├── deployer/                       # Helm CLI wrapper for deploy/undeploy (multi-cluster)
 │   ├── k8s/                            # Cluster client + status monitoring
 │   ├── models/                         # Domain models + repository interfaces + validation
+│   ├── scheduler/                      # Cron-based cleanup policy execution
+│   ├── ttl/                            # TTL reaper for auto-expiring stack instances
 │   └── websocket/                      # Real-time event broadcasting (hub + clients)
 ├── pkg/
 │   ├── crypto/                         # AES-GCM encryption/decryption for kubeconfig at rest (key derived via SHA-256)
@@ -41,12 +43,20 @@ backend/
 | Auth | `/api/v1/auth` | Login: No, Register/Me: Yes | JWT login, register, current user |
 | Templates | `/api/v1/templates` | Yes (DevOps for writes) | Stack template CRUD, publish, chart management, instantiate |
 | Definitions | `/api/v1/stack-definitions` | Yes | Stack definition CRUD, chart configs |
-| Instances | `/api/v1/stack-instances` | Yes | Stack instance CRUD, clone, value export |
+| Instances | `/api/v1/stack-instances` | Yes | Stack instance CRUD, clone, deploy, stop, clean, status, logs |
+| Value Overrides | `/api/v1/stack-instances/:id/overrides` | Yes | Per-chart value overrides |
+| Branch Overrides | `/api/v1/stack-instances/:id/branches` | Yes | Per-chart branch overrides |
 | Git | `/api/v1/git` | Yes | Branch listing, validation, provider status |
-| Audit Logs | `/api/v1/audit-logs` | Yes | Filterable audit trail |
+| Audit Logs | `/api/v1/audit-logs` | Yes | Filterable audit trail + CSV/JSON export |
 | Users | `/api/v1/users` | Admin | List and delete users |
 | API Keys | `/api/v1/users/:id/api-keys` | Yes | Per-user API key management |
 | Clusters | `/api/v1/clusters` | Admin | Multi-cluster registration, health, test-connection |
+| Shared Values | `/api/v1/clusters/:id/shared-values` | Admin | Per-cluster shared Helm values |
+| Admin | `/api/v1/admin` | Admin | Orphaned namespace detection and cleanup |
+| Cleanup Policies | `/api/v1/admin/cleanup-policies` | Admin | Cron-based cleanup policy management |
+| Analytics | `/api/v1/analytics` | DevOps | Usage overview, template stats, user stats |
+| Favorites | `/api/v1/favorites` | Yes | User bookmark management |
+| Quick Deploy | `/api/v1/templates/:id/quick-deploy` | Yes | One-click template deployment |
 
 ## Prerequisites
 
@@ -89,7 +99,7 @@ Key environment variables (see `docker-compose.yml` for full list):
 
 ## Data Storage
 
-- **Azure Table Storage** (via Azurite locally): Users, Templates, Definitions, Instances, Overrides, ChartConfigs, APIKeys, AuditLogs, Clusters
+- **Azure Table Storage** (via Azurite locally): Users, Templates, Definitions, Instances, Overrides, ChartConfigs, APIKeys, AuditLogs, Clusters, SharedValues, CleanupPolicies, Favorites, BranchOverrides
 - **MySQL** (GORM): Legacy Items table only
 
 ## Testing
