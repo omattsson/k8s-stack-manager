@@ -10,15 +10,15 @@ function App() {
   return (
     <ThemeModeProvider>
       <BrowserRouter>
-        <NotificationProvider>
-        <AuthProvider>
-          <Layout>
-            <ErrorBoundary>
-              <AppRoutes />
-            </ErrorBoundary>
-          </Layout>
-        </AuthProvider>
-        </NotificationProvider>
+          <NotificationProvider>
+            <AuthProvider>
+              <Layout>
+                <ErrorBoundary>
+                  <AppRoutes />
+                </ErrorBoundary>
+              </Layout>
+            </AuthProvider>
+          </NotificationProvider>
       </BrowserRouter>
     </ThemeModeProvider>
   );

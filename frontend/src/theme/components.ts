@@ -55,13 +55,13 @@ export function getComponentOverrides(mode: 'light' | 'dark'): ThemeOptions['com
     },
     MuiButtonBase: {
       styleOverrides: {
-        root: {
+        root: ({ theme }) => ({
           '&:focus-visible': {
             outline: '2px solid',
-            outlineColor: 'primary.main',
+            outlineColor: theme.palette.primary.main,
             outlineOffset: 2,
           },
-        },
+        }),
       },
     },
     MuiListItemButton: {

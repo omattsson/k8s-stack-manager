@@ -2,6 +2,7 @@ import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import Clusters from '../index';
+import { NotificationProvider } from '../../../../context/NotificationContext';
 
 vi.mock('../../../../api/client', () => ({
   clusterService: {
@@ -77,7 +78,9 @@ describe('Clusters Page', () => {
 
     render(
       <MemoryRouter>
-        <Clusters />
+        <NotificationProvider>
+          <Clusters />
+        </NotificationProvider>
       </MemoryRouter>
     );
 
@@ -89,7 +92,9 @@ describe('Clusters Page', () => {
 
     render(
       <MemoryRouter>
-        <Clusters />
+        <NotificationProvider>
+          <Clusters />
+        </NotificationProvider>
       </MemoryRouter>
     );
 
@@ -103,7 +108,9 @@ describe('Clusters Page', () => {
 
     render(
       <MemoryRouter>
-        <Clusters />
+        <NotificationProvider>
+          <Clusters />
+        </NotificationProvider>
       </MemoryRouter>
     );
 
@@ -117,7 +124,9 @@ describe('Clusters Page', () => {
 
     render(
       <MemoryRouter>
-        <Clusters />
+        <NotificationProvider>
+          <Clusters />
+        </NotificationProvider>
       </MemoryRouter>
     );
 
@@ -135,7 +144,9 @@ describe('Clusters Page', () => {
 
     render(
       <MemoryRouter>
-        <Clusters />
+        <NotificationProvider>
+          <Clusters />
+        </NotificationProvider>
       </MemoryRouter>
     );
 
@@ -151,7 +162,9 @@ describe('Clusters Page', () => {
 
     render(
       <MemoryRouter>
-        <Clusters />
+        <NotificationProvider>
+          <Clusters />
+        </NotificationProvider>
       </MemoryRouter>
     );
 
