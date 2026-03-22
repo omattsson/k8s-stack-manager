@@ -33,7 +33,7 @@ const AuditLog = () => {
   const [error, setError] = useState<string | null>(null);
   const [entityType, setEntityType] = useState('All');
   const [action, setAction] = useState('All');
-  const [username, setUsername] = useState('');
+  const [userID, setUserID] = useState('');
   const [page, setPage] = useState(0);
   const [rowsPerPage, setRowsPerPage] = useState(25);
   const [exportAnchor, setExportAnchor] = useState<null | HTMLElement>(null);
@@ -48,7 +48,7 @@ const AuditLog = () => {
       };
       if (entityType !== 'All') filters.entity_type = entityType;
       if (action !== 'All') filters.action = action;
-      if (username) filters.user_id = username;
+      if (userID) filters.user_id = userID;
 
       const response = await auditService.list(filters);
       setLogs(response.data || []);
@@ -58,7 +58,7 @@ const AuditLog = () => {
     } finally {
       setLoading(false);
     }
-  }, [entityType, action, username, page, rowsPerPage]);
+  }, [entityType, action, userID, page, rowsPerPage]);
 
   useEffect(() => {
     fetchLogs();
@@ -75,7 +75,7 @@ const AuditLog = () => {
       const filters: Record<string, string> = {};
       if (entityType !== 'All') filters.entity_type = entityType;
       if (action !== 'All') filters.action = action;
-      if (username) filters.user_id = username;
+      if (userID) filters.user_id = userID;
       await auditService.export(filters, format);
     } catch {
       setError('Failed to export audit logs');
@@ -92,8 +92,8 @@ const AuditLog = () => {
         <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap', alignItems: 'flex-end' }}>
           <TextField
             label="User ID"
-            value={username}
-            onChange={(e) => setUsername(e.target.value)}
+            value={userID}
+            onChange={(e) => setUserID(e.target.value)}
             size="small"
             sx={{ minWidth: 150 }}
           />

@@ -184,7 +184,6 @@ func (s *Scheduler) executePolicyWithOptions(policy *models.CleanupPolicy, dryRu
 			result.Status = "dry_run"
 		} else if s.executor != nil {
 			ctx, cancel := context.WithTimeout(s.ctx, 5*time.Minute)
-			defer cancel()
 			var execErr error
 			switch policy.Action {
 			case "stop":
@@ -193,7 +192,10 @@ func (s *Scheduler) executePolicyWithOptions(policy *models.CleanupPolicy, dryRu
 				execErr = s.executor.CleanInstance(ctx, inst)
 			case "delete":
 				execErr = s.executor.DeleteInstance(ctx, inst)
+			default:
+				execErr = fmt.Errorf("unknown cleanup action: %s", policy.Action)
 			}
+			cancel()
 			if execErr != nil {
 				result.Status = "error"
 				result.Error = execErr.Error()

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"sort"
 	"strings"
 	"time"
 
@@ -632,11 +633,9 @@ func (c *Client) GetNodeStatuses(ctx context.Context) ([]NodeStatus, error) {
 
 // sortNodeStatuses sorts node statuses by name in ascending order.
 func sortNodeStatuses(nodes []NodeStatus) {
-	for i := 1; i < len(nodes); i++ {
-		for j := i; j > 0 && nodes[j].Name < nodes[j-1].Name; j-- {
-			nodes[j], nodes[j-1] = nodes[j-1], nodes[j]
-		}
-	}
+	sort.Slice(nodes, func(i, j int) bool {
+		return nodes[i].Name < nodes[j].Name
+	})
 }
 
 // formatMemoryBytes formats a byte count as a human-readable string (Mi or Gi).

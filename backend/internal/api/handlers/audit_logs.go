@@ -161,9 +161,12 @@ func (h *AuditLogHandler) ExportAuditLogs(c *gin.Context) {
 		c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=%s", filename))
 
 		w := csv.NewWriter(c.Writer)
-		_ = w.Write([]string{"ID", "Timestamp", "UserID", "Username", "Action", "EntityType", "EntityID", "Details"})
+		if err := w.Write([]string{"ID", "Timestamp", "UserID", "Username", "Action", "EntityType", "EntityID", "Details"}); err != nil {
+			slog.Error("failed to write CSV header", "error", err)
+			return
+		}
 		for _, l := range logs {
-			_ = w.Write([]string{
+			if err := w.Write([]string{
 				l.ID,
 				l.Timestamp.Format(time.RFC3339),
 				l.UserID,
@@ -172,9 +175,15 @@ func (h *AuditLogHandler) ExportAuditLogs(c *gin.Context) {
 				l.EntityType,
 				l.EntityID,
 				l.Details,
-			})
+			}); err != nil {
+				slog.Error("failed to write CSV row", "error", err)
+				return
+			}
 		}
 		w.Flush()
+		if err := w.Error(); err != nil {
+			slog.Error("CSV flush error", "error", err)
+		}
 	default: // json
 		filename := fmt.Sprintf("audit-logs-%s.json", timestamp)
 		c.Header("Content-Type", "application/json")

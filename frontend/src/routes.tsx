@@ -39,8 +39,8 @@ const AppRoutes = () => {
       <Route path="/admin/users" element={<ProtectedRoute requiredRole="admin"><AdminUsers /></ProtectedRoute>} />
       <Route path="/admin/orphaned-namespaces" element={<ProtectedRoute requiredRole="admin"><OrphanedNamespaces /></ProtectedRoute>} />
       <Route path="/admin/clusters" element={<ProtectedRoute requiredRole="admin"><Clusters /></ProtectedRoute>} />
-      <Route path="/admin/cluster-health" element={<ProtectedRoute requiredRole="admin"><ClusterHealth /></ProtectedRoute>} />
-      <Route path="/admin/analytics" element={<ProtectedRoute requiredRole="admin"><Analytics /></ProtectedRoute>} />
+      <Route path="/admin/cluster-health" element={<ProtectedRoute requiredRole="devops"><ClusterHealth /></ProtectedRoute>} />
+      <Route path="/admin/analytics" element={<ProtectedRoute requiredRole="devops"><Analytics /></ProtectedRoute>} />
       <Route path="/admin/shared-values" element={<ProtectedRoute requiredRole="admin"><SharedValues /></ProtectedRoute>} />
       <Route path="/admin/cleanup-policies" element={<ProtectedRoute requiredRole="admin"><CleanupPolicies /></ProtectedRoute>} />
       <Route path="/profile" element={<ProtectedRoute><Profile /></ProtectedRoute>} />
