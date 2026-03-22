@@ -507,7 +507,9 @@ export const auditService = {
     let filename = `audit-logs.${format}`;
     if (contentDisposition) {
       const match = contentDisposition.match(/filename=([^;]+)/);
-      if (match) filename = match[1].trim();
+      if (match) {
+        filename = match[1].trim().replace(/^"|"$/g, '');
+      }
     }
 
     const url = window.URL.createObjectURL(new Blob([response.data]));

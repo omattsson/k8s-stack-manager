@@ -388,8 +388,16 @@ const SharedValuesPage = () => {
         open={snackbar.open}
         autoHideDuration={4000}
         onClose={() => setSnackbar((s) => ({ ...s, open: false }))}
-        message={snackbar.message}
-      />
+      >
+        <Alert
+          onClose={() => setSnackbar((s) => ({ ...s, open: false }))}
+          severity={snackbar.severity}
+          variant="filled"
+          sx={{ width: '100%' }}
+        >
+          {snackbar.message}
+        </Alert>
+      </Snackbar>
     </Box>
   );
 };

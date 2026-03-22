@@ -39,6 +39,8 @@ type Scheduler struct {
 	executor     ActionExecutor // can be nil (dry-run only mode)
 	mu           sync.Mutex
 	entryMap     map[string]cron.EntryID // policyID → cron entry
+	ctx          context.Context
+	cancel       context.CancelFunc
 }
 
 // NewScheduler creates a new cleanup scheduler.
@@ -48,6 +50,7 @@ func NewScheduler(
 	auditRepo models.AuditLogRepository,
 	executor ActionExecutor,
 ) *Scheduler {
+	ctx, cancel := context.WithCancel(context.Background())
 	return &Scheduler{
 		cron:         cron.New(),
 		policyRepo:   policyRepo,
@@ -55,6 +58,8 @@ func NewScheduler(
 		auditRepo:    auditRepo,
 		executor:     executor,
 		entryMap:     make(map[string]cron.EntryID),
+		ctx:          ctx,
+		cancel:       cancel,
 	}
 }
 
@@ -76,6 +81,7 @@ func (s *Scheduler) Start() error {
 
 // Stop gracefully stops the cron scheduler, waiting for running jobs to finish.
 func (s *Scheduler) Stop() {
+	s.cancel()
 	ctx := s.cron.Stop()
 	<-ctx.Done()
 	slog.Info("Cleanup scheduler stopped")
@@ -177,7 +183,8 @@ func (s *Scheduler) executePolicyWithOptions(policy *models.CleanupPolicy, dryRu
 		if dryRun {
 			result.Status = "dry_run"
 		} else if s.executor != nil {
-			ctx := context.Background()
+			ctx, cancel := context.WithTimeout(s.ctx, 5*time.Minute)
+			defer cancel()
 			var execErr error
 			switch policy.Action {
 			case "stop":

@@ -39,6 +39,10 @@ func (r *CleanupPolicyRepository) Create(policy *models.CleanupPolicy) error {
 	policy.CreatedAt = now
 	policy.UpdatedAt = now
 
+	if err := policy.Validate(); err != nil {
+		return dberrors.NewDatabaseError(err.Error(), dberrors.ErrValidation)
+	}
+
 	entity := r.toEntity(policy)
 	entityBytes, err := json.Marshal(entity)
 	if err != nil {
@@ -70,6 +74,10 @@ func (r *CleanupPolicyRepository) FindByID(id string) (*models.CleanupPolicy, er
 func (r *CleanupPolicyRepository) Update(policy *models.CleanupPolicy) error {
 	ctx := context.Background()
 	policy.UpdatedAt = time.Now().UTC()
+
+	if err := policy.Validate(); err != nil {
+		return dberrors.NewDatabaseError(err.Error(), dberrors.ErrValidation)
+	}
 
 	entity := r.toEntity(policy)
 	entityBytes, err := json.Marshal(entity)

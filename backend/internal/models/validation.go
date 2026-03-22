@@ -197,9 +197,9 @@ func (sv *SharedValues) Validate() error {
 		return errors.New("priority must be non-negative")
 	}
 	if sv.Values != "" {
-		var parsed interface{}
+		var parsed map[string]interface{}
 		if err := yaml.Unmarshal([]byte(sv.Values), &parsed); err != nil {
-			return fmt.Errorf("values must be valid YAML: %w", err)
+			return fmt.Errorf("values must be a valid YAML mapping: %w", err)
 		}
 	}
 	return nil

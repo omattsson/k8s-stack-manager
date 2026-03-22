@@ -91,7 +91,7 @@ const AuditLog = () => {
       <Paper sx={{ p: 2, mb: 3 }}>
         <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap', alignItems: 'flex-end' }}>
           <TextField
-            label="Username"
+            label="User ID"
             value={username}
             onChange={(e) => setUsername(e.target.value)}
             size="small"

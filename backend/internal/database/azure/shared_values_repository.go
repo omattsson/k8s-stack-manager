@@ -49,7 +49,7 @@ func (r *SharedValuesRepository) Create(sv *models.SharedValues) error {
 	sv.UpdatedAt = now
 
 	if err := sv.Validate(); err != nil {
-		return dberrors.NewDatabaseError("validation", dberrors.ErrValidation)
+		return dberrors.NewDatabaseError(err.Error(), dberrors.ErrValidation)
 	}
 
 	entity := sharedValuesToEntity(sv)
@@ -91,7 +91,7 @@ func (r *SharedValuesRepository) Update(sv *models.SharedValues) error {
 	sv.UpdatedAt = now
 
 	if err := sv.Validate(); err != nil {
-		return dberrors.NewDatabaseError("validation", dberrors.ErrValidation)
+		return dberrors.NewDatabaseError(err.Error(), dberrors.ErrValidation)
 	}
 
 	entity := sharedValuesToEntity(sv)

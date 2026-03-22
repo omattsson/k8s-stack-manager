@@ -287,7 +287,6 @@ func SetupRoutes(router *gin.Engine, deps Deps) *handlers.RateLimiter {
 		}
 		if clusterHandler != nil {
 			admin := middleware.RequireAdmin()
-			devops := middleware.RequireDevOps()
 			clusters := authed.Group("/clusters")
 			{
 				// GET routes are intentionally open to all authenticated users
