@@ -20,28 +20,59 @@ function fakeJwt(payload: Record<string, unknown>): string {
   return `${header}.${body}.${signature}`;
 }
 
+/**
+ * Creates a mock localStorage backed by a plain Map.
+ * All methods are vi.fn() so tests can assert calls without
+ * corrupting jsdom's native localStorage implementation.
+ */
+function createMockLocalStorage() {
+  const store = new Map<string, string>();
+  return {
+    getItem: vi.fn((key: string) => store.get(key) ?? null),
+    setItem: vi.fn((key: string, value: string) => {
+      store.set(key, value);
+    }),
+    removeItem: vi.fn((key: string) => {
+      store.delete(key);
+    }),
+    clear: vi.fn(() => {
+      store.clear();
+    }),
+    get length() {
+      return store.size;
+    },
+    key: vi.fn((index: number) => {
+      const keys = Array.from(store.keys());
+      return keys[index] ?? null;
+    }),
+  };
+}
+
 const wrapper = ({ children }: { children: ReactNode }) => (
   <AuthProvider>{children}</AuthProvider>
 );
 
 describe('AuthContext', () => {
-  let getItemSpy: ReturnType<typeof vi.spyOn>;
-  let setItemSpy: ReturnType<typeof vi.spyOn>;
-  let removeItemSpy: ReturnType<typeof vi.spyOn>;
+  let mockStorage: ReturnType<typeof createMockLocalStorage>;
+  let originalLocalStorage: Storage;
 
   beforeEach(() => {
-    getItemSpy = vi.spyOn(Storage.prototype, 'getItem');
-    setItemSpy = vi.spyOn(Storage.prototype, 'setItem');
-    removeItemSpy = vi.spyOn(Storage.prototype, 'removeItem');
-    localStorage.clear();
+    originalLocalStorage = globalThis.localStorage;
+    mockStorage = createMockLocalStorage();
+    Object.defineProperty(globalThis, 'localStorage', {
+      value: mockStorage,
+      writable: true,
+      configurable: true,
+    });
   });
 
   afterEach(() => {
+    Object.defineProperty(globalThis, 'localStorage', {
+      value: originalLocalStorage,
+      writable: true,
+      configurable: true,
+    });
     vi.clearAllMocks();
-    getItemSpy.mockRestore();
-    setItemSpy.mockRestore();
-    removeItemSpy.mockRestore();
-    localStorage.clear();
   });
 
   describe('useAuth outside provider', () => {
@@ -75,7 +106,7 @@ describe('AuthContext', () => {
         role: 'devops',
         exp: futureExp,
       });
-      localStorage.setItem('token', token);
+      mockStorage.setItem('token', token);
 
       const { result } = renderHook(() => useAuth(), { wrapper });
 
@@ -102,7 +133,7 @@ describe('AuthContext', () => {
         role: 'user',
         exp: pastExp,
       });
-      localStorage.setItem('token', token);
+      mockStorage.setItem('token', token);
 
       const { result } = renderHook(() => useAuth(), { wrapper });
 
@@ -112,11 +143,11 @@ describe('AuthContext', () => {
 
       expect(result.current.user).toBeNull();
       expect(result.current.isAuthenticated).toBe(false);
-      expect(removeItemSpy).toHaveBeenCalledWith('token');
+      expect(mockStorage.removeItem).toHaveBeenCalledWith('token');
     });
 
     it('handles malformed token gracefully', async () => {
-      localStorage.setItem('token', 'not-a-jwt');
+      mockStorage.setItem('token', 'not-a-jwt');
 
       const { result } = renderHook(() => useAuth(), { wrapper });
 
@@ -158,7 +189,7 @@ describe('AuthContext', () => {
         username: 'bob',
         password: 'password',
       });
-      expect(setItemSpy).toHaveBeenCalledWith('token', 'jwt-token-123');
+      expect(mockStorage.setItem).toHaveBeenCalledWith('token', 'jwt-token-123');
       expect(result.current.user).toEqual(mockUser);
       expect(result.current.isAuthenticated).toBe(true);
     });
@@ -194,7 +225,7 @@ describe('AuthContext', () => {
         role: 'admin',
         exp: futureExp,
       });
-      localStorage.setItem('token', token);
+      mockStorage.setItem('token', token);
 
       const { result } = renderHook(() => useAuth(), { wrapper });
 
@@ -208,7 +239,7 @@ describe('AuthContext', () => {
 
       expect(result.current.user).toBeNull();
       expect(result.current.isAuthenticated).toBe(false);
-      expect(removeItemSpy).toHaveBeenCalledWith('token');
+      expect(mockStorage.removeItem).toHaveBeenCalledWith('token');
     });
   });
 });
