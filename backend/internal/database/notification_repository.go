@@ -8,6 +8,7 @@ import (
 	"backend/pkg/dberrors"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // GORMNotificationRepository implements NotificationRepository using GORM.
@@ -97,9 +98,15 @@ func (r *GORMNotificationRepository) GetPreferences(ctx context.Context, userID 
 }
 
 // UpdatePreference upserts a notification preference for a user+event_type.
+// Uses ON CONFLICT on the (user_id, event_type) unique index to atomically
+// insert or update, preventing races and duplicate-key violations.
 func (r *GORMNotificationRepository) UpdatePreference(ctx context.Context, pref *models.NotificationPreference) error {
-	// Use GORM's Save which does an upsert.
-	if err := r.db.WithContext(ctx).Save(pref).Error; err != nil {
+	if err := r.db.WithContext(ctx).
+		Clauses(clause.OnConflict{
+			Columns:   []clause.Column{{Name: "user_id"}, {Name: "event_type"}},
+			DoUpdates: clause.AssignmentColumns([]string{"enabled"}),
+		}).
+		Create(pref).Error; err != nil {
 		return dberrors.NewDatabaseError("update_preference", err)
 	}
 	return nil

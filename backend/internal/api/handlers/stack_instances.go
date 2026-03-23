@@ -306,20 +306,16 @@ func (h *InstanceHandler) CreateInstance(c *gin.Context) {
 	}
 
 	// Enforce per-user instance limit if configured on the cluster.
+	// Note: this is a best-effort check; concurrent creates may exceed the limit
+	// slightly since Azure Table Storage lacks atomic count-and-insert.
 	if h.clusterRepo != nil && inst.ClusterID != "" {
 		cl, clErr := h.clusterRepo.FindByID(inst.ClusterID)
 		if clErr == nil && cl.MaxInstancesPerUser > 0 {
-			userInstances, listErr := h.instanceRepo.FindByCluster(inst.ClusterID)
+			count, listErr := h.instanceRepo.CountByClusterAndOwner(inst.ClusterID, inst.OwnerID)
 			if listErr != nil {
-				slog.Error("Failed to list instances for per-user limit check", "error", listErr, "cluster_id", inst.ClusterID)
+				slog.Error("Failed to count instances for per-user limit check", "error", listErr, "cluster_id", inst.ClusterID)
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
 				return
-			}
-			count := 0
-			for _, ui := range userInstances {
-				if ui.OwnerID == inst.OwnerID {
-					count++
-				}
 			}
 			if count >= cl.MaxInstancesPerUser {
 				c.JSON(http.StatusConflict, gin.H{"error": fmt.Sprintf("Maximum instances per user reached for this cluster (limit: %d)", cl.MaxInstancesPerUser)})
@@ -1444,8 +1440,19 @@ func (h *InstanceHandler) CompareInstances(c *gin.Context) {
 	}
 
 	// Fetch overrides for both instances.
-	leftOverrides, _ := h.overrideRepo.ListByInstance(leftID)
-	rightOverrides, _ := h.overrideRepo.ListByInstance(rightID)
+	leftOverrides, err := h.overrideRepo.ListByInstance(leftID)
+	if err != nil {
+		slog.Error("compare: failed to fetch left overrides", "instance_id", leftID, "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
+		return
+	}
+
+	rightOverrides, err := h.overrideRepo.ListByInstance(rightID)
+	if err != nil {
+		slog.Error("compare: failed to fetch right overrides", "instance_id", rightID, "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
+		return
+	}
 
 	leftOverrideMap := make(map[string]string) // chartConfigID → values
 	for _, ov := range leftOverrides {

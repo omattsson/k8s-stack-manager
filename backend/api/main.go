@@ -32,6 +32,7 @@ import (
 	"github.com/google/uuid"
 	swaggerFiles "github.com/swaggo/files"
 	ginSwagger "github.com/swaggo/gin-swagger"
+	"gorm.io/gorm"
 	"k8s.io/client-go/tools/clientcmd"
 )
 
@@ -225,6 +226,17 @@ func main() {
 	// ------------------------------------------------------------------
 	authHandler := handlers.NewAuthHandler(userRepo, &cfg.Auth)
 
+	// Shared MySQL *gorm.DB for domain repos that need it (allocated lazily).
+	var mysqlGormDB *gorm.DB
+	if !cfg.AzureTable.UseAzureTable {
+		mysqlDB, dbErr := database.NewFromAppConfig(cfg)
+		if dbErr != nil {
+			slog.Error("Failed to initialize MySQL database", "error", dbErr)
+			os.Exit(1)
+		}
+		mysqlGormDB = mysqlDB.DB
+	}
+
 	// Template version repository — datastore selection via config.
 	var templateVersionRepo models.TemplateVersionRepository
 	if cfg.AzureTable.UseAzureTable {
@@ -235,12 +247,7 @@ func main() {
 		}
 		templateVersionRepo = tvr
 	} else {
-		mysqlDB, dbErr := database.NewFromAppConfig(cfg)
-		if dbErr != nil {
-			slog.Error("Failed to initialize MySQL for template version repository", "error", dbErr)
-			os.Exit(1)
-		}
-		templateVersionRepo = database.NewGORMTemplateVersionRepository(mysqlDB.DB)
+		templateVersionRepo = database.NewGORMTemplateVersionRepository(mysqlGormDB)
 	}
 
 	templateHandler := handlers.NewTemplateHandlerWithVersions(templateRepo, templateChartRepo, definitionRepo, chartConfigRepo, templateVersionRepo)
@@ -272,12 +279,7 @@ func main() {
 		}
 		notificationRepo = nr
 	} else {
-		mysqlDB, dbErr := database.NewFromAppConfig(cfg)
-		if dbErr != nil {
-			slog.Error("Failed to initialize MySQL for notification repository", "error", dbErr)
-			os.Exit(1)
-		}
-		notificationRepo = database.NewGORMNotificationRepository(mysqlDB.DB)
+		notificationRepo = database.NewGORMNotificationRepository(mysqlGormDB)
 	}
 	notificationHandler := handlers.NewNotificationHandler(notificationRepo)
 

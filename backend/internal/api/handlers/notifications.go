@@ -185,8 +185,8 @@ func (h *NotificationHandler) GetPreferences(c *gin.Context) {
 
 	prefs, err := h.repo.GetPreferences(c.Request.Context(), userID)
 	if err != nil {
-		slog.Error("Failed to get notification preferences", "error", err, "user_id", userID)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
+		status, message := mapError(err, "Notification preferences")
+		c.JSON(status, gin.H{"error": message})
 		return
 	}
 
@@ -230,8 +230,8 @@ func (h *NotificationHandler) UpdatePreferences(c *gin.Context) {
 	// Fetch existing preferences to find IDs for update or generate new ones.
 	existing, err := h.repo.GetPreferences(c.Request.Context(), userID)
 	if err != nil {
-		slog.Error("Failed to get existing preferences", "error", err, "user_id", userID)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
+		status, message := mapError(err, "Notification preferences")
+		c.JSON(status, gin.H{"error": message})
 		return
 	}
 
@@ -253,8 +253,8 @@ func (h *NotificationHandler) UpdatePreferences(c *gin.Context) {
 		}
 
 		if err := h.repo.UpdatePreference(c.Request.Context(), pref); err != nil {
-			slog.Error("Failed to update notification preference", "error", err, "user_id", userID, "event_type", r.EventType)
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
+			status, message := mapError(err, "Notification preference")
+			c.JSON(status, gin.H{"error": message})
 			return
 		}
 	}

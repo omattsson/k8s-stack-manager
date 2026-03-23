@@ -205,6 +205,20 @@ func (r *StackInstanceRepository) FindByCluster(clusterID string) ([]models.Stac
 	return results, nil
 }
 
+func (r *StackInstanceRepository) CountByClusterAndOwner(clusterID, ownerID string) (int, error) {
+	instances, err := r.FindByCluster(clusterID)
+	if err != nil {
+		return 0, err
+	}
+	count := 0
+	for _, inst := range instances {
+		if inst.OwnerID == ownerID {
+			count++
+		}
+	}
+	return count, nil
+}
+
 func (r *StackInstanceRepository) ListExpired() ([]*models.StackInstance, error) {
 	ctx := context.Background()
 	now := time.Now().UTC()

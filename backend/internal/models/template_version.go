@@ -18,7 +18,7 @@ type TemplateVersion struct {
 
 // TemplateSnapshot is the serialized structure stored in the Snapshot field.
 type TemplateSnapshot struct {
-	Template TemplateSnapshotData       `json:"template"`
+	Template TemplateSnapshotData        `json:"template"`
 	Charts   []TemplateChartSnapshotData `json:"charts"`
 }
 
@@ -28,7 +28,6 @@ type TemplateSnapshotData struct {
 	Description   string `json:"description"`
 	Category      string `json:"category"`
 	DefaultBranch string `json:"default_branch"`
-	RepositoryURL string `json:"repository_url"`
 	IsPublished   bool   `json:"is_published"`
 	Version       string `json:"version"`
 }

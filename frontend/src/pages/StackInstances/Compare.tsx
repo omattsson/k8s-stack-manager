@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import {
   Box,
@@ -69,13 +69,13 @@ const Compare = () => {
   }, []);
 
   // Auto-trigger comparison if URL has both params and instances are loaded
+  const hasAutoTriggered = useRef(false);
   useEffect(() => {
-    if (!loadingInstances && leftId && rightId) {
+    if (!loadingInstances && leftId && rightId && !hasAutoTriggered.current) {
+      hasAutoTriggered.current = true;
       runComparison(leftId, rightId);
     }
-    // Only run when instances finish loading or IDs come from URL
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loadingInstances]);
+  }, [loadingInstances, leftId, rightId, runComparison]);
 
   const handleCompare = () => {
     if (!leftId || !rightId) return;
