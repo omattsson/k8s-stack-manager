@@ -90,6 +90,68 @@ func (d *Database) AutoMigrate() error {
 		},
 	})
 
+	// Create notifications and notification_preferences tables
+	migrator.AddMigration(schema.Migration{
+		Version:     "20231201000004",
+		Name:        "create_notification_tables",
+		Description: "Create notifications and notification_preferences tables",
+		Up: func(tx *gorm.DB) error {
+			if err := tx.AutoMigrate(&models.Notification{}, &models.NotificationPreference{}); err != nil {
+				return err
+			}
+			return nil
+		},
+		Down: func(tx *gorm.DB) error {
+			if err := tx.Migrator().DropTable(&models.NotificationPreference{}); err != nil {
+				return err
+			}
+			return tx.Migrator().DropTable(&models.Notification{})
+		},
+	})
+
+	// Create resource_quota_configs table and add max_instances_per_user to clusters
+	migrator.AddMigration(schema.Migration{
+		Version:     "20231201000005",
+		Name:        "create_resource_quota_configs",
+		Description: "Create resource_quota_configs table and add max_instances_per_user to clusters",
+		Up: func(tx *gorm.DB) error {
+			if err := tx.AutoMigrate(&models.ResourceQuotaConfig{}); err != nil {
+				return err
+			}
+			// Add max_instances_per_user column to clusters if using MySQL.
+			if tx.Dialector.Name() == "mysql" {
+				var count int64
+				tx.Raw("SELECT COUNT(1) FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = 'clusters' AND column_name = 'max_instances_per_user'").Scan(&count)
+				if count == 0 {
+					return tx.Exec("ALTER TABLE clusters ADD COLUMN max_instances_per_user INT NOT NULL DEFAULT 0").Error
+				}
+			}
+			return nil
+		},
+		Down: func(tx *gorm.DB) error {
+			if err := tx.Migrator().DropTable(&models.ResourceQuotaConfig{}); err != nil {
+				return err
+			}
+			if tx.Dialector.Name() == "mysql" {
+				return tx.Exec("ALTER TABLE clusters DROP COLUMN max_instances_per_user").Error
+			}
+			return nil
+		},
+	})
+
+	// Create template_versions table for template versioning & upgrades
+	migrator.AddMigration(schema.Migration{
+		Version:     "20231201000006",
+		Name:        "create_template_versions",
+		Description: "Create template_versions table for tracking published template snapshots",
+		Up: func(tx *gorm.DB) error {
+			return tx.AutoMigrate(&models.TemplateVersion{})
+		},
+		Down: func(tx *gorm.DB) error {
+			return tx.Migrator().DropTable(&models.TemplateVersion{})
+		},
+	})
+
 	// Run migrations
 	if err := migrator.MigrateUp(); err != nil {
 		return err

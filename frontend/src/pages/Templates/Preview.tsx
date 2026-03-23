@@ -8,11 +8,14 @@ import {
   Button,
   Alert,
   Divider,
+  Tabs,
+  Tab,
 } from '@mui/material';
 import { templateService } from '../../api/client';
 import { useAuth } from '../../context/AuthContext';
 import type { StackTemplate } from '../../types';
 import LoadingState from '../../components/LoadingState';
+import VersionHistory from './VersionHistory';
 
 const Preview = () => {
   const { id } = useParams<{ id: string }>();
@@ -22,6 +25,7 @@ const Preview = () => {
   const { user } = useAuth();
   const navigate = useNavigate();
 
+  const [activeTab, setActiveTab] = useState(0);
   const isDevOps = user?.role === 'devops' || user?.role === 'admin';
 
   useEffect(() => {
@@ -101,59 +105,72 @@ const Preview = () => {
         Default Branch: {template.default_branch}
       </Typography>
 
-      <Typography variant="h5" gutterBottom>
-        Charts ({template.charts?.length || 0})
-      </Typography>
+      <Tabs
+        value={activeTab}
+        onChange={(_e, newValue: number) => setActiveTab(newValue)}
+        sx={{ mb: 3, borderBottom: 1, borderColor: 'divider' }}
+      >
+        <Tab label={`Charts (${template.charts?.length || 0})`} />
+        <Tab label="Version History" />
+      </Tabs>
 
-      {(!template.charts || template.charts.length === 0) ? (
-        <Typography color="text.secondary">No charts configured.</Typography>
-      ) : (
-        template.charts.map((chart) => (
-          <Paper key={chart.id} sx={{ p: 3, mb: 2 }}>
-            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
-              <Typography variant="h6">{chart.chart_name}</Typography>
-              <Box sx={{ display: 'flex', gap: 1 }}>
-                {chart.required && <Chip label="Required" color="primary" size="small" />}
-                <Chip label={`Order: ${chart.deploy_order}`} variant="outlined" size="small" />
-              </Box>
-            </Box>
-            {chart.repository_url && (
-              <Typography variant="body2" color="text.secondary">
-                Repo: {chart.repository_url}
-              </Typography>
-            )}
-            {chart.chart_path && (
-              <Typography variant="body2" color="text.secondary">
-                Path: {chart.chart_path} {chart.chart_version && `(v${chart.chart_version})`}
-              </Typography>
-            )}
-            {chart.default_values && (
-              <>
-                <Divider sx={{ my: 2 }} />
-                <Typography variant="subtitle2" gutterBottom>Default Values</Typography>
-                <Paper variant="outlined" sx={{ p: 2, bgcolor: 'grey.50' }}>
-                  <Typography variant="body2" component="pre" sx={{ fontFamily: 'monospace', fontSize: 13, whiteSpace: 'pre-wrap', m: 0 }}>
-                    {chart.default_values}
+      {activeTab === 0 && (
+        <Box>
+          {(!template.charts || template.charts.length === 0) ? (
+            <Typography color="text.secondary">No charts configured.</Typography>
+          ) : (
+            template.charts.map((chart) => (
+              <Paper key={chart.id} sx={{ p: 3, mb: 2 }}>
+                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
+                  <Typography variant="h6">{chart.chart_name}</Typography>
+                  <Box sx={{ display: 'flex', gap: 1 }}>
+                    {chart.required && <Chip label="Required" color="primary" size="small" />}
+                    <Chip label={`Order: ${chart.deploy_order}`} variant="outlined" size="small" />
+                  </Box>
+                </Box>
+                {chart.repository_url && (
+                  <Typography variant="body2" color="text.secondary">
+                    Repo: {chart.repository_url}
                   </Typography>
-                </Paper>
-              </>
-            )}
-            {chart.locked_values && (
-              <>
-                <Divider sx={{ my: 2 }} />
-                <Typography variant="subtitle2" gutterBottom>
-                  Locked Values
-                  <Chip label="Read-only" size="small" color="warning" sx={{ ml: 1 }} />
-                </Typography>
-                <Paper variant="outlined" sx={{ p: 2, bgcolor: 'warning.50', borderColor: 'warning.main' }}>
-                  <Typography variant="body2" component="pre" sx={{ fontFamily: 'monospace', fontSize: 13, whiteSpace: 'pre-wrap', m: 0 }}>
-                    {chart.locked_values}
+                )}
+                {chart.chart_path && (
+                  <Typography variant="body2" color="text.secondary">
+                    Path: {chart.chart_path} {chart.chart_version && `(v${chart.chart_version})`}
                   </Typography>
-                </Paper>
-              </>
-            )}
-          </Paper>
-        ))
+                )}
+                {chart.default_values && (
+                  <>
+                    <Divider sx={{ my: 2 }} />
+                    <Typography variant="subtitle2" gutterBottom>Default Values</Typography>
+                    <Paper variant="outlined" sx={{ p: 2, bgcolor: 'grey.50' }}>
+                      <Typography variant="body2" component="pre" sx={{ fontFamily: 'monospace', fontSize: 13, whiteSpace: 'pre-wrap', m: 0 }}>
+                        {chart.default_values}
+                      </Typography>
+                    </Paper>
+                  </>
+                )}
+                {chart.locked_values && (
+                  <>
+                    <Divider sx={{ my: 2 }} />
+                    <Typography variant="subtitle2" gutterBottom>
+                      Locked Values
+                      <Chip label="Read-only" size="small" color="warning" sx={{ ml: 1 }} />
+                    </Typography>
+                    <Paper variant="outlined" sx={{ p: 2, bgcolor: 'warning.50', borderColor: 'warning.main' }}>
+                      <Typography variant="body2" component="pre" sx={{ fontFamily: 'monospace', fontSize: 13, whiteSpace: 'pre-wrap', m: 0 }}>
+                        {chart.locked_values}
+                      </Typography>
+                    </Paper>
+                  </>
+                )}
+              </Paper>
+            ))
+          )}
+        </Box>
+      )}
+
+      {activeTab === 1 && id && (
+        <VersionHistory templateId={id} />
       )}
 
       <Button variant="outlined" onClick={() => navigate('/templates')} sx={{ mt: 2 }}>

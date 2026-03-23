@@ -7,6 +7,10 @@ vi.mock('../../../context/AuthContext', () => ({
   useAuth: vi.fn(),
 }));
 
+vi.mock('../../NotificationCenter', () => ({
+  default: () => <div data-testid="notification-center">NotificationCenter</div>,
+}));
+
 vi.mock('../../../context/ThemeContext', () => ({
   useThemeMode: () => ({
     mode: 'light' as const,

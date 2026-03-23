@@ -148,7 +148,7 @@ func setupDeployRouter(
 	h := NewInstanceHandlerWithDeployer(
 		instanceRepo, overrideRepo, nil, defRepo, ccRepo,
 		tmplRepo, tmplChartRepo, valuesGen, userRepo,
-		deployManager, k8sWatcher, registry, deployLogRepo,
+		deployManager, k8sWatcher, registry, deployLogRepo, nil,
 		0,
 	)
 

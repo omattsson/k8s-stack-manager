@@ -14,6 +14,102 @@ definitions:
       type:
         type: string
     type: object
+  handlers.BulkOperationRequest:
+    properties:
+      instance_ids:
+        items:
+          type: string
+        type: array
+    required:
+    - instance_ids
+    type: object
+  handlers.BulkOperationResponse:
+    properties:
+      failed:
+        type: integer
+      results:
+        items:
+          $ref: '#/definitions/handlers.BulkOperationResultItem'
+        type: array
+      succeeded:
+        type: integer
+      total:
+        type: integer
+    type: object
+  handlers.BulkOperationResultItem:
+    properties:
+      error:
+        type: string
+      instance_id:
+        type: string
+      instance_name:
+        type: string
+      log_id:
+        type: string
+      status:
+        type: string
+    type: object
+  handlers.ChartConfigExportData:
+    properties:
+      chart_name:
+        type: string
+      chart_path:
+        type: string
+      chart_version:
+        type: string
+      default_values:
+        type: string
+      deploy_order:
+        type: integer
+      repository_url:
+        type: string
+      source_repo_url:
+        type: string
+    type: object
+  handlers.ClusterUtilization:
+    properties:
+      cluster_id:
+        type: string
+      namespaces:
+        items:
+          $ref: '#/definitions/handlers.NamespaceResourceUsage'
+        type: array
+    type: object
+  handlers.CompareChartDiff:
+    properties:
+      chart_name:
+        type: string
+      has_differences:
+        type: boolean
+      left_values:
+        type: string
+      right_values:
+        type: string
+    type: object
+  handlers.CompareInstanceSummary:
+    properties:
+      branch:
+        type: string
+      definition_name:
+        type: string
+      id:
+        type: string
+      name:
+        type: string
+      owner:
+        type: string
+    type: object
+  handlers.CompareInstancesResponse:
+    properties:
+      charts:
+        items:
+          $ref: '#/definitions/handlers.CompareChartDiff'
+        type: array
+      left:
+        $ref: '#/definitions/handlers.CompareInstanceSummary'
+      right:
+        $ref: '#/definitions/handlers.CompareInstanceSummary'
+    type: object
   handlers.CreateAPIKeyRequest:
     properties:
       expires_at:
@@ -51,6 +147,8 @@ definitions:
         type: string
       kubeconfig_path:
         type: string
+      max_instances_per_user:
+        type: integer
       max_namespaces:
         type: integer
       name:
@@ -60,6 +158,28 @@ definitions:
     required:
     - api_server_url
     - name
+    type: object
+  handlers.DefinitionExportBundle:
+    properties:
+      charts:
+        items:
+          $ref: '#/definitions/handlers.ChartConfigExportData'
+        type: array
+      definition:
+        $ref: '#/definitions/handlers.DefinitionExportData'
+      exported_at:
+        type: string
+      schema_version:
+        type: string
+    type: object
+  handlers.DefinitionExportData:
+    properties:
+      default_branch:
+        type: string
+      description:
+        type: string
+      name:
+        type: string
     type: object
   handlers.LoginRequest:
     properties:
@@ -88,6 +208,23 @@ definitions:
         items:
           type: string
         type: array
+    type: object
+  handlers.NamespaceResourceUsage:
+    properties:
+      cpu_limit:
+        type: string
+      cpu_used:
+        type: string
+      memory_limit:
+        type: string
+      memory_used:
+        type: string
+      namespace:
+        type: string
+      pod_count:
+        type: integer
+      pod_limit:
+        type: integer
     type: object
   handlers.OrphanedNamespaceResponse:
     properties:
@@ -168,11 +305,28 @@ definitions:
         type: string
       kubeconfig_path:
         type: string
+      max_instances_per_user:
+        type: integer
       max_namespaces:
         type: integer
       name:
         type: string
       region:
+        type: string
+    type: object
+  handlers.UpdateQuotaRequest:
+    properties:
+      cpu_limit:
+        type: string
+      cpu_request:
+        type: string
+      memory_limit:
+        type: string
+      memory_request:
+        type: string
+      pod_limit:
+        type: integer
+      storage_limit:
         type: string
     type: object
   handlers.UserStats:
@@ -230,6 +384,30 @@ definitions:
     properties:
       branch:
         example: feature/my-branch
+        type: string
+    type: object
+  handlers.updatePreferenceRequest:
+    properties:
+      enabled:
+        type: boolean
+      event_type:
+        type: string
+    type: object
+  handlers.versionDetailResponse:
+    properties:
+      change_summary:
+        type: string
+      created_at:
+        type: string
+      created_by:
+        type: string
+      id:
+        type: string
+      snapshot:
+        $ref: '#/definitions/models.TemplateSnapshot'
+      template_id:
+        type: string
+      version:
         type: string
     type: object
   health.CheckStatus:
@@ -539,6 +717,9 @@ definitions:
         type: string
       is_default:
         type: boolean
+      max_instances_per_user:
+        description: 0 = unlimited
+        type: integer
       max_namespaces:
         type: integer
       name:
@@ -591,6 +772,38 @@ definitions:
         description: For optimistic locking (1 = initial; 0 = not provided)
         type: integer
     type: object
+  models.Notification:
+    properties:
+      created_at:
+        type: string
+      entity_id:
+        type: string
+      entity_type:
+        type: string
+      id:
+        type: string
+      is_read:
+        type: boolean
+      message:
+        type: string
+      title:
+        type: string
+      type:
+        type: string
+      user_id:
+        type: string
+    type: object
+  models.NotificationPreference:
+    properties:
+      enabled:
+        type: boolean
+      event_type:
+        type: string
+      id:
+        type: string
+      user_id:
+        type: string
+    type: object
   models.PaginatedAuditLogs:
     properties:
       data:
@@ -603,6 +816,40 @@ definitions:
         type: integer
       total:
         type: integer
+    type: object
+  models.PaginatedNotifications:
+    properties:
+      notifications:
+        items:
+          $ref: '#/definitions/models.Notification'
+        type: array
+      total:
+        type: integer
+      unread_count:
+        type: integer
+    type: object
+  models.ResourceQuotaConfig:
+    properties:
+      cluster_id:
+        type: string
+      cpu_limit:
+        type: string
+      cpu_request:
+        type: string
+      created_at:
+        type: string
+      id:
+        type: string
+      memory_limit:
+        type: string
+      memory_request:
+        type: string
+      pod_limit:
+        type: integer
+      storage_limit:
+        type: string
+      updated_at:
+        type: string
     type: object
   models.SharedValues:
     properties:
@@ -725,6 +972,62 @@ definitions:
       source_repo_url:
         type: string
       stack_template_id:
+        type: string
+    type: object
+  models.TemplateChartSnapshotData:
+    properties:
+      chart_name:
+        type: string
+      default_values:
+        type: string
+      is_required:
+        type: boolean
+      locked_values:
+        type: string
+      repo_url:
+        type: string
+      sort_order:
+        type: integer
+    type: object
+  models.TemplateSnapshot:
+    properties:
+      charts:
+        items:
+          $ref: '#/definitions/models.TemplateChartSnapshotData'
+        type: array
+      template:
+        $ref: '#/definitions/models.TemplateSnapshotData'
+    type: object
+  models.TemplateSnapshotData:
+    properties:
+      category:
+        type: string
+      default_branch:
+        type: string
+      description:
+        type: string
+      is_published:
+        type: boolean
+      name:
+        type: string
+      repository_url:
+        type: string
+      version:
+        type: string
+    type: object
+  models.TemplateVersion:
+    properties:
+      change_summary:
+        type: string
+      created_at:
+        type: string
+      created_by:
+        type: string
+      id:
+        type: string
+      template_id:
+        type: string
+      version:
         type: string
     type: object
   models.User:
@@ -1672,6 +1975,117 @@ paths:
       summary: Get cluster namespaces
       tags:
       - clusters
+  /api/v1/clusters/{id}/quotas:
+    delete:
+      description: Removes the resource quota configuration for a cluster. Admin only.
+      parameters:
+      - description: Cluster ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Delete resource quota config for a cluster
+      tags:
+      - clusters
+    get:
+      description: Returns the resource quota configuration for a cluster, or 404
+        if not set.
+      parameters:
+      - description: Cluster ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.ResourceQuotaConfig'
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get resource quota config for a cluster
+      tags:
+      - clusters
+    put:
+      consumes:
+      - application/json
+      description: Creates or updates the resource quota configuration for a cluster.
+        Admin only.
+      parameters:
+      - description: Cluster ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Quota configuration
+        in: body
+        name: quota
+        required: true
+        schema:
+          $ref: '#/definitions/handlers.UpdateQuotaRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.ResourceQuotaConfig'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Create or update resource quota config for a cluster
+      tags:
+      - clusters
   /api/v1/clusters/{id}/shared-values:
     get:
       description: Returns all shared values for the specified cluster, sorted by
@@ -1881,6 +2295,40 @@ paths:
       summary: Test cluster connectivity
       tags:
       - clusters
+  /api/v1/clusters/{id}/utilization:
+    get:
+      description: Returns per-namespace resource usage for all stack namespaces in
+        the cluster.
+      parameters:
+      - description: Cluster ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handlers.ClusterUtilization'
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get cluster-wide resource utilization
+      tags:
+      - clusters
   /api/v1/favorites:
     get:
       description: Returns all favorited entities for the current user
@@ -2069,6 +2517,12 @@ paths:
             additionalProperties:
               type: string
             type: object
+        "503":
+          description: Service Unavailable
+          schema:
+            additionalProperties:
+              type: string
+            type: object
       summary: List branches
       tags:
       - git
@@ -2117,6 +2571,12 @@ paths:
             type: object
         "500":
           description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "503":
+          description: Service Unavailable
           schema:
             additionalProperties:
               type: string
@@ -2245,6 +2705,234 @@ paths:
       summary: Update an item
       tags:
       - items
+  /api/v1/notifications:
+    get:
+      description: List the authenticated user's notifications with optional filters
+        and pagination
+      parameters:
+      - description: Only return unread notifications
+        in: query
+        name: unread_only
+        type: boolean
+      - description: Page size (default 20, max 100)
+        in: query
+        name: limit
+        type: integer
+      - description: Offset (default 0)
+        in: query
+        name: offset
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.PaginatedNotifications'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List notifications
+      tags:
+      - notifications
+  /api/v1/notifications/{id}/read:
+    post:
+      description: Mark a single notification as read (verifies ownership)
+      parameters:
+      - description: Notification ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Mark notification as read
+      tags:
+      - notifications
+  /api/v1/notifications/count:
+    get:
+      description: Returns the unread notification count for badge display
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              format: int64
+              type: integer
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Count unread notifications
+      tags:
+      - notifications
+  /api/v1/notifications/preferences:
+    get:
+      description: Get the authenticated user's notification preferences
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/models.NotificationPreference'
+            type: array
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get notification preferences
+      tags:
+      - notifications
+    put:
+      consumes:
+      - application/json
+      description: Update the authenticated user's notification preferences (array
+        of event_type + enabled)
+      parameters:
+      - description: Preferences to update
+        in: body
+        name: preferences
+        required: true
+        schema:
+          items:
+            $ref: '#/definitions/handlers.updatePreferenceRequest'
+          type: array
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/models.NotificationPreference'
+            type: array
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Update notification preferences
+      tags:
+      - notifications
+  /api/v1/notifications/read-all:
+    post:
+      description: Mark all of the authenticated user's notifications as read
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Mark all notifications as read
+      tags:
+      - notifications
   /api/v1/ping:
     get:
       description: Ping test endpoint
@@ -2509,6 +3197,166 @@ paths:
       summary: Update a chart config
       tags:
       - chart-configs
+  /api/v1/stack-definitions/{id}/check-upgrade:
+    get:
+      description: Check if the source template has a newer version than the definition's
+        current version
+      parameters:
+      - description: Definition ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Check if a template upgrade is available
+      tags:
+      - stack-definitions
+  /api/v1/stack-definitions/{id}/export:
+    get:
+      description: Export a stack definition and its chart configs as a portable JSON
+        bundle
+      parameters:
+      - description: Definition ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handlers.DefinitionExportBundle'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Export a stack definition
+      tags:
+      - stack-definitions
+  /api/v1/stack-definitions/{id}/upgrade:
+    post:
+      consumes:
+      - application/json
+      description: Upgrade a definition to the latest template version, adding new
+        charts and updating defaults
+      parameters:
+      - description: Definition ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "409":
+          description: Conflict
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Apply a template upgrade to a definition
+      tags:
+      - stack-definitions
+  /api/v1/stack-definitions/import:
+    post:
+      consumes:
+      - application/json
+      description: Import a stack definition from a portable JSON bundle, creating
+        a new definition with fresh IDs
+      parameters:
+      - description: Export bundle
+        in: body
+        name: bundle
+        required: true
+        schema:
+          $ref: '#/definitions/handlers.DefinitionExportBundle'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Import a stack definition
+      tags:
+      - stack-definitions
   /api/v1/stack-instances:
     get:
       description: List all stack instances, optionally filtered by owner
@@ -3150,6 +3998,213 @@ paths:
       summary: Export chart values
       tags:
       - stack-instances
+  /api/v1/stack-instances/bulk/clean:
+    post:
+      consumes:
+      - application/json
+      description: Clean multiple stack instances in a single request. Uninstalls
+        Helm releases and deletes namespaces.
+      parameters:
+      - description: Instance IDs to clean
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/handlers.BulkOperationRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handlers.BulkOperationResponse'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Bulk clean stack instances
+      tags:
+      - stack-instances
+  /api/v1/stack-instances/bulk/delete:
+    post:
+      consumes:
+      - application/json
+      description: Delete multiple stack instances in a single request. Processes
+        instances sequentially.
+      parameters:
+      - description: Instance IDs to delete
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/handlers.BulkOperationRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handlers.BulkOperationResponse'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Bulk delete stack instances
+      tags:
+      - stack-instances
+  /api/v1/stack-instances/bulk/deploy:
+    post:
+      consumes:
+      - application/json
+      description: Deploy multiple stack instances in a single request. Processes
+        instances sequentially.
+      parameters:
+      - description: Instance IDs to deploy
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/handlers.BulkOperationRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handlers.BulkOperationResponse'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Bulk deploy stack instances
+      tags:
+      - stack-instances
+  /api/v1/stack-instances/bulk/stop:
+    post:
+      consumes:
+      - application/json
+      description: Stop multiple stack instances in a single request. Processes instances
+        sequentially.
+      parameters:
+      - description: Instance IDs to stop
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/handlers.BulkOperationRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handlers.BulkOperationResponse'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Bulk stop stack instances
+      tags:
+      - stack-instances
+  /api/v1/stack-instances/compare:
+    get:
+      description: Compare the merged values of two stack instances side-by-side,
+        per chart
+      parameters:
+      - description: Left instance ID
+        in: query
+        name: left
+        required: true
+        type: string
+      - description: Right instance ID
+        in: query
+        name: right
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handlers.CompareInstancesResponse'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Compare two stack instances
+      tags:
+      - stack-instances
   /api/v1/stack-instances/recent:
     get:
       description: Returns the 5 most recently updated stack instances owned by the
@@ -3585,6 +4640,135 @@ paths:
               type: string
             type: object
       summary: Unpublish a stack template
+      tags:
+      - templates
+  /api/v1/templates/{id}/versions:
+    get:
+      description: List all version snapshots for a template, ordered newest first
+      parameters:
+      - description: Template ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/models.TemplateVersion'
+            type: array
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: List template versions
+      tags:
+      - templates
+  /api/v1/templates/{id}/versions/{versionId}:
+    get:
+      description: Get a specific template version with its parsed snapshot
+      parameters:
+      - description: Template ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Version ID
+        in: path
+        name: versionId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handlers.versionDetailResponse'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Get a template version
+      tags:
+      - templates
+  /api/v1/templates/{id}/versions/diff:
+    get:
+      description: Compare two template version snapshots side by side
+      parameters:
+      - description: Template ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Left version ID
+        in: query
+        name: left
+        required: true
+        type: string
+      - description: Right version ID
+        in: query
+        name: right
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Compare two template versions
       tags:
       - templates
   /api/v1/users:

@@ -94,6 +94,7 @@ type InstanceHandler struct {
 	k8sWatcher         *k8s.Watcher
 	registry           *cluster.Registry
 	deployLogRepo      models.DeploymentLogRepository
+	clusterRepo        models.ClusterRepository
 	defaultTTLMinutes  int
 }
 
@@ -139,6 +140,7 @@ func NewInstanceHandlerWithDeployer(
 	k8sWatcher *k8s.Watcher,
 	registry *cluster.Registry,
 	deployLogRepo models.DeploymentLogRepository,
+	clusterRepo models.ClusterRepository,
 	defaultTTLMinutes int,
 ) *InstanceHandler {
 	return &InstanceHandler{
@@ -155,6 +157,7 @@ func NewInstanceHandlerWithDeployer(
 		k8sWatcher:         k8sWatcher,
 		registry:           registry,
 		deployLogRepo:      deployLogRepo,
+		clusterRepo:        clusterRepo,
 		defaultTTLMinutes:  defaultTTLMinutes,
 	}
 }
@@ -299,6 +302,29 @@ func (h *InstanceHandler) CreateInstance(c *gin.Context) {
 		} else if !h.registry.ClusterExists(inst.ClusterID) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "Unknown cluster_id"})
 			return
+		}
+	}
+
+	// Enforce per-user instance limit if configured on the cluster.
+	if h.clusterRepo != nil && inst.ClusterID != "" {
+		cl, clErr := h.clusterRepo.FindByID(inst.ClusterID)
+		if clErr == nil && cl.MaxInstancesPerUser > 0 {
+			userInstances, listErr := h.instanceRepo.FindByCluster(inst.ClusterID)
+			if listErr != nil {
+				slog.Error("Failed to list instances for per-user limit check", "error", listErr, "cluster_id", inst.ClusterID)
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
+				return
+			}
+			count := 0
+			for _, ui := range userInstances {
+				if ui.OwnerID == inst.OwnerID {
+					count++
+				}
+			}
+			if count >= cl.MaxInstancesPerUser {
+				c.JSON(http.StatusConflict, gin.H{"error": fmt.Sprintf("Maximum instances per user reached for this cluster (limit: %d)", cl.MaxInstancesPerUser)})
+				return
+			}
 		}
 	}
 
@@ -1322,4 +1348,242 @@ func (h *InstanceHandler) ExtendTTL(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, inst)
+}
+
+// CompareInstanceSummary is the summary info for one side of a comparison.
+type CompareInstanceSummary struct {
+	ID             string `json:"id"`
+	Name           string `json:"name"`
+	DefinitionName string `json:"definition_name"`
+	Branch         string `json:"branch"`
+	Owner          string `json:"owner"`
+}
+
+// CompareChartDiff holds per-chart comparison data.
+type CompareChartDiff struct {
+	ChartName      string  `json:"chart_name"`
+	LeftValues     *string `json:"left_values"`
+	RightValues    *string `json:"right_values"`
+	HasDifferences bool    `json:"has_differences"`
+}
+
+// CompareInstancesResponse is the response for the compare endpoint.
+type CompareInstancesResponse struct {
+	Left   CompareInstanceSummary `json:"left"`
+	Right  CompareInstanceSummary `json:"right"`
+	Charts []CompareChartDiff     `json:"charts"`
+}
+
+// CompareInstances godoc
+// @Summary     Compare two stack instances
+// @Description Compare the merged values of two stack instances side-by-side, per chart
+// @Tags        stack-instances
+// @Produce     json
+// @Param       left  query    string true "Left instance ID"
+// @Param       right query    string true "Right instance ID"
+// @Success     200   {object} CompareInstancesResponse
+// @Failure     400   {object} map[string]string
+// @Failure     404   {object} map[string]string
+// @Failure     500   {object} map[string]string
+// @Router      /api/v1/stack-instances/compare [get]
+func (h *InstanceHandler) CompareInstances(c *gin.Context) {
+	leftID := c.Query("left")
+	rightID := c.Query("right")
+
+	if leftID == "" || rightID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Both 'left' and 'right' query parameters are required"})
+		return
+	}
+
+	// Fetch left instance.
+	leftInst, err := h.instanceRepo.FindByID(leftID)
+	if err != nil {
+		status, message := mapError(err, "Left stack instance")
+		c.JSON(status, gin.H{"error": message})
+		return
+	}
+
+	// Fetch right instance.
+	rightInst, err := h.instanceRepo.FindByID(rightID)
+	if err != nil {
+		status, message := mapError(err, "Right stack instance")
+		c.JSON(status, gin.H{"error": message})
+		return
+	}
+
+	// Fetch definitions.
+	leftDef, err := h.definitionRepo.FindByID(leftInst.StackDefinitionID)
+	if err != nil {
+		slog.Error("compare: failed to fetch left definition", "instance_id", leftID, "error", err)
+		status, message := mapError(err, "Stack definition")
+		c.JSON(status, gin.H{"error": message})
+		return
+	}
+
+	rightDef, err := h.definitionRepo.FindByID(rightInst.StackDefinitionID)
+	if err != nil {
+		slog.Error("compare: failed to fetch right definition", "instance_id", rightID, "error", err)
+		status, message := mapError(err, "Stack definition")
+		c.JSON(status, gin.H{"error": message})
+		return
+	}
+
+	// Fetch chart configs for both definitions.
+	leftCharts, err := h.chartConfigRepo.ListByDefinition(leftDef.ID)
+	if err != nil {
+		slog.Error("compare: failed to fetch left chart configs", "definition_id", leftDef.ID, "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
+		return
+	}
+
+	rightCharts, err := h.chartConfigRepo.ListByDefinition(rightDef.ID)
+	if err != nil {
+		slog.Error("compare: failed to fetch right chart configs", "definition_id", rightDef.ID, "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
+		return
+	}
+
+	// Fetch overrides for both instances.
+	leftOverrides, _ := h.overrideRepo.ListByInstance(leftID)
+	rightOverrides, _ := h.overrideRepo.ListByInstance(rightID)
+
+	leftOverrideMap := make(map[string]string) // chartConfigID → values
+	for _, ov := range leftOverrides {
+		leftOverrideMap[ov.ChartConfigID] = ov.Values
+	}
+	rightOverrideMap := make(map[string]string)
+	for _, ov := range rightOverrides {
+		rightOverrideMap[ov.ChartConfigID] = ov.Values
+	}
+
+	// Build locked values maps from templates.
+	leftLockedMap := h.buildLockedValuesMap(leftDef)
+	rightLockedMap := h.buildLockedValuesMap(rightDef)
+
+	// Resolve owner names.
+	leftOwner := resolveOwnerName(h.userRepo, leftInst.OwnerID)
+	rightOwner := resolveOwnerName(h.userRepo, rightInst.OwnerID)
+
+	// Generate merged values for left charts.
+	leftValuesMap := make(map[string]string) // chartName → merged YAML
+	for _, ch := range leftCharts {
+		yamlBytes, err := h.valuesGen.GenerateValues(c.Request.Context(), helm.GenerateParams{
+			ChartName:      ch.ChartName,
+			DefaultValues:  ch.DefaultValues,
+			LockedValues:   leftLockedMap[ch.ChartName],
+			OverrideValues: leftOverrideMap[ch.ID],
+			TemplateVars: helm.TemplateVars{
+				Branch:       leftInst.Branch,
+				Namespace:    leftInst.Namespace,
+				InstanceName: leftInst.Name,
+				StackName:    leftDef.Name,
+				Owner:        leftOwner,
+			},
+		})
+		if err != nil {
+			slog.Error("compare: failed to generate left values", "chart", ch.ChartName, "error", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
+			return
+		}
+		leftValuesMap[ch.ChartName] = string(yamlBytes)
+	}
+
+	// Generate merged values for right charts.
+	rightValuesMap := make(map[string]string)
+	for _, ch := range rightCharts {
+		yamlBytes, err := h.valuesGen.GenerateValues(c.Request.Context(), helm.GenerateParams{
+			ChartName:      ch.ChartName,
+			DefaultValues:  ch.DefaultValues,
+			LockedValues:   rightLockedMap[ch.ChartName],
+			OverrideValues: rightOverrideMap[ch.ID],
+			TemplateVars: helm.TemplateVars{
+				Branch:       rightInst.Branch,
+				Namespace:    rightInst.Namespace,
+				InstanceName: rightInst.Name,
+				StackName:    rightDef.Name,
+				Owner:        rightOwner,
+			},
+		})
+		if err != nil {
+			slog.Error("compare: failed to generate right values", "chart", ch.ChartName, "error", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
+			return
+		}
+		rightValuesMap[ch.ChartName] = string(yamlBytes)
+	}
+
+	// Collect all chart names from both sides.
+	allChartNames := make(map[string]bool)
+	for name := range leftValuesMap {
+		allChartNames[name] = true
+	}
+	for name := range rightValuesMap {
+		allChartNames[name] = true
+	}
+
+	// Build sorted chart names for deterministic output.
+	sortedNames := make([]string, 0, len(allChartNames))
+	for name := range allChartNames {
+		sortedNames = append(sortedNames, name)
+	}
+	sort.Strings(sortedNames)
+
+	// Build per-chart diffs.
+	charts := make([]CompareChartDiff, 0, len(sortedNames))
+	for _, name := range sortedNames {
+		diff := CompareChartDiff{ChartName: name}
+
+		leftVal, leftOK := leftValuesMap[name]
+		rightVal, rightOK := rightValuesMap[name]
+
+		if leftOK {
+			diff.LeftValues = &leftVal
+		}
+		if rightOK {
+			diff.RightValues = &rightVal
+		}
+
+		// Determine differences: charts missing on one side always differ.
+		if leftOK && rightOK {
+			diff.HasDifferences = leftVal != rightVal
+		} else {
+			diff.HasDifferences = true
+		}
+
+		charts = append(charts, diff)
+	}
+
+	resp := CompareInstancesResponse{
+		Left: CompareInstanceSummary{
+			ID:             leftInst.ID,
+			Name:           leftInst.Name,
+			DefinitionName: leftDef.Name,
+			Branch:         leftInst.Branch,
+			Owner:          leftOwner,
+		},
+		Right: CompareInstanceSummary{
+			ID:             rightInst.ID,
+			Name:           rightInst.Name,
+			DefinitionName: rightDef.Name,
+			Branch:         rightInst.Branch,
+			Owner:          rightOwner,
+		},
+		Charts: charts,
+	}
+
+	c.JSON(http.StatusOK, resp)
+}
+
+// buildLockedValuesMap returns chartName → lockedValues for a definition's source template.
+func (h *InstanceHandler) buildLockedValuesMap(def *models.StackDefinition) map[string]string {
+	lockedMap := make(map[string]string)
+	if def.SourceTemplateID != "" && h.templateChartRepo != nil {
+		templateCharts, err := h.templateChartRepo.ListByTemplate(def.SourceTemplateID)
+		if err == nil {
+			for _, tc := range templateCharts {
+				lockedMap[tc.ChartName] = tc.LockedValues
+			}
+		}
+	}
+	return lockedMap
 }

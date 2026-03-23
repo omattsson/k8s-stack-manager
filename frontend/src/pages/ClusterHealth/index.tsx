@@ -29,6 +29,7 @@ import type {
   ClusterSummary,
   NodeStatusInfo,
   ClusterNamespaceInfo,
+  NamespaceResourceUsage,
 } from '../../types';
 import LoadingState from '../../components/LoadingState';
 
@@ -61,6 +62,7 @@ const ClusterHealth = () => {
   const [summary, setSummary] = useState<ClusterSummary | null>(null);
   const [nodes, setNodes] = useState<NodeStatusInfo[]>([]);
   const [namespaces, setNamespaces] = useState<ClusterNamespaceInfo[]>([]);
+  const [utilization, setUtilization] = useState<NamespaceResourceUsage[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [autoRefresh, setAutoRefresh] = useState(false);
@@ -92,14 +94,16 @@ const ClusterHealth = () => {
     setLoading(true);
     setError(null);
     try {
-      const [summaryData, nodesData, namespacesData] = await Promise.all([
+      const [summaryData, nodesData, namespacesData, utilizationData] = await Promise.all([
         clusterService.getHealthSummary(selectedCluster),
         clusterService.getNodes(selectedCluster),
         clusterService.getNamespaces(selectedCluster),
+        clusterService.getUtilization(selectedCluster).catch(() => ({ namespaces: [] })),
       ]);
       setSummary(summaryData);
       setNodes(nodesData ?? []);
       setNamespaces(namespacesData ?? []);
+      setUtilization(utilizationData.namespaces ?? []);
     } catch {
       setError('Failed to load cluster health data');
     } finally {
@@ -359,6 +363,93 @@ const ClusterHealth = () => {
               </TableBody>
             </Table>
           </TableContainer>
+
+          {/* Namespace Resource Usage */}
+          {utilization.length > 0 && (
+            <>
+              <Typography variant="h6" sx={{ mb: 1, mt: 3 }}>
+                Namespace Resource Usage
+              </Typography>
+              <TableContainer component={Paper}>
+                <Table size="small">
+                  <TableHead>
+                    <TableRow>
+                      <TableCell>Namespace</TableCell>
+                      <TableCell>CPU Usage</TableCell>
+                      <TableCell>Memory Usage</TableCell>
+                      <TableCell>Pods</TableCell>
+                    </TableRow>
+                  </TableHead>
+                  <TableBody>
+                    {utilization.map((ns) => {
+                      const cpuPercent = resourcePercent(ns.cpu_used, ns.cpu_limit);
+                      const memPercent = resourcePercent(ns.memory_used, ns.memory_limit);
+                      const podPercent = ns.pod_limit > 0 ? Math.round((ns.pod_count / ns.pod_limit) * 100) : 0;
+                      return (
+                        <TableRow key={ns.namespace}>
+                          <TableCell>
+                            <Typography variant="body2" fontWeight="medium">
+                              {ns.namespace}
+                            </Typography>
+                          </TableCell>
+                          <TableCell>
+                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                              <Box sx={{ flexGrow: 1, minWidth: 80 }}>
+                                <LinearProgress
+                                  variant="determinate"
+                                  value={Math.min(cpuPercent, 100)}
+                                  color={cpuPercent > 90 ? 'error' : cpuPercent > 70 ? 'warning' : 'success'}
+                                />
+                              </Box>
+                              <Typography variant="body2" sx={{ minWidth: 110, textAlign: 'right' }}>
+                                {ns.cpu_used} / {ns.cpu_limit} ({cpuPercent}%)
+                              </Typography>
+                            </Box>
+                          </TableCell>
+                          <TableCell>
+                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                              <Box sx={{ flexGrow: 1, minWidth: 80 }}>
+                                <LinearProgress
+                                  variant="determinate"
+                                  value={Math.min(memPercent, 100)}
+                                  color={memPercent > 90 ? 'error' : memPercent > 70 ? 'warning' : 'success'}
+                                />
+                              </Box>
+                              <Typography variant="body2" sx={{ minWidth: 130, textAlign: 'right' }}>
+                                {ns.memory_used} / {ns.memory_limit} ({memPercent}%)
+                              </Typography>
+                            </Box>
+                          </TableCell>
+                          <TableCell>
+                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                              {ns.pod_limit > 0 ? (
+                                <>
+                                  <Box sx={{ flexGrow: 1, minWidth: 60 }}>
+                                    <LinearProgress
+                                      variant="determinate"
+                                      value={Math.min(podPercent, 100)}
+                                      color={podPercent > 90 ? 'error' : podPercent > 70 ? 'warning' : 'success'}
+                                    />
+                                  </Box>
+                                  <Typography variant="body2" sx={{ minWidth: 70, textAlign: 'right' }}>
+                                    {ns.pod_count} / {ns.pod_limit}
+                                  </Typography>
+                                </>
+                              ) : (
+                                <Typography variant="body2">
+                                  {ns.pod_count} (no limit)
+                                </Typography>
+                              )}
+                            </Box>
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
+                  </TableBody>
+                </Table>
+              </TableContainer>
+            </>
+          )}
         </>
       )}
     </Box>

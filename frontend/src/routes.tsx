@@ -9,6 +9,7 @@ import Instantiate from './pages/Templates/Instantiate';
 import DefinitionList from './pages/StackDefinitions/List';
 import DefinitionForm from './pages/StackDefinitions/Form';
 import InstanceForm from './pages/StackInstances/Form';
+import InstanceCompare from './pages/StackInstances/Compare';
 import InstanceDetail from './pages/StackInstances/Detail';
 import AuditLog from './pages/AuditLog';
 import AdminUsers from './pages/Admin/Users';
@@ -19,6 +20,7 @@ import Analytics from './pages/Analytics';
 import SharedValues from './pages/SharedValues';
 import CleanupPolicies from './pages/CleanupPolicies';
 import Profile from './pages/Profile';
+import Notifications from './pages/Notifications';
 import NotFound from './pages/NotFound';
 
 const AppRoutes = () => {
@@ -35,6 +37,7 @@ const AppRoutes = () => {
       <Route path="/stack-definitions/new" element={<ProtectedRoute><DefinitionForm /></ProtectedRoute>} />
       <Route path="/stack-definitions/:id/edit" element={<ProtectedRoute><DefinitionForm /></ProtectedRoute>} />
       <Route path="/stack-instances/new" element={<ProtectedRoute><InstanceForm /></ProtectedRoute>} />
+      <Route path="/stack-instances/compare" element={<ProtectedRoute><InstanceCompare /></ProtectedRoute>} />
       <Route path="/stack-instances/:id" element={<ProtectedRoute><InstanceDetail /></ProtectedRoute>} />
       <Route path="/audit-log" element={<ProtectedRoute><AuditLog /></ProtectedRoute>} />
       <Route path="/admin/users" element={<ProtectedRoute requiredRole="admin"><AdminUsers /></ProtectedRoute>} />
@@ -45,6 +48,7 @@ const AppRoutes = () => {
       <Route path="/admin/shared-values" element={<ProtectedRoute requiredRole="admin"><SharedValues /></ProtectedRoute>} />
       <Route path="/admin/cleanup-policies" element={<ProtectedRoute requiredRole="admin"><CleanupPolicies /></ProtectedRoute>} />
       <Route path="/profile" element={<ProtectedRoute><Profile /></ProtectedRoute>} />
+      <Route path="/notifications" element={<ProtectedRoute><Notifications /></ProtectedRoute>} />
       <Route path="*" element={<NotFound />} />
     </Routes>
   );

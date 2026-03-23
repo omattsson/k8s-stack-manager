@@ -18,26 +18,28 @@ import (
 
 // CreateClusterRequest is the input payload for creating a cluster.
 type CreateClusterRequest struct {
-	Name           string `json:"name" binding:"required"`
-	Description    string `json:"description"`
-	APIServerURL   string `json:"api_server_url" binding:"required"`
-	KubeconfigData string `json:"kubeconfig_data"`
-	KubeconfigPath string `json:"kubeconfig_path"`
-	Region         string `json:"region"`
-	MaxNamespaces  int    `json:"max_namespaces"`
-	IsDefault      bool   `json:"is_default"`
+	Name                string `json:"name" binding:"required"`
+	Description         string `json:"description"`
+	APIServerURL        string `json:"api_server_url" binding:"required"`
+	KubeconfigData      string `json:"kubeconfig_data"`
+	KubeconfigPath      string `json:"kubeconfig_path"`
+	Region              string `json:"region"`
+	MaxNamespaces       int    `json:"max_namespaces"`
+	MaxInstancesPerUser int    `json:"max_instances_per_user"`
+	IsDefault           bool   `json:"is_default"`
 }
 
 // UpdateClusterRequest is the input payload for updating a cluster.
 type UpdateClusterRequest struct {
-	Name           *string `json:"name,omitempty"`
-	Description    *string `json:"description,omitempty"`
-	APIServerURL   *string `json:"api_server_url,omitempty"`
-	KubeconfigData *string `json:"kubeconfig_data,omitempty"`
-	KubeconfigPath *string `json:"kubeconfig_path,omitempty"`
-	Region         *string `json:"region,omitempty"`
-	MaxNamespaces  *int    `json:"max_namespaces,omitempty"`
-	IsDefault      *bool   `json:"is_default,omitempty"`
+	Name                *string `json:"name,omitempty"`
+	Description         *string `json:"description,omitempty"`
+	APIServerURL        *string `json:"api_server_url,omitempty"`
+	KubeconfigData      *string `json:"kubeconfig_data,omitempty"`
+	KubeconfigPath      *string `json:"kubeconfig_path,omitempty"`
+	Region              *string `json:"region,omitempty"`
+	MaxNamespaces       *int    `json:"max_namespaces,omitempty"`
+	MaxInstancesPerUser *int    `json:"max_instances_per_user,omitempty"`
+	IsDefault           *bool   `json:"is_default,omitempty"`
 }
 
 // ClusterHandler provides CRUD endpoints for cluster management.
@@ -45,6 +47,7 @@ type ClusterHandler struct {
 	clusterRepo  models.ClusterRepository
 	registry     *cluster.Registry
 	instanceRepo models.StackInstanceRepository
+	quotaRepo    models.ResourceQuotaRepository
 }
 
 // NewClusterHandler creates a new ClusterHandler with the given dependencies.
@@ -57,6 +60,21 @@ func NewClusterHandler(
 		clusterRepo:  clusterRepo,
 		registry:     registry,
 		instanceRepo: instanceRepo,
+	}
+}
+
+// NewClusterHandlerWithQuotas creates a ClusterHandler with resource quota support.
+func NewClusterHandlerWithQuotas(
+	clusterRepo models.ClusterRepository,
+	registry *cluster.Registry,
+	instanceRepo models.StackInstanceRepository,
+	quotaRepo models.ResourceQuotaRepository,
+) *ClusterHandler {
+	return &ClusterHandler{
+		clusterRepo:  clusterRepo,
+		registry:     registry,
+		instanceRepo: instanceRepo,
+		quotaRepo:    quotaRepo,
 	}
 }
 
@@ -101,15 +119,16 @@ func (h *ClusterHandler) CreateCluster(c *gin.Context) {
 	}
 
 	cl := &models.Cluster{
-		Name:           req.Name,
-		Description:    req.Description,
-		APIServerURL:   req.APIServerURL,
-		KubeconfigData: req.KubeconfigData,
-		KubeconfigPath: req.KubeconfigPath,
-		Region:         req.Region,
-		MaxNamespaces:  req.MaxNamespaces,
-		IsDefault:      false,
-		HealthStatus:   models.ClusterUnreachable,
+		Name:                req.Name,
+		Description:         req.Description,
+		APIServerURL:        req.APIServerURL,
+		KubeconfigData:      req.KubeconfigData,
+		KubeconfigPath:      req.KubeconfigPath,
+		Region:              req.Region,
+		MaxNamespaces:       req.MaxNamespaces,
+		MaxInstancesPerUser: req.MaxInstancesPerUser,
+		IsDefault:           false,
+		HealthStatus:        models.ClusterUnreachable,
 	}
 
 	if err := cl.Validate(); err != nil {
@@ -241,6 +260,9 @@ func (h *ClusterHandler) UpdateCluster(c *gin.Context) {
 	}
 	if req.MaxNamespaces != nil {
 		existing.MaxNamespaces = *req.MaxNamespaces
+	}
+	if req.MaxInstancesPerUser != nil {
+		existing.MaxInstancesPerUser = *req.MaxInstancesPerUser
 	}
 	if req.IsDefault != nil {
 		if *req.IsDefault && !existing.IsDefault {
@@ -576,4 +598,236 @@ func (h *ClusterHandler) GetClusterNamespaces(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, namespaces)
+}
+
+// UpdateQuotaRequest is the input payload for creating or updating resource quotas.
+type UpdateQuotaRequest struct {
+	CPURequest    string `json:"cpu_request"`
+	CPULimit      string `json:"cpu_limit"`
+	MemoryRequest string `json:"memory_request"`
+	MemoryLimit   string `json:"memory_limit"`
+	StorageLimit  string `json:"storage_limit"`
+	PodLimit      int    `json:"pod_limit"`
+}
+
+// GetQuotas godoc
+// @Summary      Get resource quota config for a cluster
+// @Description  Returns the resource quota configuration for a cluster, or 404 if not set.
+// @Tags         clusters
+// @Produce      json
+// @Param        id  path  string  true  "Cluster ID"
+// @Success      200  {object}  models.ResourceQuotaConfig
+// @Failure      404  {object}  map[string]string
+// @Failure      500  {object}  map[string]string
+// @Router       /api/v1/clusters/{id}/quotas [get]
+// @Security     BearerAuth
+func (h *ClusterHandler) GetQuotas(c *gin.Context) {
+	id := c.Param("id")
+
+	// Verify cluster exists.
+	if _, err := h.clusterRepo.FindByID(id); err != nil {
+		status, message := mapError(err, "Cluster")
+		c.JSON(status, gin.H{"error": message})
+		return
+	}
+
+	if h.quotaRepo == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Resource quota management is not available"})
+		return
+	}
+
+	quota, err := h.quotaRepo.GetByClusterID(c.Request.Context(), id)
+	if err != nil {
+		status, message := mapError(err, "Resource quota config")
+		c.JSON(status, gin.H{"error": message})
+		return
+	}
+
+	c.JSON(http.StatusOK, quota)
+}
+
+// UpdateQuotas godoc
+// @Summary      Create or update resource quota config for a cluster
+// @Description  Creates or updates the resource quota configuration for a cluster. Admin only.
+// @Tags         clusters
+// @Accept       json
+// @Produce      json
+// @Param        id     path  string              true  "Cluster ID"
+// @Param        quota  body  UpdateQuotaRequest   true  "Quota configuration"
+// @Success      200  {object}  models.ResourceQuotaConfig
+// @Failure      400  {object}  map[string]string
+// @Failure      404  {object}  map[string]string
+// @Failure      500  {object}  map[string]string
+// @Router       /api/v1/clusters/{id}/quotas [put]
+// @Security     BearerAuth
+func (h *ClusterHandler) UpdateQuotas(c *gin.Context) {
+	id := c.Param("id")
+
+	// Verify cluster exists.
+	if _, err := h.clusterRepo.FindByID(id); err != nil {
+		status, message := mapError(err, "Cluster")
+		c.JSON(status, gin.H{"error": message})
+		return
+	}
+
+	if h.quotaRepo == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Resource quota management is not available"})
+		return
+	}
+
+	var req UpdateQuotaRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request format"})
+		return
+	}
+
+	config := &models.ResourceQuotaConfig{
+		ClusterID:     id,
+		CPURequest:    req.CPURequest,
+		CPULimit:      req.CPULimit,
+		MemoryRequest: req.MemoryRequest,
+		MemoryLimit:   req.MemoryLimit,
+		StorageLimit:  req.StorageLimit,
+		PodLimit:      req.PodLimit,
+	}
+
+	if err := config.Validate(); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	if err := h.quotaRepo.Upsert(c.Request.Context(), config); err != nil {
+		status, message := mapError(err, "Resource quota config")
+		c.JSON(status, gin.H{"error": message})
+		return
+	}
+
+	// Re-read the saved config so timestamps and ID are populated.
+	saved, err := h.quotaRepo.GetByClusterID(c.Request.Context(), id)
+	if err != nil {
+		slog.Error("Failed to read back saved quota config", "cluster_id", id, "error", err)
+		c.JSON(http.StatusOK, config)
+		return
+	}
+
+	c.JSON(http.StatusOK, saved)
+}
+
+// DeleteQuotas godoc
+// @Summary      Delete resource quota config for a cluster
+// @Description  Removes the resource quota configuration for a cluster. Admin only.
+// @Tags         clusters
+// @Produce      json
+// @Param        id  path  string  true  "Cluster ID"
+// @Success      204
+// @Failure      404  {object}  map[string]string
+// @Failure      500  {object}  map[string]string
+// @Router       /api/v1/clusters/{id}/quotas [delete]
+// @Security     BearerAuth
+func (h *ClusterHandler) DeleteQuotas(c *gin.Context) {
+	id := c.Param("id")
+
+	// Verify cluster exists.
+	if _, err := h.clusterRepo.FindByID(id); err != nil {
+		status, message := mapError(err, "Cluster")
+		c.JSON(status, gin.H{"error": message})
+		return
+	}
+
+	if h.quotaRepo == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Resource quota management is not available"})
+		return
+	}
+
+	if err := h.quotaRepo.Delete(c.Request.Context(), id); err != nil {
+		status, message := mapError(err, "Resource quota config")
+		c.JSON(status, gin.H{"error": message})
+		return
+	}
+
+	c.Status(http.StatusNoContent)
+}
+
+// NamespaceResourceUsage represents resource usage for a single namespace.
+type NamespaceResourceUsage struct {
+	Namespace  string `json:"namespace"`
+	CPUUsed    string `json:"cpu_used"`
+	CPULimit   string `json:"cpu_limit"`
+	MemoryUsed string `json:"memory_used"`
+	MemoryLimit string `json:"memory_limit"`
+	PodCount   int    `json:"pod_count"`
+	PodLimit   int    `json:"pod_limit"`
+}
+
+// ClusterUtilization represents aggregated resource utilization for a cluster.
+type ClusterUtilization struct {
+	ClusterID  string                   `json:"cluster_id"`
+	Namespaces []NamespaceResourceUsage `json:"namespaces"`
+}
+
+// GetUtilization godoc
+// @Summary      Get cluster-wide resource utilization
+// @Description  Returns per-namespace resource usage for all stack namespaces in the cluster.
+// @Tags         clusters
+// @Produce      json
+// @Param        id  path  string  true  "Cluster ID"
+// @Success      200  {object}  ClusterUtilization
+// @Failure      404  {object}  map[string]string
+// @Failure      500  {object}  map[string]string
+// @Router       /api/v1/clusters/{id}/utilization [get]
+// @Security     BearerAuth
+func (h *ClusterHandler) GetUtilization(c *gin.Context) {
+	id := c.Param("id")
+
+	// Verify cluster exists.
+	if _, err := h.clusterRepo.FindByID(id); err != nil {
+		status, message := mapError(err, "Cluster")
+		c.JSON(status, gin.H{"error": message})
+		return
+	}
+
+	if h.registry == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Cluster client registry is not available"})
+		return
+	}
+
+	k8sClient, err := h.registry.GetK8sClient(id)
+	if err != nil {
+		slog.Error("Failed to get K8s client for utilization", "error", err, "cluster_id", id)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to connect to cluster"})
+		return
+	}
+
+	ctx := c.Request.Context()
+	namespaces, err := k8sClient.ListStackNamespaces(ctx)
+	if err != nil {
+		slog.Error("Failed to list namespaces for utilization", "error", err, "cluster_id", id)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to retrieve namespaces"})
+		return
+	}
+
+	var usages []NamespaceResourceUsage
+	for _, ns := range namespaces {
+		usage, err := k8sClient.GetNamespaceResourceUsage(ctx, ns.Name)
+		if err != nil {
+			slog.Warn("Failed to get resource usage for namespace", "namespace", ns.Name, "error", err)
+			// Include the namespace with empty values rather than failing the whole request.
+			usages = append(usages, NamespaceResourceUsage{Namespace: ns.Name})
+			continue
+		}
+		usages = append(usages, NamespaceResourceUsage{
+			Namespace:   ns.Name,
+			CPUUsed:     usage.CPUUsed,
+			CPULimit:    usage.CPULimit,
+			MemoryUsed:  usage.MemoryUsed,
+			MemoryLimit: usage.MemoryLimit,
+			PodCount:    usage.PodCount,
+			PodLimit:    usage.PodLimit,
+		})
+	}
+
+	c.JSON(http.StatusOK, ClusterUtilization{
+		ClusterID:  id,
+		Namespaces: usages,
+	})
 }

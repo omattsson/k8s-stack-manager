@@ -13,43 +13,54 @@ import {
   TableRow,
   Paper,
   Chip,
+  IconButton,
+  Tooltip,
 } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
+import FileUploadIcon from '@mui/icons-material/FileUpload';
+import SystemUpdateAltIcon from '@mui/icons-material/SystemUpdateAlt';
 import { definitionService, templateService } from '../../api/client';
 import FavoriteButton from '../../components/FavoriteButton';
 import type { StackDefinition, StackTemplate } from '../../types';
 import LoadingState from '../../components/LoadingState';
 import EmptyState from '../../components/EmptyState';
+import ImportDefinitionDialog from './ImportDefinitionDialog';
+import UpgradeDialog from './UpgradeDialog';
+import { useNotification } from '../../context/NotificationContext';
 
 const List = () => {
   const [definitions, setDefinitions] = useState<StackDefinition[]>([]);
   const [templates, setTemplates] = useState<Record<string, StackTemplate>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [importDialogOpen, setImportDialogOpen] = useState(false);
+  const [upgradeDialogDefId, setUpgradeDialogDefId] = useState<string | null>(null);
   const navigate = useNavigate();
+  const { showSuccess } = useNotification();
+
+  const fetchDefinitions = async () => {
+    try {
+      const data = await definitionService.list();
+      setDefinitions(data || []);
+      // Fetch templates to check for updates
+      try {
+        const tmplList = await templateService.list();
+        const tmplMap: Record<string, StackTemplate> = {};
+        for (const t of tmplList) {
+          tmplMap[t.id] = t;
+        }
+        setTemplates(tmplMap);
+      } catch {
+        // Best-effort: don't block page if templates fail
+      }
+    } catch {
+      setError('Failed to load stack definitions');
+    } finally {
+      setLoading(false);
+    }
+  };
 
   useEffect(() => {
-    const fetchDefinitions = async () => {
-      try {
-        const data = await definitionService.list();
-        setDefinitions(data || []);
-        // Fetch templates to check for updates
-        try {
-          const tmplList = await templateService.list();
-          const tmplMap: Record<string, StackTemplate> = {};
-          for (const t of tmplList) {
-            tmplMap[t.id] = t;
-          }
-          setTemplates(tmplMap);
-        } catch {
-          // Best-effort: don't block page if templates fail
-        }
-      } catch {
-        setError('Failed to load stack definitions');
-      } finally {
-        setLoading(false);
-      }
-    };
     fetchDefinitions();
   }, []);
 
@@ -67,9 +78,14 @@ const List = () => {
         <Typography variant="h4" component="h1">
           Stack Definitions
         </Typography>
-        <Button variant="contained" startIcon={<AddIcon />} onClick={() => navigate('/stack-definitions/new')}>
-          Create Definition
-        </Button>
+        <Box sx={{ display: 'flex', gap: 1 }}>
+          <Button variant="outlined" startIcon={<FileUploadIcon />} onClick={() => setImportDialogOpen(true)}>
+            Import
+          </Button>
+          <Button variant="contained" startIcon={<AddIcon />} onClick={() => navigate('/stack-definitions/new')}>
+            Create Definition
+          </Button>
+        </Box>
       </Box>
 
       {definitions.length === 0 ? (
@@ -134,11 +150,23 @@ const List = () => {
                           def.source_template_version &&
                           templates[def.source_template_id].version !== def.source_template_version && (
                           <Chip
-                            label="Template update available"
+                            label="Update available"
                             size="small"
                             color="info"
                           />
                         )}
+                        <Tooltip title="Check for template upgrades">
+                          <IconButton
+                            size="small"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setUpgradeDialogDefId(def.id);
+                            }}
+                            aria-label={`Check upgrades for ${def.name}`}
+                          >
+                            <SystemUpdateAltIcon fontSize="small" />
+                          </IconButton>
+                        </Tooltip>
                       </Box>
                     ) : (
                       '—'
@@ -152,6 +180,24 @@ const List = () => {
             </TableBody>
           </Table>
         </TableContainer>
+      )}
+
+      <ImportDefinitionDialog
+        open={importDialogOpen}
+        onClose={() => setImportDialogOpen(false)}
+        onImported={(created) => {
+          showSuccess(`Definition "${created.name}" imported successfully`);
+          navigate(`/stack-definitions/${created.id}/edit`);
+        }}
+      />
+
+      {upgradeDialogDefId && (
+        <UpgradeDialog
+          definitionId={upgradeDialogDefId}
+          open={Boolean(upgradeDialogDefId)}
+          onClose={() => setUpgradeDialogDefId(null)}
+          onUpgraded={() => fetchDefinitions()}
+        />
       )}
     </Box>
   );

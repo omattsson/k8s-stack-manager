@@ -79,6 +79,9 @@ const Form = () => {
         if (data.suggestions && data.suggestions.length > 0) {
           setSuggestions(data.suggestions);
         }
+      } else if (axios.isAxiosError(err) && err.response?.status === 403) {
+        const data = err.response.data as { error?: string; message?: string };
+        setError(data.message || data.error || 'You have reached the instance limit for this cluster');
       } else {
         setError('Failed to create instance');
       }
@@ -198,6 +201,20 @@ const Form = () => {
               ))}
             </TextField>
           )}
+
+          {(() => {
+            const selected = selectedClusterId
+              ? clusters.find((c) => c.id === selectedClusterId)
+              : clusters.find((c) => c.is_default);
+            if (selected && selected.max_instances_per_user > 0) {
+              return (
+                <Alert severity="info">
+                  This cluster allows a maximum of {selected.max_instances_per_user} instances per user.
+                </Alert>
+              );
+            }
+            return null;
+          })()}
         </Box>
 
         <Box sx={{ display: 'flex', gap: 2, mt: 3, justifyContent: 'flex-end' }}>

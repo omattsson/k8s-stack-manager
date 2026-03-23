@@ -1,6 +1,9 @@
 package handlers
 
 import (
+	"context"
+	"encoding/json"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -17,6 +20,7 @@ type TemplateHandler struct {
 	chartRepo       models.TemplateChartConfigRepository
 	definitionRepo  models.StackDefinitionRepository
 	chartConfigRepo models.ChartConfigRepository
+	versionRepo     models.TemplateVersionRepository
 }
 
 // NewTemplateHandler creates a new TemplateHandler.
@@ -31,6 +35,23 @@ func NewTemplateHandler(
 		chartRepo:       chartRepo,
 		definitionRepo:  definitionRepo,
 		chartConfigRepo: chartConfigRepo,
+	}
+}
+
+// NewTemplateHandlerWithVersions creates a TemplateHandler with template version support.
+func NewTemplateHandlerWithVersions(
+	templateRepo models.StackTemplateRepository,
+	chartRepo models.TemplateChartConfigRepository,
+	definitionRepo models.StackDefinitionRepository,
+	chartConfigRepo models.ChartConfigRepository,
+	versionRepo models.TemplateVersionRepository,
+) *TemplateHandler {
+	return &TemplateHandler{
+		templateRepo:    templateRepo,
+		chartRepo:       chartRepo,
+		definitionRepo:  definitionRepo,
+		chartConfigRepo: chartConfigRepo,
+		versionRepo:     versionRepo,
 	}
 }
 
@@ -249,7 +270,66 @@ func (h *TemplateHandler) PublishTemplate(c *gin.Context) {
 		return
 	}
 
+	// Auto-create a version snapshot on publish.
+	if h.versionRepo != nil {
+		h.createVersionSnapshot(c, tmpl)
+	}
+
 	c.JSON(http.StatusOK, tmpl)
+}
+
+// createVersionSnapshot builds a TemplateSnapshot from the current template and
+// its charts, then persists it as a TemplateVersion record. Errors are logged
+// but do not fail the publish operation.
+func (h *TemplateHandler) createVersionSnapshot(c *gin.Context, tmpl *models.StackTemplate) {
+	charts, err := h.chartRepo.ListByTemplate(tmpl.ID)
+	if err != nil {
+		slog.Error("failed to fetch charts for version snapshot", "template_id", tmpl.ID, "error", err)
+		return
+	}
+
+	chartSnapshots := make([]models.TemplateChartSnapshotData, 0, len(charts))
+	for _, ch := range charts {
+		chartSnapshots = append(chartSnapshots, models.TemplateChartSnapshotData{
+			ChartName:     ch.ChartName,
+			RepoURL:       ch.RepositoryURL,
+			DefaultValues: ch.DefaultValues,
+			LockedValues:  ch.LockedValues,
+			IsRequired:    ch.Required,
+			SortOrder:     ch.DeployOrder,
+		})
+	}
+
+	snapshot := models.TemplateSnapshot{
+		Template: models.TemplateSnapshotData{
+			Name:          tmpl.Name,
+			Description:   tmpl.Description,
+			Category:      tmpl.Category,
+			DefaultBranch: tmpl.DefaultBranch,
+			IsPublished:   tmpl.IsPublished,
+			Version:       tmpl.Version,
+		},
+		Charts: chartSnapshots,
+	}
+
+	snapshotBytes, err := json.Marshal(snapshot)
+	if err != nil {
+		slog.Error("failed to marshal version snapshot", "template_id", tmpl.ID, "error", err)
+		return
+	}
+
+	version := &models.TemplateVersion{
+		ID:         uuid.New().String(),
+		TemplateID: tmpl.ID,
+		Version:    tmpl.Version,
+		Snapshot:   string(snapshotBytes),
+		CreatedBy:  middleware.GetUserIDFromContext(c),
+		CreatedAt:  time.Now().UTC(),
+	}
+
+	if err := h.versionRepo.Create(context.Background(), version); err != nil {
+		slog.Error("failed to create version snapshot", "template_id", tmpl.ID, "error", err)
+	}
 }
 
 // UnpublishTemplate godoc

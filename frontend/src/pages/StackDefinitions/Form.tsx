@@ -15,10 +15,14 @@ import {
 import AddIcon from '@mui/icons-material/Add';
 import DeleteIcon from '@mui/icons-material/Delete';
 import LockIcon from '@mui/icons-material/Lock';
+import FileDownloadIcon from '@mui/icons-material/FileDownload';
+import SystemUpdateAltIcon from '@mui/icons-material/SystemUpdateAlt';
 import { definitionService, templateService } from '../../api/client';
+import { useNotification } from '../../context/NotificationContext';
 import type { StackDefinition, ChartConfig, TemplateChartConfig } from '../../types';
 import YamlEditor from '../../components/YamlEditor';
 import LoadingState from '../../components/LoadingState';
+import UpgradeDialog from './UpgradeDialog';
 import { useUnsavedChanges } from '../../hooks/useUnsavedChanges';
 
 interface ChartFormData {
@@ -46,6 +50,7 @@ const Form = () => {
   const { id } = useParams<{ id: string }>();
   const isEdit = Boolean(id);
   const navigate = useNavigate();
+  const { showSuccess, showError } = useNotification();
 
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
@@ -57,6 +62,8 @@ const Form = () => {
   const [loading, setLoading] = useState(isEdit);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [exporting, setExporting] = useState(false);
+  const [upgradeDialogOpen, setUpgradeDialogOpen] = useState(false);
   const [touched, setTouched] = useState<Record<string, boolean>>({});
   const initialValuesRef = useRef({ name: '', description: '', defaultBranch: 'master', charts: [] as ChartFormData[] });
   const isDirty = useMemo(() =>
@@ -184,6 +191,29 @@ const Form = () => {
     }
   };
 
+  const handleExport = async () => {
+    if (!id) return;
+    setExporting(true);
+    try {
+      const bundle = await definitionService.exportDefinition(id);
+      const json = JSON.stringify(bundle, null, 2);
+      const blob = new Blob([json], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `${name || 'definition'}-export.json`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+      showSuccess('Definition exported successfully');
+    } catch {
+      showError('Failed to export definition');
+    } finally {
+      setExporting(false);
+    }
+  };
+
   if (loading) {
     return <LoadingState label="Loading definition..." />;
   }
@@ -204,6 +234,16 @@ const Form = () => {
             label="View Template"
             size="small"
             onClick={() => navigate(`/templates/${sourceTemplateId}`)}
+            sx={{ cursor: 'pointer' }}
+          />
+          {' '}
+          <Chip
+            icon={<SystemUpdateAltIcon />}
+            label="Check for Upgrades"
+            size="small"
+            color="primary"
+            variant="outlined"
+            onClick={() => setUpgradeDialogOpen(true)}
             sx={{ cursor: 'pointer' }}
           />
         </Alert>
@@ -307,6 +347,16 @@ const Form = () => {
       </Paper>
 
       <Box sx={{ display: 'flex', gap: 2, justifyContent: 'flex-end' }}>
+        {isEdit && (
+          <Button
+            variant="outlined"
+            startIcon={<FileDownloadIcon />}
+            onClick={handleExport}
+            disabled={exporting}
+          >
+            {exporting ? 'Exporting...' : 'Export'}
+          </Button>
+        )}
         <Button variant="outlined" onClick={() => navigate('/stack-definitions')}>
           Cancel
         </Button>
@@ -314,6 +364,18 @@ const Form = () => {
           {saving ? 'Saving...' : 'Save Definition'}
         </Button>
       </Box>
+
+      {sourceTemplateId && id && (
+        <UpgradeDialog
+          definitionId={id}
+          open={upgradeDialogOpen}
+          onClose={() => setUpgradeDialogOpen(false)}
+          onUpgraded={() => {
+            // Reload the page to reflect upgraded charts
+            window.location.reload();
+          }}
+        />
+      )}
     </Box>
   );
 };

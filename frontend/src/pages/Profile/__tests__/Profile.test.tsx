@@ -10,13 +10,26 @@ vi.mock('../../../api/client', () => ({
     create: vi.fn(),
     delete: vi.fn(),
   },
+  notificationService: {
+    getPreferences: vi.fn(),
+    updatePreferences: vi.fn(),
+  },
 }));
 
 vi.mock('../../../context/AuthContext', () => ({
   useAuth: vi.fn(),
 }));
 
-import { apiKeyService } from '../../../api/client';
+vi.mock('../../../context/NotificationContext', () => ({
+  useNotification: vi.fn().mockReturnValue({
+    showSuccess: vi.fn(),
+    showError: vi.fn(),
+    showWarning: vi.fn(),
+    showInfo: vi.fn(),
+  }),
+}));
+
+import { apiKeyService, notificationService } from '../../../api/client';
 import { useAuth } from '../../../context/AuthContext';
 
 const currentUser = {
@@ -56,6 +69,13 @@ describe('Profile Page', () => {
       login: vi.fn(),
       logout: vi.fn(),
     });
+    (notificationService.getPreferences as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { event_type: 'deployment.success', enabled: true },
+      { event_type: 'deployment.error', enabled: true },
+      { event_type: 'deployment.stopped', enabled: true },
+      { event_type: 'instance.deleted', enabled: true },
+    ]);
+    (notificationService.updatePreferences as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
   });
 
   afterEach(() => {
@@ -69,7 +89,7 @@ describe('Profile Page', () => {
         <Profile />
       </MemoryRouter>
     );
-    expect(screen.getByRole('progressbar')).toBeInTheDocument();
+    expect(screen.getAllByRole('progressbar').length).toBeGreaterThanOrEqual(1);
   });
 
   it('displays page heading and account details', async () => {

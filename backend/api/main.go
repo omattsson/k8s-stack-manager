@@ -224,12 +224,19 @@ func main() {
 	// Phase 1: Create handlers
 	// ------------------------------------------------------------------
 	authHandler := handlers.NewAuthHandler(userRepo, &cfg.Auth)
-	templateHandler := handlers.NewTemplateHandler(templateRepo, templateChartRepo, definitionRepo, chartConfigRepo)
-	definitionHandler := handlers.NewDefinitionHandler(definitionRepo, chartConfigRepo, instanceRepo, templateRepo, templateChartRepo)
+	templateVersionRepo, err := azure.NewTemplateVersionRepository(azCfg.AccountName, azCfg.AccountKey, azCfg.Endpoint, azCfg.UseAzurite)
+	if err != nil {
+		slog.Error("Failed to create template version repository", "error", err)
+		os.Exit(1)
+	}
+
+	templateHandler := handlers.NewTemplateHandlerWithVersions(templateRepo, templateChartRepo, definitionRepo, chartConfigRepo, templateVersionRepo)
+	definitionHandler := handlers.NewDefinitionHandlerWithVersions(definitionRepo, chartConfigRepo, instanceRepo, templateRepo, templateChartRepo, templateVersionRepo)
+	templateVersionHandler := handlers.NewTemplateVersionHandler(templateVersionRepo, templateRepo)
 	instanceHandler := handlers.NewInstanceHandlerWithDeployer(
 		instanceRepo, overrideRepo, branchOverrideRepo, definitionRepo, chartConfigRepo,
 		templateRepo, templateChartRepo, valuesGen, userRepo,
-		deployManager, k8sWatcher, clusterRegistry, deployLogRepo,
+		deployManager, k8sWatcher, clusterRegistry, deployLogRepo, clusterRepo,
 		cfg.App.DefaultInstanceTTLMinutes,
 	)
 	gitHandler := handlers.NewGitHandler(gitRegistry)
@@ -241,6 +248,13 @@ func main() {
 	clusterHandler := handlers.NewClusterHandler(clusterRepo, clusterRegistry, instanceRepo)
 	branchOverrideHandler := handlers.NewBranchOverrideHandler(branchOverrideRepo, instanceRepo)
 	sharedValuesHandler := handlers.NewSharedValuesHandler(sharedValuesRepo, clusterRepo)
+
+	notificationRepo, err := azure.NewNotificationRepository(azCfg.AccountName, azCfg.AccountKey, azCfg.Endpoint, azCfg.UseAzurite)
+	if err != nil {
+		slog.Error("Failed to create notification repository", "error", err)
+		os.Exit(1)
+	}
+	notificationHandler := handlers.NewNotificationHandler(notificationRepo)
 
 	favoriteRepo, err := azure.NewUserFavoriteRepository(azCfg.AccountName, azCfg.AccountKey, azCfg.Endpoint, azCfg.UseAzurite)
 	if err != nil {
@@ -292,7 +306,9 @@ func main() {
 		UserHandler:           userHandler,
 		APIKeyHandler:         apiKeyHandler,
 		AdminHandler:          adminHandler,
-		BranchOverrideHandler: branchOverrideHandler,
+		BranchOverrideHandler:  branchOverrideHandler,
+		TemplateVersionHandler: templateVersionHandler,
+		NotificationHandler:    notificationHandler,
 		FavoriteHandler:       favoriteHandler,
 		QuickDeployHandler:    quickDeployHandler,
 		AnalyticsHandler:      analyticsHandler,

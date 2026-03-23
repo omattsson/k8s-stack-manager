@@ -40,6 +40,17 @@ import type {
   SharedValues,
   CleanupPolicy,
   CleanupResult,
+  CompareInstancesResponse,
+  DefinitionExportBundle,
+  BulkOperationResponse,
+  NotificationListResponse,
+  NotificationPreference,
+  Notification,
+  ResourceQuotaConfig,
+  ClusterUtilization,
+  TemplateVersion,
+  VersionDiffResponse,
+  UpgradeCheckResponse,
 } from '../types';
 
 const api = axios.create(axiosConfig);
@@ -317,6 +328,56 @@ export const templateService = {
       throw error;
     }
   },
+  /**
+   * List all versions of a template, newest first.
+   * @param templateId - Template ID
+   * @returns Array of template versions
+   * @see GET /api/v1/templates/:id/versions
+   */
+  listVersions: async (templateId: string): Promise<TemplateVersion[]> => {
+    try {
+      const response = await api.get(`/api/v1/templates/${templateId}/versions`);
+      return response.data;
+    } catch (error) {
+      console.error('Failed to fetch template versions:', error);
+      throw error;
+    }
+  },
+  /**
+   * Fetch a single version with its snapshot data.
+   * @param templateId - Template ID
+   * @param versionId - Version ID
+   * @returns Template version with snapshot
+   * @see GET /api/v1/templates/:id/versions/:versionId
+   */
+  getVersion: async (templateId: string, versionId: string): Promise<TemplateVersion> => {
+    try {
+      const response = await api.get(`/api/v1/templates/${templateId}/versions/${versionId}`);
+      return response.data;
+    } catch (error) {
+      console.error('Failed to fetch template version:', error);
+      throw error;
+    }
+  },
+  /**
+   * Diff two versions of a template, showing per-chart YAML differences.
+   * @param templateId - Template ID
+   * @param leftId - Left version ID
+   * @param rightId - Right version ID
+   * @returns Diff response with chart-level differences
+   * @see GET /api/v1/templates/:id/versions/diff?left=ID&right=ID
+   */
+  diffVersions: async (templateId: string, leftId: string, rightId: string): Promise<VersionDiffResponse> => {
+    try {
+      const response = await api.get(`/api/v1/templates/${templateId}/versions/diff`, {
+        params: { left: leftId, right: rightId },
+      });
+      return response.data;
+    } catch (error) {
+      console.error('Failed to diff template versions:', error);
+      throw error;
+    }
+  },
 };
 
 /** Stack definition service for managing Helm-based stack configurations. Maps to `/api/v1/stack-definitions`. */
@@ -440,6 +501,66 @@ export const definitionService = {
       await api.delete(`/api/v1/stack-definitions/${id}/charts/${chartId}`);
     } catch (error) {
       console.error('Failed to delete chart:', error);
+      throw error;
+    }
+  },
+  /**
+   * Export a stack definition as a portable JSON bundle.
+   * @param id - Definition ID
+   * @returns The export bundle containing definition and charts
+   * @see GET /api/v1/stack-definitions/:id/export
+   */
+  exportDefinition: async (id: string): Promise<DefinitionExportBundle> => {
+    try {
+      const response = await api.get(`/api/v1/stack-definitions/${id}/export`);
+      return response.data;
+    } catch (error) {
+      console.error('Failed to export definition:', error);
+      throw error;
+    }
+  },
+  /**
+   * Import a stack definition from a JSON bundle.
+   * @param bundle - The export bundle to import
+   * @returns The created stack definition
+   * @see POST /api/v1/stack-definitions/import
+   */
+  importDefinition: async (bundle: DefinitionExportBundle): Promise<StackDefinition> => {
+    try {
+      const response = await api.post('/api/v1/stack-definitions/import', bundle);
+      return response.data;
+    } catch (error) {
+      console.error('Failed to import definition:', error);
+      throw error;
+    }
+  },
+  /**
+   * Check if a template upgrade is available for a definition.
+   * @param definitionId - Definition ID
+   * @returns Upgrade check result with change details
+   * @see GET /api/v1/stack-definitions/:id/check-upgrade
+   */
+  checkUpgrade: async (definitionId: string): Promise<UpgradeCheckResponse> => {
+    try {
+      const response = await api.get(`/api/v1/stack-definitions/${definitionId}/check-upgrade`);
+      return response.data;
+    } catch (error) {
+      console.error('Failed to check for upgrade:', error);
+      throw error;
+    }
+  },
+  /**
+   * Apply a template upgrade to a definition, updating its charts to match the latest template version.
+   * @param definitionId - Definition ID
+   * @returns The updated definition
+   * @see POST /api/v1/stack-definitions/:id/upgrade
+   */
+  applyUpgrade: async (definitionId: string): Promise<StackDefinition> => {
+    try {
+      const response = await api.post(`/api/v1/stack-definitions/${definitionId}/upgrade`);
+      return response.data;
+    } catch (error) {
+      console.error('Failed to apply upgrade:', error);
       throw error;
     }
   },
@@ -690,6 +811,84 @@ export const instanceService = {
       throw error;
     }
   },
+  /**
+   * Deploy multiple instances in bulk.
+   * @param instanceIds - Array of instance IDs to deploy
+   * @returns Bulk operation response with per-instance results
+   * @see POST /api/v1/stack-instances/bulk/deploy
+   */
+  bulkDeploy: async (instanceIds: string[]): Promise<BulkOperationResponse> => {
+    try {
+      const response = await api.post('/api/v1/stack-instances/bulk/deploy', { instance_ids: instanceIds });
+      return response.data;
+    } catch (error) {
+      console.error('Failed to bulk deploy instances:', error);
+      throw error;
+    }
+  },
+  /**
+   * Stop multiple instances in bulk.
+   * @param instanceIds - Array of instance IDs to stop
+   * @returns Bulk operation response with per-instance results
+   * @see POST /api/v1/stack-instances/bulk/stop
+   */
+  bulkStop: async (instanceIds: string[]): Promise<BulkOperationResponse> => {
+    try {
+      const response = await api.post('/api/v1/stack-instances/bulk/stop', { instance_ids: instanceIds });
+      return response.data;
+    } catch (error) {
+      console.error('Failed to bulk stop instances:', error);
+      throw error;
+    }
+  },
+  /**
+   * Clean namespaces for multiple instances in bulk.
+   * @param instanceIds - Array of instance IDs to clean
+   * @returns Bulk operation response with per-instance results
+   * @see POST /api/v1/stack-instances/bulk/clean
+   */
+  bulkClean: async (instanceIds: string[]): Promise<BulkOperationResponse> => {
+    try {
+      const response = await api.post('/api/v1/stack-instances/bulk/clean', { instance_ids: instanceIds });
+      return response.data;
+    } catch (error) {
+      console.error('Failed to bulk clean instances:', error);
+      throw error;
+    }
+  },
+  /**
+   * Delete multiple instances in bulk.
+   * @param instanceIds - Array of instance IDs to delete
+   * @returns Bulk operation response with per-instance results
+   * @see POST /api/v1/stack-instances/bulk/delete
+   */
+  bulkDelete: async (instanceIds: string[]): Promise<BulkOperationResponse> => {
+    try {
+      const response = await api.post('/api/v1/stack-instances/bulk/delete', { instance_ids: instanceIds });
+      return response.data;
+    } catch (error) {
+      console.error('Failed to bulk delete instances:', error);
+      throw error;
+    }
+  },
+  /**
+   * Compare two stack instances, returning per-chart value diffs.
+   * @param leftId - ID of the left instance
+   * @param rightId - ID of the right instance
+   * @returns Comparison result with instance summaries and per-chart diffs
+   * @see GET /api/v1/stack-instances/compare?left=ID&right=ID
+   */
+  compareInstances: async (leftId: string, rightId: string): Promise<CompareInstancesResponse> => {
+    try {
+      const response = await api.get('/api/v1/stack-instances/compare', {
+        params: { left: leftId, right: rightId },
+      });
+      return response.data;
+    } catch (error) {
+      console.error('Failed to compare instances:', error);
+      throw error;
+    }
+  },
 };
 
 /** Git provider service for branch listing and validation. Maps to `/api/v1/git`. */
@@ -705,6 +904,7 @@ export const gitService = {
       const response = await api.get('/api/v1/git/branches', { params: { repo: repoUrl } });
       return response.data;
     } catch (error) {
+      console.error('Failed to fetch branches:', error);
       throw error;
     }
   },
@@ -1085,6 +1285,68 @@ export const clusterService = {
       throw error;
     }
   },
+  /**
+   * Fetch resource quota configuration for a cluster.
+   * @param clusterId - Cluster ID
+   * @returns The quota config, or null if none configured (404)
+   * @see GET /api/v1/clusters/:id/quotas
+   */
+  getQuotas: async (clusterId: string): Promise<ResourceQuotaConfig | null> => {
+    try {
+      const response = await api.get(`/api/v1/clusters/${encodeURIComponent(clusterId)}/quotas`);
+      return response.data;
+    } catch (error) {
+      if (axios.isAxiosError(error) && error.response?.status === 404) {
+        return null;
+      }
+      console.error('Failed to fetch cluster quotas:', error);
+      throw error;
+    }
+  },
+  /**
+   * Create or update resource quota configuration for a cluster.
+   * @param clusterId - Cluster ID
+   * @param config - Quota configuration fields
+   * @returns The saved quota config
+   * @see PUT /api/v1/clusters/:id/quotas
+   */
+  updateQuotas: async (clusterId: string, config: Partial<ResourceQuotaConfig>): Promise<ResourceQuotaConfig> => {
+    try {
+      const response = await api.put(`/api/v1/clusters/${encodeURIComponent(clusterId)}/quotas`, config);
+      return response.data;
+    } catch (error) {
+      console.error('Failed to update cluster quotas:', error);
+      throw error;
+    }
+  },
+  /**
+   * Remove resource quota configuration from a cluster.
+   * @param clusterId - Cluster ID
+   * @see DELETE /api/v1/clusters/:id/quotas
+   */
+  deleteQuotas: async (clusterId: string): Promise<void> => {
+    try {
+      await api.delete(`/api/v1/clusters/${encodeURIComponent(clusterId)}/quotas`);
+    } catch (error) {
+      console.error('Failed to delete cluster quotas:', error);
+      throw error;
+    }
+  },
+  /**
+   * Fetch namespace-level resource utilization for a cluster.
+   * @param clusterId - Cluster ID
+   * @returns Utilization data with per-namespace CPU, memory, and pod usage
+   * @see GET /api/v1/clusters/:id/utilization
+   */
+  getUtilization: async (clusterId: string): Promise<ClusterUtilization> => {
+    try {
+      const response = await api.get(`/api/v1/clusters/${encodeURIComponent(clusterId)}/utilization`);
+      return response.data;
+    } catch (error) {
+      console.error('Failed to fetch cluster utilization:', error);
+      throw error;
+    }
+  },
 };
 
 /** User favorites (bookmarks) service. Maps to `/api/v1/favorites`. */
@@ -1388,6 +1650,99 @@ export const cleanupPolicyService = {
       return response.data;
     } catch (error) {
       console.error('Failed to run cleanup policy:', error);
+      throw error;
+    }
+  },
+};
+
+/** Notification service for in-app notification management. Maps to `/api/v1/notifications`. */
+export const notificationService = {
+  /**
+   * Fetch a paginated list of notifications for the current user.
+   * @param unreadOnly - If `true`, only return unread notifications
+   * @param limit - Maximum number of notifications to return
+   * @param offset - Number of notifications to skip (for pagination)
+   * @returns Paginated notification response with unread count
+   * @see GET /api/v1/notifications
+   */
+  list: async (unreadOnly?: boolean, limit?: number, offset?: number): Promise<NotificationListResponse> => {
+    try {
+      const params: Record<string, string | number | boolean> = {};
+      if (unreadOnly !== undefined) params.unread_only = unreadOnly;
+      if (limit !== undefined) params.limit = limit;
+      if (offset !== undefined) params.offset = offset;
+      const response = await api.get('/api/v1/notifications', { params });
+      return response.data;
+    } catch (error) {
+      console.error('Failed to fetch notifications:', error);
+      throw error;
+    }
+  },
+  /**
+   * Fetch the count of unread notifications for the current user.
+   * @returns Object containing the unread count
+   * @see GET /api/v1/notifications/count
+   */
+  countUnread: async (): Promise<{ unread_count: number }> => {
+    try {
+      const response = await api.get('/api/v1/notifications/count');
+      return response.data;
+    } catch (error) {
+      console.error('Failed to fetch unread count:', error);
+      throw error;
+    }
+  },
+  /**
+   * Mark a single notification as read.
+   * @param id - Notification ID
+   * @returns The updated notification
+   * @see POST /api/v1/notifications/:id/read
+   */
+  markAsRead: async (id: string): Promise<Notification> => {
+    try {
+      const response = await api.post(`/api/v1/notifications/${id}/read`);
+      return response.data;
+    } catch (error) {
+      console.error('Failed to mark notification as read:', error);
+      throw error;
+    }
+  },
+  /**
+   * Mark all notifications as read for the current user.
+   * @see POST /api/v1/notifications/read-all
+   */
+  markAllAsRead: async (): Promise<void> => {
+    try {
+      await api.post('/api/v1/notifications/read-all');
+    } catch (error) {
+      console.error('Failed to mark all notifications as read:', error);
+      throw error;
+    }
+  },
+  /**
+   * Fetch notification preferences for the current user.
+   * @returns Array of notification preference settings
+   * @see GET /api/v1/notifications/preferences
+   */
+  getPreferences: async (): Promise<NotificationPreference[]> => {
+    try {
+      const response = await api.get('/api/v1/notifications/preferences');
+      return response.data;
+    } catch (error) {
+      console.error('Failed to fetch notification preferences:', error);
+      throw error;
+    }
+  },
+  /**
+   * Update notification preferences for the current user.
+   * @param preferences - Array of event type / enabled pairs
+   * @see PUT /api/v1/notifications/preferences
+   */
+  updatePreferences: async (preferences: { event_type: string; enabled: boolean }[]): Promise<void> => {
+    try {
+      await api.put('/api/v1/notifications/preferences', { preferences });
+    } catch (error) {
+      console.error('Failed to update notification preferences:', error);
       throw error;
     }
   },

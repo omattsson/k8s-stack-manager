@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import { render, screen, waitFor, act } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import Dashboard from '../Dashboard';
 import { NotificationProvider } from '../../../context/NotificationContext';
@@ -23,6 +24,10 @@ vi.mock('../../../api/client', () => ({
   instanceService: {
     list: vi.fn(),
     recent: vi.fn().mockResolvedValue([]),
+    bulkDeploy: vi.fn(),
+    bulkStop: vi.fn(),
+    bulkClean: vi.fn(),
+    bulkDelete: vi.fn(),
   },
   clusterService: {
     list: vi.fn().mockResolvedValue([]),
@@ -47,6 +52,19 @@ vi.mock('../../../context/AuthContext', () => ({
 
 import { instanceService, favoriteService } from '../../../api/client';
 import useCountdown from '../../../hooks/useCountdown';
+
+const mockInstance = (overrides: Record<string, unknown> = {}) => ({
+  id: '1',
+  name: 'Test Instance',
+  status: 'running',
+  branch: 'main',
+  namespace: 'stack-test',
+  owner_id: '1',
+  stack_definition_id: '1',
+  created_at: '',
+  updated_at: '',
+  ...overrides,
+});
 
 describe('Dashboard', () => {
   afterEach(() => {
@@ -75,7 +93,7 @@ describe('Dashboard', () => {
 
   it('displays instances when fetch succeeds', async () => {
     (instanceService.list as ReturnType<typeof vi.fn>).mockResolvedValue([
-      { id: '1', name: 'Test Instance', status: 'running', branch: 'main', namespace: 'stack-test', owner_id: '1', stack_definition_id: '1', created_at: '', updated_at: '' },
+      mockInstance(),
     ]);
     render(
       <MemoryRouter>
@@ -119,7 +137,7 @@ describe('Dashboard', () => {
 
   it('updates instance status on WebSocket deployment.status message', async () => {
     (instanceService.list as ReturnType<typeof vi.fn>).mockResolvedValue([
-      { id: 'inst-1', name: 'WS Instance', status: 'draft', branch: 'main', namespace: 'stack-ws', owner_id: '1', stack_definition_id: '1', created_at: '', updated_at: '' },
+      mockInstance({ id: 'inst-1', name: 'WS Instance', status: 'draft' }),
     ]);
     render(
       <MemoryRouter>
@@ -154,7 +172,7 @@ describe('Dashboard', () => {
 
   it('ignores WebSocket messages for unknown instance IDs', async () => {
     (instanceService.list as ReturnType<typeof vi.fn>).mockResolvedValue([
-      { id: 'inst-1', name: 'My Instance', status: 'running', branch: 'main', namespace: 'stack-test', owner_id: '1', stack_definition_id: '1', created_at: '', updated_at: '' },
+      mockInstance({ id: 'inst-1', name: 'My Instance' }),
     ]);
     render(
       <MemoryRouter>
@@ -192,7 +210,7 @@ describe('Dashboard', () => {
     });
 
     (instanceService.list as ReturnType<typeof vi.fn>).mockResolvedValue([
-      { id: '1', name: 'TTL Instance', status: 'running', branch: 'main', namespace: 'stack-ttl', owner_id: '1', stack_definition_id: '1', created_at: '', updated_at: '', expires_at: '2026-01-01T12:00:00Z', ttl_minutes: 240 },
+      mockInstance({ name: 'TTL Instance', namespace: 'stack-ttl', expires_at: '2026-01-01T12:00:00Z', ttl_minutes: 240 }),
     ]);
     render(
       <MemoryRouter>
@@ -214,7 +232,7 @@ describe('Dashboard', () => {
     mockUseCountdown.mockReturnValue(null);
 
     (instanceService.list as ReturnType<typeof vi.fn>).mockResolvedValue([
-      { id: '1', name: 'Expired Instance', status: 'stopped', branch: 'main', namespace: 'stack-exp', owner_id: '1', stack_definition_id: '1', created_at: '', updated_at: '', error_message: 'Expired (TTL)' },
+      mockInstance({ name: 'Expired Instance', status: 'stopped', namespace: 'stack-exp', error_message: 'Expired (TTL)' }),
     ]);
     render(
       <MemoryRouter>
@@ -236,7 +254,7 @@ describe('Dashboard', () => {
     mockUseCountdown.mockReturnValue(null);
 
     (instanceService.list as ReturnType<typeof vi.fn>).mockResolvedValue([
-      { id: '1', name: 'No TTL Instance', status: 'running', branch: 'main', namespace: 'stack-nottl', owner_id: '1', stack_definition_id: '1', created_at: '', updated_at: '' },
+      mockInstance({ name: 'No TTL Instance', namespace: 'stack-nottl' }),
     ]);
     render(
       <MemoryRouter>
@@ -271,7 +289,7 @@ describe('Dashboard', () => {
 
   it('renders favorited instances in favorites section', async () => {
     (instanceService.list as ReturnType<typeof vi.fn>).mockResolvedValue([
-      { id: 'inst-1', name: 'Fav Instance', status: 'running', branch: 'main', namespace: 'stack-fav', owner_id: '1', stack_definition_id: '1', created_at: '', updated_at: '' },
+      mockInstance({ id: 'inst-1', name: 'Fav Instance', namespace: 'stack-fav' }),
     ]);
     (favoriteService.list as ReturnType<typeof vi.fn>).mockResolvedValue([
       { id: 'fav-1', user_id: '1', entity_type: 'instance', entity_id: 'inst-1', created_at: '' },
@@ -293,7 +311,7 @@ describe('Dashboard', () => {
   it('renders recent stacks section when recent instances exist', async () => {
     (instanceService.list as ReturnType<typeof vi.fn>).mockResolvedValue([]);
     (instanceService.recent as ReturnType<typeof vi.fn>).mockResolvedValue([
-      { id: 'r-1', name: 'Recent Stack', status: 'draft', branch: 'main', namespace: 'stack-rec', owner_id: '1', stack_definition_id: '1', created_at: '', updated_at: '2026-01-15T10:00:00Z' },
+      mockInstance({ id: 'r-1', name: 'Recent Stack', status: 'draft', namespace: 'stack-rec', updated_at: '2026-01-15T10:00:00Z' }),
     ]);
     render(
       <MemoryRouter>
@@ -310,7 +328,7 @@ describe('Dashboard', () => {
 
   it('hides recent stacks section when empty', async () => {
     (instanceService.list as ReturnType<typeof vi.fn>).mockResolvedValue([
-      { id: '1', name: 'Some Instance', status: 'running', branch: 'main', namespace: 'stack-some', owner_id: '1', stack_definition_id: '1', created_at: '', updated_at: '' },
+      mockInstance({ name: 'Some Instance', namespace: 'stack-some' }),
     ]);
     (instanceService.recent as ReturnType<typeof vi.fn>).mockResolvedValue([]);
     render(
@@ -324,5 +342,317 @@ describe('Dashboard', () => {
       expect(screen.getByText('Some Instance')).toBeInTheDocument();
     });
     expect(screen.queryByText('Recent Stacks')).not.toBeInTheDocument();
+  });
+
+  describe('Bulk Operations', () => {
+    const twoInstances = [
+      mockInstance({ id: 'inst-1', name: 'Instance A', namespace: 'stack-a' }),
+      mockInstance({ id: 'inst-2', name: 'Instance B', namespace: 'stack-b', status: 'stopped' }),
+    ];
+
+    beforeEach(() => {
+      (instanceService.list as ReturnType<typeof vi.fn>).mockResolvedValue(twoInstances);
+    });
+
+    it('shows checkboxes on each instance card', async () => {
+      render(
+        <MemoryRouter>
+          <NotificationProvider>
+            <Dashboard />
+          </NotificationProvider>
+        </MemoryRouter>
+      );
+      await waitFor(() => {
+        expect(screen.getByText('Instance A')).toBeInTheDocument();
+      });
+      expect(screen.getByRole('checkbox', { name: 'Select Instance A' })).toBeInTheDocument();
+      expect(screen.getByRole('checkbox', { name: 'Select Instance B' })).toBeInTheDocument();
+    });
+
+    it('shows bulk action toolbar when instances are selected', async () => {
+      const user = userEvent.setup();
+      render(
+        <MemoryRouter>
+          <NotificationProvider>
+            <Dashboard />
+          </NotificationProvider>
+        </MemoryRouter>
+      );
+      await waitFor(() => {
+        expect(screen.getByText('Instance A')).toBeInTheDocument();
+      });
+
+      // No toolbar initially
+      expect(screen.queryByRole('toolbar', { name: 'Bulk actions' })).not.toBeInTheDocument();
+
+      // Select one instance
+      await user.click(screen.getByRole('checkbox', { name: 'Select Instance A' }));
+
+      expect(screen.getByRole('toolbar', { name: 'Bulk actions' })).toBeInTheDocument();
+      expect(screen.getByText('1 selected')).toBeInTheDocument();
+    });
+
+    it('select all checkbox selects all filtered instances', async () => {
+      const user = userEvent.setup();
+      render(
+        <MemoryRouter>
+          <NotificationProvider>
+            <Dashboard />
+          </NotificationProvider>
+        </MemoryRouter>
+      );
+      await waitFor(() => {
+        expect(screen.getByText('Instance A')).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByRole('checkbox', { name: 'Select all instances' }));
+
+      expect(screen.getByText('2 selected')).toBeInTheDocument();
+    });
+
+    it('shows confirm dialog before bulk deploy', async () => {
+      const user = userEvent.setup();
+      render(
+        <MemoryRouter>
+          <NotificationProvider>
+            <Dashboard />
+          </NotificationProvider>
+        </MemoryRouter>
+      );
+      await waitFor(() => {
+        expect(screen.getByText('Instance A')).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByRole('checkbox', { name: 'Select Instance A' }));
+      const deployBtn = screen.getByRole('button', { name: 'Deploy' });
+      await user.click(deployBtn);
+
+      // Confirm dialog should be visible
+      expect(screen.getByText('Confirm Bulk Deploy')).toBeInTheDocument();
+    });
+
+    it('executes bulk deploy and shows results dialog', async () => {
+      const user = userEvent.setup();
+      const bulkResult = {
+        total: 1,
+        succeeded: 1,
+        failed: 0,
+        results: [
+          { instance_id: 'inst-1', instance_name: 'Instance A', status: 'success' as const },
+        ],
+      };
+      (instanceService.bulkDeploy as ReturnType<typeof vi.fn>).mockResolvedValue(bulkResult);
+      // Mock the refresh call after bulk operation
+      (instanceService.list as ReturnType<typeof vi.fn>).mockResolvedValue(twoInstances);
+
+      render(
+        <MemoryRouter>
+          <NotificationProvider>
+            <Dashboard />
+          </NotificationProvider>
+        </MemoryRouter>
+      );
+      await waitFor(() => {
+        expect(screen.getByText('Instance A')).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByRole('checkbox', { name: 'Select Instance A' }));
+      await user.click(screen.getByRole('button', { name: 'Deploy' }));
+
+      // Confirm the action in the dialog
+      const confirmButtons = screen.getAllByRole('button', { name: 'Deploy' });
+      const dialogConfirmButton = confirmButtons[confirmButtons.length - 1];
+      await user.click(dialogConfirmButton);
+
+      // Results dialog should appear
+      await waitFor(() => {
+        expect(screen.getByText('Bulk Operation Results')).toBeInTheDocument();
+      });
+      expect(screen.getByText('1 succeeded')).toBeInTheDocument();
+      expect(instanceService.bulkDeploy).toHaveBeenCalledWith(['inst-1']);
+    });
+
+    it('shows failures in results dialog', async () => {
+      const user = userEvent.setup();
+      const bulkResult = {
+        total: 2,
+        succeeded: 1,
+        failed: 1,
+        results: [
+          { instance_id: 'inst-1', instance_name: 'Instance A', status: 'success' as const },
+          { instance_id: 'inst-2', instance_name: 'Instance B', status: 'error' as const, error: 'Instance not found' },
+        ],
+      };
+      (instanceService.bulkStop as ReturnType<typeof vi.fn>).mockResolvedValue(bulkResult);
+      (instanceService.list as ReturnType<typeof vi.fn>).mockResolvedValue(twoInstances);
+
+      render(
+        <MemoryRouter>
+          <NotificationProvider>
+            <Dashboard />
+          </NotificationProvider>
+        </MemoryRouter>
+      );
+      await waitFor(() => {
+        expect(screen.getByText('Instance A')).toBeInTheDocument();
+      });
+
+      // Select all, then stop
+      await user.click(screen.getByRole('checkbox', { name: 'Select all instances' }));
+      await user.click(screen.getByRole('button', { name: 'Stop' }));
+
+      // Confirm
+      const confirmButtons = screen.getAllByRole('button', { name: 'Stop' });
+      const dialogConfirmButton = confirmButtons[confirmButtons.length - 1];
+      await user.click(dialogConfirmButton);
+
+      await waitFor(() => {
+        expect(screen.getByText('Bulk Operation Results')).toBeInTheDocument();
+      });
+      expect(screen.getByText('1 succeeded')).toBeInTheDocument();
+      expect(screen.getByText('1 failed')).toBeInTheDocument();
+      expect(screen.getByText('Instance not found')).toBeInTheDocument();
+    });
+
+    it('shows warning alert for bulk delete confirmation', async () => {
+      const user = userEvent.setup();
+      render(
+        <MemoryRouter>
+          <NotificationProvider>
+            <Dashboard />
+          </NotificationProvider>
+        </MemoryRouter>
+      );
+      await waitFor(() => {
+        expect(screen.getByText('Instance A')).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByRole('checkbox', { name: 'Select Instance A' }));
+      await user.click(screen.getByRole('button', { name: 'Delete' }));
+
+      expect(screen.getByText('Confirm Bulk Delete')).toBeInTheDocument();
+      expect(screen.getByText(/cannot be undone/i)).toBeInTheDocument();
+    });
+
+    it('clears selection when Clear Selection is clicked', async () => {
+      const user = userEvent.setup();
+      render(
+        <MemoryRouter>
+          <NotificationProvider>
+            <Dashboard />
+          </NotificationProvider>
+        </MemoryRouter>
+      );
+      await waitFor(() => {
+        expect(screen.getByText('Instance A')).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByRole('checkbox', { name: 'Select Instance A' }));
+      expect(screen.getByText('1 selected')).toBeInTheDocument();
+
+      await user.click(screen.getByRole('button', { name: /Clear Selection/i }));
+      expect(screen.queryByText('1 selected')).not.toBeInTheDocument();
+    });
+
+    it('clears selection after closing results dialog', async () => {
+      const user = userEvent.setup();
+      const bulkResult = {
+        total: 1,
+        succeeded: 1,
+        failed: 0,
+        results: [
+          { instance_id: 'inst-1', instance_name: 'Instance A', status: 'success' as const },
+        ],
+      };
+      (instanceService.bulkClean as ReturnType<typeof vi.fn>).mockResolvedValue(bulkResult);
+      (instanceService.list as ReturnType<typeof vi.fn>).mockResolvedValue(twoInstances);
+
+      render(
+        <MemoryRouter>
+          <NotificationProvider>
+            <Dashboard />
+          </NotificationProvider>
+        </MemoryRouter>
+      );
+      await waitFor(() => {
+        expect(screen.getByText('Instance A')).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByRole('checkbox', { name: 'Select Instance A' }));
+      await user.click(screen.getByRole('button', { name: 'Clean' }));
+
+      // Confirm
+      const confirmButtons = screen.getAllByRole('button', { name: 'Clean' });
+      const dialogConfirmButton = confirmButtons[confirmButtons.length - 1];
+      await user.click(dialogConfirmButton);
+
+      await waitFor(() => {
+        expect(screen.getByText('Bulk Operation Results')).toBeInTheDocument();
+      });
+
+      // Close results dialog
+      await user.click(screen.getByRole('button', { name: /Close/i }));
+
+      // Selection should be cleared - toolbar gone
+      await waitFor(() => {
+        expect(screen.queryByRole('toolbar', { name: 'Bulk actions' })).not.toBeInTheDocument();
+      });
+    });
+
+    it('handles bulk operation API failure gracefully', async () => {
+      const user = userEvent.setup();
+      (instanceService.bulkDeploy as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('Server error'));
+
+      render(
+        <MemoryRouter>
+          <NotificationProvider>
+            <Dashboard />
+          </NotificationProvider>
+        </MemoryRouter>
+      );
+      await waitFor(() => {
+        expect(screen.getByText('Instance A')).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByRole('checkbox', { name: 'Select Instance A' }));
+      await user.click(screen.getByRole('button', { name: 'Deploy' }));
+
+      // Confirm
+      const confirmButtons = screen.getAllByRole('button', { name: 'Deploy' });
+      const dialogConfirmButton = confirmButtons[confirmButtons.length - 1];
+      await user.click(dialogConfirmButton);
+
+      // Should not show results dialog on error
+      await waitFor(() => {
+        expect(screen.queryByText('Bulk Operation Results')).not.toBeInTheDocument();
+      });
+    });
+
+    it('cancels confirm dialog without executing action', async () => {
+      const user = userEvent.setup();
+      render(
+        <MemoryRouter>
+          <NotificationProvider>
+            <Dashboard />
+          </NotificationProvider>
+        </MemoryRouter>
+      );
+      await waitFor(() => {
+        expect(screen.getByText('Instance A')).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByRole('checkbox', { name: 'Select Instance A' }));
+      await user.click(screen.getByRole('button', { name: 'Deploy' }));
+
+      expect(screen.getByText('Confirm Bulk Deploy')).toBeInTheDocument();
+
+      // Cancel
+      await user.click(screen.getByRole('button', { name: 'Cancel' }));
+
+      // Dialog should be gone but selection preserved
+      expect(screen.queryByText('Confirm Bulk Deploy')).not.toBeInTheDocument();
+      expect(screen.getByText('1 selected')).toBeInTheDocument();
+      expect(instanceService.bulkDeploy).not.toHaveBeenCalled();
+    });
   });
 });

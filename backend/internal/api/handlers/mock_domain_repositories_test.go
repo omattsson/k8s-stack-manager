@@ -5,8 +5,10 @@ package handlers
 // All mocks are thread-safe and support configuring errors for negative-path tests.
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"sync"
 	"time"
 
@@ -1175,4 +1177,93 @@ func (m *MockUserFavoriteRepository) SetError(err error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.err = err
+}
+
+// ---- TemplateVersionRepository mock ----
+
+type MockTemplateVersionRepository struct {
+	mu       sync.RWMutex
+	items    map[string]*models.TemplateVersion
+	err      error
+	fetchErr error
+}
+
+func NewMockTemplateVersionRepository() *MockTemplateVersionRepository {
+	return &MockTemplateVersionRepository{items: make(map[string]*models.TemplateVersion)}
+}
+
+func (m *MockTemplateVersionRepository) Create(_ context.Context, v *models.TemplateVersion) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.err != nil {
+		return m.err
+	}
+	m.items[v.ID] = v
+	return nil
+}
+
+func (m *MockTemplateVersionRepository) ListByTemplate(_ context.Context, templateID string) ([]models.TemplateVersion, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.err != nil {
+		return nil, m.err
+	}
+	var out []models.TemplateVersion
+	for _, v := range m.items {
+		if v.TemplateID == templateID {
+			out = append(out, *v)
+		}
+	}
+	// Sort by CreatedAt descending.
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].CreatedAt.After(out[j].CreatedAt)
+	})
+	return out, nil
+}
+
+func (m *MockTemplateVersionRepository) GetByID(_ context.Context, id string) (*models.TemplateVersion, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.fetchErr != nil {
+		return nil, m.fetchErr
+	}
+	v, ok := m.items[id]
+	if !ok {
+		return nil, errors.New("not found")
+	}
+	cp := *v
+	return &cp, nil
+}
+
+func (m *MockTemplateVersionRepository) GetLatestByTemplate(_ context.Context, templateID string) (*models.TemplateVersion, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.fetchErr != nil {
+		return nil, m.fetchErr
+	}
+	var latest *models.TemplateVersion
+	for _, v := range m.items {
+		if v.TemplateID == templateID {
+			if latest == nil || v.CreatedAt.After(latest.CreatedAt) {
+				cp := *v
+				latest = &cp
+			}
+		}
+	}
+	if latest == nil {
+		return nil, errors.New("not found")
+	}
+	return latest, nil
+}
+
+func (m *MockTemplateVersionRepository) SetError(err error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.err = err
+}
+
+func (m *MockTemplateVersionRepository) SetFetchError(err error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.fetchErr = err
 }

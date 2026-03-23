@@ -21,8 +21,9 @@ type Cluster struct {
 	KubeconfigPath string    `json:"-"`
 	Region         string    `json:"region"`
 	HealthStatus   string    `json:"health_status"`
-	MaxNamespaces  int       `json:"max_namespaces"`
-	IsDefault      bool      `json:"is_default"`
+	MaxNamespaces       int  `json:"max_namespaces"`
+	MaxInstancesPerUser int  `json:"max_instances_per_user" gorm:"default:0"` // 0 = unlimited
+	IsDefault           bool `json:"is_default"`
 }
 
 // ClusterRepository defines data access operations for clusters.
