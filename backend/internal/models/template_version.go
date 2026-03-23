@@ -46,6 +46,6 @@ type TemplateChartSnapshotData struct {
 type TemplateVersionRepository interface {
 	Create(ctx context.Context, version *TemplateVersion) error
 	ListByTemplate(ctx context.Context, templateID string) ([]TemplateVersion, error)
-	GetByID(ctx context.Context, id string) (*TemplateVersion, error)
+	GetByID(ctx context.Context, templateID, id string) (*TemplateVersion, error)
 	GetLatestByTemplate(ctx context.Context, templateID string) (*TemplateVersion, error)
 }

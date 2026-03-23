@@ -2,7 +2,9 @@ package handlers
 
 import (
 	"encoding/json"
+	"log/slog"
 	"net/http"
+	"time"
 
 	"backend/internal/models"
 
@@ -68,7 +70,7 @@ type versionDetailResponse struct {
 	Version       string                  `json:"version"`
 	ChangeSummary string                  `json:"change_summary"`
 	CreatedBy     string                  `json:"created_by"`
-	CreatedAt     string                  `json:"created_at"`
+	CreatedAt     time.Time               `json:"created_at"`
 	Snapshot      models.TemplateSnapshot `json:"snapshot"`
 }
 
@@ -92,33 +94,28 @@ func (h *TemplateVersionHandler) GetVersion(c *gin.Context) {
 		return
 	}
 
-	version, err := h.versionRepo.GetByID(c.Request.Context(), versionID)
+	version, err := h.versionRepo.GetByID(c.Request.Context(), templateID, versionID)
 	if err != nil {
 		status, message := mapError(err, "Template version")
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
 
-	// Verify the version belongs to the requested template.
-	if version.TemplateID != templateID {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Template version not found"})
-		return
-	}
-
 	var snapshot models.TemplateSnapshot
 	if err := json.Unmarshal([]byte(version.Snapshot), &snapshot); err != nil {
+		slog.Error("Failed to unmarshal template version snapshot", "error", err, "version_id", version.ID)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"id":             version.ID,
-		"template_id":    version.TemplateID,
-		"version":        version.Version,
-		"change_summary": version.ChangeSummary,
-		"created_by":     version.CreatedBy,
-		"created_at":     version.CreatedAt,
-		"snapshot":       snapshot,
+	c.JSON(http.StatusOK, versionDetailResponse{
+		ID:            version.ID,
+		TemplateID:    version.TemplateID,
+		Version:       version.Version,
+		ChangeSummary: version.ChangeSummary,
+		CreatedBy:     version.CreatedBy,
+		CreatedAt:     version.CreatedAt,
+		Snapshot:      snapshot,
 	})
 }
 
@@ -153,7 +150,7 @@ func (h *TemplateVersionHandler) DiffVersions(c *gin.Context) {
 		return
 	}
 
-	left, err := h.versionRepo.GetByID(c.Request.Context(), v1ID)
+	left, err := h.versionRepo.GetByID(c.Request.Context(), templateID, v1ID)
 	if err != nil {
 		status, message := mapError(err, "Template version")
 		c.JSON(status, gin.H{"error": message})
@@ -164,7 +161,7 @@ func (h *TemplateVersionHandler) DiffVersions(c *gin.Context) {
 		return
 	}
 
-	right, err := h.versionRepo.GetByID(c.Request.Context(), v2ID)
+	right, err := h.versionRepo.GetByID(c.Request.Context(), templateID, v2ID)
 	if err != nil {
 		status, message := mapError(err, "Template version")
 		c.JSON(status, gin.H{"error": message})

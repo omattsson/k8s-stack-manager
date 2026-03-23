@@ -156,8 +156,10 @@ func (m *MockNotificationRepository) UpdatePreference(_ context.Context, pref *m
 		return m.err
 	}
 
+	// Simulate ON CONFLICT (user_id, event_type) DO UPDATE.
 	for i := range m.preferences {
-		if m.preferences[i].ID == pref.ID {
+		if m.preferences[i].UserID == pref.UserID && m.preferences[i].EventType == pref.EventType {
+			pref.ID = m.preferences[i].ID // keep original ID
 			m.preferences[i] = *pref
 			return nil
 		}

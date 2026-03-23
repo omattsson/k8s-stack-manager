@@ -2,6 +2,7 @@ package database
 
 import (
 	"context"
+	"errors"
 
 	"backend/internal/models"
 	"backend/pkg/dberrors"
@@ -40,10 +41,10 @@ func (r *GORMTemplateVersionRepository) ListByTemplate(ctx context.Context, temp
 }
 
 // GetByID returns a single template version by its ID.
-func (r *GORMTemplateVersionRepository) GetByID(ctx context.Context, id string) (*models.TemplateVersion, error) {
+func (r *GORMTemplateVersionRepository) GetByID(ctx context.Context, templateID, id string) (*models.TemplateVersion, error) {
 	var version models.TemplateVersion
-	if err := r.db.WithContext(ctx).Where("id = ?", id).First(&version).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+	if err := r.db.WithContext(ctx).Where("template_id = ? AND id = ?", templateID, id).First(&version).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, dberrors.NewDatabaseError("find", dberrors.ErrNotFound)
 		}
 		return nil, dberrors.NewDatabaseError("find", err)
@@ -58,7 +59,7 @@ func (r *GORMTemplateVersionRepository) GetLatestByTemplate(ctx context.Context,
 		Where("template_id = ?", templateID).
 		Order("created_at DESC").
 		First(&version).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, dberrors.NewDatabaseError("find", dberrors.ErrNotFound)
 		}
 		return nil, dberrors.NewDatabaseError("find", err)

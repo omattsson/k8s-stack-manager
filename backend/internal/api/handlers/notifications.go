@@ -227,29 +227,12 @@ func (h *NotificationHandler) UpdatePreferences(c *gin.Context) {
 		}
 	}
 
-	// Fetch existing preferences to find IDs for update or generate new ones.
-	existing, err := h.repo.GetPreferences(c.Request.Context(), userID)
-	if err != nil {
-		status, message := mapError(err, "Notification preferences")
-		c.JSON(status, gin.H{"error": message})
-		return
-	}
-
-	existingByEvent := make(map[string]string, len(existing))
-	for _, p := range existing {
-		existingByEvent[p.EventType] = p.ID
-	}
-
 	for _, r := range reqs {
 		pref := &models.NotificationPreference{
+			ID:        generateID(),
 			UserID:    userID,
 			EventType: r.EventType,
 			Enabled:   r.Enabled,
-		}
-		if id, ok := existingByEvent[r.EventType]; ok {
-			pref.ID = id
-		} else {
-			pref.ID = generateID()
 		}
 
 		if err := h.repo.UpdatePreference(c.Request.Context(), pref); err != nil {

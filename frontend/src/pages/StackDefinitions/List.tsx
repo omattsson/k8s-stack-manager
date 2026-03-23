@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Box,
@@ -38,7 +38,7 @@ const List = () => {
   const navigate = useNavigate();
   const { showSuccess } = useNotification();
 
-  const fetchDefinitions = async () => {
+  const fetchDefinitions = useCallback(async () => {
     try {
       const data = await definitionService.list();
       setDefinitions(data || []);
@@ -58,11 +58,11 @@ const List = () => {
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
     fetchDefinitions();
-  }, []);
+  }, [fetchDefinitions]);
 
   if (loading) {
     return <LoadingState label="Loading definitions..." />;

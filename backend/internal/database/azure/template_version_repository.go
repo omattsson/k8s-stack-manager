@@ -112,9 +112,9 @@ func (r *TemplateVersionRepository) ListByTemplate(ctx context.Context, template
 }
 
 // GetByID returns a single template version by its ID.
-// Since we don't know the partition key from the ID alone, we scan all partitions.
-func (r *TemplateVersionRepository) GetByID(ctx context.Context, id string) (*models.TemplateVersion, error) {
-	filter := "RowKey eq '" + escapeODataString(id) + "'"
+// Uses templateID as the partition key for an efficient point lookup.
+func (r *TemplateVersionRepository) GetByID(ctx context.Context, templateID, id string) (*models.TemplateVersion, error) {
+	filter := "PartitionKey eq '" + escapeODataString(templateID) + "' and RowKey eq '" + escapeODataString(id) + "'"
 	pager := r.client.NewListEntitiesPager(&aztables.ListEntitiesOptions{
 		Filter: &filter,
 	})

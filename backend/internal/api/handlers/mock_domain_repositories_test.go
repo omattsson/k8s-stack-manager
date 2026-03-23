@@ -1236,14 +1236,14 @@ func (m *MockTemplateVersionRepository) ListByTemplate(_ context.Context, templa
 	return out, nil
 }
 
-func (m *MockTemplateVersionRepository) GetByID(_ context.Context, id string) (*models.TemplateVersion, error) {
+func (m *MockTemplateVersionRepository) GetByID(_ context.Context, templateID, id string) (*models.TemplateVersion, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	if m.fetchErr != nil {
 		return nil, m.fetchErr
 	}
 	v, ok := m.items[id]
-	if !ok {
+	if !ok || v.TemplateID != templateID {
 		return nil, errors.New("not found")
 	}
 	cp := *v

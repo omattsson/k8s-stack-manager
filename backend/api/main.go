@@ -32,7 +32,6 @@ import (
 	"github.com/google/uuid"
 	swaggerFiles "github.com/swaggo/files"
 	ginSwagger "github.com/swaggo/gin-swagger"
-	"gorm.io/gorm"
 	"k8s.io/client-go/tools/clientcmd"
 )
 
@@ -67,7 +66,7 @@ func main() {
 	}
 
 	// Initialize repository using the factory (selects MySQL or Azure Table based on config)
-	repo, err := database.NewRepository(cfg)
+	repo, mysqlGormDB, err := database.NewRepositoryWithGormDB(cfg)
 	if err != nil {
 		slog.Error("Failed to initialize repository", "error", err)
 		os.Exit(1)
@@ -225,17 +224,6 @@ func main() {
 	// Phase 1: Create handlers
 	// ------------------------------------------------------------------
 	authHandler := handlers.NewAuthHandler(userRepo, &cfg.Auth)
-
-	// Shared MySQL *gorm.DB for domain repos that need it (allocated lazily).
-	var mysqlGormDB *gorm.DB
-	if !cfg.AzureTable.UseAzureTable {
-		mysqlDB, dbErr := database.NewFromAppConfig(cfg)
-		if dbErr != nil {
-			slog.Error("Failed to initialize MySQL database", "error", dbErr)
-			os.Exit(1)
-		}
-		mysqlGormDB = mysqlDB.DB
-	}
 
 	// Template version repository — datastore selection via config.
 	var templateVersionRepo models.TemplateVersionRepository
