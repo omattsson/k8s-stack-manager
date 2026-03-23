@@ -56,7 +56,7 @@ useBlocker must be used within a data router
 
 **Root Cause**: The `make dev-local` target runs with `RATE_LIMIT=1000` (requests per minute per IP). The `make test-e2e` target uses `RATE_LIMIT=10000`. When running e2e tests against a dev backend, the rate limit is too low for concurrent workers.
 
-**Mitigation**: Run e2e tests via `make test-e2e` which starts the backend with `RATE_LIMIT=10000`, or reduce workers to 1 (`--workers=1`). The Playwright config uses `workers: 1` for CI, `workers: 9` for local.
+**Mitigation**: Run e2e tests via `make test-e2e` which starts the backend with `RATE_LIMIT=10000`, or reduce workers to 1 (`--workers=1`). In practice, we run CI with 1 worker and typically use up to 9 workers for local runs.
 
 ## Root Cause 5: Shared Database State Between Parallel Workers (Critical)
 
@@ -123,5 +123,5 @@ Helper functions added to `helpers.ts`: `loginAsUser(page)`, `loginAsDevops(page
 | `orphaned-namespaces.spec.ts` | `.or().first()` on alternative locators | Multiple matches when both visible |
 | `profile.spec.ts` | `getByRole('heading', { name: 'API Keys' })` | Strict-mode: text matched heading and paragraph |
 | `navigation.spec.ts` | Split admin/user nav tests with separate logins | Admin nav links only visible to admin users |
-| `playwright.config.ts` | `workers: 9` for local runs | Faster local execution (~25s total) |
+| `playwright.config.ts` | Derive `workers` from `PW_WORKERS` (otherwise Playwright default) | Configurable parallelism for local/CI runs |
 | Various spec files | Adjusted selectors, labels, and test flows | Align tests with actual UI implementation |
