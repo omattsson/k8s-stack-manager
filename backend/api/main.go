@@ -224,10 +224,23 @@ func main() {
 	// Phase 1: Create handlers
 	// ------------------------------------------------------------------
 	authHandler := handlers.NewAuthHandler(userRepo, &cfg.Auth)
-	templateVersionRepo, err := azure.NewTemplateVersionRepository(azCfg.AccountName, azCfg.AccountKey, azCfg.Endpoint, azCfg.UseAzurite)
-	if err != nil {
-		slog.Error("Failed to create template version repository", "error", err)
-		os.Exit(1)
+
+	// Template version repository — datastore selection via config.
+	var templateVersionRepo models.TemplateVersionRepository
+	if cfg.AzureTable.UseAzureTable {
+		tvr, tvrErr := azure.NewTemplateVersionRepository(azCfg.AccountName, azCfg.AccountKey, azCfg.Endpoint, azCfg.UseAzurite)
+		if tvrErr != nil {
+			slog.Error("Failed to create template version repository", "error", tvrErr)
+			os.Exit(1)
+		}
+		templateVersionRepo = tvr
+	} else {
+		mysqlDB, dbErr := database.NewFromAppConfig(cfg)
+		if dbErr != nil {
+			slog.Error("Failed to initialize MySQL for template version repository", "error", dbErr)
+			os.Exit(1)
+		}
+		templateVersionRepo = database.NewGORMTemplateVersionRepository(mysqlDB.DB)
 	}
 
 	templateHandler := handlers.NewTemplateHandlerWithVersions(templateRepo, templateChartRepo, definitionRepo, chartConfigRepo, templateVersionRepo)
@@ -249,10 +262,22 @@ func main() {
 	branchOverrideHandler := handlers.NewBranchOverrideHandler(branchOverrideRepo, instanceRepo)
 	sharedValuesHandler := handlers.NewSharedValuesHandler(sharedValuesRepo, clusterRepo)
 
-	notificationRepo, err := azure.NewNotificationRepository(azCfg.AccountName, azCfg.AccountKey, azCfg.Endpoint, azCfg.UseAzurite)
-	if err != nil {
-		slog.Error("Failed to create notification repository", "error", err)
-		os.Exit(1)
+	// Notification repository — datastore selection via config.
+	var notificationRepo models.NotificationRepository
+	if cfg.AzureTable.UseAzureTable {
+		nr, nrErr := azure.NewNotificationRepository(azCfg.AccountName, azCfg.AccountKey, azCfg.Endpoint, azCfg.UseAzurite)
+		if nrErr != nil {
+			slog.Error("Failed to create notification repository", "error", nrErr)
+			os.Exit(1)
+		}
+		notificationRepo = nr
+	} else {
+		mysqlDB, dbErr := database.NewFromAppConfig(cfg)
+		if dbErr != nil {
+			slog.Error("Failed to initialize MySQL for notification repository", "error", dbErr)
+			os.Exit(1)
+		}
+		notificationRepo = database.NewGORMNotificationRepository(mysqlDB.DB)
 	}
 	notificationHandler := handlers.NewNotificationHandler(notificationRepo)
 

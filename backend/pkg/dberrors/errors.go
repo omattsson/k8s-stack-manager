@@ -12,6 +12,7 @@ var (
 	ErrDuplicateKey     = errors.New("duplicate key violation")
 	ErrValidation       = errors.New("validation error")
 	ErrConnectionFailed = errors.New("database connection failed")
+	ErrNotImplemented   = errors.New("not implemented")
 )
 
 // DatabaseError wraps database-specific errors with additional context

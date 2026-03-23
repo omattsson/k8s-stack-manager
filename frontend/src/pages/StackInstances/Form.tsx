@@ -75,13 +75,12 @@ const Form = () => {
     } catch (err) {
       if (axios.isAxiosError(err) && err.response?.status === 409) {
         const data = err.response.data as ConflictResponse;
-        setError(data.message || data.error || 'Name already taken');
         if (data.suggestions && data.suggestions.length > 0) {
+          setError(data.message || data.error || 'Name already taken');
           setSuggestions(data.suggestions);
+        } else {
+          setError(data.message || data.error || 'You have reached the instance limit for this cluster');
         }
-      } else if (axios.isAxiosError(err) && err.response?.status === 403) {
-        const data = err.response.data as { error?: string; message?: string };
-        setError(data.message || data.error || 'You have reached the instance limit for this cluster');
       } else {
         setError('Failed to create instance');
       }

@@ -211,13 +211,13 @@ func (c *Client) GetNamespaceResourceUsage(ctx context.Context, namespace string
 	if q, ok := quota.Status.Used[corev1.ResourceRequestsCPU]; ok {
 		usage.CPUUsed = q.String()
 	}
-	if q, ok := quota.Status.Hard[corev1.ResourceRequestsCPU]; ok {
+	if q, ok := quota.Status.Hard[corev1.ResourceLimitsCPU]; ok {
 		usage.CPULimit = q.String()
 	}
 	if q, ok := quota.Status.Used[corev1.ResourceRequestsMemory]; ok {
 		usage.MemoryUsed = q.String()
 	}
-	if q, ok := quota.Status.Hard[corev1.ResourceRequestsMemory]; ok {
+	if q, ok := quota.Status.Hard[corev1.ResourceLimitsMemory]; ok {
 		usage.MemoryLimit = q.String()
 	}
 	if q, ok := quota.Status.Used[corev1.ResourcePods]; ok {

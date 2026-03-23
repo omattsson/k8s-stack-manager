@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"context"
 	"encoding/json"
 	"log/slog"
 	"net/http"
@@ -327,7 +326,7 @@ func (h *TemplateHandler) createVersionSnapshot(c *gin.Context, tmpl *models.Sta
 		CreatedAt:  time.Now().UTC(),
 	}
 
-	if err := h.versionRepo.Create(context.Background(), version); err != nil {
+	if err := h.versionRepo.Create(c.Request.Context(), version); err != nil {
 		slog.Error("failed to create version snapshot", "template_id", tmpl.ID, "error", err)
 	}
 }

@@ -181,6 +181,8 @@ func TestGetNamespaceResourceUsage(t *testing.T) {
 				},
 				Status: corev1.ResourceQuotaStatus{
 					Hard: corev1.ResourceList{
+						corev1.ResourceLimitsCPU:      resource.MustParse("2000m"),
+						corev1.ResourceLimitsMemory:   resource.MustParse("1Gi"),
 						corev1.ResourceRequestsCPU:    resource.MustParse("2000m"),
 						corev1.ResourceRequestsMemory: resource.MustParse("1Gi"),
 						corev1.ResourcePods:           resource.MustParse("10"),

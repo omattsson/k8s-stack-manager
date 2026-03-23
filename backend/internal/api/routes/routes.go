@@ -332,7 +332,7 @@ func SetupRoutes(router *gin.Engine, deps Deps) *handlers.RateLimiter {
 				clusters.GET("/:id/namespaces", devops, clusterHandler.GetClusterNamespaces)
 
 				// Resource quotas
-				clusters.GET("/:id/quotas", clusterHandler.GetQuotas)
+				clusters.GET("/:id/quotas", devops, clusterHandler.GetQuotas)
 				clusters.PUT("/:id/quotas", admin, clusterHandler.UpdateQuotas)
 				clusters.DELETE("/:id/quotas", admin, clusterHandler.DeleteQuotas)
 				clusters.GET("/:id/utilization", devops, clusterHandler.GetUtilization)

@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"context"
 	"encoding/json"
 	"net/http"
 
@@ -52,7 +51,7 @@ func (h *TemplateVersionHandler) ListVersions(c *gin.Context) {
 		return
 	}
 
-	versions, err := h.versionRepo.ListByTemplate(context.Background(), id)
+	versions, err := h.versionRepo.ListByTemplate(c.Request.Context(), id)
 	if err != nil {
 		status, message := mapError(err, "Template version")
 		c.JSON(status, gin.H{"error": message})
@@ -93,7 +92,7 @@ func (h *TemplateVersionHandler) GetVersion(c *gin.Context) {
 		return
 	}
 
-	version, err := h.versionRepo.GetByID(context.Background(), versionID)
+	version, err := h.versionRepo.GetByID(c.Request.Context(), versionID)
 	if err != nil {
 		status, message := mapError(err, "Template version")
 		c.JSON(status, gin.H{"error": message})
@@ -154,7 +153,7 @@ func (h *TemplateVersionHandler) DiffVersions(c *gin.Context) {
 		return
 	}
 
-	left, err := h.versionRepo.GetByID(context.Background(), v1ID)
+	left, err := h.versionRepo.GetByID(c.Request.Context(), v1ID)
 	if err != nil {
 		status, message := mapError(err, "Template version")
 		c.JSON(status, gin.H{"error": message})
@@ -165,7 +164,7 @@ func (h *TemplateVersionHandler) DiffVersions(c *gin.Context) {
 		return
 	}
 
-	right, err := h.versionRepo.GetByID(context.Background(), v2ID)
+	right, err := h.versionRepo.GetByID(c.Request.Context(), v2ID)
 	if err != nil {
 		status, message := mapError(err, "Template version")
 		c.JSON(status, gin.H{"error": message})

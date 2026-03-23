@@ -371,8 +371,8 @@ const Form = () => {
           open={upgradeDialogOpen}
           onClose={() => setUpgradeDialogOpen(false)}
           onUpgraded={() => {
-            // Reload the page to reflect upgraded charts
-            window.location.reload();
+            setUpgradeDialogOpen(false);
+            navigate('/stack-definitions');
           }}
         />
       )}

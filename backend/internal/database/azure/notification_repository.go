@@ -187,13 +187,12 @@ func (r *NotificationRepository) MarkAllAsRead(ctx context.Context, userID strin
 
 func (r *NotificationRepository) GetPreferences(_ context.Context, _ string) ([]models.NotificationPreference, error) {
 	// Preferences are not yet implemented for Azure Table Storage.
-	// Return an empty list so the handler works without error.
-	return []models.NotificationPreference{}, nil
+	return nil, dberrors.NewDatabaseError("get_preferences", dberrors.ErrNotImplemented)
 }
 
 func (r *NotificationRepository) UpdatePreference(_ context.Context, _ *models.NotificationPreference) error {
 	// Preferences are not yet implemented for Azure Table Storage.
-	return nil
+	return dberrors.NewDatabaseError("update_preference", dberrors.ErrNotImplemented)
 }
 
 func notificationFromEntity(e map[string]interface{}) *models.Notification {

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"sync"
 	"time"
 
 	"backend/internal/cluster"
@@ -807,24 +808,40 @@ func (h *ClusterHandler) GetUtilization(c *gin.Context) {
 	}
 
 	var usages []NamespaceResourceUsage
-	for _, ns := range namespaces {
-		usage, err := k8sClient.GetNamespaceResourceUsage(ctx, ns.Name)
-		if err != nil {
-			slog.Warn("Failed to get resource usage for namespace", "namespace", ns.Name, "error", err)
-			// Include the namespace with empty values rather than failing the whole request.
-			usages = append(usages, NamespaceResourceUsage{Namespace: ns.Name})
-			continue
-		}
-		usages = append(usages, NamespaceResourceUsage{
-			Namespace:   ns.Name,
-			CPUUsed:     usage.CPUUsed,
-			CPULimit:    usage.CPULimit,
-			MemoryUsed:  usage.MemoryUsed,
-			MemoryLimit: usage.MemoryLimit,
-			PodCount:    usage.PodCount,
-			PodLimit:    usage.PodLimit,
-		})
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, 10) // bound concurrency to 10
+	usages = make([]NamespaceResourceUsage, len(namespaces))
+
+	for i, ns := range namespaces {
+		wg.Add(1)
+		go func(idx int, nsName string) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			usage, err := k8sClient.GetNamespaceResourceUsage(ctx, nsName)
+			if err != nil {
+				slog.Warn("Failed to get resource usage for namespace", "namespace", nsName, "error", err)
+				mu.Lock()
+				usages[idx] = NamespaceResourceUsage{Namespace: nsName}
+				mu.Unlock()
+				return
+			}
+			mu.Lock()
+			usages[idx] = NamespaceResourceUsage{
+				Namespace:   nsName,
+				CPUUsed:     usage.CPUUsed,
+				CPULimit:    usage.CPULimit,
+				MemoryUsed:  usage.MemoryUsed,
+				MemoryLimit: usage.MemoryLimit,
+				PodCount:    usage.PodCount,
+				PodLimit:    usage.PodLimit,
+			}
+			mu.Unlock()
+		}(i, ns.Name)
 	}
+	wg.Wait()
 
 	c.JSON(http.StatusOK, ClusterUtilization{
 		ClusterID:  id,

@@ -30,6 +30,7 @@ const PAGE_SIZE_OPTIONS = [10, 25, 50];
 function timeAgo(dateStr: string): string {
   const now = Date.now();
   const then = new Date(dateStr).getTime();
+  if (!Number.isFinite(then)) return dateStr || 'unknown';
   const diffSeconds = Math.floor((now - then) / 1000);
 
   if (diffSeconds < 60) return 'just now';

@@ -26,6 +26,9 @@ func mapError(err error, entityName string) (int, string) {
 	if errors.Is(err, dberrors.ErrDuplicateKey) {
 		return http.StatusConflict, entityName + " already exists"
 	}
+	if errors.Is(err, dberrors.ErrNotImplemented) {
+		return http.StatusNotImplemented, "Feature not implemented"
+	}
 
 	// Fallback to string matching for implementations that don't wrap sentinels.
 	errStr := err.Error()
