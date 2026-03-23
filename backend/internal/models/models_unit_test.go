@@ -315,7 +315,7 @@ func TestStackInstanceValidate_NameLength(t *testing.T) {
 			name: "name exceeds max length",
 			inst: StackInstance{
 				StackDefinitionID: "d1",
-				Name:              "a" + string(make([]byte, MaxInstanceNameLength)),
+				Name:              strings.Repeat("a", MaxInstanceNameLength+1),
 				OwnerID:           "o1",
 			},
 			wantErr:     true,

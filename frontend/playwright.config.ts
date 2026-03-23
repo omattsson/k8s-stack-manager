@@ -5,7 +5,7 @@ export default defineConfig({
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,
-  workers: process.env.CI ? 1 : (process.env.PW_WORKERS ? parseInt(process.env.PW_WORKERS, 10) : undefined),
+  workers: process.env.CI ? 1 : (() => { const n = parseInt(process.env.PW_WORKERS ?? '', 10); return Number.isFinite(n) ? n : undefined; })(),
   reporter: 'html',
   use: {
     baseURL: 'http://localhost:3000',
