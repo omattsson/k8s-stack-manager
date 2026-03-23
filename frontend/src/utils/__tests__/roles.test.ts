@@ -66,7 +66,7 @@ describe('hasAtLeastRole', () => {
       expect(hasAtLeastRole('admin', 'superadmin')).toBe(false);
     });
 
-    it('returns true when both roles are unknown (0 >= 999 is false)', () => {
+    it('returns false when both roles are unknown (0 >= 999 is false)', () => {
       // unknown user role gets rank 0, unknown required role gets rank 999
       expect(hasAtLeastRole('foo', 'bar')).toBe(false);
     });

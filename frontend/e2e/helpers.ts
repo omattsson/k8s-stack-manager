@@ -69,8 +69,8 @@ async function ensureUserRegistered(
   }
 }
 
-const E2E_USER_USERNAME = 'e2e-regular-user';
-const E2E_DEVOPS_USERNAME = 'e2e-devops-user';
+const E2E_USER_USERNAME = `e2e-regular-user-${process.pid}`;
+const E2E_DEVOPS_USERNAME = `e2e-devops-user-${process.pid}`;
 const E2E_TEST_PASSWORD = 'e2e-test-password';
 
 /**

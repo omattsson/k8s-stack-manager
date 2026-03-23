@@ -9,37 +9,24 @@ import (
 func TestGenerateAPIKey(t *testing.T) {
 	t.Parallel()
 
-	tests := []struct {
-		name string
-	}{
-		{name: "generates valid key"},
-		{name: "generates unique keys across calls"},
-	}
+	rawKey, prefix, hash, err := GenerateAPIKey()
+	assert.NoError(t, err)
+	assert.NotEmpty(t, rawKey)
+	assert.NotEmpty(t, prefix)
+	assert.NotEmpty(t, hash)
 
-	for _, tt := range tests {
-		tt := tt
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			rawKey, prefix, hash, err := GenerateAPIKey()
-			assert.NoError(t, err)
-			assert.NotEmpty(t, rawKey)
-			assert.NotEmpty(t, prefix)
-			assert.NotEmpty(t, hash)
+	// rawKey should be 64-char hex (32 bytes)
+	assert.Len(t, rawKey, 64)
 
-			// rawKey should be 64-char hex (32 bytes)
-			assert.Len(t, rawKey, 64)
+	// prefix should be first 16 chars of rawKey
+	assert.Equal(t, rawKey[:16], prefix)
+	assert.Len(t, prefix, 16)
 
-			// prefix should be first 16 chars of rawKey
-			assert.Equal(t, rawKey[:16], prefix)
-			assert.Len(t, prefix, 16)
+	// hash should be 64-char hex (SHA-256)
+	assert.Len(t, hash, 64)
 
-			// hash should be 64-char hex (SHA-256)
-			assert.Len(t, hash, 64)
-
-			// hash should match HashAPIKey(rawKey)
-			assert.Equal(t, HashAPIKey(rawKey), hash)
-		})
-	}
+	// hash should match HashAPIKey(rawKey)
+	assert.Equal(t, HashAPIKey(rawKey), hash)
 }
 
 func TestGenerateAPIKey_Uniqueness(t *testing.T) {

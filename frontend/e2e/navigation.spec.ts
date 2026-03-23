@@ -2,8 +2,10 @@ import { test, expect } from '@playwright/test';
 import { loginAsAdmin, loginAsUser } from './helpers';
 
 test.describe('Navigation & Layout', () => {
+  let username: string;
+
   test.beforeEach(async ({ page }) => {
-    await loginAsUser(page);
+    username = await loginAsUser(page);
     await page.goto('/');
   });
 
@@ -22,7 +24,7 @@ test.describe('Navigation & Layout', () => {
   });
 
   test('displays logged-in user info', async ({ page }) => {
-    await expect(page.getByText('e2e-regular-user', { exact: true }).first()).toBeVisible();
+    await expect(page.getByText(username, { exact: true }).first()).toBeVisible();
     await expect(page.getByRole('button', { name: 'Logout' })).toBeVisible();
   });
 

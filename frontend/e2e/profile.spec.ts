@@ -42,7 +42,7 @@ test.describe('Profile Page', () => {
     });
 
     // The raw key should be visible — format is sk_<64-char hex>
-    await expect(page.getByText(/^sk_[0-9a-f]{32}/)).toBeVisible({ timeout: 5_000 });
+    await expect(page.getByText(/^sk_[0-9a-f]{64}$/)).toBeVisible({ timeout: 5_000 });
 
     // Close the raw key dialog
     await page.getByRole('button', { name: 'Done' }).click();

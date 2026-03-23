@@ -14,23 +14,20 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+func init() {
+	gin.SetMode(gin.TestMode)
+}
+
 func TestHealthCheckHandler(t *testing.T) {
 	t.Parallel()
-	// Set Gin to Test Mode
-	gin.SetMode(gin.TestMode)
 
-	// Setup the router
-	r := gin.Default()
+	r := gin.New()
 	r.GET("/health", HealthCheck)
 
-	// Create a mock request
 	w := httptest.NewRecorder()
 	req, _ := http.NewRequest("GET", "/health", nil)
-
-	// Serve the request
 	r.ServeHTTP(w, req)
 
-	// Assert the response
 	assert.Equal(t, http.StatusOK, w.Code)
 
 	var response map[string]string
@@ -42,21 +39,14 @@ func TestHealthCheckHandler(t *testing.T) {
 
 func TestPingHandler(t *testing.T) {
 	t.Parallel()
-	// Set Gin to Test Mode
-	gin.SetMode(gin.TestMode)
 
-	// Setup the router
-	r := gin.Default()
+	r := gin.New()
 	r.GET("/ping", Ping)
 
-	// Create a mock request
 	w := httptest.NewRecorder()
 	req, _ := http.NewRequest("GET", "/ping", nil)
-
-	// Serve the request
 	r.ServeHTTP(w, req)
 
-	// Assert the response
 	assert.Equal(t, http.StatusOK, w.Code)
 
 	var response map[string]string
@@ -87,7 +77,6 @@ func TestLivenessHandler(t *testing.T) {
 		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			gin.SetMode(gin.TestMode)
 			r := gin.New()
 
 			hc := health.New()
@@ -160,7 +149,6 @@ func TestReadinessHandler(t *testing.T) {
 		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			gin.SetMode(gin.TestMode)
 			r := gin.New()
 
 			hc := health.New()
