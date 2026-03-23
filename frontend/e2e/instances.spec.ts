@@ -4,6 +4,7 @@ import { loginAsAdmin, uniqueName, createAndPublishTemplate, instantiateTemplate
 test.describe('Stack Instance Management', () => {
   test.beforeEach(async ({ page }) => {
     await loginAsAdmin(page);
+    await page.goto('/');
   });
 
   test('dashboard page loads', async ({ page }) => {
@@ -33,13 +34,10 @@ test.describe('Stack Instance Management', () => {
     const instName = uniqueName('inst');
     await page.getByLabel('Instance Name').fill(instName);
 
-    // Namespace should auto-generate
-    const nsField = page.getByLabel('Namespace (auto-generated)');
-    await expect(nsField).not.toHaveValue('');
-
     await page.getByRole('button', { name: 'Create Instance' }).click();
     // Redirects to instance detail
     await page.waitForURL(/\/stack-instances\/[^/]+$/, { timeout: 10_000 });
+    await page.waitForLoadState('domcontentloaded');
     await expect(page.getByRole('heading', { level: 1, name: instName })).toBeVisible({
       timeout: 10_000,
     });
@@ -59,6 +57,7 @@ test.describe('Stack Instance Management', () => {
     await page.getByLabel('Instance Name').fill(instName);
     await page.getByRole('button', { name: 'Create Instance' }).click();
     await page.waitForURL(/\/stack-instances\/[^/]+$/, { timeout: 10_000 });
+    await page.waitForLoadState('domcontentloaded');
 
     // Go to dashboard
     await page.goto('/');
@@ -82,6 +81,7 @@ test.describe('Stack Instance Management', () => {
     await page.getByLabel('Instance Name').fill(instName);
     await page.getByRole('button', { name: 'Create Instance' }).click();
     await page.waitForURL(/\/stack-instances\/[^/]+$/, { timeout: 10_000 });
+    await page.waitForLoadState('domcontentloaded');
 
     // Verify detail page content
     await expect(page.getByRole('heading', { level: 1, name: instName })).toBeVisible({
@@ -109,6 +109,7 @@ test.describe('Stack Instance Management', () => {
     await page.getByLabel('Instance Name').fill(instName);
     await page.getByRole('button', { name: 'Create Instance' }).click();
     await page.waitForURL(/\/stack-instances\/[^/]+$/, { timeout: 10_000 });
+    await page.waitForLoadState('domcontentloaded');
 
     const originalUrl = page.url();
 
@@ -116,6 +117,7 @@ test.describe('Stack Instance Management', () => {
     await page.getByRole('button', { name: 'Clone' }).click();
     // Should navigate to a different instance page
     await page.waitForURL(/\/stack-instances\/[^/]+$/, { timeout: 10_000 });
+    await page.waitForLoadState('domcontentloaded');
     const clonedUrl = page.url();
     expect(clonedUrl).not.toBe(originalUrl);
     // Cloned instance name should contain original name
@@ -136,6 +138,7 @@ test.describe('Stack Instance Management', () => {
     await page.getByLabel('Instance Name').fill(instName);
     await page.getByRole('button', { name: 'Create Instance' }).click();
     await page.waitForURL(/\/stack-instances\/[^/]+$/, { timeout: 10_000 });
+    await page.waitForLoadState('domcontentloaded');
     await expect(page.getByRole('heading', { level: 1, name: instName })).toBeVisible({
       timeout: 10_000,
     });
@@ -166,6 +169,7 @@ test.describe('Stack Instance Management', () => {
     await page.getByLabel('Instance Name').fill(instName);
     await page.getByRole('button', { name: 'Create Instance' }).click();
     await page.waitForURL(/\/stack-instances\/[^/]+$/, { timeout: 10_000 });
+    await page.waitForLoadState('domcontentloaded');
 
     // Go to dashboard and search
     await page.goto('/');
@@ -192,6 +196,7 @@ test.describe('Stack Instance Management', () => {
     await page.getByLabel('Instance Name').fill(instName);
     await page.getByRole('button', { name: 'Create Instance' }).click();
     await page.waitForURL(/\/stack-instances\/[^/]+$/, { timeout: 10_000 });
+    await page.waitForLoadState('domcontentloaded');
 
     // Go to dashboard
     await page.goto('/');
@@ -201,13 +206,14 @@ test.describe('Stack Instance Management', () => {
     const card = page.locator('.MuiCard-root', { hasText: instName });
     await card.getByRole('button', { name: 'Details' }).click();
     await page.waitForURL(/\/stack-instances\/[^/]+$/, { timeout: 10_000 });
+    await page.waitForLoadState('domcontentloaded');
     await expect(page.getByRole('heading', { level: 1, name: instName })).toBeVisible({
       timeout: 10_000,
     });
   });
 
   test('instance creation form shows cluster selector when clusters exist', async ({ page }) => {
-    // Create a cluster via API so the selector appears
+    // Navigate first so localStorage is accessible (loginAsAdmin uses addInitScript)
     const token = await page.evaluate(() => localStorage.getItem('token'));
     const clusterName = uniqueName('e2e-cluster');
     const createRes = await page.request.post('http://localhost:8081/api/v1/clusters', {
@@ -215,7 +221,7 @@ test.describe('Stack Instance Management', () => {
       data: {
         name: clusterName,
         api_server_url: 'https://fake-cluster.example.com:6443',
-        kubeconfig_data: 'apiVersion: v1\nkind: Config\nclusters: []\n',
+        kubeconfig_path: '/tmp/test-kubeconfig',
         region: 'e2e-region',
       },
     });

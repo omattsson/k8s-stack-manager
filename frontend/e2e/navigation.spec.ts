@@ -4,6 +4,7 @@ import { loginAsAdmin } from './helpers';
 test.describe('Navigation & Layout', () => {
   test.beforeEach(async ({ page }) => {
     await loginAsAdmin(page);
+    await page.goto('/');
   });
 
   test('app bar shows navigation buttons', async ({ page }) => {
@@ -18,7 +19,6 @@ test.describe('Navigation & Layout', () => {
   });
 
   test('displays logged-in user info', async ({ page }) => {
-    await expect(page.getByRole('link', { name: 'admin' })).toBeVisible();
     await expect(page.getByText('admin', { exact: true }).first()).toBeVisible();
     await expect(page.getByRole('button', { name: 'Logout' })).toBeVisible();
   });
@@ -71,8 +71,8 @@ test.describe('Navigation & Layout', () => {
   });
 
   test('profile link navigates to /profile', async ({ page }) => {
-    // The username button in the nav bar links to /profile
-    await page.getByRole('link', { name: 'admin' }).click();
+    // The Profile link in the sidebar navigates to /profile
+    await page.getByRole('link', { name: 'Profile' }).click();
     await expect(page).toHaveURL('/profile');
   });
 

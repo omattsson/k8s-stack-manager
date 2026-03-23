@@ -3,13 +3,6 @@ import { loginAsAdmin, uniqueName } from './helpers';
 
 const API_BASE = 'http://localhost:8081';
 
-const DUMMY_KUBECONFIG = `apiVersion: v1
-kind: Config
-clusters:
-- cluster:
-    server: https://fake-sv.example.com:6443
-  name: test`;
-
 /**
  * Helper: login via API and return the JWT token.
  */
@@ -35,7 +28,7 @@ async function apiCreateCluster(
     data: {
       name,
       api_server_url: 'https://sv-test.example.com:6443',
-      kubeconfig_data: DUMMY_KUBECONFIG,
+      kubeconfig_path: '/tmp/fake-kubeconfig',
       region: 'westeurope',
     },
   });

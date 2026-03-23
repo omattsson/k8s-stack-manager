@@ -173,7 +173,7 @@ test.describe('Cleanup Policies', () => {
     await row.getByRole('button', { name: `Delete ${name}` }).click();
 
     const dialog = page.getByRole('dialog');
-    await expect(dialog.getByText('Delete Cleanup Policy')).toBeVisible();
+    await expect(dialog.getByText('Delete Policy')).toBeVisible();
     await dialog.getByRole('button', { name: 'Delete' }).click();
 
     await expect(dialog).not.toBeVisible({ timeout: 10_000 });
@@ -193,19 +193,22 @@ test.describe('Cleanup Policies', () => {
       data: { username, password: 'testpass123', role: 'user' },
     });
 
-    // Login as the regular user
-    await page.goto('/login');
-    await page.getByLabel('Username').fill(username);
-    await page.getByLabel('Password').fill('testpass123');
-    await page.getByRole('button', { name: 'Sign In' }).click();
-    await page.waitForURL('/', { timeout: 10_000 });
+    // Login as the regular user in a fresh browser context (avoids addInitScript re-injecting admin token)
+    const newContext = await page.context().browser()!.newContext({ baseURL: 'http://localhost:3000' });
+    const newPage = await newContext.newPage();
+    await newPage.goto('/login');
+    await newPage.getByLabel('Username').fill(username);
+    await newPage.getByLabel('Password').fill('testpass123');
+    await newPage.getByRole('button', { name: 'Sign In' }).click();
+    await newPage.waitForURL('/', { timeout: 10_000 });
 
     // Navigate to cleanup policies
-    await page.goto('/admin/cleanup-policies');
+    await newPage.goto('/admin/cleanup-policies');
 
     // Should see permission error
-    await expect(page.getByText('You do not have permission to access this page.')).toBeVisible({
+    await expect(newPage.getByText('You do not have permission to access this page.')).toBeVisible({
       timeout: 10_000,
     });
+    await newContext.close();
   });
 });

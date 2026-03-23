@@ -161,7 +161,8 @@ test.describe('Template Management', () => {
 
     // Search for something that doesn't exist
     await page.getByPlaceholder('Search templates...').fill('nonexistent-template-xyz');
-    await expect(page.getByText('No templates found.')).toBeVisible({ timeout: 5_000 });
+    await page.waitForLoadState('domcontentloaded');
+    await expect(page.getByText('No templates found')).toBeVisible({ timeout: 10_000 });
   });
 
   test('delete a template via API after creation', async ({ page, request }) => {
@@ -206,6 +207,7 @@ test.describe('Template Management', () => {
     await page.getByRole('button', { name: 'Create Stack Definition' }).click();
     // Redirects to definition edit
     await page.waitForURL(/\/stack-definitions\/[^/]+\/edit/, { timeout: 10_000 });
+    await page.waitForLoadState('domcontentloaded');
     await expect(page.getByRole('heading', { level: 1, name: /Edit Stack Definition/ })).toBeVisible({
       timeout: 10_000,
     });

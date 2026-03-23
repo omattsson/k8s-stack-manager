@@ -1,15 +1,28 @@
 import { Page, expect } from '@playwright/test';
 
+const API_BASE = 'http://localhost:8081';
+
 /**
- * Log in as admin and wait for the dashboard to load.
+ * Log in as admin by obtaining a JWT token via API and injecting it into localStorage.
+ * This avoids the UI login flow to reduce API calls and rate-limiter pressure.
+ * Does NOT navigate to any page — each test should navigate to its target page.
+ * Retries on rate-limit (429) responses with backoff.
  */
 export async function loginAsAdmin(page: Page) {
-  await page.goto('/login');
-  await page.getByLabel('Username').fill('admin');
-  await page.getByLabel('Password').fill('admin');
-  await page.getByRole('button', { name: 'Sign In' }).click();
-  await page.waitForURL('/', { timeout: 10_000 });
-  await expect(page.getByRole('heading', { level: 1 })).toBeVisible({ timeout: 10_000 });
+  let res;
+  for (let attempt = 0; attempt < 5; attempt++) {
+    res = await page.request.post(`${API_BASE}/api/v1/auth/login`, {
+      data: { username: 'admin', password: 'admin' },
+    });
+    if (res.status() !== 429) break;
+    await page.waitForTimeout(2000 * (attempt + 1));
+  }
+  expect(res!.ok(), `Login API failed with status ${res!.status()}`).toBe(true);
+  const { token } = await res!.json();
+  // Inject token before any page JS runs so AuthContext picks it up on mount
+  await page.addInitScript((t) => {
+    localStorage.setItem('token', t);
+  }, token);
 }
 
 /**

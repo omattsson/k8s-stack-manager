@@ -1,13 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { loginAsAdmin, uniqueName } from './helpers';
 
-const DUMMY_KUBECONFIG = `apiVersion: v1
-kind: Config
-clusters:
-- cluster:
-    server: https://fake-cluster.example.com:6443
-  name: test`;
-
 test.describe('Cluster Management', () => {
   test.beforeEach(async ({ page }) => {
     await loginAsAdmin(page);
@@ -42,10 +35,11 @@ test.describe('Cluster Management', () => {
 
     const dialog = page.getByRole('dialog');
     await expect(dialog.getByText('Add Cluster')).toBeVisible();
+    await expect(dialog.getByRole('textbox').first()).toBeVisible({ timeout: 10_000 });
 
-    await dialog.getByLabel('Name').fill(name);
+    await dialog.getByRole('textbox').first().fill(name);
     await dialog.getByLabel('API Server URL').fill(apiUrl);
-    await dialog.getByLabel('Kubeconfig', { exact: false }).fill(DUMMY_KUBECONFIG);
+    await dialog.getByLabel('Kubeconfig Path', { exact: true }).fill('/tmp/test-kubeconfig');
     await dialog.getByLabel('Region').fill('westeurope');
 
     await dialog.getByRole('button', { name: 'Create' }).click();
@@ -78,7 +72,7 @@ test.describe('Cluster Management', () => {
       data: {
         name,
         api_server_url: 'https://edit-test.example.com:6443',
-        kubeconfig_data: DUMMY_KUBECONFIG,
+        kubeconfig_path: '/tmp/test-kubeconfig',
         region: 'northeurope',
       },
     });
@@ -90,13 +84,13 @@ test.describe('Cluster Management', () => {
 
     // Click edit button on the row containing our cluster
     const row = page.getByRole('row').filter({ hasText: name });
-    await row.getByRole('button', { name: 'Edit' }).click();
+    await row.getByRole('button', { name: `Edit ${name}` }).click();
 
     const dialog = page.getByRole('dialog');
     await expect(dialog.getByText('Edit Cluster')).toBeVisible();
 
     const updatedName = uniqueName('cluster-edited');
-    const nameField = dialog.getByLabel('Name');
+    const nameField = dialog.getByRole('textbox').first();
     await nameField.clear();
     await nameField.fill(updatedName);
 
@@ -122,7 +116,7 @@ test.describe('Cluster Management', () => {
       data: {
         name,
         api_server_url: 'https://delete-test.example.com:6443',
-        kubeconfig_data: DUMMY_KUBECONFIG,
+        kubeconfig_path: '/tmp/test-kubeconfig',
         region: 'eastus',
       },
     });
@@ -136,7 +130,7 @@ test.describe('Cluster Management', () => {
 
     // Confirm deletion dialog
     const dialog = page.getByRole('dialog');
-    await expect(dialog.getByText('Delete Cluster')).toBeVisible();
+    await expect(dialog.getByRole('heading', { name: 'Delete Cluster' })).toBeVisible();
     await expect(dialog.getByText(name)).toBeVisible();
 
     await dialog.getByRole('button', { name: 'Delete' }).click();
@@ -150,7 +144,7 @@ test.describe('Cluster Management', () => {
     await page.getByRole('button', { name: 'Add Cluster' }).click();
 
     const dialog = page.getByRole('dialog');
-    await dialog.getByLabel('Kubeconfig', { exact: false }).fill(DUMMY_KUBECONFIG);
+    await dialog.getByLabel('Kubeconfig Path', { exact: true }).fill('/tmp/test-kubeconfig');
 
     // Try to create without name and URL
     await dialog.getByRole('button', { name: 'Create' }).click();
@@ -163,7 +157,8 @@ test.describe('Cluster Management', () => {
     await page.getByRole('button', { name: 'Add Cluster' }).click();
 
     const dialog = page.getByRole('dialog');
-    await dialog.getByLabel('Name').fill('test-cluster');
+    await expect(dialog.getByRole('textbox').first()).toBeVisible({ timeout: 10_000 });
+    await dialog.getByRole('textbox').first().fill('test-cluster');
     await dialog.getByLabel('API Server URL').fill('https://test.example.com:6443');
 
     // Try to create without kubeconfig

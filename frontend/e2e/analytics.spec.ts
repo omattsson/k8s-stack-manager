@@ -17,9 +17,9 @@ test.describe('Analytics Page', () => {
 
   test('shows overview cards', async ({ page }) => {
     // Wait for data to load — overview cards should show stats
-    await expect(page.getByText('Templates')).toBeVisible({ timeout: 10_000 });
-    await expect(page.getByText('Definitions')).toBeVisible();
-    await expect(page.getByText('Instances')).toBeVisible();
+    await expect(page.getByRole('paragraph').filter({ hasText: 'Templates' })).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByRole('paragraph').filter({ hasText: 'Definitions' })).toBeVisible();
+    await expect(page.getByRole('paragraph').filter({ hasText: /^Instances$/ })).toBeVisible();
   });
 
   test('shows template statistics section', async ({ page }) => {
@@ -48,7 +48,7 @@ test.describe('Analytics Page', () => {
     await page.getByRole('button', { name: 'Refresh' }).click();
 
     // Page should still show data after refresh (no errors)
-    await expect(page.getByText('Templates')).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByRole('paragraph').filter({ hasText: 'Templates' })).toBeVisible({ timeout: 10_000 });
     await expect(page.getByText('Template Usage')).toBeVisible();
     await expect(page.getByText('User Activity')).toBeVisible();
   });

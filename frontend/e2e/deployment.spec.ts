@@ -447,6 +447,7 @@ test.describe('Deployment UI', () => {
     await page.getByLabel('Instance Name').fill(instName);
     await page.getByRole('button', { name: 'Create Instance' }).click();
     await page.waitForURL(/\/stack-instances\/[^/]+$/, { timeout: 10_000 });
+    await page.waitForLoadState('domcontentloaded');
 
     // Verify Deploy button is visible for draft instance.
     await expect(page.getByRole('button', { name: 'Deploy' })).toBeVisible({ timeout: 10_000 });
@@ -468,6 +469,7 @@ test.describe('Deployment UI', () => {
     await page.getByLabel('Instance Name').fill(instName);
     await page.getByRole('button', { name: 'Create Instance' }).click();
     await page.waitForURL(/\/stack-instances\/[^/]+$/, { timeout: 10_000 });
+    await page.waitForLoadState('domcontentloaded');
 
     // Click Deploy.
     await page.getByRole('button', { name: 'Deploy' }).click();
@@ -491,6 +493,7 @@ test.describe('Deployment UI', () => {
     await page.getByLabel('Instance Name').fill(instName);
     await page.getByRole('button', { name: 'Create Instance' }).click();
     await page.waitForURL(/\/stack-instances\/[^/]+$/, { timeout: 10_000 });
+    await page.waitForLoadState('domcontentloaded');
 
     // Draft instance should NOT show Deployment History yet.
     await expect(page.getByRole('button', { name: 'Deploy' })).toBeVisible({ timeout: 10_000 });
@@ -539,6 +542,7 @@ test.describe('Deployment UI', () => {
     await page.getByLabel('Instance Name').fill(instName);
     await page.getByRole('button', { name: 'Create Instance' }).click();
     await page.waitForURL(/\/stack-instances\/[^/]+$/, { timeout: 10_000 });
+    await page.waitForLoadState('domcontentloaded');
 
     // Deploy to trigger error state (helm not available in test env).
     await page.getByRole('button', { name: 'Deploy' }).click();

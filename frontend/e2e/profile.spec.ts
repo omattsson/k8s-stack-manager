@@ -14,7 +14,7 @@ test.describe('Profile Page', () => {
 
   test('page loads with user information', async ({ page }) => {
     await expect(page.getByText('Username:')).toBeVisible();
-    await expect(page.getByText('admin')).toBeVisible();
+    await expect(page.locator('#main-content').getByText('admin', { exact: true }).first()).toBeVisible();
     await expect(page.getByText('Role:')).toBeVisible();
   });
 
@@ -39,9 +39,8 @@ test.describe('Profile Page', () => {
       timeout: 10_000,
     });
 
-    // The raw key should be visible (monospace text area)
-    const rawKeyText = page.locator('[style*="monospace"], [class*="monospace"]');
-    await expect(rawKeyText.or(page.getByText(/^ksm_/))).toBeVisible({ timeout: 5_000 });
+    // The raw key should be visible — format is sk_<64-char hex>
+    await expect(page.getByText(/^sk_[0-9a-f]{32}/)).toBeVisible({ timeout: 5_000 });
 
     // Close the raw key dialog
     await page.getByRole('button', { name: 'Done' }).click();
@@ -87,7 +86,8 @@ test.describe('Profile Page', () => {
     await expect(page.getByText(keyName)).toBeVisible({ timeout: 10_000 });
 
     // The prefix column should show a truncated value with "..."
-    await expect(page.getByText(/\.\.\./)).toBeVisible();
+    const keyRow = page.getByRole('row').filter({ hasText: keyName });
+    await expect(keyRow.getByText(/\.\.\./).first()).toBeVisible();
 
     // Cleanup
     const keysResp = await page.request.get(`${API_BASE}/api/v1/users/${me.id}/api-keys`, {

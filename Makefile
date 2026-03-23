@@ -127,6 +127,7 @@ DEV_LOCAL_ENV = \
 	SELF_REGISTRATION=true \
 	HELM_BINARY=$${HELM_BINARY:-helm} \
 	KUBECONFIG_PATH=$${KUBECONFIG_PATH:-$$HOME/.kube/config} \
+	RATE_LIMIT=1000 \
 	PORT=8081 GIN_MODE=debug
 
 # Run backend locally against Azurite with hot reload.
