@@ -20,12 +20,12 @@ const limitRangeName = "stack-manager-limits"
 
 // NamespaceResourceUsage represents actual resource usage for a namespace.
 type NamespaceResourceUsage struct {
-	CPUUsed    string `json:"cpu_used"`
-	CPULimit   string `json:"cpu_limit"`
-	MemoryUsed string `json:"memory_used"`
+	CPUUsed     string `json:"cpu_used"`
+	CPULimit    string `json:"cpu_limit"`
+	MemoryUsed  string `json:"memory_used"`
 	MemoryLimit string `json:"memory_limit"`
-	PodCount   int    `json:"pod_count"`
-	PodLimit   int    `json:"pod_limit"`
+	PodCount    int    `json:"pod_count"`
+	PodLimit    int    `json:"pod_limit"`
 }
 
 // EnsureResourceQuota creates or updates a ResourceQuota in the given namespace
@@ -159,9 +159,9 @@ func (c *Client) EnsureLimitRange(ctx context.Context, namespace string, config 
 		Spec: corev1.LimitRangeSpec{
 			Limits: []corev1.LimitRangeItem{
 				{
-					Type:            corev1.LimitTypeContainer,
-					Default:         defaultLimits,
-					DefaultRequest:  defaultRequests,
+					Type:           corev1.LimitTypeContainer,
+					Default:        defaultLimits,
+					DefaultRequest: defaultRequests,
 				},
 			},
 		},

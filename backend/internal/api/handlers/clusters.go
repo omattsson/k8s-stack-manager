@@ -751,13 +751,13 @@ func (h *ClusterHandler) DeleteQuotas(c *gin.Context) {
 
 // NamespaceResourceUsage represents resource usage for a single namespace.
 type NamespaceResourceUsage struct {
-	Namespace  string `json:"namespace"`
-	CPUUsed    string `json:"cpu_used"`
-	CPULimit   string `json:"cpu_limit"`
-	MemoryUsed string `json:"memory_used"`
+	Namespace   string `json:"namespace"`
+	CPUUsed     string `json:"cpu_used"`
+	CPULimit    string `json:"cpu_limit"`
+	MemoryUsed  string `json:"memory_used"`
 	MemoryLimit string `json:"memory_limit"`
-	PodCount   int    `json:"pod_count"`
-	PodLimit   int    `json:"pod_limit"`
+	PodCount    int    `json:"pod_count"`
+	PodLimit    int    `json:"pod_limit"`
 }
 
 // ClusterUtilization represents aggregated resource utilization for a cluster.

@@ -208,4 +208,3 @@ func notificationFromEntity(e map[string]interface{}) *models.Notification {
 		CreatedAt:  parseTime(e, "CreatedAt"),
 	}
 }
-
