@@ -705,7 +705,6 @@ export const gitService = {
       const response = await api.get('/api/v1/git/branches', { params: { repo: repoUrl } });
       return response.data;
     } catch (error) {
-      console.error('Failed to fetch branches:', error);
       throw error;
     }
   },

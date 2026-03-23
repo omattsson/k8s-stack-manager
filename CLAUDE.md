@@ -4,7 +4,7 @@
 
 Full-stack app: **Go (Gin) backend** + **React (TypeScript, Vite, MUI) frontend**, with **MySQL** (GORM) or **Azure Table Storage** as swappable data stores. Docker Compose orchestrates all services.
 
-**Bootstrap flow**: `backend/api/main.go` → `config.LoadConfig()` → `database.NewRepository(cfg)` (factory selects MySQL or Azure based on `USE_AZURE_TABLE`) → `routes.SetupRoutes(router, repo, healthChecker, cfg, hub)` → `http.Server` with graceful shutdown (`SIGINT`/`SIGTERM`).
+**Bootstrap flow**: `backend/api/main.go` → `config.LoadConfig()` → `database.NewRepository(cfg)` (factory selects MySQL or Azure based on `USE_AZURE_TABLE`) → `routes.SetupRoutes(router, routes.Deps{...})` → `http.Server` with graceful shutdown (`SIGINT`/`SIGTERM`).
 
 **Ports**: Backend `:8081` on host, frontend `:3000` in dev. Inside Docker, nginx (`proxy_pass` with trailing `/`) and Vite (`rewrite: ^/api → ""`) both strip the `/api` prefix when proxying to `backend:8081`. Local non-Docker dev hits `localhost:8081` directly (`frontend/src/api/config.ts`).
 
@@ -33,7 +33,7 @@ backend/
       items.go                   # CRUD handler pattern (reference implementation)
       handlers.go                # Health handlers (closure-injection, not Handler struct)
       rate_limiter.go            # Per-IP sliding window, returned from SetupRoutes for shutdown
-      errors.go                  # handleDBError() maps repo errors to HTTP status
+      errors.go                  # mapError() maps repo errors to HTTP status for domain handlers
       admin.go                   # AdminHandler: orphaned namespace detection/cleanup
       analytics.go               # AnalyticsHandler: overview, template, user stats
       api_keys.go                # APIKeyHandler: API key management
@@ -55,6 +55,7 @@ backend/
       value_overrides.go         # Per-chart value overrides
       websocket.go               # WebSocket upgrade handler
       mock_repository.go         # In-memory mock for Item tests (same package)
+      mock_broadcast_sender.go   # Test double for websocket.BroadcastSender
     api/middleware/
       middleware.go              # CORS, Logger, Recovery, RequestID, MaxBodySize
       auth.go                    # JWT authentication + token generation
@@ -62,6 +63,9 @@ backend/
       audit.go                   # Audit logging middleware (applied to route groups)
       role.go                    # RequireAdmin, RequireDevOps role-based access
     config/config.go             # Env vars with godotenv .env fallback, typed config structs
+    database/database.go         # Database struct wrapping gorm.DB, NewDatabase(), Transaction, Ping
+    database/config.go           # Database connection Config struct, loaded from env vars
+    database/schema.go           # SchemaManager interface for table creation/dropping/inspection
     database/factory.go          # MySQL connection with retry (5x, 2s delay)
     database/repository.go       # NewRepository() factory: MySQL vs Azure Table
     database/migrations.go       # Versioned migrations via schema.Migrator, auto-run on startup
@@ -78,6 +82,8 @@ backend/
     ttl/                         # TTL reaper for auto-expiring stack instances
   pkg/dberrors/errors.go         # Canonical error types: ErrNotFound, ErrDuplicateKey, ErrValidation
   pkg/crypto/                    # AES-GCM encryption/decryption for kubeconfig data at rest (key derived via SHA-256)
+  pkg/utils/                     # Shared utilities (e.g., cryptographic random string generation)
+  internal/test/test_helpers.go  # Shared test utilities (test server setup)
 ```
 
 ## Key Backend Patterns
@@ -86,7 +92,7 @@ backend/
 
 **Handler struct**: `handlers.Handler` holds `models.Repository` and optional `websocket.BroadcastSender` via constructor injection (`NewHandler(repo)` or `NewHandlerWithHub(repo, hub)`). Domain handlers (e.g., `InstanceHandler`, `DefinitionHandler`, `AdminHandler`) use separate structs with specialized repository dependencies injected via their own constructors. Health handlers use factory functions returning `gin.HandlerFunc` via closure.
 
-**Error flow**: Repository returns `*dberrors.DatabaseError` wrapping sentinel errors → `handleDBError()` in `handlers/items.go` maps via `errors.As`/`errors.Is` to HTTP status (400 validation, 404 not found, 409 duplicate/version conflict, 500 internal). **Never expose raw error messages for 500s** — always return `"Internal server error"`.
+**Error flow**: Repository returns `*dberrors.DatabaseError` wrapping sentinel errors → two mapping functions translate to HTTP status: `handleDBError()` in `handlers/items.go` (Items reference implementation, uses `errors.As`/`errors.Is`) and `mapError()` in `handlers/errors.go` (domain handlers, takes entity name for contextual messages). Both map to 400 validation, 404 not found, 409 duplicate/conflict, 500 internal. **Never expose raw error messages for 500s** — always return `"Internal server error"`.
 
 **Optimistic locking**: Models embed `Version uint` field. Repository `Update()` uses `WHERE version = ?` — returns `"version mismatch"` error (mapped to 409).
 
@@ -98,11 +104,56 @@ backend/
 
 ```
 frontend/src/
-  api/config.ts          # API_BASE_URL: localhost:8081 (dev) | /api (prod)
-  api/client.ts          # Axios instance + service objects
-  routes.tsx             # Route definitions
-  components/Layout/     # AppBar + nav + footer shell
-  pages/{Name}/index.tsx # Page components (one dir per page)
+  api/config.ts                # API_BASE_URL: localhost:8081 (dev) | /api (prod)
+  api/client.ts                # Axios instance + service objects
+  routes.tsx                   # Route definitions
+  App.tsx                      # Root component with providers
+  main.tsx                     # Entry point
+  components/
+    Layout/                    # AppBar + nav + footer shell
+    AccessUrls/                # Access URL display for stack instances
+    BranchSelector/            # Git branch picker with autocomplete
+    ConfirmDialog/             # Reusable confirmation modal
+    DeploymentLogViewer/       # Real-time deployment log display
+    EmptyState/                # Placeholder for empty lists
+    EntityLink/                # Clickable link to related entities
+    ErrorBoundary/             # React error boundary wrapper
+    FavoriteButton/            # Toggle bookmark on templates/instances
+    LoadingState/              # Centered CircularProgress wrapper
+    PodStatusDisplay/          # Kubernetes pod status visualization
+    ProtectedRoute/            # Auth-gated route wrapper
+    QuickDeployDialog/         # One-click template deploy modal
+    StatusBadge/               # Colored status chip
+    TtlSelector/               # TTL duration picker
+    YamlEditor/                # YAML text editor with syntax support
+  pages/
+    Login/                     # Authentication page
+    StackInstances/            # Dashboard — instance list, deploy, stop, clean
+    StackDefinitions/          # Definition CRUD + chart management
+    Templates/                 # Template CRUD + publish, instantiate
+    AuditLog/                  # Filterable audit log viewer
+    Admin/                     # Orphaned namespace detection/cleanup
+    Profile/                   # User profile and settings
+    Analytics/                 # Usage overview, template stats, user stats
+    CleanupPolicies/           # Cron-based cleanup policy management
+    ClusterHealth/             # Multi-cluster health monitoring
+    SharedValues/              # Per-cluster shared Helm values
+    NotFound/                  # 404 page
+  context/
+    AuthContext.tsx             # Authentication state + JWT token management
+    NotificationContext.tsx     # Toast/snackbar notification provider
+    ThemeContext.tsx            # Light/dark theme toggle provider
+  hooks/
+    useCountdown.ts            # Countdown timer hook (e.g., TTL display)
+    useUnsavedChanges.ts       # Unsaved changes warning hook
+    useWebSocket.ts            # WebSocket hook for real-time updates
+  theme/
+    index.ts                   # MUI theme export (combines palette, typography, components)
+    palette.ts                 # Color palette definitions
+    typography.ts              # Typography variant overrides
+    components.ts              # MUI component default prop/style overrides
+  types/                       # Shared TypeScript type definitions
+  utils/                       # Utility functions
 ```
 
 **Patterns**: MUI components (no raw HTML), `sx` prop for styling, functional components only, `useState`/`useEffect` for state, service objects with async methods for API calls. All service objects and methods in `api/client.ts` must have TSDoc comments with `@param`, `@returns`, and `@see` (HTTP method + route).

@@ -12,7 +12,7 @@ Frontend (React + MUI + TypeScript)
         ▼
 Backend (Go + Gin)
   ├── REST API with JWT auth
-  ├── Azure Table Storage (Azurite for local dev)
+  ├── MySQL (GORM) or Azure Table Storage (Azurite for local dev)
   ├── Git Provider (Azure DevOps + GitLab)
   ├── Helm Values (deep merge + template substitution)
   ├── Multi-cluster support (kubeconfig encrypted at rest)
@@ -97,6 +97,9 @@ cd frontend && npm install && npm run dev
 │       ├── context/           # Auth + WebSocket contexts
 │       ├── pages/             # Page components
 │       └── routes.tsx         # Route definitions
+├── loadtest/                   # Load testing suites
+│   ├── backend/               # k6 API + WebSocket load tests
+│   └── frontend/              # Playwright load tests
 └── docker-compose.yml
 ```
 

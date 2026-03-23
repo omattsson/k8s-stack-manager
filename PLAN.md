@@ -1,6 +1,6 @@
 # K8s Stack Manager — Project Plan
 
-A web application that enables developers to configure, store, and deploy multi-service application stacks to a shared Kubernetes cluster. Built on Go (Gin) + React (TypeScript/Vite/MUI) with Azure Table Storage for persistence.
+A web application that enables developers to configure, store, and deploy multi-service application stacks to a shared Kubernetes cluster. Built on Go (Gin) + React (TypeScript/Vite/MUI) with MySQL (GORM) or Azure Table Storage for persistence.
 
 ## Problem Statement
 
@@ -53,8 +53,8 @@ DevOps teams can:
 ## Tech Stack
 
 - **Backend**: Go 1.24, Gin, Azure Table Storage SDK, JWT (golang-jwt)
-- **Frontend**: React 18, TypeScript, Vite, MUI, Monaco Editor, Axios
-- **Persistence**: Azure Tables (Azurite for local dev)
+- **Frontend**: React 19, TypeScript, Vite, MUI, Monaco Editor, Axios
+- **Persistence**: MySQL (GORM) or Azure Tables (Azurite for local dev), selected via `USE_AZURE_TABLE` env var
 - **Auth**: JWT with username/password (Phase 1), upgradeable to OIDC
 - **K8s target**: Single AKS Arc cluster on own hardware, shared by all devs
 - **Git providers**: Azure DevOps + GitLab (shared service-level tokens)
@@ -107,11 +107,11 @@ All in `.github/instructions/`:
 
 ### Phase 0 Verification
 
-- [ ] 8 `.agent.md` files in `.github/agents/`
-- [ ] `copilot-instructions.md` in `.github/`
-- [ ] 3 `.instructions.md` files in `.github/instructions/`
-- [ ] Each agent selectable from VS Code agent picker
-- [ ] Orchestrator can discover and invoke all specialist agents
+- [x] 10 agent files in `.github/agents/` (9 planned + `ux-designer.md` added in Phase 9)
+- [x] `copilot-instructions.md` in `.github/`
+- [x] 8 instruction files in `.github/instructions/` (3 planned + 5 added: `api-extension`, `go`, `scalability`, `security`, `typescript`)
+- [x] Each agent selectable from VS Code agent picker
+- [x] Orchestrator can discover and invoke all specialist agents
 
 ---
 
@@ -416,24 +416,24 @@ GitProviders: GitProvidersConfig{
 
 ### Phase 1 Verification
 
-- [ ] All 8 model structs defined with proper types and tags
-- [ ] All 8 Azure Table repositories implement CRUD + filters
-- [ ] StackTemplate + TemplateChartConfig repos support publish/unpublish + ListPublished
-- [ ] Instantiate endpoint copies template charts into a new StackDefinition
-- [ ] Locked values enforced: override attempts on locked keys rejected by API
-- [ ] Required charts enforced: delete attempts on required charts rejected by API
-- [ ] DevOps role can manage templates but not admin-level operations
-- [ ] All REST endpoints return correct status codes and response shapes
-- [ ] JWT auth middleware rejects unauthenticated requests with 401
-- [ ] Role middleware rejects unauthorized requests with 403 (admin > devops > user)
-- [ ] Every POST/PUT/DELETE endpoint produces an AuditLog entry
-- [ ] Helm values merge produces valid YAML with correct override precedence (locked > override > default)
-- [ ] Template variables are substituted in exported values
-- [ ] Git provider detects Azure DevOps and GitLab URLs correctly
-- [ ] Branch listing returns branches from both providers
-- [ ] Branch cache returns cached results within TTL
-- [ ] Swagger docs generated and accessible at `/swagger/index.html`
-- [ ] All new Go code has unit tests with testify
+- [x] All 8 model structs defined with proper types and tags
+- [x] All 8 Azure Table repositories implement CRUD + filters
+- [x] StackTemplate + TemplateChartConfig repos support publish/unpublish + ListPublished
+- [x] Instantiate endpoint copies template charts into a new StackDefinition
+- [x] Locked values enforced: override attempts on locked keys rejected by API
+- [x] Required charts enforced: delete attempts on required charts rejected by API
+- [x] DevOps role can manage templates but not admin-level operations
+- [x] All REST endpoints return correct status codes and response shapes
+- [x] JWT auth middleware rejects unauthenticated requests with 401
+- [x] Role middleware rejects unauthorized requests with 403 (admin > devops > user)
+- [x] Every POST/PUT/DELETE endpoint produces an AuditLog entry
+- [x] Helm values merge produces valid YAML with correct override precedence (locked > override > default)
+- [x] Template variables are substituted in exported values
+- [x] Git provider detects Azure DevOps and GitLab URLs correctly
+- [x] Branch listing returns branches from both providers
+- [x] Branch cache returns cached results within TTL
+- [x] Swagger docs generated and accessible at `/swagger/index.html`
+- [x] All new Go code has unit tests with testify
 
 ---
 
@@ -549,30 +549,30 @@ GitProviders: GitProvidersConfig{
 | BranchSelector | `src/components/BranchSelector/` | Searchable dropdown calling `/api/v1/git/branches`, debounced, with provider icon, fallback to text input |
 | ConfirmDialog | `src/components/ConfirmDialog/` | MUI dialog for destructive action confirmation |
 | EntityLink | `src/components/EntityLink/` | Clickable link to entity detail pages (for audit log) |
-| LockedValuesBanner | `src/components/LockedValuesBanner/` | Read-only YAML display for template-locked values |
-| TemplateBadge | `src/components/TemplateBadge/` | Badge showing source template name + version, with upgrade indicator |
+| LockedValuesBanner | _(absorbed into Template pages)_ | Read-only YAML display for template-locked values |
+| TemplateBadge | _(absorbed into Template pages)_ | Badge showing source template name + version, with upgrade indicator |
 
 ### Phase 2 Verification
 
-- [ ] Login flow works: login → JWT stored → protected routes accessible → logout clears JWT
-- [ ] Unauthenticated users redirected to login
-- [ ] Template gallery: devs see only published templates; devops/admin see all
-- [ ] Template builder: devops/admin can create, edit, publish/unpublish templates
-- [ ] Template locked values and required charts are enforced in the UI
-- [ ] Instantiate from template pre-fills definition with correct charts and values
-- [ ] Derived definitions show source template link and upgrade indicator
-- [ ] Stack definitions: create, list, edit, delete all functional
-- [ ] Chart configs: add, remove, reorder within a definition (respecting required flag)
-- [ ] YAML editor validates and highlights syntax errors
-- [ ] Locked values shown as read-only in definition editor
-- [ ] Stack instances: create from definition, edit, clone, delete
-- [ ] Branch selector fetches live branches from Azure DevOps and GitLab
-- [ ] Branch selector falls back to text input when provider is unavailable
-- [ ] Values export produces valid YAML files
-- [ ] Dashboard shows all stacks with correct status colors
-- [ ] Audit log displays all mutations with correct user attribution
-- [ ] All new components have Vitest + RTL tests in `__tests__/`
-- [ ] Responsive layout works on desktop (mobile-friendly is nice-to-have)
+- [x] Login flow works: login → JWT stored → protected routes accessible → logout clears JWT
+- [x] Unauthenticated users redirected to login
+- [x] Template gallery: devs see only published templates; devops/admin see all
+- [x] Template builder: devops/admin can create, edit, publish/unpublish templates
+- [x] Template locked values and required charts are enforced in the UI
+- [x] Instantiate from template pre-fills definition with correct charts and values
+- [x] Derived definitions show source template link and upgrade indicator
+- [x] Stack definitions: create, list, edit, delete all functional
+- [x] Chart configs: add, remove, reorder within a definition (respecting required flag)
+- [x] YAML editor validates and highlights syntax errors
+- [x] Locked values shown as read-only in definition editor
+- [x] Stack instances: create from definition, edit, clone, delete
+- [x] Branch selector fetches live branches from Azure DevOps and GitLab
+- [x] Branch selector falls back to text input when provider is unavailable
+- [x] Values export produces valid YAML files
+- [x] Dashboard shows all stacks with correct status colors
+- [x] Audit log displays all mutations with correct user attribution
+- [x] All new components have Vitest + RTL tests in `__tests__/`
+- [x] Responsive layout works on desktop (mobile-friendly is nice-to-have)
 
 ---
 
@@ -629,13 +629,13 @@ Optional enhancement to branch selection:
 
 ### Phase 3 Verification
 
-- [ ] Helm deploy creates namespace and installs all charts in order
-- [ ] Helm stop uninstalls all charts and updates status
-- [ ] Deployment log captures full helm output
-- [ ] K8s status shows correct pod/deployment health per chart
-- [ ] WebSocket pushes status changes to connected clients
-- [ ] Dashboard cards update in real-time when deployment status changes
-- [ ] Failed deployments show error details and don't leave orphaned resources
+- [x] Helm deploy creates namespace and installs all charts in order
+- [x] Helm stop uninstalls all charts and updates status
+- [x] Deployment log captures full helm output
+- [x] K8s status shows correct pod/deployment health per chart
+- [x] WebSocket pushes status changes to connected clients
+- [x] Dashboard cards update in real-time when deployment status changes
+- [x] Failed deployments show error details and don't leave orphaned resources
 
 ---
 
@@ -810,7 +810,7 @@ Reduce the steps from "I want to test my branch" to a running stack.
 
 | Method | Path | Description | Auth |
 |--------|------|-------------|------|
-| POST | `/api/v1/quick-deploy` | Create instance from template + deploy in one step | User |
+| POST | `/api/v1/templates/:id/quick-deploy` | Create instance from template + deploy in one step | User |
 
 **Request body**:
 ```json
@@ -1382,11 +1382,17 @@ Specifically:
 │   ├── orchestrator.md
 │   ├── devops-engineer.md
 │   ├── scm-engineer.md
-│   └── code-reviewer.md
+│   ├── code-reviewer.md
+│   └── ux-designer.md              (added in Phase 9)
 └── instructions/
     ├── go-handlers.instructions.md
     ├── azure-table-repos.instructions.md
-    └── react-pages.instructions.md
+    ├── react-pages.instructions.md
+    ├── api-extension.instructions.md (added post-Phase 0)
+    ├── go.instructions.md            (added post-Phase 0)
+    ├── scalability.instructions.md   (added post-Phase 0)
+    ├── security.instructions.md      (added post-Phase 0)
+    └── typescript.instructions.md    (added post-Phase 0)
 ```
 
 ### Phase 1 — New Files
@@ -1564,3 +1570,25 @@ backend/internal/
 5. **Cost tracking**: Integrate with Azure Cost Management to show per-stack resource costs
 6. **API rate limiting**: Add per-user rate limits for Git provider APIs
 7. **Backup/restore**: Periodic Azure Table backup for disaster recovery
+
+---
+
+## Implementation Notes
+
+### Load Testing Infrastructure
+
+A `loadtest/` directory contains load testing suites for both backend and frontend:
+- `loadtest/backend/k6-api.js` — k6 load tests for REST API endpoints
+- `loadtest/backend/k6-websocket.js` — k6 load tests for WebSocket connections
+- `loadtest/frontend/loadtest.spec.ts` — Playwright-based frontend load tests
+
+### UI Polish (Phase 9 Partial)
+
+The following Phase 9 items have been implemented:
+- **NotFound page** (`frontend/src/pages/NotFound/`) — 404 catch-all route with navigation back to Dashboard
+- **ErrorBoundary** (`frontend/src/components/ErrorBoundary/`) — React error boundary with friendly error display
+- **EmptyState** (`frontend/src/components/EmptyState/`) — Shared empty state component for list views
+- **LoadingState** (`frontend/src/components/LoadingState/`) — Shared loading indicator component
+- **Theme system** (`frontend/src/theme/`) — Extracted theme with `palette.ts`, `typography.ts`, `components.ts`
+- **NotificationContext** (`frontend/src/context/NotificationContext.tsx`) — Global toast notification system replacing ad-hoc alerts
+- **ThemeContext** (`frontend/src/context/ThemeContext.tsx`) — Theme context with dark mode support

@@ -1,7 +1,7 @@
 # Backend — Go Instructions
 
 ## Project Layout
-Module is `backend` (see `go.mod`). Use `internal/` for private packages and `pkg/` for shared utilities.
+Module is `backend` (see `go.mod`). Use `internal/` for private packages and `pkg/` for shared utilities (`pkg/dberrors/`, `pkg/crypto/`, `pkg/utils/`). Shared test utilities live in `internal/test/test_helpers.go`.
 
 ## Handler Pattern
 Resource handlers use the `Handler` struct with repository injection. Use `NewHandlerWithHub` when the handler needs to broadcast WebSocket events. Register in `internal/api/routes/routes.go` under `/api/v1`.
@@ -13,7 +13,8 @@ Generic data access through `models.Repository` with `context.Context` as first 
 - Sentinel errors: `ErrNotFound`, `ErrDuplicateKey`, `ErrValidation`, `ErrConnectionFailed`
 - Wrap with context: `NewDatabaseError("operation", err)`
 - Check with: `errors.As(err, &dbErr)` and `errors.Is(dbErr.Err, database.ErrNotFound)`
-- See `handleDBError()` in `handlers/items.go` for HTTP status mapping
+- Items reference handler uses `handleDBError()` in `handlers/items.go` for HTTP status mapping
+- Domain handlers use `mapError()` in `handlers/errors.go` — takes `(err, entityName)` and returns `(statusCode, message)` with contextual entity names
 
 ## Testing
 - `testify/assert` — never `testing` alone for assertions

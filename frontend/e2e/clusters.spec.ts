@@ -1,13 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { loginAsAdmin, uniqueName } from './helpers';
 
-const DUMMY_KUBECONFIG = `apiVersion: v1
-kind: Config
-clusters:
-- cluster:
-    server: https://fake-cluster.example.com:6443
-  name: test`;
-
 test.describe('Cluster Management', () => {
   test.beforeEach(async ({ page }) => {
     await loginAsAdmin(page);
@@ -42,10 +35,11 @@ test.describe('Cluster Management', () => {
 
     const dialog = page.getByRole('dialog');
     await expect(dialog.getByText('Add Cluster')).toBeVisible();
+    await expect(dialog.getByRole('textbox').first()).toBeVisible({ timeout: 10_000 });
 
-    await dialog.getByLabel('Name').fill(name);
+    await dialog.getByRole('textbox').first().fill(name);
     await dialog.getByLabel('API Server URL').fill(apiUrl);
-    await dialog.getByLabel('Kubeconfig', { exact: false }).fill(DUMMY_KUBECONFIG);
+    await dialog.getByLabel('Kubeconfig Path', { exact: true }).fill('/tmp/test-kubeconfig');
     await dialog.getByLabel('Region').fill('westeurope');
 
     await dialog.getByRole('button', { name: 'Create' }).click();
@@ -78,7 +72,7 @@ test.describe('Cluster Management', () => {
       data: {
         name,
         api_server_url: 'https://edit-test.example.com:6443',
-        kubeconfig_data: DUMMY_KUBECONFIG,
+        kubeconfig_path: '/tmp/test-kubeconfig',
         region: 'northeurope',
       },
     });
@@ -90,13 +84,13 @@ test.describe('Cluster Management', () => {
 
     // Click edit button on the row containing our cluster
     const row = page.getByRole('row').filter({ hasText: name });
-    await row.getByRole('button', { name: 'Edit' }).click();
+    await row.getByRole('button', { name: `Edit ${name}` }).click();
 
     const dialog = page.getByRole('dialog');
     await expect(dialog.getByText('Edit Cluster')).toBeVisible();
 
     const updatedName = uniqueName('cluster-edited');
-    const nameField = dialog.getByLabel('Name');
+    const nameField = dialog.getByRole('textbox').first();
     await nameField.clear();
     await nameField.fill(updatedName);
 
@@ -122,7 +116,7 @@ test.describe('Cluster Management', () => {
       data: {
         name,
         api_server_url: 'https://delete-test.example.com:6443',
-        kubeconfig_data: DUMMY_KUBECONFIG,
+        kubeconfig_path: '/tmp/test-kubeconfig',
         region: 'eastus',
       },
     });
@@ -136,7 +130,7 @@ test.describe('Cluster Management', () => {
 
     // Confirm deletion dialog
     const dialog = page.getByRole('dialog');
-    await expect(dialog.getByText('Delete Cluster')).toBeVisible();
+    await expect(dialog.getByRole('heading', { name: 'Delete Cluster' })).toBeVisible();
     await expect(dialog.getByText(name)).toBeVisible();
 
     await dialog.getByRole('button', { name: 'Delete' }).click();
@@ -150,7 +144,7 @@ test.describe('Cluster Management', () => {
     await page.getByRole('button', { name: 'Add Cluster' }).click();
 
     const dialog = page.getByRole('dialog');
-    await dialog.getByLabel('Kubeconfig', { exact: false }).fill(DUMMY_KUBECONFIG);
+    await dialog.getByLabel('Kubeconfig Path', { exact: true }).fill('/tmp/test-kubeconfig');
 
     // Try to create without name and URL
     await dialog.getByRole('button', { name: 'Create' }).click();
@@ -163,12 +157,121 @@ test.describe('Cluster Management', () => {
     await page.getByRole('button', { name: 'Add Cluster' }).click();
 
     const dialog = page.getByRole('dialog');
-    await dialog.getByLabel('Name').fill('test-cluster');
+    await expect(dialog.getByRole('textbox').first()).toBeVisible({ timeout: 10_000 });
+    await dialog.getByRole('textbox').first().fill('test-cluster');
     await dialog.getByLabel('API Server URL').fill('https://test.example.com:6443');
 
     // Try to create without kubeconfig
     await dialog.getByRole('button', { name: 'Create' }).click();
 
     await expect(dialog.getByText('Either kubeconfig data or kubeconfig path is required when creating a cluster')).toBeVisible();
+  });
+
+  test('test cluster connection shows feedback', async ({ page }) => {
+    // Create a cluster via API
+    const name = uniqueName('cluster-conn');
+    const token = await page.evaluate(() => localStorage.getItem('token'));
+    const createResp = await page.request.post('http://localhost:8081/api/v1/clusters', {
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      data: {
+        name,
+        api_server_url: 'https://conn-test.example.com:6443',
+        kubeconfig_path: '/tmp/test-kubeconfig',
+        region: 'westeurope',
+      },
+    });
+    const created = await createResp.json();
+
+    try {
+      await page.reload();
+      await expect(page.getByText(name)).toBeVisible({ timeout: 10_000 });
+
+      // Click the Test Connection button in the row
+      const row = page.getByRole('row').filter({ hasText: name });
+      await row.getByRole('button', { name: `Test connection for ${name}` }).click();
+
+      // The notification should appear as an alert (success or error depending on
+      // whether the cluster is actually reachable). Either way it should contain
+      // the cluster name, confirming the action was invoked.
+      const alert = page.getByRole('alert');
+      await expect(alert).toBeVisible({ timeout: 15_000 });
+      await expect(alert).toContainText(name);
+    } finally {
+      // Cleanup
+      await page.request.delete(`http://localhost:8081/api/v1/clusters/${created.id}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+    }
+  });
+
+  test('set default cluster marks it with Default chip', async ({ page }) => {
+    // Create two clusters so we can change the default
+    const nameA = uniqueName('cluster-std-a');
+    const nameB = uniqueName('cluster-std-b');
+    const token = await page.evaluate(() => localStorage.getItem('token'));
+
+    const respA = await page.request.post('http://localhost:8081/api/v1/clusters', {
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      data: {
+        name: nameA,
+        api_server_url: 'https://std-a.example.com:6443',
+        kubeconfig_path: '/tmp/test-kubeconfig',
+        region: 'westeurope',
+      },
+    });
+    const createdA = await respA.json();
+
+    const respB = await page.request.post('http://localhost:8081/api/v1/clusters', {
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      data: {
+        name: nameB,
+        api_server_url: 'https://std-b.example.com:6443',
+        kubeconfig_path: '/tmp/test-kubeconfig',
+        region: 'northeurope',
+      },
+    });
+    const createdB = await respB.json();
+
+    try {
+      await page.reload();
+      await expect(page.getByText(nameA)).toBeVisible({ timeout: 10_000 });
+      await expect(page.getByText(nameB)).toBeVisible({ timeout: 10_000 });
+
+      // Find the row for cluster B and click Set Default
+      const rowB = page.getByRole('row').filter({ hasText: nameB });
+      await rowB.getByRole('button', { name: `Set ${nameB} as default` }).click();
+
+      // Wait for the success notification
+      const alert = page.getByRole('alert');
+      await expect(alert).toBeVisible({ timeout: 10_000 });
+      await expect(alert).toContainText(`${nameB} set as default`);
+
+      // After refresh, cluster B's row should show the "Default" chip
+      // The page auto-refreshes after setDefault, but wait for the chip to appear
+      const rowBAfter = page.getByRole('row').filter({ hasText: nameB });
+      await expect(rowBAfter.getByText('Default')).toBeVisible({ timeout: 10_000 });
+
+      // Cluster B's row should no longer have the "Set as default" button
+      await expect(rowBAfter.getByRole('button', { name: `Set ${nameB} as default` })).not.toBeVisible();
+    } finally {
+      // Restore the original default cluster before cleanup
+      const clustersRes = await page.request.get('http://localhost:8081/api/v1/clusters', {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const clusters = await clustersRes.json();
+      const original = clusters.find((c: { name: string }) => c.name === 'default');
+      if (original) {
+        await page.request.post(`http://localhost:8081/api/v1/clusters/${original.id}/default`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+      }
+      // Cleanup both test clusters
+      await page.request.delete(`http://localhost:8081/api/v1/clusters/${createdA.id}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      await page.request.delete(`http://localhost:8081/api/v1/clusters/${createdB.id}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+    }
   });
 });

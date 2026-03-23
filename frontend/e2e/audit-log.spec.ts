@@ -1,9 +1,9 @@
 import { test, expect } from '@playwright/test';
-import { loginAsAdmin, uniqueName, createAndPublishTemplate } from './helpers';
+import { loginAsDevops, uniqueName, createAndPublishTemplate } from './helpers';
 
 test.describe('Audit Log', () => {
   test.beforeEach(async ({ page }) => {
-    await loginAsAdmin(page);
+    await loginAsDevops(page);
   });
 
   test('audit log page loads with heading and table', async ({ page }) => {
@@ -87,8 +87,9 @@ test.describe('Audit Log', () => {
     await expect(page.getByRole('heading', { level: 1, name: 'Audit Log' })).toBeVisible({
       timeout: 10_000,
     });
+    await page.waitForLoadState('domcontentloaded');
 
-    await page.getByLabel('Username').fill('admin');
+    await page.getByLabel('User ID').fill('admin');
     await page.getByRole('button', { name: 'Filter' }).click();
 
     await page.waitForTimeout(1000);

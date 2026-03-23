@@ -4,7 +4,7 @@
 
 Full-stack app: **Go (Gin) backend** + **React (TypeScript, Vite, MUI) frontend**, with **MySQL** (GORM) or **Azure Table Storage** as swappable data stores. Docker Compose orchestrates all services.
 
-**Bootstrap flow**: `backend/api/main.go` → `config.LoadConfig()` → `database.NewRepository(cfg)` (factory selects MySQL or Azure based on `USE_AZURE_TABLE`) → `routes.SetupRoutes(router, repo, healthChecker, cfg, hub)` → `http.Server` with graceful shutdown (`SIGINT`/`SIGTERM`).
+**Bootstrap flow**: `backend/api/main.go` → `config.LoadConfig()` → `database.NewRepository(cfg)` (factory selects MySQL or Azure based on `USE_AZURE_TABLE`) → `routes.SetupRoutes(router, routes.Deps{...})` → `http.Server` with graceful shutdown (`SIGINT`/`SIGTERM`).
 
 **Ports**: Backend `:8081` on host, frontend `:3000` in dev. Inside Docker, nginx and Vite proxy `/api` to `backend:8081`. Local non-Docker dev hits `localhost:8081` directly (`frontend/src/api/config.ts`).
 
@@ -19,7 +19,7 @@ backend/
       items.go                   # CRUD handler pattern (reference implementation)
       handlers.go                # Health handlers (closure-injection, not Handler struct)
       rate_limiter.go            # Per-IP sliding window, returned from SetupRoutes for shutdown
-      errors.go                  # handleDBError() maps repo errors to HTTP status
+      errors.go                  # mapError() maps repo errors to HTTP status for domain handlers
       admin.go                   # AdminHandler: orphaned namespace detection/cleanup
       analytics.go               # AnalyticsHandler: overview, template, user stats
       api_keys.go                # APIKeyHandler: API key management
@@ -41,6 +41,7 @@ backend/
       value_overrides.go         # Per-chart value overrides
       websocket.go               # WebSocket upgrade handler
       mock_repository.go         # In-memory mock for Item tests (same package)
+      mock_broadcast_sender.go   # Test double for websocket.BroadcastSender
     api/middleware/
       middleware.go              # CORS, Logger, Recovery, RequestID, MaxBodySize
       auth.go                    # JWT authentication + token generation
@@ -48,6 +49,9 @@ backend/
       audit.go                   # Audit logging middleware (applied to route groups)
       role.go                    # RequireAdmin, RequireDevOps role-based access
     config/config.go             # Env vars with godotenv .env fallback, typed config structs
+    database/database.go         # Database struct wrapping gorm.DB, NewDatabase(), Transaction, Ping
+    database/config.go           # Database connection Config struct, loaded from env vars
+    database/schema.go           # SchemaManager interface for table creation/dropping/inspection
     database/factory.go          # MySQL connection with retry (5x, 2s delay)
     database/repository.go       # NewRepository() factory: MySQL vs Azure Table
     database/migrations.go       # Versioned migrations via schema.Migrator, auto-run on startup
@@ -64,6 +68,8 @@ backend/
     ttl/                         # TTL reaper for auto-expiring stack instances
   pkg/dberrors/errors.go         # Canonical error types: ErrNotFound, ErrDuplicateKey, ErrValidation
   pkg/crypto/                    # AES-GCM encryption/decryption for kubeconfig data at rest (key derived via SHA-256)
+  pkg/utils/                     # Shared utilities (e.g., cryptographic random string generation)
+  internal/test/test_helpers.go  # Shared test utilities (test server setup)
 ```
 
 ## Key Backend Patterns
@@ -72,7 +78,7 @@ backend/
 
 **Handler struct**: `handlers.Handler` holds `models.Repository` for the Items reference implementation. Domain handlers (`InstanceHandler`, `DefinitionHandler`, `AdminHandler`, etc.) use separate structs with specialized repository dependencies injected via their own constructors. Health handlers use factory functions returning `gin.HandlerFunc` via closure.
 
-**Error flow**: Repository returns `*dberrors.DatabaseError` wrapping sentinel errors → `handleDBError()` in `handlers/items.go` maps via `errors.As`/`errors.Is` to HTTP status (400 validation, 404 not found, 409 duplicate/version conflict, 500 internal). **Never expose raw error messages for 500s** — always return `"Internal server error"`.
+**Error flow**: Repository returns `*dberrors.DatabaseError` wrapping sentinel errors → two mapping functions translate to HTTP status: `handleDBError()` in `handlers/items.go` (Items reference implementation, uses `errors.As`/`errors.Is`) and `mapError()` in `handlers/errors.go` (domain handlers, takes entity name for contextual messages). Both map to 400 validation, 404 not found, 409 duplicate/conflict, 500 internal. **Never expose raw error messages for 500s** — always return `"Internal server error"`.
 
 **Optimistic locking**: Models embed `Version uint` field. Repository `Update()` uses `WHERE version = ?` — returns `"version mismatch"` error (mapped to 409). Handlers read-then-update: if client sends `Version > 0`, it overrides; if 0 (omitted), uses the just-read version.
 
@@ -86,12 +92,12 @@ backend/
 frontend/src/
   api/config.ts          # API_BASE_URL: localhost:8081 (dev) | /api (prod)
   api/client.ts          # Axios instance + service objects (e.g., healthService)
-  routes.tsx             # Route definitions: /login, / (Dashboard), /stack-definitions, /templates, /audit-log, /admin, /profile
+  routes.tsx             # Route definitions (all pages + nested routes)
   components/Layout/     # AppBar + nav + footer shell
-  pages/{Name}/index.tsx # Page components (one dir per page)
+  pages/{Name}/          # Page components (one dir per page, may contain multiple files)
 ```
 
-**Patterns**: MUI components (no raw HTML), `sx` prop for styling, functional components only, `useState`/`useEffect` for state, service objects with async methods for API calls. All service objects and methods in `api/client.ts` must have TSDoc comments with `@param`, `@returns`, and `@see` (HTTP method + route). New pages: create `pages/{Name}/index.tsx`, register in `routes.tsx`, add nav in `Layout/index.tsx`.
+**Patterns**: MUI components (no raw HTML), `sx` prop for styling, functional components only, `useState`/`useEffect` for state, service objects with async methods for API calls. All service objects and methods in `api/client.ts` must have TSDoc comments with `@param`, `@returns`, and `@see` (HTTP method + route). New pages: create `pages/{Name}/` directory, register in `routes.tsx`, add nav in `Layout/index.tsx`.
 
 ## Development Commands
 

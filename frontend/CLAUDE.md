@@ -10,17 +10,19 @@ Built with Vite + React 19 + TypeScript (strict mode). Uses SWC via `@vitejs/plu
 - **API Client**: Axios instance in `src/api/client.ts`
 - **API Config**: `src/api/config.ts` — dev: `http://localhost:8081` (direct), prod: `/api` (nginx strips `/api` prefix via trailing `/` in `proxy_pass`). Endpoints in `client.ts` use full `/api/v1/...` paths.
 - **WebSocket**: `reconnecting-websocket` with context provider and hook
-- **Auth Context**: `src/context/AuthContext.tsx` — authentication state provider
-- **Hooks**: `src/hooks/useWebSocket.ts` — WebSocket hook for real-time updates
+- **Contexts**: `src/context/AuthContext.tsx` (authentication state + JWT), `NotificationContext.tsx` (toast/snackbar), `ThemeContext.tsx` (light/dark toggle)
+- **Hooks**: `src/hooks/useCountdown.ts` (countdown timer), `useUnsavedChanges.ts` (unsaved changes warning), `useWebSocket.ts` (WebSocket real-time updates)
+- **Theme**: `src/theme/` — `index.ts` (MUI theme export), `palette.ts`, `typography.ts`, `components.ts` (default prop/style overrides)
 - **Types**: `src/types/index.ts` — shared TypeScript type definitions
+- **Utils**: `src/utils/roles.ts` — role ranking and permission helpers
 
 ## Component Patterns
 - Functional components only (no class components)
 - `useState`/`useEffect` for state, no global state library
 - MUI `sx` prop for styling, no separate CSS files
 - TypeScript interfaces for all component props and API response types
-- Pages: one directory per page under `src/pages/` with `index.tsx` — current pages: Login, StackInstances (Dashboard), StackDefinitions, Templates, AuditLog, Admin, Profile
-- Shared components in `src/components/`: Layout, BranchSelector, ConfirmDialog, DeploymentLogViewer, EntityLink, PodStatusDisplay, ProtectedRoute, StatusBadge, YamlEditor
+- Pages: one directory per page under `src/pages/` with `index.tsx` — current pages: Login, StackInstances (Dashboard), StackDefinitions, Templates, AuditLog, Admin, Profile, Analytics, CleanupPolicies, ClusterHealth, SharedValues, NotFound
+- Shared components in `src/components/`: Layout, AccessUrls, BranchSelector, ConfirmDialog, DeploymentLogViewer, EmptyState, EntityLink, ErrorBoundary, FavoriteButton, LoadingState, PodStatusDisplay, ProtectedRoute, QuickDeployDialog, StatusBadge, TtlSelector, YamlEditor
 - Register new pages in `src/routes.tsx`, add nav in `src/components/Layout/index.tsx`
 
 ## Page Pattern

@@ -38,6 +38,7 @@ test.describe('Authentication', () => {
 
   test('logout returns to login page', async ({ page }) => {
     await loginAsAdmin(page);
+    await page.goto('/');
     // Click logout button in the nav bar
     await page.getByRole('button', { name: 'Logout' }).click();
     await expect(page).toHaveURL(/\/login/, { timeout: 10_000 });
@@ -57,6 +58,7 @@ test.describe('Authentication', () => {
 
   test('session persists after page reload', async ({ page }) => {
     await loginAsAdmin(page);
+    await page.goto('/');
     await page.reload();
     await expect(page).toHaveURL('/', { timeout: 10_000 });
     await expect(page.getByRole('heading', { level: 1, name: 'Stack Instances' })).toBeVisible({

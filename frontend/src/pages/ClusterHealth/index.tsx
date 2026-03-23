@@ -98,8 +98,8 @@ const ClusterHealth = () => {
         clusterService.getNamespaces(selectedCluster),
       ]);
       setSummary(summaryData);
-      setNodes(nodesData);
-      setNamespaces(namespacesData);
+      setNodes(nodesData ?? []);
+      setNamespaces(namespacesData ?? []);
     } catch {
       setError('Failed to load cluster health data');
     } finally {
