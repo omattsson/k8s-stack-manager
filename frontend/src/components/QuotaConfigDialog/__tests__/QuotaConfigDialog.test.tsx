@@ -177,9 +177,9 @@ describe('QuotaConfigDialog', () => {
       }));
     });
 
-    // Error message should appear in the dialog
+    // Error message should appear (in dialog and/or toast notification)
     await waitFor(() => {
-      expect(screen.getByText('Failed to save quota configuration')).toBeInTheDocument();
+      expect(screen.getAllByText('Failed to save quota configuration').length).toBeGreaterThanOrEqual(1);
     });
 
     // Dialog should NOT have been closed on failure
@@ -213,9 +213,9 @@ describe('QuotaConfigDialog', () => {
       expect(clusterService.deleteQuotas).toHaveBeenCalledWith('c1');
     });
 
-    // Error message should appear in the dialog
+    // Error message should appear (in dialog and/or toast notification)
     await waitFor(() => {
-      expect(screen.getByText('Failed to remove quota configuration')).toBeInTheDocument();
+      expect(screen.getAllByText('Failed to remove quota configuration').length).toBeGreaterThanOrEqual(1);
     });
 
     // Dialog should NOT have been closed on failure

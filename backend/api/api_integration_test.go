@@ -39,22 +39,24 @@ func uniqueName(prefix string) string {
 }
 
 type integServer struct {
-	router           *gin.Engine
-	userRepo         *azure.UserRepository
-	templateRepo     *azure.StackTemplateRepository
-	tplChartRepo     *azure.TemplateChartConfigRepository
-	definitionRepo   *azure.StackDefinitionRepository
-	chartConfigRepo  *azure.ChartConfigRepository
-	instanceRepo     *azure.StackInstanceRepository
-	overrideRepo     *azure.ValueOverrideRepository
-	auditRepo        *azure.AuditLogRepository
-	apiKeyRepo       *azure.APIKeyRepository
-	clusterRepo      *azure.ClusterRepository
-	branchRepo       *azure.ChartBranchOverrideRepository
-	cleanupRepo      *azure.CleanupPolicyRepository
-	sharedValuesRepo *azure.SharedValuesRepository
-	favoriteRepo     *azure.UserFavoriteRepository
-	deployLogRepo    *azure.DeploymentLogRepository
+	router              *gin.Engine
+	userRepo            *azure.UserRepository
+	templateRepo        *azure.StackTemplateRepository
+	tplChartRepo        *azure.TemplateChartConfigRepository
+	definitionRepo      *azure.StackDefinitionRepository
+	chartConfigRepo     *azure.ChartConfigRepository
+	instanceRepo        *azure.StackInstanceRepository
+	overrideRepo        *azure.ValueOverrideRepository
+	auditRepo           *azure.AuditLogRepository
+	apiKeyRepo          *azure.APIKeyRepository
+	clusterRepo         *azure.ClusterRepository
+	branchRepo          *azure.ChartBranchOverrideRepository
+	cleanupRepo         *azure.CleanupPolicyRepository
+	sharedValuesRepo    *azure.SharedValuesRepository
+	favoriteRepo        *azure.UserFavoriteRepository
+	deployLogRepo       *azure.DeploymentLogRepository
+	templateVersionRepo *azure.TemplateVersionRepository
+	notificationRepo    *azure.NotificationRepository
 }
 
 func newIntegServer(t *testing.T) *integServer {
@@ -93,6 +95,10 @@ func newIntegServer(t *testing.T) *integServer {
 	require.NoError(t, err)
 	deployLogRepo, err := azure.NewDeploymentLogRepository(azAccountName, azAccountKey, azEndpoint, true)
 	require.NoError(t, err)
+	templateVersionRepo, err := azure.NewTemplateVersionRepository(azAccountName, azAccountKey, azEndpoint, true)
+	require.NoError(t, err)
+	notificationRepo, err := azure.NewNotificationRepository(azAccountName, azAccountKey, azEndpoint, true)
+	require.NoError(t, err)
 
 	authCfg := &config.AuthConfig{
 		JWTSecret:        integJWTSecret,
@@ -100,8 +106,10 @@ func newIntegServer(t *testing.T) *integServer {
 		SelfRegistration: true,
 	}
 	authHandler := handlers.NewAuthHandler(userRepo, authCfg)
-	templateHandler := handlers.NewTemplateHandler(templateRepo, tplChartRepo, definitionRepo, chartConfigRepo)
-	definitionHandler := handlers.NewDefinitionHandler(definitionRepo, chartConfigRepo, instanceRepo, templateRepo, tplChartRepo)
+	templateHandler := handlers.NewTemplateHandlerWithVersions(templateRepo, tplChartRepo, definitionRepo, chartConfigRepo, templateVersionRepo)
+	definitionHandler := handlers.NewDefinitionHandlerWithVersions(definitionRepo, chartConfigRepo, instanceRepo, templateRepo, tplChartRepo, templateVersionRepo)
+	templateVersionHandler := handlers.NewTemplateVersionHandler(templateVersionRepo, templateRepo)
+	notificationHandler := handlers.NewNotificationHandler(notificationRepo)
 	valuesGen := helm.NewValuesGenerator()
 	instanceHandler := handlers.NewInstanceHandler(instanceRepo, overrideRepo, nil, definitionRepo, chartConfigRepo, templateRepo, tplChartRepo, valuesGen, userRepo, 0)
 	branchOverrideHandler := handlers.NewBranchOverrideHandler(branchRepo, instanceRepo)
@@ -127,47 +135,51 @@ func newIntegServer(t *testing.T) *integServer {
 	}
 	router := gin.New()
 	rl := routes.SetupRoutes(router, routes.Deps{
-		HealthChecker:         healthChecker,
-		Config:                cfg,
-		Hub:                   hub,
-		AuthHandler:           authHandler,
-		TemplateHandler:       templateHandler,
-		DefinitionHandler:     definitionHandler,
-		InstanceHandler:       instanceHandler,
-		GitHandler:            gitHandler,
-		AuditLogHandler:       auditLogHandler,
-		AuditLogger:           auditRepo,
-		UserHandler:           userHandler,
-		APIKeyHandler:         apiKeyHandler,
-		UserRepo:              userRepo,
-		APIKeyRepo:            apiKeyRepo,
-		ClusterRepo:           clusterRepo,
-		InstanceRepo:          instanceRepo,
-		BranchOverrideHandler: branchOverrideHandler,
-		CleanupPolicyHandler:  cleanupPolicyHandler,
-		SharedValuesHandler:   sharedValuesHandler,
-		FavoriteHandler:       favoriteHandler,
-		AnalyticsHandler:      analyticsHandler,
+		HealthChecker:          healthChecker,
+		Config:                 cfg,
+		Hub:                    hub,
+		AuthHandler:            authHandler,
+		TemplateHandler:        templateHandler,
+		DefinitionHandler:      definitionHandler,
+		InstanceHandler:        instanceHandler,
+		GitHandler:             gitHandler,
+		AuditLogHandler:        auditLogHandler,
+		AuditLogger:            auditRepo,
+		UserHandler:            userHandler,
+		APIKeyHandler:          apiKeyHandler,
+		UserRepo:               userRepo,
+		APIKeyRepo:             apiKeyRepo,
+		ClusterRepo:            clusterRepo,
+		InstanceRepo:           instanceRepo,
+		BranchOverrideHandler:  branchOverrideHandler,
+		CleanupPolicyHandler:   cleanupPolicyHandler,
+		SharedValuesHandler:    sharedValuesHandler,
+		FavoriteHandler:        favoriteHandler,
+		AnalyticsHandler:       analyticsHandler,
+		TemplateVersionHandler: templateVersionHandler,
+		NotificationHandler:    notificationHandler,
 	})
 	t.Cleanup(func() { rl.Stop() })
 
 	return &integServer{
-		router:           router,
-		userRepo:         userRepo,
-		templateRepo:     templateRepo,
-		tplChartRepo:     tplChartRepo,
-		definitionRepo:   definitionRepo,
-		chartConfigRepo:  chartConfigRepo,
-		instanceRepo:     instanceRepo,
-		overrideRepo:     overrideRepo,
-		auditRepo:        auditRepo,
-		apiKeyRepo:       apiKeyRepo,
-		clusterRepo:      clusterRepo,
-		branchRepo:       branchRepo,
-		cleanupRepo:      cleanupRepo,
-		sharedValuesRepo: sharedValuesRepo,
-		favoriteRepo:     favoriteRepo,
-		deployLogRepo:    deployLogRepo,
+		router:              router,
+		userRepo:            userRepo,
+		templateRepo:        templateRepo,
+		tplChartRepo:        tplChartRepo,
+		definitionRepo:      definitionRepo,
+		chartConfigRepo:     chartConfigRepo,
+		instanceRepo:        instanceRepo,
+		overrideRepo:        overrideRepo,
+		auditRepo:           auditRepo,
+		apiKeyRepo:          apiKeyRepo,
+		clusterRepo:         clusterRepo,
+		branchRepo:          branchRepo,
+		cleanupRepo:         cleanupRepo,
+		sharedValuesRepo:    sharedValuesRepo,
+		favoriteRepo:        favoriteRepo,
+		deployLogRepo:       deployLogRepo,
+		templateVersionRepo: templateVersionRepo,
+		notificationRepo:    notificationRepo,
 	}
 }
 
@@ -1566,5 +1578,575 @@ func TestAPIIntegration_Analytics(t *testing.T) {
 	t.Run("unauthenticated request returns 401", func(t *testing.T) {
 		w := s.do("GET", "/api/v1/analytics/overview", nil, "")
 		assert.Equal(t, http.StatusUnauthorized, w.Code)
+	})
+}
+
+// ---------------------------------------------------------------------------
+// TestAPIIntegration_TemplateVersions
+// ---------------------------------------------------------------------------
+
+func TestAPIIntegration_TemplateVersions(t *testing.T) {
+	s := newIntegServer(t)
+
+	adminToken := s.createAdminAndLogin(t)
+	devopsToken, _ := s.registerAndLogin(t, uniqueName("devops"), "pass", "devops", adminToken)
+
+	// Create a template with a chart.
+	tplName := uniqueName("vertpl")
+	tpl := map[string]interface{}{
+		"name":           tplName,
+		"description":    "Template for version test",
+		"category":       "test",
+		"version":        "1.0.0",
+		"default_branch": "main",
+	}
+	w := s.do("POST", "/api/v1/templates", tpl, devopsToken)
+	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+	tplID := parseBody(t, w)["id"].(string)
+
+	chart := map[string]interface{}{
+		"chart_name":     "frontend",
+		"repository_url": "https://charts.example.com",
+		"chart_version":  "1.0.0",
+		"default_values": "replicas: 1",
+	}
+	w = s.do("POST", fmt.Sprintf("/api/v1/templates/%s/charts", tplID), chart, devopsToken)
+	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+
+	t.Run("publish creates version snapshot", func(t *testing.T) {
+		w := s.do("POST", fmt.Sprintf("/api/v1/templates/%s/publish", tplID), nil, devopsToken)
+		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	})
+
+	var firstVersionID string
+
+	t.Run("list versions returns 1 version", func(t *testing.T) {
+		w := s.do("GET", fmt.Sprintf("/api/v1/templates/%s/versions", tplID), nil, devopsToken)
+		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+		arr := parseArray(t, w)
+		require.Len(t, arr, 1)
+		v := arr[0].(map[string]interface{})
+		firstVersionID = v["id"].(string)
+		assert.Equal(t, tplID, v["template_id"])
+		assert.Equal(t, "1.0.0", v["version"])
+	})
+
+	t.Run("get specific version", func(t *testing.T) {
+		require.NotEmpty(t, firstVersionID)
+		w := s.do("GET", fmt.Sprintf("/api/v1/templates/%s/versions/%s", tplID, firstVersionID), nil, devopsToken)
+		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+		body := parseBody(t, w)
+		assert.Equal(t, firstVersionID, body["id"])
+		assert.Equal(t, tplID, body["template_id"])
+		// Verify snapshot contains template data and charts.
+		snapshot, ok := body["snapshot"].(map[string]interface{})
+		require.True(t, ok, "snapshot should be a map")
+		assert.Contains(t, snapshot, "template")
+		assert.Contains(t, snapshot, "charts")
+		charts, ok := snapshot["charts"].([]interface{})
+		require.True(t, ok)
+		assert.Len(t, charts, 1)
+	})
+
+	// Update the template version and publish again.
+	var secondVersionID string
+
+	t.Run("update template and publish again creates second version", func(t *testing.T) {
+		// Update template version field.
+		w := s.do("PUT", fmt.Sprintf("/api/v1/templates/%s", tplID),
+			map[string]interface{}{
+				"name":        tplName,
+				"description": "Updated template",
+				"version":     "2.0.0",
+			}, devopsToken)
+		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+		// Publish again.
+		w = s.do("POST", fmt.Sprintf("/api/v1/templates/%s/publish", tplID), nil, devopsToken)
+		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+		// List versions — should have 2.
+		w = s.do("GET", fmt.Sprintf("/api/v1/templates/%s/versions", tplID), nil, devopsToken)
+		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+		arr := parseArray(t, w)
+		require.Len(t, arr, 2)
+		// Versions are ordered newest first.
+		secondVersionID = arr[0].(map[string]interface{})["id"].(string)
+		assert.NotEqual(t, firstVersionID, secondVersionID)
+	})
+
+	t.Run("diff two versions", func(t *testing.T) {
+		require.NotEmpty(t, firstVersionID)
+		require.NotEmpty(t, secondVersionID)
+		url := fmt.Sprintf("/api/v1/templates/%s/versions/diff?left=%s&right=%s", tplID, firstVersionID, secondVersionID)
+		w := s.do("GET", url, nil, devopsToken)
+		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+		body := parseBody(t, w)
+		assert.Contains(t, body, "left")
+		assert.Contains(t, body, "right")
+		assert.Contains(t, body, "chart_diffs")
+	})
+
+	t.Run("diff missing query params returns 400", func(t *testing.T) {
+		url := fmt.Sprintf("/api/v1/templates/%s/versions/diff", tplID)
+		w := s.do("GET", url, nil, devopsToken)
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+	})
+
+	t.Run("versions for non-existent template returns 404", func(t *testing.T) {
+		w := s.do("GET", "/api/v1/templates/nonexistent/versions", nil, devopsToken)
+		assert.Equal(t, http.StatusNotFound, w.Code)
+	})
+
+	t.Run("unauthenticated version list returns 401", func(t *testing.T) {
+		w := s.do("GET", fmt.Sprintf("/api/v1/templates/%s/versions", tplID), nil, "")
+		assert.Equal(t, http.StatusUnauthorized, w.Code)
+	})
+}
+
+// ---------------------------------------------------------------------------
+// TestAPIIntegration_Notifications
+// ---------------------------------------------------------------------------
+
+func TestAPIIntegration_Notifications(t *testing.T) {
+	s := newIntegServer(t)
+
+	adminToken := s.createAdminAndLogin(t)
+	userToken, userID := s.registerAndLogin(t, uniqueName("notifuser"), "pass", "user", adminToken)
+
+	t.Run("list notifications empty initially", func(t *testing.T) {
+		w := s.do("GET", "/api/v1/notifications", nil, userToken)
+		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+		body := parseBody(t, w)
+		notifs, ok := body["notifications"].([]interface{})
+		require.True(t, ok)
+		assert.Empty(t, notifs)
+		assert.Equal(t, float64(0), body["total"])
+	})
+
+	t.Run("count unread returns 0", func(t *testing.T) {
+		w := s.do("GET", "/api/v1/notifications/count", nil, userToken)
+		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+		body := parseBody(t, w)
+		assert.Equal(t, float64(0), body["unread_count"])
+	})
+
+	// Create a notification directly via repo.
+	var notifID string
+	t.Run("create notification via repo and list", func(t *testing.T) {
+		notif := &models.Notification{
+			ID:         fmt.Sprintf("notif-%d", time.Now().UnixNano()),
+			UserID:     userID,
+			Type:       "info",
+			Title:      "Test notification",
+			Message:    "This is a test",
+			EntityType: "template",
+			EntityID:   "tpl-1",
+			IsRead:     false,
+			CreatedAt:  time.Now().UTC(),
+		}
+		err := s.notificationRepo.Create(t.Context(), notif)
+		require.NoError(t, err)
+		notifID = notif.ID
+
+		w := s.do("GET", "/api/v1/notifications", nil, userToken)
+		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+		body := parseBody(t, w)
+		notifs := body["notifications"].([]interface{})
+		assert.Len(t, notifs, 1)
+		first := notifs[0].(map[string]interface{})
+		assert.Equal(t, notifID, first["id"])
+		assert.Equal(t, "Test notification", first["title"])
+	})
+
+	t.Run("count unread returns 1", func(t *testing.T) {
+		w := s.do("GET", "/api/v1/notifications/count", nil, userToken)
+		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+		body := parseBody(t, w)
+		assert.Equal(t, float64(1), body["unread_count"])
+	})
+
+	t.Run("mark as read", func(t *testing.T) {
+		require.NotEmpty(t, notifID)
+		w := s.do("POST", fmt.Sprintf("/api/v1/notifications/%s/read", notifID), nil, userToken)
+		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+		// Verify count is now 0.
+		w = s.do("GET", "/api/v1/notifications/count", nil, userToken)
+		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+		body := parseBody(t, w)
+		assert.Equal(t, float64(0), body["unread_count"])
+	})
+
+	t.Run("mark all as read", func(t *testing.T) {
+		// Create another notification.
+		notif2 := &models.Notification{
+			ID:        fmt.Sprintf("notif2-%d", time.Now().UnixNano()),
+			UserID:    userID,
+			Type:      "warning",
+			Title:     "Second notification",
+			Message:   "Another test",
+			IsRead:    false,
+			CreatedAt: time.Now().UTC(),
+		}
+		err := s.notificationRepo.Create(t.Context(), notif2)
+		require.NoError(t, err)
+
+		w := s.do("POST", "/api/v1/notifications/read-all", nil, userToken)
+		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+		// Verify count is 0.
+		w = s.do("GET", "/api/v1/notifications/count", nil, userToken)
+		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+		body := parseBody(t, w)
+		assert.Equal(t, float64(0), body["unread_count"])
+	})
+
+	t.Run("get preferences returns 500 for azure", func(t *testing.T) {
+		w := s.do("GET", "/api/v1/notifications/preferences", nil, userToken)
+		// Azure implementation returns ErrNotImplemented, but the handler catches all errors as 500.
+		assert.Equal(t, http.StatusInternalServerError, w.Code)
+	})
+
+	t.Run("update preferences returns 500 for azure", func(t *testing.T) {
+		prefs := []map[string]interface{}{
+			{"event_type": "deploy", "enabled": true},
+		}
+		w := s.do("PUT", "/api/v1/notifications/preferences", prefs, userToken)
+		// Azure implementation returns ErrNotImplemented on GetPreferences (called first), handler returns 500.
+		assert.Equal(t, http.StatusInternalServerError, w.Code)
+	})
+
+	t.Run("unauthenticated returns 401", func(t *testing.T) {
+		w := s.do("GET", "/api/v1/notifications", nil, "")
+		assert.Equal(t, http.StatusUnauthorized, w.Code)
+	})
+}
+
+// ---------------------------------------------------------------------------
+// TestAPIIntegration_BulkOperations
+// ---------------------------------------------------------------------------
+
+func TestAPIIntegration_BulkOperations(t *testing.T) {
+	s := newIntegServer(t)
+
+	adminToken := s.createAdminAndLogin(t)
+	devopsToken, _ := s.registerAndLogin(t, uniqueName("bulkdevops"), "pass", "devops", adminToken)
+	userToken, _ := s.registerAndLogin(t, uniqueName("bulkuser"), "pass", "user", adminToken)
+
+	// Create template → chart → publish → instantiate → get definition → create instance.
+	tplName := uniqueName("bulktpl")
+	tpl := map[string]interface{}{
+		"name":           tplName,
+		"description":    "Bulk ops test",
+		"category":       "test",
+		"version":        "1.0.0",
+		"default_branch": "main",
+	}
+	w := s.do("POST", "/api/v1/templates", tpl, devopsToken)
+	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+	tplID := parseBody(t, w)["id"].(string)
+
+	chart := map[string]interface{}{
+		"chart_name":     "webapp",
+		"repository_url": "https://charts.example.com",
+		"chart_version":  "1.0.0",
+		"default_values": "replicas: 1",
+	}
+	w = s.do("POST", fmt.Sprintf("/api/v1/templates/%s/charts", tplID), chart, devopsToken)
+	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+
+	w = s.do("POST", fmt.Sprintf("/api/v1/templates/%s/publish", tplID), nil, devopsToken)
+	require.Equal(t, http.StatusOK, w.Code)
+
+	// Instantiate template to get a definition.
+	w = s.do("POST", fmt.Sprintf("/api/v1/templates/%s/instantiate", tplID),
+		map[string]interface{}{"name": uniqueName("bulkdef"), "description": "test"}, devopsToken)
+	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+	defID := parseBody(t, w)["definition"].(map[string]interface{})["id"].(string)
+
+	// Create two instances for bulk operations.
+	var instanceIDs []string
+	for i := 0; i < 2; i++ {
+		inst := map[string]interface{}{
+			"name":                uniqueName(fmt.Sprintf("bulkinst%d", i)),
+			"stack_definition_id": defID,
+			"branch":              "main",
+		}
+		w = s.do("POST", "/api/v1/stack-instances", inst, devopsToken)
+		require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+		instanceIDs = append(instanceIDs, parseBody(t, w)["id"].(string))
+	}
+
+	t.Run("bulk deploy returns 200 with per-instance errors (no deploy manager)", func(t *testing.T) {
+		body := map[string]interface{}{"instance_ids": instanceIDs}
+		w := s.do("POST", "/api/v1/stack-instances/bulk/deploy", body, devopsToken)
+		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+		resp := parseBody(t, w)
+		assert.Equal(t, float64(len(instanceIDs)), resp["total"])
+		// All should fail because deploy manager is nil.
+		assert.Equal(t, float64(len(instanceIDs)), resp["failed"])
+		results := resp["results"].([]interface{})
+		assert.Len(t, results, len(instanceIDs))
+		for _, r := range results {
+			result := r.(map[string]interface{})
+			assert.Equal(t, "error", result["status"])
+		}
+	})
+
+	t.Run("bulk stop returns 200 with per-instance errors (no deploy manager)", func(t *testing.T) {
+		body := map[string]interface{}{"instance_ids": instanceIDs}
+		w := s.do("POST", "/api/v1/stack-instances/bulk/stop", body, devopsToken)
+		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+		resp := parseBody(t, w)
+		assert.Equal(t, float64(len(instanceIDs)), resp["total"])
+		assert.Equal(t, float64(len(instanceIDs)), resp["failed"])
+	})
+
+	t.Run("bulk clean returns 200 with per-instance errors (no deploy manager)", func(t *testing.T) {
+		body := map[string]interface{}{"instance_ids": instanceIDs}
+		w := s.do("POST", "/api/v1/stack-instances/bulk/clean", body, devopsToken)
+		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+		resp := parseBody(t, w)
+		assert.Equal(t, float64(len(instanceIDs)), resp["total"])
+		assert.Equal(t, float64(len(instanceIDs)), resp["failed"])
+	})
+
+	t.Run("bulk delete returns 200 with success", func(t *testing.T) {
+		body := map[string]interface{}{"instance_ids": instanceIDs}
+		w := s.do("POST", "/api/v1/stack-instances/bulk/delete", body, devopsToken)
+		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+		resp := parseBody(t, w)
+		assert.Equal(t, float64(len(instanceIDs)), resp["total"])
+		assert.Equal(t, float64(len(instanceIDs)), resp["succeeded"])
+		assert.Equal(t, float64(0), resp["failed"])
+	})
+
+	t.Run("regular user gets 403 on bulk operations", func(t *testing.T) {
+		body := map[string]interface{}{"instance_ids": []string{"any-id"}}
+		w := s.do("POST", "/api/v1/stack-instances/bulk/deploy", body, userToken)
+		assert.Equal(t, http.StatusForbidden, w.Code)
+	})
+
+	t.Run("invalid JSON returns 400", func(t *testing.T) {
+		w := s.do("POST", "/api/v1/stack-instances/bulk/deploy", "not-json", devopsToken)
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+	})
+
+	t.Run("empty instance_ids returns 400", func(t *testing.T) {
+		body := map[string]interface{}{"instance_ids": []string{}}
+		w := s.do("POST", "/api/v1/stack-instances/bulk/deploy", body, devopsToken)
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+	})
+}
+
+// ---------------------------------------------------------------------------
+// TestAPIIntegration_ImportExport
+// ---------------------------------------------------------------------------
+
+func TestAPIIntegration_ImportExport(t *testing.T) {
+	s := newIntegServer(t)
+
+	adminToken := s.createAdminAndLogin(t)
+	devopsToken, _ := s.registerAndLogin(t, uniqueName("impdevops"), "pass", "devops", adminToken)
+	userToken, _ := s.registerAndLogin(t, uniqueName("impuser"), "pass", "user", adminToken)
+
+	// Create a template → chart → publish → instantiate to get a definition with charts.
+	tplName := uniqueName("exptpl")
+	tpl := map[string]interface{}{
+		"name":           tplName,
+		"description":    "Export/Import test",
+		"category":       "test",
+		"version":        "1.0.0",
+		"default_branch": "main",
+	}
+	w := s.do("POST", "/api/v1/templates", tpl, devopsToken)
+	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+	tplID := parseBody(t, w)["id"].(string)
+
+	chart := map[string]interface{}{
+		"chart_name":     "api-server",
+		"repository_url": "https://charts.example.com",
+		"chart_version":  "2.0.0",
+		"default_values": "port: 8080",
+	}
+	w = s.do("POST", fmt.Sprintf("/api/v1/templates/%s/charts", tplID), chart, devopsToken)
+	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+
+	w = s.do("POST", fmt.Sprintf("/api/v1/templates/%s/publish", tplID), nil, devopsToken)
+	require.Equal(t, http.StatusOK, w.Code)
+
+	w = s.do("POST", fmt.Sprintf("/api/v1/templates/%s/instantiate", tplID),
+		map[string]interface{}{"name": uniqueName("expdef"), "description": "test"}, devopsToken)
+	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+	defID := parseBody(t, w)["definition"].(map[string]interface{})["id"].(string)
+
+	var exportBundle map[string]interface{}
+
+	t.Run("export definition returns bundle", func(t *testing.T) {
+		w := s.do("GET", fmt.Sprintf("/api/v1/stack-definitions/%s/export", defID), nil, devopsToken)
+		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+		exportBundle = parseBody(t, w)
+		assert.Equal(t, "1.0", exportBundle["schema_version"])
+		assert.Contains(t, exportBundle, "definition")
+		assert.Contains(t, exportBundle, "charts")
+
+		def := exportBundle["definition"].(map[string]interface{})
+		assert.NotEmpty(t, def["name"])
+
+		charts := exportBundle["charts"].([]interface{})
+		assert.Len(t, charts, 1)
+		c := charts[0].(map[string]interface{})
+		assert.Equal(t, "api-server", c["chart_name"])
+	})
+
+	t.Run("import exported bundle creates new definition", func(t *testing.T) {
+		require.NotNil(t, exportBundle)
+		// Modify name to avoid collision.
+		def := exportBundle["definition"].(map[string]interface{})
+		def["name"] = uniqueName("imported")
+		exportBundle["definition"] = def
+
+		w := s.do("POST", "/api/v1/stack-definitions/import", exportBundle, devopsToken)
+		require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+		resp := parseBody(t, w)
+		assert.Contains(t, resp, "definition")
+		assert.Contains(t, resp, "charts")
+
+		importedDef := resp["definition"].(map[string]interface{})
+		assert.NotEqual(t, defID, importedDef["id"], "imported definition should have a new ID")
+
+		importedCharts := resp["charts"].([]interface{})
+		assert.Len(t, importedCharts, 1)
+		ic := importedCharts[0].(map[string]interface{})
+		assert.Equal(t, "api-server", ic["chart_name"])
+	})
+
+	t.Run("import invalid JSON returns 400", func(t *testing.T) {
+		w := s.do("POST", "/api/v1/stack-definitions/import", "not-json", devopsToken)
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+	})
+
+	t.Run("import missing schema_version returns 400", func(t *testing.T) {
+		bundle := map[string]interface{}{
+			"definition": map[string]interface{}{"name": "test"},
+			"charts":     []interface{}{},
+		}
+		w := s.do("POST", "/api/v1/stack-definitions/import", bundle, devopsToken)
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+	})
+
+	t.Run("export non-existent definition returns 404", func(t *testing.T) {
+		w := s.do("GET", "/api/v1/stack-definitions/nonexistent/export", nil, devopsToken)
+		assert.Equal(t, http.StatusNotFound, w.Code)
+	})
+
+	t.Run("regular user cannot export", func(t *testing.T) {
+		w := s.do("GET", fmt.Sprintf("/api/v1/stack-definitions/%s/export", defID), nil, userToken)
+		assert.Equal(t, http.StatusForbidden, w.Code)
+	})
+
+	t.Run("regular user cannot import", func(t *testing.T) {
+		w := s.do("POST", "/api/v1/stack-definitions/import", exportBundle, userToken)
+		assert.Equal(t, http.StatusForbidden, w.Code)
+	})
+}
+
+// ---------------------------------------------------------------------------
+// TestAPIIntegration_InstanceComparison
+// ---------------------------------------------------------------------------
+
+func TestAPIIntegration_InstanceComparison(t *testing.T) {
+	s := newIntegServer(t)
+
+	adminToken := s.createAdminAndLogin(t)
+	devopsToken, _ := s.registerAndLogin(t, uniqueName("cmpdevops"), "pass", "devops", adminToken)
+
+	// Create template → chart → publish → instantiate to get a definition.
+	tplName := uniqueName("cmptpl")
+	tpl := map[string]interface{}{
+		"name":           tplName,
+		"description":    "Compare test",
+		"category":       "test",
+		"version":        "1.0.0",
+		"default_branch": "main",
+	}
+	w := s.do("POST", "/api/v1/templates", tpl, devopsToken)
+	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+	tplID := parseBody(t, w)["id"].(string)
+
+	chart := map[string]interface{}{
+		"chart_name":     "backend",
+		"repository_url": "https://charts.example.com",
+		"chart_version":  "3.0.0",
+		"default_values": "replicas: 2\nport: 8080",
+	}
+	w = s.do("POST", fmt.Sprintf("/api/v1/templates/%s/charts", tplID), chart, devopsToken)
+	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+
+	w = s.do("POST", fmt.Sprintf("/api/v1/templates/%s/publish", tplID), nil, devopsToken)
+	require.Equal(t, http.StatusOK, w.Code)
+
+	w = s.do("POST", fmt.Sprintf("/api/v1/templates/%s/instantiate", tplID),
+		map[string]interface{}{"name": uniqueName("cmpdef"), "description": "test"}, devopsToken)
+	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+	defID := parseBody(t, w)["definition"].(map[string]interface{})["id"].(string)
+
+	// Create two instances from the same definition.
+	inst1 := map[string]interface{}{
+		"name":                uniqueName("cmpinst1"),
+		"stack_definition_id": defID,
+		"branch":              "main",
+	}
+	w = s.do("POST", "/api/v1/stack-instances", inst1, devopsToken)
+	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+	inst1ID := parseBody(t, w)["id"].(string)
+
+	inst2 := map[string]interface{}{
+		"name":                uniqueName("cmpinst2"),
+		"stack_definition_id": defID,
+		"branch":              "develop",
+	}
+	w = s.do("POST", "/api/v1/stack-instances", inst2, devopsToken)
+	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+	inst2ID := parseBody(t, w)["id"].(string)
+
+	t.Run("compare two instances", func(t *testing.T) {
+		url := fmt.Sprintf("/api/v1/stack-instances/compare?left=%s&right=%s", inst1ID, inst2ID)
+		w := s.do("GET", url, nil, devopsToken)
+		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+		body := parseBody(t, w)
+
+		left := body["left"].(map[string]interface{})
+		assert.Equal(t, inst1ID, left["id"])
+		assert.Contains(t, left, "name")
+		assert.Contains(t, left, "definition_name")
+		assert.Contains(t, left, "branch")
+
+		right := body["right"].(map[string]interface{})
+		assert.Equal(t, inst2ID, right["id"])
+
+		charts := body["charts"].([]interface{})
+		assert.NotEmpty(t, charts)
+		firstChart := charts[0].(map[string]interface{})
+		assert.Contains(t, firstChart, "chart_name")
+		assert.Contains(t, firstChart, "has_differences")
+	})
+
+	t.Run("compare with non-existent ID returns 404", func(t *testing.T) {
+		url := fmt.Sprintf("/api/v1/stack-instances/compare?left=%s&right=nonexistent", inst1ID)
+		w := s.do("GET", url, nil, devopsToken)
+		assert.Equal(t, http.StatusNotFound, w.Code)
+	})
+
+	t.Run("missing query params returns 400", func(t *testing.T) {
+		w := s.do("GET", "/api/v1/stack-instances/compare", nil, devopsToken)
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+	})
+
+	t.Run("missing one query param returns 400", func(t *testing.T) {
+		url := fmt.Sprintf("/api/v1/stack-instances/compare?left=%s", inst1ID)
+		w := s.do("GET", url, nil, devopsToken)
+		assert.Equal(t, http.StatusBadRequest, w.Code)
 	})
 }
