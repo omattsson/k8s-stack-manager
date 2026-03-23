@@ -32,8 +32,9 @@ Template → (instantiate) → Definition + ChartConfigs → (create instance) �
 ```
 
 ### Storage
-- **Azure Table Storage** (Azurite for local dev) for all domain entities
-- **MySQL** (GORM) for legacy Items CRUD
+- **MySQL** (GORM) or **Azure Table Storage** (Azurite for local dev) — selected via `USE_AZURE_TABLE` env var
+- Both backends implement the same repository interfaces for all domain entities
+- Factory in `internal/database/repository.go` selects the backend at startup
 
 ### Authentication
 - JWT-based with `Authorization: Bearer <token>` header
@@ -84,6 +85,6 @@ See `.github/instructions/api-extension.instructions.md` for the step-by-step gu
 
 - **Azurite connection errors**: Ensure Azurite is running (`make azurite-start`). Inside Docker, endpoint is `azurite:10002`; locally it's `127.0.0.1:10002`.
 - **JWT errors**: Ensure `JWT_SECRET` is set and at least 16 characters.
-- **Database connection errors (MySQL)**: Only affects legacy Items. Ensure MySQL is running if `USE_AZURE_TABLE=false`.
+- **Database connection errors (MySQL)**: Ensure MySQL is running if `USE_AZURE_TABLE=false`. MySQL serves all domain entities when Azure Table Storage is disabled.
 - **Git provider errors**: Check `AZURE_DEVOPS_PAT` or `GITLAB_TOKEN` are set correctly. Empty tokens are valid (provider just won't be available).
 - **Cluster connection errors**: Verify the kubeconfig path or data is valid. Use the "Test Connection" button on the Clusters admin page. If `KUBECONFIG_ENCRYPTION_KEY` is set, all kubeconfig data is encrypted at rest — changing the key will make existing encrypted data unreadable.
