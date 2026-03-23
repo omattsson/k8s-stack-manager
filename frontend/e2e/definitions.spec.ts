@@ -1,9 +1,9 @@
 import { test, expect } from '@playwright/test';
-import { loginAsAdmin, uniqueName, createAndPublishTemplate, instantiateTemplate } from './helpers';
+import { loginAsDevops, uniqueName, createAndPublishTemplate, instantiateTemplate } from './helpers';
 
 test.describe('Stack Definition Management', () => {
   test.beforeEach(async ({ page }) => {
-    await loginAsAdmin(page);
+    await loginAsDevops(page);
   });
 
   test('definitions list page loads', async ({ page }) => {

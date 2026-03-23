@@ -1,13 +1,16 @@
 import { test, expect } from '@playwright/test';
-import { loginAsAdmin } from './helpers';
+import { loginAsAdmin, loginAsUser } from './helpers';
 
 test.describe('Navigation & Layout', () => {
   test.beforeEach(async ({ page }) => {
-    await loginAsAdmin(page);
+    await loginAsUser(page);
     await page.goto('/');
   });
 
-  test('app bar shows navigation buttons', async ({ page }) => {
+  test('app bar shows navigation buttons (admin)', async ({ page }) => {
+    // This test checks admin-only nav items, so re-login as admin
+    await loginAsAdmin(page);
+    await page.goto('/');
     await expect(page.getByRole('link', { name: 'K8s Stack Manager' })).toBeVisible();
     await expect(page.getByRole('link', { name: 'Dashboard' })).toBeVisible();
     await expect(page.getByRole('link', { name: 'Templates' })).toBeVisible();
@@ -19,7 +22,7 @@ test.describe('Navigation & Layout', () => {
   });
 
   test('displays logged-in user info', async ({ page }) => {
-    await expect(page.getByText('admin', { exact: true }).first()).toBeVisible();
+    await expect(page.getByText('e2e-regular-user', { exact: true }).first()).toBeVisible();
     await expect(page.getByRole('button', { name: 'Logout' })).toBeVisible();
   });
 
@@ -57,12 +60,16 @@ test.describe('Navigation & Layout', () => {
   });
 
   test('Users link navigates to /admin/users (admin only)', async ({ page }) => {
+    await loginAsAdmin(page);
+    await page.goto('/');
     await page.getByRole('link', { name: 'Users' }).click();
     await expect(page).toHaveURL('/admin/users');
     await expect(page.getByRole('heading', { level: 1 })).toBeVisible({ timeout: 10_000 });
   });
 
-  test('Clusters link navigates to /admin/clusters', async ({ page }) => {
+  test('Clusters link navigates to /admin/clusters (admin only)', async ({ page }) => {
+    await loginAsAdmin(page);
+    await page.goto('/');
     await page.getByRole('link', { name: 'Clusters' }).click();
     await expect(page).toHaveURL('/admin/clusters');
     await expect(page.getByRole('heading', { level: 1, name: 'Cluster Management' })).toBeVisible({

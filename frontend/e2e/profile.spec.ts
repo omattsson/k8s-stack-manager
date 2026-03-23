@@ -1,11 +1,13 @@
 import { test, expect } from '@playwright/test';
-import { loginAsAdmin, uniqueName } from './helpers';
+import { loginAsUser, uniqueName } from './helpers';
 
 const API_BASE = 'http://localhost:8081';
 
 test.describe('Profile Page', () => {
+  let username: string;
+
   test.beforeEach(async ({ page }) => {
-    await loginAsAdmin(page);
+    username = await loginAsUser(page);
     await page.goto('/profile');
     await expect(page.getByRole('heading', { level: 1, name: 'My Profile' })).toBeVisible({
       timeout: 10_000,
@@ -14,12 +16,12 @@ test.describe('Profile Page', () => {
 
   test('page loads with user information', async ({ page }) => {
     await expect(page.getByText('Username:')).toBeVisible();
-    await expect(page.locator('#main-content').getByText('admin', { exact: true }).first()).toBeVisible();
+    await expect(page.locator('#main-content').getByText(username, { exact: true }).first()).toBeVisible();
     await expect(page.getByText('Role:')).toBeVisible();
   });
 
   test('shows API keys section', async ({ page }) => {
-    await expect(page.getByText('API Keys')).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'API Keys' })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Generate API Key' })).toBeVisible();
   });
 

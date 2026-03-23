@@ -1,9 +1,9 @@
 import { test, expect } from '@playwright/test';
-import { loginAsAdmin, uniqueName, createAndPublishTemplate } from './helpers';
+import { loginAsDevops, uniqueName, createAndPublishTemplate } from './helpers';
 
 test.describe('Template Management', () => {
   test.beforeEach(async ({ page }) => {
-    await loginAsAdmin(page);
+    await loginAsDevops(page);
   });
 
   test('gallery page loads and shows heading', async ({ page }) => {
@@ -211,5 +211,141 @@ test.describe('Template Management', () => {
     await expect(page.getByRole('heading', { level: 1, name: /Edit Stack Definition/ })).toBeVisible({
       timeout: 10_000,
     });
+  });
+
+  test('quick deploy dialog opens from gallery and validates instance name', async ({ page }) => {
+    const tplName = uniqueName('tpl-qdeploy');
+    await createAndPublishTemplate(page, tplName);
+
+    // Navigate to gallery and wait for the published template to appear
+    await page.goto('/templates');
+    await expect(page.getByRole('heading', { level: 1, name: 'Template Gallery' })).toBeVisible({
+      timeout: 10_000,
+    });
+    await expect(page.getByRole('heading', { name: tplName })).toBeVisible({ timeout: 10_000 });
+
+    // Click Quick Deploy on the template card
+    const templateCard = page.locator('.MuiCard-root').filter({ hasText: tplName });
+    await templateCard.getByRole('button', { name: 'Quick Deploy' }).click();
+
+    // Dialog should open with template name in title
+    await expect(page.getByText(`Quick Deploy: ${tplName}`)).toBeVisible({ timeout: 5_000 });
+
+    // Verify required fields are present
+    await expect(page.getByLabel('Instance Name')).toBeVisible();
+    await expect(page.getByLabel('Branch')).toBeVisible();
+
+    // Try to deploy without filling instance name -- should show validation error
+    await page.getByRole('button', { name: 'Deploy' }).click();
+    await expect(page.getByText('Instance name is required')).toBeVisible({ timeout: 5_000 });
+
+    // Cancel closes the dialog
+    await page.getByRole('button', { name: 'Cancel' }).click();
+    await expect(page.getByText(`Quick Deploy: ${tplName}`)).not.toBeVisible({ timeout: 5_000 });
+  });
+
+  test('quick deploy creates instance and navigates to it', async ({ page }) => {
+    const tplName = uniqueName('tpl-qdrun');
+    await createAndPublishTemplate(page, tplName);
+
+    // Navigate to gallery
+    await page.goto('/templates');
+    await expect(page.getByRole('heading', { level: 1, name: 'Template Gallery' })).toBeVisible({
+      timeout: 10_000,
+    });
+    await expect(page.getByRole('heading', { name: tplName })).toBeVisible({ timeout: 10_000 });
+
+    // Open Quick Deploy dialog
+    const templateCard = page.locator('.MuiCard-root').filter({ hasText: tplName });
+    await templateCard.getByRole('button', { name: 'Quick Deploy' }).click();
+    await expect(page.getByText(`Quick Deploy: ${tplName}`)).toBeVisible({ timeout: 5_000 });
+
+    // Fill the instance name and deploy
+    const instanceName = uniqueName('qi');
+    await page.getByLabel('Instance Name').fill(instanceName);
+
+    await page.getByRole('button', { name: 'Deploy' }).click();
+
+    // Should navigate to the created instance page
+    await page.waitForURL(/\/stack-instances\/[^/]+$/, { timeout: 15_000 });
+  });
+
+  test('favorite toggle on template gallery card', async ({ page }) => {
+    const tplName = uniqueName('tpl-fav');
+    await createAndPublishTemplate(page, tplName);
+
+    // Navigate to gallery
+    await page.goto('/templates');
+    await expect(page.getByRole('heading', { level: 1, name: 'Template Gallery' })).toBeVisible({
+      timeout: 10_000,
+    });
+    await expect(page.getByRole('heading', { name: tplName })).toBeVisible({ timeout: 10_000 });
+
+    // Find the favorite button within the template card
+    const templateCard = page.locator('.MuiCard-root').filter({ hasText: tplName });
+    const favoriteButton = templateCard.getByRole('button', { name: 'Add to favorites' });
+    await expect(favoriteButton).toBeVisible({ timeout: 5_000 });
+
+    // Click to add to favorites
+    await favoriteButton.click();
+
+    // After toggling, the button label should change to "Remove from favorites"
+    await expect(
+      templateCard.getByRole('button', { name: 'Remove from favorites' })
+    ).toBeVisible({ timeout: 5_000 });
+
+    // Click again to remove from favorites
+    await templateCard.getByRole('button', { name: 'Remove from favorites' }).click();
+
+    // Should revert back to "Add to favorites"
+    await expect(
+      templateCard.getByRole('button', { name: 'Add to favorites' })
+    ).toBeVisible({ timeout: 5_000 });
+  });
+
+  test('gallery category filter narrows displayed templates', async ({ page }) => {
+    const tplName = uniqueName('tpl-catfilt');
+    // createAndPublishTemplate uses category 'Web'
+    await createAndPublishTemplate(page, tplName);
+
+    await page.goto('/templates');
+    await expect(page.getByRole('heading', { level: 1, name: 'Template Gallery' })).toBeVisible({
+      timeout: 10_000,
+    });
+    await expect(page.getByRole('heading', { name: tplName })).toBeVisible({ timeout: 10_000 });
+
+    // Filter by a category that should not include our template
+    await page.getByText('Data', { exact: true }).click();
+    await expect(page.getByText('No templates found')).toBeVisible({ timeout: 10_000 });
+
+    // Filter by 'Web' should show our template again
+    await page.getByText('Web', { exact: true }).click();
+    await expect(page.getByRole('heading', { name: tplName })).toBeVisible({ timeout: 10_000 });
+
+    // 'All' should also show it
+    await page.getByText('All', { exact: true }).click();
+    await expect(page.getByRole('heading', { name: tplName })).toBeVisible({ timeout: 10_000 });
+  });
+
+  test('gallery My Templates tab shows own templates', async ({ page }) => {
+    const tplName = uniqueName('tpl-mytab');
+    // Create a template (not necessarily published) -- it should appear in "My Templates"
+    await page.goto('/templates/new');
+    await page.getByRole('textbox', { name: 'Name' }).fill(tplName);
+    await page.getByLabel('Description').fill('My draft template');
+    await page.getByLabel('Category').click();
+    await page.getByRole('option', { name: 'Web' }).click();
+    await page.getByRole('button', { name: 'Save Template' }).click();
+    await page.waitForURL(/\/templates\/(?!new)[^/]+$/, { timeout: 10_000 });
+
+    // Go to gallery and switch to "My Templates" tab
+    await page.goto('/templates');
+    await expect(page.getByRole('heading', { level: 1, name: 'Template Gallery' })).toBeVisible({
+      timeout: 10_000,
+    });
+    await page.getByRole('tab', { name: 'My Templates' }).click();
+
+    // The draft template should be visible in "My Templates"
+    await expect(page.getByRole('heading', { name: tplName })).toBeVisible({ timeout: 10_000 });
   });
 });

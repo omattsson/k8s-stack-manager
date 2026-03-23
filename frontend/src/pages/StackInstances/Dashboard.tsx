@@ -241,7 +241,7 @@ const Dashboard = () => {
               >
                 <CardContent sx={{ py: 1.5, px: 2, '&:last-child': { pb: 1.5 } }}>
                   <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <Typography variant="subtitle2" noWrap sx={{ flex: 1 }}>
+                    <Typography variant="subtitle2" component="div" noWrap sx={{ flex: 1 }}>
                       {inst.name}
                     </Typography>
                     <FavoriteButton entityType="instance" entityId={inst.id} size="small" initialFavorited={true} />
@@ -269,7 +269,7 @@ const Dashboard = () => {
                 onClick={() => navigate(`/stack-instances/${inst.id}`)}
               >
                 <CardContent sx={{ py: 1.5, px: 2, '&:last-child': { pb: 1.5 } }}>
-                  <Typography variant="subtitle2" noWrap>
+                  <Typography variant="subtitle2" component="div" noWrap>
                     {inst.name}
                   </Typography>
                   {inst.definition && (

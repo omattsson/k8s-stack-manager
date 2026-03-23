@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { loginAsAdmin, uniqueName, createAndPublishTemplate, instantiateTemplate } from './helpers';
+import { loginAsDevops, uniqueName, createAndPublishTemplate, instantiateTemplate } from './helpers';
 
 const API_BASE = 'http://localhost:8081';
 
@@ -85,8 +85,8 @@ async function apiCreateInstance(
       branch: 'main',
     },
   });
-  expect(res.ok()).toBe(true);
   const body = await res.json();
+  expect(res.ok(), `apiCreateInstance failed: ${res.status()} ${JSON.stringify(body)}`).toBe(true);
   return body.id;
 }
 
@@ -429,7 +429,7 @@ test.describe('Deployment API', () => {
 // ---------------------------------------------------------------------------
 test.describe('Deployment UI', () => {
   test.beforeEach(async ({ page }) => {
-    await loginAsAdmin(page);
+    await loginAsDevops(page);
   });
 
   test('deploy button visible on draft instance, stop button hidden', async ({ page }) => {

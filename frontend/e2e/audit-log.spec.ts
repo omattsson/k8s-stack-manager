@@ -1,9 +1,9 @@
 import { test, expect } from '@playwright/test';
-import { loginAsAdmin, uniqueName, createAndPublishTemplate } from './helpers';
+import { loginAsDevops, uniqueName, createAndPublishTemplate } from './helpers';
 
 test.describe('Audit Log', () => {
   test.beforeEach(async ({ page }) => {
-    await loginAsAdmin(page);
+    await loginAsDevops(page);
   });
 
   test('audit log page loads with heading and table', async ({ page }) => {
