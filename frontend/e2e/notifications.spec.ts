@@ -119,7 +119,7 @@ test.describe('Notifications', () => {
     await page.route('**/api/v1/notifications?*', async (route) => {
       const url = route.request().url();
       requestCount++;
-      if (url.includes('unread=true') || requestCount > 1) {
+      if (url.includes('unread_only=true') || requestCount > 1) {
         await route.fulfill({ json: { notifications: [], total: 0, unread_count: 0 } });
       } else {
         await route.fulfill({

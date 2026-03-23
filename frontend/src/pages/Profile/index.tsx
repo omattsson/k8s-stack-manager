@@ -20,6 +20,7 @@ import {
   DialogContent,
   DialogActions,
   TextField,
+  Switch,
 } from '@mui/material';
 import KeyIcon from '@mui/icons-material/Key';
 import DeleteIcon from '@mui/icons-material/Delete';
@@ -31,7 +32,6 @@ import { useAuth } from '../../context/AuthContext';
 import { useNotification } from '../../context/NotificationContext';
 import type { APIKey, CreateAPIKeyRequest, CreateAPIKeyResponse, NotificationPreference } from '../../types';
 import LoadingState from '../../components/LoadingState';
-import Switch from '@mui/material/Switch';
 
 const EVENT_TYPE_LABELS: Record<string, string> = {
   'deployment.success': 'Deployment succeeded',

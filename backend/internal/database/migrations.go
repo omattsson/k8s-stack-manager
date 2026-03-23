@@ -118,12 +118,10 @@ func (d *Database) AutoMigrate() error {
 			if err := tx.AutoMigrate(&models.ResourceQuotaConfig{}); err != nil {
 				return err
 			}
-			// Add max_instances_per_user column to clusters if using MySQL.
-			if tx.Dialector.Name() == "mysql" {
-				var count int64
-				tx.Raw("SELECT COUNT(1) FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = 'clusters' AND column_name = 'max_instances_per_user'").Scan(&count)
-				if count == 0 {
-					return tx.Exec("ALTER TABLE clusters ADD COLUMN max_instances_per_user INT NOT NULL DEFAULT 0").Error
+			// Add max_instances_per_user column to clusters using GORM's dialect-agnostic migrator.
+			if !tx.Migrator().HasColumn(&models.Cluster{}, "MaxInstancesPerUser") {
+				if err := tx.Migrator().AddColumn(&models.Cluster{}, "MaxInstancesPerUser"); err != nil {
+					return err
 				}
 			}
 			return nil
@@ -132,8 +130,10 @@ func (d *Database) AutoMigrate() error {
 			if err := tx.Migrator().DropTable(&models.ResourceQuotaConfig{}); err != nil {
 				return err
 			}
-			if tx.Dialector.Name() == "mysql" {
-				return tx.Exec("ALTER TABLE clusters DROP COLUMN max_instances_per_user").Error
+			if tx.Migrator().HasColumn(&models.Cluster{}, "MaxInstancesPerUser") {
+				if err := tx.Migrator().DropColumn(&models.Cluster{}, "MaxInstancesPerUser"); err != nil {
+					return err
+				}
 			}
 			return nil
 		},

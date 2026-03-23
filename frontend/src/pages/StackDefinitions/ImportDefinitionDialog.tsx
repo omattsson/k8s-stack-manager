@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, type ChangeEvent } from 'react';
 import {
   Dialog,
   DialogTitle,
@@ -42,7 +42,7 @@ const ImportDefinitionDialog = ({ open, onClose, onImported }: ImportDefinitionD
     onClose();
   };
 
-  const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileSelect = (event: ChangeEvent<HTMLInputElement>) => {
     setParseError(null);
     setImportError(null);
     setBundle(null);
