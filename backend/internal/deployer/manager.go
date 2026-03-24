@@ -258,6 +258,7 @@ func (m *Manager) executeDeploy(helm HelmExecutor, instanceID string, deployLog 
 			Version:     chart.ChartConfig.ChartVersion,
 			ValuesFile:  valuesFile,
 			Namespace:   namespace,
+			SkipCRDs:    true, // CRDs are cluster-scoped; skip to avoid conflicts across namespaces
 		})
 
 		allOutput += fmt.Sprintf("=== Chart: %s ===\n%s\n", chart.ChartConfig.ChartName, output)

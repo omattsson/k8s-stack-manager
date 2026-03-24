@@ -107,13 +107,14 @@ WEB_ID=$(api_post "/api/v1/templates" '{
 log "Web template: ${WEB_ID}"
 
 api_post "/api/v1/templates/${WEB_ID}/charts" '{
-  "chart_name": "traefik",
-  "repository_url": "https://traefik.github.io/charts",
-  "chart_path": "traefik",
-  "chart_version": "34.5.0",
+  "chart_name": "backend-api",
+  "repository_url": "https://charts.bitnami.com/bitnami",
+  "source_repo_url": "https://dev.azure.com/org/project/_git/backend",
+  "chart_path": "node",
+  "chart_version": "19.1.7",
   "deploy_order": 1,
   "required": true,
-  "default_values": "service:\n  type: ClusterIP\nports:\n  web:\n    port: 8000\n    expose:\n      default: true",
+  "default_values": "replicaCount: 1\nimage:\n  tag: \"{{.Branch}}\"\nservice:\n  type: ClusterIP\n  port: 3000\nresources:\n  requests:\n    cpu: 100m\n    memory: 128Mi",
   "locked_values": ""
 }' > /dev/null
 
@@ -139,7 +140,7 @@ api_post "/api/v1/templates/${WEB_ID}/charts" '{
   "default_values": "replicaCount: 1\nservice:\n  type: ClusterIP\n  port: 8080",
   "locked_values": ""
 }' > /dev/null
-log "  + 3 charts (traefik, azurite-storage, frontend-app)"
+log "  + 3 charts (backend-api, azurite-storage, frontend-app)"
 
 # ── API Category ─────────────────────────────────────────────────────
 API_ID=$(api_post "/api/v1/templates" '{
@@ -222,8 +223,8 @@ log "  + 3 charts (cnpg-cluster, redis, worker)"
 
 # ── Infrastructure Category ──────────────────────────────────────────
 INFRA_ID=$(api_post "/api/v1/templates" '{
-  "name": "Cluster Infrastructure",
-  "description": "Shared infra components: cert-manager, monitoring stack.",
+  "name": "Observability Stack",
+  "description": "Grafana + Loki for logging and dashboards. Namespace-safe, no cluster-scoped resources.",
   "category": "Infrastructure",
   "version": "1.0.0",
   "default_branch": "main"
@@ -231,27 +232,27 @@ INFRA_ID=$(api_post "/api/v1/templates" '{
 log "Infrastructure template: ${INFRA_ID}"
 
 api_post "/api/v1/templates/${INFRA_ID}/charts" '{
-  "chart_name": "cert-manager",
-  "repository_url": "https://charts.jetstack.io",
-  "chart_path": "cert-manager",
-  "chart_version": "1.16.2",
+  "chart_name": "grafana",
+  "repository_url": "https://grafana.github.io/helm-charts",
+  "chart_path": "grafana",
+  "chart_version": "8.12.1",
   "deploy_order": 1,
   "required": true,
-  "default_values": "crds:\n  enabled: true\nreplicaCount: 1",
-  "locked_values": "crds:\n  enabled: true"
+  "default_values": "adminUser: admin\nadminPassword: admin\npersistence:\n  enabled: false\nservice:\n  type: ClusterIP\n  port: 3000",
+  "locked_values": ""
 }' > /dev/null
 
 api_post "/api/v1/templates/${INFRA_ID}/charts" '{
-  "chart_name": "kube-prometheus-stack",
-  "repository_url": "https://prometheus-community.github.io/helm-charts",
-  "chart_path": "kube-prometheus-stack",
-  "chart_version": "65.3.1",
+  "chart_name": "loki",
+  "repository_url": "https://grafana.github.io/helm-charts",
+  "chart_path": "loki",
+  "chart_version": "6.24.1",
   "deploy_order": 2,
   "required": false,
-  "default_values": "grafana:\n  enabled: true\n  adminPassword: admin\nprometheus:\n  prometheusSpec:\n    retention: 7d\n    storageSpec:\n      volumeClaimTemplate:\n        spec:\n          resources:\n            requests:\n              storage: 10Gi",
+  "default_values": "deploymentMode: SingleBinary\nloki:\n  auth_enabled: false\n  storage:\n    type: filesystem\nsingleBinary:\n  replicas: 1\n  persistence:\n    size: 5Gi",
   "locked_values": ""
 }' > /dev/null
-log "  + 2 charts (cert-manager, kube-prometheus-stack)"
+log "  + 2 charts (grafana, loki)"
 
 # ── Other Category ───────────────────────────────────────────────────
 OTHER_ID=$(api_post "/api/v1/templates" '{
@@ -559,7 +560,7 @@ echo "Templates (5, all published):"
 echo "  Web:            Full-Stack Web App (3 charts, 2 versions)"
 echo "  API:            REST API Service (2 charts)"
 echo "  Data:           Data Pipeline (3 charts)"
-echo "  Infrastructure: Cluster Infrastructure (2 charts)"
+echo "  Infrastructure: Observability Stack (2 charts)"
 echo "  Other:          Development Tools (2 charts)"
 echo ""
 echo "Stack Definitions (3):"
