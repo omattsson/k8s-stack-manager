@@ -79,7 +79,7 @@ test.describe('OIDC Authentication', () => {
 
     await expect(page.getByLabel('Username')).toBeVisible({ timeout: 10_000 });
     await expect(page.getByLabel('Password')).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Sign In' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Sign In', exact: true })).toBeVisible();
     await expect(
       page.getByRole('button', { name: /sign in with/i })
     ).not.toBeVisible();
@@ -161,7 +161,7 @@ test.describe('OIDC Authentication', () => {
 
     await expect(page.getByRole('alert')).toBeVisible({ timeout: 10_000 });
     await expect(page.getByText(/session expired/i)).toBeVisible();
-    await expect(page.getByRole('button', { name: /back to login/i })).toBeVisible();
+    await expect(page.getByRole('link', { name: /back to login/i })).toBeVisible();
   });
 
   test('auth callback shows error for no_account', async ({ page }) => {
@@ -208,7 +208,7 @@ test.describe('OIDC Authentication', () => {
 
     await page.getByLabel('Username').fill('admin');
     await page.getByLabel('Password').fill('admin');
-    await page.getByRole('button', { name: 'Sign In' }).click();
+    await page.getByRole('button', { name: 'Sign In', exact: true }).click();
 
     await expect(page).toHaveURL('/', { timeout: 10_000 });
   });
