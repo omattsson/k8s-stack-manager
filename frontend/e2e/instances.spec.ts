@@ -115,8 +115,14 @@ test.describe('Stack Instance Management', () => {
 
     // Clone
     await page.getByRole('button', { name: 'Clone' }).click();
-    // Should navigate to a different instance page
-    await page.waitForURL(/\/stack-instances\/[^/]+$/, { timeout: 10_000 });
+    // Wait for navigation to a DIFFERENT instance page (not the current one)
+    await page.waitForURL(
+      (url) => {
+        const match = url.toString().match(/\/stack-instances\/([^/]+)$/);
+        return match !== null && url.toString() !== originalUrl;
+      },
+      { timeout: 15_000 },
+    );
     await page.waitForLoadState('domcontentloaded');
     const clonedUrl = page.url();
     expect(clonedUrl).not.toBe(originalUrl);
@@ -147,12 +153,12 @@ test.describe('Stack Instance Management', () => {
     await page.getByRole('button', { name: 'Delete' }).click();
     // Confirm dialog appears
     await expect(page.getByText(/Are you sure you want to delete/)).toBeVisible({ timeout: 5_000 });
-    // Click the confirm Delete button in the dialog
-    await page.getByRole('button', { name: 'Delete' }).last().click();
+    // Click the confirm Delete button scoped to the dialog
+    await page.getByRole('dialog').getByRole('button', { name: 'Delete' }).click();
     // Redirects to dashboard
-    await expect(page).toHaveURL('/', { timeout: 10_000 });
+    await page.waitForURL('/', { timeout: 10_000 });
     // Instance should no longer appear
-    await expect(page.getByText(instName)).not.toBeVisible({ timeout: 5_000 });
+    await expect(page.getByText(instName, { exact: true })).toHaveCount(0, { timeout: 5_000 });
   });
 
   test('dashboard search filters instances', async ({ page }) => {

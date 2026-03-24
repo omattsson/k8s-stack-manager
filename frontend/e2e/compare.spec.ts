@@ -199,12 +199,8 @@ test.describe('Stack Instance Comparison', () => {
     ).toBeVisible({ timeout: 10_000 });
 
     // Wait for comparison results to load (auto-triggered by URL params)
-    await expect(page.getByText('Left Instance')).toBeVisible({ timeout: 10_000 });
-    await expect(page.getByText('Right Instance')).toBeVisible({ timeout: 10_000 });
-
-    // Verify instance summary cards
-    await expect(page.getByText('frontend-app-dev')).toBeVisible();
-    await expect(page.getByText('frontend-app-staging')).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'frontend-app-dev' })).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByRole('heading', { name: 'frontend-app-staging' })).toBeVisible();
 
     // Verify chart tabs are rendered
     await expect(page.getByRole('tab', { name: /nginx/ })).toBeVisible();

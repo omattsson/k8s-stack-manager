@@ -220,10 +220,11 @@ test.describe('Bulk Operations', () => {
     await toolbar.getByRole('button', { name: 'Deploy' }).click();
 
     // Confirmation dialog should appear with title and instance names
-    await expect(page.getByText('Confirm Bulk Deploy')).toBeVisible({ timeout: 5_000 });
-    await expect(page.getByText('bulk-test-alpha')).toBeVisible();
-    await expect(page.getByText('bulk-test-beta')).toBeVisible();
-    await expect(page.getByText(/Deploy 2 instances/)).toBeVisible();
+    const dialog = page.getByRole('dialog');
+    await expect(dialog.getByText('Confirm Bulk Deploy')).toBeVisible({ timeout: 5_000 });
+    await expect(dialog.getByText('bulk-test-alpha')).toBeVisible();
+    await expect(dialog.getByText('bulk-test-beta')).toBeVisible();
+    await expect(dialog.getByText(/Deploy 2 instances/)).toBeVisible();
   });
 
   test('delete confirmation shows warning alert', async ({ page }) => {
@@ -288,5 +289,147 @@ test.describe('Bulk Operations', () => {
     // Deselect all
     await page.getByRole('checkbox', { name: 'Select all instances' }).click();
     await expect(toolbar).not.toBeVisible({ timeout: 5_000 });
+  });
+
+  test('executing bulk deploy shows results dialog with success counts', async ({ page }) => {
+    // Select two instances
+    await page.getByRole('checkbox', { name: /Select bulk-test-alpha/ }).click();
+    await page.getByRole('checkbox', { name: /Select bulk-test-beta/ }).click();
+
+    const toolbar = page.getByRole('toolbar', { name: 'Bulk actions' });
+    await expect(toolbar).toBeVisible({ timeout: 5_000 });
+
+    // Click Deploy in toolbar to open confirmation dialog
+    await toolbar.getByRole('button', { name: 'Deploy' }).click();
+    await expect(page.getByText('Confirm Bulk Deploy')).toBeVisible({ timeout: 5_000 });
+
+    // Click the Confirm (Deploy) button in the dialog
+    await page.getByRole('dialog').getByRole('button', { name: 'Deploy' }).click();
+
+    // Results dialog appears with success counts and instance names
+    const resultsDialog = page.getByRole('dialog');
+    await expect(resultsDialog.getByText('Bulk Operation Results')).toBeVisible({ timeout: 5_000 });
+    await expect(resultsDialog.getByText('2 succeeded', { exact: true })).toBeVisible();
+    await expect(resultsDialog.getByText('bulk-test-alpha')).toBeVisible();
+    await expect(resultsDialog.getByText('bulk-test-beta')).toBeVisible();
+  });
+
+  test('executing bulk stop completes and shows results', async ({ page }) => {
+    // Select two instances
+    await page.getByRole('checkbox', { name: /Select bulk-test-alpha/ }).click();
+    await page.getByRole('checkbox', { name: /Select bulk-test-beta/ }).click();
+
+    const toolbar = page.getByRole('toolbar', { name: 'Bulk actions' });
+    await expect(toolbar).toBeVisible({ timeout: 5_000 });
+
+    // Click Stop in toolbar
+    await toolbar.getByRole('button', { name: 'Stop' }).click();
+    await expect(page.getByText('Confirm Bulk Stop')).toBeVisible({ timeout: 5_000 });
+
+    // Click the Confirm (Stop) button in the dialog
+    await page.getByRole('dialog').getByRole('button', { name: 'Stop' }).click();
+
+    // Results dialog appears with success counts
+    const resultsDialog = page.getByRole('dialog');
+    await expect(resultsDialog.getByText('Bulk Operation Results')).toBeVisible({ timeout: 5_000 });
+    await expect(resultsDialog.getByText('2 succeeded', { exact: true })).toBeVisible();
+  });
+
+  test('executing bulk delete with warning completes successfully', async ({ page }) => {
+    // Select one instance
+    await page.getByRole('checkbox', { name: /Select bulk-test-alpha/ }).click();
+
+    const toolbar = page.getByRole('toolbar', { name: 'Bulk actions' });
+    await expect(toolbar).toBeVisible({ timeout: 5_000 });
+
+    // Click Delete in toolbar
+    await toolbar.getByRole('button', { name: 'Delete' }).click();
+    await expect(page.getByText('Confirm Bulk Delete')).toBeVisible({ timeout: 5_000 });
+
+    // Warning text must be visible before confirming
+    await expect(
+      page.getByText('This action cannot be undone. Selected instances will be permanently deleted.'),
+    ).toBeVisible();
+
+    // Click the Confirm (Delete) button in the dialog
+    await page.getByRole('dialog').getByRole('button', { name: 'Delete' }).click();
+
+    // Results dialog appears with a success alert
+    const resultsDialog = page.getByRole('dialog');
+    await expect(resultsDialog.getByText('Bulk Operation Results')).toBeVisible({ timeout: 5_000 });
+    await expect(resultsDialog.getByRole('alert').filter({ hasText: /succeeded/ })).toBeVisible();
+  });
+
+  test('bulk operation with partial failure shows errors in results', async ({ page }) => {
+    // Override deploy mock with a partial failure response (LIFO — this handler runs first)
+    await page.route('**/api/v1/stack-instances/bulk/deploy', (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          total: 2,
+          succeeded: 1,
+          failed: 1,
+          results: [
+            { instance_id: 'bulk-inst-001', instance_name: 'bulk-test-alpha', status: 'ok' },
+            {
+              instance_id: 'bulk-inst-002',
+              instance_name: 'bulk-test-beta',
+              status: 'error',
+              error: 'instance status is not valid for deploy',
+            },
+          ],
+        }),
+      }),
+    );
+
+    // Select two instances
+    await page.getByRole('checkbox', { name: /Select bulk-test-alpha/ }).click();
+    await page.getByRole('checkbox', { name: /Select bulk-test-beta/ }).click();
+
+    const toolbar = page.getByRole('toolbar', { name: 'Bulk actions' });
+    await expect(toolbar).toBeVisible({ timeout: 5_000 });
+
+    // Click Deploy in toolbar
+    await toolbar.getByRole('button', { name: 'Deploy' }).click();
+    await expect(page.getByText('Confirm Bulk Deploy')).toBeVisible({ timeout: 5_000 });
+
+    // Confirm the operation
+    await page.getByRole('dialog').getByRole('button', { name: 'Deploy' }).click();
+
+    // Results dialog shows both success and failure counts
+    const resultsDialog = page.getByRole('dialog');
+    await expect(resultsDialog.getByText('Bulk Operation Results')).toBeVisible({ timeout: 5_000 });
+    await expect(resultsDialog.getByText('1 succeeded', { exact: true })).toBeVisible();
+    await expect(resultsDialog.getByText('1 failed', { exact: true })).toBeVisible();
+    await expect(resultsDialog.getByText('instance status is not valid for deploy')).toBeVisible();
+  });
+
+  test('results dialog close clears selection and hides toolbar', async ({ page }) => {
+    // Select two instances
+    await page.getByRole('checkbox', { name: /Select bulk-test-alpha/ }).click();
+    await page.getByRole('checkbox', { name: /Select bulk-test-beta/ }).click();
+
+    const toolbar = page.getByRole('toolbar', { name: 'Bulk actions' });
+    await expect(toolbar).toBeVisible({ timeout: 5_000 });
+
+    // Execute bulk deploy through confirm dialog
+    await toolbar.getByRole('button', { name: 'Deploy' }).click();
+    await expect(page.getByText('Confirm Bulk Deploy')).toBeVisible({ timeout: 5_000 });
+    await page.getByRole('dialog').getByRole('button', { name: 'Deploy' }).click();
+
+    // Results dialog appears
+    const resultsDialog = page.getByRole('dialog');
+    await expect(resultsDialog.getByText('Bulk Operation Results')).toBeVisible({ timeout: 5_000 });
+
+    // Close the results dialog
+    await page.getByRole('dialog').getByRole('button', { name: 'Close' }).click();
+
+    // Selection is cleared — toolbar must disappear
+    await expect(toolbar).not.toBeVisible({ timeout: 5_000 });
+
+    // Individual checkboxes must be unchecked
+    await expect(page.getByRole('checkbox', { name: /Select bulk-test-alpha/ })).not.toBeChecked();
+    await expect(page.getByRole('checkbox', { name: /Select bulk-test-beta/ })).not.toBeChecked();
   });
 });

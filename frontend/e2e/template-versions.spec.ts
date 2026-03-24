@@ -23,8 +23,8 @@ test.describe('Template Version History', () => {
     await page.goto(`/templates/${templateId}`);
     await page.getByRole('tab', { name: 'Version History' }).click();
 
-    // Should show at least one version (v1)
-    await expect(page.getByText(/v\d+/)).toBeVisible({ timeout: 10_000 });
+    // Should show at least one version entry (e.g. v1.0.0)
+    await expect(page.getByRole('list').getByText('v1.0.0')).toBeVisible({ timeout: 10_000 });
   });
 
   test('version entry shows version number and timestamp', async ({ page }) => {
@@ -34,12 +34,12 @@ test.describe('Template Version History', () => {
     await page.goto(`/templates/${templateId}`);
     await page.getByRole('tab', { name: 'Version History' }).click();
 
-    // v1 chip should be visible
-    await expect(page.getByText('v1')).toBeVisible({ timeout: 10_000 });
+    // v1.0.0 chip should be visible in the version list
+    await expect(page.getByRole('list').getByText('v1.0.0')).toBeVisible({ timeout: 10_000 });
 
     // Timestamp should appear (the component shows relative time + locale date)
-    // Look for the "by <username>" text that accompanies the timestamp
-    await expect(page.getByText(/by .+ ago/)).toBeVisible({ timeout: 10_000 });
+    // formatRelativeTime returns "just now" when < 1 min, "Xm ago" otherwise
+    await expect(page.getByText(/by .+ (just now|ago)/)).toBeVisible({ timeout: 10_000 });
   });
 
   test('republishing creates a second version entry', async ({ page }) => {
@@ -66,9 +66,9 @@ test.describe('Template Version History', () => {
     await page.goto(`/templates/${templateId}`);
     await page.getByRole('tab', { name: 'Version History' }).click();
 
-    // Should show v1 and v2
-    await expect(page.getByText('v1')).toBeVisible({ timeout: 10_000 });
-    await expect(page.getByText('v2')).toBeVisible({ timeout: 10_000 });
+    // Both publishes produce the same version string (e.g. v1.0.0), so assert 2 list entries exist
+    const versionList = page.getByRole('list');
+    await expect(versionList.getByRole('listitem')).toHaveCount(2, { timeout: 10_000 });
   });
 
   test('version has expand/collapse functionality', async ({ page }) => {
@@ -78,8 +78,8 @@ test.describe('Template Version History', () => {
     await page.goto(`/templates/${templateId}`);
     await page.getByRole('tab', { name: 'Version History' }).click();
 
-    // Wait for v1 to appear
-    await expect(page.getByText('v1')).toBeVisible({ timeout: 10_000 });
+    // Wait for version entry to appear
+    await expect(page.getByRole('list').getByText('v1.0.0')).toBeVisible({ timeout: 10_000 });
 
     // Click the expand button
     const expandBtn = page.getByRole('button', { name: 'Expand version details' });
