@@ -20,15 +20,27 @@ import {
   DialogContent,
   DialogActions,
   TextField,
+  Switch,
 } from '@mui/material';
 import KeyIcon from '@mui/icons-material/Key';
 import DeleteIcon from '@mui/icons-material/Delete';
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import CheckIcon from '@mui/icons-material/Check';
-import { apiKeyService } from '../../api/client';
+import SaveIcon from '@mui/icons-material/Save';
+import { apiKeyService, notificationService } from '../../api/client';
 import { useAuth } from '../../context/AuthContext';
-import type { APIKey, CreateAPIKeyRequest, CreateAPIKeyResponse } from '../../types';
+import { useNotification } from '../../context/NotificationContext';
+import type { APIKey, CreateAPIKeyRequest, CreateAPIKeyResponse, NotificationPreference } from '../../types';
 import LoadingState from '../../components/LoadingState';
+
+const EVENT_TYPE_LABELS: Record<string, string> = {
+  'deployment.success': 'Deployment succeeded',
+  'deployment.error': 'Deployment failed',
+  'deployment.stopped': 'Deployment stopped',
+  'instance.deleted': 'Instance deleted',
+};
+
+const DEFAULT_EVENT_TYPES = Object.keys(EVENT_TYPE_LABELS);
 
 const getRoleChipColor = (role: string): 'error' | 'warning' | 'default' => {
   if (role === 'admin') return 'error';
@@ -57,6 +69,12 @@ const Profile = () => {
   // Revoke key confirm
   const [revokeKeyTarget, setRevokeKeyTarget] = useState<APIKey | null>(null);
 
+  // Notification preferences
+  const { showSuccess: showPrefSuccess, showError: showPrefError } = useNotification();
+  const [notifPrefs, setNotifPrefs] = useState<NotificationPreference[]>([]);
+  const [notifPrefsLoading, setNotifPrefsLoading] = useState(true);
+  const [notifPrefsSaving, setNotifPrefsSaving] = useState(false);
+
   const fetchApiKeys = useCallback(async () => {
     if (!currentUser) return;
     setLoading(true);
@@ -80,6 +98,48 @@ const Profile = () => {
       if (copyTimeoutRef.current) clearTimeout(copyTimeoutRef.current);
     };
   }, []);
+
+  const fetchNotifPrefs = useCallback(async () => {
+    setNotifPrefsLoading(true);
+    try {
+      const prefs = await notificationService.getPreferences();
+      if (prefs && prefs.length > 0) {
+        setNotifPrefs(prefs);
+      } else {
+        // Initialize with defaults (all enabled)
+        setNotifPrefs(DEFAULT_EVENT_TYPES.map((et) => ({ event_type: et, enabled: true })));
+      }
+    } catch {
+      // Initialize with defaults on error
+      setNotifPrefs(DEFAULT_EVENT_TYPES.map((et) => ({ event_type: et, enabled: true })));
+    } finally {
+      setNotifPrefsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchNotifPrefs();
+  }, [fetchNotifPrefs]);
+
+  const handleTogglePref = (eventType: string) => {
+    setNotifPrefs((prev) =>
+      prev.map((p) => (p.event_type === eventType ? { ...p, enabled: !p.enabled } : p)),
+    );
+  };
+
+  const handleSavePrefs = async () => {
+    setNotifPrefsSaving(true);
+    try {
+      await notificationService.updatePreferences(
+        notifPrefs.map((p) => ({ event_type: p.event_type, enabled: p.enabled })),
+      );
+      showPrefSuccess('Notification preferences saved');
+    } catch {
+      showPrefError('Failed to save notification preferences');
+    } finally {
+      setNotifPrefsSaving(false);
+    }
+  };
 
   const handleGenerateKey = async () => {
     if (!currentUser || !generateKeyForm.name.trim()) {
@@ -223,6 +283,52 @@ const Profile = () => {
               </Table>
             </TableContainer>
           )}
+        </Paper>
+      )}
+
+      {/* ── Notification Preferences ──────────────────────────────── */}
+      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2, mt: 4 }}>
+        <Typography variant="h5">Notification Preferences</Typography>
+        <Button
+          variant="outlined"
+          startIcon={notifPrefsSaving ? <CircularProgress size={16} /> : <SaveIcon />}
+          onClick={handleSavePrefs}
+          disabled={notifPrefsSaving || notifPrefsLoading}
+        >
+          Save
+        </Button>
+      </Box>
+
+      {notifPrefsLoading ? (
+        <LoadingState label="Loading preferences..." />
+      ) : (
+        <Paper>
+          <Table size="small">
+            <TableHead>
+              <TableRow>
+                <TableCell>Event Type</TableCell>
+                <TableCell align="right">Enabled</TableCell>
+              </TableRow>
+            </TableHead>
+            <TableBody>
+              {notifPrefs.map((pref) => (
+                <TableRow key={pref.event_type}>
+                  <TableCell>
+                    {EVENT_TYPE_LABELS[pref.event_type] || pref.event_type}
+                  </TableCell>
+                  <TableCell align="right">
+                    <Switch
+                      checked={pref.enabled}
+                      onChange={() => handleTogglePref(pref.event_type)}
+                      inputProps={{
+                        'aria-label': `Toggle ${EVENT_TYPE_LABELS[pref.event_type] || pref.event_type}`,
+                      }}
+                    />
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
         </Paper>
       )}
 

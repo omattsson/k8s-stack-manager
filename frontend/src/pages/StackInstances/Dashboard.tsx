@@ -16,18 +16,42 @@ import {
   Chip,
   Paper,
   Link,
+  Checkbox,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  List,
+  ListItem,
+  ListItemText,
+  CircularProgress,
 } from '@mui/material';
 import SearchIcon from '@mui/icons-material/Search';
 import AddIcon from '@mui/icons-material/Add';
+import PlayArrowIcon from '@mui/icons-material/PlayArrow';
+import StopIcon from '@mui/icons-material/Stop';
+import CleaningServicesIcon from '@mui/icons-material/CleaningServices';
+import DeleteIcon from '@mui/icons-material/Delete';
+import CompareArrowsIcon from '@mui/icons-material/CompareArrows';
 import StatusBadge from '../../components/StatusBadge';
 import FavoriteButton from '../../components/FavoriteButton';
 import ExpiryChip from './ExpiryChip';
 import { instanceService, clusterService, favoriteService } from '../../api/client';
-import type { StackInstance, Cluster, NamespaceStatus, UserFavorite } from '../../types';
+import type { StackInstance, Cluster, NamespaceStatus, UserFavorite, BulkOperationResponse } from '../../types';
 import LoadingState from '../../components/LoadingState';
 import EmptyState from '../../components/EmptyState';
+import { useNotification } from '../../context/NotificationContext';
 
 const STATUSES = ['All', 'draft', 'deploying', 'running', 'stopped', 'error'];
+
+type BulkAction = 'deploy' | 'stop' | 'clean' | 'delete';
+
+const BULK_ACTION_LABELS: Record<BulkAction, string> = {
+  deploy: 'Deploy',
+  stop: 'Stop',
+  clean: 'Clean',
+  delete: 'Delete',
+};
 
 const getPrimaryUrl = (status: NamespaceStatus): string | null => {
   // First ingress URL
@@ -57,6 +81,28 @@ const Dashboard = () => {
   const [statusFilter, setStatusFilter] = useState('All');
   const [instanceUrls, setInstanceUrls] = useState<Record<string, string>>({});
   const navigate = useNavigate();
+  const { showSuccess, showError } = useNotification();
+
+  // Bulk operation state
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [bulkConfirmOpen, setBulkConfirmOpen] = useState(false);
+  const [bulkAction, setBulkAction] = useState<BulkAction | null>(null);
+  const [bulkLoading, setBulkLoading] = useState(false);
+  const [bulkResultOpen, setBulkResultOpen] = useState(false);
+  const [bulkResult, setBulkResult] = useState<BulkOperationResponse | null>(null);
+
+  const refreshInstances = useCallback(async () => {
+    try {
+      const [instData, recentData] = await Promise.all([
+        instanceService.list(),
+        instanceService.recent().catch(() => [] as StackInstance[]),
+      ]);
+      setInstances(instData || []);
+      setRecentInstances(recentData || []);
+    } catch {
+      // Silently fail on refresh - data is already loaded
+    }
+  }, []);
 
   useEffect(() => {
     const fetchData = async () => {
@@ -172,6 +218,91 @@ const Dashboard = () => {
     return instances.filter((inst) => favoriteInstanceIds.has(inst.id));
   }, [instances, favoriteInstanceIds]);
 
+  // Bulk selection helpers
+  const toggleSelect = useCallback((id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  }, []);
+
+  const toggleSelectAll = useCallback(() => {
+    setSelectedIds((prev) => {
+      if (prev.size === filtered.length && filtered.length > 0) {
+        return new Set();
+      }
+      return new Set(filtered.map((inst) => inst.id));
+    });
+  }, [filtered]);
+
+  const selectedInstances = useMemo(() => {
+    return instances.filter((inst) => selectedIds.has(inst.id));
+  }, [instances, selectedIds]);
+
+  const handleBulkActionClick = useCallback((action: BulkAction) => {
+    setBulkAction(action);
+    setBulkConfirmOpen(true);
+  }, []);
+
+  const handleBulkConfirm = useCallback(async () => {
+    if (!bulkAction || selectedIds.size === 0) return;
+
+    setBulkConfirmOpen(false);
+    setBulkLoading(true);
+
+    const ids = Array.from(selectedIds);
+    try {
+      let result: BulkOperationResponse;
+      switch (bulkAction) {
+        case 'deploy':
+          result = await instanceService.bulkDeploy(ids);
+          break;
+        case 'stop':
+          result = await instanceService.bulkStop(ids);
+          break;
+        case 'clean':
+          result = await instanceService.bulkClean(ids);
+          break;
+        case 'delete':
+          result = await instanceService.bulkDelete(ids);
+          break;
+      }
+
+      setBulkResult(result);
+      setBulkResultOpen(true);
+
+      if (result.failed === 0) {
+        showSuccess(`Bulk ${bulkAction}: ${result.succeeded}/${result.total} succeeded`);
+      } else {
+        showError(`Bulk ${bulkAction}: ${result.failed}/${result.total} failed`);
+      }
+
+      // Refresh instances to reflect new statuses
+      await refreshInstances();
+    } catch {
+      showError(`Bulk ${bulkAction} failed`);
+    } finally {
+      setBulkLoading(false);
+    }
+  }, [bulkAction, selectedIds, showSuccess, showError, refreshInstances]);
+
+  const handleBulkResultClose = useCallback(() => {
+    setBulkResultOpen(false);
+    setBulkResult(null);
+    setSelectedIds(new Set());
+    setBulkAction(null);
+  }, []);
+
+  const handleBulkConfirmCancel = useCallback(() => {
+    setBulkConfirmOpen(false);
+    setBulkAction(null);
+  }, []);
+
   if (loading) {
     return <LoadingState label="Loading instances..." />;
   }
@@ -180,15 +311,27 @@ const Dashboard = () => {
     return <Alert severity="error">{error}</Alert>;
   }
 
+  const allFilteredSelected = filtered.length > 0 && selectedIds.size === filtered.length;
+  const someFilteredSelected = selectedIds.size > 0 && selectedIds.size < filtered.length;
+
   return (
     <Box>
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
         <Typography variant="h4" component="h1">
           Stack Instances
         </Typography>
-        <Button variant="contained" startIcon={<AddIcon />} onClick={() => navigate('/stack-instances/new')}>
-          Create Instance
-        </Button>
+        <Box sx={{ display: 'flex', gap: 1 }}>
+          <Button
+            variant="outlined"
+            startIcon={<CompareArrowsIcon />}
+            onClick={() => navigate('/stack-instances/compare')}
+          >
+            Compare
+          </Button>
+          <Button variant="contained" startIcon={<AddIcon />} onClick={() => navigate('/stack-instances/new')}>
+            Create Instance
+          </Button>
+        </Box>
       </Box>
 
       <Box sx={{ display: 'flex', gap: 2, mb: 3, alignItems: 'center', flexWrap: 'wrap' }}>
@@ -220,6 +363,77 @@ const Dashboard = () => {
           ))}
         </Box>
       </Box>
+
+      {/* Bulk Action Toolbar */}
+      {selectedIds.size > 0 && (
+        <Paper
+          sx={{
+            p: 1.5,
+            mb: 3,
+            display: 'flex',
+            alignItems: 'center',
+            gap: 2,
+            bgcolor: 'primary.light',
+            color: 'primary.contrastText',
+          }}
+          role="toolbar"
+          aria-label="Bulk actions"
+        >
+          <Typography variant="body2" sx={{ fontWeight: 'bold', mr: 1 }}>
+            {selectedIds.size} selected
+          </Typography>
+          <Button
+            size="small"
+            variant="contained"
+            color="success"
+            startIcon={bulkLoading ? <CircularProgress size={16} color="inherit" /> : <PlayArrowIcon />}
+            onClick={() => handleBulkActionClick('deploy')}
+            disabled={bulkLoading}
+          >
+            Deploy
+          </Button>
+          <Button
+            size="small"
+            variant="contained"
+            color="warning"
+            startIcon={bulkLoading ? <CircularProgress size={16} color="inherit" /> : <StopIcon />}
+            onClick={() => handleBulkActionClick('stop')}
+            disabled={bulkLoading}
+          >
+            Stop
+          </Button>
+          <Button
+            size="small"
+            variant="contained"
+            color="info"
+            startIcon={bulkLoading ? <CircularProgress size={16} color="inherit" /> : <CleaningServicesIcon />}
+            onClick={() => handleBulkActionClick('clean')}
+            disabled={bulkLoading}
+          >
+            Clean
+          </Button>
+          <Button
+            size="small"
+            variant="contained"
+            color="error"
+            startIcon={bulkLoading ? <CircularProgress size={16} color="inherit" /> : <DeleteIcon />}
+            onClick={() => handleBulkActionClick('delete')}
+            disabled={bulkLoading}
+          >
+            Delete
+          </Button>
+          <Box sx={{ flex: 1 }} />
+          <Button
+            size="small"
+            variant="outlined"
+            sx={{ color: 'primary.contrastText', borderColor: 'primary.contrastText' }}
+            onClick={() => setSelectedIds(new Set())}
+            disabled={bulkLoading}
+          >
+            Clear Selection
+          </Button>
+        </Paper>
+      )}
 
       {/* My Favorites section */}
       <Box sx={{ mb: 3 }}>
@@ -322,63 +536,174 @@ const Dashboard = () => {
           }
         />
       ) : (
-        <Grid container spacing={3} aria-live="polite">
-          {filtered.map((instance) => (
-            <Grid key={instance.id} size={{ xs: 12, sm: 6, md: 4 }}>
-              <Card sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
-                <CardContent sx={{ flex: 1 }}>
-                  <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
-                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, minWidth: 0 }}>
-                      <FavoriteButton entityType="instance" entityId={instance.id} size="small" initialFavorited={favoriteInstanceIds.has(instance.id)} />
-                      <Typography variant="h6" component="h2" noWrap>
-                        {instance.name}
-                      </Typography>
+        <Box>
+          {/* Select All header */}
+          <Box sx={{ display: 'flex', alignItems: 'center', mb: 1, ml: 1 }}>
+            <Checkbox
+              checked={allFilteredSelected}
+              indeterminate={someFilteredSelected}
+              onChange={toggleSelectAll}
+              slotProps={{ input: { 'aria-label': 'Select all instances' } }}
+              size="small"
+            />
+            <Typography variant="body2" color="text.secondary">
+              {allFilteredSelected ? 'Deselect all' : 'Select all'} ({filtered.length})
+            </Typography>
+          </Box>
+          <Grid container spacing={3} aria-live="polite">
+            {filtered.map((instance) => (
+              <Grid key={instance.id} size={{ xs: 12, sm: 6, md: 4 }}>
+                <Card
+                  sx={{
+                    height: '100%',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    outline: selectedIds.has(instance.id) ? 2 : 0,
+                    outlineColor: 'primary.main',
+                    outlineStyle: 'solid',
+                  }}
+                >
+                  <CardContent sx={{ flex: 1 }}>
+                    <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, minWidth: 0 }}>
+                        <Checkbox
+                          checked={selectedIds.has(instance.id)}
+                          onChange={() => toggleSelect(instance.id)}
+                          onClick={(e) => e.stopPropagation()}
+                          slotProps={{ input: { 'aria-label': `Select ${instance.name}` } }}
+                          size="small"
+                        />
+                        <FavoriteButton entityType="instance" entityId={instance.id} size="small" initialFavorited={favoriteInstanceIds.has(instance.id)} />
+                        <Typography variant="h6" component="h2" noWrap>
+                          {instance.name}
+                        </Typography>
+                      </Box>
+                      <StatusBadge status={instance.status} />
                     </Box>
-                    <StatusBadge status={instance.status} />
-                  </Box>
-                  <Typography variant="body2" color="text.secondary">
-                    Branch: {instance.branch}
-                  </Typography>
-                  <Typography variant="body2" color="text.secondary">
-                    Namespace: {instance.namespace}
-                  </Typography>
-                  {instance.definition && (
                     <Typography variant="body2" color="text.secondary">
-                      Definition: {instance.definition.name}
+                      Branch: {instance.branch}
                     </Typography>
-                  )}
-                  {instance.cluster_id && (() => {
-                    const clusterName = clusterNameMap.get(instance.cluster_id);
-                    return clusterName ? (
+                    <Typography variant="body2" color="text.secondary">
+                      Namespace: {instance.namespace}
+                    </Typography>
+                    {instance.definition && (
                       <Typography variant="body2" color="text.secondary">
-                        Cluster: {clusterName}
+                        Definition: {instance.definition.name}
                       </Typography>
-                    ) : null;
-                  })()}
-                  {instanceUrls[instance.id] && (
-                    <Link
-                      href={instanceUrls[instance.id]}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      variant="body2"
-                      sx={{ display: 'block', mt: 0.5, fontFamily: 'monospace', fontSize: '0.75rem' }}
-                      noWrap
-                    >
-                      {instanceUrls[instance.id]}
-                    </Link>
-                  )}
-                  <ExpiryChip instance={instance} />
-                </CardContent>
-                <CardActions>
-                  <Button size="small" onClick={() => navigate(`/stack-instances/${instance.id}`)}>
-                    Details
-                  </Button>
-                </CardActions>
-              </Card>
-            </Grid>
-          ))}
-        </Grid>
+                    )}
+                    {instance.cluster_id && (() => {
+                      const clusterName = clusterNameMap.get(instance.cluster_id);
+                      return clusterName ? (
+                        <Typography variant="body2" color="text.secondary">
+                          Cluster: {clusterName}
+                        </Typography>
+                      ) : null;
+                    })()}
+                    {instanceUrls[instance.id] && (
+                      <Link
+                        href={instanceUrls[instance.id]}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        variant="body2"
+                        sx={{ display: 'block', mt: 0.5, fontFamily: 'monospace', fontSize: '0.75rem' }}
+                        noWrap
+                      >
+                        {instanceUrls[instance.id]}
+                      </Link>
+                    )}
+                    <ExpiryChip instance={instance} />
+                  </CardContent>
+                  <CardActions>
+                    <Button size="small" onClick={() => navigate(`/stack-instances/${instance.id}`)}>
+                      Details
+                    </Button>
+                  </CardActions>
+                </Card>
+              </Grid>
+            ))}
+          </Grid>
+        </Box>
       )}
+
+      {/* Bulk Confirm Dialog */}
+      <Dialog open={bulkConfirmOpen} onClose={handleBulkConfirmCancel} maxWidth="sm" fullWidth>
+        <DialogTitle>
+          Confirm Bulk {bulkAction ? BULK_ACTION_LABELS[bulkAction] : ''}
+        </DialogTitle>
+        <DialogContent>
+          {bulkAction === 'delete' && (
+            <Alert severity="warning" sx={{ mb: 2 }}>
+              This action cannot be undone. Selected instances will be permanently deleted.
+            </Alert>
+          )}
+          <Typography variant="body1" sx={{ mb: 1 }}>
+            {bulkAction ? BULK_ACTION_LABELS[bulkAction] : ''} {selectedInstances.length} instance{selectedInstances.length !== 1 ? 's' : ''}:
+          </Typography>
+          <List dense>
+            {selectedInstances.map((inst) => (
+              <ListItem key={inst.id}>
+                <ListItemText
+                  primary={inst.name}
+                  secondary={`Status: ${inst.status}`}
+                />
+              </ListItem>
+            ))}
+          </List>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={handleBulkConfirmCancel}>Cancel</Button>
+          <Button
+            onClick={handleBulkConfirm}
+            variant="contained"
+            color={bulkAction === 'delete' ? 'error' : 'primary'}
+          >
+            {bulkAction ? BULK_ACTION_LABELS[bulkAction] : 'Confirm'}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Bulk Results Dialog */}
+      <Dialog open={bulkResultOpen} onClose={handleBulkResultClose} maxWidth="sm" fullWidth>
+        <DialogTitle>
+          Bulk Operation Results
+        </DialogTitle>
+        <DialogContent>
+          {bulkResult && (
+            <Box>
+              <Box sx={{ display: 'flex', gap: 2, mb: 2 }}>
+                <Alert severity="success" sx={{ flex: 1 }}>
+                  {bulkResult.succeeded} succeeded
+                </Alert>
+                {bulkResult.failed > 0 && (
+                  <Alert severity="error" sx={{ flex: 1 }}>
+                    {bulkResult.failed} failed
+                  </Alert>
+                )}
+              </Box>
+              <List dense>
+                {bulkResult.results.map((item) => (
+                  <ListItem key={item.instance_id}>
+                    <ListItemText
+                      primary={item.instance_name}
+                      secondary={item.status === 'error' ? item.error : 'Success'}
+                      slotProps={{
+                        secondary: {
+                          color: item.status === 'error' ? 'error' : 'success.main',
+                        },
+                      }}
+                    />
+                  </ListItem>
+                ))}
+              </List>
+            </Box>
+          )}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={handleBulkResultClose} variant="contained">
+            Close
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   );
 };

@@ -113,6 +113,18 @@ func (m *mockInstanceRepo) FindByCluster(clusterID string) ([]models.StackInstan
 	return out, nil
 }
 
+func (m *mockInstanceRepo) CountByClusterAndOwner(clusterID, ownerID string) (int, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	count := 0
+	for _, inst := range m.instances {
+		if inst.ClusterID == clusterID && inst.OwnerID == ownerID {
+			count++
+		}
+	}
+	return count, nil
+}
+
 func (m *mockInstanceRepo) ListExpired() ([]*models.StackInstance, error) {
 	return nil, nil
 }

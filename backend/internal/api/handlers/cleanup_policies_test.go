@@ -511,6 +511,15 @@ func (r *cleanupMockInstanceRepo) FindByCluster(id string) ([]models.StackInstan
 	}
 	return result, nil
 }
+func (r *cleanupMockInstanceRepo) CountByClusterAndOwner(clusterID, ownerID string) (int, error) {
+	count := 0
+	for _, inst := range r.instances {
+		if inst.ClusterID == clusterID && inst.OwnerID == ownerID {
+			count++
+		}
+	}
+	return count, nil
+}
 func (r *cleanupMockInstanceRepo) ListExpired() ([]*models.StackInstance, error) { return nil, nil }
 
 // cleanupMockAuditRepo implements models.AuditLogRepository for handler tests.

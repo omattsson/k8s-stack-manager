@@ -66,7 +66,7 @@ func main() {
 	}
 
 	// Initialize repository using the factory (selects MySQL or Azure Table based on config)
-	repo, err := database.NewRepository(cfg)
+	repo, mysqlGormDB, err := database.NewRepositoryWithGormDB(cfg)
 	if err != nil {
 		slog.Error("Failed to initialize repository", "error", err)
 		os.Exit(1)
@@ -160,6 +160,18 @@ func main() {
 		os.Exit(1)
 	}
 
+	quotaRepo, err := azure.NewResourceQuotaRepository(azCfg.AccountName, azCfg.AccountKey, azCfg.Endpoint, azCfg.UseAzurite)
+	if err != nil {
+		slog.Error("Failed to create resource quota repository", "error", err)
+		os.Exit(1)
+	}
+
+	quotaOverrideRepo, err := azure.NewInstanceQuotaOverrideRepository(azCfg.AccountName, azCfg.AccountKey, azCfg.Endpoint, azCfg.UseAzurite)
+	if err != nil {
+		slog.Error("Failed to create instance quota override repository", "error", err)
+		os.Exit(1)
+	}
+
 	// ------------------------------------------------------------------
 	// Phase 1: Create domain services
 	// ------------------------------------------------------------------
@@ -218,18 +230,35 @@ func main() {
 		DeployLogRepo: deployLogRepo,
 		Hub:           hub,
 		MaxConcurrent: int(cfg.Deployment.MaxConcurrentDeploys),
+		QuotaRepo:         quotaRepo,
+		QuotaOverrideRepo: quotaOverrideRepo,
 	})
 
 	// ------------------------------------------------------------------
 	// Phase 1: Create handlers
 	// ------------------------------------------------------------------
 	authHandler := handlers.NewAuthHandler(userRepo, &cfg.Auth)
-	templateHandler := handlers.NewTemplateHandler(templateRepo, templateChartRepo, definitionRepo, chartConfigRepo)
-	definitionHandler := handlers.NewDefinitionHandler(definitionRepo, chartConfigRepo, instanceRepo, templateRepo, templateChartRepo)
+
+	// Template version repository — datastore selection via config.
+	var templateVersionRepo models.TemplateVersionRepository
+	if cfg.AzureTable.UseAzureTable {
+		tvr, tvrErr := azure.NewTemplateVersionRepository(azCfg.AccountName, azCfg.AccountKey, azCfg.Endpoint, azCfg.UseAzurite)
+		if tvrErr != nil {
+			slog.Error("Failed to create template version repository", "error", tvrErr)
+			os.Exit(1)
+		}
+		templateVersionRepo = tvr
+	} else {
+		templateVersionRepo = database.NewGORMTemplateVersionRepository(mysqlGormDB)
+	}
+
+	templateHandler := handlers.NewTemplateHandlerWithVersions(templateRepo, templateChartRepo, definitionRepo, chartConfigRepo, templateVersionRepo)
+	definitionHandler := handlers.NewDefinitionHandlerWithVersions(definitionRepo, chartConfigRepo, instanceRepo, templateRepo, templateChartRepo, templateVersionRepo)
+	templateVersionHandler := handlers.NewTemplateVersionHandler(templateVersionRepo, templateRepo)
 	instanceHandler := handlers.NewInstanceHandlerWithDeployer(
 		instanceRepo, overrideRepo, branchOverrideRepo, definitionRepo, chartConfigRepo,
 		templateRepo, templateChartRepo, valuesGen, userRepo,
-		deployManager, k8sWatcher, clusterRegistry, deployLogRepo,
+		deployManager, k8sWatcher, clusterRegistry, deployLogRepo, clusterRepo,
 		cfg.App.DefaultInstanceTTLMinutes,
 	)
 	gitHandler := handlers.NewGitHandler(gitRegistry)
@@ -238,9 +267,24 @@ func main() {
 	apiKeyHandler := handlers.NewAPIKeyHandler(apiKeyRepo, userRepo)
 
 	adminHandler := handlers.NewAdminHandler(clusterRegistry, instanceRepo)
-	clusterHandler := handlers.NewClusterHandler(clusterRepo, clusterRegistry, instanceRepo)
+	clusterHandler := handlers.NewClusterHandlerWithQuotas(clusterRepo, clusterRegistry, instanceRepo, quotaRepo)
 	branchOverrideHandler := handlers.NewBranchOverrideHandler(branchOverrideRepo, instanceRepo)
+	instanceQuotaOverrideHandler := handlers.NewInstanceQuotaOverrideHandler(quotaOverrideRepo, instanceRepo)
 	sharedValuesHandler := handlers.NewSharedValuesHandler(sharedValuesRepo, clusterRepo)
+
+	// Notification repository — datastore selection via config.
+	var notificationRepo models.NotificationRepository
+	if cfg.AzureTable.UseAzureTable {
+		nr, nrErr := azure.NewNotificationRepository(azCfg.AccountName, azCfg.AccountKey, azCfg.Endpoint, azCfg.UseAzurite)
+		if nrErr != nil {
+			slog.Error("Failed to create notification repository", "error", nrErr)
+			os.Exit(1)
+		}
+		notificationRepo = nr
+	} else {
+		notificationRepo = database.NewGORMNotificationRepository(mysqlGormDB)
+	}
+	notificationHandler := handlers.NewNotificationHandler(notificationRepo)
 
 	favoriteRepo, err := azure.NewUserFavoriteRepository(azCfg.AccountName, azCfg.AccountKey, azCfg.Endpoint, azCfg.UseAzurite)
 	if err != nil {
@@ -278,30 +322,33 @@ func main() {
 	// Setup router — use gin.New() since SetupRoutes registers its own Logger and Recovery middleware.
 	router := gin.New()
 	rateLimiter := routes.SetupRoutes(router, routes.Deps{
-		Repository:            repo,
-		HealthChecker:         healthChecker,
-		Config:                cfg,
-		Hub:                   hub,
-		AuthHandler:           authHandler,
-		TemplateHandler:       templateHandler,
-		DefinitionHandler:     definitionHandler,
-		InstanceHandler:       instanceHandler,
-		GitHandler:            gitHandler,
-		AuditLogHandler:       auditLogHandler,
-		AuditLogger:           auditRepo,
-		UserHandler:           userHandler,
-		APIKeyHandler:         apiKeyHandler,
-		AdminHandler:          adminHandler,
-		BranchOverrideHandler: branchOverrideHandler,
-		FavoriteHandler:       favoriteHandler,
-		QuickDeployHandler:    quickDeployHandler,
-		AnalyticsHandler:      analyticsHandler,
-		CleanupPolicyHandler:  cleanupPolicyHandler,
-		CleanupScheduler:      cleanupScheduler,
-		ClusterHandler:        clusterHandler,
-		SharedValuesHandler:   sharedValuesHandler,
-		UserRepo:              userRepo,
-		APIKeyRepo:            apiKeyRepo,
+		Repository:             repo,
+		HealthChecker:          healthChecker,
+		Config:                 cfg,
+		Hub:                    hub,
+		AuthHandler:            authHandler,
+		TemplateHandler:        templateHandler,
+		DefinitionHandler:      definitionHandler,
+		InstanceHandler:        instanceHandler,
+		GitHandler:             gitHandler,
+		AuditLogHandler:        auditLogHandler,
+		AuditLogger:            auditRepo,
+		UserHandler:            userHandler,
+		APIKeyHandler:          apiKeyHandler,
+		AdminHandler:           adminHandler,
+		BranchOverrideHandler:          branchOverrideHandler,
+		InstanceQuotaOverrideHandler:   instanceQuotaOverrideHandler,
+		TemplateVersionHandler: templateVersionHandler,
+		NotificationHandler:    notificationHandler,
+		FavoriteHandler:        favoriteHandler,
+		QuickDeployHandler:     quickDeployHandler,
+		AnalyticsHandler:       analyticsHandler,
+		CleanupPolicyHandler:   cleanupPolicyHandler,
+		CleanupScheduler:       cleanupScheduler,
+		ClusterHandler:         clusterHandler,
+		SharedValuesHandler:    sharedValuesHandler,
+		UserRepo:               userRepo,
+		APIKeyRepo:             apiKeyRepo,
 	})
 	defer rateLimiter.Stop()
 	router.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))

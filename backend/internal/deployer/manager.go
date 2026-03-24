@@ -46,7 +46,9 @@ type Manager struct {
 	instanceRepo   models.StackInstanceRepository
 	logRepo        models.DeploymentLogRepository
 	hub            websocket.BroadcastSender
-	semaphore      chan struct{}
+	quotaRepo         models.ResourceQuotaRepository
+	quotaOverrideRepo models.InstanceQuotaOverrideRepository
+	semaphore         chan struct{}
 	shutdownCtx    context.Context
 	shutdownCancel context.CancelFunc
 	wg             sync.WaitGroup
@@ -60,6 +62,8 @@ type ManagerConfig struct {
 	DeployLogRepo models.DeploymentLogRepository
 	Hub           websocket.BroadcastSender
 	MaxConcurrent int
+	QuotaRepo         models.ResourceQuotaRepository         // optional: apply quotas on deploy
+	QuotaOverrideRepo models.InstanceQuotaOverrideRepository // optional: per-instance quota overrides
 }
 
 // DeployRequest contains everything needed to deploy a stack instance.
@@ -90,6 +94,8 @@ func NewManager(cfg ManagerConfig) *Manager {
 		instanceRepo:   cfg.InstanceRepo,
 		logRepo:        cfg.DeployLogRepo,
 		hub:            cfg.Hub,
+		quotaRepo:         cfg.QuotaRepo,
+		quotaOverrideRepo: cfg.QuotaOverrideRepo,
 		semaphore:      make(chan struct{}, maxConcurrent),
 		shutdownCtx:    ctx,
 		shutdownCancel: cancel,
@@ -258,6 +264,7 @@ func (m *Manager) executeDeploy(helm HelmExecutor, instanceID string, deployLog 
 			Version:     chart.ChartConfig.ChartVersion,
 			ValuesFile:  valuesFile,
 			Namespace:   namespace,
+			SkipCRDs:    true, // CRDs are cluster-scoped; skip to avoid conflicts across namespaces
 		})
 
 		allOutput += fmt.Sprintf("=== Chart: %s ===\n%s\n", chart.ChartConfig.ChartName, output)
@@ -270,6 +277,19 @@ func (m *Manager) executeDeploy(helm HelmExecutor, instanceID string, deployLog 
 		}
 
 		installedCharts = append(installedCharts, chart)
+	}
+
+	// Apply resource quotas to the namespace if configured.
+	if deployErr == nil && m.quotaRepo != nil {
+		if quotaErr := m.applyNamespaceQuotas(ctx, instanceID, namespace); quotaErr != nil {
+			// Quota application failure is non-fatal — log warning but don't fail the deploy.
+			slog.Warn("failed to apply resource quotas",
+				"instance_id", instanceID,
+				"namespace", namespace,
+				"error", quotaErr,
+			)
+			allOutput += fmt.Sprintf("WARNING: failed to apply resource quotas: %s\n", quotaErr.Error())
+		}
 	}
 
 	// Roll back successfully installed charts on partial failure.
@@ -820,6 +840,91 @@ func (m *Manager) finalizeClean(instanceID string, deployLog *models.DeploymentL
 // truncateString returns s truncated to maxLen characters. If truncation
 // occurs, the last three characters are replaced with "..." to signal that
 // the string was cut.
+// applyNamespaceQuotas fetches the quota config for the instance's cluster and
+// applies ResourceQuota + LimitRange to the namespace via the K8s API.
+func (m *Manager) applyNamespaceQuotas(ctx context.Context, instanceID, namespace string) error {
+	// Look up the instance to get its cluster ID.
+	instance, err := m.instanceRepo.FindByID(instanceID)
+	if err != nil {
+		return fmt.Errorf("finding instance: %w", err)
+	}
+
+	clusterID, err := m.registry.ResolveClusterID(instance.ClusterID)
+	if err != nil {
+		return fmt.Errorf("resolving cluster: %w", err)
+	}
+
+	// Get cluster-level defaults. If none configured, start with an empty base.
+	clusterQuota, err := m.quotaRepo.GetByClusterID(ctx, clusterID)
+	if err != nil {
+		clusterQuota = &models.ResourceQuotaConfig{}
+	}
+
+	// Merge per-instance overrides on top of cluster defaults.
+	effectiveQuota := clusterQuota
+	hasOverride := false
+	if m.quotaOverrideRepo != nil {
+		override, overrideErr := m.quotaOverrideRepo.GetByInstanceID(ctx, instanceID)
+		if overrideErr == nil && override != nil {
+			effectiveQuota = mergeQuotaOverride(clusterQuota, override)
+			hasOverride = true
+		}
+	}
+
+	// If the effective quota is completely empty, skip.
+	if effectiveQuota.CPURequest == "" && effectiveQuota.CPULimit == "" &&
+		effectiveQuota.MemoryRequest == "" && effectiveQuota.MemoryLimit == "" &&
+		effectiveQuota.StorageLimit == "" && effectiveQuota.PodLimit == 0 {
+		return nil
+	}
+
+	k8sClient, err := m.registry.GetK8sClient(clusterID)
+	if err != nil {
+		return fmt.Errorf("getting k8s client: %w", err)
+	}
+
+	if err := k8sClient.EnsureResourceQuota(ctx, namespace, effectiveQuota); err != nil {
+		return fmt.Errorf("ensuring resource quota: %w", err)
+	}
+	if err := k8sClient.EnsureLimitRange(ctx, namespace, effectiveQuota); err != nil {
+		return fmt.Errorf("ensuring limit range: %w", err)
+	}
+
+	slog.Info("applied resource quotas to namespace",
+		"instance_id", instanceID,
+		"namespace", namespace,
+		"cluster_id", clusterID,
+		"has_instance_override", hasOverride,
+	)
+	return nil
+}
+
+// mergeQuotaOverride applies per-instance overrides on top of cluster defaults.
+// Non-empty override fields replace the cluster default; empty/nil fields fall
+// back to the cluster value.
+func mergeQuotaOverride(cluster *models.ResourceQuotaConfig, override *models.InstanceQuotaOverride) *models.ResourceQuotaConfig {
+	merged := *cluster // copy
+	if override.CPURequest != "" {
+		merged.CPURequest = override.CPURequest
+	}
+	if override.CPULimit != "" {
+		merged.CPULimit = override.CPULimit
+	}
+	if override.MemoryRequest != "" {
+		merged.MemoryRequest = override.MemoryRequest
+	}
+	if override.MemoryLimit != "" {
+		merged.MemoryLimit = override.MemoryLimit
+	}
+	if override.StorageLimit != "" {
+		merged.StorageLimit = override.StorageLimit
+	}
+	if override.PodLimit != nil {
+		merged.PodLimit = *override.PodLimit
+	}
+	return &merged
+}
+
 func truncateString(s string, maxLen int) string {
 	if len(s) <= maxLen {
 		return s

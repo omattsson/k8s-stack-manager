@@ -25,6 +25,7 @@ vi.mock('../../../api/client', () => ({
     update: vi.fn(),
     addChart: vi.fn(),
     updateChart: vi.fn(),
+    exportDefinition: vi.fn(),
   },
   templateService: {
     get: vi.fn(),
@@ -161,6 +162,42 @@ describe('StackDefinitions Form', () => {
 
     await user.click(screen.getByRole('button', { name: /cancel/i }));
     expect(mockNavigate).toHaveBeenCalledWith('/stack-definitions');
+  });
+
+  it('shows Export button in edit mode', async () => {
+    (definitionService.get as ReturnType<typeof vi.fn>).mockResolvedValue({
+      id: '123',
+      name: 'Test Def',
+      description: 'A test definition',
+      default_branch: 'develop',
+      charts: [],
+    });
+    render(
+      <MemoryRouter initialEntries={['/stack-definitions/123/edit']}>
+        <NotificationProvider>
+          <Routes>
+            <Route path="/stack-definitions/:id/edit" element={<Form />} />
+          </Routes>
+        </NotificationProvider>
+      </MemoryRouter>
+    );
+    await waitFor(() => {
+      expect(screen.getByText('Edit Stack Definition')).toBeInTheDocument();
+    });
+    expect(screen.getByRole('button', { name: /export/i })).toBeInTheDocument();
+  });
+
+  it('does not show Export button in create mode', () => {
+    render(
+      <MemoryRouter initialEntries={['/stack-definitions/new']}>
+        <NotificationProvider>
+          <Routes>
+            <Route path="/stack-definitions/new" element={<Form />} />
+          </Routes>
+        </NotificationProvider>
+      </MemoryRouter>
+    );
+    expect(screen.queryByRole('button', { name: /export/i })).not.toBeInTheDocument();
   });
 
   it('adds a chart when Add Chart is clicked', async () => {

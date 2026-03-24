@@ -45,7 +45,9 @@ func setupDefinitionRouterWithTemplates(
 	{
 		defs.GET("", h.ListDefinitions)
 		defs.POST("", h.CreateDefinition)
+		defs.POST("/import", h.ImportDefinition)
 		defs.GET("/:id", h.GetDefinition)
+		defs.GET("/:id/export", h.ExportDefinition)
 		defs.PUT("/:id", h.UpdateDefinition)
 		defs.DELETE("/:id", h.DeleteDefinition)
 		defs.DELETE("/:id/charts/:chartId", h.DeleteChartConfig)
@@ -356,5 +358,355 @@ func TestDeleteDefinition(t *testing.T) {
 		req, _ := http.NewRequest(http.MethodDelete, "/api/v1/stack-definitions/missing", nil)
 		router.ServeHTTP(w, req)
 		assert.Equal(t, http.StatusNotFound, w.Code)
+	})
+}
+
+// ---- ExportDefinition ----
+
+func TestExportDefinition(t *testing.T) {
+	t.Parallel()
+
+	t.Run("exports definition with charts", func(t *testing.T) {
+		t.Parallel()
+		defRepo := NewMockStackDefinitionRepository()
+		ccRepo := NewMockChartConfigRepository()
+		seedDefinition(t, defRepo, "d1", "My Stack", "uid-1")
+		require.NoError(t, ccRepo.Create(&models.ChartConfig{
+			ID:                "c1",
+			StackDefinitionID: "d1",
+			ChartName:         "backend",
+			RepositoryURL:     "https://charts.example.com",
+			SourceRepoURL:     "https://git.example.com/repo",
+			ChartPath:         "charts/backend",
+			ChartVersion:      "1.0.0",
+			DefaultValues:     "replicas: 1",
+			DeployOrder:       1,
+			CreatedAt:         time.Now().UTC(),
+		}))
+		require.NoError(t, ccRepo.Create(&models.ChartConfig{
+			ID:                "c2",
+			StackDefinitionID: "d1",
+			ChartName:         "frontend",
+			DeployOrder:       2,
+			CreatedAt:         time.Now().UTC(),
+		}))
+
+		router := setupDefinitionRouter(defRepo, ccRepo, NewMockStackInstanceRepository(), "uid-1", "devops")
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest(http.MethodGet, "/api/v1/stack-definitions/d1/export", nil)
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		var bundle DefinitionExportBundle
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &bundle))
+		assert.Equal(t, "1.0", bundle.SchemaVersion)
+		assert.False(t, bundle.ExportedAt.IsZero())
+		assert.Equal(t, "My Stack", bundle.Definition.Name)
+		assert.Equal(t, "test definition", bundle.Definition.Description)
+		assert.Equal(t, "master", bundle.Definition.DefaultBranch)
+		assert.Len(t, bundle.Charts, 2)
+
+		// Verify chart fields are exported correctly.
+		var backendChart *ChartConfigExportData
+		for i := range bundle.Charts {
+			if bundle.Charts[i].ChartName == "backend" {
+				backendChart = &bundle.Charts[i]
+				break
+			}
+		}
+		require.NotNil(t, backendChart)
+		assert.Equal(t, "https://charts.example.com", backendChart.RepositoryURL)
+		assert.Equal(t, "https://git.example.com/repo", backendChart.SourceRepoURL)
+		assert.Equal(t, "charts/backend", backendChart.ChartPath)
+		assert.Equal(t, "1.0.0", backendChart.ChartVersion)
+		assert.Equal(t, "replicas: 1", backendChart.DefaultValues)
+		assert.Equal(t, 1, backendChart.DeployOrder)
+	})
+
+	t.Run("exports definition with no charts", func(t *testing.T) {
+		t.Parallel()
+		defRepo := NewMockStackDefinitionRepository()
+		ccRepo := NewMockChartConfigRepository()
+		seedDefinition(t, defRepo, "d1", "Empty Stack", "uid-1")
+
+		router := setupDefinitionRouter(defRepo, ccRepo, NewMockStackInstanceRepository(), "uid-1", "devops")
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest(http.MethodGet, "/api/v1/stack-definitions/d1/export", nil)
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		var bundle DefinitionExportBundle
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &bundle))
+		assert.Empty(t, bundle.Charts)
+	})
+
+	t.Run("not found returns 404", func(t *testing.T) {
+		t.Parallel()
+		defRepo := NewMockStackDefinitionRepository()
+		router := setupDefinitionRouter(defRepo, NewMockChartConfigRepository(), NewMockStackInstanceRepository(), "uid-1", "devops")
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest(http.MethodGet, "/api/v1/stack-definitions/missing/export", nil)
+		router.ServeHTTP(w, req)
+		assert.Equal(t, http.StatusNotFound, w.Code)
+	})
+
+	t.Run("chart list error returns 500", func(t *testing.T) {
+		t.Parallel()
+		defRepo := NewMockStackDefinitionRepository()
+		ccRepo := NewMockChartConfigRepository()
+		seedDefinition(t, defRepo, "d1", "My Stack", "uid-1")
+		ccRepo.SetError(errInternal)
+
+		router := setupDefinitionRouter(defRepo, ccRepo, NewMockStackInstanceRepository(), "uid-1", "devops")
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest(http.MethodGet, "/api/v1/stack-definitions/d1/export", nil)
+		router.ServeHTTP(w, req)
+		assert.Equal(t, http.StatusInternalServerError, w.Code)
+	})
+}
+
+// ---- ImportDefinition ----
+
+func TestImportDefinition(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name           string
+		body           string
+		callerID       string
+		setupDef       func(*MockStackDefinitionRepository)
+		setupChart     func(*MockChartConfigRepository)
+		wantStatus     int
+		wantErrContain string
+	}{
+		{
+			name: "valid import with charts",
+			body: `{
+				"schema_version": "1.0",
+				"exported_at": "2024-01-01T00:00:00Z",
+				"definition": {
+					"name": "Imported Stack",
+					"description": "imported desc",
+					"default_branch": "develop"
+				},
+				"charts": [
+					{
+						"chart_name": "backend",
+						"repository_url": "https://charts.example.com",
+						"source_repo_url": "https://git.example.com/repo",
+						"chart_path": "charts/backend",
+						"chart_version": "1.0.0",
+						"default_values": "replicas: 2",
+						"deploy_order": 1
+					},
+					{
+						"chart_name": "frontend",
+						"deploy_order": 2
+					}
+				]
+			}`,
+			callerID:   "uid-1",
+			setupDef:   func(_ *MockStackDefinitionRepository) {},
+			setupChart: func(_ *MockChartConfigRepository) {},
+			wantStatus: http.StatusCreated,
+		},
+		{
+			name: "valid import with no charts",
+			body: `{
+				"schema_version": "1.0",
+				"definition": {"name": "No Charts Stack"},
+				"charts": []
+			}`,
+			callerID:   "uid-1",
+			setupDef:   func(_ *MockStackDefinitionRepository) {},
+			setupChart: func(_ *MockChartConfigRepository) {},
+			wantStatus: http.StatusCreated,
+		},
+		{
+			name: "valid import defaults branch to master",
+			body: `{
+				"schema_version": "1.0",
+				"definition": {"name": "Default Branch"},
+				"charts": []
+			}`,
+			callerID:   "uid-1",
+			setupDef:   func(_ *MockStackDefinitionRepository) {},
+			setupChart: func(_ *MockChartConfigRepository) {},
+			wantStatus: http.StatusCreated,
+		},
+		{
+			name:           "missing schema_version returns 400",
+			body:           `{"definition": {"name": "X"}, "charts": []}`,
+			callerID:       "uid-1",
+			setupDef:       func(_ *MockStackDefinitionRepository) {},
+			setupChart:     func(_ *MockChartConfigRepository) {},
+			wantStatus:     http.StatusBadRequest,
+			wantErrContain: "schema_version is required",
+		},
+		{
+			name:           "unsupported schema_version returns 400",
+			body:           `{"schema_version": "99.0", "definition": {"name": "X"}, "charts": []}`,
+			callerID:       "uid-1",
+			setupDef:       func(_ *MockStackDefinitionRepository) {},
+			setupChart:     func(_ *MockChartConfigRepository) {},
+			wantStatus:     http.StatusBadRequest,
+			wantErrContain: "unsupported schema_version",
+		},
+		{
+			name:           "missing definition name returns 400",
+			body:           `{"schema_version": "1.0", "definition": {"description": "no name"}, "charts": []}`,
+			callerID:       "uid-1",
+			setupDef:       func(_ *MockStackDefinitionRepository) {},
+			setupChart:     func(_ *MockChartConfigRepository) {},
+			wantStatus:     http.StatusBadRequest,
+			wantErrContain: "definition name is required",
+		},
+		{
+			name: "chart with empty name returns 400",
+			body: `{
+				"schema_version": "1.0",
+				"definition": {"name": "My Stack"},
+				"charts": [{"chart_name": "", "deploy_order": 1}]
+			}`,
+			callerID:       "uid-1",
+			setupDef:       func(_ *MockStackDefinitionRepository) {},
+			setupChart:     func(_ *MockChartConfigRepository) {},
+			wantStatus:     http.StatusBadRequest,
+			wantErrContain: "chart_name is required",
+		},
+		{
+			name:       "invalid JSON returns 400",
+			body:       `{bad json`,
+			callerID:   "uid-1",
+			setupDef:   func(_ *MockStackDefinitionRepository) {},
+			setupChart: func(_ *MockChartConfigRepository) {},
+			wantStatus: http.StatusBadRequest,
+		},
+		{
+			name: "definition repo error returns 500",
+			body: `{
+				"schema_version": "1.0",
+				"definition": {"name": "My Stack"},
+				"charts": []
+			}`,
+			callerID: "uid-1",
+			setupDef: func(repo *MockStackDefinitionRepository) {
+				repo.SetError(errInternal)
+			},
+			setupChart: func(_ *MockChartConfigRepository) {},
+			wantStatus: http.StatusInternalServerError,
+		},
+		{
+			name: "chart repo error returns 500",
+			body: `{
+				"schema_version": "1.0",
+				"definition": {"name": "My Stack"},
+				"charts": [{"chart_name": "backend"}]
+			}`,
+			callerID: "uid-1",
+			setupDef: func(_ *MockStackDefinitionRepository) {},
+			setupChart: func(repo *MockChartConfigRepository) {
+				repo.SetError(errInternal)
+			},
+			wantStatus: http.StatusInternalServerError,
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			defRepo := NewMockStackDefinitionRepository()
+			ccRepo := NewMockChartConfigRepository()
+			tt.setupDef(defRepo)
+			tt.setupChart(ccRepo)
+			router := setupDefinitionRouter(defRepo, ccRepo, NewMockStackInstanceRepository(), tt.callerID, "devops")
+
+			w := httptest.NewRecorder()
+			req, _ := http.NewRequest(http.MethodPost, "/api/v1/stack-definitions/import", bytes.NewBufferString(tt.body))
+			req.Header.Set("Content-Type", "application/json")
+			router.ServeHTTP(w, req)
+
+			assert.Equal(t, tt.wantStatus, w.Code)
+
+			if tt.wantErrContain != "" {
+				var resp map[string]string
+				require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+				assert.Contains(t, resp["error"], tt.wantErrContain)
+			}
+
+			if tt.wantStatus == http.StatusCreated {
+				var resp map[string]json.RawMessage
+				require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+
+				var def models.StackDefinition
+				require.NoError(t, json.Unmarshal(resp["definition"], &def))
+				assert.NotEmpty(t, def.ID)
+				assert.Equal(t, tt.callerID, def.OwnerID)
+				assert.NotEmpty(t, def.CreatedAt)
+				assert.NotEmpty(t, def.UpdatedAt)
+			}
+		})
+	}
+}
+
+// ---- Export/Import round-trip ----
+
+func TestExportImportRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	t.Run("exported bundle can be imported", func(t *testing.T) {
+		t.Parallel()
+		defRepo := NewMockStackDefinitionRepository()
+		ccRepo := NewMockChartConfigRepository()
+		seedDefinition(t, defRepo, "d1", "Round Trip Stack", "uid-1")
+		require.NoError(t, ccRepo.Create(&models.ChartConfig{
+			ID:                "c1",
+			StackDefinitionID: "d1",
+			ChartName:         "api",
+			RepositoryURL:     "https://charts.example.com",
+			DefaultValues:     "port: 8080",
+			DeployOrder:       1,
+			CreatedAt:         time.Now().UTC(),
+		}))
+
+		router := setupDefinitionRouter(defRepo, ccRepo, NewMockStackInstanceRepository(), "uid-2", "devops")
+
+		// Export
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest(http.MethodGet, "/api/v1/stack-definitions/d1/export", nil)
+		router.ServeHTTP(w, req)
+		require.Equal(t, http.StatusOK, w.Code)
+
+		exportBody := w.Body.Bytes()
+
+		// Import using the exported bundle
+		w2 := httptest.NewRecorder()
+		req2, _ := http.NewRequest(http.MethodPost, "/api/v1/stack-definitions/import", bytes.NewBuffer(exportBody))
+		req2.Header.Set("Content-Type", "application/json")
+		router.ServeHTTP(w2, req2)
+
+		require.Equal(t, http.StatusCreated, w2.Code)
+
+		var resp map[string]json.RawMessage
+		require.NoError(t, json.Unmarshal(w2.Body.Bytes(), &resp))
+
+		var importedDef models.StackDefinition
+		require.NoError(t, json.Unmarshal(resp["definition"], &importedDef))
+
+		// Fresh ID, different from original.
+		assert.NotEqual(t, "d1", importedDef.ID)
+		assert.Equal(t, "Round Trip Stack", importedDef.Name)
+		// Owner is the importing user.
+		assert.Equal(t, "uid-2", importedDef.OwnerID)
+
+		var importedCharts []models.ChartConfig
+		require.NoError(t, json.Unmarshal(resp["charts"], &importedCharts))
+		assert.Len(t, importedCharts, 1)
+		assert.NotEqual(t, "c1", importedCharts[0].ID)
+		assert.Equal(t, importedDef.ID, importedCharts[0].StackDefinitionID)
+		assert.Equal(t, "api", importedCharts[0].ChartName)
+		assert.Equal(t, "https://charts.example.com", importedCharts[0].RepositoryURL)
+		assert.Equal(t, "port: 8080", importedCharts[0].DefaultValues)
 	})
 }

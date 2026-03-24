@@ -21,8 +21,8 @@ Built with Vite + React 19 + TypeScript (strict mode). Uses SWC via `@vitejs/plu
 - `useState`/`useEffect` for state, no global state library
 - MUI `sx` prop for styling, no separate CSS files
 - TypeScript interfaces for all component props and API response types
-- Pages: one directory per page under `src/pages/` with `index.tsx` — current pages: Login, StackInstances (Dashboard), StackDefinitions, Templates, AuditLog, Admin, Profile, Analytics, CleanupPolicies, ClusterHealth, SharedValues, NotFound
-- Shared components in `src/components/`: Layout, AccessUrls, BranchSelector, ConfirmDialog, DeploymentLogViewer, EmptyState, EntityLink, ErrorBoundary, FavoriteButton, LoadingState, PodStatusDisplay, ProtectedRoute, QuickDeployDialog, StatusBadge, TtlSelector, YamlEditor
+- Pages: one directory per page under `src/pages/` with `index.tsx` — current pages: Login, StackInstances (Dashboard), StackDefinitions, Templates, AuditLog, Admin, Profile, Analytics, CleanupPolicies, ClusterHealth, Notifications, SharedValues, NotFound
+- Shared components in `src/components/`: Layout, AccessUrls, BranchSelector, ConfirmDialog, DeploymentLogViewer, EmptyState, EntityLink, ErrorBoundary, FavoriteButton, LoadingState, NotificationCenter, PodStatusDisplay, ProtectedRoute, QuickDeployDialog, QuotaConfigDialog, StatusBadge, TtlSelector, YamlEditor
 - Register new pages in `src/routes.tsx`, add nav in `src/components/Layout/index.tsx`
 
 ## Page Pattern

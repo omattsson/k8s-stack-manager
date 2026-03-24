@@ -90,6 +90,81 @@ func (d *Database) AutoMigrate() error {
 		},
 	})
 
+	// Create notifications and notification_preferences tables
+	migrator.AddMigration(schema.Migration{
+		Version:     "20231201000004",
+		Name:        "create_notification_tables",
+		Description: "Create notifications and notification_preferences tables",
+		Up: func(tx *gorm.DB) error {
+			if err := tx.AutoMigrate(&models.Notification{}, &models.NotificationPreference{}); err != nil {
+				return err
+			}
+			return nil
+		},
+		Down: func(tx *gorm.DB) error {
+			if err := tx.Migrator().DropTable(&models.NotificationPreference{}); err != nil {
+				return err
+			}
+			return tx.Migrator().DropTable(&models.Notification{})
+		},
+	})
+
+	// Create resource_quota_configs table and add max_instances_per_user to clusters
+	migrator.AddMigration(schema.Migration{
+		Version:     "20231201000005",
+		Name:        "create_resource_quota_configs",
+		Description: "Create resource_quota_configs table and add max_instances_per_user to clusters",
+		Up: func(tx *gorm.DB) error {
+			if err := tx.AutoMigrate(&models.ResourceQuotaConfig{}); err != nil {
+				return err
+			}
+			// Add max_instances_per_user column to clusters using GORM's dialect-agnostic migrator.
+			if !tx.Migrator().HasColumn(&models.Cluster{}, "MaxInstancesPerUser") {
+				if err := tx.Migrator().AddColumn(&models.Cluster{}, "MaxInstancesPerUser"); err != nil {
+					return err
+				}
+			}
+			return nil
+		},
+		Down: func(tx *gorm.DB) error {
+			if err := tx.Migrator().DropTable(&models.ResourceQuotaConfig{}); err != nil {
+				return err
+			}
+			if tx.Migrator().HasColumn(&models.Cluster{}, "MaxInstancesPerUser") {
+				if err := tx.Migrator().DropColumn(&models.Cluster{}, "MaxInstancesPerUser"); err != nil {
+					return err
+				}
+			}
+			return nil
+		},
+	})
+
+	// Create template_versions table for template versioning & upgrades
+	migrator.AddMigration(schema.Migration{
+		Version:     "20231201000006",
+		Name:        "create_template_versions",
+		Description: "Create template_versions table for tracking published template snapshots",
+		Up: func(tx *gorm.DB) error {
+			return tx.AutoMigrate(&models.TemplateVersion{})
+		},
+		Down: func(tx *gorm.DB) error {
+			return tx.Migrator().DropTable(&models.TemplateVersion{})
+		},
+	})
+
+	// Create instance_quota_overrides table for per-instance resource quota overrides
+	migrator.AddMigration(schema.Migration{
+		Version:     "20231201000007",
+		Name:        "create_instance_quota_overrides",
+		Description: "Create instance_quota_overrides table for per-instance resource quota overrides",
+		Up: func(tx *gorm.DB) error {
+			return tx.AutoMigrate(&models.InstanceQuotaOverride{})
+		},
+		Down: func(tx *gorm.DB) error {
+			return tx.Migrator().DropTable(&models.InstanceQuotaOverride{})
+		},
+	})
+
 	// Run migrations
 	if err := migrator.MigrateUp(); err != nil {
 		return err

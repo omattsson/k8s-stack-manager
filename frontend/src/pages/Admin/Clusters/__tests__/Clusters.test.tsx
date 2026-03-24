@@ -12,6 +12,9 @@ vi.mock('../../../../api/client', () => ({
     delete: vi.fn(),
     testConnection: vi.fn(),
     setDefault: vi.fn(),
+    getQuotas: vi.fn(),
+    updateQuotas: vi.fn(),
+    deleteQuotas: vi.fn(),
   },
 }));
 
@@ -41,6 +44,7 @@ const mockClusters = [
     health_status: 'healthy',
     is_default: true,
     max_namespaces: 50,
+    max_instances_per_user: 10,
     created_at: '2026-01-01T00:00:00Z',
     updated_at: '2026-01-01T00:00:00Z',
   },
@@ -53,6 +57,7 @@ const mockClusters = [
     health_status: 'unreachable',
     is_default: false,
     max_namespaces: 0,
+    max_instances_per_user: 0,
     created_at: '2026-01-02T00:00:00Z',
     updated_at: '2026-01-02T00:00:00Z',
   },
@@ -157,7 +162,7 @@ describe('Clusters Page', () => {
     });
   });
 
-  it('has accessible action buttons', async () => {
+  it('has accessible action buttons including resource quotas', async () => {
     (clusterService.list as ReturnType<typeof vi.fn>).mockResolvedValue(mockClusters);
 
     render(
@@ -169,6 +174,8 @@ describe('Clusters Page', () => {
     );
 
     await waitFor(() => {
+      expect(screen.getByLabelText('Resource quotas for production')).toBeTruthy();
+      expect(screen.getByLabelText('Resource quotas for staging')).toBeTruthy();
       expect(screen.getByLabelText('Test connection for production')).toBeTruthy();
       expect(screen.getByLabelText('Edit production')).toBeTruthy();
       expect(screen.getByLabelText('Delete production')).toBeTruthy();

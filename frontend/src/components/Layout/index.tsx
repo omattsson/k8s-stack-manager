@@ -42,6 +42,7 @@ import CleaningServicesOutlined from '@mui/icons-material/CleaningServicesOutlin
 import AccountCircleOutlined from '@mui/icons-material/AccountCircleOutlined';
 import LogoutIcon from '@mui/icons-material/Logout';
 import HubOutlined from '@mui/icons-material/HubOutlined';
+import NotificationCenter from '../NotificationCenter';
 
 const DRAWER_MINI_WIDTH = DRAWER_COLLAPSED_WIDTH;
 const STORAGE_KEY = 'sidebar-open';
@@ -253,9 +254,14 @@ const Layout = ({ children }: LayoutProps) => {
         )}
       </Box>
 
-      {/* User section */}
+      {/* Notifications + User section */}
       <Divider />
       <Box sx={{ p: open ? 2 : 1, display: 'flex', flexDirection: 'column', alignItems: open ? 'stretch' : 'center', gap: 1 }}>
+        {!isMobile && (
+          <Box sx={{ display: 'flex', justifyContent: open ? 'flex-start' : 'center', pl: open ? 0.5 : 0 }}>
+            <NotificationCenter />
+          </Box>
+        )}
         {open ? (
           <>
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
@@ -371,9 +377,10 @@ const Layout = ({ children }: LayoutProps) => {
             >
               <MenuIcon />
             </IconButton>
-            <Typography variant="h6" noWrap sx={{ fontWeight: 700 }}>
+            <Typography variant="h6" noWrap sx={{ fontWeight: 700, flexGrow: 1 }}>
               K8s Stack Manager
             </Typography>
+            <NotificationCenter />
           </Toolbar>
         </AppBar>
       )}

@@ -278,6 +278,7 @@ export interface Cluster {
   region: string;
   health_status: 'healthy' | 'degraded' | 'unreachable' | '';
   max_namespaces: number;
+  max_instances_per_user: number;
   is_default: boolean;
   created_at: string;
   updated_at: string;
@@ -291,6 +292,7 @@ export interface CreateClusterRequest {
   kubeconfig_path?: string;
   region: string;
   max_namespaces: number;
+  max_instances_per_user?: number;
   is_default: boolean;
 }
 
@@ -302,6 +304,7 @@ export interface UpdateClusterRequest {
   kubeconfig_path?: string;
   region?: string;
   max_namespaces?: number;
+  max_instances_per_user?: number;
   is_default?: boolean;
 }
 
@@ -441,4 +444,179 @@ export interface CleanupResult {
   action: string;
   status: string;
   error?: string;
+}
+
+export interface BulkOperationRequest {
+  instance_ids: string[];
+}
+
+export interface BulkOperationResultItem {
+  instance_id: string;
+  instance_name: string;
+  status: 'success' | 'error';
+  error?: string;
+}
+
+export interface BulkOperationResponse {
+  total: number;
+  succeeded: number;
+  failed: number;
+  results: BulkOperationResultItem[];
+}
+
+export interface CompareInstanceSummary {
+  id: string;
+  name: string;
+  definition_name: string;
+  branch: string;
+  owner: string;
+}
+
+export interface CompareChartDiff {
+  chart_name: string;
+  left_values: string | null;
+  right_values: string | null;
+  has_differences: boolean;
+}
+
+export interface CompareInstancesResponse {
+  left: CompareInstanceSummary;
+  right: CompareInstanceSummary;
+  charts: CompareChartDiff[];
+}
+
+export interface Notification {
+  id: string;
+  user_id: string;
+  type: string;
+  title: string;
+  message: string;
+  is_read: boolean;
+  entity_type?: string;
+  entity_id?: string;
+  created_at: string;
+}
+
+export interface NotificationPreference {
+  id?: string;
+  user_id?: string;
+  event_type: string;
+  enabled: boolean;
+}
+
+export interface NotificationListResponse {
+  notifications: Notification[];
+  total: number;
+  unread_count: number;
+}
+
+export interface DefinitionExportBundle {
+  schema_version: string;
+  exported_at: string;
+  definition: {
+    name: string;
+    description: string;
+    default_branch: string;
+    repository_url: string;
+    [key: string]: unknown;
+  };
+  charts: Array<{
+    chart_name: string;
+    repository_url: string;
+    default_values: string;
+    sort_order: number;
+    [key: string]: unknown;
+  }>;
+}
+
+export interface ResourceQuotaConfig {
+  id?: string;
+  cluster_id: string;
+  cpu_request: string;
+  cpu_limit: string;
+  memory_request: string;
+  memory_limit: string;
+  storage_limit: string;
+  pod_limit: number;
+}
+
+export interface InstanceQuotaOverride {
+  id?: string;
+  stack_instance_id: string;
+  cpu_request: string;
+  cpu_limit: string;
+  memory_request: string;
+  memory_limit: string;
+  storage_limit: string;
+  pod_limit: number | null;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface NamespaceResourceUsage {
+  namespace: string;
+  cpu_used: string;
+  cpu_limit: string;
+  memory_used: string;
+  memory_limit: string;
+  pod_count: number;
+  pod_limit: number;
+}
+
+export interface ClusterUtilization {
+  namespaces: NamespaceResourceUsage[];
+}
+
+export interface TemplateVersion {
+  id: string;
+  template_id: string;
+  version: string;
+  change_summary: string;
+  created_by: string;
+  created_at: string;
+  snapshot?: TemplateSnapshot;
+}
+
+export interface TemplateSnapshot {
+  template: {
+    name: string;
+    description: string;
+    category: string;
+    default_branch: string;
+    repository_url: string;
+    is_published: boolean;
+    version: string;
+  };
+  charts: Array<{
+    chart_name: string;
+    repo_url: string;
+    default_values: string;
+    locked_values: string;
+    is_required: boolean;
+    sort_order: number;
+  }>;
+}
+
+export interface VersionDiffResponse {
+  left: { version: TemplateVersion; snapshot: TemplateSnapshot };
+  right: { version: TemplateVersion; snapshot: TemplateSnapshot };
+  chart_diffs: Array<{
+    chart_name: string;
+    left_values: string | null;
+    right_values: string | null;
+    has_differences: boolean;
+    change_type: 'added' | 'removed' | 'modified' | 'unchanged';
+  }>;
+}
+
+export interface UpgradeCheckResponse {
+  upgrade_available: boolean;
+  current_version?: string;
+  latest_version?: string;
+  changes?: {
+    charts_added: string[];
+    charts_removed: string[];
+    charts_modified: string[];
+    charts_unchanged: string[];
+  };
 }

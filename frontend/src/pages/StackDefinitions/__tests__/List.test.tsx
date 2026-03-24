@@ -6,10 +6,20 @@ import List from '../List';
 vi.mock('../../../api/client', () => ({
   definitionService: {
     list: vi.fn(),
+    importDefinition: vi.fn(),
   },
   templateService: {
     list: vi.fn().mockResolvedValue([]),
   },
+}));
+
+vi.mock('../../../context/NotificationContext', () => ({
+  useNotification: () => ({
+    showSuccess: vi.fn(),
+    showError: vi.fn(),
+    showWarning: vi.fn(),
+    showInfo: vi.fn(),
+  }),
 }));
 
 vi.mock('../../../context/AuthContext', () => ({
@@ -50,6 +60,18 @@ describe('Stack Definitions List', () => {
     );
     await waitFor(() => {
       expect(screen.getByText('My Stack')).toBeInTheDocument();
+    });
+  });
+
+  it('shows Import button', async () => {
+    (definitionService.list as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    render(
+      <MemoryRouter>
+        <List />
+      </MemoryRouter>
+    );
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /import/i })).toBeInTheDocument();
     });
   });
 

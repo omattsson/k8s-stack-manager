@@ -148,6 +148,9 @@ func (c *Cluster) Validate() error {
 	if c.MaxNamespaces < 0 {
 		return errors.New("max_namespaces must be non-negative")
 	}
+	if c.MaxInstancesPerUser < 0 {
+		return errors.New("max_instances_per_user must be non-negative")
+	}
 	switch c.HealthStatus {
 	case "", ClusterHealthy, ClusterDegraded, ClusterUnreachable:
 		// valid
@@ -231,6 +234,28 @@ func (cp *CleanupPolicy) Validate() error {
 	}
 	if cp.ClusterID == "" {
 		return errors.New("cluster_id is required")
+	}
+	return nil
+}
+
+// Validate implements model validation for ResourceQuotaConfig.
+func (rq *ResourceQuotaConfig) Validate() error {
+	if rq.ClusterID == "" {
+		return errors.New("cluster_id is required")
+	}
+	if rq.PodLimit < 0 {
+		return errors.New("pod_limit must be non-negative")
+	}
+	return nil
+}
+
+// Validate implements model validation for InstanceQuotaOverride.
+func (iqo *InstanceQuotaOverride) Validate() error {
+	if iqo.StackInstanceID == "" {
+		return errors.New("stack_instance_id is required")
+	}
+	if iqo.PodLimit != nil && *iqo.PodLimit < 0 {
+		return errors.New("pod_limit must be non-negative")
 	}
 	return nil
 }

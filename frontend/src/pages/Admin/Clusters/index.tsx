@@ -32,9 +32,11 @@ import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import StarIcon from '@mui/icons-material/Star';
 import StarBorderIcon from '@mui/icons-material/StarBorder';
 import NavigateNextIcon from '@mui/icons-material/NavigateNext';
+import TuneIcon from '@mui/icons-material/Tune';
 import { clusterService } from '../../../api/client';
 import type { Cluster, CreateClusterRequest, UpdateClusterRequest, ClusterTestResult } from '../../../types';
 import LoadingState from '../../../components/LoadingState';
+import QuotaConfigDialog from '../../../components/QuotaConfigDialog';
 import { Link } from 'react-router-dom';
 import { useNotification } from '../../../context/NotificationContext';
 
@@ -46,6 +48,7 @@ const emptyCreateForm: CreateClusterRequest = {
   kubeconfig_path: '',
   region: '',
   max_namespaces: 0,
+  max_instances_per_user: 0,
   is_default: false,
 };
 
@@ -80,6 +83,8 @@ const Clusters = () => {
 
   // Delete confirm
   const [deleteTarget, setDeleteTarget] = useState<Cluster | null>(null);
+  // Quota config dialog
+  const [quotaTarget, setQuotaTarget] = useState<Cluster | null>(null);
   const { showSuccess, showError } = useNotification();
 
   const fetchClusters = useCallback(async () => {
@@ -116,6 +121,7 @@ const Clusters = () => {
       kubeconfig_path: '',
       region: cluster.region,
       max_namespaces: cluster.max_namespaces,
+      max_instances_per_user: cluster.max_instances_per_user,
       is_default: cluster.is_default,
     });
     setDialogError(null);
@@ -146,6 +152,7 @@ const Clusters = () => {
           api_server_url: form.api_server_url,
           region: form.region,
           max_namespaces: form.max_namespaces,
+          max_instances_per_user: form.max_instances_per_user,
           is_default: form.is_default,
         };
         if ((form.kubeconfig_data ?? '').trim()) {
@@ -285,6 +292,11 @@ const Clusters = () => {
                     )}
                   </TableCell>
                   <TableCell align="right">
+                    <Tooltip title="Resource Quotas">
+                      <IconButton size="small" aria-label={`Resource quotas for ${cluster.name}`} onClick={() => setQuotaTarget(cluster)}>
+                        <TuneIcon />
+                      </IconButton>
+                    </Tooltip>
                     <Tooltip title="Test Connection">
                       <IconButton size="small" aria-label={`Test connection for ${cluster.name}`} onClick={() => handleTestConnection(cluster)}>
                         <CheckCircleIcon />
@@ -373,6 +385,14 @@ const Clusters = () => {
               fullWidth
               helperText="0 = unlimited"
             />
+            <TextField
+              label="Max Instances Per User"
+              type="number"
+              value={form.max_instances_per_user ?? 0}
+              onChange={(e) => setForm({ ...form, max_instances_per_user: parseInt(e.target.value, 10) || 0 })}
+              fullWidth
+              helperText="Maximum stack instances a single user can create on this cluster (0 = unlimited)"
+            />
             <FormControlLabel
               control={
                 <Checkbox
@@ -410,6 +430,16 @@ const Clusters = () => {
           </Button>
         </DialogActions>
       </Dialog>
+
+      {/* Quota Config Dialog */}
+      {quotaTarget && (
+        <QuotaConfigDialog
+          open={!!quotaTarget}
+          onClose={() => setQuotaTarget(null)}
+          clusterId={quotaTarget.id}
+          clusterName={quotaTarget.name}
+        />
+      )}
 
     </Box>
   );

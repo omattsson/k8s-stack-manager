@@ -28,6 +28,7 @@ type InstallRequest struct {
 	Version     string // optional: chart version (passed as --version)
 	ValuesFile  string
 	Namespace   string
+	SkipCRDs    bool   // skip CRD installation (avoids conflicts when CRDs already exist)
 }
 
 // UninstallRequest contains the parameters for a helm uninstall operation.
@@ -88,6 +89,9 @@ func (h *HelmClient) Install(ctx context.Context, req InstallRequest) (string, e
 	}
 	if req.ValuesFile != "" {
 		args = append(args, "-f", req.ValuesFile)
+	}
+	if req.SkipCRDs {
+		args = append(args, "--skip-crds")
 	}
 
 	return h.run(ctx, args)

@@ -40,6 +40,9 @@ type Deps struct {
 	// Branch override handler.
 	BranchOverrideHandler *handlers.BranchOverrideHandler
 
+	// Instance quota override handler.
+	InstanceQuotaOverrideHandler *handlers.InstanceQuotaOverrideHandler
+
 	// Favorites handler.
 	FavoriteHandler *handlers.FavoriteHandler
 
@@ -59,6 +62,12 @@ type Deps struct {
 	ClusterRepo         models.ClusterRepository
 	Registry            *cluster.Registry
 	InstanceRepo        models.StackInstanceRepository
+
+	// Template version handler.
+	TemplateVersionHandler *handlers.TemplateVersionHandler
+
+	// Notification handler.
+	NotificationHandler *handlers.NotificationHandler
 
 	// Repos needed by combined JWT+API-key auth middleware.
 	UserRepo   models.UserRepository
@@ -162,6 +171,12 @@ func SetupRoutes(router *gin.Engine, deps Deps) *handlers.RateLimiter {
 				templates.PUT("/:id/charts/:chartId", devops, deps.TemplateHandler.UpdateTemplateChart)
 				templates.DELETE("/:id/charts/:chartId", devops, deps.TemplateHandler.DeleteTemplateChart)
 			}
+			// Template versions
+			if deps.TemplateVersionHandler != nil {
+				templates.GET("/:id/versions", deps.TemplateVersionHandler.ListVersions)
+				templates.GET("/:id/versions/diff", deps.TemplateVersionHandler.DiffVersions)
+				templates.GET("/:id/versions/:versionId", deps.TemplateVersionHandler.GetVersion)
+			}
 			if deps.QuickDeployHandler != nil {
 				templates.POST("/:id/quick-deploy", deps.QuickDeployHandler.QuickDeploy)
 			}
@@ -173,9 +188,13 @@ func SetupRoutes(router *gin.Engine, deps Deps) *handlers.RateLimiter {
 			{
 				definitions.GET("", deps.DefinitionHandler.ListDefinitions)
 				definitions.POST("", deps.DefinitionHandler.CreateDefinition)
+				definitions.POST("/import", devops, deps.DefinitionHandler.ImportDefinition)
 				definitions.GET("/:id", deps.DefinitionHandler.GetDefinition)
+				definitions.GET("/:id/export", devops, deps.DefinitionHandler.ExportDefinition)
 				definitions.PUT("/:id", deps.DefinitionHandler.UpdateDefinition)
 				definitions.DELETE("/:id", deps.DefinitionHandler.DeleteDefinition)
+				definitions.GET("/:id/check-upgrade", deps.DefinitionHandler.CheckUpgrade)
+				definitions.POST("/:id/upgrade", deps.DefinitionHandler.ApplyUpgrade)
 				definitions.POST("/:id/charts", deps.DefinitionHandler.AddChartConfig)
 				definitions.PUT("/:id/charts/:chartId", deps.DefinitionHandler.UpdateChartConfig)
 				definitions.DELETE("/:id/charts/:chartId", deps.DefinitionHandler.DeleteChartConfig)
@@ -188,6 +207,7 @@ func SetupRoutes(router *gin.Engine, deps Deps) *handlers.RateLimiter {
 			{
 				instances.GET("", deps.InstanceHandler.ListInstances)
 				instances.POST("", deps.InstanceHandler.CreateInstance)
+				instances.GET("/compare", deps.InstanceHandler.CompareInstances)
 				instances.GET("/recent", deps.InstanceHandler.GetRecentInstances)
 				instances.GET("/:id", deps.InstanceHandler.GetInstance)
 				instances.PUT("/:id", deps.InstanceHandler.UpdateInstance)
@@ -204,11 +224,28 @@ func SetupRoutes(router *gin.Engine, deps Deps) *handlers.RateLimiter {
 				instances.GET("/:id/deploy-log", deps.InstanceHandler.GetDeployLog)
 				instances.GET("/:id/status", deps.InstanceHandler.GetInstanceStatus)
 
+				// Bulk operations (DevOps/Admin only)
+				bulk := instances.Group("/bulk")
+				bulk.Use(devops)
+				{
+					bulk.POST("/deploy", deps.InstanceHandler.BulkDeploy)
+					bulk.POST("/stop", deps.InstanceHandler.BulkStop)
+					bulk.POST("/clean", deps.InstanceHandler.BulkClean)
+					bulk.POST("/delete", deps.InstanceHandler.BulkDelete)
+				}
+
 				// Per-chart branch overrides
 				if deps.BranchOverrideHandler != nil {
 					instances.GET("/:id/branches", deps.BranchOverrideHandler.ListBranchOverrides)
 					instances.PUT("/:id/branches/:chartId", deps.BranchOverrideHandler.SetBranchOverride)
 					instances.DELETE("/:id/branches/:chartId", deps.BranchOverrideHandler.DeleteBranchOverride)
+				}
+
+				// Per-instance quota overrides
+				if deps.InstanceQuotaOverrideHandler != nil {
+					instances.GET("/:id/quota-overrides", deps.InstanceQuotaOverrideHandler.GetQuotaOverride)
+					instances.PUT("/:id/quota-overrides", deps.InstanceQuotaOverrideHandler.SetQuotaOverride)
+					instances.DELETE("/:id/quota-overrides", deps.InstanceQuotaOverrideHandler.DeleteQuotaOverride)
 				}
 			}
 		}
@@ -303,6 +340,12 @@ func SetupRoutes(router *gin.Engine, deps Deps) *handlers.RateLimiter {
 				clusters.GET("/:id/health/summary", devops, clusterHandler.GetClusterHealthSummary)
 				clusters.GET("/:id/health/nodes", devops, clusterHandler.GetClusterNodes)
 				clusters.GET("/:id/namespaces", devops, clusterHandler.GetClusterNamespaces)
+
+				// Resource quotas
+				clusters.GET("/:id/quotas", devops, clusterHandler.GetQuotas)
+				clusters.PUT("/:id/quotas", admin, clusterHandler.UpdateQuotas)
+				clusters.DELETE("/:id/quotas", admin, clusterHandler.DeleteQuotas)
+				clusters.GET("/:id/utilization", devops, clusterHandler.GetUtilization)
 			}
 
 			// Shared values (Phase 6.4)
@@ -326,6 +369,19 @@ func SetupRoutes(router *gin.Engine, deps Deps) *handlers.RateLimiter {
 				analytics.GET("/overview", deps.AnalyticsHandler.GetOverview)
 				analytics.GET("/templates", deps.AnalyticsHandler.GetTemplateStats)
 				analytics.GET("/users", middleware.RequireAdmin(), deps.AnalyticsHandler.GetUserStats)
+			}
+		}
+
+		// Notifications
+		if deps.NotificationHandler != nil {
+			notifications := authed.Group("/notifications")
+			{
+				notifications.GET("", deps.NotificationHandler.List)
+				notifications.GET("/count", deps.NotificationHandler.CountUnread)
+				notifications.POST("/:id/read", deps.NotificationHandler.MarkAsRead)
+				notifications.POST("/read-all", deps.NotificationHandler.MarkAllAsRead)
+				notifications.GET("/preferences", deps.NotificationHandler.GetPreferences)
+				notifications.PUT("/preferences", deps.NotificationHandler.UpdatePreferences)
 			}
 		}
 

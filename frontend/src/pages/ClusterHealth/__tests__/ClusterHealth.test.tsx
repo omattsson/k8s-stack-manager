@@ -9,6 +9,7 @@ vi.mock('../../../api/client', () => ({
     getHealthSummary: vi.fn(),
     getNodes: vi.fn(),
     getNamespaces: vi.fn(),
+    getUtilization: vi.fn(),
   },
 }));
 
@@ -24,6 +25,7 @@ const mockClusters = [
     health_status: 'healthy',
     is_default: true,
     max_namespaces: 50,
+    max_instances_per_user: 0,
     created_at: '2026-01-01T00:00:00Z',
     updated_at: '2026-01-01T00:00:00Z',
   },
@@ -55,6 +57,29 @@ const mockNamespaces = [
   { name: 'kube-system', phase: 'Active', created_at: '2026-01-01T00:00:00Z' },
 ];
 
+const mockUtilization = {
+  namespaces: [
+    {
+      namespace: 'stack-myapp-dev',
+      cpu_used: '200m',
+      cpu_limit: '2000m',
+      memory_used: '128Mi',
+      memory_limit: '1Gi',
+      pod_count: 5,
+      pod_limit: 50,
+    },
+    {
+      namespace: 'stack-api-staging',
+      cpu_used: '1800m',
+      cpu_limit: '2000m',
+      memory_used: '900Mi',
+      memory_limit: '1Gi',
+      pod_count: 48,
+      pod_limit: 50,
+    },
+  ],
+};
+
 describe('ClusterHealth Page', () => {
   afterEach(() => {
     vi.clearAllMocks();
@@ -78,6 +103,7 @@ describe('ClusterHealth Page', () => {
     (clusterService.getHealthSummary as ReturnType<typeof vi.fn>).mockResolvedValue(mockSummary);
     (clusterService.getNodes as ReturnType<typeof vi.fn>).mockResolvedValue(mockNodes);
     (clusterService.getNamespaces as ReturnType<typeof vi.fn>).mockResolvedValue(mockNamespaces);
+    (clusterService.getUtilization as ReturnType<typeof vi.fn>).mockResolvedValue({ namespaces: [] });
 
     render(
       <MemoryRouter>
@@ -93,6 +119,33 @@ describe('ClusterHealth Page', () => {
     expect(screen.getByText('default')).toBeInTheDocument();
     expect(screen.getByText('kube-system')).toBeInTheDocument();
     expect(screen.getByText('12')).toBeInTheDocument();
+  });
+
+  it('renders namespace resource utilization table', async () => {
+    (clusterService.list as ReturnType<typeof vi.fn>).mockResolvedValue(mockClusters);
+    (clusterService.getHealthSummary as ReturnType<typeof vi.fn>).mockResolvedValue(mockSummary);
+    (clusterService.getNodes as ReturnType<typeof vi.fn>).mockResolvedValue(mockNodes);
+    (clusterService.getNamespaces as ReturnType<typeof vi.fn>).mockResolvedValue(mockNamespaces);
+    (clusterService.getUtilization as ReturnType<typeof vi.fn>).mockResolvedValue(mockUtilization);
+
+    render(
+      <MemoryRouter>
+        <ClusterHealth />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('Namespace Resource Usage')).toBeInTheDocument();
+    });
+
+    expect(screen.getByText('stack-myapp-dev')).toBeInTheDocument();
+    expect(screen.getByText('stack-api-staging')).toBeInTheDocument();
+    // Check CPU usage text is rendered
+    expect(screen.getByText(/200m \/ 2000m/)).toBeInTheDocument();
+    expect(screen.getByText(/1800m \/ 2000m/)).toBeInTheDocument();
+    // Check pod counts
+    expect(screen.getByText('5 / 50')).toBeInTheDocument();
+    expect(screen.getByText('48 / 50')).toBeInTheDocument();
   });
 
   it('renders error state', async () => {
