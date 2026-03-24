@@ -36,18 +36,23 @@ import LoadingState from '../../components/LoadingState';
 const AUTO_REFRESH_INTERVAL = 30000;
 
 const parseResource = (value: string): number => {
+  if (!value) return 0;
   if (value.endsWith('Gi')) return parseFloat(value) * 1024;
   if (value.endsWith('Mi')) return parseFloat(value);
   if (value.endsWith('m')) return parseFloat(value);
-  return parseFloat(value);
+  const n = parseFloat(value);
+  return Number.isFinite(n) ? n : 0;
 };
 
 const resourcePercent = (used: string, total: string): number => {
+  if (!used || !total) return 0;
   const u = parseResource(used);
   const t = parseResource(total);
   if (t === 0) return 0;
   return Math.round((u / t) * 100);
 };
+
+const hasQuota = (used: string, limit: string): boolean => !!(used || limit);
 
 const nodeHealthColor = (ready: number, total: number): 'success' | 'warning' | 'error' => {
   if (total === 0) return 'error';
@@ -382,6 +387,8 @@ const ClusterHealth = () => {
                   </TableHead>
                   <TableBody>
                     {utilization.map((ns) => {
+                      const hasCpuQuota = hasQuota(ns.cpu_used, ns.cpu_limit);
+                      const hasMemQuota = hasQuota(ns.memory_used, ns.memory_limit);
                       const cpuPercent = resourcePercent(ns.cpu_used, ns.cpu_limit);
                       const memPercent = resourcePercent(ns.memory_used, ns.memory_limit);
                       const podPercent = ns.pod_limit > 0 ? Math.round((ns.pod_count / ns.pod_limit) * 100) : 0;
@@ -393,32 +400,40 @@ const ClusterHealth = () => {
                             </Typography>
                           </TableCell>
                           <TableCell>
-                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                              <Box sx={{ flexGrow: 1, minWidth: 80 }}>
-                                <LinearProgress
-                                  variant="determinate"
-                                  value={Math.min(cpuPercent, 100)}
-                                  color={cpuPercent > 90 ? 'error' : cpuPercent > 70 ? 'warning' : 'success'}
-                                />
+                            {hasCpuQuota ? (
+                              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                                <Box sx={{ flexGrow: 1, minWidth: 80 }}>
+                                  <LinearProgress
+                                    variant="determinate"
+                                    value={Math.min(cpuPercent, 100)}
+                                    color={cpuPercent > 90 ? 'error' : cpuPercent > 70 ? 'warning' : 'success'}
+                                  />
+                                </Box>
+                                <Typography variant="body2" sx={{ minWidth: 110, textAlign: 'right' }}>
+                                  {ns.cpu_used} / {ns.cpu_limit} ({cpuPercent}%)
+                                </Typography>
                               </Box>
-                              <Typography variant="body2" sx={{ minWidth: 110, textAlign: 'right' }}>
-                                {ns.cpu_used} / {ns.cpu_limit} ({cpuPercent}%)
-                              </Typography>
-                            </Box>
+                            ) : (
+                              <Typography variant="body2" color="text.secondary">No quota</Typography>
+                            )}
                           </TableCell>
                           <TableCell>
-                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                              <Box sx={{ flexGrow: 1, minWidth: 80 }}>
-                                <LinearProgress
-                                  variant="determinate"
-                                  value={Math.min(memPercent, 100)}
-                                  color={memPercent > 90 ? 'error' : memPercent > 70 ? 'warning' : 'success'}
-                                />
+                            {hasMemQuota ? (
+                              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                                <Box sx={{ flexGrow: 1, minWidth: 80 }}>
+                                  <LinearProgress
+                                    variant="determinate"
+                                    value={Math.min(memPercent, 100)}
+                                    color={memPercent > 90 ? 'error' : memPercent > 70 ? 'warning' : 'success'}
+                                  />
+                                </Box>
+                                <Typography variant="body2" sx={{ minWidth: 130, textAlign: 'right' }}>
+                                  {ns.memory_used} / {ns.memory_limit} ({memPercent}%)
+                                </Typography>
                               </Box>
-                              <Typography variant="body2" sx={{ minWidth: 130, textAlign: 'right' }}>
-                                {ns.memory_used} / {ns.memory_limit} ({memPercent}%)
-                              </Typography>
-                            </Box>
+                            ) : (
+                              <Typography variant="body2" color="text.secondary">No quota</Typography>
+                            )}
                           </TableCell>
                           <TableCell>
                             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
