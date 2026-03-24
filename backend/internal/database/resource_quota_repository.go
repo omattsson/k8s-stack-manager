@@ -2,6 +2,7 @@ package database
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -26,7 +27,7 @@ func NewGormResourceQuotaRepository(db *gorm.DB) *GormResourceQuotaRepository {
 func (r *GormResourceQuotaRepository) GetByClusterID(ctx context.Context, clusterID string) (*models.ResourceQuotaConfig, error) {
 	var config models.ResourceQuotaConfig
 	if err := r.db.WithContext(ctx).Where("cluster_id = ?", clusterID).First(&config).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, dberrors.NewDatabaseError("GetByClusterID", dberrors.ErrNotFound)
 		}
 		return nil, dberrors.NewDatabaseError("GetByClusterID", fmt.Errorf("query resource quota config: %w", err))
@@ -44,7 +45,7 @@ func (r *GormResourceQuotaRepository) Upsert(ctx context.Context, config *models
 	err := r.db.WithContext(ctx).Where("cluster_id = ?", config.ClusterID).First(&existing).Error
 
 	now := time.Now().UTC()
-	if err == gorm.ErrRecordNotFound {
+	if errors.Is(err, gorm.ErrRecordNotFound) {
 		// Create new.
 		config.ID = uuid.New().String()
 		config.CreatedAt = now

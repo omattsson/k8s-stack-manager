@@ -21,7 +21,7 @@ const validBundle = JSON.stringify({
     repository_url: 'https://example.com/repo',
   },
   charts: [
-    { chart_name: 'chart-1', repo_url: 'https://example.com', default_values: '', sort_order: 0 },
+    { chart_name: 'chart-1', repository_url: 'https://example.com', default_values: '', sort_order: 0 },
   ],
 });
 

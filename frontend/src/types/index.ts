@@ -522,7 +522,7 @@ export interface DefinitionExportBundle {
   };
   charts: Array<{
     chart_name: string;
-    repo_url: string;
+    repository_url: string;
     default_values: string;
     sort_order: number;
     [key: string]: unknown;

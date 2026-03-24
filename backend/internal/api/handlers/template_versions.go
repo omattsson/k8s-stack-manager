@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"sort"
 	"time"
 
 	"backend/internal/models"
@@ -156,19 +157,11 @@ func (h *TemplateVersionHandler) DiffVersions(c *gin.Context) {
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
-	if left.TemplateID != templateID {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Template version not found"})
-		return
-	}
 
 	right, err := h.versionRepo.GetByID(c.Request.Context(), templateID, v2ID)
 	if err != nil {
 		status, message := mapError(err, "Template version")
 		c.JSON(status, gin.H{"error": message})
-		return
-	}
-	if right.TemplateID != templateID {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Template version not found"})
 		return
 	}
 
@@ -253,6 +246,11 @@ func computeChartDiffs(leftCharts, rightCharts []models.TemplateChartSnapshotDat
 			ChangeType:     "added",
 		})
 	}
+
+	// Sort by chart name for deterministic output.
+	sort.Slice(diffs, func(i, j int) bool {
+		return diffs[i].ChartName < diffs[j].ChartName
+	})
 
 	return diffs
 }
