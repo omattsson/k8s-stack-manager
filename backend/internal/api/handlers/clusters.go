@@ -711,7 +711,44 @@ func (h *ClusterHandler) UpdateQuotas(c *gin.Context) {
 		return
 	}
 
+	// Propagate quotas to all existing stack namespaces in this cluster.
+	if h.registry != nil {
+		go h.propagateQuotasToNamespaces(id, config)
+	}
+
 	c.JSON(http.StatusOK, saved)
+}
+
+// propagateQuotasToNamespaces applies the quota config to all existing stack
+// namespaces in the cluster. Runs in a background goroutine so the API
+// response is not delayed. Errors are logged but do not affect the response.
+func (h *ClusterHandler) propagateQuotasToNamespaces(clusterID string, config *models.ResourceQuotaConfig) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	k8sClient, err := h.registry.GetK8sClient(clusterID)
+	if err != nil {
+		slog.Error("Failed to get K8s client for quota propagation", "cluster_id", clusterID, "error", err)
+		return
+	}
+
+	namespaces, err := k8sClient.ListStackNamespaces(ctx)
+	if err != nil {
+		slog.Error("Failed to list namespaces for quota propagation", "cluster_id", clusterID, "error", err)
+		return
+	}
+
+	for _, ns := range namespaces {
+		if err := k8sClient.EnsureResourceQuota(ctx, ns.Name, config); err != nil {
+			slog.Warn("Failed to apply resource quota to namespace", "namespace", ns.Name, "cluster_id", clusterID, "error", err)
+			continue
+		}
+		if err := k8sClient.EnsureLimitRange(ctx, ns.Name, config); err != nil {
+			slog.Warn("Failed to apply limit range to namespace", "namespace", ns.Name, "cluster_id", clusterID, "error", err)
+			continue
+		}
+		slog.Info("Applied resource quota to namespace", "namespace", ns.Name, "cluster_id", clusterID)
+	}
 }
 
 // DeleteQuotas godoc

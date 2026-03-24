@@ -248,3 +248,14 @@ func (rq *ResourceQuotaConfig) Validate() error {
 	}
 	return nil
 }
+
+// Validate implements model validation for InstanceQuotaOverride.
+func (iqo *InstanceQuotaOverride) Validate() error {
+	if iqo.StackInstanceID == "" {
+		return errors.New("stack_instance_id is required")
+	}
+	if iqo.PodLimit != nil && *iqo.PodLimit < 0 {
+		return errors.New("pod_limit must be non-negative")
+	}
+	return nil
+}

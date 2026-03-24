@@ -160,6 +160,18 @@ func main() {
 		os.Exit(1)
 	}
 
+	quotaRepo, err := azure.NewResourceQuotaRepository(azCfg.AccountName, azCfg.AccountKey, azCfg.Endpoint, azCfg.UseAzurite)
+	if err != nil {
+		slog.Error("Failed to create resource quota repository", "error", err)
+		os.Exit(1)
+	}
+
+	quotaOverrideRepo, err := azure.NewInstanceQuotaOverrideRepository(azCfg.AccountName, azCfg.AccountKey, azCfg.Endpoint, azCfg.UseAzurite)
+	if err != nil {
+		slog.Error("Failed to create instance quota override repository", "error", err)
+		os.Exit(1)
+	}
+
 	// ------------------------------------------------------------------
 	// Phase 1: Create domain services
 	// ------------------------------------------------------------------
@@ -218,6 +230,8 @@ func main() {
 		DeployLogRepo: deployLogRepo,
 		Hub:           hub,
 		MaxConcurrent: int(cfg.Deployment.MaxConcurrentDeploys),
+		QuotaRepo:         quotaRepo,
+		QuotaOverrideRepo: quotaOverrideRepo,
 	})
 
 	// ------------------------------------------------------------------
@@ -253,8 +267,9 @@ func main() {
 	apiKeyHandler := handlers.NewAPIKeyHandler(apiKeyRepo, userRepo)
 
 	adminHandler := handlers.NewAdminHandler(clusterRegistry, instanceRepo)
-	clusterHandler := handlers.NewClusterHandler(clusterRepo, clusterRegistry, instanceRepo)
+	clusterHandler := handlers.NewClusterHandlerWithQuotas(clusterRepo, clusterRegistry, instanceRepo, quotaRepo)
 	branchOverrideHandler := handlers.NewBranchOverrideHandler(branchOverrideRepo, instanceRepo)
+	instanceQuotaOverrideHandler := handlers.NewInstanceQuotaOverrideHandler(quotaOverrideRepo, instanceRepo)
 	sharedValuesHandler := handlers.NewSharedValuesHandler(sharedValuesRepo, clusterRepo)
 
 	// Notification repository — datastore selection via config.
@@ -321,7 +336,8 @@ func main() {
 		UserHandler:            userHandler,
 		APIKeyHandler:          apiKeyHandler,
 		AdminHandler:           adminHandler,
-		BranchOverrideHandler:  branchOverrideHandler,
+		BranchOverrideHandler:          branchOverrideHandler,
+		InstanceQuotaOverrideHandler:   instanceQuotaOverrideHandler,
 		TemplateVersionHandler: templateVersionHandler,
 		NotificationHandler:    notificationHandler,
 		FavoriteHandler:        favoriteHandler,

@@ -152,6 +152,19 @@ func (d *Database) AutoMigrate() error {
 		},
 	})
 
+	// Create instance_quota_overrides table for per-instance resource quota overrides
+	migrator.AddMigration(schema.Migration{
+		Version:     "20231201000007",
+		Name:        "create_instance_quota_overrides",
+		Description: "Create instance_quota_overrides table for per-instance resource quota overrides",
+		Up: func(tx *gorm.DB) error {
+			return tx.AutoMigrate(&models.InstanceQuotaOverride{})
+		},
+		Down: func(tx *gorm.DB) error {
+			return tx.Migrator().DropTable(&models.InstanceQuotaOverride{})
+		},
+	})
+
 	// Run migrations
 	if err := migrator.MigrateUp(); err != nil {
 		return err

@@ -51,6 +51,7 @@ import type {
   TemplateVersion,
   VersionDiffResponse,
   UpgradeCheckResponse,
+  InstanceQuotaOverride,
 } from '../types';
 
 const api = axios.create(axiosConfig);
@@ -888,6 +889,43 @@ export const instanceService = {
       console.error('Failed to compare instances:', error);
       throw error;
     }
+  },
+  /**
+   * Get quota override for a stack instance.
+   * @param instanceId - Stack instance ID
+   * @returns The quota override, or null if not set
+   * @see GET /api/v1/stack-instances/:id/quota-overrides
+   */
+  getQuotaOverride: async (instanceId: string): Promise<InstanceQuotaOverride | null> => {
+    try {
+      const response = await api.get<InstanceQuotaOverride>(`/api/v1/stack-instances/${instanceId}/quota-overrides`);
+      return response.data;
+    } catch (error: unknown) {
+      if (error && typeof error === 'object' && 'response' in error) {
+        const axiosError = error as { response?: { status?: number } };
+        if (axiosError.response?.status === 404) return null;
+      }
+      throw error;
+    }
+  },
+  /**
+   * Set or update quota override for a stack instance.
+   * @param instanceId - Stack instance ID
+   * @param override - Quota override values (empty strings fall back to cluster defaults)
+   * @returns The saved quota override
+   * @see PUT /api/v1/stack-instances/:id/quota-overrides
+   */
+  setQuotaOverride: async (instanceId: string, override: Omit<InstanceQuotaOverride, 'id' | 'stack_instance_id' | 'created_at' | 'updated_at'>): Promise<InstanceQuotaOverride> => {
+    const response = await api.put<InstanceQuotaOverride>(`/api/v1/stack-instances/${instanceId}/quota-overrides`, override);
+    return response.data;
+  },
+  /**
+   * Remove quota override for a stack instance (reverts to cluster defaults).
+   * @param instanceId - Stack instance ID
+   * @see DELETE /api/v1/stack-instances/:id/quota-overrides
+   */
+  deleteQuotaOverride: async (instanceId: string): Promise<void> => {
+    await api.delete(`/api/v1/stack-instances/${instanceId}/quota-overrides`);
   },
 };
 

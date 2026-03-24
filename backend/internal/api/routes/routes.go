@@ -40,6 +40,9 @@ type Deps struct {
 	// Branch override handler.
 	BranchOverrideHandler *handlers.BranchOverrideHandler
 
+	// Instance quota override handler.
+	InstanceQuotaOverrideHandler *handlers.InstanceQuotaOverrideHandler
+
 	// Favorites handler.
 	FavoriteHandler *handlers.FavoriteHandler
 
@@ -236,6 +239,13 @@ func SetupRoutes(router *gin.Engine, deps Deps) *handlers.RateLimiter {
 					instances.GET("/:id/branches", deps.BranchOverrideHandler.ListBranchOverrides)
 					instances.PUT("/:id/branches/:chartId", deps.BranchOverrideHandler.SetBranchOverride)
 					instances.DELETE("/:id/branches/:chartId", deps.BranchOverrideHandler.DeleteBranchOverride)
+				}
+
+				// Per-instance quota overrides
+				if deps.InstanceQuotaOverrideHandler != nil {
+					instances.GET("/:id/quota-overrides", deps.InstanceQuotaOverrideHandler.GetQuotaOverride)
+					instances.PUT("/:id/quota-overrides", deps.InstanceQuotaOverrideHandler.SetQuotaOverride)
+					instances.DELETE("/:id/quota-overrides", deps.InstanceQuotaOverrideHandler.DeleteQuotaOverride)
 				}
 			}
 		}

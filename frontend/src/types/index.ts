@@ -540,6 +540,19 @@ export interface ResourceQuotaConfig {
   pod_limit: number;
 }
 
+export interface InstanceQuotaOverride {
+  id?: string;
+  stack_instance_id: string;
+  cpu_request: string;
+  cpu_limit: string;
+  memory_request: string;
+  memory_limit: string;
+  storage_limit: string;
+  pod_limit: number | null;
+  created_at?: string;
+  updated_at?: string;
+}
+
 export interface NamespaceResourceUsage {
   namespace: string;
   cpu_used: string;
