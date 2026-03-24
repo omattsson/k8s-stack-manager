@@ -6,6 +6,7 @@ import (
 	_ "backend/docs"
 	"backend/internal/api/handlers"
 	"backend/internal/api/routes"
+	"backend/internal/auth"
 	"backend/internal/cluster"
 	"backend/internal/config"
 	"backend/internal/database"
@@ -225,11 +226,11 @@ func main() {
 
 	// Deployment manager — uses registry for multi-cluster deploys
 	deployManager := deployer.NewManager(deployer.ManagerConfig{
-		Registry:      clusterRegistry,
-		InstanceRepo:  instanceRepo,
-		DeployLogRepo: deployLogRepo,
-		Hub:           hub,
-		MaxConcurrent: int(cfg.Deployment.MaxConcurrentDeploys),
+		Registry:          clusterRegistry,
+		InstanceRepo:      instanceRepo,
+		DeployLogRepo:     deployLogRepo,
+		Hub:               hub,
+		MaxConcurrent:     int(cfg.Deployment.MaxConcurrentDeploys),
 		QuotaRepo:         quotaRepo,
 		QuotaOverrideRepo: quotaOverrideRepo,
 	})
@@ -238,6 +239,20 @@ func main() {
 	// Phase 1: Create handlers
 	// ------------------------------------------------------------------
 	authHandler := handlers.NewAuthHandler(userRepo, &cfg.Auth)
+
+	// OIDC authentication — conditionally initialize when enabled.
+	var oidcHandler *handlers.OIDCHandler
+	var oidcStateStore *auth.StateStore
+	if cfg.OIDC.Enabled {
+		oidcProvider, oidcErr := auth.NewProvider(context.Background(), &cfg.OIDC)
+		if oidcErr != nil {
+			slog.Error("Failed to initialize OIDC provider", "error", oidcErr)
+			os.Exit(1)
+		}
+		oidcStateStore = auth.NewStateStore(cfg.OIDC.StateTTL)
+		oidcHandler = handlers.NewOIDCHandler(oidcProvider, oidcStateStore, userRepo, &cfg.OIDC, &cfg.Auth)
+		slog.Info("OIDC authentication enabled", "provider_url", cfg.OIDC.ProviderURL)
+	}
 
 	// Template version repository — datastore selection via config.
 	var templateVersionRepo models.TemplateVersionRepository
@@ -322,33 +337,34 @@ func main() {
 	// Setup router — use gin.New() since SetupRoutes registers its own Logger and Recovery middleware.
 	router := gin.New()
 	rateLimiter := routes.SetupRoutes(router, routes.Deps{
-		Repository:             repo,
-		HealthChecker:          healthChecker,
-		Config:                 cfg,
-		Hub:                    hub,
-		AuthHandler:            authHandler,
-		TemplateHandler:        templateHandler,
-		DefinitionHandler:      definitionHandler,
-		InstanceHandler:        instanceHandler,
-		GitHandler:             gitHandler,
-		AuditLogHandler:        auditLogHandler,
-		AuditLogger:            auditRepo,
-		UserHandler:            userHandler,
-		APIKeyHandler:          apiKeyHandler,
-		AdminHandler:           adminHandler,
-		BranchOverrideHandler:          branchOverrideHandler,
-		InstanceQuotaOverrideHandler:   instanceQuotaOverrideHandler,
-		TemplateVersionHandler: templateVersionHandler,
-		NotificationHandler:    notificationHandler,
-		FavoriteHandler:        favoriteHandler,
-		QuickDeployHandler:     quickDeployHandler,
-		AnalyticsHandler:       analyticsHandler,
-		CleanupPolicyHandler:   cleanupPolicyHandler,
-		CleanupScheduler:       cleanupScheduler,
-		ClusterHandler:         clusterHandler,
-		SharedValuesHandler:    sharedValuesHandler,
-		UserRepo:               userRepo,
-		APIKeyRepo:             apiKeyRepo,
+		Repository:                   repo,
+		HealthChecker:                healthChecker,
+		Config:                       cfg,
+		Hub:                          hub,
+		AuthHandler:                  authHandler,
+		TemplateHandler:              templateHandler,
+		DefinitionHandler:            definitionHandler,
+		InstanceHandler:              instanceHandler,
+		GitHandler:                   gitHandler,
+		AuditLogHandler:              auditLogHandler,
+		AuditLogger:                  auditRepo,
+		UserHandler:                  userHandler,
+		APIKeyHandler:                apiKeyHandler,
+		AdminHandler:                 adminHandler,
+		BranchOverrideHandler:        branchOverrideHandler,
+		InstanceQuotaOverrideHandler: instanceQuotaOverrideHandler,
+		TemplateVersionHandler:       templateVersionHandler,
+		NotificationHandler:          notificationHandler,
+		FavoriteHandler:              favoriteHandler,
+		QuickDeployHandler:           quickDeployHandler,
+		AnalyticsHandler:             analyticsHandler,
+		CleanupPolicyHandler:         cleanupPolicyHandler,
+		CleanupScheduler:             cleanupScheduler,
+		ClusterHandler:               clusterHandler,
+		SharedValuesHandler:          sharedValuesHandler,
+		UserRepo:                     userRepo,
+		APIKeyRepo:                   apiKeyRepo,
+		OIDCHandler:                  oidcHandler,
 	})
 	defer rateLimiter.Stop()
 	router.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
@@ -415,6 +431,9 @@ func main() {
 	hub.Shutdown()
 	clusterRegistry.Close()
 	watcherCancel()
+	if oidcStateStore != nil {
+		oidcStateStore.Stop()
+	}
 
 	// 5. Close data layer
 	if closeErr := repo.Close(); closeErr != nil {

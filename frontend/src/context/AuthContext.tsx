@@ -1,7 +1,14 @@
 import { createContext, useContext, useState, useEffect, useCallback, useMemo } from 'react';
 import type { ReactNode } from 'react';
-import { authService } from '../api/client';
+import { authService, oidcService } from '../api/client';
+import { useNotification } from './NotificationContext';
 import type { User, JwtPayload } from '../types';
+
+interface OidcConfig {
+  enabled: boolean;
+  provider_name: string;
+  local_auth_enabled: boolean;
+}
 
 interface AuthContextType {
   user: User | null;
@@ -9,6 +16,10 @@ interface AuthContextType {
   logout: () => void;
   isAuthenticated: boolean;
   isLoading: boolean;
+  oidcConfig: OidcConfig | null;
+  oidcLoading: boolean;
+  loginWithOIDC: (redirect?: string) => Promise<void>;
+  handleOIDCCallback: (token: string) => void;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -41,6 +52,9 @@ function userFromPayload(payload: JwtPayload): User {
 export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [oidcConfig, setOidcConfig] = useState<OidcConfig | null>(null);
+  const [oidcLoading, setOidcLoading] = useState(true);
+  const { showError } = useNotification();
 
   useEffect(() => {
     const token = localStorage.getItem('token');
@@ -55,6 +69,20 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     setIsLoading(false);
   }, []);
 
+  useEffect(() => {
+    const fetchOidcConfig = async () => {
+      try {
+        const config = await oidcService.getConfig();
+        setOidcConfig(config);
+      } catch {
+        setOidcConfig({ enabled: false, provider_name: '', local_auth_enabled: true });
+      } finally {
+        setOidcLoading(false);
+      }
+    };
+    fetchOidcConfig();
+  }, []);
+
   const login = useCallback(async (username: string, password: string) => {
     const response = await authService.login({ username, password });
     localStorage.setItem('token', response.token);
@@ -66,11 +94,28 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     setUser(null);
   }, []);
 
+  const loginWithOIDC = useCallback(async (redirect?: string) => {
+    try {
+      const result = await oidcService.getAuthorizeUrl(redirect);
+      window.location.href = result.redirect_url;
+    } catch {
+      showError('Failed to initiate SSO login. Please try again.');
+    }
+  }, [showError]);
+
+  const handleOIDCCallback = useCallback((token: string) => {
+    localStorage.setItem('token', token);
+    const payload = decodeJwtPayload(token);
+    if (payload && !isTokenExpired(payload)) {
+      setUser(userFromPayload(payload));
+    }
+  }, []);
+
   const isAuthenticated = user !== null;
 
   const value = useMemo(
-    () => ({ user, login, logout, isAuthenticated, isLoading }),
-    [user, login, logout, isAuthenticated, isLoading]
+    () => ({ user, login, logout, isAuthenticated, isLoading, oidcConfig, oidcLoading, loginWithOIDC, handleOIDCCallback }),
+    [user, login, logout, isAuthenticated, isLoading, oidcConfig, oidcLoading, loginWithOIDC, handleOIDCCallback]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

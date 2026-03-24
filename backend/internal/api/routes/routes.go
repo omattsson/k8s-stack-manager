@@ -9,6 +9,7 @@ import (
 	"backend/internal/models"
 	"backend/internal/scheduler"
 	"backend/internal/websocket"
+	"net/http"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -72,6 +73,9 @@ type Deps struct {
 	// Repos needed by combined JWT+API-key auth middleware.
 	UserRepo   models.UserRepository
 	APIKeyRepo models.APIKeyRepository
+
+	// OIDC handler — nil when OIDC is disabled.
+	OIDCHandler *handlers.OIDCHandler
 }
 
 // SetupRoutes configures all the routes for our application.
@@ -141,6 +145,21 @@ func SetupRoutes(router *gin.Engine, deps Deps) *handlers.RateLimiter {
 			registerHandlers = append(registerHandlers, deps.AuthHandler.Register)
 			auth.POST("/register", registerHandlers...)
 			auth.GET("/me", authMW, deps.AuthHandler.GetCurrentUser)
+
+			// OIDC routes — public (no auth required).
+			if deps.OIDCHandler != nil {
+				oidcGroup := auth.Group("/oidc")
+				{
+					oidcGroup.GET("/config", deps.OIDCHandler.GetConfig)
+					oidcGroup.GET("/authorize", deps.OIDCHandler.Authorize)
+					oidcGroup.GET("/callback", deps.OIDCHandler.Callback)
+				}
+			} else {
+				// Return disabled config when OIDC is not configured.
+				auth.GET("/oidc/config", func(c *gin.Context) {
+					c.JSON(http.StatusOK, gin.H{"enabled": false})
+				})
+			}
 		}
 
 		// All remaining Phase 1 routes require authentication.

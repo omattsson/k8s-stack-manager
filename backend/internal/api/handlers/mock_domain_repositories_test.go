@@ -19,11 +19,12 @@ import (
 // ---- UserRepository mock ----
 
 type MockUserRepository struct {
-	mu        sync.RWMutex
-	users     map[string]*models.User // by ID
-	byName    map[string]*models.User // by Username
-	createErr error
-	findErr   error
+	mu         sync.RWMutex
+	users      map[string]*models.User // by ID
+	byName     map[string]*models.User // by Username
+	createErr  error
+	findErr    error
+	createFunc func(user *models.User) error // optional override for Create; called under lock
 }
 
 func NewMockUserRepository() *MockUserRepository {
@@ -36,6 +37,9 @@ func NewMockUserRepository() *MockUserRepository {
 func (m *MockUserRepository) Create(user *models.User) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.createFunc != nil {
+		return m.createFunc(user)
+	}
 	if m.createErr != nil {
 		return m.createErr
 	}
@@ -73,6 +77,21 @@ func (m *MockUserRepository) FindByUsername(username string) (*models.User, erro
 	}
 	cp := *u
 	return &cp, nil
+}
+
+func (m *MockUserRepository) FindByExternalID(provider, externalID string) (*models.User, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.findErr != nil {
+		return nil, m.findErr
+	}
+	for _, u := range m.users {
+		if u.AuthProvider == provider && u.ExternalID == externalID {
+			cp := *u
+			return &cp, nil
+		}
+	}
+	return nil, errors.New("not found")
 }
 
 func (m *MockUserRepository) Update(user *models.User) error {
@@ -125,6 +144,12 @@ func (m *MockUserRepository) SetFindError(err error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.findErr = err
+}
+
+func (m *MockUserRepository) SetCreateFunc(fn func(user *models.User) error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.createFunc = fn
 }
 
 // ---- StackTemplateRepository mock ----

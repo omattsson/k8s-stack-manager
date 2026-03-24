@@ -61,6 +61,36 @@ type DeploymentConfig struct {
 	MaxConcurrentDeploys      int32
 }
 
+// OIDCConfig holds OpenID Connect configuration for external SSO authentication.
+type OIDCConfig struct {
+	StateTTL      time.Duration
+	ProviderURL   string
+	ClientID      string
+	ClientSecret  string
+	RedirectURL   string
+	RoleClaim     string
+	Scopes        []string
+	AdminRoles    []string
+	DevOpsRoles   []string
+	Enabled       bool
+	AutoProvision bool
+	LocalAuth     bool
+}
+
+// Validate checks OIDCConfig when OIDC is enabled.
+func (c *OIDCConfig) Validate() error {
+	if !c.Enabled {
+		return nil
+	}
+	if c.ProviderURL == "" {
+		return errors.New("OIDC_PROVIDER_URL is required when OIDC is enabled")
+	}
+	if c.ClientID == "" {
+		return errors.New("OIDC_CLIENT_ID is required when OIDC is enabled")
+	}
+	return nil
+}
+
 // Config holds all configuration for the application
 //
 //nolint:govet // Struct field alignment has been optimized for better memory usage
@@ -69,6 +99,8 @@ type Config struct {
 	Database DatabaseConfig
 	Server   ServerConfig
 	Auth     AuthConfig
+	// Then string and simple field structs
+	OIDC OIDCConfig
 	// Then string and simple field structs
 	App         AppConfig
 	AzureTable  AzureTableConfig
@@ -173,6 +205,12 @@ func (c *Config) Validate() error {
 
 	if c.Deployment.KubeconfigEncryptionKey == "" || len(c.Deployment.KubeconfigEncryptionKey) < 16 {
 		slog.Warn("KUBECONFIG_ENCRYPTION_KEY is not set or too short, kubeconfig data will not be encrypted at rest")
+	}
+
+	if c.OIDC.Enabled {
+		if err := c.OIDC.Validate(); err != nil {
+			return fmt.Errorf("OIDC config: %w", err)
+		}
 	}
 
 	return nil
@@ -385,6 +423,20 @@ func LoadConfig() (*Config, error) {
 			ClusterHealthPollInterval: getEnvDuration("CLUSTER_HEALTH_POLL_INTERVAL", 60*time.Second),
 			MaxConcurrentDeploys:      getEnvInt32("MAX_CONCURRENT_DEPLOYS", 5),
 		},
+		OIDC: OIDCConfig{
+			Enabled:       getEnvBool("OIDC_ENABLED", false),
+			ProviderURL:   getEnv("OIDC_PROVIDER_URL", ""),
+			ClientID:      getEnv("OIDC_CLIENT_ID", ""),
+			ClientSecret:  getEnv("OIDC_CLIENT_SECRET", ""),
+			RedirectURL:   getEnv("OIDC_REDIRECT_URL", ""),
+			Scopes:        parseCSV(getEnv("OIDC_SCOPES", "openid,profile,email")),
+			RoleClaim:     getEnv("OIDC_ROLE_CLAIM", "roles"),
+			AdminRoles:    parseCSV(getEnv("OIDC_ADMIN_ROLES", "")),
+			DevOpsRoles:   parseCSV(getEnv("OIDC_DEVOPS_ROLES", "")),
+			AutoProvision: getEnvBool("OIDC_AUTO_PROVISION", true),
+			LocalAuth:     getEnvBool("OIDC_LOCAL_AUTH", true),
+			StateTTL:      getEnvDuration("OIDC_STATE_TTL", 5*time.Minute),
+		},
 	}
 
 	// Validate the configuration
@@ -443,4 +495,20 @@ func getEnvDuration(key string, fallback time.Duration) time.Duration {
 	}
 
 	return v
+}
+
+// parseCSV splits a comma-separated string into a trimmed slice, filtering out empty entries.
+func parseCSV(s string) []string {
+	if s == "" {
+		return nil
+	}
+	parts := strings.Split(s, ",")
+	result := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			result = append(result, p)
+		}
+	}
+	return result
 }

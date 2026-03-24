@@ -18,9 +18,11 @@ const (
 
 // Claims represents the JWT claims payload.
 type Claims struct {
-	UserID   string `json:"user_id"`
-	Username string `json:"username"`
-	Role     string `json:"role"`
+	UserID       string `json:"user_id"`
+	Username     string `json:"username"`
+	Role         string `json:"role"`
+	AuthProvider string `json:"auth_provider,omitempty"`
+	Email        string `json:"email,omitempty"`
 	jwt.RegisteredClaims
 }
 
@@ -60,22 +62,47 @@ func AuthRequired(jwtSecret string) gin.HandlerFunc {
 	}
 }
 
-// GenerateToken creates a signed JWT token for the given user.
-func GenerateToken(userID, username, role, secret string, expiration time.Duration) (string, error) {
+// GenerateTokenOptions holds all parameters for JWT generation.
+type GenerateTokenOptions struct {
+	UserID       string
+	Username     string
+	Role         string
+	Secret       string
+	Expiration   time.Duration
+	AuthProvider string // optional, included in claims when non-empty
+	Email        string // optional, included in claims when non-empty
+}
+
+// GenerateTokenWithOpts creates a signed JWT token using the provided options.
+func GenerateTokenWithOpts(opts GenerateTokenOptions) (string, error) {
 	now := time.Now()
 	claims := Claims{
-		UserID:   userID,
-		Username: username,
-		Role:     role,
+		UserID:       opts.UserID,
+		Username:     opts.Username,
+		Role:         opts.Role,
+		AuthProvider: opts.AuthProvider,
+		Email:        opts.Email,
 		RegisteredClaims: jwt.RegisteredClaims{
-			ExpiresAt: jwt.NewNumericDate(now.Add(expiration)),
+			ExpiresAt: jwt.NewNumericDate(now.Add(opts.Expiration)),
 			IssuedAt:  jwt.NewNumericDate(now),
-			Subject:   userID,
+			Subject:   opts.UserID,
 		},
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	return token.SignedString([]byte(secret))
+	return token.SignedString([]byte(opts.Secret))
+}
+
+// GenerateToken creates a signed JWT token for the given user.
+// Deprecated: Use GenerateTokenWithOpts for new code that needs auth_provider or email in claims.
+func GenerateToken(userID, username, role, secret string, expiration time.Duration) (string, error) {
+	return GenerateTokenWithOpts(GenerateTokenOptions{
+		UserID:     userID,
+		Username:   username,
+		Role:       role,
+		Secret:     secret,
+		Expiration: expiration,
+	})
 }
 
 // GetUserIDFromContext extracts the user ID set by AuthRequired middleware.

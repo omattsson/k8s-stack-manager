@@ -1,6 +1,7 @@
 import { Routes, Route } from 'react-router-dom';
 import ProtectedRoute from './components/ProtectedRoute';
 import Login from './pages/Login';
+import AuthCallback from './pages/AuthCallback';
 import Dashboard from './pages/StackInstances/Dashboard';
 import Gallery from './pages/Templates/Gallery';
 import Builder from './pages/Templates/Builder';
@@ -27,6 +28,7 @@ const AppRoutes = () => {
   return (
     <Routes>
       <Route path="/login" element={<Login />} />
+      <Route path="/auth/callback" element={<AuthCallback />} />
       <Route path="/" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
       <Route path="/templates" element={<ProtectedRoute><Gallery /></ProtectedRoute>} />
       <Route path="/templates/new" element={<ProtectedRoute><Builder /></ProtectedRoute>} />

@@ -782,6 +782,112 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/auth/oidc/authorize": {
+            "get": {
+                "description": "Generates PKCE parameters and state, returns the IdP authorization URL for the frontend to redirect to",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "auth"
+                ],
+                "summary": "Start OIDC authorization flow",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Frontend URL to return to after authentication",
+                        "name": "redirect",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/auth/oidc/callback": {
+            "get": {
+                "description": "Handles the IdP callback after user authentication. Exchanges the authorization code for tokens, provisions or updates the local user, and redirects to the frontend with a JWT.",
+                "produces": [
+                    "text/html"
+                ],
+                "tags": [
+                    "auth"
+                ],
+                "summary": "OIDC callback",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Authorization code from IdP",
+                        "name": "code",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "State parameter for CSRF validation",
+                        "name": "state",
+                        "in": "query",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "302": {
+                        "description": "Redirect to login with error",
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/auth/oidc/config": {
+            "get": {
+                "description": "Returns public OIDC configuration for the frontend (enabled status, provider name, local auth availability)",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "auth"
+                ],
+                "summary": "Get OIDC configuration",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/auth/register": {
             "post": {
                 "description": "Create a new user account (admin only, or when self-registration is enabled)",
@@ -2578,8 +2684,7 @@ const docTemplate = `{
                         "schema": {
                             "type": "object",
                             "additionalProperties": {
-                                "type": "integer",
-                                "format": "int64"
+                                "type": "integer"
                             }
                         }
                     },
@@ -4567,6 +4672,203 @@ const docTemplate = `{
                     },
                     "404": {
                         "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/stack-instances/{id}/quota-overrides": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Retrieve the per-instance resource quota override for a stack instance",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "stack-instances"
+                ],
+                "summary": "Get quota override for an instance",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Stack Instance ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/models.InstanceQuotaOverride"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            },
+            "put": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Upsert the per-instance resource quota override for a stack instance",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "stack-instances"
+                ],
+                "summary": "Set or update quota override for an instance",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Stack Instance ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Quota override values",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handlers.setQuotaOverrideRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/models.InstanceQuotaOverride"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Remove the per-instance resource quota override for a stack instance",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "stack-instances"
+                ],
+                "summary": "Delete quota override for an instance",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Stack Instance ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {
@@ -6624,6 +6926,35 @@ const docTemplate = `{
                 }
             }
         },
+        "handlers.setQuotaOverrideRequest": {
+            "type": "object",
+            "properties": {
+                "cpu_limit": {
+                    "type": "string",
+                    "example": "2000m"
+                },
+                "cpu_request": {
+                    "type": "string",
+                    "example": "500m"
+                },
+                "memory_limit": {
+                    "type": "string",
+                    "example": "1Gi"
+                },
+                "memory_request": {
+                    "type": "string",
+                    "example": "256Mi"
+                },
+                "pod_limit": {
+                    "type": "integer",
+                    "example": 20
+                },
+                "storage_limit": {
+                    "type": "string",
+                    "example": "10Gi"
+                }
+            }
+        },
         "handlers.updatePreferenceRequest": {
             "type": "object",
             "properties": {
@@ -7176,6 +7507,41 @@ const docTemplate = `{
                 }
             }
         },
+        "models.InstanceQuotaOverride": {
+            "type": "object",
+            "properties": {
+                "cpu_limit": {
+                    "type": "string"
+                },
+                "cpu_request": {
+                    "type": "string"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "memory_limit": {
+                    "type": "string"
+                },
+                "memory_request": {
+                    "type": "string"
+                },
+                "pod_limit": {
+                    "type": "integer"
+                },
+                "stack_instance_id": {
+                    "type": "string"
+                },
+                "storage_limit": {
+                    "type": "string"
+                },
+                "updated_at": {
+                    "type": "string"
+                }
+            }
+        },
         "models.Item": {
             "type": "object",
             "properties": {
@@ -7569,9 +7935,6 @@ const docTemplate = `{
                 "name": {
                     "type": "string"
                 },
-                "repository_url": {
-                    "type": "string"
-                },
                 "version": {
                     "type": "string"
                 }
@@ -7603,10 +7966,19 @@ const docTemplate = `{
         "models.User": {
             "type": "object",
             "properties": {
+                "auth_provider": {
+                    "type": "string"
+                },
                 "created_at": {
                     "type": "string"
                 },
                 "display_name": {
+                    "type": "string"
+                },
+                "email": {
+                    "type": "string"
+                },
+                "external_id": {
                     "type": "string"
                 },
                 "id": {

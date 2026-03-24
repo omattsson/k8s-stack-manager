@@ -27,11 +27,18 @@ import DeleteIcon from '@mui/icons-material/Delete';
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import CheckIcon from '@mui/icons-material/Check';
 import SaveIcon from '@mui/icons-material/Save';
+import LockOutlinedIcon from '@mui/icons-material/LockOutlined';
+import SecurityOutlinedIcon from '@mui/icons-material/SecurityOutlined';
 import { apiKeyService, notificationService } from '../../api/client';
 import { useAuth } from '../../context/AuthContext';
 import { useNotification } from '../../context/NotificationContext';
 import type { APIKey, CreateAPIKeyRequest, CreateAPIKeyResponse, NotificationPreference } from '../../types';
 import LoadingState from '../../components/LoadingState';
+
+interface TokenPayload {
+  auth_provider?: string;
+  email?: string;
+}
 
 const EVENT_TYPE_LABELS: Record<string, string> = {
   'deployment.success': 'Deployment succeeded',
@@ -48,8 +55,20 @@ const getRoleChipColor = (role: string): 'error' | 'warning' | 'default' => {
   return 'default';
 };
 
+function decodeTokenPayload(): TokenPayload | null {
+  try {
+    const token = localStorage.getItem('token');
+    if (!token) return null;
+    const base64 = token.split('.')[1];
+    const json = atob(base64);
+    return JSON.parse(json);
+  } catch {
+    return null;
+  }
+}
+
 const Profile = () => {
-  const { user: currentUser } = useAuth();
+  const { user: currentUser, oidcConfig } = useAuth();
 
   const [apiKeys, setApiKeys] = useState<APIKey[]>([]);
   const [loading, setLoading] = useState(true);
@@ -75,6 +94,10 @@ const Profile = () => {
   const [notifPrefsLoading, setNotifPrefsLoading] = useState(true);
   const [notifPrefsSaving, setNotifPrefsSaving] = useState(false);
 
+  // Auth provider detection
+  const [authProvider, setAuthProvider] = useState<string | null>(null);
+  const [authEmail, setAuthEmail] = useState<string | null>(null);
+
   const fetchApiKeys = useCallback(async () => {
     if (!currentUser) return;
     setLoading(true);
@@ -92,6 +115,14 @@ const Profile = () => {
   useEffect(() => {
     fetchApiKeys();
   }, [fetchApiKeys]);
+
+  useEffect(() => {
+    const payload = decodeTokenPayload();
+    if (payload?.auth_provider) {
+      setAuthProvider(payload.auth_provider);
+      if (payload.email) setAuthEmail(payload.email);
+    }
+  }, []);
 
   useEffect(() => {
     return () => {
@@ -205,6 +236,31 @@ const Profile = () => {
             <Box>
               <Chip label={currentUser.role} size="small" color={getRoleChipColor(currentUser.role)} />
             </Box>
+            <Typography color="text.secondary">Authentication:</Typography>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+              {authProvider ? (
+                <Chip
+                  icon={<SecurityOutlinedIcon />}
+                  label={`SSO via ${oidcConfig?.provider_name || authProvider}`}
+                  size="small"
+                  color="info"
+                  variant="outlined"
+                />
+              ) : (
+                <Chip
+                  icon={<LockOutlinedIcon />}
+                  label="Local account"
+                  size="small"
+                  variant="outlined"
+                />
+              )}
+            </Box>
+            {authEmail && (
+              <>
+                <Typography color="text.secondary">Email:</Typography>
+                <Typography>{authEmail}</Typography>
+              </>
+            )}
           </Box>
         </Paper>
       )}

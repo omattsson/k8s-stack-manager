@@ -59,6 +59,9 @@ func (r *UserRepository) Create(user *models.User) error {
 		"PasswordHash": user.PasswordHash,
 		"DisplayName":  user.DisplayName,
 		"Role":         user.Role,
+		"AuthProvider": user.AuthProvider,
+		"ExternalID":   user.ExternalID,
+		"Email":        user.Email,
 		"CreatedAt":    now.Format(time.RFC3339),
 		"UpdatedAt":    now.Format(time.RFC3339),
 	}
@@ -112,6 +115,25 @@ func (r *UserRepository) FindByUsername(username string) (*models.User, error) {
 	return userFromEntity(entity), nil
 }
 
+func (r *UserRepository) FindByExternalID(provider, externalID string) (*models.User, error) {
+	ctx := context.Background()
+
+	filter := "PartitionKey eq 'users' and AuthProvider eq '" + escapeODataString(provider) + "' and ExternalID eq '" + escapeODataString(externalID) + "'"
+	pager := r.client.NewListEntitiesPager(&aztables.ListEntitiesOptions{
+		Filter: &filter,
+	})
+
+	entities, err := collectEntities(ctx, pager, nil)
+	if err != nil {
+		return nil, mapAzureError("find_by_external_id", err)
+	}
+	if len(entities) == 0 {
+		return nil, dberrors.NewDatabaseError("find_by_external_id", dberrors.ErrNotFound)
+	}
+
+	return userFromEntity(entities[0]), nil
+}
+
 func (r *UserRepository) Update(user *models.User) error {
 	ctx := context.Background()
 	now := time.Now().UTC()
@@ -125,6 +147,9 @@ func (r *UserRepository) Update(user *models.User) error {
 		"PasswordHash": user.PasswordHash,
 		"DisplayName":  user.DisplayName,
 		"Role":         user.Role,
+		"AuthProvider": user.AuthProvider,
+		"ExternalID":   user.ExternalID,
+		"Email":        user.Email,
 		"CreatedAt":    user.CreatedAt.Format(time.RFC3339),
 		"UpdatedAt":    now.Format(time.RFC3339),
 	}
@@ -184,6 +209,9 @@ func userFromEntity(e map[string]interface{}) *models.User {
 		PasswordHash: getString(e, "PasswordHash"),
 		DisplayName:  getString(e, "DisplayName"),
 		Role:         getString(e, "Role"),
+		AuthProvider: getStringDefault(e, "AuthProvider", "local"),
+		ExternalID:   getString(e, "ExternalID"),
+		Email:        getString(e, "Email"),
 		CreatedAt:    parseTime(e, "CreatedAt"),
 		UpdatedAt:    parseTime(e, "UpdatedAt"),
 	}

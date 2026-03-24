@@ -386,6 +386,27 @@ definitions:
         example: feature/my-branch
         type: string
     type: object
+  handlers.setQuotaOverrideRequest:
+    properties:
+      cpu_limit:
+        example: 2000m
+        type: string
+      cpu_request:
+        example: 500m
+        type: string
+      memory_limit:
+        example: 1Gi
+        type: string
+      memory_request:
+        example: 256Mi
+        type: string
+      pod_limit:
+        example: 20
+        type: integer
+      storage_limit:
+        example: 10Gi
+        type: string
+    type: object
   handlers.updatePreferenceRequest:
     properties:
       enabled:
@@ -750,6 +771,29 @@ definitions:
         description: '"running", "success", "error"'
         type: string
     type: object
+  models.InstanceQuotaOverride:
+    properties:
+      cpu_limit:
+        type: string
+      cpu_request:
+        type: string
+      created_at:
+        type: string
+      id:
+        type: string
+      memory_limit:
+        type: string
+      memory_request:
+        type: string
+      pod_limit:
+        type: integer
+      stack_instance_id:
+        type: string
+      storage_limit:
+        type: string
+      updated_at:
+        type: string
+    type: object
   models.Item:
     properties:
       created_at:
@@ -1010,8 +1054,6 @@ definitions:
         type: boolean
       name:
         type: string
-      repository_url:
-        type: string
       version:
         type: string
     type: object
@@ -1032,9 +1074,15 @@ definitions:
     type: object
   models.User:
     properties:
+      auth_provider:
+        type: string
       created_at:
         type: string
       display_name:
+        type: string
+      email:
+        type: string
+      external_id:
         type: string
       id:
         type: string
@@ -1592,6 +1640,80 @@ paths:
               type: string
             type: object
       summary: Get current user
+      tags:
+      - auth
+  /api/v1/auth/oidc/authorize:
+    get:
+      description: Generates PKCE parameters and state, returns the IdP authorization
+        URL for the frontend to redirect to
+      parameters:
+      - description: Frontend URL to return to after authentication
+        in: query
+        name: redirect
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Start OIDC authorization flow
+      tags:
+      - auth
+  /api/v1/auth/oidc/callback:
+    get:
+      description: Handles the IdP callback after user authentication. Exchanges the
+        authorization code for tokens, provisions or updates the local user, and redirects
+        to the frontend with a JWT.
+      parameters:
+      - description: Authorization code from IdP
+        in: query
+        name: code
+        required: true
+        type: string
+      - description: State parameter for CSRF validation
+        in: query
+        name: state
+        required: true
+        type: string
+      produces:
+      - text/html
+      responses:
+        "302":
+          description: Redirect to login with error
+          schema:
+            type: string
+      summary: OIDC callback
+      tags:
+      - auth
+  /api/v1/auth/oidc/config:
+    get:
+      description: Returns public OIDC configuration for the frontend (enabled status,
+        provider name, local auth availability)
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      summary: Get OIDC configuration
       tags:
       - auth
   /api/v1/auth/register:
@@ -2809,7 +2931,6 @@ paths:
           description: OK
           schema:
             additionalProperties:
-              format: int64
               type: integer
             type: object
         "401":
@@ -3861,6 +3982,133 @@ paths:
       summary: Set or update override for a chart
       tags:
       - value-overrides
+  /api/v1/stack-instances/{id}/quota-overrides:
+    delete:
+      description: Remove the per-instance resource quota override for a stack instance
+      parameters:
+      - description: Stack Instance ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Delete quota override for an instance
+      tags:
+      - stack-instances
+    get:
+      description: Retrieve the per-instance resource quota override for a stack instance
+      parameters:
+      - description: Stack Instance ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.InstanceQuotaOverride'
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get quota override for an instance
+      tags:
+      - stack-instances
+    put:
+      consumes:
+      - application/json
+      description: Upsert the per-instance resource quota override for a stack instance
+      parameters:
+      - description: Stack Instance ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Quota override values
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/handlers.setQuotaOverrideRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.InstanceQuotaOverride'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Set or update quota override for an instance
+      tags:
+      - stack-instances
   /api/v1/stack-instances/{id}/status:
     get:
       description: Get detailed Kubernetes resource status for a stack instance

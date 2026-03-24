@@ -165,6 +165,51 @@ func (d *Database) AutoMigrate() error {
 		},
 	})
 
+	// Add OIDC-related columns to users table for external authentication
+	migrator.AddMigration(schema.Migration{
+		Version:     "20231201000008",
+		Name:        "add_oidc_fields_to_users",
+		Description: "Add auth_provider, external_id, and email columns to users table for OIDC support",
+		Up: func(tx *gorm.DB) error {
+			// Add columns idempotently — check existence before adding.
+			if !tx.Migrator().HasColumn(&models.User{}, "auth_provider") {
+				if err := tx.Exec("ALTER TABLE users ADD COLUMN auth_provider VARCHAR(50) NOT NULL DEFAULT 'local'").Error; err != nil {
+					return err
+				}
+			}
+			if !tx.Migrator().HasColumn(&models.User{}, "external_id") {
+				if err := tx.Exec("ALTER TABLE users ADD COLUMN external_id VARCHAR(255) NOT NULL DEFAULT ''").Error; err != nil {
+					return err
+				}
+			}
+			if !tx.Migrator().HasColumn(&models.User{}, "email") {
+				if err := tx.Exec("ALTER TABLE users ADD COLUMN email VARCHAR(255) NOT NULL DEFAULT ''").Error; err != nil {
+					return err
+				}
+			}
+			// Set existing rows to 'local'.
+			if err := tx.Exec("UPDATE users SET auth_provider = 'local' WHERE auth_provider = '' OR auth_provider IS NULL").Error; err != nil {
+				return err
+			}
+			// Add index on (auth_provider, external_id) for FindByExternalID queries.
+			var count int64
+			tx.Raw("SELECT COUNT(*) FROM information_schema.statistics WHERE table_schema = DATABASE() AND table_name = 'users' AND index_name = 'idx_users_auth_provider_external_id'").Scan(&count)
+			if count == 0 {
+				if err := tx.Exec("CREATE INDEX idx_users_auth_provider_external_id ON users (auth_provider, external_id)").Error; err != nil {
+					return err
+				}
+			}
+			return nil
+		},
+		Down: func(tx *gorm.DB) error {
+			_ = tx.Exec("DROP INDEX idx_users_auth_provider_external_id ON users")
+			_ = tx.Exec("ALTER TABLE users DROP COLUMN IF EXISTS email")
+			_ = tx.Exec("ALTER TABLE users DROP COLUMN IF EXISTS external_id")
+			_ = tx.Exec("ALTER TABLE users DROP COLUMN IF EXISTS auth_provider")
+			return nil
+		},
+	})
+
 	// Run migrations
 	if err := migrator.MigrateUp(); err != nil {
 		return err
