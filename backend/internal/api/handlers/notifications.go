@@ -50,7 +50,7 @@ func (h *NotificationHandler) List(c *gin.Context) {
 	limit := 20
 	if limitStr := c.Query("limit"); limitStr != "" {
 		l, err := strconv.Atoi(limitStr)
-		if err != nil || l < 0 {
+		if err != nil || l <= 0 {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid limit parameter"})
 			return
 		}

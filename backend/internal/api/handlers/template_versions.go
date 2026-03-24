@@ -125,6 +125,14 @@ type chartDiffEntry struct {
 	ChartName      string `json:"chart_name"`
 	LeftValues     string `json:"left_values,omitempty"`
 	RightValues    string `json:"right_values,omitempty"`
+	LeftRepoURL    string `json:"left_repo_url,omitempty"`
+	RightRepoURL   string `json:"right_repo_url,omitempty"`
+	LeftLocked     string `json:"left_locked,omitempty"`
+	RightLocked    string `json:"right_locked,omitempty"`
+	LeftRequired   bool   `json:"left_required,omitempty"`
+	RightRequired  bool   `json:"right_required,omitempty"`
+	LeftSortOrder  int    `json:"left_sort_order,omitempty"`
+	RightSortOrder int    `json:"right_sort_order,omitempty"`
 	HasDifferences bool   `json:"has_differences"`
 	ChangeType     string `json:"change_type"` // "added", "removed", "modified", "unchanged"
 }
@@ -210,8 +218,12 @@ func computeChartDiffs(leftCharts, rightCharts []models.TemplateChartSnapshotDat
 		rch, inRight := rightMap[ch.ChartName]
 		if !inRight {
 			diffs = append(diffs, chartDiffEntry{
-				ChartName:      ch.ChartName,
-				LeftValues:     ch.DefaultValues,
+				ChartName:     ch.ChartName,
+				LeftValues:    ch.DefaultValues,
+				LeftRepoURL:   ch.RepoURL,
+				LeftLocked:    ch.LockedValues,
+				LeftRequired:  ch.IsRequired,
+				LeftSortOrder: ch.SortOrder,
 				HasDifferences: true,
 				ChangeType:     "removed",
 			})
@@ -230,6 +242,14 @@ func computeChartDiffs(leftCharts, rightCharts []models.TemplateChartSnapshotDat
 			ChartName:      ch.ChartName,
 			LeftValues:     ch.DefaultValues,
 			RightValues:    rch.DefaultValues,
+			LeftRepoURL:    ch.RepoURL,
+			RightRepoURL:   rch.RepoURL,
+			LeftLocked:     ch.LockedValues,
+			RightLocked:    rch.LockedValues,
+			LeftRequired:   ch.IsRequired,
+			RightRequired:  rch.IsRequired,
+			LeftSortOrder:  ch.SortOrder,
+			RightSortOrder: rch.SortOrder,
 			HasDifferences: hasDiff,
 			ChangeType:     changeType,
 		})
@@ -242,6 +262,10 @@ func computeChartDiffs(leftCharts, rightCharts []models.TemplateChartSnapshotDat
 		diffs = append(diffs, chartDiffEntry{
 			ChartName:      ch.ChartName,
 			RightValues:    ch.DefaultValues,
+			RightRepoURL:   ch.RepoURL,
+			RightLocked:    ch.LockedValues,
+			RightRequired:  ch.IsRequired,
+			RightSortOrder: ch.SortOrder,
 			HasDifferences: true,
 			ChangeType:     "added",
 		})
