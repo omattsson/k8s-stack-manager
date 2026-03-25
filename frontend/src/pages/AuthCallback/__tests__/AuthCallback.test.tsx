@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
-import AuthCallback from './index';
+import AuthCallback from '../index';
 
 const mockNavigate = vi.fn();
 const mockHandleOIDCCallback = vi.fn();
@@ -15,7 +15,7 @@ vi.mock('react-router-dom', async () => {
   };
 });
 
-vi.mock('../../context/AuthContext', () => ({
+vi.mock('../../../context/AuthContext', () => ({
   useAuth: () => ({
     handleOIDCCallback: mockHandleOIDCCallback,
   }),
