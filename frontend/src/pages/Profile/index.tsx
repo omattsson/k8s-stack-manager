@@ -27,6 +27,8 @@ import DeleteIcon from '@mui/icons-material/Delete';
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import CheckIcon from '@mui/icons-material/Check';
 import SaveIcon from '@mui/icons-material/Save';
+import LockOutlinedIcon from '@mui/icons-material/LockOutlined';
+import SecurityOutlinedIcon from '@mui/icons-material/SecurityOutlined';
 import { apiKeyService, notificationService } from '../../api/client';
 import { useAuth } from '../../context/AuthContext';
 import { useNotification } from '../../context/NotificationContext';
@@ -49,7 +51,7 @@ const getRoleChipColor = (role: string): 'error' | 'warning' | 'default' => {
 };
 
 const Profile = () => {
-  const { user: currentUser } = useAuth();
+  const { user: currentUser, oidcConfig, authProvider, authEmail } = useAuth();
 
   const [apiKeys, setApiKeys] = useState<APIKey[]>([]);
   const [loading, setLoading] = useState(true);
@@ -205,6 +207,31 @@ const Profile = () => {
             <Box>
               <Chip label={currentUser.role} size="small" color={getRoleChipColor(currentUser.role)} />
             </Box>
+            <Typography color="text.secondary">Authentication:</Typography>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+              {authProvider ? (
+                <Chip
+                  icon={<SecurityOutlinedIcon />}
+                  label={`SSO via ${oidcConfig?.provider_name || authProvider}`}
+                  size="small"
+                  color="info"
+                  variant="outlined"
+                />
+              ) : (
+                <Chip
+                  icon={<LockOutlinedIcon />}
+                  label="Local account"
+                  size="small"
+                  variant="outlined"
+                />
+              )}
+            </Box>
+            {authEmail && (
+              <>
+                <Typography color="text.secondary">Email:</Typography>
+                <Typography>{authEmail}</Typography>
+              </>
+            )}
           </Box>
         </Paper>
       )}

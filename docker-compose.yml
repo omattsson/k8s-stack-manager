@@ -30,6 +30,19 @@ services:
       - ADMIN_USERNAME=${ADMIN_USERNAME:-admin}
       - ADMIN_PASSWORD=${ADMIN_PASSWORD:-admin}
       - SELF_REGISTRATION=${SELF_REGISTRATION:-true}
+      # OIDC / External Auth (optional)
+      - OIDC_ENABLED=${OIDC_ENABLED:-false}
+      - OIDC_PROVIDER_URL=${OIDC_PROVIDER_URL:-}
+      - OIDC_CLIENT_ID=${OIDC_CLIENT_ID:-}
+      - OIDC_CLIENT_SECRET=${OIDC_CLIENT_SECRET:-}
+      - OIDC_REDIRECT_URL=${OIDC_REDIRECT_URL:-}
+      - OIDC_SCOPES=${OIDC_SCOPES:-openid,profile,email}
+      - OIDC_ROLE_CLAIM=${OIDC_ROLE_CLAIM:-roles}
+      - OIDC_ADMIN_ROLES=${OIDC_ADMIN_ROLES:-}
+      - OIDC_DEVOPS_ROLES=${OIDC_DEVOPS_ROLES:-}
+      - OIDC_AUTO_PROVISION=${OIDC_AUTO_PROVISION:-true}
+      - OIDC_LOCAL_AUTH=${OIDC_LOCAL_AUTH:-true}
+      - OIDC_STATE_TTL=${OIDC_STATE_TTL:-5m}
       # Azure Table Storage (Azurite for local dev)
       - USE_AZURE_TABLE=${USE_AZURE_TABLE:-true}
       - USE_AZURITE=${USE_AZURITE:-true}

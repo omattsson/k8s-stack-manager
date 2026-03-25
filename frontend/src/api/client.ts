@@ -127,6 +127,39 @@ export const authService = {
   },
 };
 
+/** OIDC authentication service. Maps to `/api/v1/auth/oidc`. */
+export const oidcService = {
+  /**
+   * Get OIDC configuration (public endpoint).
+   * @returns OIDC config with enabled status and provider name
+   * @see GET /api/v1/auth/oidc/config
+   */
+  getConfig: async (): Promise<{ enabled: boolean; provider_name: string; local_auth_enabled: boolean }> => {
+    try {
+      const response = await api.get('/api/v1/auth/oidc/config');
+      return response.data;
+    } catch (error) {
+      console.error('Failed to fetch OIDC config:', error);
+      throw error;
+    }
+  },
+  /**
+   * Get the OIDC authorization URL to redirect the user to.
+   * @param redirect - Optional URL to redirect to after authentication
+   * @returns Object with redirect_url to the identity provider
+   * @see GET /api/v1/auth/oidc/authorize
+   */
+  getAuthorizeUrl: async (redirect?: string): Promise<{ redirect_url: string }> => {
+    try {
+      const response = await api.get('/api/v1/auth/oidc/authorize', { params: redirect ? { redirect } : undefined });
+      return response.data;
+    } catch (error) {
+      console.error('Failed to get OIDC authorize URL:', error);
+      throw error;
+    }
+  },
+};
+
 /** Stack template service for managing reusable deployment templates. Maps to `/api/v1/templates`. */
 export const templateService = {
   /**

@@ -1,8 +1,11 @@
 package middleware
 
 import (
+	"encoding/base64"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -191,4 +194,92 @@ func TestGetContextHelpers_EmptyWhenNotSet(t *testing.T) {
 	assert.Empty(t, id)
 	assert.Empty(t, username)
 	assert.Empty(t, role)
+}
+
+func TestGenerateTokenWithOpts_IncludesAuthProvider(t *testing.T) {
+	t.Parallel()
+
+	token, err := GenerateTokenWithOpts(GenerateTokenOptions{
+		UserID:       "uid-1",
+		Username:     "alice",
+		Role:         "admin",
+		Secret:       testSecret,
+		Expiration:   time.Hour,
+		AuthProvider: "oidc",
+		Email:        "user@example.com",
+	})
+	require.NoError(t, err)
+
+	claims := &Claims{}
+	parsed, err := jwt.ParseWithClaims(token, claims, func(t *jwt.Token) (interface{}, error) {
+		return []byte(testSecret), nil
+	})
+	require.NoError(t, err)
+	assert.True(t, parsed.Valid)
+	assert.Equal(t, "oidc", claims.AuthProvider)
+	assert.Equal(t, "user@example.com", claims.Email)
+	assert.Equal(t, "uid-1", claims.UserID)
+	assert.Equal(t, "alice", claims.Username)
+	assert.Equal(t, "admin", claims.Role)
+}
+
+func TestGenerateTokenWithOpts_OmitsEmptyFields(t *testing.T) {
+	t.Parallel()
+
+	token, err := GenerateTokenWithOpts(GenerateTokenOptions{
+		UserID:     "uid-2",
+		Username:   "bob",
+		Role:       "user",
+		Secret:     testSecret,
+		Expiration: time.Hour,
+	})
+	require.NoError(t, err)
+
+	// Parse the raw JWT payload to check omitempty behaviour.
+	parts := strings.SplitN(token, ".", 3)
+	require.Len(t, parts, 3, "JWT must have 3 segments")
+
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	require.NoError(t, err)
+
+	var raw map[string]any
+	require.NoError(t, json.Unmarshal(payload, &raw))
+
+	assert.NotContains(t, raw, "auth_provider", "auth_provider must be omitted when empty")
+	assert.NotContains(t, raw, "email", "email must be omitted when empty")
+
+	// Standard claims should still be present.
+	assert.Equal(t, "uid-2", raw["user_id"])
+	assert.Equal(t, "bob", raw["username"])
+}
+
+func TestGenerateToken_BackwardCompatible(t *testing.T) {
+	t.Parallel()
+
+	token, err := GenerateToken("uid-3", "carol", "devops", testSecret, time.Hour)
+	require.NoError(t, err)
+
+	// Parse with Claims struct — should work identically.
+	claims := &Claims{}
+	parsed, err := jwt.ParseWithClaims(token, claims, func(t *jwt.Token) (interface{}, error) {
+		return []byte(testSecret), nil
+	})
+	require.NoError(t, err)
+	assert.True(t, parsed.Valid)
+	assert.Equal(t, "uid-3", claims.UserID)
+	assert.Equal(t, "carol", claims.Username)
+	assert.Equal(t, "devops", claims.Role)
+	assert.Empty(t, claims.AuthProvider, "legacy GenerateToken must not set auth_provider")
+	assert.Empty(t, claims.Email, "legacy GenerateToken must not set email")
+
+	// Also verify the raw payload omits the fields.
+	parts := strings.SplitN(token, ".", 3)
+	require.Len(t, parts, 3)
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	require.NoError(t, err)
+
+	var raw map[string]any
+	require.NoError(t, json.Unmarshal(payload, &raw))
+	assert.NotContains(t, raw, "auth_provider")
+	assert.NotContains(t, raw, "email")
 }

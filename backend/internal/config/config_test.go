@@ -484,3 +484,177 @@ func TestAzureTableConfigValidate(t *testing.T) {
 		assert.Contains(t, err.Error(), "table name is required")
 	})
 }
+
+// ---- OIDC config tests ----
+
+func TestOIDCConfigValidate(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		cfg     config.OIDCConfig
+		wantErr bool
+		errMsg  string
+	}{
+		{
+			name:    "disabled config is always valid",
+			cfg:     config.OIDCConfig{Enabled: false},
+			wantErr: false,
+		},
+		{
+			name: "enabled config with all required fields is valid",
+			cfg: config.OIDCConfig{
+				Enabled:     true,
+				ProviderURL: "https://login.microsoftonline.com/tenant/v2.0",
+				ClientID:    "my-client",
+				RedirectURL: "http://localhost:3000/auth/callback",
+			},
+			wantErr: false,
+		},
+		{
+			name: "enabled config without ProviderURL is invalid",
+			cfg: config.OIDCConfig{
+				Enabled:  true,
+				ClientID: "my-client",
+			},
+			wantErr: true,
+			errMsg:  "OIDC_PROVIDER_URL",
+		},
+		{
+			name: "enabled config without ClientID is invalid",
+			cfg: config.OIDCConfig{
+				Enabled:     true,
+				ProviderURL: "https://example.com",
+				RedirectURL: "http://localhost:3000/auth/callback",
+			},
+			wantErr: true,
+			errMsg:  "OIDC_CLIENT_ID",
+		},
+		{
+			name: "enabled config without RedirectURL is invalid",
+			cfg: config.OIDCConfig{
+				Enabled:     true,
+				ProviderURL: "https://example.com",
+				ClientID:    "my-client",
+			},
+			wantErr: true,
+			errMsg:  "OIDC_REDIRECT_URL",
+		},
+		{
+			name: "enabled config missing both required fields is invalid",
+			cfg: config.OIDCConfig{
+				Enabled: true,
+			},
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			err := tt.cfg.Validate()
+			if tt.wantErr {
+				require.Error(t, err)
+				if tt.errMsg != "" {
+					assert.Contains(t, err.Error(), tt.errMsg)
+				}
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestOIDCConfigLoad(t *testing.T) {
+	// Not parallel: subtests use t.Setenv which modifies the process environment.
+
+	t.Run("OIDC disabled by default when env var not set", func(t *testing.T) {
+		t.Setenv("OIDC_ENABLED", "")
+		cfg, err := config.LoadConfig()
+		require.NoError(t, err)
+		assert.False(t, cfg.OIDC.Enabled)
+	})
+
+	t.Run("scopes default to openid profile email when env var not set", func(t *testing.T) {
+		t.Setenv("OIDC_ENABLED", "")
+		t.Setenv("OIDC_SCOPES", "")
+		cfg, err := config.LoadConfig()
+		require.NoError(t, err)
+		assert.Equal(t, []string{"openid", "profile", "email"}, cfg.OIDC.Scopes)
+	})
+
+	t.Run("OIDC enabled with required fields is valid", func(t *testing.T) {
+		t.Setenv("OIDC_ENABLED", "true")
+		t.Setenv("OIDC_PROVIDER_URL", "https://login.microsoftonline.com/tenant/v2.0")
+		t.Setenv("OIDC_CLIENT_ID", "test-client-id")
+		t.Setenv("OIDC_REDIRECT_URL", "http://localhost:3000/auth/callback")
+		cfg, err := config.LoadConfig()
+		require.NoError(t, err)
+		assert.True(t, cfg.OIDC.Enabled)
+		assert.Equal(t, "https://login.microsoftonline.com/tenant/v2.0", cfg.OIDC.ProviderURL)
+		assert.Equal(t, "test-client-id", cfg.OIDC.ClientID)
+	})
+
+	t.Run("OIDC enabled without ProviderURL returns validation error", func(t *testing.T) {
+		t.Setenv("OIDC_ENABLED", "true")
+		t.Setenv("OIDC_PROVIDER_URL", "")
+		t.Setenv("OIDC_CLIENT_ID", "test-client-id")
+		_, err := config.LoadConfig()
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "OIDC_PROVIDER_URL")
+	})
+
+	t.Run("OIDC enabled without ClientID returns validation error", func(t *testing.T) {
+		t.Setenv("OIDC_ENABLED", "true")
+		t.Setenv("OIDC_PROVIDER_URL", "https://example.com")
+		t.Setenv("OIDC_CLIENT_ID", "")
+		_, err := config.LoadConfig()
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "OIDC_CLIENT_ID")
+	})
+
+	t.Run("admin and devops roles are parsed from comma-separated values", func(t *testing.T) {
+		t.Setenv("OIDC_ENABLED", "")
+		t.Setenv("OIDC_ADMIN_ROLES", "k8s-stack-admin,stack-admin")
+		t.Setenv("OIDC_DEVOPS_ROLES", "k8s-stack-devops")
+		cfg, err := config.LoadConfig()
+		require.NoError(t, err)
+		assert.Equal(t, []string{"k8s-stack-admin", "stack-admin"}, cfg.OIDC.AdminRoles)
+		assert.Equal(t, []string{"k8s-stack-devops"}, cfg.OIDC.DevOpsRoles)
+	})
+
+	t.Run("empty admin and devops role env vars produce nil slices", func(t *testing.T) {
+		t.Setenv("OIDC_ENABLED", "")
+		t.Setenv("OIDC_ADMIN_ROLES", "")
+		t.Setenv("OIDC_DEVOPS_ROLES", "")
+		cfg, err := config.LoadConfig()
+		require.NoError(t, err)
+		assert.Nil(t, cfg.OIDC.AdminRoles)
+		assert.Nil(t, cfg.OIDC.DevOpsRoles)
+	})
+
+	t.Run("custom scopes override the default", func(t *testing.T) {
+		t.Setenv("OIDC_ENABLED", "")
+		t.Setenv("OIDC_SCOPES", "openid,groups")
+		cfg, err := config.LoadConfig()
+		require.NoError(t, err)
+		assert.Equal(t, []string{"openid", "groups"}, cfg.OIDC.Scopes)
+	})
+
+	t.Run("auto-provision defaults to true", func(t *testing.T) {
+		t.Setenv("OIDC_ENABLED", "")
+		t.Setenv("OIDC_AUTO_PROVISION", "")
+		cfg, err := config.LoadConfig()
+		require.NoError(t, err)
+		assert.True(t, cfg.OIDC.AutoProvision)
+	})
+
+	t.Run("local auth defaults to true", func(t *testing.T) {
+		t.Setenv("OIDC_ENABLED", "")
+		t.Setenv("OIDC_LOCAL_AUTH", "")
+		cfg, err := config.LoadConfig()
+		require.NoError(t, err)
+		assert.True(t, cfg.OIDC.LocalAuth)
+	})
+}

@@ -165,6 +165,60 @@ func (d *Database) AutoMigrate() error {
 		},
 	})
 
+	// Add OIDC-related columns to users table for external authentication
+	migrator.AddMigration(schema.Migration{
+		Version:     "20231201000008",
+		Name:        "add_oidc_fields_to_users",
+		Description: "Add auth_provider, external_id, and email columns to users table for OIDC support",
+		Up: func(tx *gorm.DB) error {
+			// Add columns idempotently — check existence before adding.
+			if !tx.Migrator().HasColumn(&models.User{}, "auth_provider") {
+				if err := tx.Exec("ALTER TABLE users ADD COLUMN auth_provider VARCHAR(50) NOT NULL DEFAULT 'local'").Error; err != nil {
+					return err
+				}
+			}
+			if !tx.Migrator().HasColumn(&models.User{}, "external_id") {
+				if err := tx.Exec("ALTER TABLE users ADD COLUMN external_id VARCHAR(255) NULL DEFAULT NULL").Error; err != nil {
+					return err
+				}
+			}
+			if !tx.Migrator().HasColumn(&models.User{}, "email") {
+				if err := tx.Exec("ALTER TABLE users ADD COLUMN email VARCHAR(255) NOT NULL DEFAULT ''").Error; err != nil {
+					return err
+				}
+			}
+			// Set existing rows to 'local'.
+			if err := tx.Exec("UPDATE users SET auth_provider = 'local' WHERE auth_provider = '' OR auth_provider IS NULL").Error; err != nil {
+				return err
+			}
+			// Normalise legacy empty-string external_id to NULL so unique index works.
+			if err := tx.Exec("UPDATE users SET external_id = NULL WHERE external_id = ''").Error; err != nil {
+				return err
+			}
+			// Add UNIQUE index on (auth_provider, external_id) for FindByExternalID queries.
+			// MySQL allows multiple NULLs in a unique index, so local users (NULL external_id) won't collide.
+			var count int64
+			tx.Raw("SELECT COUNT(*) FROM information_schema.statistics WHERE table_schema = DATABASE() AND table_name = 'users' AND index_name = 'idx_users_auth_provider_external_id'").Scan(&count)
+			if count == 0 {
+				if err := tx.Exec("CREATE UNIQUE INDEX idx_users_auth_provider_external_id ON users (auth_provider, external_id)").Error; err != nil {
+					return err
+				}
+			}
+			return nil
+		},
+		Down: func(tx *gorm.DB) error {
+			_ = tx.Migrator().DropIndex(&models.User{}, "idx_users_auth_provider_external_id")
+			for _, col := range []string{"email", "external_id", "auth_provider"} {
+				if tx.Migrator().HasColumn(&models.User{}, col) {
+					if err := tx.Migrator().DropColumn(&models.User{}, col); err != nil {
+						return err
+					}
+				}
+			}
+			return nil
+		},
+	})
+
 	// Run migrations
 	if err := migrator.MigrateUp(); err != nil {
 		return err

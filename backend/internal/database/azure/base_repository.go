@@ -118,6 +118,17 @@ func getString(m map[string]interface{}, key string) string {
 	return ""
 }
 
+// getStringPtr safely extracts a string value from a map, returning nil when
+// the key is missing or the value is empty.
+func getStringPtr(m map[string]interface{}, key string) *string {
+	if v, ok := m[key]; ok {
+		if s, ok := v.(string); ok && s != "" {
+			return &s
+		}
+	}
+	return nil
+}
+
 // getStringDefault safely extracts a string value from a map, returning
 // defaultVal when the key is missing or the value is empty.
 func getStringDefault(m map[string]interface{}, key, defaultVal string) string {
