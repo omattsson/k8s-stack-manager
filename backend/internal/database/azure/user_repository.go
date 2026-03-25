@@ -18,6 +18,14 @@ type UserRepository struct {
 	tableName string
 }
 
+// derefString returns the value of a *string or "" if nil.
+func derefString(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
+}
+
 // NewUserRepository creates a new Azure Table Storage user repository.
 func NewUserRepository(accountName, accountKey, endpoint string, useAzurite bool) (*UserRepository, error) {
 	client, err := createTableClient(accountName, accountKey, endpoint, "Users", useAzurite)
@@ -60,7 +68,7 @@ func (r *UserRepository) Create(user *models.User) error {
 		"DisplayName":  user.DisplayName,
 		"Role":         user.Role,
 		"AuthProvider": user.AuthProvider,
-		"ExternalID":   user.ExternalID,
+		"ExternalID":   derefString(user.ExternalID),
 		"Email":        user.Email,
 		"CreatedAt":    now.Format(time.RFC3339),
 		"UpdatedAt":    now.Format(time.RFC3339),
@@ -148,7 +156,7 @@ func (r *UserRepository) Update(user *models.User) error {
 		"DisplayName":  user.DisplayName,
 		"Role":         user.Role,
 		"AuthProvider": user.AuthProvider,
-		"ExternalID":   user.ExternalID,
+		"ExternalID":   derefString(user.ExternalID),
 		"Email":        user.Email,
 		"CreatedAt":    user.CreatedAt.Format(time.RFC3339),
 		"UpdatedAt":    now.Format(time.RFC3339),
@@ -210,7 +218,7 @@ func userFromEntity(e map[string]interface{}) *models.User {
 		DisplayName:  getString(e, "DisplayName"),
 		Role:         getString(e, "Role"),
 		AuthProvider: getStringDefault(e, "AuthProvider", "local"),
-		ExternalID:   getString(e, "ExternalID"),
+		ExternalID:   getStringPtr(e, "ExternalID"),
 		Email:        getString(e, "Email"),
 		CreatedAt:    parseTime(e, "CreatedAt"),
 		UpdatedAt:    parseTime(e, "UpdatedAt"),

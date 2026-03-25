@@ -1,7 +1,6 @@
 import { createContext, useContext, useState, useEffect, useCallback, useMemo } from 'react';
 import type { ReactNode } from 'react';
 import { authService, oidcService } from '../api/client';
-import { useNotification } from './NotificationContext';
 import type { User, JwtPayload } from '../types';
 
 interface OidcConfig {
@@ -20,6 +19,8 @@ interface AuthContextType {
   oidcLoading: boolean;
   loginWithOIDC: (redirect?: string) => Promise<void>;
   handleOIDCCallback: (token: string) => void;
+  authProvider: string | null;
+  authEmail: string | null;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -56,7 +57,8 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const [isLoading, setIsLoading] = useState(true);
   const [oidcConfig, setOidcConfig] = useState<OidcConfig | null>(null);
   const [oidcLoading, setOidcLoading] = useState(true);
-  const { showError } = useNotification();
+  const [authProvider, setAuthProvider] = useState<string | null>(null);
+  const [authEmail, setAuthEmail] = useState<string | null>(null);
 
   useEffect(() => {
     const token = localStorage.getItem('token');
@@ -64,6 +66,8 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       const payload = decodeJwtPayload(token);
       if (payload && !isTokenExpired(payload)) {
         setUser(userFromPayload(payload));
+        setAuthProvider(payload.auth_provider ?? null);
+        setAuthEmail(payload.email ?? null);
       } else {
         localStorage.removeItem('token');
       }
@@ -97,28 +101,25 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   }, []);
 
   const loginWithOIDC = useCallback(async (redirect?: string) => {
-    try {
-      const result = await oidcService.getAuthorizeUrl(redirect);
-      window.location.href = result.redirect_url;
-    } catch (error) {
-      showError('Failed to initiate SSO login. Please try again.');
-      throw error;
-    }
-  }, [showError]);
+    const result = await oidcService.getAuthorizeUrl(redirect);
+    window.location.href = result.redirect_url;
+  }, []);
 
   const handleOIDCCallback = useCallback((token: string) => {
     localStorage.setItem('token', token);
     const payload = decodeJwtPayload(token);
     if (payload && !isTokenExpired(payload)) {
       setUser(userFromPayload(payload));
+      setAuthProvider(payload.auth_provider ?? null);
+      setAuthEmail(payload.email ?? null);
     }
   }, []);
 
   const isAuthenticated = user !== null;
 
   const value = useMemo(
-    () => ({ user, login, logout, isAuthenticated, isLoading, oidcConfig, oidcLoading, loginWithOIDC, handleOIDCCallback }),
-    [user, login, logout, isAuthenticated, isLoading, oidcConfig, oidcLoading, loginWithOIDC, handleOIDCCallback]
+    () => ({ user, login, logout, isAuthenticated, isLoading, oidcConfig, oidcLoading, loginWithOIDC, handleOIDCCallback, authProvider, authEmail }),
+    [user, login, logout, isAuthenticated, isLoading, oidcConfig, oidcLoading, loginWithOIDC, handleOIDCCallback, authProvider, authEmail]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

@@ -19,6 +19,7 @@ import (
 	"backend/internal/auth"
 	"backend/internal/config"
 	"backend/internal/models"
+	"backend/pkg/dberrors"
 
 	"github.com/gin-gonic/gin"
 	jwtlib "github.com/golang-jwt/jwt/v5"
@@ -26,7 +27,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// ---- shared RSA key for handler OIDC tests ----
+func stringPtr(s string) *string { return &s }
 
 var (
 	handlerOIDCPrivKey     *rsa.PrivateKey
@@ -154,7 +155,7 @@ func newOIDCHandlerSetup(t *testing.T, failToken bool, cfgOverrides ...func(*con
 		ProviderURL:   oidcSvr.server.URL,
 		ClientID:      clientID,
 		ClientSecret:  "",
-		RedirectURL:   "http://localhost:3000/auth/callback",
+		RedirectURL:   "http://localhost:3000/api/v1/auth/oidc/callback",
 		Scopes:        []string{"openid", "profile", "email"},
 		RoleClaim:     "roles",
 		AdminRoles:    []string{"k8s-stack-admin"},
@@ -510,7 +511,7 @@ func TestOIDCCallback(t *testing.T) {
 		require.NoError(t, err)
 		require.Len(t, users, 1, "exactly one user must be provisioned")
 		assert.Equal(t, "oidc", users[0].AuthProvider)
-		assert.Equal(t, "oidc-user-001", users[0].ExternalID)
+		assert.Equal(t, "oidc-user-001", *users[0].ExternalID)
 		assert.Equal(t, "oidcuser@example.com", users[0].Email)
 	})
 
@@ -579,7 +580,7 @@ func TestOIDCCallback(t *testing.T) {
 			DisplayName:  "Old Name",
 			Role:         "user",
 			AuthProvider: "oidc",
-			ExternalID:   "oidc-user-001", // matches mock token "sub"
+			ExternalID:   stringPtr("oidc-user-001"), // matches mock token "sub"
 			Email:        "old@example.com",
 		}
 		require.NoError(t, userRepo.Create(existingUser))
@@ -657,7 +658,7 @@ func TestCallback_DuplicateKeyRaceCondition(t *testing.T) {
 		DisplayName:  "OIDC User",
 		Role:         "admin",
 		AuthProvider: "oidc",
-		ExternalID:   "oidc-user-001", // matches mock token "sub"
+		ExternalID:   stringPtr("oidc-user-001"), // matches mock token "sub"
 		Email:        "oidcuser@example.com",
 	}
 
@@ -734,6 +735,7 @@ func TestIsDuplicateError(t *testing.T) {
 		want bool
 	}{
 		{name: "nil error", err: nil, want: false},
+		{name: "dberrors ErrDuplicateKey", err: dberrors.NewDatabaseError("create", dberrors.ErrDuplicateKey), want: true},
 		{name: "duplicate key lowercase", err: errors.New("duplicate key"), want: true},
 		{name: "Duplicate entry MySQL", err: errors.New("Duplicate entry '1' for key 'PRIMARY'"), want: true},
 		{name: "wrapped duplicate key", err: fmt.Errorf("create failed: %w", errors.New("duplicate key violation")), want: true},
@@ -758,6 +760,7 @@ func TestIsNotFoundError(t *testing.T) {
 		want bool
 	}{
 		{name: "nil error", err: nil, want: false},
+		{name: "dberrors ErrNotFound", err: dberrors.NewDatabaseError("find", dberrors.ErrNotFound), want: true},
 		{name: "not found", err: errors.New("not found"), want: true},
 		{name: "record not found", err: errors.New("record not found"), want: true},
 		{name: "wrapped not found", err: fmt.Errorf("lookup: %w", errors.New("user not found")), want: true},

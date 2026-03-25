@@ -12,6 +12,8 @@ export interface JwtPayload {
   username: string;
   role: string;
   exp: number;
+  auth_provider?: string;
+  email?: string;
 }
 
 export interface LoginRequest {

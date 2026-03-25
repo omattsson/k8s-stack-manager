@@ -132,6 +132,7 @@ func (h *AuthHandler) Register(c *gin.Context) {
 		PasswordHash: string(hash),
 		DisplayName:  req.DisplayName,
 		Role:         role,
+		AuthProvider: "local",
 		CreatedAt:    time.Now().UTC(),
 		UpdatedAt:    time.Now().UTC(),
 	}

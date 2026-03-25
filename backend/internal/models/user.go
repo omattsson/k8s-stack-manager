@@ -10,7 +10,7 @@ type User struct {
 	DisplayName  string    `json:"display_name"`
 	Role         string    `json:"role"`
 	AuthProvider string    `json:"auth_provider"`
-	ExternalID   string    `json:"external_id"`
+	ExternalID   *string   `json:"external_id"`
 	Email        string    `json:"email"`
 	CreatedAt    time.Time `json:"created_at"`
 	UpdatedAt    time.Time `json:"updated_at"`

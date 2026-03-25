@@ -178,7 +178,7 @@ func (d *Database) AutoMigrate() error {
 				}
 			}
 			if !tx.Migrator().HasColumn(&models.User{}, "external_id") {
-				if err := tx.Exec("ALTER TABLE users ADD COLUMN external_id VARCHAR(255) NOT NULL DEFAULT ''").Error; err != nil {
+				if err := tx.Exec("ALTER TABLE users ADD COLUMN external_id VARCHAR(255) NULL DEFAULT NULL").Error; err != nil {
 					return err
 				}
 			}
@@ -191,11 +191,16 @@ func (d *Database) AutoMigrate() error {
 			if err := tx.Exec("UPDATE users SET auth_provider = 'local' WHERE auth_provider = '' OR auth_provider IS NULL").Error; err != nil {
 				return err
 			}
-			// Add index on (auth_provider, external_id) for FindByExternalID queries.
+			// Normalise legacy empty-string external_id to NULL so unique index works.
+			if err := tx.Exec("UPDATE users SET external_id = NULL WHERE external_id = ''").Error; err != nil {
+				return err
+			}
+			// Add UNIQUE index on (auth_provider, external_id) for FindByExternalID queries.
+			// MySQL allows multiple NULLs in a unique index, so local users (NULL external_id) won't collide.
 			var count int64
 			tx.Raw("SELECT COUNT(*) FROM information_schema.statistics WHERE table_schema = DATABASE() AND table_name = 'users' AND index_name = 'idx_users_auth_provider_external_id'").Scan(&count)
 			if count == 0 {
-				if err := tx.Exec("CREATE INDEX idx_users_auth_provider_external_id ON users (auth_provider, external_id)").Error; err != nil {
+				if err := tx.Exec("CREATE UNIQUE INDEX idx_users_auth_provider_external_id ON users (auth_provider, external_id)").Error; err != nil {
 					return err
 				}
 			}

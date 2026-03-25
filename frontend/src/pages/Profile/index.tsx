@@ -35,11 +35,6 @@ import { useNotification } from '../../context/NotificationContext';
 import type { APIKey, CreateAPIKeyRequest, CreateAPIKeyResponse, NotificationPreference } from '../../types';
 import LoadingState from '../../components/LoadingState';
 
-interface TokenPayload {
-  auth_provider?: string;
-  email?: string;
-}
-
 const EVENT_TYPE_LABELS: Record<string, string> = {
   'deployment.success': 'Deployment succeeded',
   'deployment.error': 'Deployment failed',
@@ -55,22 +50,8 @@ const getRoleChipColor = (role: string): 'error' | 'warning' | 'default' => {
   return 'default';
 };
 
-function decodeTokenPayload(): TokenPayload | null {
-  try {
-    const token = localStorage.getItem('token');
-    if (!token) return null;
-    const base64Url = token.split('.')[1];
-    const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
-    const padded = base64.padEnd(base64.length + (4 - (base64.length % 4)) % 4, '=');
-    const json = atob(padded);
-    return JSON.parse(json);
-  } catch {
-    return null;
-  }
-}
-
 const Profile = () => {
-  const { user: currentUser, oidcConfig } = useAuth();
+  const { user: currentUser, oidcConfig, authProvider, authEmail } = useAuth();
 
   const [apiKeys, setApiKeys] = useState<APIKey[]>([]);
   const [loading, setLoading] = useState(true);
@@ -96,10 +77,6 @@ const Profile = () => {
   const [notifPrefsLoading, setNotifPrefsLoading] = useState(true);
   const [notifPrefsSaving, setNotifPrefsSaving] = useState(false);
 
-  // Auth provider detection
-  const [authProvider, setAuthProvider] = useState<string | null>(null);
-  const [authEmail, setAuthEmail] = useState<string | null>(null);
-
   const fetchApiKeys = useCallback(async () => {
     if (!currentUser) return;
     setLoading(true);
@@ -117,14 +94,6 @@ const Profile = () => {
   useEffect(() => {
     fetchApiKeys();
   }, [fetchApiKeys]);
-
-  useEffect(() => {
-    const payload = decodeTokenPayload();
-    if (payload?.auth_provider) {
-      setAuthProvider(payload.auth_provider);
-      if (payload.email) setAuthEmail(payload.email);
-    }
-  }, []);
 
   useEffect(() => {
     return () => {

@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -12,6 +13,7 @@ import (
 	"backend/internal/auth"
 	"backend/internal/config"
 	"backend/internal/models"
+	"backend/pkg/dberrors"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -218,7 +220,7 @@ func (h *OIDCHandler) provisionUser(oidcUser *auth.OIDCUser) (*models.User, erro
 		DisplayName:  oidcUser.Name,
 		Role:         h.provider.MapRole(oidcUser.Roles),
 		AuthProvider: "oidc",
-		ExternalID:   oidcUser.Subject,
+		ExternalID:   &oidcUser.Subject,
 		Email:        oidcUser.Email,
 	}
 
@@ -273,18 +275,26 @@ func isSafeRedirect(target string) bool {
 	return u.Scheme == "" && u.Host == ""
 }
 
-// isNotFoundError checks whether an error represents a "not found" condition.
+// isNotFoundError checks whether an error represents a "not found" condition,
+// using the typed dberrors system with string fallback for legacy callers.
 func isNotFoundError(err error) bool {
 	if err == nil {
 		return false
 	}
+	if errors.Is(err, dberrors.ErrNotFound) {
+		return true
+	}
 	return strings.Contains(err.Error(), "not found")
 }
 
-// isDuplicateError checks whether an error represents a duplicate key violation.
+// isDuplicateError checks whether an error represents a duplicate key violation,
+// using the typed dberrors system with string fallback for legacy callers.
 func isDuplicateError(err error) bool {
 	if err == nil {
 		return false
+	}
+	if errors.Is(err, dberrors.ErrDuplicateKey) {
+		return true
 	}
 	msg := err.Error()
 	return strings.Contains(msg, "duplicate key") || strings.Contains(msg, "Duplicate entry")

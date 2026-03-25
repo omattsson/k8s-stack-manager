@@ -86,7 +86,7 @@ func (m *MockUserRepository) FindByExternalID(provider, externalID string) (*mod
 		return nil, m.findErr
 	}
 	for _, u := range m.users {
-		if u.AuthProvider == provider && u.ExternalID == externalID {
+		if u.AuthProvider == provider && u.ExternalID != nil && *u.ExternalID == externalID {
 			cp := *u
 			return &cp, nil
 		}

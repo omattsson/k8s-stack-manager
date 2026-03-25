@@ -143,7 +143,7 @@ test.describe('OIDC Authentication', () => {
       exp: futureExp,
     });
 
-    await page.goto(`/auth/callback?token=${encodeURIComponent(fakeToken)}`);
+    await page.goto(`/auth/callback#token=${encodeURIComponent(fakeToken)}&redirect=%2F`);
 
     await expect(page).toHaveURL('/', { timeout: 10_000 });
   });
