@@ -161,7 +161,7 @@ func (h *OIDCHandler) Callback(c *gin.Context) {
 	params := url.Values{}
 	params.Set("token", token)
 	params.Set("redirect", redirectPath)
-	c.Redirect(http.StatusFound, "/auth/callback?"+params.Encode())
+	c.Redirect(http.StatusFound, "/auth/callback#"+params.Encode())
 }
 
 func (h *OIDCHandler) provisionUser(oidcUser *auth.OIDCUser) (*models.User, error) {

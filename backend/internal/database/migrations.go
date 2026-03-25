@@ -202,10 +202,14 @@ func (d *Database) AutoMigrate() error {
 			return nil
 		},
 		Down: func(tx *gorm.DB) error {
-			_ = tx.Exec("DROP INDEX idx_users_auth_provider_external_id ON users")
-			_ = tx.Exec("ALTER TABLE users DROP COLUMN IF EXISTS email")
-			_ = tx.Exec("ALTER TABLE users DROP COLUMN IF EXISTS external_id")
-			_ = tx.Exec("ALTER TABLE users DROP COLUMN IF EXISTS auth_provider")
+			_ = tx.Migrator().DropIndex(&models.User{}, "idx_users_auth_provider_external_id")
+			for _, col := range []string{"email", "external_id", "auth_provider"} {
+				if tx.Migrator().HasColumn(&models.User{}, col) {
+					if err := tx.Migrator().DropColumn(&models.User{}, col); err != nil {
+						return err
+					}
+				}
+			}
 			return nil
 		},
 	})

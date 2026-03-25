@@ -157,7 +157,11 @@ func SetupRoutes(router *gin.Engine, deps Deps) *handlers.RateLimiter {
 			} else {
 				// Return disabled config when OIDC is not configured.
 				auth.GET("/oidc/config", func(c *gin.Context) {
-					c.JSON(http.StatusOK, gin.H{"enabled": false})
+					c.JSON(http.StatusOK, gin.H{
+						"enabled":            false,
+						"provider_name":      "",
+						"local_auth_enabled": true,
+					})
 				})
 			}
 		}

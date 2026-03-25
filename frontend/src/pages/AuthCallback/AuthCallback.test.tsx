@@ -1,10 +1,11 @@
-import { describe, it, expect, vi, afterEach } from 'vitest';
+import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import AuthCallback from './index';
 
 const mockNavigate = vi.fn();
 const mockHandleOIDCCallback = vi.fn();
+const mockReplaceState = vi.fn();
 
 vi.mock('react-router-dom', async () => {
   const actual = await vi.importActual('react-router-dom');
@@ -21,27 +22,40 @@ vi.mock('../../context/AuthContext', () => ({
 }));
 
 /**
- * Renders AuthCallback with the given search string (e.g. "?token=abc" or "?error=invalid_state").
- * Uses MemoryRouter so that useSearchParams reads from the initial location.
+ * Renders AuthCallback.
+ * - `search`: query string for error params (e.g. "?error=invalid_state")
+ * - `hash`: URL fragment for token/redirect (e.g. "#token=abc&redirect=/foo")
+ *
+ * Sets window.location.hash and mocks history.replaceState to capture calls.
  */
-function renderCallback(search: string) {
+function renderCallback(search: string, hash = '') {
+  // Set the hash so the component can read it
+  window.location.hash = hash;
+
   return render(
     <MemoryRouter initialEntries={[`/auth/callback${search}`]}>
       <AuthCallback />
-    </MemoryRouter>
+    </MemoryRouter>,
   );
 }
 
 describe('AuthCallback Page', () => {
+  beforeEach(() => {
+    // Mock history.replaceState to prevent jsdom warnings and to assert calls
+    mockReplaceState.mockClear();
+    vi.spyOn(window.history, 'replaceState').mockImplementation(mockReplaceState);
+  });
+
   afterEach(() => {
     vi.clearAllMocks();
     vi.restoreAllMocks();
+    window.location.hash = '';
   });
 
-  describe('Token in URL (success path)', () => {
-    it('calls handleOIDCCallback with the token', async () => {
+  describe('Token in URL fragment (success path)', () => {
+    it('calls handleOIDCCallback with the token from the fragment', async () => {
       const token = 'header.payload.sig';
-      renderCallback(`?token=${token}`);
+      renderCallback('', `#token=${token}`);
 
       await waitFor(() => {
         expect(mockHandleOIDCCallback).toHaveBeenCalledWith(token);
@@ -49,28 +63,51 @@ describe('AuthCallback Page', () => {
     });
 
     it('navigates to root after processing token', async () => {
-      renderCallback('?token=sometoken');
+      renderCallback('', '#token=sometoken');
 
       await waitFor(() => {
         expect(mockNavigate).toHaveBeenCalledWith('/', { replace: true });
       });
     });
 
+    it('navigates to the redirect path from the fragment', async () => {
+      renderCallback('', '#token=sometoken&redirect=/dashboard');
+
+      await waitFor(() => {
+        expect(mockNavigate).toHaveBeenCalledWith('/dashboard', { replace: true });
+      });
+    });
+
+    it('ignores unsafe redirect paths (protocol-relative)', async () => {
+      renderCallback('', '#token=sometoken&redirect=//evil.com');
+
+      await waitFor(() => {
+        expect(mockNavigate).toHaveBeenCalledWith('/', { replace: true });
+      });
+    });
+
+    it('clears the URL fragment immediately', async () => {
+      renderCallback('', '#token=sometoken');
+
+      await waitFor(() => {
+        expect(mockReplaceState).toHaveBeenCalled();
+      });
+    });
+
     it('shows "Completing sign-in" text while processing (navigate is mocked)', () => {
-      // navigate is mocked so the component stays in the loading view
-      renderCallback('?token=sometoken');
+      renderCallback('', '#token=sometoken');
 
       expect(screen.getByText(/completing sign-in/i)).toBeInTheDocument();
     });
 
     it('shows a loading spinner while processing', () => {
-      renderCallback('?token=sometoken');
+      renderCallback('', '#token=sometoken');
 
       expect(screen.getByRole('progressbar')).toBeInTheDocument();
     });
   });
 
-  describe('Error param in URL', () => {
+  describe('Error param in URL query string', () => {
     it('shows session-expired message for invalid_state error', () => {
       renderCallback('?error=invalid_state');
 
@@ -116,7 +153,7 @@ describe('AuthCallback Page', () => {
   });
 
   describe('No token and no error', () => {
-    it('shows generic error message when search params are empty', () => {
+    it('shows generic error message when no fragment and no query params', () => {
       renderCallback('');
 
       expect(screen.getByRole('alert')).toBeInTheDocument();

@@ -507,6 +507,7 @@ func TestOIDCConfigValidate(t *testing.T) {
 				Enabled:     true,
 				ProviderURL: "https://login.microsoftonline.com/tenant/v2.0",
 				ClientID:    "my-client",
+				RedirectURL: "http://localhost:3000/auth/callback",
 			},
 			wantErr: false,
 		},
@@ -524,9 +525,20 @@ func TestOIDCConfigValidate(t *testing.T) {
 			cfg: config.OIDCConfig{
 				Enabled:     true,
 				ProviderURL: "https://example.com",
+				RedirectURL: "http://localhost:3000/auth/callback",
 			},
 			wantErr: true,
 			errMsg:  "OIDC_CLIENT_ID",
+		},
+		{
+			name: "enabled config without RedirectURL is invalid",
+			cfg: config.OIDCConfig{
+				Enabled:     true,
+				ProviderURL: "https://example.com",
+				ClientID:    "my-client",
+			},
+			wantErr: true,
+			errMsg:  "OIDC_REDIRECT_URL",
 		},
 		{
 			name: "enabled config missing both required fields is invalid",
@@ -576,6 +588,7 @@ func TestOIDCConfigLoad(t *testing.T) {
 		t.Setenv("OIDC_ENABLED", "true")
 		t.Setenv("OIDC_PROVIDER_URL", "https://login.microsoftonline.com/tenant/v2.0")
 		t.Setenv("OIDC_CLIENT_ID", "test-client-id")
+		t.Setenv("OIDC_REDIRECT_URL", "http://localhost:3000/auth/callback")
 		cfg, err := config.LoadConfig()
 		require.NoError(t, err)
 		assert.True(t, cfg.OIDC.Enabled)

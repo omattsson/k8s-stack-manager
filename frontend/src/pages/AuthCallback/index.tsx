@@ -9,6 +9,17 @@ const ERROR_MESSAGES: Record<string, string> = {
   no_account: 'No account found. Contact your administrator.',
 };
 
+/** Parse a URL hash fragment (e.g. "#token=abc&redirect=/foo") into URLSearchParams. */
+function parseFragment(hash: string): URLSearchParams {
+  const raw = hash.startsWith('#') ? hash.slice(1) : hash;
+  return new URLSearchParams(raw);
+}
+
+/** Return true when `path` is a safe relative redirect (starts with `/`, not `//`). */
+function isSafeRedirect(path: string): boolean {
+  return path.startsWith('/') && !path.startsWith('//');
+}
+
 const AuthCallback = () => {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
@@ -16,13 +27,20 @@ const AuthCallback = () => {
   const { handleOIDCCallback } = useAuth();
 
   useEffect(() => {
-    const token = searchParams.get('token');
+    // IdP errors still arrive via query string
     const errorParam = searchParams.get('error');
-
     if (errorParam) {
       setError(ERROR_MESSAGES[errorParam] || 'Something went wrong. Please try again.');
       return;
     }
+
+    // Token and redirect come from the URL fragment
+    const fragment = parseFragment(window.location.hash);
+    const token = fragment.get('token');
+    const redirect = fragment.get('redirect');
+
+    // Clear the fragment from the URL immediately
+    window.history.replaceState(null, '', window.location.pathname + window.location.search);
 
     if (!token) {
       setError('Something went wrong. Please try again.');
@@ -30,7 +48,9 @@ const AuthCallback = () => {
     }
 
     handleOIDCCallback(token);
-    navigate('/', { replace: true });
+
+    const target = redirect && isSafeRedirect(redirect) ? redirect : '/';
+    navigate(target, { replace: true });
   }, [searchParams, navigate, handleOIDCCallback]);
 
   if (error) {

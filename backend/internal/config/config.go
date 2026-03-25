@@ -88,6 +88,9 @@ func (c *OIDCConfig) Validate() error {
 	if c.ClientID == "" {
 		return errors.New("OIDC_CLIENT_ID is required when OIDC is enabled")
 	}
+	if c.RedirectURL == "" {
+		return errors.New("OIDC_REDIRECT_URL is required when OIDC is enabled")
+	}
 	return nil
 }
 

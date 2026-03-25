@@ -26,8 +26,10 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 function decodeJwtPayload(token: string): JwtPayload | null {
   try {
-    const base64 = token.split('.')[1];
-    const json = atob(base64);
+    const base64Url = token.split('.')[1];
+    const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
+    const padded = base64.padEnd(base64.length + (4 - (base64.length % 4)) % 4, '=');
+    const json = atob(padded);
     return JSON.parse(json);
   } catch {
     return null;
@@ -98,8 +100,9 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     try {
       const result = await oidcService.getAuthorizeUrl(redirect);
       window.location.href = result.redirect_url;
-    } catch {
+    } catch (error) {
       showError('Failed to initiate SSO login. Please try again.');
+      throw error;
     }
   }, [showError]);
 

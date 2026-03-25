@@ -501,7 +501,7 @@ func TestOIDCCallback(t *testing.T) {
 
 		require.Equal(t, http.StatusFound, w.Code)
 		location := w.Header().Get("Location")
-		assert.Contains(t, location, "/auth/callback?", "must redirect to callback")
+		assert.Contains(t, location, "/auth/callback#", "must redirect to callback")
 		assert.Contains(t, location, "token=", "must include JWT token")
 		assert.Contains(t, location, "redirect=", "must include redirect path")
 
@@ -599,7 +599,7 @@ func TestOIDCCallback(t *testing.T) {
 		r.ServeHTTP(w, req)
 
 		require.Equal(t, http.StatusFound, w.Code)
-		assert.Contains(t, w.Header().Get("Location"), "/auth/callback?", "must redirect to callback")
+		assert.Contains(t, w.Header().Get("Location"), "/auth/callback#", "must redirect to callback")
 		assert.Contains(t, w.Header().Get("Location"), "token=", "must include JWT token")
 
 		// Verify the existing user was updated in the repo.
@@ -629,7 +629,7 @@ func TestOIDCCallback(t *testing.T) {
 		require.NoError(t, err)
 		r.ServeHTTP(w1, req1)
 		assert.Equal(t, http.StatusFound, w1.Code)
-		assert.Contains(t, w1.Header().Get("Location"), "/auth/callback?")
+		assert.Contains(t, w1.Header().Get("Location"), "/auth/callback#")
 		assert.Contains(t, w1.Header().Get("Location"), "token=")
 
 		// Second request with same state: state was consumed, must fail with invalid_state.
@@ -685,7 +685,7 @@ func TestCallback_DuplicateKeyRaceCondition(t *testing.T) {
 
 	require.Equal(t, http.StatusFound, w.Code)
 	location := w.Header().Get("Location")
-	assert.Contains(t, location, "/auth/callback?", "must redirect to callback on race-condition recovery")
+	assert.Contains(t, location, "/auth/callback#", "must redirect to callback on race-condition recovery")
 	assert.Contains(t, location, "token=", "must include JWT token")
 }
 

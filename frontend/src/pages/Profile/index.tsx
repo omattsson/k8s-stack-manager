@@ -59,8 +59,10 @@ function decodeTokenPayload(): TokenPayload | null {
   try {
     const token = localStorage.getItem('token');
     if (!token) return null;
-    const base64 = token.split('.')[1];
-    const json = atob(base64);
+    const base64Url = token.split('.')[1];
+    const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
+    const padded = base64.padEnd(base64.length + (4 - (base64.length % 4)) % 4, '=');
+    const json = atob(padded);
     return JSON.parse(json);
   } catch {
     return null;
