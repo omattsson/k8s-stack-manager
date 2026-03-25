@@ -188,6 +188,9 @@ func (h *OIDCHandler) provisionUser(oidcUser *auth.OIDCUser) (*models.User, erro
 		if changed {
 			if updateErr := h.userRepo.Update(user); updateErr != nil {
 				slog.Error("Failed to update OIDC user", "user_id", user.ID, "error", updateErr)
+				// Abort authentication to avoid issuing a token with
+				// unpersisted changes (e.g., elevated role or new email).
+				return nil, fmt.Errorf("auth_failed")
 			}
 		}
 		return user, nil
