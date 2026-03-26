@@ -73,6 +73,9 @@ frontend/src/
     useWebSocket.ts                  # WebSocket hook for real-time updates
   types/
     index.ts                         # Shared TypeScript types
+  utils/
+    timeAgo.ts                       # Relative timestamp formatting ("2m ago")
+    roles.ts                         # Role ranking and permission helpers
   test/
     setup.ts                         # Vitest setup: @testing-library/jest-dom
   e2e/

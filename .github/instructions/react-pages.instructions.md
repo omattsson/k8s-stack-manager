@@ -17,3 +17,7 @@ applyTo: "frontend/src/pages/**/*.tsx"
 - Use TypeScript interfaces for all component props and API response types
 - Page titles use `Typography variant="h4" component="h1"`
 - Wrap content in MUI `Box` and `Paper` components for consistent spacing
+- For relative timestamps, use `timeAgo()` from `utils/timeAgo.ts` with MUI `Tooltip` showing the full date
+- For keyboard shortcuts, register `keydown` listeners in `useEffect` — skip when `activeElement` is `INPUT`/`TEXTAREA`/`SELECT`
+- For bulk operations, use checkbox multi-select + toolbar with `ConfirmDialog` before destructive actions and a results dialog showing per-item status
+- For recently used tracking, store an array of IDs in `localStorage` with JSON validation and size limits

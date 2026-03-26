@@ -14,7 +14,7 @@ Built with Vite + React 19 + TypeScript (strict mode). Uses SWC via `@vitejs/plu
 - **Hooks**: `src/hooks/useCountdown.ts` (countdown timer), `useUnsavedChanges.ts` (unsaved changes warning), `useWebSocket.ts` (WebSocket real-time updates)
 - **Theme**: `src/theme/` — `index.ts` (MUI theme export), `palette.ts`, `typography.ts`, `components.ts` (default prop/style overrides)
 - **Types**: `src/types/index.ts` — shared TypeScript type definitions
-- **Utils**: `src/utils/roles.ts` — role ranking and permission helpers
+- **Utils**: `src/utils/roles.ts` — role ranking and permission helpers; `src/utils/timeAgo.ts` — relative timestamp formatting ("2m ago", "3h ago")
 
 ## Component Patterns
 - Functional components only (no class components)
@@ -23,6 +23,32 @@ Built with Vite + React 19 + TypeScript (strict mode). Uses SWC via `@vitejs/plu
 - TypeScript interfaces for all component props and API response types
 - Pages: one directory per page under `src/pages/` with `index.tsx` — current pages: Login, StackInstances (Dashboard), StackDefinitions, Templates, AuditLog, Admin, Profile, Analytics, CleanupPolicies, ClusterHealth, Notifications, SharedValues, NotFound
 - Shared components in `src/components/`: Layout, AccessUrls, BranchSelector, ConfirmDialog, DeploymentLogViewer, EmptyState, EntityLink, ErrorBoundary, FavoriteButton, LoadingState, NotificationCenter, PodStatusDisplay, ProtectedRoute, QuickDeployDialog, QuotaConfigDialog, StatusBadge, TtlSelector, YamlEditor
+
+## UX Patterns
+
+### Keyboard Shortcuts
+Pages can register keyboard shortcuts via `useEffect` with `keydown` event listeners. Shortcuts must check `document.activeElement` to avoid firing when input/textarea is focused:
+```typescript
+useEffect(() => {
+  const handler = (e: KeyboardEvent) => {
+    if (['INPUT', 'TEXTAREA', 'SELECT'].includes((document.activeElement?.tagName || ''))) return;
+    if (e.key === 'r') handleRefresh();
+  };
+  window.addEventListener('keydown', handler);
+  return () => window.removeEventListener('keydown', handler);
+}, []);
+```
+Currently used in Dashboard: `r` (refresh), `n` (new instance).
+
+### Relative Timestamps
+Use `timeAgo(date)` from `src/utils/timeAgo.ts` for human-friendly relative time display. Returns strings like "just now", "2m ago", "3h ago", "5d ago". Combine with MUI `Tooltip` showing the full absolute date for accessibility.
+
+### Recently Used Tracking
+Track recently used items in `localStorage` for quick access. Use a validated array of IDs with maximum size limit. Parse safely with JSON validation and shape checking. Example: `localStorage.getItem('recentlyUsedTemplates')` in the Templates gallery.
+
+### Bulk Operations UI
+Multi-select with checkbox + toolbar pattern for bulk actions. Show a `Toolbar` with action buttons when items are selected. Use `ConfirmDialog` before destructive actions. Display results in a dialog with per-item success/error status.
+
 - Register new pages in `src/routes.tsx`, add nav in `src/components/Layout/index.tsx`
 
 ## Page Pattern

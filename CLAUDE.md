@@ -41,6 +41,7 @@ backend/
       auth.go                    # AuthHandler: login, register, current user
       branch_overrides.go        # BranchOverrideHandler: per-chart branch overrides
       bulk_operations.go         # BulkHandler: bulk deploy/stop/clean/delete (up to 50 instances)
+      bulk_template_operations.go # BulkTemplateHandler: bulk delete/publish/unpublish (up to 50 templates)
       chart_configs.go           # Chart config management (nested under definitions)
       cleanup_policies.go        # CleanupPolicyHandler: CRUD + manual run
       clusters.go                # ClusterHandler: CRUD + test-connection + health + quotas + utilization
@@ -160,7 +161,7 @@ frontend/src/
     typography.ts              # Typography variant overrides
     components.ts              # MUI component default prop/style overrides
   types/                       # Shared TypeScript type definitions
-  utils/                       # Utility functions
+  utils/                       # Utility functions (timeAgo, role helpers)
 ```
 
 **Patterns**: MUI components (no raw HTML), `sx` prop for styling, functional components only, `useState`/`useEffect` for state, service objects with async methods for API calls. All service objects and methods in `api/client.ts` must have TSDoc comments with `@param`, `@returns`, and `@see` (HTTP method + route).
@@ -223,6 +224,7 @@ backend/internal/
 - **Template versioning**: Templates maintain version history; snapshots are created automatically on publish. Version diff compares chart configs between snapshots.
 - **Resource quotas**: Per-cluster resource quotas (CPU, memory, storage, pods) enforced via Kubernetes ResourceQuota and LimitRange objects. Admin-configurable via API.
 - **Bulk operations**: Bulk deploy/stop/clean/delete supports up to 50 instances per request. Returns per-instance success/failure results.
+- **Bulk template operations**: Bulk delete/publish/unpublish supports up to 50 templates per request. Returns per-template success/failure results. Requires DevOps+ role.
 - **Instance comparison**: Side-by-side comparison of two stack instances including merged Helm values per chart.
 - **Import/export**: Stack definitions can be exported as JSON bundles and re-imported to create new definitions with charts.
 
@@ -236,6 +238,7 @@ backend/internal/
 | Stack Definitions | `/api/v1/stack-definitions` | CRUD + nested chart management + import/export |
 | Stack Instances | `/api/v1/stack-instances` | CRUD + clone, deploy, stop, clean, status, logs, compare, extend TTL |
 | Bulk Operations | `/api/v1/stack-instances/bulk` | Bulk deploy, stop, clean, delete (up to 50 instances) |
+| Bulk Template Ops | `/api/v1/templates/bulk` | Bulk delete, publish, unpublish templates (up to 50) |
 | Value Overrides | `/api/v1/stack-instances/:id/overrides` | Per-chart value overrides |
 | Git | `/api/v1/git` | Branch listing, validation, provider status |
 | Audit Logs | `/api/v1/audit-logs` | Filterable audit log viewer |
