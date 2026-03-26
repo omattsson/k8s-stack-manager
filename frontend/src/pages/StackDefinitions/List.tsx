@@ -19,6 +19,7 @@ import {
 import AddIcon from '@mui/icons-material/Add';
 import FileUploadIcon from '@mui/icons-material/FileUpload';
 import SystemUpdateAltIcon from '@mui/icons-material/SystemUpdateAlt';
+import RocketLaunchIcon from '@mui/icons-material/RocketLaunch';
 import { definitionService, templateService } from '../../api/client';
 import FavoriteButton from '../../components/FavoriteButton';
 import type { StackDefinition, StackTemplate } from '../../types';
@@ -109,6 +110,7 @@ const List = () => {
                 <TableCell>Charts</TableCell>
                 <TableCell>Source Template</TableCell>
                 <TableCell sx={{ display: { xs: 'none', md: 'table-cell' } }}>Created</TableCell>
+                <TableCell align="right">Actions</TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
@@ -174,6 +176,18 @@ const List = () => {
                   </TableCell>
                   <TableCell sx={{ display: { xs: 'none', md: 'table-cell' } }}>
                     {new Date(def.created_at).toLocaleDateString()}
+                  </TableCell>
+                  <TableCell align="right" onClick={(e) => e.stopPropagation()}>
+                    <Tooltip title="Create instance from this definition">
+                      <IconButton
+                        size="small"
+                        color="primary"
+                        onClick={() => navigate(`/stack-instances/new?definition=${def.id}`)}
+                        aria-label={`Deploy ${def.name}`}
+                      >
+                        <RocketLaunchIcon fontSize="small" />
+                      </IconButton>
+                    </Tooltip>
                   </TableCell>
                 </TableRow>
               ))}

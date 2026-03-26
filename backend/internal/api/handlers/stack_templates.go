@@ -20,6 +20,12 @@ type TemplateHandler struct {
 	definitionRepo  models.StackDefinitionRepository
 	chartConfigRepo models.ChartConfigRepository
 	versionRepo     models.TemplateVersionRepository
+	userRepo        models.UserRepository
+}
+
+// SetUserRepo sets the optional UserRepository for enriched list responses.
+func (h *TemplateHandler) SetUserRepo(repo models.UserRepository) {
+	h.userRepo = repo
 }
 
 // NewTemplateHandler creates a new TemplateHandler.
@@ -54,12 +60,19 @@ func NewTemplateHandlerWithVersions(
 	}
 }
 
+// TemplateListItem extends StackTemplate with computed fields for the gallery.
+type TemplateListItem struct {
+	models.StackTemplate
+	DefinitionCount int    `json:"definition_count"`
+	OwnerUsername   string `json:"owner_username,omitempty"`
+}
+
 // ListTemplates godoc
 // @Summary     List stack templates
-// @Description List published templates for regular users, all templates for devops/admin
+// @Description List published templates for regular users, all templates for devops/admin. Includes definition_count and owner_username.
 // @Tags        templates
 // @Produce     json
-// @Success     200 {array}  models.StackTemplate
+// @Success     200 {array}  TemplateListItem
 // @Failure     500 {object} map[string]string
 // @Router      /api/v1/templates [get]
 func (h *TemplateHandler) ListTemplates(c *gin.Context) {
@@ -78,7 +91,41 @@ func (h *TemplateHandler) ListTemplates(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, templates)
+	// Build definition count map.
+	defCountMap := make(map[string]int)
+	if h.definitionRepo != nil {
+		defs, defErr := h.definitionRepo.List()
+		if defErr == nil {
+			for _, d := range defs {
+				if d.SourceTemplateID != "" {
+					defCountMap[d.SourceTemplateID]++
+				}
+			}
+		}
+	}
+
+	// Build user ID → username map.
+	usernameMap := make(map[string]string)
+	if h.userRepo != nil {
+		users, userErr := h.userRepo.List()
+		if userErr == nil {
+			for _, u := range users {
+				usernameMap[u.ID] = u.Username
+			}
+		}
+	}
+
+	// Assemble enriched response.
+	items := make([]TemplateListItem, len(templates))
+	for i, t := range templates {
+		items[i] = TemplateListItem{
+			StackTemplate:   t,
+			DefinitionCount: defCountMap[t.ID],
+			OwnerUsername:   usernameMap[t.OwnerID],
+		}
+	}
+
+	c.JSON(http.StatusOK, items)
 }
 
 // CreateTemplate godoc

@@ -8,6 +8,9 @@ vi.mock('../../../api/client', () => ({
   templateService: {
     list: vi.fn(),
     quickDeploy: vi.fn(),
+    bulkDelete: vi.fn(),
+    bulkPublish: vi.fn(),
+    bulkUnpublish: vi.fn(),
   },
   clusterService: {
     list: vi.fn().mockResolvedValue([]),
@@ -21,6 +24,15 @@ vi.mock('../../../context/AuthContext', () => ({
     isLoading: false,
     login: vi.fn(),
     logout: vi.fn(),
+  }),
+}));
+
+vi.mock('../../../context/NotificationContext', () => ({
+  useNotification: () => ({
+    showSuccess: vi.fn(),
+    showError: vi.fn(),
+    showWarning: vi.fn(),
+    showInfo: vi.fn(),
   }),
 }));
 

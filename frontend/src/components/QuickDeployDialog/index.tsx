@@ -76,6 +76,13 @@ const QuickDeployDialog = ({ open, onClose, template }: QuickDeployDialogProps) 
         cluster_id: clusterId || undefined,
         ttl_minutes: ttlMinutes,
       });
+      // Track in recently used templates
+      try {
+        const stored = JSON.parse(localStorage.getItem('recentTemplates') || '[]');
+        const filtered = stored.filter((t: { id: string }) => t.id !== template.id);
+        const updated = [{ id: template.id, name: template.name, usedAt: new Date().toISOString() }, ...filtered].slice(0, 5);
+        localStorage.setItem('recentTemplates', JSON.stringify(updated));
+      } catch { /* ignore localStorage errors */ }
       onClose();
       navigate(`/stack-instances/${result.instance.id}`);
     } catch (err: unknown) {
@@ -158,7 +165,7 @@ const QuickDeployDialog = ({ open, onClose, template }: QuickDeployDialogProps) 
           disabled={deploying}
           startIcon={deploying ? <CircularProgress size={18} /> : <RocketLaunchIcon />}
         >
-          {deploying ? 'Deploying...' : 'Deploy'}
+          {deploying ? 'Deploying...' : error ? 'Retry' : 'Deploy'}
         </Button>
       </DialogActions>
     </Dialog>

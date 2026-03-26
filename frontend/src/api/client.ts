@@ -43,6 +43,7 @@ import type {
   CompareInstancesResponse,
   DefinitionExportBundle,
   BulkOperationResponse,
+  BulkTemplateResponse,
   NotificationListResponse,
   NotificationPreference,
   Notification,
@@ -361,6 +362,36 @@ export const templateService = {
       console.error('Failed to quick deploy template:', error);
       throw error;
     }
+  },
+  /**
+   * Bulk delete unpublished templates.
+   * @param templateIds - Array of template IDs to delete
+   * @returns Bulk operation results
+   * @see POST /api/v1/templates/bulk/delete
+   */
+  bulkDelete: async (templateIds: string[]): Promise<BulkTemplateResponse> => {
+    const response = await api.post('/api/v1/templates/bulk/delete', { template_ids: templateIds });
+    return response.data;
+  },
+  /**
+   * Bulk publish templates.
+   * @param templateIds - Array of template IDs to publish
+   * @returns Bulk operation results
+   * @see POST /api/v1/templates/bulk/publish
+   */
+  bulkPublish: async (templateIds: string[]): Promise<BulkTemplateResponse> => {
+    const response = await api.post('/api/v1/templates/bulk/publish', { template_ids: templateIds });
+    return response.data;
+  },
+  /**
+   * Bulk unpublish templates.
+   * @param templateIds - Array of template IDs to unpublish
+   * @returns Bulk operation results
+   * @see POST /api/v1/templates/bulk/unpublish
+   */
+  bulkUnpublish: async (templateIds: string[]): Promise<BulkTemplateResponse> => {
+    const response = await api.post('/api/v1/templates/bulk/unpublish', { template_ids: templateIds });
+    return response.data;
   },
   /**
    * List all versions of a template, newest first.

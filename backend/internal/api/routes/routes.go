@@ -179,6 +179,9 @@ func SetupRoutes(router *gin.Engine, deps Deps) *handlers.RateLimiter {
 
 		// Stack Templates
 		if deps.TemplateHandler != nil {
+			if deps.UserRepo != nil {
+				deps.TemplateHandler.SetUserRepo(deps.UserRepo)
+			}
 			templates := authed.Group("/templates")
 			{
 				templates.GET("", deps.TemplateHandler.ListTemplates)
@@ -190,6 +193,16 @@ func SetupRoutes(router *gin.Engine, deps Deps) *handlers.RateLimiter {
 				templates.POST("/:id/unpublish", devops, deps.TemplateHandler.UnpublishTemplate)
 				templates.POST("/:id/instantiate", deps.TemplateHandler.InstantiateTemplate)
 				templates.POST("/:id/clone", devops, deps.TemplateHandler.CloneTemplate)
+
+				// Bulk template operations (DevOps/Admin only)
+				bulk := templates.Group("/bulk")
+				bulk.Use(devops)
+				{
+					bulk.POST("/delete", deps.TemplateHandler.BulkDeleteTemplates)
+					bulk.POST("/publish", deps.TemplateHandler.BulkPublishTemplates)
+					bulk.POST("/unpublish", deps.TemplateHandler.BulkUnpublishTemplates)
+				}
+
 				templates.POST("/:id/charts", devops, deps.TemplateHandler.AddTemplateChart)
 				templates.PUT("/:id/charts/:chartId", devops, deps.TemplateHandler.UpdateTemplateChart)
 				templates.DELETE("/:id/charts/:chartId", devops, deps.TemplateHandler.DeleteTemplateChart)
