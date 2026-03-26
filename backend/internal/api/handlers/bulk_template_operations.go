@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"time"
 
-	"backend/internal/api/middleware"
 	"backend/internal/models"
 
 	"github.com/gin-gonic/gin"
@@ -58,9 +57,6 @@ func (h *TemplateHandler) executeBulkTemplateOperation(c *gin.Context, opName st
 		return
 	}
 
-	userID := middleware.GetUserIDFromContext(c)
-	role := middleware.GetRoleFromContext(c)
-
 	// De-duplicate template IDs while preserving order.
 	seen := make(map[string]struct{}, len(req.TemplateIDs))
 	uniqueIDs := make([]string, 0, len(req.TemplateIDs))
@@ -92,15 +88,6 @@ func (h *TemplateHandler) executeBulkTemplateOperation(c *gin.Context, opName st
 		}
 
 		result.TemplateName = tmpl.Name
-
-		// Authorization: admin can operate on any template, devops only on owned templates.
-		if role != "admin" && tmpl.OwnerID != userID {
-			result.Status = "error"
-			result.Error = "not authorized"
-			resp.Failed++
-			resp.Results = append(resp.Results, result)
-			continue
-		}
 
 		if err := op(c, tmpl); err != nil {
 			result.Status = "error"

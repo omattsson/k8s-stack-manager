@@ -71,6 +71,7 @@ type TemplateListItem struct {
 // @Summary     List stack templates
 // @Description List published templates for regular users, all templates for devops/admin. Includes definition_count and owner_username.
 // @Tags        templates
+// @Accept      json
 // @Produce     json
 // @Success     200 {array}  TemplateListItem
 // @Failure     500 {object} map[string]string
