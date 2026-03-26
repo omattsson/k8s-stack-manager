@@ -34,6 +34,7 @@ import UnpublishedIcon from '@mui/icons-material/Unpublished';
 import { templateService } from '../../api/client';
 import FavoriteButton from '../../components/FavoriteButton';
 import QuickDeployDialog from '../../components/QuickDeployDialog';
+import ConfirmDialog from '../../components/ConfirmDialog';
 import { useAuth } from '../../context/AuthContext';
 import { useNotification } from '../../context/NotificationContext';
 import type { StackTemplate, BulkTemplateResponse } from '../../types';
@@ -368,6 +369,10 @@ const Gallery = () => {
                 variant="outlined"
                 sx={{ minWidth: 200, maxWidth: 250, flexShrink: 0, cursor: 'pointer' }}
                 onClick={() => navigate(`/templates/${template.id}`)}
+                tabIndex={0}
+                role="button"
+                aria-label={`Open template ${template.name}`}
+                onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); navigate(`/templates/${template.id}`); } }}
               >
                 <CardContent sx={{ py: 1.5, px: 2, '&:last-child': { pb: 1.5 } }}>
                   <Typography variant="subtitle2" component="div" noWrap>
@@ -506,41 +511,14 @@ const Gallery = () => {
       />
 
       {/* Bulk Confirm Dialog */}
-      <Dialog open={bulkConfirmOpen} onClose={handleBulkConfirmCancel} maxWidth="sm" fullWidth>
-        <DialogTitle>
-          Confirm Bulk {bulkAction ? BULK_ACTION_LABELS[bulkAction] : ''}
-        </DialogTitle>
-        <DialogContent>
-          {bulkAction === 'delete' && (
-            <Alert severity="warning" sx={{ mb: 2 }}>
-              This action cannot be undone. Selected templates will be permanently deleted.
-            </Alert>
-          )}
-          <Typography variant="body1" sx={{ mb: 1 }}>
-            {bulkAction ? BULK_ACTION_LABELS[bulkAction] : ''} {selectedTemplates.length} template{selectedTemplates.length !== 1 ? 's' : ''}:
-          </Typography>
-          <List dense>
-            {selectedTemplates.map((tmpl) => (
-              <ListItem key={tmpl.id}>
-                <ListItemText
-                  primary={tmpl.name}
-                  secondary={tmpl.is_published ? 'Published' : 'Draft'}
-                />
-              </ListItem>
-            ))}
-          </List>
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={handleBulkConfirmCancel}>Cancel</Button>
-          <Button
-            onClick={handleBulkConfirm}
-            variant="contained"
-            color={bulkAction === 'delete' ? 'error' : 'primary'}
-          >
-            {bulkAction ? BULK_ACTION_LABELS[bulkAction] : 'Confirm'}
-          </Button>
-        </DialogActions>
-      </Dialog>
+      <ConfirmDialog
+        open={bulkConfirmOpen}
+        title={`Confirm Bulk ${bulkAction ? BULK_ACTION_LABELS[bulkAction] : ''}`}
+        message={`${bulkAction ? BULK_ACTION_LABELS[bulkAction] : ''} ${selectedTemplates.length} template${selectedTemplates.length !== 1 ? 's' : ''}?`}
+        onConfirm={handleBulkConfirm}
+        onCancel={handleBulkConfirmCancel}
+        confirmText={bulkAction ? BULK_ACTION_LABELS[bulkAction] : 'Confirm'}
+      />
 
       {/* Bulk Results Dialog */}
       <Dialog open={bulkResultOpen} onClose={handleBulkResultClose} maxWidth="sm" fullWidth>

@@ -37,7 +37,7 @@ type BulkTemplateResponse struct {
 }
 
 // bulkTemplateOperationFunc is the signature for a function that operates on a single template.
-type bulkTemplateOperationFunc func(tmpl *models.StackTemplate) error
+type bulkTemplateOperationFunc func(c *gin.Context, tmpl *models.StackTemplate) error
 
 // executeBulkTemplateOperation is a shared helper that validates the request, checks
 // authorization per template, and invokes the given operation for each template.
@@ -91,7 +91,7 @@ func (h *TemplateHandler) executeBulkTemplateOperation(c *gin.Context, opName st
 			continue
 		}
 
-		if err := op(tmpl); err != nil {
+		if err := op(c, tmpl); err != nil {
 			result.Status = "error"
 			result.Error = err.Error()
 			resp.Failed++
@@ -123,7 +123,7 @@ func (h *TemplateHandler) executeBulkTemplateOperation(c *gin.Context, opName st
 // @Failure     403     {object} map[string]string
 // @Router      /api/v1/templates/bulk/delete [post]
 func (h *TemplateHandler) BulkDeleteTemplates(c *gin.Context) {
-	h.executeBulkTemplateOperation(c, "delete", func(tmpl *models.StackTemplate) error {
+	h.executeBulkTemplateOperation(c, "delete", func(_ *gin.Context, tmpl *models.StackTemplate) error {
 		if tmpl.IsPublished {
 			return fmt.Errorf("template is published")
 		}
@@ -162,7 +162,7 @@ func (h *TemplateHandler) BulkDeleteTemplates(c *gin.Context) {
 // @Failure     403     {object} map[string]string
 // @Router      /api/v1/templates/bulk/publish [post]
 func (h *TemplateHandler) BulkPublishTemplates(c *gin.Context) {
-	h.executeBulkTemplateOperation(c, "publish", func(tmpl *models.StackTemplate) error {
+	h.executeBulkTemplateOperation(c, "publish", func(c *gin.Context, tmpl *models.StackTemplate) error {
 		if tmpl.IsPublished {
 			return nil // already published, treat as success
 		}
@@ -173,6 +173,11 @@ func (h *TemplateHandler) BulkPublishTemplates(c *gin.Context) {
 		if err := h.templateRepo.Update(tmpl); err != nil {
 			slog.Error("bulk publish: failed to update template", "template_id", tmpl.ID, "error", err)
 			return fmt.Errorf("failed to publish template")
+		}
+
+		// Auto-create a version snapshot on publish.
+		if h.versionRepo != nil {
+			h.createVersionSnapshot(c, tmpl)
 		}
 
 		return nil
@@ -192,7 +197,7 @@ func (h *TemplateHandler) BulkPublishTemplates(c *gin.Context) {
 // @Failure     403     {object} map[string]string
 // @Router      /api/v1/templates/bulk/unpublish [post]
 func (h *TemplateHandler) BulkUnpublishTemplates(c *gin.Context) {
-	h.executeBulkTemplateOperation(c, "unpublish", func(tmpl *models.StackTemplate) error {
+	h.executeBulkTemplateOperation(c, "unpublish", func(_ *gin.Context, tmpl *models.StackTemplate) error {
 		if !tmpl.IsPublished {
 			return nil // already unpublished, treat as success
 		}

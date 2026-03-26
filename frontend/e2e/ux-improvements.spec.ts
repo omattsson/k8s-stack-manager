@@ -264,7 +264,7 @@ test.describe('Template Gallery Tabs', () => {
       });
 
       // If any templates are visible, none should show "Draft" chip
-      const draftChips = page.locator('[data-testid="template-card"]').filter({ hasText: 'Draft' });
+      const draftChips = page.locator('.MuiCard-root').filter({ hasText: 'Draft' });
       await expect(draftChips).toHaveCount(0, { timeout: 5_000 });
     });
   });

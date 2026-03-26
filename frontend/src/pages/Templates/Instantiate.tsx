@@ -16,6 +16,7 @@ import { templateService } from '../../api/client';
 import type { StackTemplate, TemplateChartConfig } from '../../types';
 import YamlEditor from '../../components/YamlEditor';
 import LoadingState from '../../components/LoadingState';
+import { trackRecentTemplate } from '../../utils/recentTemplates';
 
 interface ChartOverride {
   chart: TemplateChartConfig;
@@ -99,12 +100,7 @@ const Instantiate = () => {
       });
       // Track in recently used templates
       if (template) {
-        try {
-          const stored = JSON.parse(localStorage.getItem('recentTemplates') || '[]');
-          const filtered = stored.filter((t: { id: string }) => t.id !== template.id);
-          const updated = [{ id: template.id, name: template.name, usedAt: new Date().toISOString() }, ...filtered].slice(0, 5);
-          localStorage.setItem('recentTemplates', JSON.stringify(updated));
-        } catch { /* ignore localStorage errors */ }
+        trackRecentTemplate({ id: template.id, name: template.name });
       }
       navigate(`/stack-definitions/${definition.id}/edit`);
     } catch {

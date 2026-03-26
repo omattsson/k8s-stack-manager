@@ -22,6 +22,6 @@ export function timeAgo(dateStr: string | undefined | null): string {
   if (minutes < 60) return `${minutes}m ago`;
   if (hours < 24) return `${hours}h ago`;
   if (days < 7) return `${days}d ago`;
-  if (weeks < 4) return `${weeks}w ago`;
+  if (weeks < 4 || months === 0) return `${weeks}w ago`;
   return `${months}mo ago`;
 }

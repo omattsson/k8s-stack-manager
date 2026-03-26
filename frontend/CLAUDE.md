@@ -38,13 +38,13 @@ useEffect(() => {
   return () => window.removeEventListener('keydown', handler);
 }, []);
 ```
-Currently used in Dashboard: `r` (refresh), `n` (new instance).
+Currently used in Dashboard: `/` (focus search), `Escape` (clear selection/search).
 
 ### Relative Timestamps
 Use `timeAgo(date)` from `src/utils/timeAgo.ts` for human-friendly relative time display. Returns strings like "just now", "2m ago", "3h ago", "5d ago". Combine with MUI `Tooltip` showing the full absolute date for accessibility.
 
 ### Recently Used Tracking
-Track recently used items in `localStorage` for quick access. Use a validated array of IDs with maximum size limit. Parse safely with JSON validation and shape checking. Example: `localStorage.getItem('recentlyUsedTemplates')` in the Templates gallery.
+Track recently used items in `localStorage` for quick access. Use a validated array of IDs with maximum size limit. Parse safely with JSON validation and shape checking. Example: `localStorage.getItem('recentTemplates')` in the Templates gallery. Use `trackRecentTemplate()` from `src/utils/recentTemplates.ts` to add entries.
 
 ### Bulk Operations UI
 Multi-select with checkbox + toolbar pattern for bulk actions. Show a `Toolbar` with action buttons when items are selected. Use `ConfirmDialog` before destructive actions. Display results in a dialog with per-item success/error status.

@@ -17,6 +17,7 @@ import RocketLaunchIcon from '@mui/icons-material/RocketLaunch';
 import { templateService, clusterService } from '../../api/client';
 import TtlSelector from '../TtlSelector';
 import type { Cluster, StackTemplate } from '../../types';
+import { trackRecentTemplate } from '../../utils/recentTemplates';
 
 interface QuickDeployDialogProps {
   open: boolean;
@@ -77,12 +78,7 @@ const QuickDeployDialog = ({ open, onClose, template }: QuickDeployDialogProps) 
         ttl_minutes: ttlMinutes,
       });
       // Track in recently used templates
-      try {
-        const stored = JSON.parse(localStorage.getItem('recentTemplates') || '[]');
-        const filtered = stored.filter((t: { id: string }) => t.id !== template.id);
-        const updated = [{ id: template.id, name: template.name, usedAt: new Date().toISOString() }, ...filtered].slice(0, 5);
-        localStorage.setItem('recentTemplates', JSON.stringify(updated));
-      } catch { /* ignore localStorage errors */ }
+      trackRecentTemplate({ id: template.id, name: template.name });
       onClose();
       navigate(`/stack-instances/${result.instance.id}`);
     } catch (err: unknown) {

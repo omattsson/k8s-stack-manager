@@ -91,10 +91,13 @@ func (h *TemplateHandler) ListTemplates(c *gin.Context) {
 		return
 	}
 
-	// Build definition count map.
+	// TODO: Consider using a count-by-template-id repo method to avoid full definition scan.
 	defCountMap := make(map[string]int)
 	if h.definitionRepo != nil {
 		defs, defErr := h.definitionRepo.List()
+		if defErr != nil {
+			slog.Warn("failed to fetch definitions for template counts", "error", defErr)
+		}
 		if defErr == nil {
 			for _, d := range defs {
 				if d.SourceTemplateID != "" {
@@ -104,10 +107,13 @@ func (h *TemplateHandler) ListTemplates(c *gin.Context) {
 		}
 	}
 
-	// Build user ID → username map.
+	// TODO: Consider batch user lookup by owner IDs to avoid loading all users.
 	usernameMap := make(map[string]string)
 	if h.userRepo != nil {
 		users, userErr := h.userRepo.List()
+		if userErr != nil {
+			slog.Warn("failed to fetch users for template listing", "error", userErr)
+		}
 		if userErr == nil {
 			for _, u := range users {
 				usernameMap[u.ID] = u.Username

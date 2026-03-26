@@ -78,6 +78,7 @@ const Dashboard = () => {
   const [favorites, setFavorites] = useState<UserFavorite[]>([]);
   const [recentInstances, setRecentInstances] = useState<StackInstance[]>([]);
   const [loading, setLoading] = useState(true);
+  const searchRef = useRef<HTMLInputElement>(null);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('All');
@@ -199,15 +200,13 @@ const Dashboard = () => {
     const handleKeyDown = (e: KeyboardEvent) => {
       // Don't intercept when typing in inputs
       const target = e.target as HTMLElement;
-      if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable) {
+      if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT' || target.isContentEditable) {
         return;
       }
 
       if (e.key === '/') {
         e.preventDefault();
-        // Focus the search field
-        const searchInput = document.querySelector<HTMLInputElement>('[placeholder="Search instances..."]');
-        searchInput?.focus();
+        searchRef.current?.focus();
       }
 
       if (e.key === 'Escape') {
@@ -372,6 +371,7 @@ const Dashboard = () => {
           placeholder="Search instances..."
           value={search}
           onChange={(e) => setSearch(e.target.value)}
+          inputRef={searchRef}
           slotProps={{
             input: {
               startAdornment: (
@@ -384,7 +384,7 @@ const Dashboard = () => {
           sx={{ minWidth: 250 }}
         />
         <Typography variant="caption" color="text.secondary" sx={{ ml: 0.5, display: { xs: 'none', md: 'inline' } }}>
-          Press <kbd style={{ fontFamily: 'monospace', padding: '0 4px', border: '1px solid', borderRadius: 3, fontSize: '0.75rem' }}>/</kbd> to search
+          Press <Box component="kbd" sx={{ fontFamily: 'monospace', padding: '0 4px', border: '1px solid', borderRadius: 3, fontSize: '0.75rem' }}>/</Box> to search
         </Typography>
         <Box sx={{ display: 'flex', gap: 1 }}>
           {STATUSES.map((s) => (
