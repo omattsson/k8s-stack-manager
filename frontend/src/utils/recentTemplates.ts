@@ -16,6 +16,18 @@ function isStoredRecentTemplate(value: unknown): value is StoredRecentTemplate {
   return typeof v.id === 'string' && typeof v.name === 'string' && typeof v.usedAt === 'string';
 }
 
+export function getRecentTemplates(): StoredRecentTemplate[] {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return [];
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(isStoredRecentTemplate).slice(0, MAX_RECENT);
+  } catch {
+    return [];
+  }
+}
+
 export function trackRecentTemplate(template: RecentTemplate): void {
   try {
     const stored = localStorage.getItem(STORAGE_KEY);

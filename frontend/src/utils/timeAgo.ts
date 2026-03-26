@@ -1,6 +1,6 @@
 /**
  * Convert an ISO date string to a relative time string (e.g., "2h ago", "3d ago").
- * Returns empty string if input is falsy.
+ * Returns an empty string if the input is falsy or cannot be parsed as a valid date.
  */
 export function timeAgo(dateStr: string | undefined | null): string {
   if (!dateStr) return '';

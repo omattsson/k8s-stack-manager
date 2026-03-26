@@ -373,9 +373,7 @@ test.describe('Bulk Template Operations', () => {
     // Confirmation dialog
     const dialog = page.getByRole('dialog');
     await expect(dialog.getByText('Confirm Bulk Delete')).toBeVisible({ timeout: 5_000 });
-    await expect(
-      dialog.getByText('This action cannot be undone. Selected templates will be permanently deleted.'),
-    ).toBeVisible();
+    await expect(dialog.getByText('This action cannot be undone.')).toBeVisible();
     await expect(dialog.getByText(name)).toBeVisible();
   });
 

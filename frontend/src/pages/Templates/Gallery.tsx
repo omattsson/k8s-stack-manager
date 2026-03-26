@@ -31,7 +31,7 @@ import RocketLaunchIcon from '@mui/icons-material/RocketLaunch';
 import DeleteIcon from '@mui/icons-material/Delete';
 import PublishIcon from '@mui/icons-material/Publish';
 import UnpublishedIcon from '@mui/icons-material/Unpublished';
-import { templateService } from '../../api/client';
+import { templateService, favoriteService } from '../../api/client';
 import FavoriteButton from '../../components/FavoriteButton';
 import QuickDeployDialog from '../../components/QuickDeployDialog';
 import ConfirmDialog from '../../components/ConfirmDialog';
@@ -40,16 +40,9 @@ import { useNotification } from '../../context/NotificationContext';
 import type { StackTemplate, BulkTemplateResponse } from '../../types';
 import LoadingState from '../../components/LoadingState';
 import EmptyState from '../../components/EmptyState';
+import { getRecentTemplates } from '../../utils/recentTemplates';
 
 const CATEGORIES = ['All', 'Web', 'API', 'Data', 'Infrastructure', 'Other'];
-
-const RECENT_TEMPLATES_KEY = 'recentTemplates';
-
-interface RecentTemplate {
-  id: string;
-  name: string;
-  usedAt: string;
-}
 
 type BulkAction = 'delete' | 'publish' | 'unpublish';
 
@@ -57,18 +50,6 @@ const BULK_ACTION_LABELS: Record<BulkAction, string> = {
   delete: 'Delete',
   publish: 'Publish',
   unpublish: 'Unpublish',
-};
-
-const getRecentTemplates = (): RecentTemplate[] => {
-  try {
-    const raw = localStorage.getItem(RECENT_TEMPLATES_KEY);
-    if (!raw) return [];
-    const parsed: unknown = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return [];
-    return (parsed as RecentTemplate[]).filter((item) => item?.id && item?.name).slice(0, 5);
-  } catch {
-    return [];
-  }
 };
 
 const Gallery = () => {
@@ -93,12 +74,17 @@ const Gallery = () => {
   const [bulkResult, setBulkResult] = useState<BulkTemplateResponse | null>(null);
 
   const recentTemplates = useMemo(() => getRecentTemplates(), []);
+  const [favoriteIds, setFavoriteIds] = useState<Set<string>>(new Set());
 
   const fetchTemplates = useCallback(async () => {
     try {
       setLoading(true);
-      const data = await templateService.list();
+      const [data, favs] = await Promise.all([
+        templateService.list(),
+        favoriteService.list().catch(() => []),
+      ]);
       setTemplates(data || []);
+      setFavoriteIds(new Set(favs.filter((f) => f.entity_type === 'template').map((f) => f.entity_id)));
     } catch {
       setError('Failed to load templates');
     } finally {
@@ -437,7 +423,7 @@ const Gallery = () => {
                           size="small"
                         />
                       )}
-                      <FavoriteButton entityType="template" entityId={template.id} size="small" />
+                      <FavoriteButton entityType="template" entityId={template.id} size="small" initialFavorited={favoriteIds.has(template.id)} />
                       <Typography variant="h6" component="h2" noWrap>
                         {template.name}
                       </Typography>

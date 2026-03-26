@@ -20,7 +20,7 @@ import AddIcon from '@mui/icons-material/Add';
 import FileUploadIcon from '@mui/icons-material/FileUpload';
 import SystemUpdateAltIcon from '@mui/icons-material/SystemUpdateAlt';
 import RocketLaunchIcon from '@mui/icons-material/RocketLaunch';
-import { definitionService, templateService } from '../../api/client';
+import { definitionService, templateService, favoriteService } from '../../api/client';
 import FavoriteButton from '../../components/FavoriteButton';
 import type { StackDefinition, StackTemplate } from '../../types';
 import LoadingState from '../../components/LoadingState';
@@ -34,6 +34,7 @@ const List = () => {
   const [templates, setTemplates] = useState<Record<string, StackTemplate>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [favoriteIds, setFavoriteIds] = useState<Set<string>>(new Set());
   const [importDialogOpen, setImportDialogOpen] = useState(false);
   const [upgradeDialogDefId, setUpgradeDialogDefId] = useState<string | null>(null);
   const navigate = useNavigate();
@@ -43,17 +44,17 @@ const List = () => {
     try {
       const data = await definitionService.list();
       setDefinitions(data || []);
-      // Fetch templates to check for updates
-      try {
-        const tmplList = await templateService.list();
-        const tmplMap: Record<string, StackTemplate> = {};
-        for (const t of tmplList) {
-          tmplMap[t.id] = t;
-        }
-        setTemplates(tmplMap);
-      } catch {
-        // Best-effort: don't block page if templates fail
+      // Fetch templates and favorites in parallel (best-effort)
+      const [tmplList, favs] = await Promise.all([
+        templateService.list().catch(() => [] as StackTemplate[]),
+        favoriteService.list().catch(() => []),
+      ]);
+      const tmplMap: Record<string, StackTemplate> = {};
+      for (const t of tmplList) {
+        tmplMap[t.id] = t;
       }
+      setTemplates(tmplMap);
+      setFavoriteIds(new Set(favs.filter((f) => f.entity_type === 'definition').map((f) => f.entity_id)));
     } catch {
       setError('Failed to load stack definitions');
     } finally {
@@ -123,7 +124,7 @@ const List = () => {
                 >
                   <TableCell>
                     <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                      <FavoriteButton entityType="definition" entityId={def.id} size="small" />
+                      <FavoriteButton entityType="definition" entityId={def.id} size="small" initialFavorited={favoriteIds.has(def.id)} />
                       <Typography variant="body2" fontWeight="bold">
                         {def.name}
                       </Typography>

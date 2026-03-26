@@ -15,6 +15,9 @@ vi.mock('../../../api/client', () => ({
   clusterService: {
     list: vi.fn().mockResolvedValue([]),
   },
+  favoriteService: {
+    list: vi.fn().mockResolvedValue([]),
+  },
 }));
 
 vi.mock('../../../context/AuthContext', () => ({

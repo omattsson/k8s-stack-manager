@@ -11,6 +11,9 @@ vi.mock('../../../api/client', () => ({
   templateService: {
     list: vi.fn().mockResolvedValue([]),
   },
+  favoriteService: {
+    list: vi.fn().mockResolvedValue([]),
+  },
 }));
 
 vi.mock('../../../context/NotificationContext', () => ({

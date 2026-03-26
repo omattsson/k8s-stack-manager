@@ -61,12 +61,23 @@ func (h *TemplateHandler) executeBulkTemplateOperation(c *gin.Context, opName st
 	userID := middleware.GetUserIDFromContext(c)
 	role := middleware.GetRoleFromContext(c)
 
-	resp := BulkTemplateResponse{
-		Total:   len(req.TemplateIDs),
-		Results: make([]BulkTemplateResultItem, 0, len(req.TemplateIDs)),
+	// De-duplicate template IDs while preserving order.
+	seen := make(map[string]struct{}, len(req.TemplateIDs))
+	uniqueIDs := make([]string, 0, len(req.TemplateIDs))
+	for _, id := range req.TemplateIDs {
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		uniqueIDs = append(uniqueIDs, id)
 	}
 
-	for _, id := range req.TemplateIDs {
+	resp := BulkTemplateResponse{
+		Total:   len(uniqueIDs),
+		Results: make([]BulkTemplateResultItem, 0, len(uniqueIDs)),
+	}
+
+	for _, id := range uniqueIDs {
 		result := BulkTemplateResultItem{
 			TemplateID: id,
 		}
