@@ -514,7 +514,11 @@ const Gallery = () => {
       <ConfirmDialog
         open={bulkConfirmOpen}
         title={`Confirm Bulk ${bulkAction ? BULK_ACTION_LABELS[bulkAction] : ''}`}
-        message={`${bulkAction ? BULK_ACTION_LABELS[bulkAction] : ''} ${selectedTemplates.length} template${selectedTemplates.length !== 1 ? 's' : ''}?`}
+        message={
+          bulkAction === 'delete'
+            ? `You are about to permanently delete ${selectedTemplates.length} template${selectedTemplates.length !== 1 ? 's' : ''}: ${selectedTemplates.map((t) => t.name).join(', ')}. This action cannot be undone.`
+            : `${bulkAction ? BULK_ACTION_LABELS[bulkAction] : ''} ${selectedTemplates.length} template${selectedTemplates.length !== 1 ? 's' : ''}?`
+        }
         onConfirm={handleBulkConfirm}
         onCancel={handleBulkConfirmCancel}
         confirmText={bulkAction ? BULK_ACTION_LABELS[bulkAction] : 'Confirm'}

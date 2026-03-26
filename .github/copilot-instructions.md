@@ -27,7 +27,7 @@ backend/
       auth.go                    # AuthHandler: login, register, current user
       branch_overrides.go        # BranchOverrideHandler: per-chart branch overrides
       bulk_operations.go         # BulkHandler: bulk deploy/stop/clean/delete (up to 50 instances)
-      bulk_template_operations.go # BulkTemplateHandler: bulk delete/publish/unpublish (up to 50 templates)
+      bulk_template_operations.go # TemplateHandler: bulk delete/publish/unpublish (up to 50 templates)
       chart_configs.go           # Chart config management (nested under definitions)
       cleanup_policies.go        # CleanupPolicyHandler: CRUD + manual run
       clusters.go                # ClusterHandler: CRUD + test-connection + health + quotas + utilization
