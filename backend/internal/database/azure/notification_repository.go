@@ -44,6 +44,36 @@ func notificationReverseTimestamp(t time.Time) string {
 	return fmt.Sprintf("%020d", math.MaxInt64-t.UnixNano())
 }
 
+// notificationEntity is the typed Azure Table entity for notifications.
+type notificationEntity struct {
+	PartitionKey string `json:"PartitionKey"`
+	RowKey       string `json:"RowKey"`
+	ID           string `json:"ID"`
+	UserID       string `json:"UserID"`
+	Type         string `json:"Type"`
+	Title        string `json:"Title"`
+	Message      string `json:"Message"`
+	IsRead       bool   `json:"IsRead"`
+	EntityType   string `json:"EntityType"`
+	EntityID     string `json:"EntityID"`
+	CreatedAt    string `json:"CreatedAt"`
+}
+
+func (e *notificationEntity) toModel() *models.Notification {
+	createdAt, _ := time.Parse(time.RFC3339, e.CreatedAt)
+	return &models.Notification{
+		ID:         e.ID,
+		UserID:     e.UserID,
+		Type:       e.Type,
+		Title:      e.Title,
+		Message:    e.Message,
+		IsRead:     e.IsRead,
+		EntityType: e.EntityType,
+		EntityID:   e.EntityID,
+		CreatedAt:  createdAt,
+	}
+}
+
 func (r *NotificationRepository) Create(ctx context.Context, notification *models.Notification) error {
 	if notification.ID == "" {
 		notification.ID = uuid.New().String()
@@ -90,7 +120,7 @@ func (r *NotificationRepository) ListByUser(ctx context.Context, userID string, 
 		Filter: &filter,
 	})
 
-	entities, err := collectEntities(ctx, pager, nil)
+	entities, err := collectEntitiesTyped[notificationEntity](ctx, pager, nil, 0)
 	if err != nil {
 		return nil, 0, mapAzureError("list", err)
 	}
@@ -108,7 +138,7 @@ func (r *NotificationRepository) ListByUser(ctx context.Context, userID string, 
 
 	results := make([]models.Notification, 0, len(entities))
 	for _, e := range entities {
-		results = append(results, *notificationFromEntity(e))
+		results = append(results, *e.toModel())
 	}
 	return results, total, nil
 }
@@ -120,7 +150,7 @@ func (r *NotificationRepository) CountUnread(ctx context.Context, userID string)
 		Filter: &filter,
 	})
 
-	entities, err := collectEntities(ctx, pager, nil)
+	entities, err := collectEntitiesTyped[notificationEntity](ctx, pager, nil, 0)
 	if err != nil {
 		return 0, mapAzureError("count_unread", err)
 	}
@@ -130,11 +160,13 @@ func (r *NotificationRepository) CountUnread(ctx context.Context, userID string)
 func (r *NotificationRepository) MarkAsRead(ctx context.Context, id string, userID string) error {
 	// Find the entity first by scanning the user's partition.
 	filter := "PartitionKey eq '" + escapeODataString(userID) + "' and ID eq '" + escapeODataString(id) + "'"
+	top := int32(1)
 	pager := r.client.NewListEntitiesPager(&aztables.ListEntitiesOptions{
 		Filter: &filter,
+		Top:    &top,
 	})
 
-	entities, err := collectEntities(ctx, pager, nil)
+	entities, err := collectEntitiesTyped[notificationEntity](ctx, pager, nil, 1)
 	if err != nil {
 		return mapAzureError("mark_read", err)
 	}
@@ -143,7 +175,7 @@ func (r *NotificationRepository) MarkAsRead(ctx context.Context, id string, user
 	}
 
 	e := entities[0]
-	e["IsRead"] = true
+	e.IsRead = true
 
 	entityBytes, err := json.Marshal(e)
 	if err != nil {
@@ -163,13 +195,13 @@ func (r *NotificationRepository) MarkAllAsRead(ctx context.Context, userID strin
 		Filter: &filter,
 	})
 
-	entities, err := collectEntities(ctx, pager, nil)
+	entities, err := collectEntitiesTyped[notificationEntity](ctx, pager, nil, 0)
 	if err != nil {
 		return mapAzureError("mark_all_read", err)
 	}
 
 	for _, e := range entities {
-		e["IsRead"] = true
+		e.IsRead = true
 		entityBytes, marshalErr := json.Marshal(e)
 		if marshalErr != nil {
 			return dberrors.NewDatabaseError("marshal", marshalErr)
@@ -193,18 +225,4 @@ func (r *NotificationRepository) GetPreferences(_ context.Context, _ string) ([]
 func (r *NotificationRepository) UpdatePreference(_ context.Context, _ *models.NotificationPreference) error {
 	// Preferences are not yet implemented for Azure Table Storage.
 	return dberrors.NewDatabaseError("update_preference", dberrors.ErrNotImplemented)
-}
-
-func notificationFromEntity(e map[string]interface{}) *models.Notification {
-	return &models.Notification{
-		ID:         getString(e, "ID"),
-		UserID:     getString(e, "UserID"),
-		Type:       getString(e, "Type"),
-		Title:      getString(e, "Title"),
-		Message:    getString(e, "Message"),
-		IsRead:     getBool(e, "IsRead"),
-		EntityType: getString(e, "EntityType"),
-		EntityID:   getString(e, "EntityID"),
-		CreatedAt:  parseTime(e, "CreatedAt"),
-	}
 }

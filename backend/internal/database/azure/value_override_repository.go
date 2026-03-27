@@ -37,6 +37,28 @@ func (r *ValueOverrideRepository) SetTestClient(client AzureTableClient) {
 	r.client = client
 }
 
+// valueOverrideEntity is the typed Azure Table entity for value overrides.
+type valueOverrideEntity struct {
+	PartitionKey    string `json:"PartitionKey"`
+	RowKey          string `json:"RowKey"`
+	ID              string `json:"ID"`
+	StackInstanceID string `json:"StackInstanceID"`
+	ChartConfigID   string `json:"ChartConfigID"`
+	Values          string `json:"Values"`
+	UpdatedAt       string `json:"UpdatedAt"`
+}
+
+func (e *valueOverrideEntity) toModel() *models.ValueOverride {
+	o := &models.ValueOverride{
+		ID:              e.ID,
+		StackInstanceID: e.StackInstanceID,
+		ChartConfigID:   e.ChartConfigID,
+		Values:          e.Values,
+	}
+	o.UpdatedAt, _ = time.Parse(time.RFC3339, e.UpdatedAt)
+	return o
+}
+
 func (r *ValueOverrideRepository) Create(override *models.ValueOverride) error {
 	ctx := context.Background()
 	now := time.Now().UTC()
@@ -67,11 +89,13 @@ func (r *ValueOverrideRepository) FindByID(id string) (*models.ValueOverride, er
 
 	// ID is stored as a property; row key is chart_config_id.
 	filter := "ID eq '" + id + "'"
+	top := int32(1)
 	pager := r.client.NewListEntitiesPager(&aztables.ListEntitiesOptions{
 		Filter: &filter,
+		Top:    &top,
 	})
 
-	entities, err := collectEntities(ctx, pager, nil)
+	entities, err := collectEntitiesTyped[valueOverrideEntity](ctx, pager, nil, 1)
 	if err != nil {
 		return nil, mapAzureError("find_by_id", err)
 	}
@@ -79,7 +103,7 @@ func (r *ValueOverrideRepository) FindByID(id string) (*models.ValueOverride, er
 		return nil, dberrors.NewDatabaseError("find_by_id", dberrors.ErrNotFound)
 	}
 
-	return valueOverrideFromEntity(entities[0]), nil
+	return entities[0].toModel(), nil
 }
 
 func (r *ValueOverrideRepository) FindByInstanceAndChart(instanceID, chartConfigID string) (*models.ValueOverride, error) {
@@ -91,11 +115,11 @@ func (r *ValueOverrideRepository) FindByInstanceAndChart(instanceID, chartConfig
 		return nil, mapAzureError("find_by_instance_and_chart", err)
 	}
 
-	var entity map[string]interface{}
+	var entity valueOverrideEntity
 	if err := json.Unmarshal(resp.Value, &entity); err != nil {
 		return nil, dberrors.NewDatabaseError("unmarshal", err)
 	}
-	return valueOverrideFromEntity(entity), nil
+	return entity.toModel(), nil
 }
 
 func (r *ValueOverrideRepository) Update(override *models.ValueOverride) error {
@@ -141,14 +165,14 @@ func (r *ValueOverrideRepository) ListByInstance(instanceID string) ([]models.Va
 		Filter: &filter,
 	})
 
-	entities, err := collectEntities(ctx, pager, nil)
+	entities, err := collectEntitiesTyped[valueOverrideEntity](ctx, pager, nil, 0)
 	if err != nil {
 		return nil, mapAzureError("list_by_instance", err)
 	}
 
 	results := make([]models.ValueOverride, 0, len(entities))
 	for _, e := range entities {
-		results = append(results, *valueOverrideFromEntity(e))
+		results = append(results, *e.toModel())
 	}
 	return results, nil
 }
@@ -162,15 +186,5 @@ func valueOverrideToEntity(o *models.ValueOverride) map[string]interface{} {
 		"ChartConfigID":   o.ChartConfigID,
 		"Values":          o.Values,
 		"UpdatedAt":       o.UpdatedAt.Format(time.RFC3339),
-	}
-}
-
-func valueOverrideFromEntity(e map[string]interface{}) *models.ValueOverride {
-	return &models.ValueOverride{
-		ID:              getString(e, "ID"),
-		StackInstanceID: getString(e, "StackInstanceID"),
-		ChartConfigID:   getString(e, "ChartConfigID"),
-		Values:          getString(e, "Values"),
-		UpdatedAt:       parseTime(e, "UpdatedAt"),
 	}
 }

@@ -38,6 +38,38 @@ func (r *InstanceQuotaOverrideRepository) SetTestClient(client AzureTableClient)
 	r.client = client
 }
 
+// instanceQuotaOverrideEntity maps to the Azure Table JSON representation.
+type instanceQuotaOverrideEntity struct {
+	PartitionKey    string `json:"PartitionKey"`
+	RowKey          string `json:"RowKey"`
+	ID              string `json:"ID"`
+	StackInstanceID string `json:"StackInstanceID"`
+	CPURequest      string `json:"CPURequest"`
+	CPULimit        string `json:"CPULimit"`
+	MemoryRequest   string `json:"MemoryRequest"`
+	MemoryLimit     string `json:"MemoryLimit"`
+	StorageLimit    string `json:"StorageLimit"`
+	PodLimit        *int   `json:"PodLimit,omitempty"`
+	CreatedAt       string `json:"CreatedAt"`
+	UpdatedAt       string `json:"UpdatedAt"`
+}
+
+func (e *instanceQuotaOverrideEntity) toModel() *models.InstanceQuotaOverride {
+	o := &models.InstanceQuotaOverride{
+		ID:              e.ID,
+		StackInstanceID: e.StackInstanceID,
+		CPURequest:      e.CPURequest,
+		CPULimit:        e.CPULimit,
+		MemoryRequest:   e.MemoryRequest,
+		MemoryLimit:     e.MemoryLimit,
+		StorageLimit:    e.StorageLimit,
+		PodLimit:        e.PodLimit,
+	}
+	o.CreatedAt, _ = time.Parse(time.RFC3339, e.CreatedAt)
+	o.UpdatedAt, _ = time.Parse(time.RFC3339, e.UpdatedAt)
+	return o
+}
+
 // GetByInstanceID returns the quota override for the given stack instance.
 func (r *InstanceQuotaOverrideRepository) GetByInstanceID(ctx context.Context, instanceID string) (*models.InstanceQuotaOverride, error) {
 	resp, err := r.client.GetEntity(ctx, instanceID, instanceQuotaRowKey, nil)
@@ -45,12 +77,12 @@ func (r *InstanceQuotaOverrideRepository) GetByInstanceID(ctx context.Context, i
 		return nil, mapAzureError("get_by_instance_id", err)
 	}
 
-	var entity map[string]interface{}
+	var entity instanceQuotaOverrideEntity
 	if err := json.Unmarshal(resp.Value, &entity); err != nil {
 		return nil, dberrors.NewDatabaseError("unmarshal", err)
 	}
 
-	return instanceQuotaOverrideFromEntity(entity), nil
+	return entity.toModel(), nil
 }
 
 // Upsert creates or updates the quota override for a stack instance.
@@ -128,21 +160,3 @@ func instanceQuotaOverrideToEntity(o *models.InstanceQuotaOverride) map[string]i
 	return entity
 }
 
-func instanceQuotaOverrideFromEntity(e map[string]interface{}) *models.InstanceQuotaOverride {
-	override := &models.InstanceQuotaOverride{
-		ID:              getString(e, "ID"),
-		StackInstanceID: getString(e, "StackInstanceID"),
-		CPURequest:      getString(e, "CPURequest"),
-		CPULimit:        getString(e, "CPULimit"),
-		MemoryRequest:   getString(e, "MemoryRequest"),
-		MemoryLimit:     getString(e, "MemoryLimit"),
-		StorageLimit:    getString(e, "StorageLimit"),
-		CreatedAt:       parseTime(e, "CreatedAt"),
-		UpdatedAt:       parseTime(e, "UpdatedAt"),
-	}
-	if _, ok := e["PodLimit"]; ok {
-		v := getInt(e, "PodLimit")
-		override.PodLimit = &v
-	}
-	return override
-}

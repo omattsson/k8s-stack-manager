@@ -128,8 +128,11 @@ func (r *mockAuditRepo) Create(log *models.AuditLog) error {
 	return nil
 }
 
-func (r *mockAuditRepo) List(filters models.AuditLogFilters) ([]models.AuditLog, int64, error) {
-	return r.entries, int64(len(r.entries)), nil
+func (r *mockAuditRepo) List(_ models.AuditLogFilters) (*models.AuditLogResult, error) {
+	return &models.AuditLogResult{
+		Data:  r.entries,
+		Total: int64(len(r.entries)),
+	}, nil
 }
 
 // mockExecutor records calls to verify actions were invoked.

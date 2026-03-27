@@ -105,6 +105,28 @@ func (m *MockDeploymentLogRepository) GetLatestByInstance(_ context.Context, ins
 	return latest, nil
 }
 
+func (m *MockDeploymentLogRepository) SummarizeByInstance(_ context.Context, instanceID string) (*models.DeployLogSummary, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.err != nil {
+		return nil, m.err
+	}
+	summary := &models.DeployLogSummary{InstanceID: instanceID}
+	for _, log := range m.items {
+		if log.StackInstanceID != instanceID || log.Action != models.DeployActionDeploy {
+			continue
+		}
+		summary.DeployCount++
+		switch log.Status {
+		case models.DeployLogSuccess:
+			summary.SuccessCount++
+		case models.DeployLogError:
+			summary.ErrorCount++
+		}
+	}
+	return summary, nil
+}
+
 func (m *MockDeploymentLogRepository) SetError(err error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

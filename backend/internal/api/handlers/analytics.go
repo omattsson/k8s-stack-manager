@@ -4,12 +4,18 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
+	"sync"
 	"time"
 
 	"backend/internal/models"
 
 	"github.com/gin-gonic/gin"
 )
+
+// maxDeployLogWorkers limits the number of concurrent goroutines used to
+// fetch deploy log summaries in collectDeploySummaries, preventing excessive
+// fan-out against the backing store.
+const maxDeployLogWorkers = 20
 
 // ---- Response types ----
 
@@ -112,15 +118,11 @@ func (h *AnalyticsHandler) GetOverview(c *gin.Context) {
 	}
 
 	ctx := c.Request.Context()
-	logsByInstance := h.collectDeployLogs(ctx, instances)
+	summaries := h.collectDeploySummaries(ctx, instances)
 
 	totalDeploys := 0
-	for _, logs := range logsByInstance {
-		for _, l := range logs {
-			if l.Action == models.DeployActionDeploy {
-				totalDeploys++
-			}
-		}
+	for _, s := range summaries {
+		totalDeploys += s.DeployCount
 	}
 
 	running := 0
@@ -182,9 +184,9 @@ func (h *AnalyticsHandler) GetTemplateStats(c *gin.Context) {
 		instancesByDef[inst.StackDefinitionID] = append(instancesByDef[inst.StackDefinitionID], inst)
 	}
 
-	// Collect all deploy logs for all instances (avoid N+1 per template).
+	// Collect lightweight deploy summaries for all instances (avoid N+1 per template).
 	ctx := c.Request.Context()
-	logsByInstance := h.collectDeployLogs(ctx, allInstances)
+	summaries := h.collectDeploySummaries(ctx, allInstances)
 
 	result := make([]TemplateStats, 0, len(templates))
 	for _, tmpl := range templates {
@@ -200,16 +202,10 @@ func (h *AnalyticsHandler) GetTemplateStats(c *gin.Context) {
 			insts := instancesByDef[def.ID]
 			instanceCount += len(insts)
 			for _, inst := range insts {
-				for _, l := range logsByInstance[inst.ID] {
-					if l.Action == models.DeployActionDeploy {
-						deployCount++
-						switch l.Status {
-						case models.DeployLogSuccess:
-							successCount++
-						case models.DeployLogError:
-							errorCount++
-						}
-					}
+				if s, ok := summaries[inst.ID]; ok {
+					deployCount += s.DeployCount
+					successCount += s.SuccessCount
+					errorCount += s.ErrorCount
 				}
 			}
 		}
@@ -265,34 +261,30 @@ func (h *AnalyticsHandler) GetUserStats(c *gin.Context) {
 		instancesByOwner[inst.OwnerID] = append(instancesByOwner[inst.OwnerID], inst)
 	}
 
-	// Collect deploy logs for all instances.
+	// Collect lightweight deploy summaries for all instances.
 	ctx := c.Request.Context()
-	logsByInstance := h.collectDeployLogs(ctx, allInstances)
+	summaries := h.collectDeploySummaries(ctx, allInstances)
 
-	// Build per-user log index.
+	// Build per-user summary index.
 	type userLogInfo struct {
 		deployCount int
 		lastActive  *time.Time
 	}
 	userLogs := make(map[string]*userLogInfo)
 	for _, inst := range allInstances {
+		s, ok := summaries[inst.ID]
+		if !ok {
+			continue
+		}
 		info := userLogs[inst.OwnerID]
 		if info == nil {
 			info = &userLogInfo{}
 			userLogs[inst.OwnerID] = info
 		}
-		for _, l := range logsByInstance[inst.ID] {
-			if l.Action == models.DeployActionDeploy {
-				info.deployCount++
-			}
-			ts := l.StartedAt
-			if l.CompletedAt != nil {
-				ts = *l.CompletedAt
-			}
-			if info.lastActive == nil || ts.After(*info.lastActive) {
-				cp := ts
-				info.lastActive = &cp
-			}
+		info.deployCount += s.DeployCount
+		if s.LastDeployAt != nil && (info.lastActive == nil || s.LastDeployAt.After(*info.lastActive)) {
+			cp := *s.LastDeployAt
+			info.lastActive = &cp
 		}
 	}
 
@@ -318,19 +310,37 @@ func (h *AnalyticsHandler) GetUserStats(c *gin.Context) {
 	c.JSON(http.StatusOK, result)
 }
 
-// collectDeployLogs fetches deploy logs for each instance and returns them indexed by instance ID.
-// TODO: This performs O(N) queries — one per instance. For large deployments consider
-// adding a bulk ListByInstances(ids) repository method, time-bounded queries, or
-// pre-aggregated per-template deployment counters to avoid the N+1 pattern.
-func (h *AnalyticsHandler) collectDeployLogs(ctx context.Context, instances []models.StackInstance) map[string][]models.DeploymentLog {
-	result := make(map[string][]models.DeploymentLog, len(instances))
-	for _, inst := range instances {
-		logs, err := h.deployLogRepo.ListByInstance(ctx, inst.ID)
-		if err != nil {
-			slog.Error("analytics: failed to list deploy logs", "instance_id", inst.ID, "error", err)
-			continue
-		}
-		result[inst.ID] = logs
+// collectDeploySummaries fetches lightweight deploy log summaries for each
+// instance concurrently and returns them indexed by instance ID. A bounded
+// worker pool of maxDeployLogWorkers goroutines prevents excessive fan-out
+// against the backing store.
+func (h *AnalyticsHandler) collectDeploySummaries(ctx context.Context, instances []models.StackInstance) map[string]*models.DeployLogSummary {
+	result := make(map[string]*models.DeployLogSummary, len(instances))
+	if len(instances) == 0 {
+		return result
 	}
+
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, maxDeployLogWorkers)
+
+	for _, inst := range instances {
+		wg.Add(1)
+		sem <- struct{}{} // acquire slot
+		go func(id string) {
+			defer wg.Done()
+			defer func() { <-sem }() // release slot
+
+			summary, err := h.deployLogRepo.SummarizeByInstance(ctx, id)
+			if err != nil {
+				slog.Error("analytics: failed to summarize deploy logs", "instance_id", id, "error", err)
+				return
+			}
+			mu.Lock()
+			result[id] = summary
+			mu.Unlock()
+		}(inst.ID)
+	}
+	wg.Wait()
 	return result
 }

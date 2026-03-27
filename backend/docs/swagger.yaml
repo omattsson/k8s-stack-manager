@@ -49,6 +49,40 @@ definitions:
       status:
         type: string
     type: object
+  handlers.BulkTemplateRequest:
+    properties:
+      template_ids:
+        items:
+          type: string
+        type: array
+    required:
+    - template_ids
+    type: object
+  handlers.BulkTemplateResponse:
+    properties:
+      failed:
+        type: integer
+      results:
+        items:
+          $ref: '#/definitions/handlers.BulkTemplateResultItem'
+        type: array
+      succeeded:
+        type: integer
+      total:
+        type: integer
+    type: object
+  handlers.BulkTemplateResultItem:
+    properties:
+      error:
+        type: string
+      status:
+        description: '"success" or "error"'
+        type: string
+      template_id:
+        type: string
+      template_name:
+        type: string
+    type: object
   handlers.ChartConfigExportData:
     properties:
       chart_name:
@@ -269,6 +303,33 @@ definitions:
     required:
     - password
     - username
+    type: object
+  handlers.TemplateListItem:
+    properties:
+      category:
+        type: string
+      created_at:
+        type: string
+      default_branch:
+        type: string
+      definition_count:
+        type: integer
+      description:
+        type: string
+      id:
+        type: string
+      is_published:
+        type: boolean
+      name:
+        type: string
+      owner_id:
+        type: string
+      owner_username:
+        type: string
+      updated_at:
+        type: string
+      version:
+        type: string
     type: object
   handlers.TemplateStats:
     properties:
@@ -856,6 +917,8 @@ definitions:
         type: array
       limit:
         type: integer
+      next_cursor:
+        type: string
       offset:
         type: integer
       total:
@@ -1471,7 +1534,8 @@ paths:
       - analytics
   /api/v1/audit-logs:
     get:
-      description: List audit logs with optional filters and pagination
+      description: List audit logs with optional filters and pagination. Supports
+        cursor-based pagination for efficient large dataset traversal.
       parameters:
       - description: Filter by user ID
         in: query
@@ -1505,6 +1569,11 @@ paths:
         in: query
         name: offset
         type: integer
+      - description: Cursor from previous page for cursor-based pagination (overrides
+          offset)
+        in: query
+        name: cursor
+        type: string
       produces:
       - application/json
       responses:
@@ -2931,6 +3000,7 @@ paths:
           description: OK
           schema:
             additionalProperties:
+              format: int64
               type: integer
             type: object
         "401":
@@ -4479,7 +4549,10 @@ paths:
       - stack-instances
   /api/v1/templates:
     get:
-      description: List published templates for regular users, all templates for devops/admin
+      consumes:
+      - application/json
+      description: List published templates for regular users, all templates for devops/admin.
+        Includes definition_count and owner_username.
       produces:
       - application/json
       responses:
@@ -4487,7 +4560,7 @@ paths:
           description: OK
           schema:
             items:
-              $ref: '#/definitions/models.StackTemplate'
+              $ref: '#/definitions/handlers.TemplateListItem'
             type: array
         "500":
           description: Internal Server Error
@@ -5017,6 +5090,129 @@ paths:
               type: string
             type: object
       summary: Compare two template versions
+      tags:
+      - templates
+  /api/v1/templates/bulk/delete:
+    post:
+      consumes:
+      - application/json
+      description: Delete multiple stack templates in a single request. Only unpublished
+        templates with no linked definitions can be deleted.
+      parameters:
+      - description: Template IDs to delete
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/handlers.BulkTemplateRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handlers.BulkTemplateResponse'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Bulk delete stack templates
+      tags:
+      - templates
+  /api/v1/templates/bulk/publish:
+    post:
+      consumes:
+      - application/json
+      description: Publish multiple stack templates in a single request, making them
+        visible to all users.
+      parameters:
+      - description: Template IDs to publish
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/handlers.BulkTemplateRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handlers.BulkTemplateResponse'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Bulk publish stack templates
+      tags:
+      - templates
+  /api/v1/templates/bulk/unpublish:
+    post:
+      consumes:
+      - application/json
+      description: Unpublish multiple stack templates in a single request, hiding
+        them from regular users.
+      parameters:
+      - description: Template IDs to unpublish
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/handlers.BulkTemplateRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handlers.BulkTemplateResponse'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Bulk unpublish stack templates
       tags:
       - templates
   /api/v1/users:

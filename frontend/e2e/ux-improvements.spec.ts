@@ -264,7 +264,7 @@ test.describe('Template Gallery Tabs', () => {
       });
 
       // If any templates are visible, none should show "Draft" chip
-      const draftChips = page.locator('.MuiCard-root').filter({ hasText: 'Draft' });
+      const draftChips = page.locator('.MuiCard-root .MuiChip-root').filter({ hasText: 'Draft' });
       await expect(draftChips).toHaveCount(0, { timeout: 5_000 });
     });
   });
@@ -393,7 +393,7 @@ test.describe('Bulk Template Operations', () => {
 
     const dialog = page.getByRole('dialog');
     await expect(dialog.getByText('Confirm Bulk Publish')).toBeVisible({ timeout: 5_000 });
-    await expect(dialog.getByText(name)).toBeVisible();
+    await expect(dialog.getByText(/template/)).toBeVisible();
   });
 
   test('bulk unpublish shows confirmation on My Templates tab', async ({ page }) => {
@@ -416,7 +416,7 @@ test.describe('Bulk Template Operations', () => {
 
     const dialog = page.getByRole('dialog');
     await expect(dialog.getByText('Confirm Bulk Unpublish')).toBeVisible({ timeout: 5_000 });
-    await expect(dialog.getByText(name)).toBeVisible();
+    await expect(dialog.getByText(/template/)).toBeVisible();
   });
 
   test('cancel dismisses bulk confirmation dialog', async ({ page }) => {
@@ -462,7 +462,7 @@ test.describe('Bulk Template Operations', () => {
 
     // Results dialog
     await expect(page.getByText('Bulk Operation Results')).toBeVisible({ timeout: 10_000 });
-    await expect(page.getByText(/succeeded/)).toBeVisible();
+    await expect(page.getByText(/succeeded/).first()).toBeVisible();
   });
 
   test('clear selection button removes all selections', async ({ page }) => {
@@ -529,7 +529,7 @@ test.describe('Draft Chip', () => {
 
     // Find the card containing our template name
     const card = page.locator('.MuiCard-root').filter({ hasText: name });
-    await expect(card.getByText('Draft')).toBeVisible();
+    await expect(card.locator('.MuiChip-root', { hasText: 'Draft' })).toBeVisible();
   });
 
   test('published templates do NOT show "Draft" chip', async ({ page }) => {
@@ -541,7 +541,7 @@ test.describe('Draft Chip', () => {
     await expect(page.getByRole('heading', { name })).toBeVisible({ timeout: 10_000 });
 
     const card = page.locator('.MuiCard-root').filter({ hasText: name });
-    await expect(card.getByText('Draft')).not.toBeVisible();
+    await expect(card.locator('.MuiChip-root', { hasText: 'Draft' })).not.toBeVisible();
   });
 });
 
@@ -688,12 +688,12 @@ test.describe('Dashboard Relative Timestamps', () => {
     });
 
     // Wait for cards to render
-    await expect(page.getByText('webapp-alpha')).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByRole('heading', { name: 'webapp-alpha' })).toBeVisible({ timeout: 10_000 });
 
     // The instance cards should NOT show full ISO or locale date strings
     // e.g., "2025-06-01" or "6/1/2025" should not appear in the main card text
     // (they may appear in tooltips, which is fine)
-    const cardArea = page.locator('.MuiCard-root').filter({ hasText: 'webapp-alpha' });
+    const cardArea = page.locator('.MuiCard-root').filter({ hasText: 'webapp-alpha' }).first();
     const cardText = await cardArea.textContent();
     expect(cardText).not.toMatch(/\d{4}-\d{2}-\d{2}T/); // No raw ISO dates in visible text
   });

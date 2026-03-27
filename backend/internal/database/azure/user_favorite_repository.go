@@ -102,16 +102,44 @@ func (r *UserFavoriteRepository) List(userID string) ([]*models.UserFavorite, er
 		Filter: &filter,
 	})
 
-	entities, err := collectEntities(ctx, pager, nil)
+	entities, err := collectEntitiesTyped[userFavoriteEntity](ctx, pager, nil, 0)
 	if err != nil {
 		return nil, mapAzureError("list", err)
 	}
 
 	favorites := make([]*models.UserFavorite, 0, len(entities))
 	for _, e := range entities {
-		favorites = append(favorites, favoriteFromEntity(e))
+		favorites = append(favorites, e.toModel())
 	}
 	return favorites, nil
+}
+
+// userFavoriteEntity maps to the Azure Table JSON representation.
+type userFavoriteEntity struct {
+	PartitionKey string `json:"PartitionKey"`
+	RowKey       string `json:"RowKey"`
+	ID           string `json:"ID"`
+	UserID       string `json:"UserID"`
+	EntityType   string `json:"EntityType"`
+	EntityID     string `json:"EntityID"`
+	CreatedAt    string `json:"CreatedAt"`
+}
+
+func (e *userFavoriteEntity) toModel() *models.UserFavorite {
+	fav := &models.UserFavorite{
+		ID:         e.ID,
+		UserID:     e.UserID,
+		EntityType: e.EntityType,
+		EntityID:   e.EntityID,
+		CreatedAt:  func() time.Time { t, _ := time.Parse(time.RFC3339, e.CreatedAt); return t }(),
+	}
+	// Fall back to parsing the RowKey if EntityType is empty.
+	if fav.EntityType == "" {
+		if idx := strings.Index(e.RowKey, ":"); idx >= 0 {
+			fav.EntityType = e.RowKey[:idx]
+		}
+	}
+	return fav
 }
 
 func (r *UserFavoriteRepository) IsFavorite(userID, entityType, entityID string) (bool, error) {
@@ -129,20 +157,3 @@ func (r *UserFavoriteRepository) IsFavorite(userID, entityType, entityID string)
 	return true, nil
 }
 
-func favoriteFromEntity(e map[string]interface{}) *models.UserFavorite {
-	fav := &models.UserFavorite{
-		ID:        getString(e, "ID"),
-		UserID:    getString(e, "UserID"),
-		EntityID:  getString(e, "EntityID"),
-		CreatedAt: parseTime(e, "CreatedAt"),
-	}
-	// EntityType field — fall back to parsing the RowKey if the property is empty.
-	fav.EntityType = getString(e, "EntityType")
-	if fav.EntityType == "" {
-		rk := getString(e, "RowKey")
-		if idx := strings.Index(rk, ":"); idx >= 0 {
-			fav.EntityType = rk[:idx]
-		}
-	}
-	return fav
-}

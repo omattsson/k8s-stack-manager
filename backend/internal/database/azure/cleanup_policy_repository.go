@@ -29,6 +29,45 @@ func NewCleanupPolicyRepository(accountName, accountKey, endpoint string, useAzu
 	return &CleanupPolicyRepository{client: client, tableName: "CleanupPolicies"}, nil
 }
 
+// cleanupPolicyEntity is the typed Azure Table entity for cleanup policies.
+type cleanupPolicyEntity struct {
+	PartitionKey string `json:"PartitionKey"`
+	RowKey       string `json:"RowKey"`
+	ID           string `json:"ID"`
+	Name         string `json:"Name"`
+	ClusterID    string `json:"ClusterID"`
+	Action       string `json:"Action"`
+	Condition    string `json:"Condition"`
+	Schedule     string `json:"Schedule"`
+	Enabled      bool   `json:"Enabled"`
+	DryRun       bool   `json:"DryRun"`
+	LastRunAt    string `json:"LastRunAt,omitempty"`
+	CreatedAt    string `json:"CreatedAt"`
+	UpdatedAt    string `json:"UpdatedAt"`
+}
+
+func (e *cleanupPolicyEntity) toModel() *models.CleanupPolicy {
+	p := &models.CleanupPolicy{
+		ID:        e.ID,
+		Name:      e.Name,
+		ClusterID: e.ClusterID,
+		Action:    e.Action,
+		Condition: e.Condition,
+		Schedule:  e.Schedule,
+		Enabled:   e.Enabled,
+		DryRun:    e.DryRun,
+	}
+	p.CreatedAt, _ = time.Parse(time.RFC3339, e.CreatedAt)
+	p.UpdatedAt, _ = time.Parse(time.RFC3339, e.UpdatedAt)
+	if e.LastRunAt != "" {
+		t, err := time.Parse(time.RFC3339, e.LastRunAt)
+		if err == nil {
+			p.LastRunAt = &t
+		}
+	}
+	return p
+}
+
 func (r *CleanupPolicyRepository) Create(policy *models.CleanupPolicy) error {
 	ctx := context.Background()
 	now := time.Now().UTC()
@@ -64,11 +103,11 @@ func (r *CleanupPolicyRepository) FindByID(id string) (*models.CleanupPolicy, er
 		return nil, mapAzureError("find_by_id", err)
 	}
 
-	var entity map[string]interface{}
+	var entity cleanupPolicyEntity
 	if err := json.Unmarshal(resp.Value, &entity); err != nil {
 		return nil, dberrors.NewDatabaseError("unmarshal", err)
 	}
-	return r.fromEntity(entity), nil
+	return entity.toModel(), nil
 }
 
 func (r *CleanupPolicyRepository) Update(policy *models.CleanupPolicy) error {
@@ -110,14 +149,14 @@ func (r *CleanupPolicyRepository) List() ([]models.CleanupPolicy, error) {
 		Filter: &filter,
 	})
 
-	entities, err := collectEntities(ctx, pager, nil)
+	entities, err := collectEntitiesTyped[cleanupPolicyEntity](ctx, pager, nil, 0)
 	if err != nil {
 		return nil, mapAzureError("list", err)
 	}
 
 	results := make([]models.CleanupPolicy, 0, len(entities))
 	for _, e := range entities {
-		results = append(results, *r.fromEntity(e))
+		results = append(results, *e.toModel())
 	}
 	return results, nil
 }
@@ -130,16 +169,16 @@ func (r *CleanupPolicyRepository) ListEnabled() ([]models.CleanupPolicy, error) 
 		Filter: &filter,
 	})
 
-	entities, err := collectEntities(ctx, pager, func(e map[string]interface{}) bool {
-		return getBool(e, "Enabled")
-	})
+	entities, err := collectEntitiesTyped[cleanupPolicyEntity](ctx, pager, func(e *cleanupPolicyEntity) bool {
+		return e.Enabled
+	}, 0)
 	if err != nil {
 		return nil, mapAzureError("list_enabled", err)
 	}
 
 	results := make([]models.CleanupPolicy, 0, len(entities))
 	for _, e := range entities {
-		results = append(results, *r.fromEntity(e))
+		results = append(results, *e.toModel())
 	}
 	return results, nil
 }
@@ -163,26 +202,4 @@ func (r *CleanupPolicyRepository) toEntity(p *models.CleanupPolicy) map[string]i
 		e["LastRunAt"] = p.LastRunAt.Format(time.RFC3339)
 	}
 	return e
-}
-
-func (r *CleanupPolicyRepository) fromEntity(e map[string]interface{}) *models.CleanupPolicy {
-	p := &models.CleanupPolicy{
-		ID:        getString(e, "ID"),
-		Name:      getString(e, "Name"),
-		ClusterID: getString(e, "ClusterID"),
-		Action:    getString(e, "Action"),
-		Condition: getString(e, "Condition"),
-		Schedule:  getString(e, "Schedule"),
-		Enabled:   getBool(e, "Enabled"),
-		DryRun:    getBool(e, "DryRun"),
-		CreatedAt: parseTime(e, "CreatedAt"),
-		UpdatedAt: parseTime(e, "UpdatedAt"),
-	}
-	if s := getString(e, "LastRunAt"); s != "" {
-		t, err := time.Parse(time.RFC3339, s)
-		if err == nil {
-			p.LastRunAt = &t
-		}
-	}
-	return p
 }

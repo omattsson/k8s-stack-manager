@@ -104,8 +104,8 @@ func (m *mockAuditRepo) Create(log *models.AuditLog) error {
 	return nil
 }
 
-func (m *mockAuditRepo) List(models.AuditLogFilters) ([]models.AuditLog, int64, error) {
-	return nil, 0, nil
+func (m *mockAuditRepo) List(models.AuditLogFilters) (*models.AuditLogResult, error) {
+	return &models.AuditLogResult{}, nil
 }
 
 func (m *mockAuditRepo) count() int {

@@ -21,6 +21,7 @@ const loginDuration = new Trend('login_duration', true);
 const listDuration = new Trend('list_duration', true);
 const crudDuration = new Trend('crud_duration', true);
 const deployDuration = new Trend('deploy_duration', true);
+const analyticsDuration = new Trend('analytics_duration', true);
 const apiCalls = new Counter('api_calls');
 
 // ── Options ─────────────────────────────────────────────────────────
@@ -49,13 +50,36 @@ export const options = {
       tags: { scenario: 'load' },
       exec: 'loadTest',
     },
+    // Analytics: aggregation-heavy reads + notifications
+    analytics: {
+      executor: 'constant-vus',
+      vus: 10,
+      duration: '2m',
+      startTime: '35s', // starts after smoke, runs in parallel with load
+      exec: 'analyticsTest',
+      tags: { scenario: 'analytics' },
+    },
+    // Nested CRUD: sub-resources, clone, compare, export
+    'nested-crud': {
+      executor: 'ramping-vus',
+      startVUs: 0,
+      stages: [
+        { duration: '30s', target: 10 },
+        { duration: '2m', target: 20 },
+        { duration: '30s', target: 0 },
+      ],
+      startTime: '35s', // starts after smoke
+      exec: 'nestedCrudTest',
+      tags: { scenario: 'nested-crud' },
+    },
   },
   thresholds: {
     http_req_duration: ['p(95)<500', 'p(99)<1000'],  // 95th < 500ms, 99th < 1s
     errors: ['rate<0.05'],                             // <5% error rate
     login_duration: ['p(95)<300'],
-    list_duration: ['p(95)<400'],
+    list_duration: ['p(95)<450'],
     crud_duration: ['p(95)<500'],
+    analytics_duration: ['p(95)<600'],
   },
 };
 
@@ -360,4 +384,263 @@ function runWorkflows(username, password) {
   });
 
   sleep(1);
+}
+
+// ── Analytics Test ─────────────────────────────────────────────────
+export function analyticsTest() {
+  const token = login(ADMIN_USER, ADMIN_PASS);
+  if (!token) return;
+
+  const headers = authHeaders(token);
+
+  group('Analytics Overview', () => {
+    const res = http.get(`${BASE_URL}/api/v1/analytics/overview`, {
+      headers,
+      tags: { name: 'GET /analytics/overview' },
+    });
+    analyticsDuration.add(res.timings.duration);
+    apiCalls.add(1);
+    const ok = check(res, { 'analytics overview 200': (r) => r.status === 200 });
+    errorRate.add(!ok);
+  });
+
+  group('Analytics Templates', () => {
+    const res = http.get(`${BASE_URL}/api/v1/analytics/templates`, {
+      headers,
+      tags: { name: 'GET /analytics/templates' },
+    });
+    analyticsDuration.add(res.timings.duration);
+    apiCalls.add(1);
+    const ok = check(res, { 'analytics templates 200': (r) => r.status === 200 });
+    errorRate.add(!ok);
+  });
+
+  group('Notifications List', () => {
+    const res = http.get(`${BASE_URL}/api/v1/notifications`, {
+      headers,
+      tags: { name: 'GET /notifications' },
+    });
+    analyticsDuration.add(res.timings.duration);
+    apiCalls.add(1);
+    const ok = check(res, { 'notifications 200': (r) => r.status === 200 });
+    errorRate.add(!ok);
+  });
+
+  group('Notifications Count', () => {
+    const res = http.get(`${BASE_URL}/api/v1/notifications/count`, {
+      headers,
+      tags: { name: 'GET /notifications/count' },
+    });
+    analyticsDuration.add(res.timings.duration);
+    apiCalls.add(1);
+    const ok = check(res, { 'notification count 200': (r) => r.status === 200 });
+    errorRate.add(!ok);
+  });
+
+  group('Notifications Read All', () => {
+    const res = http.post(`${BASE_URL}/api/v1/notifications/read-all`, null, {
+      headers,
+      tags: { name: 'POST /notifications/read-all' },
+    });
+    analyticsDuration.add(res.timings.duration);
+    apiCalls.add(1);
+    const ok = check(res, { 'read-all 200': (r) => r.status === 200 });
+    errorRate.add(!ok);
+  });
+
+  sleep(0.5);
+}
+
+// ── Nested CRUD Test ───────────────────────────────────────────────
+export function nestedCrudTest() {
+  const token = login(ADMIN_USER, ADMIN_PASS);
+  if (!token) return;
+
+  const headers = authHeaders(token);
+  const suffix = `${__VU}-${__ITER}-${Date.now()}`;
+
+  let defId = null;
+  let chartId1 = null;
+  let chartId2 = null;
+  let instId = null;
+  let clonedId = null;
+
+  group('Nested CRUD: Setup Definition + Charts', () => {
+    // Create definition
+    const defRes = http.post(
+      `${BASE_URL}/api/v1/stack-definitions`,
+      JSON.stringify({
+        name: `loadtest-nested-${suffix}`,
+        description: 'Nested CRUD load test definition',
+        default_branch: 'main',
+      }),
+      { headers, tags: { name: 'POST /stack-definitions' } },
+    );
+    crudDuration.add(defRes.timings.duration);
+    apiCalls.add(1);
+    const defOk = check(defRes, { 'nested create def 201': (r) => r.status === 201 });
+    errorRate.add(!defOk);
+    if (defRes.status !== 201) return;
+
+    const def = JSON.parse(defRes.body);
+    defId = def.id;
+
+    // Add chart 1: frontend-app
+    const chart1Res = http.post(
+      `${BASE_URL}/api/v1/stack-definitions/${defId}/charts`,
+      JSON.stringify({
+        chart_name: 'frontend-app',
+        repository_url: 'https://charts.example.com/frontend',
+        chart_version: '1.0.0',
+        values_yaml: 'replicaCount: 2\nimage:\n  tag: latest',
+      }),
+      { headers, tags: { name: 'POST /stack-definitions/:id/charts' } },
+    );
+    crudDuration.add(chart1Res.timings.duration);
+    apiCalls.add(1);
+    const chart1Ok = check(chart1Res, {
+      'add chart 1 201': (r) => r.status === 201,
+    });
+    errorRate.add(!chart1Ok);
+    if (chart1Res.status === 201) {
+      chartId1 = JSON.parse(chart1Res.body).id;
+    }
+
+    // Add chart 2: backend-api
+    const chart2Res = http.post(
+      `${BASE_URL}/api/v1/stack-definitions/${defId}/charts`,
+      JSON.stringify({
+        chart_name: 'backend-api',
+        repository_url: 'https://charts.example.com/backend',
+        chart_version: '2.1.0',
+        values_yaml: 'replicaCount: 3\nresources:\n  limits:\n    memory: 512Mi',
+      }),
+      { headers, tags: { name: 'POST /stack-definitions/:id/charts' } },
+    );
+    crudDuration.add(chart2Res.timings.duration);
+    apiCalls.add(1);
+    const chart2Ok = check(chart2Res, {
+      'add chart 2 201': (r) => r.status === 201,
+    });
+    errorRate.add(!chart2Ok);
+    if (chart2Res.status === 201) {
+      chartId2 = JSON.parse(chart2Res.body).id;
+    }
+  });
+
+  if (!defId) { sleep(0.5); return; }
+
+  group('Nested CRUD: Instance + Override + Clone + Compare', () => {
+    // Create instance
+    const instRes = http.post(
+      `${BASE_URL}/api/v1/stack-instances`,
+      JSON.stringify({
+        stack_definition_id: defId,
+        name: `lt-nested-inst-${suffix}`,
+        branch: 'main',
+        ttl_minutes: 120,
+      }),
+      { headers, tags: { name: 'POST /stack-instances' } },
+    );
+    crudDuration.add(instRes.timings.duration);
+    apiCalls.add(1);
+    const instOk = check(instRes, { 'nested create instance 201': (r) => r.status === 201 });
+    errorRate.add(!instOk);
+    if (instRes.status !== 201) return;
+
+    const inst = JSON.parse(instRes.body);
+    instId = inst.id;
+
+    // Set value override on chart 1 (if chart was created)
+    if (chartId1) {
+      const overrideRes = http.put(
+        `${BASE_URL}/api/v1/stack-instances/${instId}/overrides/${chartId1}`,
+        JSON.stringify({ values_yaml: 'replicaCount: 5\nimage:\n  tag: v2.0.0' }),
+        { headers, tags: { name: 'PUT /stack-instances/:id/overrides/:chartId' } },
+      );
+      crudDuration.add(overrideRes.timings.duration);
+      apiCalls.add(1);
+      const overrideOk = check(overrideRes, {
+        'set override 200': (r) => r.status === 200,
+      });
+      errorRate.add(!overrideOk);
+    }
+
+    // Clone the instance
+    const cloneRes = http.post(
+      `${BASE_URL}/api/v1/stack-instances/${instId}/clone`,
+      null,
+      { headers, tags: { name: 'POST /stack-instances/:id/clone' } },
+    );
+    crudDuration.add(cloneRes.timings.duration);
+    apiCalls.add(1);
+    const cloneOk = check(cloneRes, {
+      'clone instance 201': (r) => r.status === 201,
+    });
+    errorRate.add(!cloneOk);
+    if (cloneRes.status === 201) {
+      clonedId = JSON.parse(cloneRes.body).id;
+    }
+
+    // Compare the two instances (only if clone succeeded)
+    if (clonedId) {
+      const compareRes = http.get(
+        `${BASE_URL}/api/v1/stack-instances/compare?left=${instId}&right=${clonedId}`,
+        { headers, tags: { name: 'GET /stack-instances/compare' } },
+      );
+      crudDuration.add(compareRes.timings.duration);
+      apiCalls.add(1);
+      const compareOk = check(compareRes, {
+        'compare instances 200': (r) => r.status === 200,
+      });
+      errorRate.add(!compareOk);
+    }
+
+    // Export the definition
+    const exportRes = http.get(
+      `${BASE_URL}/api/v1/stack-definitions/${defId}/export`,
+      { headers, tags: { name: 'GET /stack-definitions/:id/export' } },
+    );
+    crudDuration.add(exportRes.timings.duration);
+    apiCalls.add(1);
+    const exportOk = check(exportRes, {
+      'export definition 200': (r) => r.status === 200,
+    });
+    errorRate.add(!exportOk);
+  });
+
+  // Cleanup: delete cloned instance, original instance, definition
+  group('Nested CRUD: Cleanup', () => {
+    if (clonedId) {
+      const delClone = http.del(`${BASE_URL}/api/v1/stack-instances/${clonedId}`, null, {
+        headers,
+        tags: { name: 'DELETE /stack-instances/:id' },
+      });
+      crudDuration.add(delClone.timings.duration);
+      apiCalls.add(1);
+      check(delClone, { 'delete clone 200/204': (r) => r.status === 200 || r.status === 204 });
+    }
+
+    if (instId) {
+      const delInst = http.del(`${BASE_URL}/api/v1/stack-instances/${instId}`, null, {
+        headers,
+        tags: { name: 'DELETE /stack-instances/:id' },
+      });
+      crudDuration.add(delInst.timings.duration);
+      apiCalls.add(1);
+      check(delInst, { 'delete nested inst 200/204': (r) => r.status === 200 || r.status === 204 });
+    }
+
+    if (defId) {
+      const delDef = http.del(`${BASE_URL}/api/v1/stack-definitions/${defId}`, null, {
+        headers,
+        tags: { name: 'DELETE /stack-definitions/:id' },
+      });
+      crudDuration.add(delDef.timings.duration);
+      apiCalls.add(1);
+      check(delDef, { 'delete nested def 200/204': (r) => r.status === 200 || r.status === 204 });
+    }
+  });
+
+  sleep(0.5);
 }

@@ -38,6 +38,28 @@ func (r *ChartBranchOverrideRepository) SetTestClient(client AzureTableClient) {
 	r.client = client
 }
 
+// chartBranchOverrideEntity is the typed Azure Table entity for chart branch overrides.
+type chartBranchOverrideEntity struct {
+	PartitionKey    string `json:"PartitionKey"`
+	RowKey          string `json:"RowKey"`
+	ID              string `json:"ID"`
+	StackInstanceID string `json:"StackInstanceID"`
+	ChartConfigID   string `json:"ChartConfigID"`
+	Branch          string `json:"Branch"`
+	UpdatedAt       string `json:"UpdatedAt"`
+}
+
+func (e *chartBranchOverrideEntity) toModel() *models.ChartBranchOverride {
+	o := &models.ChartBranchOverride{
+		ID:              e.ID,
+		StackInstanceID: e.StackInstanceID,
+		ChartConfigID:   e.ChartConfigID,
+		Branch:          e.Branch,
+	}
+	o.UpdatedAt, _ = time.Parse(time.RFC3339, e.UpdatedAt)
+	return o
+}
+
 func (r *ChartBranchOverrideRepository) List(instanceID string) ([]*models.ChartBranchOverride, error) {
 	ctx := context.Background()
 
@@ -46,14 +68,14 @@ func (r *ChartBranchOverrideRepository) List(instanceID string) ([]*models.Chart
 		Filter: &filter,
 	})
 
-	entities, err := collectEntities(ctx, pager, nil)
+	entities, err := collectEntitiesTyped[chartBranchOverrideEntity](ctx, pager, nil, 0)
 	if err != nil {
 		return nil, mapAzureError("list", err)
 	}
 
 	results := make([]*models.ChartBranchOverride, 0, len(entities))
 	for _, e := range entities {
-		results = append(results, chartBranchOverrideFromEntity(e))
+		results = append(results, e.toModel())
 	}
 	return results, nil
 }
@@ -66,11 +88,11 @@ func (r *ChartBranchOverrideRepository) Get(instanceID, chartConfigID string) (*
 		return nil, mapAzureError("get", err)
 	}
 
-	var entity map[string]interface{}
+	var entity chartBranchOverrideEntity
 	if err := json.Unmarshal(resp.Value, &entity); err != nil {
 		return nil, dberrors.NewDatabaseError("unmarshal", err)
 	}
-	return chartBranchOverrideFromEntity(entity), nil
+	return entity.toModel(), nil
 }
 
 func (r *ChartBranchOverrideRepository) Set(override *models.ChartBranchOverride) error {
@@ -133,15 +155,5 @@ func chartBranchOverrideToEntity(o *models.ChartBranchOverride) map[string]inter
 		"ChartConfigID":   o.ChartConfigID,
 		"Branch":          o.Branch,
 		"UpdatedAt":       o.UpdatedAt.Format(time.RFC3339),
-	}
-}
-
-func chartBranchOverrideFromEntity(e map[string]interface{}) *models.ChartBranchOverride {
-	return &models.ChartBranchOverride{
-		ID:              getString(e, "ID"),
-		StackInstanceID: getString(e, "StackInstanceID"),
-		ChartConfigID:   getString(e, "ChartConfigID"),
-		Branch:          getString(e, "Branch"),
-		UpdatedAt:       parseTime(e, "UpdatedAt"),
 	}
 }

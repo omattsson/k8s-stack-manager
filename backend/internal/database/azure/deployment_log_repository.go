@@ -46,6 +46,39 @@ func (r *DeploymentLogRepository) SetTestClient(client AzureTableClient) {
 	r.client = client
 }
 
+// deploymentLogEntity is the typed Azure Table entity for deployment logs.
+type deploymentLogEntity struct {
+	PartitionKey    string `json:"PartitionKey"`
+	RowKey          string `json:"RowKey"`
+	ID              string `json:"ID"`
+	StackInstanceID string `json:"StackInstanceID"`
+	Action          string `json:"Action"`
+	Status          string `json:"Status"`
+	Output          string `json:"Output"`
+	ErrorMessage    string `json:"ErrorMessage"`
+	StartedAt       string `json:"StartedAt"`
+	CompletedAt     string `json:"CompletedAt,omitempty"`
+}
+
+func (e *deploymentLogEntity) toModel() *models.DeploymentLog {
+	log := &models.DeploymentLog{
+		ID:              e.ID,
+		StackInstanceID: e.StackInstanceID,
+		Action:          e.Action,
+		Status:          e.Status,
+		Output:          e.Output,
+		ErrorMessage:    e.ErrorMessage,
+	}
+	log.StartedAt, _ = time.Parse(time.RFC3339, e.StartedAt)
+	if e.CompletedAt != "" {
+		t, err := time.Parse(time.RFC3339, e.CompletedAt)
+		if err == nil {
+			log.CompletedAt = &t
+		}
+	}
+	return log
+}
+
 func (r *DeploymentLogRepository) Create(ctx context.Context, log *models.DeploymentLog) error {
 
 	if log.StartedAt.IsZero() {
@@ -75,11 +108,13 @@ func (r *DeploymentLogRepository) FindByID(ctx context.Context, id string) (*mod
 
 	// No secondary index available; scan all partitions filtering by ID property.
 	filter := "ID eq '" + escapeODataString(id) + "'"
+	top := int32(1)
 	pager := r.client.NewListEntitiesPager(&aztables.ListEntitiesOptions{
 		Filter: &filter,
+		Top:    &top,
 	})
 
-	entities, err := collectEntities(ctx, pager, nil)
+	entities, err := collectEntitiesTyped[deploymentLogEntity](ctx, pager, nil, 1)
 	if err != nil {
 		return nil, mapAzureError("find_by_id", err)
 	}
@@ -88,7 +123,7 @@ func (r *DeploymentLogRepository) FindByID(ctx context.Context, id string) (*mod
 		return nil, dberrors.NewDatabaseError("find_by_id", dberrors.ErrNotFound)
 	}
 
-	return deploymentLogFromEntity(entities[0]), nil
+	return entities[0].toModel(), nil
 }
 
 func (r *DeploymentLogRepository) Update(ctx context.Context, log *models.DeploymentLog) error {
@@ -118,14 +153,14 @@ func (r *DeploymentLogRepository) ListByInstance(ctx context.Context, instanceID
 		Filter: &filter,
 	})
 
-	entities, err := collectEntities(ctx, pager, nil)
+	entities, err := collectEntitiesTyped[deploymentLogEntity](ctx, pager, nil, 0)
 	if err != nil {
 		return nil, mapAzureError("list_by_instance", err)
 	}
 
 	results := make([]models.DeploymentLog, 0, len(entities))
 	for _, e := range entities {
-		results = append(results, *deploymentLogFromEntity(e))
+		results = append(results, *e.toModel())
 	}
 	return results, nil
 }
@@ -139,7 +174,7 @@ func (r *DeploymentLogRepository) GetLatestByInstance(ctx context.Context, insta
 		Top:    &top,
 	})
 
-	entities, err := collectEntities(ctx, pager, nil)
+	entities, err := collectEntitiesTyped[deploymentLogEntity](ctx, pager, nil, 1)
 	if err != nil {
 		return nil, mapAzureError("get_latest", err)
 	}
@@ -148,7 +183,76 @@ func (r *DeploymentLogRepository) GetLatestByInstance(ctx context.Context, insta
 		return nil, dberrors.NewDatabaseError("get_latest", dberrors.ErrNotFound)
 	}
 
-	return deploymentLogFromEntity(entities[0]), nil
+	return entities[0].toModel(), nil
+}
+
+// deployLogSummaryEntity is a lightweight Azure Table entity that only
+// deserializes the fields needed for counting — it intentionally omits the
+// heavy Output and ErrorMessage columns.
+type deployLogSummaryEntity struct {
+	PartitionKey string `json:"PartitionKey"`
+	RowKey       string `json:"RowKey"`
+	Action       string `json:"Action"`
+	Status       string `json:"Status"`
+	StartedAt    string `json:"StartedAt"`
+	CompletedAt  string `json:"CompletedAt,omitempty"`
+}
+
+// SummarizeByInstance returns aggregate deploy-action counts and the latest
+// activity timestamp for the given instance. Only logs from the last 90 days
+// are considered, using a RowKey upper-bound filter (RowKeys are reverse-
+// timestamp based, so recent rows have smaller RowKey values).
+func (r *DeploymentLogRepository) SummarizeByInstance(ctx context.Context, instanceID string) (*models.DeployLogSummary, error) {
+	// RowKey format: reverseTimestamp(startedAt) + "_" + id
+	// reverseTimestamp = fmt.Sprintf("%020d", math.MaxInt64 - t.UnixNano())
+	// To filter for the last 90 days we need RowKey < reverseTimestamp(now - 90 days).
+	// Since reverse timestamps are smaller for more recent times, recent rows
+	// have RowKey < cutoffRK.
+	cutoff := time.Now().UTC().Add(-90 * 24 * time.Hour)
+	cutoffRK := reverseTimestamp(cutoff)
+
+	filter := "PartitionKey eq '" + escapeODataString(instanceID) + "' and RowKey lt '" + cutoffRK + "'"
+	pager := r.client.NewListEntitiesPager(&aztables.ListEntitiesOptions{
+		Filter: &filter,
+	})
+
+	entities, err := collectEntitiesTyped[deployLogSummaryEntity](ctx, pager, nil, 0)
+	if err != nil {
+		return nil, mapAzureError("summarize_by_instance", err)
+	}
+
+	summary := &models.DeployLogSummary{InstanceID: instanceID}
+	for _, e := range entities {
+		if e.Action != models.DeployActionDeploy {
+			continue
+		}
+		summary.DeployCount++
+		switch e.Status {
+		case models.DeployLogSuccess:
+			summary.SuccessCount++
+		case models.DeployLogError:
+			summary.ErrorCount++
+		}
+
+		// Track the latest timestamp across all deploy logs.
+		var ts time.Time
+		if e.CompletedAt != "" {
+			if parsed, pErr := time.Parse(time.RFC3339, e.CompletedAt); pErr == nil {
+				ts = parsed
+			}
+		}
+		if ts.IsZero() {
+			if parsed, pErr := time.Parse(time.RFC3339, e.StartedAt); pErr == nil {
+				ts = parsed
+			}
+		}
+		if !ts.IsZero() && (summary.LastDeployAt == nil || ts.After(*summary.LastDeployAt)) {
+			cp := ts
+			summary.LastDeployAt = &cp
+		}
+	}
+
+	return summary, nil
 }
 
 func deploymentLogToEntity(log *models.DeploymentLog, pk, rk string) map[string]interface{} {
@@ -167,21 +271,4 @@ func deploymentLogToEntity(log *models.DeploymentLog, pk, rk string) map[string]
 		entity["CompletedAt"] = log.CompletedAt.Format(time.RFC3339)
 	}
 	return entity
-}
-
-func deploymentLogFromEntity(e map[string]interface{}) *models.DeploymentLog {
-	log := &models.DeploymentLog{
-		ID:              getString(e, "ID"),
-		StackInstanceID: getString(e, "StackInstanceID"),
-		Action:          getString(e, "Action"),
-		Status:          getString(e, "Status"),
-		Output:          getString(e, "Output"),
-		ErrorMessage:    getString(e, "ErrorMessage"),
-		StartedAt:       parseTime(e, "StartedAt"),
-	}
-	if s := getString(e, "CompletedAt"); s != "" {
-		t := parseTime(e, "CompletedAt")
-		log.CompletedAt = &t
-	}
-	return log
 }

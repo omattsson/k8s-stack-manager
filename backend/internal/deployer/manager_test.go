@@ -221,6 +221,28 @@ func (m *mockDeployLogRepo) GetLatestByInstance(_ context.Context, instanceID st
 	return latest, nil
 }
 
+func (m *mockDeployLogRepo) SummarizeByInstance(_ context.Context, instanceID string) (*models.DeployLogSummary, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.err != nil {
+		return nil, m.err
+	}
+	summary := &models.DeployLogSummary{InstanceID: instanceID}
+	for _, log := range m.items {
+		if log.StackInstanceID != instanceID || log.Action != models.DeployActionDeploy {
+			continue
+		}
+		summary.DeployCount++
+		switch log.Status {
+		case models.DeployLogSuccess:
+			summary.SuccessCount++
+		case models.DeployLogError:
+			summary.ErrorCount++
+		}
+	}
+	return summary, nil
+}
+
 // ---- broadcaster mock ----
 
 type mockBroadcaster struct {

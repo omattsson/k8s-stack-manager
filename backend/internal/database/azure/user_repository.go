@@ -45,6 +45,43 @@ func (r *UserRepository) SetTestClient(client AzureTableClient) {
 	r.client = client
 }
 
+// userEntity is the typed Azure Table entity for users.
+type userEntity struct {
+	PartitionKey string `json:"PartitionKey"`
+	RowKey       string `json:"RowKey"`
+	ID           string `json:"ID"`
+	Username     string `json:"Username"`
+	PasswordHash string `json:"PasswordHash"`
+	DisplayName  string `json:"DisplayName"`
+	Role         string `json:"Role"`
+	AuthProvider string `json:"AuthProvider"`
+	ExternalID   string `json:"ExternalID"`
+	Email        string `json:"Email"`
+	CreatedAt    string `json:"CreatedAt"`
+	UpdatedAt    string `json:"UpdatedAt"`
+}
+
+func (e *userEntity) toModel() *models.User {
+	u := &models.User{
+		ID:           e.ID,
+		Username:     e.Username,
+		PasswordHash: e.PasswordHash,
+		DisplayName:  e.DisplayName,
+		Role:         e.Role,
+		AuthProvider: e.AuthProvider,
+		Email:        e.Email,
+	}
+	if u.AuthProvider == "" {
+		u.AuthProvider = "local"
+	}
+	if e.ExternalID != "" {
+		u.ExternalID = &e.ExternalID
+	}
+	u.CreatedAt, _ = time.Parse(time.RFC3339, e.CreatedAt)
+	u.UpdatedAt, _ = time.Parse(time.RFC3339, e.UpdatedAt)
+	return u
+}
+
 func (r *UserRepository) Create(user *models.User) error {
 	ctx := context.Background()
 	now := time.Now().UTC()
@@ -91,11 +128,13 @@ func (r *UserRepository) FindByID(id string) (*models.User, error) {
 
 	// ID is not the row key, so we must scan with a filter.
 	filter := "PartitionKey eq 'users' and ID eq '" + id + "'"
+	top := int32(1)
 	pager := r.client.NewListEntitiesPager(&aztables.ListEntitiesOptions{
 		Filter: &filter,
+		Top:    &top,
 	})
 
-	entities, err := collectEntities(ctx, pager, nil)
+	entities, err := collectEntitiesTyped[userEntity](ctx, pager, nil, 1)
 	if err != nil {
 		return nil, mapAzureError("find_by_id", err)
 	}
@@ -103,7 +142,7 @@ func (r *UserRepository) FindByID(id string) (*models.User, error) {
 		return nil, dberrors.NewDatabaseError("find_by_id", dberrors.ErrNotFound)
 	}
 
-	return userFromEntity(entities[0]), nil
+	return entities[0].toModel(), nil
 }
 
 func (r *UserRepository) FindByUsername(username string) (*models.User, error) {
@@ -115,23 +154,25 @@ func (r *UserRepository) FindByUsername(username string) (*models.User, error) {
 		return nil, mapAzureError("find_by_username", err)
 	}
 
-	var entity map[string]interface{}
+	var entity userEntity
 	if err := json.Unmarshal(resp.Value, &entity); err != nil {
 		return nil, dberrors.NewDatabaseError("unmarshal", err)
 	}
 
-	return userFromEntity(entity), nil
+	return entity.toModel(), nil
 }
 
 func (r *UserRepository) FindByExternalID(provider, externalID string) (*models.User, error) {
 	ctx := context.Background()
 
 	filter := "PartitionKey eq 'users' and AuthProvider eq '" + escapeODataString(provider) + "' and ExternalID eq '" + escapeODataString(externalID) + "'"
+	top := int32(1)
 	pager := r.client.NewListEntitiesPager(&aztables.ListEntitiesOptions{
 		Filter: &filter,
+		Top:    &top,
 	})
 
-	entities, err := collectEntities(ctx, pager, nil)
+	entities, err := collectEntitiesTyped[userEntity](ctx, pager, nil, 1)
 	if err != nil {
 		return nil, mapAzureError("find_by_external_id", err)
 	}
@@ -139,7 +180,7 @@ func (r *UserRepository) FindByExternalID(provider, externalID string) (*models.
 		return nil, dberrors.NewDatabaseError("find_by_external_id", dberrors.ErrNotFound)
 	}
 
-	return userFromEntity(entities[0]), nil
+	return entities[0].toModel(), nil
 }
 
 func (r *UserRepository) Update(user *models.User) error {
@@ -198,29 +239,14 @@ func (r *UserRepository) List() ([]models.User, error) {
 		Filter: &filter,
 	})
 
-	entities, err := collectEntities(ctx, pager, nil)
+	entities, err := collectEntitiesTyped[userEntity](ctx, pager, nil, 0)
 	if err != nil {
 		return nil, mapAzureError("list", err)
 	}
 
 	users := make([]models.User, 0, len(entities))
 	for _, e := range entities {
-		users = append(users, *userFromEntity(e))
+		users = append(users, *e.toModel())
 	}
 	return users, nil
-}
-
-func userFromEntity(e map[string]interface{}) *models.User {
-	return &models.User{
-		ID:           getString(e, "ID"),
-		Username:     getString(e, "Username"),
-		PasswordHash: getString(e, "PasswordHash"),
-		DisplayName:  getString(e, "DisplayName"),
-		Role:         getString(e, "Role"),
-		AuthProvider: getStringDefault(e, "AuthProvider", "local"),
-		ExternalID:   getStringPtr(e, "ExternalID"),
-		Email:        getString(e, "Email"),
-		CreatedAt:    parseTime(e, "CreatedAt"),
-		UpdatedAt:    parseTime(e, "UpdatedAt"),
-	}
 }

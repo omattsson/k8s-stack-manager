@@ -819,11 +819,11 @@ func (m *MockAuditLogRepository) Create(log *models.AuditLog) error {
 	return nil
 }
 
-func (m *MockAuditLogRepository) List(filters models.AuditLogFilters) ([]models.AuditLog, int64, error) {
+func (m *MockAuditLogRepository) List(filters models.AuditLogFilters) (*models.AuditLogResult, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	if m.err != nil {
-		return nil, 0, m.err
+		return nil, m.err
 	}
 	var out []models.AuditLog
 	for _, e := range m.entries {
@@ -843,19 +843,43 @@ func (m *MockAuditLogRepository) List(filters models.AuditLogFilters) ([]models.
 	}
 	total := int64(len(out))
 
-	// Apply offset.
-	offset := filters.Offset
-	if offset > len(out) {
-		offset = len(out)
+	// Cursor-based pagination: skip entries until we pass the cursor ID.
+	if filters.Cursor != "" {
+		found := false
+		for i, e := range out {
+			if e.ID == filters.Cursor {
+				out = out[i+1:]
+				found = true
+				break
+			}
+		}
+		if !found {
+			out = nil
+		}
+		total = -1 // unknown total in cursor mode
+	} else {
+		// Apply offset.
+		offset := filters.Offset
+		if offset > len(out) {
+			offset = len(out)
+		}
+		out = out[offset:]
 	}
-	out = out[offset:]
 
-	// Apply limit.
+	// Detect next page and apply limit.
+	var nextCursor string
 	if filters.Limit > 0 && filters.Limit < len(out) {
 		out = out[:filters.Limit]
+		if filters.Cursor != "" {
+			nextCursor = out[filters.Limit-1].ID
+		}
 	}
 
-	return out, total, nil
+	return &models.AuditLogResult{
+		Data:       out,
+		Total:      total,
+		NextCursor: nextCursor,
+	}, nil
 }
 
 func (m *MockAuditLogRepository) SetError(err error) {

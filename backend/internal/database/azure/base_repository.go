@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"time"
 
 	"backend/pkg/dberrors"
 
@@ -85,95 +84,32 @@ func mapAzureError(op string, err error) error {
 	return dberrors.NewDatabaseError(op, err)
 }
 
-// collectEntities reads all pages from a pager, unmarshals each entity JSON, and applies
-// an optional filter function. Returns the parsed entity maps.
-func collectEntities(ctx context.Context, pager ListEntitiesPager, filterFn func(map[string]interface{}) bool) ([]map[string]interface{}, error) {
-	var results []map[string]interface{}
+// collectEntitiesTyped reads pages from a pager, unmarshals each entity JSON
+// directly into a typed struct T (avoiding the intermediate map[string]interface{}),
+// and applies an optional filter function. When maxResults > 0, iteration stops
+// as soon as that many matching entities have been collected (0 means unlimited).
+func collectEntitiesTyped[T any](ctx context.Context, pager ListEntitiesPager, filterFn func(*T) bool, maxResults int) ([]T, error) {
+	var results []T
+outer:
 	for pager.More() {
 		page, err := pager.NextPage(ctx)
 		if err != nil {
 			return nil, err
 		}
 		for _, entityBytes := range page.Entities {
-			var entity map[string]interface{}
-			if err := json.Unmarshal(entityBytes, &entity); err != nil {
+			var item T
+			if err := json.Unmarshal(entityBytes, &item); err != nil {
 				continue
 			}
-			if filterFn != nil && !filterFn(entity) {
+			if filterFn != nil && !filterFn(&item) {
 				continue
 			}
-			results = append(results, entity)
+			results = append(results, item)
+			if maxResults > 0 && len(results) >= maxResults {
+				break outer
+			}
 		}
 	}
 	return results, nil
 }
 
-// getString safely extracts a string value from a map.
-func getString(m map[string]interface{}, key string) string {
-	if v, ok := m[key]; ok {
-		if s, ok := v.(string); ok {
-			return s
-		}
-	}
-	return ""
-}
-
-// getStringPtr safely extracts a string value from a map, returning nil when
-// the key is missing or the value is empty.
-func getStringPtr(m map[string]interface{}, key string) *string {
-	if v, ok := m[key]; ok {
-		if s, ok := v.(string); ok && s != "" {
-			return &s
-		}
-	}
-	return nil
-}
-
-// getStringDefault safely extracts a string value from a map, returning
-// defaultVal when the key is missing or the value is empty.
-func getStringDefault(m map[string]interface{}, key, defaultVal string) string {
-	s := getString(m, key)
-	if s == "" {
-		return defaultVal
-	}
-	return s
-}
-
-// getFloat64 safely extracts a float64 value from a map.
-func getFloat64(m map[string]interface{}, key string) float64 {
-	if v, ok := m[key]; ok {
-		switch n := v.(type) {
-		case float64:
-			return n
-		case json.Number:
-			f, _ := n.Float64()
-			return f
-		}
-	}
-	return 0
-}
-
-// getInt safely extracts an int value from a map.
-func getInt(m map[string]interface{}, key string) int {
-	return int(getFloat64(m, key))
-}
-
-// getBool safely extracts a bool value from a map.
-func getBool(m map[string]interface{}, key string) bool {
-	if v, ok := m[key]; ok {
-		if b, ok := v.(bool); ok {
-			return b
-		}
-	}
-	return false
-}
-
-// parseTime safely parses a time.Time from a map value.
-func parseTime(m map[string]interface{}, key string) time.Time {
-	s := getString(m, key)
-	if s == "" {
-		return time.Time{}
-	}
-	t, _ := time.Parse(time.RFC3339, s)
-	return t
-}

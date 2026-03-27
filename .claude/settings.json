@@ -24,7 +24,31 @@
       "Bash(go tool:*)",
       "Bash(grep -v \"^$\")",
       "Bash(gh api:*)",
-      "Bash(docker build:*)"
+      "Bash(docker build:*)",
+      "Bash(ls /Users/o.mattsson/git/github/k8s-stack-manager/backend/internal/api/handlers/*.go)",
+      "Bash(grep -n \"type.*Handler struct\" /Users/o.mattsson/git/github/k8s-stack-manager/backend/internal/api/handlers/*.go)",
+      "Bash(grep -n \"type.*Repository interface\" /Users/o.mattsson/git/github/k8s-stack-manager/backend/internal/models/*.go)",
+      "Bash(grep -l \"CORS\\\\|Logger\\\\|Recovery\\\\|RequestID\\\\|MaxBodySize\" /Users/o.mattsson/git/github/k8s-stack-manager/backend/internal/api/middleware/*.go)",
+      "Bash(grep -n \"func setupTestRouter\" /Users/o.mattsson/git/github/k8s-stack-manager/backend/internal/api/handlers/*.go)",
+      "Bash(grep -n \"func.*Deploy\\\\|func.*Deployment\" /Users/o.mattsson/git/github/k8s-stack-manager/backend/internal/api/handlers/*.go)",
+      "Bash(ls /Users/o.mattsson/git/github/k8s-stack-manager/backend/internal/models/*.go)",
+      "Bash(grep \"^type.*Repository interface\" /Users/o.mattsson/git/github/k8s-stack-manager/backend/internal/models/*.go)",
+      "Bash(grep \"type.*DeploymentLog\" /Users/o.mattsson/git/github/k8s-stack-manager/backend/internal/models/*.go)",
+      "Bash(ls -d /Users/o.mattsson/git/github/k8s-stack-manager/frontend/src/pages/*/)",
+      "Bash(grep -r \"interface.*Props\" /Users/o.mattsson/git/github/k8s-stack-manager/frontend/src/pages/StackInstances/*.tsx)",
+      "Bash(grep \"TemplateChart\\\\|ChartConfig\" /Users/o.mattsson/git/github/k8s-stack-manager/backend/internal/models/*.go)",
+      "Bash(xargs -I{} basename {})",
+      "Bash(ls /Users/o.mattsson/git/github/k8s-stack-manager/backend/internal/api/middleware/*.go)",
+      "Bash(done)",
+      "Read(//private/tmp/**)",
+      "Bash(npm run:*)",
+      "Bash(tee /tmp/e2e-results-2.txt)",
+      "Bash(tee /tmp/e2e-results-3.txt)",
+      "Bash(tee /tmp/e2e-results-4.txt)",
+      "Bash(ls /Users/o.mattsson/git/github/k8s-stack-manager/backend/internal/database/*.go)",
+      "Bash(ls -d /Users/o.mattsson/git/github/k8s-stack-manager/frontend/src/components/*/)",
+      "Bash(ls /Users/o.mattsson/git/github/k8s-stack-manager/*.md /Users/o.mattsson/git/github/k8s-stack-manager/TEST_FINDINGS.md)",
+      "Bash(go vet:*)"
     ]
   }
 }

@@ -535,6 +535,9 @@ func (r *cleanupMockAuditRepo) Create(log *models.AuditLog) error {
 	return nil
 }
 
-func (r *cleanupMockAuditRepo) List(_ models.AuditLogFilters) ([]models.AuditLog, int64, error) {
-	return r.entries, int64(len(r.entries)), nil
+func (r *cleanupMockAuditRepo) List(_ models.AuditLogFilters) (*models.AuditLogResult, error) {
+	return &models.AuditLogResult{
+		Data:  r.entries,
+		Total: int64(len(r.entries)),
+	}, nil
 }
