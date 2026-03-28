@@ -44,6 +44,8 @@ export interface StackTemplate {
   created_at: string;
   updated_at: string;
   charts?: TemplateChartConfig[];
+  definition_count?: number;
+  owner_username?: string;
 }
 
 export interface TemplateChartConfig {
@@ -464,6 +466,20 @@ export interface BulkOperationResponse {
   succeeded: number;
   failed: number;
   results: BulkOperationResultItem[];
+}
+
+export interface BulkTemplateResultItem {
+  template_id: string;
+  template_name: string;
+  status: string;
+  error?: string;
+}
+
+export interface BulkTemplateResponse {
+  total: number;
+  succeeded: number;
+  failed: number;
+  results: BulkTemplateResultItem[];
 }
 
 export interface CompareInstanceSummary {

@@ -37,6 +37,56 @@ func (r *StackInstanceRepository) SetTestClient(client AzureTableClient) {
 	r.client = client
 }
 
+// stackInstanceEntity is the typed Azure Table entity for stack instances.
+type stackInstanceEntity struct {
+	PartitionKey      string  `json:"PartitionKey"`
+	RowKey            string  `json:"RowKey"`
+	ID                string  `json:"ID"`
+	StackDefinitionID string  `json:"StackDefinitionID"`
+	Name              string  `json:"Name"`
+	Namespace         string  `json:"Namespace"`
+	OwnerID           string  `json:"OwnerID"`
+	Branch            string  `json:"Branch"`
+	ClusterID         string  `json:"ClusterID"`
+	Status            string  `json:"Status"`
+	ErrorMessage      string  `json:"ErrorMessage"`
+	TTLMinutes        float64 `json:"TTLMinutes"`
+	LastDeployedAt    string  `json:"LastDeployedAt,omitempty"`
+	ExpiresAt         string  `json:"ExpiresAt,omitempty"`
+	CreatedAt         string  `json:"CreatedAt"`
+	UpdatedAt         string  `json:"UpdatedAt"`
+}
+
+func (e *stackInstanceEntity) toModel() *models.StackInstance {
+	instance := &models.StackInstance{
+		ID:                e.ID,
+		StackDefinitionID: e.StackDefinitionID,
+		Name:              e.Name,
+		Namespace:         e.Namespace,
+		OwnerID:           e.OwnerID,
+		Branch:            e.Branch,
+		ClusterID:         e.ClusterID,
+		Status:            e.Status,
+		ErrorMessage:      e.ErrorMessage,
+		TTLMinutes:        int(e.TTLMinutes),
+	}
+	instance.CreatedAt, _ = time.Parse(time.RFC3339, e.CreatedAt)
+	instance.UpdatedAt, _ = time.Parse(time.RFC3339, e.UpdatedAt)
+	if e.LastDeployedAt != "" {
+		t, err := time.Parse(time.RFC3339, e.LastDeployedAt)
+		if err == nil {
+			instance.LastDeployedAt = &t
+		}
+	}
+	if e.ExpiresAt != "" {
+		t, err := time.Parse(time.RFC3339, e.ExpiresAt)
+		if err == nil {
+			instance.ExpiresAt = &t
+		}
+	}
+	return instance
+}
+
 func (r *StackInstanceRepository) Create(instance *models.StackInstance) error {
 	ctx := context.Background()
 	now := time.Now().UTC()
@@ -68,11 +118,11 @@ func (r *StackInstanceRepository) FindByID(id string) (*models.StackInstance, er
 		return nil, mapAzureError("find_by_id", err)
 	}
 
-	var entity map[string]interface{}
+	var entity stackInstanceEntity
 	if err := json.Unmarshal(resp.Value, &entity); err != nil {
 		return nil, dberrors.NewDatabaseError("unmarshal", err)
 	}
-	return stackInstanceFromEntity(entity), nil
+	return entity.toModel(), nil
 }
 
 func (r *StackInstanceRepository) Update(instance *models.StackInstance) error {
@@ -107,11 +157,13 @@ func (r *StackInstanceRepository) FindByNamespace(namespace string) (*models.Sta
 	ctx := context.Background()
 
 	filter := "PartitionKey eq 'global' and Namespace eq '" + escapeODataString(namespace) + "'"
+	top := int32(1)
 	pager := r.client.NewListEntitiesPager(&aztables.ListEntitiesOptions{
 		Filter: &filter,
+		Top:    &top,
 	})
 
-	entities, err := collectEntities(ctx, pager, nil)
+	entities, err := collectEntitiesTyped[stackInstanceEntity](ctx, pager, nil, 1)
 	if err != nil {
 		return nil, mapAzureError("find_by_namespace", err)
 	}
@@ -119,7 +171,7 @@ func (r *StackInstanceRepository) FindByNamespace(namespace string) (*models.Sta
 	if len(entities) == 0 {
 		return nil, dberrors.NewDatabaseError("find_by_namespace", dberrors.ErrNotFound)
 	}
-	return stackInstanceFromEntity(entities[0]), nil
+	return entities[0].toModel(), nil
 }
 
 func (r *StackInstanceRepository) List() ([]models.StackInstance, error) {
@@ -130,14 +182,14 @@ func (r *StackInstanceRepository) List() ([]models.StackInstance, error) {
 		Filter: &filter,
 	})
 
-	entities, err := collectEntities(ctx, pager, nil)
+	entities, err := collectEntitiesTyped[stackInstanceEntity](ctx, pager, nil, 0)
 	if err != nil {
 		return nil, mapAzureError("list", err)
 	}
 
 	results := make([]models.StackInstance, 0, len(entities))
 	for _, e := range entities {
-		results = append(results, *stackInstanceFromEntity(e))
+		results = append(results, *e.toModel())
 	}
 	return results, nil
 }
@@ -150,14 +202,14 @@ func (r *StackInstanceRepository) ListByOwner(ownerID string) ([]models.StackIns
 		Filter: &filter,
 	})
 
-	entities, err := collectEntities(ctx, pager, nil)
+	entities, err := collectEntitiesTyped[stackInstanceEntity](ctx, pager, nil, 0)
 	if err != nil {
 		return nil, mapAzureError("list_by_owner", err)
 	}
 
 	results := make([]models.StackInstance, 0, len(entities))
 	for _, e := range entities {
-		results = append(results, *stackInstanceFromEntity(e))
+		results = append(results, *e.toModel())
 	}
 	return results, nil
 }
@@ -174,16 +226,16 @@ func (r *StackInstanceRepository) FindByCluster(clusterID string) ([]models.Stac
 			Filter: &filter,
 		})
 
-		entities, err := collectEntities(ctx, pager, func(e map[string]interface{}) bool {
-			return getString(e, "ClusterID") == ""
-		})
+		entities, err := collectEntitiesTyped[stackInstanceEntity](ctx, pager, func(e *stackInstanceEntity) bool {
+			return e.ClusterID == ""
+		}, 0)
 		if err != nil {
 			return nil, mapAzureError("find_by_cluster", err)
 		}
 
 		results := make([]models.StackInstance, 0, len(entities))
 		for _, e := range entities {
-			results = append(results, *stackInstanceFromEntity(e))
+			results = append(results, *e.toModel())
 		}
 		return results, nil
 	}
@@ -193,14 +245,14 @@ func (r *StackInstanceRepository) FindByCluster(clusterID string) ([]models.Stac
 		Filter: &filter,
 	})
 
-	entities, err := collectEntities(ctx, pager, nil)
+	entities, err := collectEntitiesTyped[stackInstanceEntity](ctx, pager, nil, 0)
 	if err != nil {
 		return nil, mapAzureError("find_by_cluster", err)
 	}
 
 	results := make([]models.StackInstance, 0, len(entities))
 	for _, e := range entities {
-		results = append(results, *stackInstanceFromEntity(e))
+		results = append(results, *e.toModel())
 	}
 	return results, nil
 }
@@ -229,28 +281,26 @@ func (r *StackInstanceRepository) ListExpired() ([]*models.StackInstance, error)
 		Filter: &filter,
 	})
 
-	entities, err := collectEntities(ctx, pager, func(e map[string]interface{}) bool {
-		status := getString(e, "Status")
-		if status != models.StackStatusRunning {
+	entities, err := collectEntitiesTyped[stackInstanceEntity](ctx, pager, func(e *stackInstanceEntity) bool {
+		if e.Status != models.StackStatusRunning {
 			return false
 		}
-		expiresStr := getString(e, "ExpiresAt")
-		if expiresStr == "" {
+		if e.ExpiresAt == "" {
 			return false
 		}
-		t, parseErr := time.Parse(time.RFC3339, expiresStr)
+		t, parseErr := time.Parse(time.RFC3339, e.ExpiresAt)
 		if parseErr != nil {
 			return false
 		}
 		return t.Before(now)
-	})
+	}, 0)
 	if err != nil {
 		return nil, mapAzureError("list_expired", err)
 	}
 
 	results := make([]*models.StackInstance, 0, len(entities))
 	for _, e := range entities {
-		results = append(results, stackInstanceFromEntity(e))
+		results = append(results, e.toModel())
 	}
 	return results, nil
 }
@@ -279,30 +329,4 @@ func stackInstanceToEntity(i *models.StackInstance) map[string]interface{} {
 		entity["ExpiresAt"] = i.ExpiresAt.Format(time.RFC3339)
 	}
 	return entity
-}
-
-func stackInstanceFromEntity(e map[string]interface{}) *models.StackInstance {
-	instance := &models.StackInstance{
-		ID:                getString(e, "ID"),
-		StackDefinitionID: getString(e, "StackDefinitionID"),
-		Name:              getString(e, "Name"),
-		Namespace:         getString(e, "Namespace"),
-		OwnerID:           getString(e, "OwnerID"),
-		Branch:            getString(e, "Branch"),
-		ClusterID:         getString(e, "ClusterID"),
-		Status:            getString(e, "Status"),
-		ErrorMessage:      getString(e, "ErrorMessage"),
-		TTLMinutes:        getInt(e, "TTLMinutes"),
-		CreatedAt:         parseTime(e, "CreatedAt"),
-		UpdatedAt:         parseTime(e, "UpdatedAt"),
-	}
-	if s := getString(e, "LastDeployedAt"); s != "" {
-		t := parseTime(e, "LastDeployedAt")
-		instance.LastDeployedAt = &t
-	}
-	if s := getString(e, "ExpiresAt"); s != "" {
-		t := parseTime(e, "ExpiresAt")
-		instance.ExpiresAt = &t
-	}
-	return instance
 }

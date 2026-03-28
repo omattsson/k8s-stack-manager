@@ -79,6 +79,45 @@ func (m *mockDeployLogRepo) GetLatestByInstance(_ context.Context, instanceID st
 	return &cp, nil
 }
 
+func (m *mockDeployLogRepo) SummarizeByInstance(_ context.Context, instanceID string) (*models.DeployLogSummary, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.err != nil {
+		return nil, m.err
+	}
+	summary := &models.DeployLogSummary{InstanceID: instanceID}
+	for _, l := range m.items[instanceID] {
+		if l.Action != models.DeployActionDeploy {
+			// Still track last activity for non-deploy actions.
+			ts := l.StartedAt
+			if l.CompletedAt != nil {
+				ts = *l.CompletedAt
+			}
+			if !ts.IsZero() && (summary.LastDeployAt == nil || ts.After(*summary.LastDeployAt)) {
+				cp := ts
+				summary.LastDeployAt = &cp
+			}
+			continue
+		}
+		summary.DeployCount++
+		switch l.Status {
+		case models.DeployLogSuccess:
+			summary.SuccessCount++
+		case models.DeployLogError:
+			summary.ErrorCount++
+		}
+		ts := l.StartedAt
+		if l.CompletedAt != nil {
+			ts = *l.CompletedAt
+		}
+		if !ts.IsZero() && (summary.LastDeployAt == nil || ts.After(*summary.LastDeployAt)) {
+			cp := ts
+			summary.LastDeployAt = &cp
+		}
+	}
+	return summary, nil
+}
+
 func (m *mockDeployLogRepo) setError(err error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

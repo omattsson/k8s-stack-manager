@@ -129,7 +129,7 @@ describe('Compare', () => {
   });
 
   it('shows comparison results after selecting instances and clicking compare', async () => {
-    const user = userEvent.setup();
+    const user = userEvent.setup({ delay: null });
     renderCompare();
 
     await waitFor(() => {
@@ -152,6 +152,9 @@ describe('Compare', () => {
 
     // Click compare
     const compareButton = screen.getByRole('button', { name: /compare/i });
+    await waitFor(() => {
+      expect(compareButton).toBeEnabled();
+    });
     await user.click(compareButton);
 
     await waitFor(() => {
@@ -171,7 +174,7 @@ describe('Compare', () => {
 
   it('shows error alert when comparison fails', async () => {
     (instanceService.compareInstances as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('Server error'));
-    const user = userEvent.setup();
+    const user = userEvent.setup({ delay: null });
     renderCompare();
 
     await waitFor(() => {
@@ -191,6 +194,9 @@ describe('Compare', () => {
     const betaOption = await screen.findByText('Instance Beta');
     await user.click(betaOption);
 
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /compare/i })).toBeEnabled();
+    });
     await user.click(screen.getByRole('button', { name: /compare/i }));
 
     await waitFor(() => {
@@ -200,7 +206,7 @@ describe('Compare', () => {
 
   it('shows loading spinner during comparison', async () => {
     (instanceService.compareInstances as ReturnType<typeof vi.fn>).mockReturnValue(new Promise(() => {}));
-    const user = userEvent.setup();
+    const user = userEvent.setup({ delay: null });
     renderCompare();
 
     await waitFor(() => {
@@ -219,8 +225,8 @@ describe('Compare', () => {
     const betaOption = await screen.findByText('Instance Beta');
     await user.click(betaOption);
 
-    await user.click(screen.getByRole('button', { name: /compare/i }));
-
+    // Auto-trigger fires once both IDs are set; compareInstances never resolves so
+    // comparing stays true and the spinner remains visible — no button click needed.
     await waitFor(() => {
       expect(screen.getByRole('progressbar')).toBeInTheDocument();
     });

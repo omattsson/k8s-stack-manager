@@ -54,6 +54,59 @@ func (r *ClusterRepository) SetTestClient(client AzureTableClient) {
 	r.client = client
 }
 
+// clusterEntity is the typed Azure Table entity for clusters.
+type clusterEntity struct {
+	PartitionKey   string  `json:"PartitionKey"`
+	RowKey         string  `json:"RowKey"`
+	ID             string  `json:"ID"`
+	Name           string  `json:"Name"`
+	Description    string  `json:"Description"`
+	APIServerURL   string  `json:"APIServerURL"`
+	KubeconfigData string  `json:"KubeconfigData"`
+	KubeconfigPath string  `json:"KubeconfigPath"`
+	Region         string  `json:"Region"`
+	HealthStatus   string  `json:"HealthStatus"`
+	MaxNamespaces  float64 `json:"MaxNamespaces"`
+	IsDefault      bool    `json:"IsDefault"`
+	CreatedAt      string  `json:"CreatedAt"`
+	UpdatedAt      string  `json:"UpdatedAt"`
+}
+
+func (r *ClusterRepository) clusterEntityToModel(e *clusterEntity) (*models.Cluster, error) {
+	kubeconfigData := e.KubeconfigData
+	if kubeconfigData != "" && len(r.encryptionKey) > 0 {
+		decoded, err := base64.StdEncoding.DecodeString(kubeconfigData)
+		if err == nil {
+			decrypted, decErr := crypto.Decrypt(decoded, r.encryptionKey)
+			if decErr != nil {
+				return nil, dberrors.NewDatabaseError("decrypt kubeconfig data", decErr)
+			}
+			kubeconfigData = string(decrypted)
+		}
+	}
+
+	healthStatus := e.HealthStatus
+	if healthStatus == "" {
+		healthStatus = models.ClusterUnreachable
+	}
+
+	c := &models.Cluster{
+		ID:             e.ID,
+		Name:           e.Name,
+		Description:    e.Description,
+		APIServerURL:   e.APIServerURL,
+		KubeconfigData: kubeconfigData,
+		KubeconfigPath: e.KubeconfigPath,
+		Region:         e.Region,
+		HealthStatus:   healthStatus,
+		MaxNamespaces:  int(e.MaxNamespaces),
+		IsDefault:      e.IsDefault,
+	}
+	c.CreatedAt, _ = time.Parse(time.RFC3339, e.CreatedAt)
+	c.UpdatedAt, _ = time.Parse(time.RFC3339, e.UpdatedAt)
+	return c, nil
+}
+
 func (r *ClusterRepository) Create(cluster *models.Cluster) error {
 	ctx := context.Background()
 	now := time.Now().UTC()
@@ -91,11 +144,11 @@ func (r *ClusterRepository) FindByID(id string) (*models.Cluster, error) {
 		return nil, mapAzureError("find_by_id", err)
 	}
 
-	var entity map[string]interface{}
+	var entity clusterEntity
 	if err := json.Unmarshal(resp.Value, &entity); err != nil {
 		return nil, dberrors.NewDatabaseError("unmarshal", err)
 	}
-	return r.clusterFromEntity(entity)
+	return r.clusterEntityToModel(&entity)
 }
 
 func (r *ClusterRepository) Update(cluster *models.Cluster) error {
@@ -137,14 +190,14 @@ func (r *ClusterRepository) List() ([]models.Cluster, error) {
 		Filter: &filter,
 	})
 
-	entities, err := collectEntities(ctx, pager, nil)
+	entities, err := collectEntitiesTyped[clusterEntity](ctx, pager, nil, 0)
 	if err != nil {
 		return nil, mapAzureError("list", err)
 	}
 
 	results := make([]models.Cluster, 0, len(entities))
 	for _, e := range entities {
-		c, err := r.clusterFromEntity(e)
+		c, err := r.clusterEntityToModel(&e)
 		if err != nil {
 			return nil, err
 		}
@@ -161,16 +214,16 @@ func (r *ClusterRepository) FindDefault() (*models.Cluster, error) {
 		Filter: &filter,
 	})
 
-	entities, err := collectEntities(ctx, pager, func(e map[string]interface{}) bool {
-		return getBool(e, "IsDefault")
-	})
+	entities, err := collectEntitiesTyped[clusterEntity](ctx, pager, func(e *clusterEntity) bool {
+		return e.IsDefault
+	}, 1)
 	if err != nil {
 		return nil, mapAzureError("find_default", err)
 	}
 	if len(entities) == 0 {
 		return nil, dberrors.NewDatabaseError("find_default", dberrors.ErrNotFound)
 	}
-	return r.clusterFromEntity(entities[0])
+	return r.clusterEntityToModel(&entities[0])
 }
 
 func (r *ClusterRepository) SetDefault(id string) error {
@@ -180,21 +233,23 @@ func (r *ClusterRepository) SetDefault(id string) error {
 	ctx := context.Background()
 
 	// Find the current default and unset it.
+	// SetDefault needs to read-modify-write, so we use the entity struct for the
+	// read (typed deserialization), then marshal back for the write.
 	filter := "PartitionKey eq 'clusters'"
 	pager := r.client.NewListEntitiesPager(&aztables.ListEntitiesOptions{
 		Filter: &filter,
 	})
 
-	entities, err := collectEntities(ctx, pager, func(e map[string]interface{}) bool {
-		return getBool(e, "IsDefault")
-	})
+	entities, err := collectEntitiesTyped[clusterEntity](ctx, pager, func(e *clusterEntity) bool {
+		return e.IsDefault
+	}, 0)
 	if err != nil {
 		return mapAzureError("set_default", err)
 	}
 
 	for _, e := range entities {
-		e["IsDefault"] = false
-		e["UpdatedAt"] = time.Now().UTC().Format(time.RFC3339)
+		e.IsDefault = false
+		e.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
 		entityBytes, err := json.Marshal(e)
 		if err != nil {
 			return dberrors.NewDatabaseError("marshal", err)
@@ -241,41 +296,5 @@ func (r *ClusterRepository) clusterToEntity(c *models.Cluster) (map[string]inter
 		"IsDefault":      c.IsDefault,
 		"CreatedAt":      c.CreatedAt.Format(time.RFC3339),
 		"UpdatedAt":      c.UpdatedAt.Format(time.RFC3339),
-	}, nil
-}
-
-func (r *ClusterRepository) clusterFromEntity(e map[string]interface{}) (*models.Cluster, error) {
-	kubeconfigData := getString(e, "KubeconfigData")
-	if kubeconfigData != "" && len(r.encryptionKey) > 0 {
-		// Attempt to decode+decrypt.
-		// - If base64 decoding fails, assume this is legacy plaintext data stored
-		//   before encryption was enabled and fall back to the raw value.
-		// - If decoding succeeds but decryption fails, treat this as a hard error
-		//   rather than propagating an encrypted blob as if it were kubeconfig YAML.
-		decoded, err := base64.StdEncoding.DecodeString(kubeconfigData)
-		if err == nil {
-			decrypted, decErr := crypto.Decrypt(decoded, r.encryptionKey)
-			if decErr != nil {
-				// Treat decryption failure as a hard error so callers can surface
-				// a clear message and avoid leaving the cluster in an unusable state.
-				return nil, dberrors.NewDatabaseError("decrypt kubeconfig data", decErr)
-			}
-			kubeconfigData = string(decrypted)
-		}
-	}
-
-	return &models.Cluster{
-		ID:             getString(e, "ID"),
-		Name:           getString(e, "Name"),
-		Description:    getString(e, "Description"),
-		APIServerURL:   getString(e, "APIServerURL"),
-		KubeconfigData: kubeconfigData,
-		KubeconfigPath: getString(e, "KubeconfigPath"),
-		Region:         getString(e, "Region"),
-		HealthStatus:   getStringDefault(e, "HealthStatus", models.ClusterUnreachable),
-		MaxNamespaces:  getInt(e, "MaxNamespaces"),
-		IsDefault:      getBool(e, "IsDefault"),
-		CreatedAt:      parseTime(e, "CreatedAt"),
-		UpdatedAt:      parseTime(e, "UpdatedAt"),
 	}, nil
 }

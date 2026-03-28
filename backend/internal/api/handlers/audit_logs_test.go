@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"encoding/base64"
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
@@ -205,6 +206,71 @@ func TestListAuditLogs(t *testing.T) {
 		req, _ := http.NewRequest(http.MethodGet, "/api/v1/audit-logs?offset=-1", nil)
 		router.ServeHTTP(w, req)
 		assert.Equal(t, http.StatusBadRequest, w.Code)
+	})
+
+	t.Run("cursor-based pagination returns next_cursor when more results", func(t *testing.T) {
+		t.Parallel()
+		repo := NewMockAuditLogRepository()
+		for i := 0; i < 5; i++ {
+			seedAuditLog(t, repo, fmt.Sprintf("log-%d", i), "uid-1", "create", "stack_definition", fmt.Sprintf("def-%d", i))
+		}
+
+		router := setupAuditLogRouter(repo)
+		w := httptest.NewRecorder()
+		// Request page of 2 starting from cursor "log-0" (should skip log-0, return log-1 and log-2)
+		cursor := base64.StdEncoding.EncodeToString([]byte("mock|log-0"))
+		req, _ := http.NewRequest(http.MethodGet, "/api/v1/audit-logs?limit=2&cursor="+cursor, nil)
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		var resp models.PaginatedAuditLogs
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+		assert.Len(t, resp.Data, 2)
+		assert.Equal(t, "log-1", resp.Data[0].ID)
+		assert.Equal(t, "log-2", resp.Data[1].ID)
+		assert.NotEmpty(t, resp.NextCursor, "expected next_cursor when more results exist")
+		assert.Equal(t, int64(-1), resp.Total, "total should be -1 in cursor mode")
+	})
+
+	t.Run("cursor-based pagination returns empty next_cursor on last page", func(t *testing.T) {
+		t.Parallel()
+		repo := NewMockAuditLogRepository()
+		for i := 0; i < 3; i++ {
+			seedAuditLog(t, repo, fmt.Sprintf("log-%d", i), "uid-1", "create", "stack_definition", fmt.Sprintf("def-%d", i))
+		}
+
+		router := setupAuditLogRouter(repo)
+		w := httptest.NewRecorder()
+		// Request page of 10 starting from cursor "log-0" (only 2 remain: log-1, log-2)
+		cursor := base64.StdEncoding.EncodeToString([]byte("mock|log-0"))
+		req, _ := http.NewRequest(http.MethodGet, "/api/v1/audit-logs?limit=10&cursor="+cursor, nil)
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		var resp models.PaginatedAuditLogs
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+		assert.Len(t, resp.Data, 2)
+		assert.Empty(t, resp.NextCursor, "expected no next_cursor on last page")
+	})
+
+	t.Run("no cursor uses offset/limit pagination", func(t *testing.T) {
+		t.Parallel()
+		repo := NewMockAuditLogRepository()
+		for i := 0; i < 5; i++ {
+			seedAuditLog(t, repo, fmt.Sprintf("log-%d", i), "uid-1", "create", "stack_definition", fmt.Sprintf("def-%d", i))
+		}
+
+		router := setupAuditLogRouter(repo)
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest(http.MethodGet, "/api/v1/audit-logs?limit=2&offset=1", nil)
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		var resp models.PaginatedAuditLogs
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+		assert.Len(t, resp.Data, 2)
+		assert.Equal(t, int64(5), resp.Total, "total should be known in offset mode")
+		assert.Empty(t, resp.NextCursor, "no next_cursor in offset mode")
 	})
 }
 

@@ -39,8 +39,11 @@ backend/
       api_keys.go                # APIKeyHandler: API key management
       audit_logs.go              # AuditLogHandler: filterable audit log viewer
       auth.go                    # AuthHandler: login, register, current user
+      oidc.go                    # OIDCHandler: OpenID Connect authentication flow
       branch_overrides.go        # BranchOverrideHandler: per-chart branch overrides
       bulk_operations.go         # BulkHandler: bulk deploy/stop/clean/delete (up to 50 instances)
+      bulk_template_operations.go # TemplateHandler: bulk delete/publish/unpublish (up to 50 templates)
+      instance_quota_overrides.go  # InstanceQuotaOverrideHandler: per-instance resource quota overrides
       chart_configs.go           # Chart config management (nested under definitions)
       cleanup_policies.go        # CleanupPolicyHandler: CRUD + manual run
       clusters.go                # ClusterHandler: CRUD + test-connection + health + quotas + utilization
@@ -73,8 +76,10 @@ backend/
     database/repository.go       # NewRepository() factory: MySQL vs Azure Table
     database/migrations.go       # Versioned migrations via schema.Migrator, auto-run on startup
     database/errors.go           # Re-exports from pkg/dberrors (single source of truth)
+    database/schema/             # Migrator and versioned migration structs
     models/                      # Domain models, repository interfaces, validation
     health/health.go             # Dependency health checks (liveness/readiness)
+    auth/                        # OIDC provider + state store for OpenID Connect auth
     cluster/                     # ClusterRegistry (multi-cluster coordination) + health poller
     deployer/                    # Helm CLI wrapper for deploy/undeploy/status (multi-cluster via registry)
     k8s/                         # Kubernetes cluster client, status monitoring, resource quota management
@@ -134,6 +139,7 @@ frontend/src/
     YamlEditor/                # YAML text editor with syntax support
   pages/
     Login/                     # Authentication page
+    AuthCallback/              # OIDC authentication callback handler
     StackInstances/            # Dashboard — instance list, deploy, stop, clean
     StackDefinitions/          # Definition CRUD + chart management
     Templates/                 # Template CRUD + publish, instantiate
@@ -160,7 +166,7 @@ frontend/src/
     typography.ts              # Typography variant overrides
     components.ts              # MUI component default prop/style overrides
   types/                       # Shared TypeScript type definitions
-  utils/                       # Utility functions
+  utils/                       # Utility functions (timeAgo, role helpers, notification helpers, recently used tracking)
 ```
 
 **Patterns**: MUI components (no raw HTML), `sx` prop for styling, functional components only, `useState`/`useEffect` for state, service objects with async methods for API calls. All service objects and methods in `api/client.ts` must have TSDoc comments with `@param`, `@returns`, and `@see` (HTTP method + route).
@@ -200,6 +206,7 @@ backend/internal/
   notifier/              # Notification dispatch (creates notifications on deploy/stop/clean events)
   scheduler/             # Cron-based cleanup policy execution with condition parsing
   ttl/                   # TTL reaper: background goroutine auto-expiring instances
+  auth/                  # OIDC provider: OpenID Connect authentication, state store
 ```
 
 ### Domain Conventions
@@ -223,6 +230,7 @@ backend/internal/
 - **Template versioning**: Templates maintain version history; snapshots are created automatically on publish. Version diff compares chart configs between snapshots.
 - **Resource quotas**: Per-cluster resource quotas (CPU, memory, storage, pods) enforced via Kubernetes ResourceQuota and LimitRange objects. Admin-configurable via API.
 - **Bulk operations**: Bulk deploy/stop/clean/delete supports up to 50 instances per request. Returns per-instance success/failure results.
+- **Bulk template operations**: Bulk delete/publish/unpublish supports up to 50 templates per request. Returns per-template success/failure results. Requires DevOps+ role.
 - **Instance comparison**: Side-by-side comparison of two stack instances including merged Helm values per chart.
 - **Import/export**: Stack definitions can be exported as JSON bundles and re-imported to create new definitions with charts.
 
@@ -236,6 +244,7 @@ backend/internal/
 | Stack Definitions | `/api/v1/stack-definitions` | CRUD + nested chart management + import/export |
 | Stack Instances | `/api/v1/stack-instances` | CRUD + clone, deploy, stop, clean, status, logs, compare, extend TTL |
 | Bulk Operations | `/api/v1/stack-instances/bulk` | Bulk deploy, stop, clean, delete (up to 50 instances) |
+| Bulk Template Ops | `/api/v1/templates/bulk` | Bulk delete, publish, unpublish templates (up to 50) |
 | Value Overrides | `/api/v1/stack-instances/:id/overrides` | Per-chart value overrides |
 | Git | `/api/v1/git` | Branch listing, validation, provider status |
 | Audit Logs | `/api/v1/audit-logs` | Filterable audit log viewer |
@@ -250,6 +259,8 @@ backend/internal/
 | Shared Values | `/api/v1/clusters/:id/shared-values` | Per-cluster shared Helm values |
 | Analytics | `/api/v1/analytics` | Usage overview, template stats, user stats |
 | Quick Deploy | `/api/v1/templates/:id/quick-deploy` | One-click template deployment |
+| OIDC Auth | `/api/v1/auth/oidc` | OpenID Connect config, authorize, callback |
+| Quota Overrides | `/api/v1/stack-instances/:id/quota-overrides` | Per-instance resource quota overrides |
 | Health | `/health/*` | Liveness + readiness |
 
 ## Security Rules

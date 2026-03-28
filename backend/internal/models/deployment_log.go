@@ -31,6 +31,17 @@ const (
 	DeployLogError   = "error"
 )
 
+// DeployLogSummary provides lightweight aggregate counts for an instance's
+// deployment logs, avoiding the need to fetch full log entities with their
+// potentially large Output and Details fields.
+type DeployLogSummary struct {
+	LastDeployAt *time.Time
+	InstanceID   string
+	DeployCount  int
+	SuccessCount int
+	ErrorCount   int
+}
+
 // DeploymentLogRepository defines data access operations for deployment logs.
 type DeploymentLogRepository interface {
 	Create(ctx context.Context, log *DeploymentLog) error
@@ -38,4 +49,5 @@ type DeploymentLogRepository interface {
 	Update(ctx context.Context, log *DeploymentLog) error
 	ListByInstance(ctx context.Context, instanceID string) ([]DeploymentLog, error)
 	GetLatestByInstance(ctx context.Context, instanceID string) (*DeploymentLog, error)
+	SummarizeByInstance(ctx context.Context, instanceID string) (*DeployLogSummary, error)
 }

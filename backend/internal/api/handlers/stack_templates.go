@@ -20,6 +20,12 @@ type TemplateHandler struct {
 	definitionRepo  models.StackDefinitionRepository
 	chartConfigRepo models.ChartConfigRepository
 	versionRepo     models.TemplateVersionRepository
+	userRepo        models.UserRepository
+}
+
+// SetUserRepo sets the optional UserRepository for enriched list responses.
+func (h *TemplateHandler) SetUserRepo(repo models.UserRepository) {
+	h.userRepo = repo
 }
 
 // NewTemplateHandler creates a new TemplateHandler.
@@ -54,12 +60,20 @@ func NewTemplateHandlerWithVersions(
 	}
 }
 
+// TemplateListItem extends StackTemplate with computed fields for the gallery.
+type TemplateListItem struct {
+	models.StackTemplate
+	DefinitionCount int    `json:"definition_count"`
+	OwnerUsername   string `json:"owner_username,omitempty"`
+}
+
 // ListTemplates godoc
 // @Summary     List stack templates
-// @Description List published templates for regular users, all templates for devops/admin
+// @Description List published templates for regular users, all templates for devops/admin. Includes definition_count and owner_username.
 // @Tags        templates
+// @Accept      json
 // @Produce     json
-// @Success     200 {array}  models.StackTemplate
+// @Success     200 {array}  TemplateListItem
 // @Failure     500 {object} map[string]string
 // @Router      /api/v1/templates [get]
 func (h *TemplateHandler) ListTemplates(c *gin.Context) {
@@ -78,7 +92,53 @@ func (h *TemplateHandler) ListTemplates(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, templates)
+	// NOTE: This does N+1 queries (per-template definition count + per-owner username lookup).
+	// Acceptable for typical gallery sizes. Ideal optimization: batch CountByTemplateIDs(ids)
+	// and FindUsersByIDs(ids) methods to reduce to 2 queries.
+
+	// Build definition count map by querying only for returned template IDs.
+	defCountMap := make(map[string]int)
+	if h.definitionRepo != nil {
+		for _, t := range templates {
+			defs, err := h.definitionRepo.ListByTemplate(t.ID)
+			if err != nil {
+				slog.Warn("failed to fetch definitions for template", "template_id", t.ID, "error", err)
+				continue
+			}
+			defCountMap[t.ID] = len(defs)
+		}
+	}
+
+	// Build username map from distinct owner IDs (instead of loading all users).
+	usernameMap := make(map[string]string)
+	if h.userRepo != nil {
+		ownerIDs := make(map[string]struct{})
+		for _, t := range templates {
+			if t.OwnerID != "" {
+				ownerIDs[t.OwnerID] = struct{}{}
+			}
+		}
+		for ownerID := range ownerIDs {
+			user, err := h.userRepo.FindByID(ownerID)
+			if err != nil {
+				slog.Warn("failed to fetch user for template listing", "owner_id", ownerID, "error", err)
+				continue
+			}
+			usernameMap[ownerID] = user.Username
+		}
+	}
+
+	// Assemble enriched response.
+	items := make([]TemplateListItem, len(templates))
+	for i, t := range templates {
+		items[i] = TemplateListItem{
+			StackTemplate:   t,
+			DefinitionCount: defCountMap[t.ID],
+			OwnerUsername:   usernameMap[t.OwnerID],
+		}
+	}
+
+	c.JSON(http.StatusOK, items)
 }
 
 // CreateTemplate godoc

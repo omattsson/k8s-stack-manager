@@ -37,6 +37,44 @@ func (r *APIKeyRepository) SetTestClient(client AzureTableClient) {
 	r.client = client
 }
 
+// apiKeyEntity is the typed Azure Table entity for API keys.
+type apiKeyEntity struct {
+	PartitionKey string `json:"PartitionKey"`
+	RowKey       string `json:"RowKey"`
+	ID           string `json:"ID"`
+	UserID       string `json:"UserID"`
+	Name         string `json:"Name"`
+	KeyHash      string `json:"KeyHash"`
+	Prefix       string `json:"Prefix"`
+	LastUsedAt   string `json:"LastUsedAt,omitempty"`
+	ExpiresAt    string `json:"ExpiresAt,omitempty"`
+	CreatedAt    string `json:"CreatedAt"`
+}
+
+func (e *apiKeyEntity) toModel() *models.APIKey {
+	key := &models.APIKey{
+		ID:      e.ID,
+		UserID:  e.UserID,
+		Name:    e.Name,
+		KeyHash: e.KeyHash,
+		Prefix:  e.Prefix,
+	}
+	key.CreatedAt, _ = time.Parse(time.RFC3339, e.CreatedAt)
+	if e.LastUsedAt != "" {
+		t, err := time.Parse(time.RFC3339, e.LastUsedAt)
+		if err == nil {
+			key.LastUsedAt = &t
+		}
+	}
+	if e.ExpiresAt != "" {
+		t, err := time.Parse(time.RFC3339, e.ExpiresAt)
+		if err == nil {
+			key.ExpiresAt = &t
+		}
+	}
+	return key
+}
+
 func (r *APIKeyRepository) Create(key *models.APIKey) error {
 	ctx := context.Background()
 	now := time.Now().UTC()
@@ -84,12 +122,12 @@ func (r *APIKeyRepository) FindByID(userID, keyID string) (*models.APIKey, error
 		return nil, mapAzureError("find_by_id", err)
 	}
 
-	var entity map[string]interface{}
+	var entity apiKeyEntity
 	if err := json.Unmarshal(resp.Value, &entity); err != nil {
 		return nil, dberrors.NewDatabaseError("unmarshal", err)
 	}
 
-	return apiKeyFromEntity(entity), nil
+	return entity.toModel(), nil
 }
 
 // FindByPrefix scans the entire table and returns all keys matching prefix.
@@ -99,9 +137,9 @@ func (r *APIKeyRepository) FindByPrefix(prefix string) ([]*models.APIKey, error)
 	ctx := context.Background()
 
 	pager := r.client.NewListEntitiesPager(nil)
-	entities, err := collectEntities(ctx, pager, func(e map[string]interface{}) bool {
-		return getString(e, "Prefix") == prefix
-	})
+	entities, err := collectEntitiesTyped[apiKeyEntity](ctx, pager, func(e *apiKeyEntity) bool {
+		return e.Prefix == prefix
+	}, 0)
 	if err != nil {
 		return nil, mapAzureError("find_by_prefix", err)
 	}
@@ -111,7 +149,7 @@ func (r *APIKeyRepository) FindByPrefix(prefix string) ([]*models.APIKey, error)
 
 	keys := make([]*models.APIKey, 0, len(entities))
 	for _, e := range entities {
-		keys = append(keys, apiKeyFromEntity(e))
+		keys = append(keys, e.toModel())
 	}
 	return keys, nil
 }
@@ -124,14 +162,14 @@ func (r *APIKeyRepository) ListByUser(userID string) ([]*models.APIKey, error) {
 		Filter: &filter,
 	})
 
-	entities, err := collectEntities(ctx, pager, nil)
+	entities, err := collectEntitiesTyped[apiKeyEntity](ctx, pager, nil, 0)
 	if err != nil {
 		return nil, mapAzureError("list_by_user", err)
 	}
 
 	keys := make([]*models.APIKey, 0, len(entities))
 	for _, e := range entities {
-		keys = append(keys, apiKeyFromEntity(e))
+		keys = append(keys, e.toModel())
 	}
 	return keys, nil
 }
@@ -145,12 +183,14 @@ func (r *APIKeyRepository) UpdateLastUsed(userID, keyID string, t time.Time) err
 		return mapAzureError("update_last_used_read", err)
 	}
 
-	var entity map[string]interface{}
+	// For the read-modify-write of UpdateLastUsed, we deserialize into the typed
+	// entity struct, update the field, and re-marshal for the write.
+	var entity apiKeyEntity
 	if err := json.Unmarshal(resp.Value, &entity); err != nil {
 		return dberrors.NewDatabaseError("unmarshal", err)
 	}
 
-	entity["LastUsedAt"] = t.UTC().Format(time.RFC3339)
+	entity.LastUsedAt = t.UTC().Format(time.RFC3339)
 
 	entityBytes, err := json.Marshal(entity)
 	if err != nil {
@@ -172,24 +212,4 @@ func (r *APIKeyRepository) Delete(userID, keyID string) error {
 		return mapAzureError("delete", err)
 	}
 	return nil
-}
-
-func apiKeyFromEntity(e map[string]interface{}) *models.APIKey {
-	key := &models.APIKey{
-		ID:        getString(e, "ID"),
-		UserID:    getString(e, "UserID"),
-		Name:      getString(e, "Name"),
-		KeyHash:   getString(e, "KeyHash"),
-		Prefix:    getString(e, "Prefix"),
-		CreatedAt: parseTime(e, "CreatedAt"),
-	}
-	if getString(e, "LastUsedAt") != "" {
-		t := parseTime(e, "LastUsedAt")
-		key.LastUsedAt = &t
-	}
-	if getString(e, "ExpiresAt") != "" {
-		t := parseTime(e, "ExpiresAt")
-		key.ExpiresAt = &t
-	}
-	return key
 }

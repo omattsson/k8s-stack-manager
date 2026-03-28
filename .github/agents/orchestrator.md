@@ -174,7 +174,7 @@ Step 3: code-reviewer
   → Review
 ```
 
-### WebSocket Feature (this project's current initiative)
+### WebSocket Feature
 
 ```
 Step 1: go-api-developer

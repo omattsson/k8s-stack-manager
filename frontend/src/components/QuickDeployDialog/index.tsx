@@ -17,6 +17,7 @@ import RocketLaunchIcon from '@mui/icons-material/RocketLaunch';
 import { templateService, clusterService } from '../../api/client';
 import TtlSelector from '../TtlSelector';
 import type { Cluster, StackTemplate } from '../../types';
+import { trackRecentTemplate } from '../../utils/recentTemplates';
 
 interface QuickDeployDialogProps {
   open: boolean;
@@ -76,6 +77,8 @@ const QuickDeployDialog = ({ open, onClose, template }: QuickDeployDialogProps) 
         cluster_id: clusterId || undefined,
         ttl_minutes: ttlMinutes,
       });
+      // Track in recently used templates
+      trackRecentTemplate({ id: template.id, name: template.name });
       onClose();
       navigate(`/stack-instances/${result.instance.id}`);
     } catch (err: unknown) {
@@ -158,7 +161,7 @@ const QuickDeployDialog = ({ open, onClose, template }: QuickDeployDialogProps) 
           disabled={deploying}
           startIcon={deploying ? <CircularProgress size={18} /> : <RocketLaunchIcon />}
         >
-          {deploying ? 'Deploying...' : 'Deploy'}
+          {deploying ? 'Deploying...' : error ? 'Retry' : 'Deploy'}
         </Button>
       </DialogActions>
     </Dialog>

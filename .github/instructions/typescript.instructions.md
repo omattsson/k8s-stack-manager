@@ -13,7 +13,7 @@ Frontend lives in `frontend/`. Built with Vite + React 19 + TypeScript (strict m
 - **UI Library**: MUI (Material UI) v7 — use MUI components (`Box`, `Paper`, `Typography`, `Alert`, etc.) instead of raw HTML
 - **API Client**: Axios instance in `src/api/client.ts` with response interceptor for error logging
 - **API Config**: `src/api/config.ts` — `API_BASE_URL` switches between `http://localhost:8081` (dev) and `/api` (prod)
-- **WebSocket**: `reconnecting-websocket` library with context provider in `src/context/WebSocketContext.tsx` and hook in `src/hooks/useWebSocket.ts`
+- **WebSocket**: `reconnecting-websocket` library with hook in `src/hooks/useWebSocket.ts`
 
 ## Component Patterns
 ### Pages

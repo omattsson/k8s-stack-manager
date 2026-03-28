@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
+import { timeAgo } from '../../utils/timeAgo';
 import { useNavigate } from 'react-router-dom';
 import { useWebSocket } from '../../hooks/useWebSocket';
 import type { WsMessage } from '../../hooks/useWebSocket';
@@ -25,6 +26,7 @@ import {
   ListItem,
   ListItemText,
   CircularProgress,
+  Tooltip,
 } from '@mui/material';
 import SearchIcon from '@mui/icons-material/Search';
 import AddIcon from '@mui/icons-material/Add';
@@ -76,6 +78,7 @@ const Dashboard = () => {
   const [favorites, setFavorites] = useState<UserFavorite[]>([]);
   const [recentInstances, setRecentInstances] = useState<StackInstance[]>([]);
   const [loading, setLoading] = useState(true);
+  const searchRef = useRef<HTMLInputElement>(null);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('All');
@@ -191,6 +194,41 @@ const Dashboard = () => {
   }, []);
 
   useWebSocket(handleWsMessage);
+
+  // Keyboard shortcuts
+  useEffect(() => {
+    const isFormOrEditable = (el: HTMLElement | null | undefined) =>
+      !!el &&
+      (el.tagName === 'INPUT' ||
+        el.tagName === 'TEXTAREA' ||
+        el.tagName === 'SELECT' ||
+        el.isContentEditable);
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Don't intercept when typing in inputs
+      const target = e.target as HTMLElement;
+      if (isFormOrEditable(target) || isFormOrEditable(document.activeElement as HTMLElement | null)) {
+        return;
+      }
+
+      if (e.key === '/') {
+        e.preventDefault();
+        searchRef.current?.focus();
+      }
+
+      if (e.key === 'Escape') {
+        // Clear selection if any, otherwise clear search
+        if (selectedIds.size > 0) {
+          setSelectedIds(new Set());
+        } else if (search) {
+          setSearch('');
+        }
+      }
+    };
+
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [selectedIds.size, search]);
 
   const clusterNameMap = useMemo(() => {
     const map = new Map<string, string>();
@@ -340,6 +378,7 @@ const Dashboard = () => {
           placeholder="Search instances..."
           value={search}
           onChange={(e) => setSearch(e.target.value)}
+          inputRef={searchRef}
           slotProps={{
             input: {
               startAdornment: (
@@ -351,6 +390,9 @@ const Dashboard = () => {
           }}
           sx={{ minWidth: 250 }}
         />
+        <Typography variant="caption" color="text.secondary" sx={{ ml: 0.5, display: { xs: 'none', md: 'inline' } }}>
+          Press <Box component="kbd" sx={{ fontFamily: 'monospace', px: 0.5, border: '1px solid', borderRadius: 3, fontSize: '0.75rem' }}>/</Box> to search
+        </Typography>
         <Box sx={{ display: 'flex', gap: 1 }}>
           {STATUSES.map((s) => (
             <Chip
@@ -493,9 +535,11 @@ const Dashboard = () => {
                   )}
                   <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 0.5 }}>
                     <StatusBadge status={inst.status} />
-                    <Typography variant="caption" color="text.secondary">
-                      {new Date(inst.updated_at).toLocaleDateString()}
-                    </Typography>
+                    <Tooltip title={new Date(inst.updated_at).toLocaleString()} arrow>
+                      <Typography variant="caption" color="text.secondary">
+                        {timeAgo(inst.updated_at)}
+                      </Typography>
+                    </Tooltip>
                   </Box>
                 </CardContent>
               </Card>
@@ -612,6 +656,13 @@ const Dashboard = () => {
                       </Link>
                     )}
                     <ExpiryChip instance={instance} />
+                    {instance.last_deployed_at && (
+                      <Tooltip title={new Date(instance.last_deployed_at).toLocaleString()} arrow>
+                        <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5 }}>
+                          Deployed {timeAgo(instance.last_deployed_at)}
+                        </Typography>
+                      </Tooltip>
+                    )}
                   </CardContent>
                   <CardActions>
                     <Button size="small" onClick={() => navigate(`/stack-instances/${instance.id}`)}>
@@ -688,7 +739,7 @@ const Dashboard = () => {
                       secondary={item.status === 'error' ? item.error : 'Success'}
                       slotProps={{
                         secondary: {
-                          color: item.status === 'error' ? 'error' : 'success.main',
+                          sx: { color: item.status === 'error' ? 'error.main' : 'success.main' },
                         },
                       }}
                     />

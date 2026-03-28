@@ -37,6 +37,38 @@ func (r *ChartConfigRepository) SetTestClient(client AzureTableClient) {
 	r.client = client
 }
 
+// chartConfigEntity is the typed Azure Table entity for chart configs.
+type chartConfigEntity struct {
+	PartitionKey      string  `json:"PartitionKey"`
+	RowKey            string  `json:"RowKey"`
+	ID                string  `json:"ID"`
+	StackDefinitionID string  `json:"StackDefinitionID"`
+	ChartName         string  `json:"ChartName"`
+	RepositoryURL     string  `json:"RepositoryURL"`
+	SourceRepoURL     string  `json:"SourceRepoURL"`
+	ChartPath         string  `json:"ChartPath"`
+	ChartVersion      string  `json:"ChartVersion"`
+	DefaultValues     string  `json:"DefaultValues"`
+	DeployOrder       float64 `json:"DeployOrder"`
+	CreatedAt         string  `json:"CreatedAt"`
+}
+
+func (e *chartConfigEntity) toModel() *models.ChartConfig {
+	c := &models.ChartConfig{
+		ID:                e.ID,
+		StackDefinitionID: e.StackDefinitionID,
+		ChartName:         e.ChartName,
+		RepositoryURL:     e.RepositoryURL,
+		SourceRepoURL:     e.SourceRepoURL,
+		ChartPath:         e.ChartPath,
+		ChartVersion:      e.ChartVersion,
+		DefaultValues:     e.DefaultValues,
+		DeployOrder:       int(e.DeployOrder),
+	}
+	c.CreatedAt, _ = time.Parse(time.RFC3339, e.CreatedAt)
+	return c
+}
+
 func (r *ChartConfigRepository) Create(config *models.ChartConfig) error {
 	ctx := context.Background()
 	now := time.Now().UTC()
@@ -67,11 +99,13 @@ func (r *ChartConfigRepository) FindByID(id string) (*models.ChartConfig, error)
 
 	// ID is the row key, but partition key (stack_definition_id) is unknown.
 	filter := "RowKey eq '" + id + "'"
+	top := int32(1)
 	pager := r.client.NewListEntitiesPager(&aztables.ListEntitiesOptions{
 		Filter: &filter,
+		Top:    &top,
 	})
 
-	entities, err := collectEntities(ctx, pager, nil)
+	entities, err := collectEntitiesTyped[chartConfigEntity](ctx, pager, nil, 1)
 	if err != nil {
 		return nil, mapAzureError("find_by_id", err)
 	}
@@ -79,7 +113,7 @@ func (r *ChartConfigRepository) FindByID(id string) (*models.ChartConfig, error)
 		return nil, dberrors.NewDatabaseError("find_by_id", dberrors.ErrNotFound)
 	}
 
-	return chartConfigFromEntity(entities[0]), nil
+	return entities[0].toModel(), nil
 }
 
 func (r *ChartConfigRepository) Update(config *models.ChartConfig) error {
@@ -123,14 +157,14 @@ func (r *ChartConfigRepository) ListByDefinition(definitionID string) ([]models.
 		Filter: &filter,
 	})
 
-	entities, err := collectEntities(ctx, pager, nil)
+	entities, err := collectEntitiesTyped[chartConfigEntity](ctx, pager, nil, 0)
 	if err != nil {
 		return nil, mapAzureError("list_by_definition", err)
 	}
 
 	results := make([]models.ChartConfig, 0, len(entities))
 	for _, e := range entities {
-		results = append(results, *chartConfigFromEntity(e))
+		results = append(results, *e.toModel())
 	}
 	return results, nil
 }
@@ -149,20 +183,5 @@ func chartConfigToEntity(c *models.ChartConfig) map[string]interface{} {
 		"DefaultValues":     c.DefaultValues,
 		"DeployOrder":       c.DeployOrder,
 		"CreatedAt":         c.CreatedAt.Format(time.RFC3339),
-	}
-}
-
-func chartConfigFromEntity(e map[string]interface{}) *models.ChartConfig {
-	return &models.ChartConfig{
-		ID:                getString(e, "ID"),
-		StackDefinitionID: getString(e, "StackDefinitionID"),
-		ChartName:         getString(e, "ChartName"),
-		RepositoryURL:     getString(e, "RepositoryURL"),
-		SourceRepoURL:     getString(e, "SourceRepoURL"),
-		ChartPath:         getString(e, "ChartPath"),
-		ChartVersion:      getString(e, "ChartVersion"),
-		DefaultValues:     getString(e, "DefaultValues"),
-		DeployOrder:       getInt(e, "DeployOrder"),
-		CreatedAt:         parseTime(e, "CreatedAt"),
 	}
 }

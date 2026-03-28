@@ -34,6 +34,7 @@ func parseAuditFilters(c *gin.Context) (models.AuditLogFilters, error) {
 		EntityType: c.Query("entity_type"),
 		EntityID:   c.Query("entity_id"),
 		Action:     c.Query("action"),
+		Cursor:     c.Query("cursor"),
 		Limit:      25,
 		Offset:     0,
 	}
@@ -75,7 +76,7 @@ func parseAuditFilters(c *gin.Context) (models.AuditLogFilters, error) {
 
 // ListAuditLogs godoc
 // @Summary     List audit logs
-// @Description List audit logs with optional filters and pagination
+// @Description List audit logs with optional filters and pagination. Supports cursor-based pagination for efficient large dataset traversal.
 // @Tags        audit-logs
 // @Produce     json
 // @Param       user_id     query    string false "Filter by user ID"
@@ -86,6 +87,7 @@ func parseAuditFilters(c *gin.Context) (models.AuditLogFilters, error) {
 // @Param       end_date    query    string false "End date (RFC3339)"
 // @Param       limit       query    int    false "Page size (default 25)"
 // @Param       offset      query    int    false "Offset (default 0)"
+// @Param       cursor      query    string false "Cursor from previous page for cursor-based pagination (overrides offset)"
 // @Success     200         {object} models.PaginatedAuditLogs
 // @Failure     400         {object} map[string]string
 // @Failure     500         {object} map[string]string
@@ -97,7 +99,7 @@ func (h *AuditLogHandler) ListAuditLogs(c *gin.Context) {
 		return
 	}
 
-	logs, total, err := h.auditRepo.List(filters)
+	result, err := h.auditRepo.List(filters)
 	if err != nil {
 		status, message := mapError(err, "Audit log")
 		c.JSON(status, gin.H{"error": message})
@@ -105,10 +107,11 @@ func (h *AuditLogHandler) ListAuditLogs(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, models.PaginatedAuditLogs{
-		Data:   logs,
-		Total:  total,
-		Limit:  filters.Limit,
-		Offset: filters.Offset,
+		Data:       result.Data,
+		Total:      result.Total,
+		Limit:      filters.Limit,
+		Offset:     filters.Offset,
+		NextCursor: result.NextCursor,
 	})
 }
 
@@ -146,12 +149,13 @@ func (h *AuditLogHandler) ExportAuditLogs(c *gin.Context) {
 	filters.Limit = maxExportLimit
 	filters.Offset = 0
 
-	logs, _, err := h.auditRepo.List(filters)
+	result, err := h.auditRepo.List(filters)
 	if err != nil {
 		slog.Error("failed to export audit logs", "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
 		return
 	}
+	logs := result.Data
 
 	timestamp := time.Now().UTC().Format("20060102-150405")
 

@@ -15,3 +15,4 @@ applyTo: "backend/internal/api/handlers/**/*.go"
 - Group related handlers in the same file (e.g., all stack definition handlers in `stack_definitions.go`)
 - For handlers that should broadcast real-time events, use `NewHandlerWithHub(repo, hub)` and call `h.broadcast(msgType, payload)` after successful mutations
 - Use `handleDBError(err)` for all repository errors — it maps DB errors to correct HTTP status codes and never leaks internal details
+- Domain handlers (non-Items) use `mapError(err, entityName)` from `errors.go` — it provides contextual entity names in error messages

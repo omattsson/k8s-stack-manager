@@ -60,19 +60,35 @@ frontend/src/
   components/
     Layout/index.tsx                 # AppBar + nav buttons + footer shell
   pages/
-    Login/index.tsx                   # Auth page
+    Login/index.tsx                  # Auth page
+    AuthCallback/index.tsx           # OIDC callback handler
     StackInstances/                  # Dashboard — data-fetching page (reference for API pages)
     StackDefinitions/                # Definition management
-    Templates/                       # Template gallery
+    Templates/                       # Template gallery + builder
     AuditLog/                        # Audit log viewer
-    Admin/                           # User management (admin only)
+    Admin/                           # User management, orphaned namespaces, clusters (admin only)
     Profile/                         # User profile + API keys
+    Analytics/                       # Usage statistics and deployment metrics
+    CleanupPolicies/                 # Cron-based cleanup policy management
+    ClusterHealth/                   # Multi-cluster health monitoring
+    Notifications/                   # Full notification list with filters
+    SharedValues/                    # Per-cluster shared Helm values
+    NotFound/                        # 404 page
   context/
     AuthContext.tsx                   # Auth state provider
+    NotificationContext.tsx           # Toast/snackbar notification queue
+    ThemeContext.tsx                  # Light/dark theme toggle
   hooks/
+    useCountdown.ts                  # Countdown timer hook (e.g., TTL display)
+    useUnsavedChanges.ts             # Unsaved changes warning hook
     useWebSocket.ts                  # WebSocket hook for real-time updates
   types/
     index.ts                         # Shared TypeScript types
+  utils/
+    timeAgo.ts                       # Relative timestamp formatting ("2m ago")
+    roles.ts                         # Role ranking and permission helpers
+    notificationHelpers.tsx          # Toast notification utilities
+    recentTemplates.ts               # Recently used template tracking
   test/
     setup.ts                         # Vitest setup: @testing-library/jest-dom
   e2e/

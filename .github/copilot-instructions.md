@@ -4,7 +4,7 @@
 
 Full-stack app: **Go (Gin) backend** + **React (TypeScript, Vite, MUI) frontend**, with **MySQL** (GORM) or **Azure Table Storage** as swappable data stores. Docker Compose orchestrates all services.
 
-**Bootstrap flow**: `backend/api/main.go` → `config.LoadConfig()` → `database.NewRepository(cfg)` (factory selects MySQL or Azure based on `USE_AZURE_TABLE`) → `routes.SetupRoutes(router, routes.Deps{...})` → `http.Server` with graceful shutdown (`SIGINT`/`SIGTERM`).
+**Bootstrap flow**: `backend/api/main.go` → `config.LoadConfig()` → `database.NewRepositoryWithGormDB(cfg)` (factory selects MySQL or Azure based on `USE_AZURE_TABLE`) → `routes.SetupRoutes(router, routes.Deps{...})` → `http.Server` with graceful shutdown (`SIGINT`/`SIGTERM`).
 
 **Ports**: Backend `:8081` on host, frontend `:3000` in dev. Inside Docker, nginx and Vite proxy `/api` to `backend:8081`. Local non-Docker dev hits `localhost:8081` directly (`frontend/src/api/config.ts`).
 
@@ -25,18 +25,24 @@ backend/
       api_keys.go                # APIKeyHandler: API key management
       audit_logs.go              # AuditLogHandler: filterable audit log viewer + export
       auth.go                    # AuthHandler: login, register, current user
+      oidc.go                    # OIDCHandler: OpenID Connect authentication flow
       branch_overrides.go        # BranchOverrideHandler: per-chart branch overrides
+      bulk_operations.go         # BulkHandler: bulk deploy/stop/clean/delete (up to 50 instances)
+      bulk_template_operations.go # TemplateHandler: bulk delete/publish/unpublish (up to 50 templates)
+      instance_quota_overrides.go  # InstanceQuotaOverrideHandler: per-instance resource quota overrides
       chart_configs.go           # Chart config management (nested under definitions)
       cleanup_policies.go        # CleanupPolicyHandler: CRUD + manual run
-      clusters.go                # ClusterHandler: CRUD + test-connection + health
+      clusters.go                # ClusterHandler: CRUD + test-connection + health + quotas + utilization
       favorites.go               # FavoriteHandler: user bookmark management
       git.go                     # GitHandler: branch listing, validation
+      notifications.go           # NotificationHandler: list, read/unread, preferences
       quick_deploy.go            # QuickDeployHandler: template quick-deploy
       shared_values.go           # SharedValuesHandler: per-cluster shared values
-      stack_definitions.go       # DefinitionHandler: CRUD + chart management
-      stack_instances.go         # InstanceHandler: CRUD + clone + deploy/stop/clean
-      stack_templates.go         # TemplateHandler: CRUD + publish + instantiate
+      stack_definitions.go       # DefinitionHandler: CRUD + chart management + import/export
+      stack_instances.go         # InstanceHandler: CRUD + clone + deploy/stop/clean + compare + extend TTL
+      stack_templates.go         # TemplateHandler: CRUD + publish + instantiate + version snapshots
       template_charts.go         # Template chart config management
+      template_versions.go       # TemplateVersionHandler: version history listing + diff
       users.go                   # UserHandler: user management
       value_overrides.go         # Per-chart value overrides
       websocket.go               # WebSocket upgrade handler
@@ -56,17 +62,20 @@ backend/
     database/repository.go       # NewRepository() factory: MySQL vs Azure Table
     database/migrations.go       # Versioned migrations via schema.Migrator, auto-run on startup
     database/errors.go           # Re-exports from pkg/dberrors (single source of truth)
+    database/schema/             # Migrator and versioned migration structs
     models/                      # Domain models, repository interfaces, validation
     health/health.go             # Dependency health checks (liveness/readiness)
+    auth/                        # OIDC provider + state store for OpenID Connect auth
     cluster/                     # ClusterRegistry (multi-cluster coordination) + health poller
     deployer/                    # Helm CLI wrapper for deploy/undeploy/status (multi-cluster via registry)
-    k8s/                         # Kubernetes cluster client and status monitoring
+    k8s/                         # Kubernetes cluster client, status monitoring, resource quota management
     gitprovider/                 # Azure DevOps + GitLab branch listing, URL detection
     helm/                        # Values deep-merge, template variable substitution
+    notifier/                    # Notification dispatch (creates notifications on deploy/stop/clean events)
     websocket/                   # WebSocket hub, client, message types
     scheduler/                   # Cron-based cleanup policy execution
     ttl/                         # TTL reaper for auto-expiring stack instances
-  pkg/dberrors/errors.go         # Canonical error types: ErrNotFound, ErrDuplicateKey, ErrValidation
+  pkg/dberrors/errors.go         # Canonical error types: ErrNotFound, ErrDuplicateKey, ErrValidation, ErrNotImplemented
   pkg/crypto/                    # AES-GCM encryption/decryption for kubeconfig data at rest (key derived via SHA-256)
   pkg/utils/                     # Shared utilities (e.g., cryptographic random string generation)
   internal/test/test_helpers.go  # Shared test utilities (test server setup)
@@ -74,15 +83,15 @@ backend/
 
 ## Key Backend Patterns
 
-**Repository interface**: The generic `models.Repository` uses `Create`, `FindByID`, `Update`, `Delete`, `List` — all take `context.Context` first. Domain-specific repositories (e.g., `StackInstanceRepository`, `UserRepository`) have dedicated interfaces without context parameters; Azure implementations use `context.Background()` internally. The repository auto-calls `Validate()` on create/update if the model implements `Validator`.
+**Repository interface**: The generic `models.Repository` interface uses `Create`, `FindByID`, `Update`, `Delete`, `List` — all take `context.Context` first. Two implementations: `GenericRepository` (GORM/MySQL) and `azure.TableRepository`. Domain-specific repositories (e.g., `StackInstanceRepository`, `UserRepository`) have dedicated interfaces in their model files with custom method signatures; these currently use `context.Background()` internally in the Azure implementation. The repository auto-calls `Validate()` on create/update if the model implements `Validator`.
 
-**Handler struct**: `handlers.Handler` holds `models.Repository` for the Items reference implementation. Domain handlers (`InstanceHandler`, `DefinitionHandler`, `AdminHandler`, etc.) use separate structs with specialized repository dependencies injected via their own constructors. Health handlers use factory functions returning `gin.HandlerFunc` via closure.
+**Handler struct**: `handlers.Handler` holds `models.Repository` and optional `websocket.BroadcastSender` via constructor injection (`NewHandler(repo)` or `NewHandlerWithHub(repo, hub)`). Domain handlers (e.g., `InstanceHandler`, `DefinitionHandler`, `AdminHandler`) use separate structs with specialized repository dependencies injected via their own constructors. Health handlers use factory functions returning `gin.HandlerFunc` via closure.
 
-**Error flow**: Repository returns `*dberrors.DatabaseError` wrapping sentinel errors → two mapping functions translate to HTTP status: `handleDBError()` in `handlers/items.go` (Items reference implementation, uses `errors.As`/`errors.Is`) and `mapError()` in `handlers/errors.go` (domain handlers, takes entity name for contextual messages). Both map to 400 validation, 404 not found, 409 duplicate/conflict, 500 internal. **Never expose raw error messages for 500s** — always return `"Internal server error"`.
+**Error flow**: Repository returns `*dberrors.DatabaseError` wrapping sentinel errors → two mapping functions translate to HTTP status: `handleDBError()` in `handlers/items.go` (Items reference implementation, uses `errors.As`/`errors.Is`) and `mapError()` in `handlers/errors.go` (domain handlers, takes entity name for contextual messages). Both map to 400 validation, 404 not found, 409 duplicate/conflict, 501 not implemented, 500 internal. **Never expose raw error messages for 500s** — always return `"Internal server error"`.
 
-**Optimistic locking**: Models embed `Version uint` field. Repository `Update()` uses `WHERE version = ?` — returns `"version mismatch"` error (mapped to 409). Handlers read-then-update: if client sends `Version > 0`, it overrides; if 0 (omitted), uses the just-read version.
+**Optimistic locking**: Models embed `Version uint` field. Repository `Update()` uses `WHERE version = ?` — returns `"version mismatch"` error (mapped to 409).
 
-**Filter whitelist**: `GenericRepository` has `allowedFilterFields` map. `NewRepository()` hardcodes Item fields ("name", "price"). New entities need `NewRepositoryWithFilterFields()` or the existing repo must be extended.
+**Filter whitelist**: `GenericRepository` has `allowedFilterFields` map. New entities need `NewRepositoryWithFilterFields()` or the existing repo must be extended.
 
 **Routes registration**: `SetupRoutes()` accepts a `Deps` struct with all handler and repository dependencies. Returns `*RateLimiter` (caller must call `Stop()` on shutdown). Middleware order: RequestID → Logger → Recovery → CORS → MaxBodySize (1MB). Auth uses `CombinedAuth` middleware (JWT + API key). Role-based access via `RequireAdmin()`/`RequireDevOps()`. Audit logging via `NewAuditMiddleware()` on route groups. WebSocket at `/ws`, health at `/health/*`, API at `/api/v1/*` (100 req/min per IP).
 
@@ -95,9 +104,10 @@ frontend/src/
   routes.tsx             # Route definitions (all pages + nested routes)
   components/Layout/     # AppBar + nav + footer shell
   pages/{Name}/          # Page components (one dir per page, may contain multiple files)
+  utils/                 # Utility functions (timeAgo, role helpers, notification helpers, recently used tracking)
 ```
 
-**Patterns**: MUI components (no raw HTML), `sx` prop for styling, functional components only, `useState`/`useEffect` for state, service objects with async methods for API calls. All service objects and methods in `api/client.ts` must have TSDoc comments with `@param`, `@returns`, and `@see` (HTTP method + route). New pages: create `pages/{Name}/` directory, register in `routes.tsx`, add nav in `Layout/index.tsx`.
+**Patterns**: MUI components (no raw HTML), `sx` prop for styling, functional components only, `useState`/`useEffect` for state, service objects with async methods for API calls. All service objects and methods in `api/client.ts` must have TSDoc comments with `@param`, `@returns`, and `@see` (HTTP method + route). New pages: create `pages/{Name}/` directory, register in `routes.tsx`, add nav in `Layout/index.tsx`. Use `timeAgo()` from `utils/timeAgo.ts` for relative timestamps with `Tooltip` showing full dates. Track recently used items via `localStorage` with JSON validation.
 
 ## Development Commands
 
@@ -147,10 +157,12 @@ backend/internal/
   cluster/               # ClusterRegistry: multi-cluster client management, health poller
   gitprovider/           # Azure DevOps + GitLab branch listing, URL detection, caching
   helm/                  # Values deep-merge, template variable substitution, YAML export
-  deployer/              # Helm CLI wrapper for deploy/undeploy/status (multi-cluster via registry)
-  k8s/                   # Kubernetes cluster client and status monitoring
+  deployer/              # Helm CLI wrapper for deploy/undeploy/status (multi-cluster via registry), cleanup executor, expiry stopper
+  k8s/                   # Kubernetes cluster client, status monitoring, resource quota management
+  notifier/              # Notification dispatch (creates notifications on deploy/stop/clean events)
   scheduler/             # Cron-based cleanup policy execution with condition parsing
   ttl/                   # TTL reaper: background goroutine auto-expiring instances
+  auth/                  # OIDC provider: OpenID Connect authentication, state store
 ```
 
 ### Domain Conventions
@@ -170,6 +182,13 @@ backend/internal/
 - **Analytics**: Read-only aggregation of instance counts, deployment stats, template usage, and user activity.
 - **Quick deploy**: One-click flow: template → new instance → deploy. Generates instance name and namespace automatically.
 - **Per-chart branch overrides**: Instances can override the branch per chart (default uses the definition's `DefaultBranch`). Substituted in Helm values via `{{.Branch}}`.
+- **Notifications**: In-app notifications for deploy/stop/clean events. Per-user notification preferences. Unread count for badge display. Notification dispatch via `notifier` package.
+- **Template versioning**: Templates maintain version history; snapshots are created automatically on publish. Version diff compares chart configs between snapshots.
+- **Resource quotas**: Per-cluster resource quotas (CPU, memory, storage, pods) enforced via Kubernetes ResourceQuota and LimitRange objects. Admin-configurable via API.
+- **Bulk operations**: Bulk deploy/stop/clean/delete supports up to 50 instances per request. Returns per-instance success/failure results.
+- **Bulk template operations**: Bulk delete/publish/unpublish supports up to 50 templates per request. Returns per-template success/failure results. Requires DevOps+ role.
+- **Instance comparison**: Side-by-side comparison of two stack instances including merged Helm values per chart.
+- **Import/export**: Stack definitions can be exported as JSON bundles and re-imported to create new definitions with charts.
 
 ### API Route Groups
 
@@ -177,8 +196,11 @@ backend/internal/
 |-------|--------|-------------|
 | Auth | `/api/v1/auth` | Login, register, current user |
 | Templates | `/api/v1/templates` | CRUD + publish, unpublish, instantiate, clone |
-| Stack Definitions | `/api/v1/stack-definitions` | CRUD + nested chart management |
-| Stack Instances | `/api/v1/stack-instances` | CRUD + clone, deploy, stop, clean, status, logs |
+| Template Versions | `/api/v1/templates/:id/versions` | Version history listing, detail, diff |
+| Stack Definitions | `/api/v1/stack-definitions` | CRUD + nested chart management + import/export |
+| Stack Instances | `/api/v1/stack-instances` | CRUD + clone, deploy, stop, clean, status, logs, compare, extend TTL |
+| Bulk Operations | `/api/v1/stack-instances/bulk` | Bulk deploy, stop, clean, delete (up to 50 instances) |
+| Bulk Template Ops | `/api/v1/templates/bulk` | Bulk delete, publish, unpublish templates (up to 50) |
 | Value Overrides | `/api/v1/stack-instances/:id/overrides` | Per-chart value overrides |
 | Branch Overrides | `/api/v1/stack-instances/:id/branches` | Per-chart branch overrides |
 | Git | `/api/v1/git` | Branch listing, validation, provider status |
@@ -186,12 +208,15 @@ backend/internal/
 | Users | `/api/v1/users` | User management (admin) |
 | API Keys | `/api/v1/users/:id/api-keys` | API key management |
 | Admin | `/api/v1/admin` | Orphaned namespace detection and cleanup |
-| Clusters | `/api/v1/clusters` | Multi-cluster registration, health, test-connection |
+| Clusters | `/api/v1/clusters` | Multi-cluster registration, health, test-connection, quotas, utilization |
 | Cleanup Policies | `/api/v1/admin/cleanup-policies` | Cron-based cleanup policy management |
 | Shared Values | `/api/v1/clusters/:id/shared-values` | Per-cluster shared Helm values |
 | Analytics | `/api/v1/analytics` | Usage overview, template stats, user stats |
 | Favorites | `/api/v1/favorites` | User bookmark management |
+| Notifications | `/api/v1/notifications` | List, read/unread, count, preferences |
 | Quick Deploy | `/api/v1/templates/:id/quick-deploy` | One-click template deployment |
+| OIDC Auth | `/api/v1/auth/oidc` | OpenID Connect config, authorize, callback |
+| Quota Overrides | `/api/v1/stack-instances/:id/quota-overrides` | Per-instance resource quota overrides |
 | Health | `/health/*` | Liveness + readiness |
 
 ### Frontend Pages
@@ -199,6 +224,7 @@ backend/internal/
 | Page | Route | Description |
 |------|-------|-------------|
 | Login | `/login` | Username/password authentication |
+| Auth Callback | `/auth/callback` | OIDC authentication callback handler |
 | Dashboard | `/` | All stack instances overview with deploy/stop actions |
 | Stack Definitions | `/stack-definitions` | List, create, edit definitions |
 | Templates | `/templates` | Template gallery with publish/instantiate |
@@ -211,6 +237,7 @@ backend/internal/
 | Analytics | `/admin/analytics` | Usage stats and deployment metrics (DevOps+) |
 | Shared Values | `/admin/shared-values` | Per-cluster shared Helm values (admin only) |
 | Cleanup Policies | `/admin/cleanup-policies` | Cron-based cleanup policy editor (admin only) |
+| Notifications | `/notifications` | Full notification list page with filters and pagination |
 | Profile | `/profile` | User profile and API key management |
 
 ### Project Plan

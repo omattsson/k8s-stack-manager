@@ -38,6 +38,34 @@ func (r *SharedValuesRepository) SetTestClient(client AzureTableClient) {
 	r.client = client
 }
 
+// sharedValuesEntity is the typed Azure Table entity for shared values.
+type sharedValuesEntity struct {
+	PartitionKey string  `json:"PartitionKey"`
+	RowKey       string  `json:"RowKey"`
+	ID           string  `json:"ID"`
+	ClusterID    string  `json:"ClusterID"`
+	Name         string  `json:"Name"`
+	Description  string  `json:"Description"`
+	Values       string  `json:"Values"`
+	Priority     float64 `json:"Priority"`
+	CreatedAt    string  `json:"CreatedAt"`
+	UpdatedAt    string  `json:"UpdatedAt"`
+}
+
+func (e *sharedValuesEntity) toModel() *models.SharedValues {
+	sv := &models.SharedValues{
+		ID:          e.ID,
+		ClusterID:   e.ClusterID,
+		Name:        e.Name,
+		Description: e.Description,
+		Values:      e.Values,
+		Priority:    int(e.Priority),
+	}
+	sv.CreatedAt, _ = time.Parse(time.RFC3339, e.CreatedAt)
+	sv.UpdatedAt, _ = time.Parse(time.RFC3339, e.UpdatedAt)
+	return sv
+}
+
 func (r *SharedValuesRepository) Create(sv *models.SharedValues) error {
 	ctx := context.Background()
 	now := time.Now().UTC()
@@ -70,11 +98,13 @@ func (r *SharedValuesRepository) FindByID(id string) (*models.SharedValues, erro
 
 	// ID is the RowKey but we don't know the PartitionKey, so scan by RowKey.
 	filter := "RowKey eq '" + escapeODataString(id) + "'"
+	top := int32(1)
 	pager := r.client.NewListEntitiesPager(&aztables.ListEntitiesOptions{
 		Filter: &filter,
+		Top:    &top,
 	})
 
-	entities, err := collectEntities(ctx, pager, nil)
+	entities, err := collectEntitiesTyped[sharedValuesEntity](ctx, pager, nil, 1)
 	if err != nil {
 		return nil, mapAzureError("find_by_id", err)
 	}
@@ -82,7 +112,7 @@ func (r *SharedValuesRepository) FindByID(id string) (*models.SharedValues, erro
 		return nil, dberrors.NewDatabaseError("find_by_id", dberrors.ErrNotFound)
 	}
 
-	return sharedValuesFromEntity(entities[0]), nil
+	return entities[0].toModel(), nil
 }
 
 func (r *SharedValuesRepository) FindByClusterAndID(clusterID, id string) (*models.SharedValues, error) {
@@ -93,12 +123,12 @@ func (r *SharedValuesRepository) FindByClusterAndID(clusterID, id string) (*mode
 		return nil, mapAzureError("find_by_cluster_and_id", err)
 	}
 
-	var entity map[string]interface{}
+	var entity sharedValuesEntity
 	if err := json.Unmarshal(resp.Value, &entity); err != nil {
 		return nil, dberrors.NewDatabaseError("unmarshal", err)
 	}
 
-	return sharedValuesFromEntity(entity), nil
+	return entity.toModel(), nil
 }
 
 func (r *SharedValuesRepository) Update(sv *models.SharedValues) error {
@@ -147,14 +177,14 @@ func (r *SharedValuesRepository) ListByCluster(clusterID string) ([]models.Share
 		Filter: &filter,
 	})
 
-	entities, err := collectEntities(ctx, pager, nil)
+	entities, err := collectEntitiesTyped[sharedValuesEntity](ctx, pager, nil, 0)
 	if err != nil {
 		return nil, mapAzureError("list_by_cluster", err)
 	}
 
 	results := make([]models.SharedValues, 0, len(entities))
 	for _, e := range entities {
-		results = append(results, *sharedValuesFromEntity(e))
+		results = append(results, *e.toModel())
 	}
 
 	// Sort by Priority ascending (lower = applied first).
@@ -177,18 +207,5 @@ func sharedValuesToEntity(sv *models.SharedValues) map[string]interface{} {
 		"Priority":     sv.Priority,
 		"CreatedAt":    sv.CreatedAt.Format(time.RFC3339),
 		"UpdatedAt":    sv.UpdatedAt.Format(time.RFC3339),
-	}
-}
-
-func sharedValuesFromEntity(e map[string]interface{}) *models.SharedValues {
-	return &models.SharedValues{
-		ID:          getString(e, "ID"),
-		ClusterID:   getString(e, "ClusterID"),
-		Name:        getString(e, "Name"),
-		Description: getString(e, "Description"),
-		Values:      getString(e, "Values"),
-		Priority:    getInt(e, "Priority"),
-		CreatedAt:   parseTime(e, "CreatedAt"),
-		UpdatedAt:   parseTime(e, "UpdatedAt"),
 	}
 }

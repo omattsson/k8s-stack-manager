@@ -16,6 +16,7 @@ import { templateService } from '../../api/client';
 import type { StackTemplate, TemplateChartConfig } from '../../types';
 import YamlEditor from '../../components/YamlEditor';
 import LoadingState from '../../components/LoadingState';
+import { trackRecentTemplate } from '../../utils/recentTemplates';
 
 interface ChartOverride {
   chart: TemplateChartConfig;
@@ -97,6 +98,10 @@ const Instantiate = () => {
         description: defDescription,
         chart_overrides: Object.keys(overridesMap).length > 0 ? overridesMap : undefined,
       });
+      // Track in recently used templates
+      if (template) {
+        trackRecentTemplate({ id: template.id, name: template.name });
+      }
       navigate(`/stack-definitions/${definition.id}/edit`);
     } catch {
       setError('Failed to instantiate template');

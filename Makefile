@@ -1,4 +1,4 @@
-.PHONY: dev seed dev-backend dev-frontend dev-local dev-local-backend dev-local-frontend prod prod-backend prod-frontend build clean prune test test-backend test-backend-integration test-backend-all test-frontend test-e2e integration-infra-start integration-infra-stop install docs fmt lint azurite-start azurite-stop loadtest loadtest-start loadtest-start-backend loadtest-start-frontend loadtest-stop loadtest-stop-backend loadtest-stop-frontend loadtest-backend loadtest-backend-run loadtest-frontend loadtest-frontend-run
+.PHONY: dev seed dev-backend dev-frontend dev-local dev-local-backend dev-local-frontend prod prod-backend prod-frontend build clean prune test test-backend test-backend-integration test-backend-all test-frontend test-e2e integration-infra-start integration-infra-stop install docs fmt lint azurite-start azurite-stop azurite-clear loadtest loadtest-start loadtest-start-backend loadtest-start-frontend loadtest-stop loadtest-stop-backend loadtest-stop-frontend loadtest-backend loadtest-backend-run loadtest-frontend loadtest-frontend-run
 
 # Development mode for both services
 dev:
@@ -8,7 +8,7 @@ dev:
 dev-k8s:
 	NODE_ENV=development GO_ENV=development PORT=3000 BACKEND_PORT=8081 GIN_MODE=debug docker compose -f docker-compose.yml -f docker-compose.k8s.yml up --build --remove-orphans
 
-seed: ## Seed dev environment with sample data (requires running dev stack)
+seed: azurite-clear ## Seed dev environment with sample data (requires running dev stack)
 	@./scripts/seed-dev-data.sh
 
 # Development mode for backend only
@@ -168,6 +168,16 @@ azurite-start:
 
 azurite-stop:
 	docker compose stop azurite
+
+azurite-clear: ## Clear all data in Azurite (requires running Azurite container)
+	@echo "Clearing Azurite data..."
+	@docker compose exec -T azurite sh -c 'rm -rf /data/*'
+	@docker compose restart azurite
+	@echo "Waiting for Azurite to be ready..."
+	@until curl -s -o /dev/null http://localhost:10002/ 2>/dev/null; do sleep 1; done
+	@echo "Waiting for backend to reconnect..."
+	@until curl -sf http://localhost:8081/health/ready >/dev/null 2>&1; do sleep 1; done
+	@echo "Azurite data cleared!"
 
 # ── Load Testing ─────────────────────────────────────────────────────
 # Starts backend in release mode with high rate limit, runs tests, then cleans up.

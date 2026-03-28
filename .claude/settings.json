@@ -1,29 +1,25 @@
 {
   "permissions": {
     "allow": [
-      "Bash(make test-e2e:*)",
+      "Bash(make:*)",
       "Bash(npm install:*)",
+      "Bash(npm test:*)",
+      "Bash(npm run:*)",
       "Bash(npx playwright:*)",
+      "Bash(npx vitest:*)",
+      "Bash(npx tsc:*)",
       "Bash(git checkout:*)",
       "Bash(git add:*)",
       "Bash(git commit:*)",
-      "Bash(git push -u origin:*)",
-      "Bash(gh pr create:*)",
-      "Bash(gh pr view:*)",
-      "Bash(gh pr list:*)",
       "Bash(git push:*)",
-      "Bash(find /Users/o.mattsson/git/github/k8s-stack-manager/frontend -type d -name *instance* -o -type d -name *stack*)",
-      "Bash(grep -E \"\\\\.go$\")",
+      "Bash(gh pr:*)",
+      "Bash(gh api:*)",
       "Bash(go get:*)",
       "Bash(go build:*)",
       "Bash(go mod:*)",
       "Bash(go test:*)",
-      "Bash(npm test:*)",
-      "Bash(npx vitest:*)",
-      "Bash(npx tsc:*)",
       "Bash(go tool:*)",
-      "Bash(grep -v \"^$\")",
-      "Bash(gh api:*)",
+      "Bash(go vet:*)",
       "Bash(docker build:*)"
     ]
   }

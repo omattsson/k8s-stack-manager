@@ -37,6 +37,38 @@ func (r *StackTemplateRepository) SetTestClient(client AzureTableClient) {
 	r.client = client
 }
 
+// stackTemplateEntity is the typed Azure Table entity for stack templates.
+type stackTemplateEntity struct {
+	PartitionKey  string `json:"PartitionKey"`
+	RowKey        string `json:"RowKey"`
+	ID            string `json:"ID"`
+	Name          string `json:"Name"`
+	Description   string `json:"Description"`
+	Category      string `json:"Category"`
+	Version       string `json:"Version"`
+	OwnerID       string `json:"OwnerID"`
+	DefaultBranch string `json:"DefaultBranch"`
+	IsPublished   bool   `json:"IsPublished"`
+	CreatedAt     string `json:"CreatedAt"`
+	UpdatedAt     string `json:"UpdatedAt"`
+}
+
+func (e *stackTemplateEntity) toModel() *models.StackTemplate {
+	t := &models.StackTemplate{
+		ID:            e.ID,
+		Name:          e.Name,
+		Description:   e.Description,
+		Category:      e.Category,
+		Version:       e.Version,
+		OwnerID:       e.OwnerID,
+		DefaultBranch: e.DefaultBranch,
+		IsPublished:   e.IsPublished,
+	}
+	t.CreatedAt, _ = time.Parse(time.RFC3339, e.CreatedAt)
+	t.UpdatedAt, _ = time.Parse(time.RFC3339, e.UpdatedAt)
+	return t
+}
+
 func (r *StackTemplateRepository) Create(template *models.StackTemplate) error {
 	ctx := context.Background()
 	now := time.Now().UTC()
@@ -68,11 +100,11 @@ func (r *StackTemplateRepository) FindByID(id string) (*models.StackTemplate, er
 		return nil, mapAzureError("find_by_id", err)
 	}
 
-	var entity map[string]interface{}
+	var entity stackTemplateEntity
 	if err := json.Unmarshal(resp.Value, &entity); err != nil {
 		return nil, dberrors.NewDatabaseError("unmarshal", err)
 	}
-	return stackTemplateFromEntity(entity), nil
+	return entity.toModel(), nil
 }
 
 func (r *StackTemplateRepository) Update(template *models.StackTemplate) error {
@@ -111,14 +143,14 @@ func (r *StackTemplateRepository) List() ([]models.StackTemplate, error) {
 		Filter: &filter,
 	})
 
-	entities, err := collectEntities(ctx, pager, nil)
+	entities, err := collectEntitiesTyped[stackTemplateEntity](ctx, pager, nil, 0)
 	if err != nil {
 		return nil, mapAzureError("list", err)
 	}
 
 	results := make([]models.StackTemplate, 0, len(entities))
 	for _, e := range entities {
-		results = append(results, *stackTemplateFromEntity(e))
+		results = append(results, *e.toModel())
 	}
 	return results, nil
 }
@@ -131,14 +163,14 @@ func (r *StackTemplateRepository) ListPublished() ([]models.StackTemplate, error
 		Filter: &filter,
 	})
 
-	entities, err := collectEntities(ctx, pager, nil)
+	entities, err := collectEntitiesTyped[stackTemplateEntity](ctx, pager, nil, 0)
 	if err != nil {
 		return nil, mapAzureError("list_published", err)
 	}
 
 	results := make([]models.StackTemplate, 0, len(entities))
 	for _, e := range entities {
-		results = append(results, *stackTemplateFromEntity(e))
+		results = append(results, *e.toModel())
 	}
 	return results, nil
 }
@@ -151,14 +183,14 @@ func (r *StackTemplateRepository) ListByOwner(ownerID string) ([]models.StackTem
 		Filter: &filter,
 	})
 
-	entities, err := collectEntities(ctx, pager, nil)
+	entities, err := collectEntitiesTyped[stackTemplateEntity](ctx, pager, nil, 0)
 	if err != nil {
 		return nil, mapAzureError("list_by_owner", err)
 	}
 
 	results := make([]models.StackTemplate, 0, len(entities))
 	for _, e := range entities {
-		results = append(results, *stackTemplateFromEntity(e))
+		results = append(results, *e.toModel())
 	}
 	return results, nil
 }
@@ -177,20 +209,5 @@ func stackTemplateToEntity(t *models.StackTemplate) map[string]interface{} {
 		"IsPublished":   t.IsPublished,
 		"CreatedAt":     t.CreatedAt.Format(time.RFC3339),
 		"UpdatedAt":     t.UpdatedAt.Format(time.RFC3339),
-	}
-}
-
-func stackTemplateFromEntity(e map[string]interface{}) *models.StackTemplate {
-	return &models.StackTemplate{
-		ID:            getString(e, "ID"),
-		Name:          getString(e, "Name"),
-		Description:   getString(e, "Description"),
-		Category:      getString(e, "Category"),
-		Version:       getString(e, "Version"),
-		OwnerID:       getString(e, "OwnerID"),
-		DefaultBranch: getString(e, "DefaultBranch"),
-		IsPublished:   getBool(e, "IsPublished"),
-		CreatedAt:     parseTime(e, "CreatedAt"),
-		UpdatedAt:     parseTime(e, "UpdatedAt"),
 	}
 }

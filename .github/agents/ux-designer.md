@@ -44,11 +44,12 @@ You are a senior UI/UX designer and frontend engineer specializing in Material D
 - **Styling**: `sx` prop exclusively (no CSS files, no styled-components)
 
 ### Current Theme
-Defined inline in `src/App.tsx`:
-- Primary: `#1976d2` (MUI default blue)
-- Secondary: `#dc004e` (MUI default pink)
-- Light mode only (no dark mode)
-- Default MUI typography and spacing scales
+Defined in `src/theme/` directory with modular files:
+- `palette.ts` — color palette (primary, secondary, error, warning, info, success, background)
+- `typography.ts` — font sizes, weights, line heights for all MUI typography variants
+- `components.ts` — MUI component default prop/style overrides
+- `index.ts` — combines all into a single MUI theme export
+- Light/dark toggle via `ThemeContext` provider (`src/context/ThemeContext.tsx`)
 
 ### Component Library (`src/components/`)
 - **Layout** — AppBar + nav + role-based menu + user section + content container

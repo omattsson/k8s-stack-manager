@@ -16,21 +16,21 @@ test.describe('Import / Export Stack Definitions', () => {
     await expect(page.getByRole('heading', { level: 1, name: 'Stack Definitions' })).toBeVisible({
       timeout: 10_000,
     });
-    await expect(page.getByRole('button', { name: 'Import' })).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByRole('button', { name: 'Import', exact: true })).toBeVisible({ timeout: 10_000 });
   });
 
   test('clicking Import opens the import dialog', async ({ page }) => {
     await page.goto('/stack-definitions');
-    await expect(page.getByRole('button', { name: 'Import' })).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByRole('button', { name: 'Import', exact: true })).toBeVisible({ timeout: 10_000 });
 
-    await page.getByRole('button', { name: 'Import' }).click();
+    await page.getByRole('button', { name: 'Import', exact: true }).click();
     await expect(page.getByRole('dialog')).toBeVisible({ timeout: 10_000 });
     await expect(page.getByText('Import Stack Definition')).toBeVisible();
   });
 
   test('import dialog has file select button and action buttons', async ({ page }) => {
     await page.goto('/stack-definitions');
-    await page.getByRole('button', { name: 'Import' }).click();
+    await page.getByRole('button', { name: 'Import', exact: true }).click();
 
     await expect(page.getByRole('dialog')).toBeVisible({ timeout: 10_000 });
 
@@ -47,7 +47,7 @@ test.describe('Import / Export Stack Definitions', () => {
 
   test('cancel closes the import dialog', async ({ page }) => {
     await page.goto('/stack-definitions');
-    await page.getByRole('button', { name: 'Import' }).click();
+    await page.getByRole('button', { name: 'Import', exact: true }).click();
     await expect(page.getByRole('dialog')).toBeVisible({ timeout: 10_000 });
 
     await page.getByRole('button', { name: 'Cancel' }).click();
@@ -104,8 +104,8 @@ test.describe('Import / Export Stack Definitions', () => {
     });
 
     await page.goto('/stack-definitions');
-    await expect(page.getByRole('button', { name: 'Import' })).toBeVisible({ timeout: 10_000 });
-    await page.getByRole('button', { name: 'Import' }).click();
+    await expect(page.getByRole('button', { name: 'Import', exact: true })).toBeVisible({ timeout: 10_000 });
+    await page.getByRole('button', { name: 'Import', exact: true }).click();
     await expect(page.getByRole('dialog')).toBeVisible({ timeout: 10_000 });
 
     // Use the hidden file input by setting its content programmatically
@@ -134,7 +134,7 @@ test.describe('Import / Export Stack Definitions', () => {
 
   test('import with invalid JSON file shows error', async ({ page }) => {
     await page.goto('/stack-definitions');
-    await page.getByRole('button', { name: 'Import' }).click();
+    await page.getByRole('button', { name: 'Import', exact: true }).click();
     await expect(page.getByRole('dialog')).toBeVisible({ timeout: 10_000 });
 
     const fileInput = page.locator('input[type="file"]');

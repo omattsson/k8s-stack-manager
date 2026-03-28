@@ -37,6 +37,42 @@ func (r *TemplateChartConfigRepository) SetTestClient(client AzureTableClient) {
 	r.client = client
 }
 
+// templateChartConfigEntity is the typed Azure Table entity for template chart configs.
+type templateChartConfigEntity struct {
+	PartitionKey    string  `json:"PartitionKey"`
+	RowKey          string  `json:"RowKey"`
+	ID              string  `json:"ID"`
+	StackTemplateID string  `json:"StackTemplateID"`
+	ChartName       string  `json:"ChartName"`
+	RepositoryURL   string  `json:"RepositoryURL"`
+	SourceRepoURL   string  `json:"SourceRepoURL"`
+	ChartPath       string  `json:"ChartPath"`
+	ChartVersion    string  `json:"ChartVersion"`
+	DefaultValues   string  `json:"DefaultValues"`
+	LockedValues    string  `json:"LockedValues"`
+	DeployOrder     float64 `json:"DeployOrder"`
+	Required        bool    `json:"Required"`
+	CreatedAt       string  `json:"CreatedAt"`
+}
+
+func (e *templateChartConfigEntity) toModel() *models.TemplateChartConfig {
+	c := &models.TemplateChartConfig{
+		ID:              e.ID,
+		StackTemplateID: e.StackTemplateID,
+		ChartName:       e.ChartName,
+		RepositoryURL:   e.RepositoryURL,
+		SourceRepoURL:   e.SourceRepoURL,
+		ChartPath:       e.ChartPath,
+		ChartVersion:    e.ChartVersion,
+		DefaultValues:   e.DefaultValues,
+		LockedValues:    e.LockedValues,
+		DeployOrder:     int(e.DeployOrder),
+		Required:        e.Required,
+	}
+	c.CreatedAt, _ = time.Parse(time.RFC3339, e.CreatedAt)
+	return c
+}
+
 func (r *TemplateChartConfigRepository) Create(config *models.TemplateChartConfig) error {
 	ctx := context.Background()
 	now := time.Now().UTC()
@@ -68,11 +104,13 @@ func (r *TemplateChartConfigRepository) FindByID(id string) (*models.TemplateCha
 	// ID is the row key, but we don't know the partition key (stack_template_id).
 	// We must scan across partitions.
 	filter := "RowKey eq '" + id + "'"
+	top := int32(1)
 	pager := r.client.NewListEntitiesPager(&aztables.ListEntitiesOptions{
 		Filter: &filter,
+		Top:    &top,
 	})
 
-	entities, err := collectEntities(ctx, pager, nil)
+	entities, err := collectEntitiesTyped[templateChartConfigEntity](ctx, pager, nil, 1)
 	if err != nil {
 		return nil, mapAzureError("find_by_id", err)
 	}
@@ -80,7 +118,7 @@ func (r *TemplateChartConfigRepository) FindByID(id string) (*models.TemplateCha
 		return nil, dberrors.NewDatabaseError("find_by_id", dberrors.ErrNotFound)
 	}
 
-	return templateChartConfigFromEntity(entities[0]), nil
+	return entities[0].toModel(), nil
 }
 
 func (r *TemplateChartConfigRepository) Update(config *models.TemplateChartConfig) error {
@@ -124,14 +162,14 @@ func (r *TemplateChartConfigRepository) ListByTemplate(templateID string) ([]mod
 		Filter: &filter,
 	})
 
-	entities, err := collectEntities(ctx, pager, nil)
+	entities, err := collectEntitiesTyped[templateChartConfigEntity](ctx, pager, nil, 0)
 	if err != nil {
 		return nil, mapAzureError("list_by_template", err)
 	}
 
 	results := make([]models.TemplateChartConfig, 0, len(entities))
 	for _, e := range entities {
-		results = append(results, *templateChartConfigFromEntity(e))
+		results = append(results, *e.toModel())
 	}
 	return results, nil
 }
@@ -152,22 +190,5 @@ func templateChartConfigToEntity(c *models.TemplateChartConfig) map[string]inter
 		"DeployOrder":     c.DeployOrder,
 		"Required":        c.Required,
 		"CreatedAt":       c.CreatedAt.Format(time.RFC3339),
-	}
-}
-
-func templateChartConfigFromEntity(e map[string]interface{}) *models.TemplateChartConfig {
-	return &models.TemplateChartConfig{
-		ID:              getString(e, "ID"),
-		StackTemplateID: getString(e, "StackTemplateID"),
-		ChartName:       getString(e, "ChartName"),
-		RepositoryURL:   getString(e, "RepositoryURL"),
-		SourceRepoURL:   getString(e, "SourceRepoURL"),
-		ChartPath:       getString(e, "ChartPath"),
-		ChartVersion:    getString(e, "ChartVersion"),
-		DefaultValues:   getString(e, "DefaultValues"),
-		LockedValues:    getString(e, "LockedValues"),
-		DeployOrder:     getInt(e, "DeployOrder"),
-		Required:        getBool(e, "Required"),
-		CreatedAt:       parseTime(e, "CreatedAt"),
 	}
 }

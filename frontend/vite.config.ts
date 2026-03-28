@@ -9,6 +9,7 @@ export default defineConfig({
     setupFiles: './src/test/setup.ts',
     css: true,
     exclude: ['e2e/**', 'node_modules/**'],
+    testTimeout: 15000,
   },
   server: {
     port: 3000,

@@ -38,6 +38,38 @@ func (r *ResourceQuotaRepository) SetTestClient(client AzureTableClient) {
 	r.client = client
 }
 
+// resourceQuotaEntity maps to the Azure Table JSON representation.
+type resourceQuotaEntity struct {
+	PartitionKey  string `json:"PartitionKey"`
+	RowKey        string `json:"RowKey"`
+	ID            string `json:"ID"`
+	ClusterID     string `json:"ClusterID"`
+	CPURequest    string `json:"CPURequest"`
+	CPULimit      string `json:"CPULimit"`
+	MemoryRequest string `json:"MemoryRequest"`
+	MemoryLimit   string `json:"MemoryLimit"`
+	StorageLimit  string `json:"StorageLimit"`
+	PodLimit      int    `json:"PodLimit"`
+	CreatedAt     string `json:"CreatedAt"`
+	UpdatedAt     string `json:"UpdatedAt"`
+}
+
+func (e *resourceQuotaEntity) toModel() *models.ResourceQuotaConfig {
+	q := &models.ResourceQuotaConfig{
+		ID:            e.ID,
+		ClusterID:     e.ClusterID,
+		CPURequest:    e.CPURequest,
+		CPULimit:      e.CPULimit,
+		MemoryRequest: e.MemoryRequest,
+		MemoryLimit:   e.MemoryLimit,
+		StorageLimit:  e.StorageLimit,
+		PodLimit:      e.PodLimit,
+	}
+	q.CreatedAt, _ = time.Parse(time.RFC3339, e.CreatedAt)
+	q.UpdatedAt, _ = time.Parse(time.RFC3339, e.UpdatedAt)
+	return q
+}
+
 // GetByClusterID returns the resource quota config for the given cluster.
 func (r *ResourceQuotaRepository) GetByClusterID(ctx context.Context, clusterID string) (*models.ResourceQuotaConfig, error) {
 	resp, err := r.client.GetEntity(ctx, clusterID, quotaRowKey, nil)
@@ -45,12 +77,12 @@ func (r *ResourceQuotaRepository) GetByClusterID(ctx context.Context, clusterID 
 		return nil, mapAzureError("get_by_cluster_id", err)
 	}
 
-	var entity map[string]interface{}
+	var entity resourceQuotaEntity
 	if err := json.Unmarshal(resp.Value, &entity); err != nil {
 		return nil, dberrors.NewDatabaseError("unmarshal", err)
 	}
 
-	return resourceQuotaFromEntity(entity), nil
+	return entity.toModel(), nil
 }
 
 // Upsert creates or updates the resource quota config for a cluster.
@@ -125,17 +157,3 @@ func resourceQuotaToEntity(config *models.ResourceQuotaConfig) map[string]interf
 	}
 }
 
-func resourceQuotaFromEntity(e map[string]interface{}) *models.ResourceQuotaConfig {
-	return &models.ResourceQuotaConfig{
-		ID:            getString(e, "ID"),
-		ClusterID:     getString(e, "ClusterID"),
-		CPURequest:    getString(e, "CPURequest"),
-		CPULimit:      getString(e, "CPULimit"),
-		MemoryRequest: getString(e, "MemoryRequest"),
-		MemoryLimit:   getString(e, "MemoryLimit"),
-		StorageLimit:  getString(e, "StorageLimit"),
-		PodLimit:      getInt(e, "PodLimit"),
-		CreatedAt:     parseTime(e, "CreatedAt"),
-		UpdatedAt:     parseTime(e, "UpdatedAt"),
-	}
-}
