@@ -18,7 +18,7 @@ require (
 	github.com/swaggo/swag v1.16.6
 	github.com/xeipuuv/gojsonschema v1.2.0
 	golang.org/x/crypto v0.49.0
-	golang.org/x/oauth2 v0.30.0
+	golang.org/x/oauth2 v0.36.0
 	gopkg.in/yaml.v3 v3.0.1
 	gorm.io/driver/mysql v1.6.0
 	gorm.io/driver/sqlite v1.6.0
