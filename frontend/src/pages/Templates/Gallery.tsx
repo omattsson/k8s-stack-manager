@@ -141,10 +141,18 @@ const Gallery = () => {
 
   const toggleSelectAll = useCallback(() => {
     setSelectedIds((prev) => {
-      if (prev.size === filtered.length) {
-        return new Set();
+      const allFilteredIds = new Set(filtered.map((t) => t.id));
+      const allFilteredSelected = filtered.every((t) => prev.has(t.id));
+      if (allFilteredSelected) {
+        // Remove only filtered IDs
+        const next = new Set(prev);
+        for (const id of allFilteredIds) {
+          next.delete(id);
+        }
+        return next;
       }
-      return new Set(filtered.map((t) => t.id));
+      // Add all filtered IDs
+      return new Set([...prev, ...allFilteredIds]);
     });
   }, [filtered]);
 
@@ -205,8 +213,12 @@ const Gallery = () => {
     setBulkAction(null);
   }, []);
 
-  const allFilteredSelected = filtered.length > 0 && selectedIds.size === filtered.length;
-  const someFilteredSelected = selectedIds.size > 0 && selectedIds.size < filtered.length;
+  const selectedFilteredCount = useMemo(
+    () => filtered.filter((t) => selectedIds.has(t.id)).length,
+    [filtered, selectedIds],
+  );
+  const allFilteredSelected = filtered.length > 0 && selectedFilteredCount === filtered.length;
+  const someFilteredSelected = selectedFilteredCount > 0 && selectedFilteredCount < filtered.length;
 
   // Recent templates that match loaded templates (to verify they still exist)
   const resolvedRecentTemplates = useMemo(() => {
@@ -306,8 +318,8 @@ const Gallery = () => {
               Publish ({selectedIds.size})
             </Button>
           )}
-          {/* Unpublish: on Published tab and My Templates */}
-          {(tab === 0 || tab === 1) && (
+          {/* Unpublish: on My Templates tab */}
+          {tab === 1 && (
             <Button
               size="small"
               variant="contained"
@@ -536,7 +548,7 @@ const Gallery = () => {
                       secondary={item.status === 'error' ? item.error : 'Success'}
                       slotProps={{
                         secondary: {
-                          color: item.status === 'error' ? 'error' : 'success.main',
+                          sx: { color: item.status === 'error' ? 'error.main' : 'success.main' },
                         },
                       }}
                     />

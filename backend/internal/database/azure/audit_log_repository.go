@@ -216,7 +216,7 @@ func (r *AuditLogRepository) List(filters models.AuditLogFilters) (*models.Audit
 		// Offset/limit mode: if we hit maxResults, total is at least that many (but unknown exact).
 		// If we got fewer than maxResults, we know the exact total.
 		if maxResults > 0 && len(entities) >= maxResults {
-			result.Total = int64(len(entities))
+			result.Total = -1 // exact total unknown due to early termination
 		} else {
 			result.Total = int64(len(entities))
 		}

@@ -31,6 +31,9 @@ func TestNewDatabase(t *testing.T) {
 }
 
 func TestDatabaseMigrations(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping database integration test")
+	}
 	t.Parallel()
 	db := setupTestDB(t)
 
@@ -49,6 +52,9 @@ func TestDatabaseMigrations(t *testing.T) {
 }
 
 func TestDatabaseTransaction(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping database integration test")
+	}
 	t.Parallel()
 	db := setupTestDB(t)
 
@@ -108,6 +114,9 @@ func TestDatabaseTransaction(t *testing.T) {
 }
 
 func TestItemCRUD(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping database integration test")
+	}
 	t.Parallel()
 	db := setupTestDB(t)
 	require.NoError(t, db.AutoMigrate())

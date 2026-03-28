@@ -370,7 +370,7 @@ describe('Dashboard', () => {
     });
 
     it('shows bulk action toolbar when instances are selected', async () => {
-      const user = userEvent.setup();
+      const user = userEvent.setup({ delay: null });
       render(
         <MemoryRouter>
           <NotificationProvider>
@@ -393,7 +393,7 @@ describe('Dashboard', () => {
     });
 
     it('select all checkbox selects all filtered instances', async () => {
-      const user = userEvent.setup();
+      const user = userEvent.setup({ delay: null });
       render(
         <MemoryRouter>
           <NotificationProvider>
@@ -411,7 +411,7 @@ describe('Dashboard', () => {
     });
 
     it('shows confirm dialog before bulk deploy', async () => {
-      const user = userEvent.setup();
+      const user = userEvent.setup({ delay: null });
       render(
         <MemoryRouter>
           <NotificationProvider>
@@ -432,7 +432,7 @@ describe('Dashboard', () => {
     });
 
     it('executes bulk deploy and shows results dialog', async () => {
-      const user = userEvent.setup();
+      const user = userEvent.setup({ delay: null });
       const bulkResult = {
         total: 1,
         succeeded: 1,
@@ -473,7 +473,7 @@ describe('Dashboard', () => {
     });
 
     it('shows failures in results dialog', async () => {
-      const user = userEvent.setup();
+      const user = userEvent.setup({ delay: null });
       const bulkResult = {
         total: 2,
         succeeded: 1,
@@ -502,6 +502,9 @@ describe('Dashboard', () => {
       await user.click(screen.getByRole('button', { name: 'Stop' }));
 
       // Confirm
+      await waitFor(() => {
+        expect(screen.getByText('Confirm Bulk Stop')).toBeInTheDocument();
+      });
       const confirmButtons = screen.getAllByRole('button', { name: 'Stop' });
       const dialogConfirmButton = confirmButtons[confirmButtons.length - 1];
       await user.click(dialogConfirmButton);
@@ -515,7 +518,7 @@ describe('Dashboard', () => {
     });
 
     it('shows warning alert for bulk delete confirmation', async () => {
-      const user = userEvent.setup();
+      const user = userEvent.setup({ delay: null });
       render(
         <MemoryRouter>
           <NotificationProvider>
@@ -535,7 +538,7 @@ describe('Dashboard', () => {
     });
 
     it('clears selection when Clear Selection is clicked', async () => {
-      const user = userEvent.setup();
+      const user = userEvent.setup({ delay: null });
       render(
         <MemoryRouter>
           <NotificationProvider>
@@ -555,7 +558,7 @@ describe('Dashboard', () => {
     });
 
     it('clears selection after closing results dialog', async () => {
-      const user = userEvent.setup();
+      const user = userEvent.setup({ delay: null });
       const bulkResult = {
         total: 1,
         succeeded: 1,
@@ -582,6 +585,9 @@ describe('Dashboard', () => {
       await user.click(screen.getByRole('button', { name: 'Clean' }));
 
       // Confirm
+      await waitFor(() => {
+        expect(screen.getByText('Confirm Bulk Clean')).toBeInTheDocument();
+      });
       const confirmButtons = screen.getAllByRole('button', { name: 'Clean' });
       const dialogConfirmButton = confirmButtons[confirmButtons.length - 1];
       await user.click(dialogConfirmButton);
@@ -600,7 +606,7 @@ describe('Dashboard', () => {
     });
 
     it('handles bulk operation API failure gracefully', async () => {
-      const user = userEvent.setup();
+      const user = userEvent.setup({ delay: null });
       (instanceService.bulkDeploy as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('Server error'));
 
       render(
@@ -618,6 +624,9 @@ describe('Dashboard', () => {
       await user.click(screen.getByRole('button', { name: 'Deploy' }));
 
       // Confirm
+      await waitFor(() => {
+        expect(screen.getByText('Confirm Bulk Deploy')).toBeInTheDocument();
+      });
       const confirmButtons = screen.getAllByRole('button', { name: 'Deploy' });
       const dialogConfirmButton = confirmButtons[confirmButtons.length - 1];
       await user.click(dialogConfirmButton);
@@ -629,7 +638,7 @@ describe('Dashboard', () => {
     });
 
     it('cancels confirm dialog without executing action', async () => {
-      const user = userEvent.setup();
+      const user = userEvent.setup({ delay: null });
       render(
         <MemoryRouter>
           <NotificationProvider>
@@ -644,7 +653,9 @@ describe('Dashboard', () => {
       await user.click(screen.getByRole('checkbox', { name: 'Select Instance A' }));
       await user.click(screen.getByRole('button', { name: 'Deploy' }));
 
-      expect(screen.getByText('Confirm Bulk Deploy')).toBeInTheDocument();
+      await waitFor(() => {
+        expect(screen.getByText('Confirm Bulk Deploy')).toBeInTheDocument();
+      });
 
       // Cancel
       await user.click(screen.getByRole('button', { name: 'Cancel' }));

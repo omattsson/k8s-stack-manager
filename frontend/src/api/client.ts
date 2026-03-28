@@ -1046,7 +1046,7 @@ export const gitService = {
 export interface PaginatedAuditLogs {
   /** The audit log entries for the current page. */
   data: AuditLog[];
-  /** Total number of matching entries across all pages. */
+  /** Total number of matching entries across all pages, or -1 when the exact count is unknown. */
   total: number;
   /** Maximum entries per page. */
   limit: number;

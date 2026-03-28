@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"time"
 
+	"backend/internal/api/middleware"
 	"backend/internal/models"
 
 	"github.com/gin-gonic/gin"
@@ -73,6 +74,9 @@ func (h *TemplateHandler) executeBulkTemplateOperation(c *gin.Context, opName st
 		Results: make([]BulkTemplateResultItem, 0, len(uniqueIDs)),
 	}
 
+	userID := middleware.GetUserIDFromContext(c)
+	role := middleware.GetRoleFromContext(c)
+
 	for _, id := range uniqueIDs {
 		result := BulkTemplateResultItem{
 			TemplateID: id,
@@ -88,6 +92,15 @@ func (h *TemplateHandler) executeBulkTemplateOperation(c *gin.Context, opName st
 		}
 
 		result.TemplateName = tmpl.Name
+
+		// Authorization: admin can operate on any template; others only their own.
+		if role != "admin" && tmpl.OwnerID != userID {
+			result.Status = "error"
+			result.Error = "not authorized"
+			resp.Failed++
+			resp.Results = append(resp.Results, result)
+			continue
+		}
 
 		if err := op(c, tmpl); err != nil {
 			result.Status = "error"

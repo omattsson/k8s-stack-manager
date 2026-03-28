@@ -92,33 +92,39 @@ func (h *TemplateHandler) ListTemplates(c *gin.Context) {
 		return
 	}
 
-	// TODO: Consider using a count-by-template-id repo method to avoid full definition scan.
+	// NOTE: This does N+1 queries (per-template definition count + per-owner username lookup).
+	// Acceptable for typical gallery sizes. Ideal optimization: batch CountByTemplateIDs(ids)
+	// and FindUsersByIDs(ids) methods to reduce to 2 queries.
+
+	// Build definition count map by querying only for returned template IDs.
 	defCountMap := make(map[string]int)
 	if h.definitionRepo != nil {
-		defs, defErr := h.definitionRepo.List()
-		if defErr != nil {
-			slog.Warn("failed to fetch definitions for template counts", "error", defErr)
-		}
-		if defErr == nil {
-			for _, d := range defs {
-				if d.SourceTemplateID != "" {
-					defCountMap[d.SourceTemplateID]++
-				}
+		for _, t := range templates {
+			defs, err := h.definitionRepo.ListByTemplate(t.ID)
+			if err != nil {
+				slog.Warn("failed to fetch definitions for template", "template_id", t.ID, "error", err)
+				continue
 			}
+			defCountMap[t.ID] = len(defs)
 		}
 	}
 
-	// TODO: Consider batch user lookup by owner IDs to avoid loading all users.
+	// Build username map from distinct owner IDs (instead of loading all users).
 	usernameMap := make(map[string]string)
 	if h.userRepo != nil {
-		users, userErr := h.userRepo.List()
-		if userErr != nil {
-			slog.Warn("failed to fetch users for template listing", "error", userErr)
-		}
-		if userErr == nil {
-			for _, u := range users {
-				usernameMap[u.ID] = u.Username
+		ownerIDs := make(map[string]struct{})
+		for _, t := range templates {
+			if t.OwnerID != "" {
+				ownerIDs[t.OwnerID] = struct{}{}
 			}
+		}
+		for ownerID := range ownerIDs {
+			user, err := h.userRepo.FindByID(ownerID)
+			if err != nil {
+				slog.Warn("failed to fetch user for template listing", "owner_id", ownerID, "error", err)
+				continue
+			}
+			usernameMap[ownerID] = user.Username
 		}
 	}
 

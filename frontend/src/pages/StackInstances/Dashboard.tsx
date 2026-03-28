@@ -197,10 +197,17 @@ const Dashboard = () => {
 
   // Keyboard shortcuts
   useEffect(() => {
+    const isFormOrEditable = (el: HTMLElement | null | undefined) =>
+      !!el &&
+      (el.tagName === 'INPUT' ||
+        el.tagName === 'TEXTAREA' ||
+        el.tagName === 'SELECT' ||
+        el.isContentEditable);
+
     const handleKeyDown = (e: KeyboardEvent) => {
       // Don't intercept when typing in inputs
       const target = e.target as HTMLElement;
-      if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT' || target.isContentEditable) {
+      if (isFormOrEditable(target) || isFormOrEditable(document.activeElement as HTMLElement | null)) {
         return;
       }
 
@@ -384,7 +391,7 @@ const Dashboard = () => {
           sx={{ minWidth: 250 }}
         />
         <Typography variant="caption" color="text.secondary" sx={{ ml: 0.5, display: { xs: 'none', md: 'inline' } }}>
-          Press <Box component="kbd" sx={{ fontFamily: 'monospace', padding: '0 4px', border: '1px solid', borderRadius: 3, fontSize: '0.75rem' }}>/</Box> to search
+          Press <Box component="kbd" sx={{ fontFamily: 'monospace', px: 0.5, border: '1px solid', borderRadius: 3, fontSize: '0.75rem' }}>/</Box> to search
         </Typography>
         <Box sx={{ display: 'flex', gap: 1 }}>
           {STATUSES.map((s) => (
@@ -732,7 +739,7 @@ const Dashboard = () => {
                       secondary={item.status === 'error' ? item.error : 'Success'}
                       slotProps={{
                         secondary: {
-                          color: item.status === 'error' ? 'error' : 'success.main',
+                          sx: { color: item.status === 'error' ? 'error.main' : 'success.main' },
                         },
                       }}
                     />
