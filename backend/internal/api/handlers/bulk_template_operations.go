@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -8,6 +9,7 @@ import (
 
 	"backend/internal/api/middleware"
 	"backend/internal/models"
+	"backend/pkg/dberrors"
 
 	"github.com/gin-gonic/gin"
 )
@@ -53,20 +55,28 @@ func (h *TemplateHandler) executeBulkTemplateOperation(c *gin.Context, opName st
 		return
 	}
 
-	if len(req.TemplateIDs) > MaxBulkTemplates {
-		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("Too many templates: maximum is %d", MaxBulkTemplates)})
-		return
-	}
-
-	// De-duplicate template IDs while preserving order.
+	// De-duplicate template IDs (and filter empty strings) while preserving order.
 	seen := make(map[string]struct{}, len(req.TemplateIDs))
 	uniqueIDs := make([]string, 0, len(req.TemplateIDs))
 	for _, id := range req.TemplateIDs {
+		if id == "" {
+			continue
+		}
 		if _, ok := seen[id]; ok {
 			continue
 		}
 		seen[id] = struct{}{}
 		uniqueIDs = append(uniqueIDs, id)
+	}
+
+	if len(uniqueIDs) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "template_ids must not be empty"})
+		return
+	}
+
+	if len(uniqueIDs) > MaxBulkTemplates {
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("Too many templates: maximum is %d", MaxBulkTemplates)})
+		return
 	}
 
 	resp := BulkTemplateResponse{
@@ -85,7 +95,15 @@ func (h *TemplateHandler) executeBulkTemplateOperation(c *gin.Context, opName st
 		tmpl, err := h.templateRepo.FindByID(id)
 		if err != nil {
 			result.Status = "error"
-			result.Error = "template not found"
+			if errors.Is(err, dberrors.ErrNotFound) {
+				result.Error = "template not found"
+			} else {
+				result.Error = "Internal server error"
+				slog.Error("bulk "+opName+" FindByID failed",
+					"template_id", id,
+					"error", err,
+				)
+			}
 			resp.Failed++
 			resp.Results = append(resp.Results, result)
 			continue

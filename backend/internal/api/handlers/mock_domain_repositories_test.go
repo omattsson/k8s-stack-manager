@@ -183,7 +183,7 @@ func (m *MockStackTemplateRepository) FindByID(id string) (*models.StackTemplate
 	}
 	t, ok := m.items[id]
 	if !ok {
-		return nil, errors.New("not found")
+		return nil, dberrors.NewDatabaseError("FindByID", dberrors.ErrNotFound)
 	}
 	cp := *t
 	return &cp, nil

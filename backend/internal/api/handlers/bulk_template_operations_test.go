@@ -3,6 +3,7 @@ package handlers
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -178,7 +179,7 @@ func TestBulkDeleteTemplates(t *testing.T) {
 			body: BulkTemplateRequest{TemplateIDs: func() []string {
 				ids := make([]string, 51)
 				for i := range ids {
-					ids[i] = "id"
+					ids[i] = fmt.Sprintf("id-%d", i)
 				}
 				return ids
 			}()},

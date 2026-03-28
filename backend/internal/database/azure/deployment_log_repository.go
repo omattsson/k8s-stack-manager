@@ -13,7 +13,7 @@ import (
 )
 
 // escapeODataString escapes single quotes in a string value for use in OData
-// filter expressions. OData uses doubled single quotes ('') as the escape
+// filter expressions. OData uses doubled single quotes (”) as the escape
 // sequence for a literal single quote within a string literal.
 func escapeODataString(s string) string {
 	return strings.ReplaceAll(s, "'", "''")
@@ -223,18 +223,18 @@ func (r *DeploymentLogRepository) SummarizeByInstance(ctx context.Context, insta
 
 	summary := &models.DeployLogSummary{InstanceID: instanceID}
 	for _, e := range entities {
-		if e.Action != models.DeployActionDeploy {
-			continue
-		}
-		summary.DeployCount++
-		switch e.Status {
-		case models.DeployLogSuccess:
-			summary.SuccessCount++
-		case models.DeployLogError:
-			summary.ErrorCount++
+		// Only deploy actions contribute to deploy-related counters.
+		if e.Action == models.DeployActionDeploy {
+			summary.DeployCount++
+			switch e.Status {
+			case models.DeployLogSuccess:
+				summary.SuccessCount++
+			case models.DeployLogError:
+				summary.ErrorCount++
+			}
 		}
 
-		// Track the latest timestamp across all deploy logs.
+		// Track the latest timestamp across all actions (deploy, stop, clean, etc.).
 		var ts time.Time
 		if e.CompletedAt != "" {
 			if parsed, pErr := time.Parse(time.RFC3339, e.CompletedAt); pErr == nil {
