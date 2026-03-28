@@ -267,4 +267,40 @@ loadtest-frontend-run: ## Run Playwright load tests (assumes backend already run
 	@echo "Running frontend load tests (workers=$${LOAD_WORKERS:-5})..."
 	cd frontend && NODE_PATH=node_modules npx playwright test --config=../loadtest/frontend/playwright.config.ts
 
+# ── Helm / Kubernetes ────────────────────────────────────────────────
+HELM_CHART     := helm/k8s-stack-manager
+HELM_RELEASE   := k8s-stack-manager
+HELM_NAMESPACE := k8s-stack-manager
+
+helm-lint: ## Lint the Helm chart
+	helm lint $(HELM_CHART) \
+		--set backend.secrets.JWT_SECRET=dummy-jwt-secret-for-lint
+
+helm-template: ## Render templates locally (dry-run)
+	helm template $(HELM_RELEASE) $(HELM_CHART) --namespace $(HELM_NAMESPACE) \
+		--set backend.secrets.JWT_SECRET=dummy-jwt-secret-for-template
+
+helm-install: ## Install the chart into the current cluster
+	@if [ -z "$${JWT_SECRET}" ]; then \
+		echo "Error: JWT_SECRET environment variable must be set for helm-install."; \
+		echo "Usage: JWT_SECRET=your-secret make helm-install"; \
+		exit 1; \
+	fi
+	helm install $(HELM_RELEASE) $(HELM_CHART) \
+		--namespace $(HELM_NAMESPACE) --create-namespace \
+		--set backend.secrets.JWT_SECRET=$${JWT_SECRET}
+
+helm-upgrade: ## Upgrade an existing release
+	@if [ -z "$${JWT_SECRET}" ]; then \
+		echo "Error: JWT_SECRET environment variable must be set for helm-upgrade."; \
+		echo "Usage: JWT_SECRET=your-secret make helm-upgrade"; \
+		exit 1; \
+	fi
+	helm upgrade $(HELM_RELEASE) $(HELM_CHART) \
+		--namespace $(HELM_NAMESPACE) \
+		--set backend.secrets.JWT_SECRET=$${JWT_SECRET}
+
+helm-uninstall: ## Uninstall the release
+	helm uninstall $(HELM_RELEASE) --namespace $(HELM_NAMESPACE)
+
 

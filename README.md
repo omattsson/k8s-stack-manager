@@ -69,6 +69,11 @@ cd frontend && npm install && npm run dev
 | `make lint` | Lint backend + frontend |
 | `make clean` | Stop containers and remove volumes |
 | `make install` | Install all dependencies |
+| `make helm-lint` | Lint the Helm chart |
+| `make helm-template` | Render templates locally (dry-run) |
+| `make helm-install` | Install chart into current cluster |
+| `make helm-upgrade` | Upgrade an existing release |
+| `make helm-uninstall` | Uninstall the release |
 
 ## Project Structure
 
@@ -97,6 +102,11 @@ cd frontend && npm install && npm run dev
 │       ├── context/           # Auth + WebSocket contexts
 │       ├── pages/             # Page components
 │       └── routes.tsx         # Route definitions
+├── helm/k8s-stack-manager/     # Helm chart (Argo Rollouts + Traefik)
+│   ├── templates/backend/     # Backend Rollout, services, config
+│   ├── templates/frontend/    # Frontend Rollout, services, nginx config
+│   ├── templates/azurite/     # Azurite deployment, service, PVC
+│   └── templates/traefik/     # IngressRoute + middleware
 ├── loadtest/                   # Load testing suites
 │   ├── backend/               # k6 API + WebSocket load tests
 │   └── frontend/              # Playwright load tests
@@ -138,6 +148,50 @@ Key environment variables (see `docker-compose.yml` for full list):
 | `GITLAB_TOKEN` | No | GitLab access token |
 | `DEFAULT_BRANCH` | No | Default Git branch (default: `master`) |
 | `KUBECONFIG_ENCRYPTION_KEY` | No | Passphrase for deriving AES-256 key (SHA-256) to encrypt kubeconfig data at rest |
+
+## Helm Chart (Kubernetes Deployment)
+
+The Helm chart in `helm/k8s-stack-manager/` deploys the full stack to Kubernetes using **Argo Rollouts** (canary strategy) and **Traefik** IngressRoute.
+
+### Prerequisites
+- Kubernetes cluster with `kubectl` context configured
+- Helm 3+
+- [Argo Rollouts](https://argoproj.github.io/argo-rollouts/) controller installed
+- [Traefik](https://traefik.io/) ingress controller with CRDs
+
+### Install
+
+> **Note:** The Helm chart requires `backend.secrets.JWT_SECRET` at render time.
+> You must provide this value via `--set` or the `JWT_SECRET` env var before running lint/install.
+
+```bash
+# Lint the chart
+make helm-lint
+
+# Install (JWT_SECRET env var required)
+JWT_SECRET=my-secret-at-least-16-chars make helm-install
+
+# Or install with custom values directly
+helm install k8s-stack-manager helm/k8s-stack-manager \
+  --namespace k8s-stack-manager --create-namespace \
+  --set backend.secrets.JWT_SECRET=my-secret-at-least-16-chars \
+  --set ingress.host=stacks.example.com
+
+# Upgrade after changes
+JWT_SECRET=my-secret-at-least-16-chars make helm-upgrade
+
+# Uninstall
+make helm-uninstall
+```
+
+### What Gets Deployed
+- **Backend** — Argo Rollout (canary 20%→50%→80%) with stable + canary services
+- **Frontend** — Argo Rollout with nginx serving the React SPA
+- **Azurite** — Azure Table Storage emulator (enabled by default, disable for production)
+- **Traefik IngressRoute** — Routes `/api/*`→backend, `/ws`→backend, `/`→frontend
+- **Traefik Middleware** — StripPrefix for `/api`, secure response headers
+
+See `helm/k8s-stack-manager/values.yaml` for all configurable values.
 
 ## Testing
 

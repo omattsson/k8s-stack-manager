@@ -1,0 +1,22 @@
+{{- if .Values.azurite.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "k8s-stack-manager.azurite.serviceName" . }}
+  labels:
+    {{- include "k8s-stack-manager.azurite.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  ports:
+    - name: blob
+      port: 10000
+      targetPort: blob
+    - name: queue
+      port: 10001
+      targetPort: queue
+    - name: table
+      port: 10002
+      targetPort: table
+  selector:
+    {{- include "k8s-stack-manager.azurite.selectorLabels" . | nindent 4 }}
+{{- end }}

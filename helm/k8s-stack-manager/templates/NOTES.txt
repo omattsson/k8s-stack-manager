@@ -1,0 +1,40 @@
+K8s Stack Manager has been deployed!
+
+{{- if .Values.ingress.enabled }}
+
+Access the application:
+{{- if .Values.ingress.host }}
+  URL: http{{ if .Values.ingress.traefik.tls.secretName }}s{{ end }}://{{ .Values.ingress.host }}
+{{- else }}
+  The IngressRoute has no host restriction — access via your Traefik load balancer IP.
+  Get the IP:  kubectl get svc -n traefik traefik -o jsonpath='{.status.loadBalancer.ingress[0].ip}'
+{{- end }}
+{{- else }}
+
+Ingress is disabled.
+
+NOTE: The frontend is built to call /api and /ws on the same origin.
+      This chart's frontend service requires an ingress or reverse proxy
+      that routes / to the frontend and /api, /ws to the backend.
+
+To test the backend API locally without ingress, port-forward the backend service:
+  kubectl port-forward svc/{{ include "k8s-stack-manager.backend.stableService" . }} 8081:{{ .Values.backend.port }}
+
+  Backend API: http://localhost:8081
+{{- end }}
+
+Watch rollout status:
+  kubectl argo rollouts get rollout {{ include "k8s-stack-manager.fullname" . }}-backend --watch
+  kubectl argo rollouts get rollout {{ include "k8s-stack-manager.fullname" . }}-frontend --watch
+
+{{- if eq .Values.backend.secrets.ADMIN_PASSWORD "admin" }}
+
+WARNING: backend.secrets.ADMIN_PASSWORD is set to the default "admin"!
+  Change it with: --set backend.secrets.ADMIN_PASSWORD="your-secure-password"
+{{- end }}
+
+{{- if eq (index .Values.backend.env "CORS_ALLOWED_ORIGINS") "*" }}
+
+WARNING: CORS_ALLOWED_ORIGINS is set to "*" (allow all origins).
+  For production, restrict it: --set backend.env.CORS_ALLOWED_ORIGINS="https://your-domain.com"
+{{- end }}
