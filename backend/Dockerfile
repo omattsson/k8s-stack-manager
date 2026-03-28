@@ -25,7 +25,7 @@ COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build -o main ./api/main.go
 
 # Final production image — Alpine-based so helm can execute
-FROM alpine:3.21 AS production
+FROM alpine:3.23 AS production
 RUN apk add --no-cache ca-certificates
 WORKDIR /app/
 COPY --from=build-prod /app/main .
