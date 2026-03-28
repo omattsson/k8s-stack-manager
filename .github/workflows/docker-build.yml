@@ -9,6 +9,7 @@ on:
       - 'frontend/**'
     tags:
       - 'v*.*.*'
+  workflow_dispatch:
 
 concurrency:
   group: docker-build-${{ github.ref }}

@@ -6,6 +6,7 @@ on:
       - main
     paths:
       - 'helm/**'
+  workflow_dispatch:
 
 concurrency:
   group: helm-release-${{ github.ref }}
