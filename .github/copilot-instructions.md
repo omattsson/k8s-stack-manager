@@ -4,7 +4,7 @@
 
 Full-stack app: **Go (Gin) backend** + **React (TypeScript, Vite, MUI) frontend**, with **MySQL** (GORM) or **Azure Table Storage** as swappable data stores. Docker Compose orchestrates all services.
 
-**Bootstrap flow**: `backend/api/main.go` → `config.LoadConfig()` → `database.NewRepository(cfg)` (factory selects MySQL or Azure based on `USE_AZURE_TABLE`) → `routes.SetupRoutes(router, routes.Deps{...})` → `http.Server` with graceful shutdown (`SIGINT`/`SIGTERM`).
+**Bootstrap flow**: `backend/api/main.go` → `config.LoadConfig()` → `database.NewRepositoryWithGormDB(cfg)` (factory selects MySQL or Azure based on `USE_AZURE_TABLE`) → `routes.SetupRoutes(router, routes.Deps{...})` → `http.Server` with graceful shutdown (`SIGINT`/`SIGTERM`).
 
 **Ports**: Backend `:8081` on host, frontend `:3000` in dev. Inside Docker, nginx and Vite proxy `/api` to `backend:8081`. Local non-Docker dev hits `localhost:8081` directly (`frontend/src/api/config.ts`).
 
@@ -25,9 +25,11 @@ backend/
       api_keys.go                # APIKeyHandler: API key management
       audit_logs.go              # AuditLogHandler: filterable audit log viewer + export
       auth.go                    # AuthHandler: login, register, current user
+      oidc.go                    # OIDCHandler: OpenID Connect authentication flow
       branch_overrides.go        # BranchOverrideHandler: per-chart branch overrides
       bulk_operations.go         # BulkHandler: bulk deploy/stop/clean/delete (up to 50 instances)
       bulk_template_operations.go # TemplateHandler: bulk delete/publish/unpublish (up to 50 templates)
+      instance_quota_overrides.go  # InstanceQuotaOverrideHandler: per-instance resource quota overrides
       chart_configs.go           # Chart config management (nested under definitions)
       cleanup_policies.go        # CleanupPolicyHandler: CRUD + manual run
       clusters.go                # ClusterHandler: CRUD + test-connection + health + quotas + utilization
@@ -60,8 +62,10 @@ backend/
     database/repository.go       # NewRepository() factory: MySQL vs Azure Table
     database/migrations.go       # Versioned migrations via schema.Migrator, auto-run on startup
     database/errors.go           # Re-exports from pkg/dberrors (single source of truth)
+    database/schema/             # Migrator and versioned migration structs
     models/                      # Domain models, repository interfaces, validation
     health/health.go             # Dependency health checks (liveness/readiness)
+    auth/                        # OIDC provider + state store for OpenID Connect auth
     cluster/                     # ClusterRegistry (multi-cluster coordination) + health poller
     deployer/                    # Helm CLI wrapper for deploy/undeploy/status (multi-cluster via registry)
     k8s/                         # Kubernetes cluster client, status monitoring, resource quota management
@@ -100,7 +104,7 @@ frontend/src/
   routes.tsx             # Route definitions (all pages + nested routes)
   components/Layout/     # AppBar + nav + footer shell
   pages/{Name}/          # Page components (one dir per page, may contain multiple files)
-  utils/                 # Utility functions (timeAgo, role helpers)
+  utils/                 # Utility functions (timeAgo, role helpers, notification helpers, recently used tracking)
 ```
 
 **Patterns**: MUI components (no raw HTML), `sx` prop for styling, functional components only, `useState`/`useEffect` for state, service objects with async methods for API calls. All service objects and methods in `api/client.ts` must have TSDoc comments with `@param`, `@returns`, and `@see` (HTTP method + route). New pages: create `pages/{Name}/` directory, register in `routes.tsx`, add nav in `Layout/index.tsx`. Use `timeAgo()` from `utils/timeAgo.ts` for relative timestamps with `Tooltip` showing full dates. Track recently used items via `localStorage` with JSON validation.
@@ -158,6 +162,7 @@ backend/internal/
   notifier/              # Notification dispatch (creates notifications on deploy/stop/clean events)
   scheduler/             # Cron-based cleanup policy execution with condition parsing
   ttl/                   # TTL reaper: background goroutine auto-expiring instances
+  auth/                  # OIDC provider: OpenID Connect authentication, state store
 ```
 
 ### Domain Conventions
@@ -210,6 +215,8 @@ backend/internal/
 | Favorites | `/api/v1/favorites` | User bookmark management |
 | Notifications | `/api/v1/notifications` | List, read/unread, count, preferences |
 | Quick Deploy | `/api/v1/templates/:id/quick-deploy` | One-click template deployment |
+| OIDC Auth | `/api/v1/auth/oidc` | OpenID Connect config, authorize, callback |
+| Quota Overrides | `/api/v1/stack-instances/:id/quota-overrides` | Per-instance resource quota overrides |
 | Health | `/health/*` | Liveness + readiness |
 
 ### Frontend Pages
@@ -217,6 +224,7 @@ backend/internal/
 | Page | Route | Description |
 |------|-------|-------------|
 | Login | `/login` | Username/password authentication |
+| Auth Callback | `/auth/callback` | OIDC authentication callback handler |
 | Dashboard | `/` | All stack instances overview with deploy/stop actions |
 | Stack Definitions | `/stack-definitions` | List, create, edit definitions |
 | Templates | `/templates` | Template gallery with publish/instantiate |

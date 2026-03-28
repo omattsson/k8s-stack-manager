@@ -34,3 +34,6 @@ Optimize field ordering for memory alignment. Place 8-byte fields before smaller
 
 ## Configuration
 All config via env vars with `.env` fallback (godotenv). See `internal/config/config.go`.
+
+## OIDC Authentication
+OpenID Connect support is in `internal/auth/`. The `auth.Provider` handles OIDC discovery and token validation. `auth.StateStore` manages CSRF-safe state tokens with configurable TTL. Enable via `OIDC_ENABLED=true` + related `OIDC_*` env vars in config. The `OIDCHandler` in `internal/api/handlers/oidc.go` exposes `/api/v1/auth/oidc/config`, `/authorize`, and `/callback` endpoints.

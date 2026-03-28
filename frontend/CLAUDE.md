@@ -14,14 +14,14 @@ Built with Vite + React 19 + TypeScript (strict mode). Uses SWC via `@vitejs/plu
 - **Hooks**: `src/hooks/useCountdown.ts` (countdown timer), `useUnsavedChanges.ts` (unsaved changes warning), `useWebSocket.ts` (WebSocket real-time updates)
 - **Theme**: `src/theme/` — `index.ts` (MUI theme export), `palette.ts`, `typography.ts`, `components.ts` (default prop/style overrides)
 - **Types**: `src/types/index.ts` — shared TypeScript type definitions
-- **Utils**: `src/utils/roles.ts` — role ranking and permission helpers; `src/utils/timeAgo.ts` — relative timestamp formatting ("2m ago", "3h ago")
+- **Utils**: `src/utils/roles.ts` — role ranking and permission helpers; `src/utils/timeAgo.ts` — relative timestamp formatting ("2m ago", "3h ago"); `src/utils/notificationHelpers.tsx` — toast notification utilities; `src/utils/recentTemplates.ts` — recently used template tracking via localStorage
 
 ## Component Patterns
 - Functional components only (no class components)
 - `useState`/`useEffect` for state, no global state library
 - MUI `sx` prop for styling, no separate CSS files
 - TypeScript interfaces for all component props and API response types
-- Pages: one directory per page under `src/pages/` with `index.tsx` — current pages: Login, StackInstances (Dashboard), StackDefinitions, Templates, AuditLog, Admin, Profile, Analytics, CleanupPolicies, ClusterHealth, Notifications, SharedValues, NotFound
+- Pages: one directory per page under `src/pages/` with `index.tsx` — current pages: Login, AuthCallback, StackInstances (Dashboard), StackDefinitions, Templates, AuditLog, Admin, Profile, Analytics, CleanupPolicies, ClusterHealth, Notifications, SharedValues, NotFound
 - Shared components in `src/components/`: Layout, AccessUrls, BranchSelector, ConfirmDialog, DeploymentLogViewer, EmptyState, EntityLink, ErrorBoundary, FavoriteButton, LoadingState, NotificationCenter, PodStatusDisplay, ProtectedRoute, QuickDeployDialog, QuotaConfigDialog, StatusBadge, TtlSelector, YamlEditor
 
 ## UX Patterns
