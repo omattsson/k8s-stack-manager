@@ -14,7 +14,7 @@ spec:
     - name: health-check
       interval: {{ .Values.backend.rollout.analysis.interval | default "30s" }}
       count: {{ .Values.backend.rollout.analysis.count | default 5 }}
-      successCondition: result == "healthy"
+      successCondition: result == "UP"
       failureLimit: {{ .Values.backend.rollout.analysis.failureLimit | default 2 }}
       provider:
         web:

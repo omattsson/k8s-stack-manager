@@ -16,6 +16,11 @@ spec:
     canary:
       canaryService: {{ include "k8s-stack-manager.backend.canaryService" . }}
       stableService: {{ include "k8s-stack-manager.backend.stableService" . }}
+      {{- if .Values.ingress.enabled }}
+      trafficRouting:
+        traefik:
+          weightedTraefikServiceName: {{ include "k8s-stack-manager.fullname" . }}-backend
+      {{- end }}
       {{- if .Values.backend.rollout.analysis.enabled }}
       analysis:
         templates:

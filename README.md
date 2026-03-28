@@ -161,21 +161,24 @@ The Helm chart in `helm/k8s-stack-manager/` deploys the full stack to Kubernetes
 
 ### Install
 
+> **Note:** The Helm chart requires `backend.secrets.JWT_SECRET` at render time.
+> You must provide this value via `--set` or the `JWT_SECRET` env var before running lint/install.
+
 ```bash
 # Lint the chart
 make helm-lint
 
-# Install with defaults (Azurite enabled, no host restriction)
-make helm-install
+# Install (JWT_SECRET env var required)
+JWT_SECRET=my-secret-at-least-16-chars make helm-install
 
-# Or install with custom values
+# Or install with custom values directly
 helm install k8s-stack-manager helm/k8s-stack-manager \
   --namespace k8s-stack-manager --create-namespace \
-  --set backend.secrets.JWT_SECRET=my-secret \
+  --set backend.secrets.JWT_SECRET=my-secret-at-least-16-chars \
   --set ingress.host=stacks.example.com
 
 # Upgrade after changes
-make helm-upgrade
+JWT_SECRET=my-secret-at-least-16-chars make helm-upgrade
 
 # Uninstall
 make helm-uninstall

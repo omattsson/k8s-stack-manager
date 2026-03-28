@@ -33,7 +33,7 @@ CMD ["nginx", "-g", "daemon off;"]
 
 # For development, use the node image to run the dev server
 FROM build AS development
-RUN adduser -D -u 1001 appuser
+RUN adduser -D -u 1001 appuser && chown -R appuser:appuser /app
 USER appuser
 EXPOSE 3000
 CMD ["npm", "run", "dev", "--", "--host", "0.0.0.0"]

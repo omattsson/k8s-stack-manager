@@ -11,23 +11,21 @@ Access the application:
 {{- end }}
 {{- else }}
 
-Port-forward to access locally:
-  kubectl port-forward svc/{{ include "k8s-stack-manager.frontend.stableService" . }} 3000:{{ .Values.frontend.port }}
+Ingress is disabled.
+
+NOTE: The frontend is built to call /api and /ws on the same origin.
+      This chart's frontend service requires an ingress or reverse proxy
+      that routes / to the frontend and /api, /ws to the backend.
+
+To test the backend API locally without ingress, port-forward the backend service:
   kubectl port-forward svc/{{ include "k8s-stack-manager.backend.stableService" . }} 8081:{{ .Values.backend.port }}
 
-  Frontend: http://localhost:3000
-  Backend:  http://localhost:8081
+  Backend API: http://localhost:8081
 {{- end }}
 
 Watch rollout status:
   kubectl argo rollouts get rollout {{ include "k8s-stack-manager.fullname" . }}-backend --watch
   kubectl argo rollouts get rollout {{ include "k8s-stack-manager.fullname" . }}-frontend --watch
-
-{{- if not .Values.backend.secrets.JWT_SECRET }}
-
-WARNING: backend.secrets.JWT_SECRET is not set!
-  Set it with: --set backend.secrets.JWT_SECRET="your-secret-at-least-16-chars"
-{{- end }}
 
 {{- if eq .Values.backend.secrets.ADMIN_PASSWORD "admin" }}
 
