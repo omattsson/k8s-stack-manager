@@ -136,6 +136,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Setup Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.25'
+          cache: true
+          cache-dependency-path: backend/go.sum
+
       - name: Run Gosec Security Scanner
         uses: securego/gosec@v2.22.4
         with:
@@ -144,5 +151,5 @@ jobs:
       - name: Run npm audit
         run: |
           cd frontend
-          npm ci --prefer-offline || true
+          npm ci --prefer-offline
           npm audit --audit-level=high
