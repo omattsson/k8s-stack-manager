@@ -6,9 +6,11 @@ package handlers
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -843,11 +845,19 @@ func (m *MockAuditLogRepository) List(filters models.AuditLogFilters) (*models.A
 	}
 	total := int64(len(out))
 
-	// Cursor-based pagination: skip entries until we pass the cursor ID.
+	// Cursor-based pagination: decode opaque cursor and skip entries until we pass the cursor ID.
 	if filters.Cursor != "" {
+		cursorID := filters.Cursor
+		// Try to decode as base64 opaque token (pk|rk format where rk is the ID).
+		if data, err := base64.StdEncoding.DecodeString(filters.Cursor); err == nil {
+			parts := strings.SplitN(string(data), "|", 2)
+			if len(parts) == 2 {
+				cursorID = parts[1]
+			}
+		}
 		found := false
 		for i, e := range out {
-			if e.ID == filters.Cursor {
+			if e.ID == cursorID {
 				out = out[i+1:]
 				found = true
 				break
@@ -871,7 +881,8 @@ func (m *MockAuditLogRepository) List(filters models.AuditLogFilters) (*models.A
 	if filters.Limit > 0 && filters.Limit < len(out) {
 		out = out[:filters.Limit]
 		if filters.Cursor != "" {
-			nextCursor = out[filters.Limit-1].ID
+			lastID := out[filters.Limit-1].ID
+			nextCursor = base64.StdEncoding.EncodeToString([]byte("mock|" + lastID))
 		}
 	}
 

@@ -2,9 +2,11 @@ package azure
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"math"
+	"strings"
 	"time"
 
 	"backend/internal/models"
@@ -39,6 +41,24 @@ func NewTestAuditLogRepository() *AuditLogRepository {
 // SetTestClient injects a mock client for testing.
 func (r *AuditLogRepository) SetTestClient(client AzureTableClient) {
 	r.client = client
+}
+
+// encodeCursor creates an opaque cursor token from a PartitionKey and RowKey.
+func encodeCursor(pk, rk string) string {
+	return base64.StdEncoding.EncodeToString([]byte(pk + "|" + rk))
+}
+
+// decodeCursor extracts PartitionKey and RowKey from an opaque cursor token.
+func decodeCursor(cursor string) (pk, rk string, err error) {
+	data, err := base64.StdEncoding.DecodeString(cursor)
+	if err != nil {
+		return "", "", fmt.Errorf("invalid cursor: %w", err)
+	}
+	parts := strings.SplitN(string(data), "|", 2)
+	if len(parts) != 2 {
+		return "", "", fmt.Errorf("invalid cursor format")
+	}
+	return parts[0], parts[1], nil
 }
 
 // reverseTimestamp generates a reverse timestamp string for recent-first ordering.
@@ -144,10 +164,20 @@ func (r *AuditLogRepository) List(filters models.AuditLogFilters) (*models.Audit
 		filterParts = append(filterParts, "Action eq '"+escapeODataString(filters.Action)+"'")
 	}
 
-	// Cursor-based pagination: skip to entities after the cursor RowKey.
-	// RowKeys are reverse-timestamp based, so lexicographic gt skips older entries already seen.
+	// Cursor-based pagination: decode the opaque cursor into PK+RK and build a
+	// composite filter that correctly handles cross-partition pagination.
 	if filters.Cursor != "" {
-		filterParts = append(filterParts, "RowKey gt '"+escapeODataString(filters.Cursor)+"'")
+		cursorPK, cursorRK, err := decodeCursor(filters.Cursor)
+		if err != nil {
+			return nil, dberrors.NewDatabaseError("list", fmt.Errorf("%w: %s", dberrors.ErrValidation, err.Error()))
+		}
+		escapedPK := escapeODataString(cursorPK)
+		escapedRK := escapeODataString(cursorRK)
+		cursorFilter := fmt.Sprintf(
+			"(PartitionKey gt '%s') or (PartitionKey eq '%s' and RowKey gt '%s')",
+			escapedPK, escapedPK, escapedRK,
+		)
+		filterParts = append(filterParts, cursorFilter)
 	}
 
 	var opts *aztables.ListEntitiesOptions
@@ -210,7 +240,7 @@ func (r *AuditLogRepository) List(filters models.AuditLogFilters) (*models.Audit
 			// More results exist beyond this page.
 			entities = entities[:filters.Limit]
 			lastEntity := entities[filters.Limit-1]
-			result.NextCursor = lastEntity.RowKey
+			result.NextCursor = encodeCursor(lastEntity.PartitionKey, lastEntity.RowKey)
 		}
 	} else {
 		// Offset/limit mode: if we hit maxResults, total is at least that many (but unknown exact).

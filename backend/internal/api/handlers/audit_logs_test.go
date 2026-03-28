@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"encoding/base64"
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
@@ -217,7 +218,8 @@ func TestListAuditLogs(t *testing.T) {
 		router := setupAuditLogRouter(repo)
 		w := httptest.NewRecorder()
 		// Request page of 2 starting from cursor "log-0" (should skip log-0, return log-1 and log-2)
-		req, _ := http.NewRequest(http.MethodGet, "/api/v1/audit-logs?limit=2&cursor=log-0", nil)
+		cursor := base64.StdEncoding.EncodeToString([]byte("mock|log-0"))
+		req, _ := http.NewRequest(http.MethodGet, "/api/v1/audit-logs?limit=2&cursor="+cursor, nil)
 		router.ServeHTTP(w, req)
 
 		assert.Equal(t, http.StatusOK, w.Code)
@@ -240,7 +242,8 @@ func TestListAuditLogs(t *testing.T) {
 		router := setupAuditLogRouter(repo)
 		w := httptest.NewRecorder()
 		// Request page of 10 starting from cursor "log-0" (only 2 remain: log-1, log-2)
-		req, _ := http.NewRequest(http.MethodGet, "/api/v1/audit-logs?limit=10&cursor=log-0", nil)
+		cursor := base64.StdEncoding.EncodeToString([]byte("mock|log-0"))
+		req, _ := http.NewRequest(http.MethodGet, "/api/v1/audit-logs?limit=10&cursor="+cursor, nil)
 		router.ServeHTTP(w, req)
 
 		assert.Equal(t, http.StatusOK, w.Code)
