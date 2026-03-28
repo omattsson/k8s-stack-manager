@@ -54,7 +54,7 @@ jobs:
         with:
           context: backend
           file: backend/Dockerfile
-          target: prod-final
+          target: production
           push: true
           tags: ${{ steps.meta-backend.outputs.tags }}
           labels: ${{ steps.meta-backend.outputs.labels }}
