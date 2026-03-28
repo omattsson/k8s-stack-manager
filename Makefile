@@ -303,4 +303,9 @@ helm-upgrade: ## Upgrade an existing release
 helm-uninstall: ## Uninstall the release
 	helm uninstall $(HELM_RELEASE) --namespace $(HELM_NAMESPACE)
 
+helm-release: helm-lint ## Package the Helm chart for release (CI uses chart-releaser-action)
+	@echo "Packaging Helm chart $(HELM_CHART)..."
+	helm package $(HELM_CHART) --destination .cr-release-packages
+	@echo "Chart packaged in .cr-release-packages/. Actual GitHub release is handled by .github/workflows/helm-release.yml"
+
 
