@@ -1,0 +1,17 @@
+{{- if .Values.frontend.pdb.enabled }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "k8s-stack-manager.fullname" . }}-frontend
+  labels:
+    {{- include "k8s-stack-manager.frontend.labels" . | nindent 4 }}
+spec:
+  {{- if .Values.frontend.pdb.minAvailable }}
+  minAvailable: {{ .Values.frontend.pdb.minAvailable }}
+  {{- else }}
+  maxUnavailable: {{ .Values.frontend.pdb.maxUnavailable | default 1 }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "k8s-stack-manager.frontend.selectorLabels" . | nindent 6 }}
+{{- end }}

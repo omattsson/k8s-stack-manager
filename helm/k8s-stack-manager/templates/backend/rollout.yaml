@@ -1,0 +1,80 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Rollout
+metadata:
+  name: {{ include "k8s-stack-manager.fullname" . }}-backend
+  labels:
+    {{- include "k8s-stack-manager.backend.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.backend.replicas }}
+  revisionHistoryLimit: 3
+  selector:
+    matchLabels:
+      {{- include "k8s-stack-manager.backend.selectorLabels" . | nindent 6 }}
+  strategy:
+    canary:
+      canaryService: {{ include "k8s-stack-manager.backend.canaryService" . }}
+      stableService: {{ include "k8s-stack-manager.backend.stableService" . }}
+      {{- if .Values.backend.rollout.analysis.enabled }}
+      analysis:
+        templates:
+          - templateName: {{ include "k8s-stack-manager.fullname" . }}-backend
+        args:
+          - name: service-name
+            value: {{ include "k8s-stack-manager.backend.canaryService" . }}
+      {{- end }}
+      {{- with .Values.backend.rollout.strategy.canary.steps }}
+      steps:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+  template:
+    metadata:
+      labels:
+        {{- include "k8s-stack-manager.backend.selectorLabels" . | nindent 8 }}
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/backend/configmap.yaml") . | sha256sum }}
+        checksum/secret: {{ include (print $.Template.BasePath "/backend/secret.yaml") . | sha256sum }}
+    spec:
+      {{- if .Values.backend.serviceAccount.create }}
+      serviceAccountName: {{ include "k8s-stack-manager.fullname" . }}-backend
+      {{- end }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        fsGroup: 65532
+      containers:
+        - name: backend
+          image: {{ include "k8s-stack-manager.backend.image" . }}
+          imagePullPolicy: {{ .Values.backend.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.backend.port }}
+              protocol: TCP
+          envFrom:
+            - configMapRef:
+                name: {{ include "k8s-stack-manager.fullname" . }}-backend
+            - secretRef:
+                name: {{ include "k8s-stack-manager.fullname" . }}-backend
+          livenessProbe:
+            httpGet:
+              path: /health/live
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /health/ready
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          resources:
+            {{- toYaml .Values.backend.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL

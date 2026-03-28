@@ -267,4 +267,26 @@ loadtest-frontend-run: ## Run Playwright load tests (assumes backend already run
 	@echo "Running frontend load tests (workers=$${LOAD_WORKERS:-5})..."
 	cd frontend && NODE_PATH=node_modules npx playwright test --config=../loadtest/frontend/playwright.config.ts
 
+# ── Helm / Kubernetes ────────────────────────────────────────────────
+HELM_CHART     := helm/k8s-stack-manager
+HELM_RELEASE   := k8s-stack-manager
+HELM_NAMESPACE := k8s-stack-manager
+
+helm-lint: ## Lint the Helm chart
+	helm lint $(HELM_CHART)
+
+helm-template: ## Render templates locally (dry-run)
+	helm template $(HELM_RELEASE) $(HELM_CHART) --namespace $(HELM_NAMESPACE)
+
+helm-install: ## Install the chart into the current cluster
+	helm install $(HELM_RELEASE) $(HELM_CHART) \
+		--namespace $(HELM_NAMESPACE) --create-namespace
+
+helm-upgrade: ## Upgrade an existing release
+	helm upgrade $(HELM_RELEASE) $(HELM_CHART) \
+		--namespace $(HELM_NAMESPACE)
+
+helm-uninstall: ## Uninstall the release
+	helm uninstall $(HELM_RELEASE) --namespace $(HELM_NAMESPACE)
+
 

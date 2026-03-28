@@ -1,0 +1,23 @@
+# Environment and secrets
+.env
+.env.*
+!.env.example
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Test and coverage
+coverage/
+*.test
+*.out
+tmp/
+
+# Documentation
+README.md
+
+# Git
+.git/
+.gitignore

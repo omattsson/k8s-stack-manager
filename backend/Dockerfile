@@ -1,16 +1,16 @@
-FROM golang:1.25 AS builder
+FROM golang:1.25.8 AS builder
 
 WORKDIR /app
 
 # Install helm CLI (multi-arch)
-ARG HELM_VERSION=3.17.3
+ARG HELM_VERSION=3.20.1
 ARG TARGETARCH
 RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*
 RUN curl -fsSL https://get.helm.sh/helm-v${HELM_VERSION}-linux-${TARGETARCH}.tar.gz \
     | tar xz -C /usr/local/bin --strip-components=1 linux-${TARGETARCH}/helm
 
 # For development mode
-FROM golang:1.25 AS development
+FROM golang:1.25.8 AS development
 WORKDIR /app
 COPY --from=builder /usr/local/bin/helm /usr/local/bin/helm
 RUN go install github.com/cosmtrek/air@v1.49.0

@@ -1,0 +1,26 @@
+{{- if .Values.azurite.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "k8s-stack-manager.fullname" . }}-azurite
+  labels:
+    {{- include "k8s-stack-manager.azurite.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "k8s-stack-manager.azurite.selectorLabels" . | nindent 6 }}
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "k8s-stack-manager.backend.selectorLabels" . | nindent 14 }}
+      ports:
+        - protocol: TCP
+          port: 10000
+        - protocol: TCP
+          port: 10001
+        - protocol: TCP
+          port: 10002
+{{- end }}

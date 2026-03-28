@@ -1,0 +1,57 @@
+{{- if .Values.ingress.enabled }}
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: {{ include "k8s-stack-manager.fullname" . }}
+  labels:
+    {{- include "k8s-stack-manager.labels" . | nindent 4 }}
+spec:
+  entryPoints:
+    {{- toYaml .Values.ingress.traefik.entryPoints | nindent 4 }}
+  routes:
+    # API requests → backend (strip /api prefix)
+    - match: {{ if .Values.ingress.host }}Host(`{{ .Values.ingress.host }}`) && {{ end }}PathPrefix(`/api`)
+      kind: Rule
+      services:
+        - name: {{ include "k8s-stack-manager.backend.stableService" . }}
+          port: {{ .Values.backend.port }}
+      middlewares:
+        {{- if .Values.ingress.traefik.middlewares.stripApiPrefix }}
+        - name: {{ include "k8s-stack-manager.fullname" . }}-strip-api-prefix
+        {{- end }}
+        {{- if .Values.ingress.traefik.middlewares.secureHeaders }}
+        - name: {{ include "k8s-stack-manager.fullname" . }}-secure-headers
+        {{- end }}
+    # WebSocket → backend (no prefix strip)
+    - match: {{ if .Values.ingress.host }}Host(`{{ .Values.ingress.host }}`) && {{ end }}PathPrefix(`/ws`)
+      kind: Rule
+      services:
+        - name: {{ include "k8s-stack-manager.backend.stableService" . }}
+          port: {{ .Values.backend.port }}
+    # Health checks → backend
+    - match: {{ if .Values.ingress.host }}Host(`{{ .Values.ingress.host }}`) && {{ end }}PathPrefix(`/health`)
+      kind: Rule
+      services:
+        - name: {{ include "k8s-stack-manager.backend.stableService" . }}
+          port: {{ .Values.backend.port }}
+    # Swagger docs → backend
+    - match: {{ if .Values.ingress.host }}Host(`{{ .Values.ingress.host }}`) && {{ end }}PathPrefix(`/swagger`)
+      kind: Rule
+      services:
+        - name: {{ include "k8s-stack-manager.backend.stableService" . }}
+          port: {{ .Values.backend.port }}
+    # Everything else → frontend (nginx serving SPA)
+    - match: {{ if .Values.ingress.host }}Host(`{{ .Values.ingress.host }}`) && {{ end }}PathPrefix(`/`)
+      kind: Rule
+      services:
+        - name: {{ include "k8s-stack-manager.frontend.stableService" . }}
+          port: {{ .Values.frontend.port }}
+      {{- if .Values.ingress.traefik.middlewares.secureHeaders }}
+      middlewares:
+        - name: {{ include "k8s-stack-manager.fullname" . }}-secure-headers
+      {{- end }}
+  {{- if .Values.ingress.traefik.tls.secretName }}
+  tls:
+    secretName: {{ .Values.ingress.traefik.tls.secretName }}
+  {{- end }}
+{{- end }}

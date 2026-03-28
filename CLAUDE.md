@@ -21,6 +21,64 @@ Full-stack app: **Go (Gin) backend** + **React (TypeScript, Vite, MUI) frontend*
 | Coverage (80% threshold) | `cd backend && make test-coverage` |
 | Lint | `make lint` (`go vet` + `npm run lint`) |
 | Install deps | `make install` |
+| Helm lint | `make helm-lint` |
+| Helm dry-run render | `make helm-template` |
+| Helm install | `make helm-install` |
+| Helm upgrade | `make helm-upgrade` |
+| Helm uninstall | `make helm-uninstall` |
+
+## Helm Chart (Kubernetes Deployment)
+
+The Helm chart lives in `helm/k8s-stack-manager/` and deploys the full stack to Kubernetes using **Argo Rollouts** (canary strategy) and **Traefik** IngressRoute.
+
+### Prerequisites
+- Kubernetes cluster with `kubectl` context configured
+- Helm 3+
+- Argo Rollouts controller installed (`kubectl create namespace argo-rollouts && kubectl apply -n argo-rollouts -f https://github.com/argoproj/argo-rollouts/releases/latest/download/install.yaml`)
+- Traefik ingress controller with CRDs installed
+
+### Chart Structure
+
+```
+helm/k8s-stack-manager/
+  Chart.yaml                              # Chart metadata (v0.1.0)
+  values.yaml                             # All configurable values
+  templates/_helpers.tpl                   # Reusable named templates
+  templates/NOTES.txt                      # Post-install instructions
+  templates/azurite/deployment.yaml        # Azurite for local Azure Table Storage
+  templates/azurite/service.yaml           # Azurite ClusterIP (blob/queue/table ports)
+  templates/azurite/pvc.yaml              # Persistent storage for Azurite data
+  templates/backend/configmap.yaml         # Non-secret env vars
+  templates/backend/secret.yaml            # Secret env vars (JWT, passwords, keys)
+  templates/backend/serviceaccount.yaml    # Optional ServiceAccount
+  templates/backend/service.yaml           # Stable service
+  templates/backend/service-canary.yaml    # Canary service
+  templates/backend/rollout.yaml           # Argo Rollout (canary: 20%→50%→80%)
+  templates/frontend/configmap.yaml        # nginx.conf (SPA-only routing)
+  templates/frontend/serviceaccount.yaml   # Optional ServiceAccount
+  templates/frontend/service.yaml          # Stable service
+  templates/frontend/service-canary.yaml   # Canary service
+  templates/frontend/rollout.yaml          # Argo Rollout (canary: 20%→50%→80%)
+  templates/traefik/middleware.yaml         # StripPrefix (/api) + secure headers
+  templates/traefik/ingressroute.yaml      # Routes: /api→backend, /ws→backend, /→frontend
+```
+
+### Key Design Decisions
+- **Argo Rollouts** instead of Deployments — canary strategy with stable + canary services for progressive delivery
+- **Traefik IngressRoute** CRD — routes `/api/*` to backend (strips prefix), `/ws` to backend, `/` to frontend
+- **Azurite enabled by default** (`azurite.enabled: true`) — provides Azure Table Storage emulator for local/dev clusters
+- **nginx in frontend pod** serves SPA only (no API proxy); Traefik handles all routing
+- **ConfigMap/Secret checksums** in pod annotations — trigger rollout on config changes
+- **Security contexts** — backend runs as non-root (uid 65532), readOnlyRootFilesystem; frontend drops all capabilities
+
+### Configuration
+Key values in `values.yaml`:
+- `backend.env.*` — Non-secret env vars (ConfigMap)
+- `backend.secrets.*` — Secret env vars like `JWT_SECRET`, `ADMIN_PASSWORD` (Secret)
+- `backend.replicas` / `frontend.replicas` — Independently scalable
+- `azurite.enabled` — Toggle Azurite (disable for production with real Azure Table Storage)
+- `ingress.enabled` / `ingress.host` — Traefik IngressRoute settings
+- `ingress.tls.enabled` / `ingress.tls.secretName` — TLS termination
 
 ## Backend Structure
 

@@ -1,0 +1,72 @@
+{{- if .Values.azurite.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "k8s-stack-manager.azurite.serviceName" . }}
+  labels:
+    {{- include "k8s-stack-manager.azurite.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "k8s-stack-manager.azurite.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "k8s-stack-manager.azurite.selectorLabels" . | nindent 8 }}
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+      containers:
+        - name: azurite
+          image: "{{ .Values.azurite.image.repository }}:{{ .Values.azurite.image.tag }}"
+          imagePullPolicy: {{ .Values.azurite.image.pullPolicy }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          command:
+            - azurite
+            - --tableHost
+            - "0.0.0.0"
+            - --blobHost
+            - "0.0.0.0"
+            - --queueHost
+            - "0.0.0.0"
+            - --location
+            - /data
+          ports:
+            - name: blob
+              containerPort: 10000
+            - name: queue
+              containerPort: 10001
+            - name: table
+              containerPort: 10002
+          readinessProbe:
+            tcpSocket:
+              port: table
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: table
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          resources:
+            {{- toYaml .Values.azurite.resources | nindent 12 }}
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ include "k8s-stack-manager.azurite.serviceName" . }}-data
+        - name: tmp
+          emptyDir: {}
+{{- end }}

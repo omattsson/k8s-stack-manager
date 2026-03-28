@@ -1,0 +1,17 @@
+{{- if .Values.azurite.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "k8s-stack-manager.azurite.serviceName" . }}-data
+  labels:
+    {{- include "k8s-stack-manager.azurite.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    - ReadWriteOnce
+  {{- if .Values.azurite.persistence.storageClass }}
+  storageClassName: {{ .Values.azurite.persistence.storageClass | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.azurite.persistence.size }}
+{{- end }}

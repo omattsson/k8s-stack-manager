@@ -1,0 +1,47 @@
+{{- if .Values.backend.rollout.analysis.enabled }}
+apiVersion: argoproj.io/v1alpha1
+kind: AnalysisTemplate
+metadata:
+  name: {{ include "k8s-stack-manager.fullname" . }}-backend
+  labels:
+    {{- include "k8s-stack-manager.backend.labels" . | nindent 4 }}
+spec:
+  args:
+    - name: service-name
+    - name: port
+      value: "{{ .Values.backend.port }}"
+  metrics:
+    - name: health-check
+      interval: {{ .Values.backend.rollout.analysis.interval | default "30s" }}
+      count: {{ .Values.backend.rollout.analysis.count | default 5 }}
+      successCondition: result == "healthy"
+      failureLimit: {{ .Values.backend.rollout.analysis.failureLimit | default 2 }}
+      provider:
+        web:
+          url: "http://{{ "{{" }}args.service-name{{ "}}" }}:{{ "{{" }}args.port{{ "}}" }}/health/ready"
+          jsonPath: "{$.status}"
+{{- end }}
+---
+{{- if .Values.frontend.rollout.analysis.enabled }}
+apiVersion: argoproj.io/v1alpha1
+kind: AnalysisTemplate
+metadata:
+  name: {{ include "k8s-stack-manager.fullname" . }}-frontend
+  labels:
+    {{- include "k8s-stack-manager.frontend.labels" . | nindent 4 }}
+spec:
+  args:
+    - name: service-name
+    - name: port
+      value: "{{ .Values.frontend.port }}"
+  metrics:
+    - name: health-check
+      interval: {{ .Values.frontend.rollout.analysis.interval | default "30s" }}
+      count: {{ .Values.frontend.rollout.analysis.count | default 5 }}
+      successCondition: result == "healthy"
+      failureLimit: {{ .Values.frontend.rollout.analysis.failureLimit | default 2 }}
+      provider:
+        web:
+          url: "http://{{ "{{" }}args.service-name{{ "}}" }}:{{ "{{" }}args.port{{ "}}" }}/"
+          jsonPath: "{$.status}"
+{{- end }}
