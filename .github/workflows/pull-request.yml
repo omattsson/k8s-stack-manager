@@ -2,16 +2,27 @@ name: Pull Request Validation
 
 on:
   pull_request:
-    branches: [ release, dev ]
+    branches: [ main ]
+
+concurrency:
+  group: pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
 
 jobs:
   validate:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+      statuses: write
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      
+
       - name: Validate PR title
         uses: amannn/action-semantic-pull-request@v5
         env:
@@ -29,83 +40,121 @@ jobs:
             - ci
             - chore
             - revert
-      
+
       - name: Check files changed
         id: files
-        uses: dorny/paths-filter@v2
+        uses: dorny/paths-filter@v3
         with:
           filters: |
             backend:
-              - 'backend/**/*'
+              - 'backend/**'
             frontend:
-              - 'frontend/**/*'
+              - 'frontend/**'
+            helm:
+              - 'helm/**'
             docs:
               - '**/*.md'
-              - 'docs/**/*'
-      
+              - 'docs/**'
+
       - name: Setup Go
         if: steps.files.outputs.backend == 'true'
-        uses: actions/setup-go@v3
+        uses: actions/setup-go@v4
         with:
-          go-version: '>=1.24.0'
-      
+          go-version: '1.25'
+          cache: true
+          cache-dependency-path: backend/go.sum
+
       - name: Backend Lint
         if: steps.files.outputs.backend == 'true'
         run: |
           cd backend
           go vet ./...
-          go get -u golang.org/x/lint/golint
-          go install golang.org/x/lint/golint
-          golint ./...
-      
+
       - name: Backend Tests
         if: steps.files.outputs.backend == 'true'
         run: |
           cd backend
-          go test -v ./...
-      
+          go test -v -short ./...
+
       - name: Setup Node.js
         if: steps.files.outputs.frontend == 'true'
-        uses: actions/setup-node@v3
+        uses: actions/setup-node@v4
         with:
           node-version: '20'
-      
-      - name: Frontend Lint
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Frontend Install
         if: steps.files.outputs.frontend == 'true'
         run: |
           cd frontend
           npm ci
+
+      - name: Frontend Lint
+        if: steps.files.outputs.frontend == 'true'
+        run: |
+          cd frontend
           npm run lint
-      
+
+      - name: Frontend Tests
+        if: steps.files.outputs.frontend == 'true'
+        run: |
+          cd frontend
+          npx vitest run
+
       - name: Frontend Build
         if: steps.files.outputs.frontend == 'true'
         run: |
           cd frontend
           npm run build
-      
-      - name: Frontend Tests
-        if: steps.files.outputs.frontend == 'true'
+
+      - name: Setup Helm
+        if: steps.files.outputs.helm == 'true'
+        uses: azure/setup-helm@v4
+        with:
+          version: 'v3.17.0'
+
+      - name: Helm Lint
+        if: steps.files.outputs.helm == 'true'
         run: |
-          cd frontend
-          npm test
-      
+          helm lint helm/k8s-stack-manager \
+            --set backend.secrets.JWT_SECRET=dummy-jwt-secret-for-lint
+
       - name: Markdown Lint
         if: steps.files.outputs.docs == 'true'
         uses: avto-dev/markdown-lint@v1
         with:
           args: '**/*.md'
-          
+
   security-scan:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
     steps:
-      - uses: actions/checkout@v3
-      
+      - uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.25'
+          cache: true
+          cache-dependency-path: backend/go.sum
+
       - name: Run Gosec Security Scanner
-        uses: securego/gosec@master
+        uses: securego/gosec@v2.22.4
         with:
           args: ./backend/...
-          
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
       - name: Run npm audit
         run: |
           cd frontend
-          npm audit
+          npm ci --prefer-offline
+          npm audit --audit-level=high
