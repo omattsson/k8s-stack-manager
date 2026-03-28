@@ -5,7 +5,9 @@ metadata:
   labels:
     {{- include "k8s-stack-manager.backend.labels" . | nindent 4 }}
 spec:
+  {{- if not .Values.backend.autoscaling.enabled }}
   replicas: {{ .Values.backend.replicas }}
+  {{- end }}
   revisionHistoryLimit: 3
   selector:
     matchLabels:
@@ -72,9 +74,27 @@ spec:
             failureThreshold: 3
           resources:
             {{- toYaml .Values.backend.resources | nindent 12 }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            - name: helm-cache
+              mountPath: /home/nonroot/.cache/helm
+            - name: helm-config
+              mountPath: /home/nonroot/.config/helm
+            - name: helm-data
+              mountPath: /home/nonroot/.local/share/helm
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
             capabilities:
               drop:
                 - ALL
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        - name: helm-cache
+          emptyDir: {}
+        - name: helm-config
+          emptyDir: {}
+        - name: helm-data
+          emptyDir: {}

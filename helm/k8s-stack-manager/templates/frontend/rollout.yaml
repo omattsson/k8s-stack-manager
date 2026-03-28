@@ -5,7 +5,9 @@ metadata:
   labels:
     {{- include "k8s-stack-manager.frontend.labels" . | nindent 4 }}
 spec:
+  {{- if not .Values.frontend.autoscaling.enabled }}
   replicas: {{ .Values.frontend.replicas }}
+  {{- end }}
   revisionHistoryLimit: 3
   selector:
     matchLabels:
@@ -36,6 +38,10 @@ spec:
       {{- if .Values.frontend.serviceAccount.create }}
       serviceAccountName: {{ include "k8s-stack-manager.fullname" . }}-frontend
       {{- end }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 101
+        fsGroup: 101
       containers:
         - name: nginx
           image: {{ include "k8s-stack-manager.frontend.image" . }}

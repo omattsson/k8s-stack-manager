@@ -10,7 +10,7 @@ fullnameOverride: ""
 backend:
   image:
     repository: k8s-stack-manager-backend
-    tag: latest
+    tag: ""  # Empty = uses Chart.AppVersion
     pullPolicy: IfNotPresent
   replicas: 2
   port: 8081
@@ -52,6 +52,8 @@ backend:
     HELM_BINARY: helm
     DEPLOYMENT_TIMEOUT: "10m"
     MAX_CONCURRENT_DEPLOYS: "5"
+    JWT_EXPIRATION: "24h"
+    ADMIN_USERNAME: admin
     # OIDC (disabled by default)
     OIDC_ENABLED: "false"
     OIDC_SCOPES: "openid,profile,email"
@@ -63,8 +65,6 @@ backend:
   # Secret environment variables (stored in Secret).
   secrets:
     JWT_SECRET: ""               # MUST be provided — minimum 16 chars
-    JWT_EXPIRATION: "24h"
-    ADMIN_USERNAME: admin
     ADMIN_PASSWORD: admin
     AZURE_TABLE_ACCOUNT_KEY: "Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw=="
     KUBECONFIG_ENCRYPTION_KEY: ""
@@ -115,7 +115,7 @@ backend:
 frontend:
   image:
     repository: k8s-stack-manager-frontend
-    tag: latest
+    tag: ""  # Empty = uses Chart.AppVersion
     pullPolicy: IfNotPresent
   replicas: 2
   port: 8080
