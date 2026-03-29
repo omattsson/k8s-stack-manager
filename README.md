@@ -4,6 +4,58 @@ A web application for configuring, storing, and managing multi-service Helm-base
 
 Developers create **stack definitions** (collections of Helm charts with configuration), launch **stack instances** (per-developer copies with branch and value overrides), and manage everything through an audit-logged UI with Git provider integration.
 
+## Features
+
+### Dashboard — Stack Instance Management
+
+View, search, and manage all your stack instances from a single dashboard. Filter by status (draft, deploying, running, stopped, error), star your favorites for quick access, and see recently used stacks at a glance. Bulk operations let you deploy, stop, clean, or delete up to 50 instances at once.
+
+![Dashboard](docs/screenshots/dashboard.png)
+
+### Template Gallery
+
+Browse and discover reusable stack templates organized by category (Web, API, Data, Infrastructure). Each template includes a description, version tag, and one-click **Quick Deploy** to spin up a new instance instantly. Create your own templates and publish them for your team.
+
+![Template Gallery](docs/screenshots/templates.png)
+
+### Stack Definitions
+
+Define multi-chart application stacks with Helm chart configurations, default branches, and value templates. Import and export definitions as JSON bundles for sharing across environments. Each definition can be used to create templates or directly instantiate stack instances.
+
+![Stack Definitions](docs/screenshots/stack-definitions.png)
+
+### Analytics Dashboard
+
+Track platform usage with real-time metrics: template and definition counts, running instances, total deployments, and active users. The template usage table shows deployment success rates and adoption across the team.
+
+![Analytics](docs/screenshots/analytics.png)
+
+### Audit Log
+
+Full audit trail of every action in the system — creates, updates, deletes — with filters by user, entity type, action, and date range. Export logs for compliance. Every mutating API call is automatically logged with user identity and entity details.
+
+![Audit Log](docs/screenshots/audit-log.png)
+
+### User Profile & API Keys
+
+Manage your account, generate API keys for CI/CD automation, and configure notification preferences per event type (deployment succeeded/failed, stopped, deleted).
+
+![Profile](docs/screenshots/profile.png)
+
+### Additional Features
+
+- **Multi-cluster support** — Register and manage multiple Kubernetes clusters with encrypted kubeconfig storage (AES-GCM). Monitor cluster health and resource utilization.
+- **Git provider integration** — Automatic branch listing from Azure DevOps and GitLab repositories, with per-chart branch overrides.
+- **Helm values deep merge** — Chart defaults are deep-merged with instance overrides. Template variables (`{{.Branch}}`, `{{.Namespace}}`, `{{.InstanceName}}`, etc.) are substituted automatically.
+- **Cleanup policies** — Schedule cron-based cleanup actions (stop, clean, delete) on instances matching custom conditions.
+- **TTL auto-expiry** — Set time-to-live on instances; a background reaper automatically stops expired deployments.
+- **Real-time updates** — WebSocket-based live updates push deployment status changes to all connected clients.
+- **RBAC** — Role-based access control (admin, devops, developer) with JWT authentication and optional OpenID Connect (OIDC) SSO.
+- **In-app notifications** — Get notified on deploy/stop/clean events with configurable per-user preferences.
+- **Instance comparison** — Side-by-side diff of two stack instances including merged Helm values per chart.
+- **Shared values** — Per-cluster shared Helm values applied to all instances, merged by priority before instance-specific overrides.
+- **Dark mode** — Full dark/light theme support.
+
 ## Architecture
 
 ```
