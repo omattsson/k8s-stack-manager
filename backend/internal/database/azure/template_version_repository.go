@@ -19,6 +19,16 @@ type TemplateVersionRepository struct {
 	tableName string
 }
 
+// NewTestTemplateVersionRepository creates a repository for unit testing.
+func NewTestTemplateVersionRepository() *TemplateVersionRepository {
+	return &TemplateVersionRepository{tableName: "TemplateVersions"}
+}
+
+// SetTestClient injects a mock client for testing.
+func (r *TemplateVersionRepository) SetTestClient(client AzureTableClient) {
+	r.client = client
+}
+
 // templateVersionEntity represents the Azure Table Storage entity for a template version.
 type templateVersionEntity struct {
 	PartitionKey  string `json:"PartitionKey"`

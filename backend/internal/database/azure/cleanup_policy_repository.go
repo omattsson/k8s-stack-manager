@@ -29,6 +29,16 @@ func NewCleanupPolicyRepository(accountName, accountKey, endpoint string, useAzu
 	return &CleanupPolicyRepository{client: client, tableName: "CleanupPolicies"}, nil
 }
 
+// NewTestCleanupPolicyRepository creates a repository for unit testing.
+func NewTestCleanupPolicyRepository() *CleanupPolicyRepository {
+	return &CleanupPolicyRepository{tableName: "CleanupPolicies"}
+}
+
+// SetTestClient injects a mock client for testing.
+func (r *CleanupPolicyRepository) SetTestClient(client AzureTableClient) {
+	r.client = client
+}
+
 // cleanupPolicyEntity is the typed Azure Table entity for cleanup policies.
 type cleanupPolicyEntity struct {
 	PartitionKey string `json:"PartitionKey"`
