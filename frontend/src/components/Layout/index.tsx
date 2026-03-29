@@ -231,7 +231,7 @@ const Layout = ({ children }: LayoutProps) => {
 
       {/* Dark mode toggle */}
       <Divider />
-      <Box sx={{ px: open ? 2 : 1, py: 1, display: 'flex', alignItems: open ? 'center' : 'center', justifyContent: open ? 'flex-start' : 'center' }}>
+      <Box sx={{ px: open ? 2 : 1, py: 1, display: 'flex', alignItems: 'center', justifyContent: open ? 'flex-start' : 'center' }}>
         {open ? (
           <ListItemButton
             onClick={toggleMode}

@@ -1096,7 +1096,7 @@ export const auditService = {
     if (contentDisposition) {
       const match = contentDisposition.match(/filename=([^;]+)/);
       if (match) {
-        filename = match[1].trim().replace(/^"|"$/g, '');
+        filename = match[1].trim().replace(/(^")|("$)/g, '');
       }
     }
 
