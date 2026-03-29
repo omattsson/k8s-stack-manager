@@ -43,7 +43,7 @@ func (h *GitHandler) ListBranches(c *gin.Context) {
 			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Git provider is not configured"})
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
 		return
 	}
 
@@ -76,7 +76,7 @@ func (h *GitHandler) ValidateBranch(c *gin.Context) {
 			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Git provider is not configured"})
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
 		return
 	}
 

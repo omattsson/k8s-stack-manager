@@ -10,6 +10,13 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// Cleanup policy handler message constants.
+const (
+	entityCleanupPolicy = "Cleanup policy"
+	msgPolicyIDRequired = "Policy ID is required"
+)
+
+
 // CleanupPolicyHandler handles CRUD and manual execution of cleanup policies.
 type CleanupPolicyHandler struct {
 	repo      models.CleanupPolicyRepository
@@ -34,7 +41,7 @@ func (h *CleanupPolicyHandler) ListCleanupPolicies(c *gin.Context) {
 	policies, err := h.repo.List()
 	if err != nil {
 		slog.Error("Failed to list cleanup policies", "error", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
 		return
 	}
 	c.JSON(http.StatusOK, policies)
@@ -55,7 +62,7 @@ func (h *CleanupPolicyHandler) ListCleanupPolicies(c *gin.Context) {
 func (h *CleanupPolicyHandler) CreateCleanupPolicy(c *gin.Context) {
 	var policy models.CleanupPolicy
 	if err := c.ShouldBindJSON(&policy); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request format"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": msgInvalidRequestFormat})
 		return
 	}
 
@@ -71,7 +78,7 @@ func (h *CleanupPolicyHandler) CreateCleanupPolicy(c *gin.Context) {
 	}
 
 	if err := h.repo.Create(&policy); err != nil {
-		status, msg := mapError(err, "Cleanup policy")
+		status, msg := mapError(err, entityCleanupPolicy)
 		c.JSON(status, gin.H{"error": msg})
 		return
 	}
@@ -102,20 +109,20 @@ func (h *CleanupPolicyHandler) CreateCleanupPolicy(c *gin.Context) {
 func (h *CleanupPolicyHandler) UpdateCleanupPolicy(c *gin.Context) {
 	id := c.Param("id")
 	if id == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Policy ID is required"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": msgPolicyIDRequired})
 		return
 	}
 
 	existing, err := h.repo.FindByID(id)
 	if err != nil {
-		status, msg := mapError(err, "Cleanup policy")
+		status, msg := mapError(err, entityCleanupPolicy)
 		c.JSON(status, gin.H{"error": msg})
 		return
 	}
 
 	var policy models.CleanupPolicy
 	if err := c.ShouldBindJSON(&policy); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request format"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": msgInvalidRequestFormat})
 		return
 	}
 
@@ -135,7 +142,7 @@ func (h *CleanupPolicyHandler) UpdateCleanupPolicy(c *gin.Context) {
 	}
 
 	if err := h.repo.Update(&policy); err != nil {
-		status, msg := mapError(err, "Cleanup policy")
+		status, msg := mapError(err, entityCleanupPolicy)
 		c.JSON(status, gin.H{"error": msg})
 		return
 	}
@@ -162,12 +169,12 @@ func (h *CleanupPolicyHandler) UpdateCleanupPolicy(c *gin.Context) {
 func (h *CleanupPolicyHandler) DeleteCleanupPolicy(c *gin.Context) {
 	id := c.Param("id")
 	if id == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Policy ID is required"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": msgPolicyIDRequired})
 		return
 	}
 
 	if err := h.repo.Delete(id); err != nil {
-		status, msg := mapError(err, "Cleanup policy")
+		status, msg := mapError(err, entityCleanupPolicy)
 		c.JSON(status, gin.H{"error": msg})
 		return
 	}
@@ -197,7 +204,7 @@ func (h *CleanupPolicyHandler) DeleteCleanupPolicy(c *gin.Context) {
 func (h *CleanupPolicyHandler) RunCleanupPolicy(c *gin.Context) {
 	id := c.Param("id")
 	if id == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Policy ID is required"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": msgPolicyIDRequired})
 		return
 	}
 
@@ -210,7 +217,7 @@ func (h *CleanupPolicyHandler) RunCleanupPolicy(c *gin.Context) {
 
 	results, err := h.scheduler.RunPolicy(id, dryRun)
 	if err != nil {
-		status, msg := mapError(err, "Cleanup policy")
+		status, msg := mapError(err, entityCleanupPolicy)
 		c.JSON(status, gin.H{"error": msg})
 		return
 	}

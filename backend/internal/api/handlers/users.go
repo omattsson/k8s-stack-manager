@@ -34,7 +34,7 @@ func NewUserHandler(userRepo models.UserRepository) *UserHandler {
 func (h *UserHandler) ListUsers(c *gin.Context) {
 	users, err := h.userRepo.List()
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
 		return
 	}
 	// models.User.PasswordHash is tagged json:"-" so it is never serialised.

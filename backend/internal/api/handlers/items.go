@@ -14,6 +14,12 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// Items handler message constants.
+const (
+	msgInvalidIDFormat = "Invalid ID format"
+)
+
+
 type Handler struct {
 	repository models.Repository
 	hub        websocket.BroadcastSender
@@ -60,14 +66,14 @@ func handleDBError(err error) (int, string) {
 		if errors.Is(dbErr.Err, database.ErrDuplicateKey) {
 			return http.StatusConflict, "Item already exists"
 		}
-		return http.StatusInternalServerError, "Internal server error"
+		return http.StatusInternalServerError, msgInternalServerError
 	}
 
 	if strings.Contains(err.Error(), "not found") {
 		return http.StatusNotFound, "Item not found"
 	}
 	// Never leak raw error messages to clients
-	return http.StatusInternalServerError, "Internal server error"
+	return http.StatusInternalServerError, msgInternalServerError
 }
 
 // CreateItem godoc
@@ -83,7 +89,7 @@ func handleDBError(err error) (int, string) {
 func (h *Handler) CreateItem(c *gin.Context) {
 	var item models.Item
 	if err := c.ShouldBindJSON(&item); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request format"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": msgInvalidRequestFormat})
 		return
 	}
 
@@ -176,7 +182,7 @@ func (h *Handler) GetItems(c *gin.Context) {
 func (h *Handler) GetItem(c *gin.Context) {
 	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid ID format"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": msgInvalidIDFormat})
 		return
 	}
 
@@ -204,7 +210,7 @@ func (h *Handler) GetItem(c *gin.Context) {
 func (h *Handler) UpdateItem(c *gin.Context) {
 	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid ID format"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": msgInvalidIDFormat})
 		return
 	}
 
@@ -218,7 +224,7 @@ func (h *Handler) UpdateItem(c *gin.Context) {
 
 	var updateItem models.Item
 	if err := c.ShouldBindJSON(&updateItem); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request format"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": msgInvalidRequestFormat})
 		return
 	}
 
@@ -261,7 +267,7 @@ func (h *Handler) UpdateItem(c *gin.Context) {
 func (h *Handler) DeleteItem(c *gin.Context) {
 	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid ID format"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": msgInvalidIDFormat})
 		return
 	}
 

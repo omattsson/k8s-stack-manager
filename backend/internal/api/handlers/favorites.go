@@ -10,6 +10,15 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// Favorites handler message constants.
+const (
+	msgInvalidEntityType = "entity_type must be one of: definition, instance, template"
+)
+
+const logKeyFavUserID = "user_id"
+
+
+
 // FavoriteHandler handles user favorites endpoints.
 type FavoriteHandler struct {
 	favoriteRepo models.UserFavoriteRepository
@@ -41,8 +50,8 @@ func (h *FavoriteHandler) ListFavorites(c *gin.Context) {
 
 	favorites, err := h.favoriteRepo.List(userID)
 	if err != nil {
-		slog.Error("Failed to list favorites", "error", err, "user_id", userID)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
+		slog.Error("Failed to list favorites", "error", err, logKeyFavUserID, userID)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
 		return
 	}
 
@@ -67,7 +76,7 @@ func (h *FavoriteHandler) AddFavorite(c *gin.Context) {
 
 	var req addFavoriteRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request format"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": msgInvalidRequestFormat})
 		return
 	}
 
@@ -77,7 +86,7 @@ func (h *FavoriteHandler) AddFavorite(c *gin.Context) {
 	}
 
 	if !models.ValidateFavoriteEntityType(req.EntityType) {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "entity_type must be one of: definition, instance, template"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": msgInvalidEntityType})
 		return
 	}
 
@@ -90,7 +99,7 @@ func (h *FavoriteHandler) AddFavorite(c *gin.Context) {
 	if err := h.favoriteRepo.Add(fav); err != nil {
 		status, message := mapError(err, "Favorite")
 		if status >= http.StatusInternalServerError {
-			slog.Error("Failed to add favorite", "error", err, "user_id", userID)
+			slog.Error("Failed to add favorite", "error", err, logKeyFavUserID, userID)
 		}
 		c.JSON(status, gin.H{"error": message})
 		return
@@ -118,7 +127,7 @@ func (h *FavoriteHandler) RemoveFavorite(c *gin.Context) {
 	entityID := c.Param("entityId")
 
 	if !models.ValidateFavoriteEntityType(entityType) {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "entity_type must be one of: definition, instance, template"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": msgInvalidEntityType})
 		return
 	}
 
@@ -130,7 +139,7 @@ func (h *FavoriteHandler) RemoveFavorite(c *gin.Context) {
 	if err := h.favoriteRepo.Remove(userID, entityType, entityID); err != nil {
 		status, message := mapError(err, "Favorite")
 		if status >= http.StatusInternalServerError {
-			slog.Error("Failed to remove favorite", "error", err, "user_id", userID)
+			slog.Error("Failed to remove favorite", "error", err, logKeyFavUserID, userID)
 		}
 		c.JSON(status, gin.H{"error": message})
 		return
@@ -163,14 +172,14 @@ func (h *FavoriteHandler) CheckFavorite(c *gin.Context) {
 	}
 
 	if !models.ValidateFavoriteEntityType(entityType) {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "entity_type must be one of: definition, instance, template"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": msgInvalidEntityType})
 		return
 	}
 
 	isFav, err := h.favoriteRepo.IsFavorite(userID, entityType, entityID)
 	if err != nil {
-		slog.Error("Failed to check favorite", "error", err, "user_id", userID)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
+		slog.Error("Failed to check favorite", "error", err, logKeyFavUserID, userID)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
 		return
 	}
 

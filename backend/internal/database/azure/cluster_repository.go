@@ -16,6 +16,10 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/data/aztables"
 )
 
+const tableClusters = "Clusters"
+const filterPKClusters = odataPartitionKeyEq + "clusters'"
+
+
 // ClusterRepository implements models.ClusterRepository for Azure Table Storage.
 // Partition key: "clusters", Row key: cluster ID.
 type ClusterRepository struct {
@@ -27,11 +31,11 @@ type ClusterRepository struct {
 
 // NewClusterRepository creates a new Azure Table Storage cluster repository.
 func NewClusterRepository(accountName, accountKey, endpoint string, useAzurite bool, encryptionKey string) (*ClusterRepository, error) {
-	client, err := createTableClient(accountName, accountKey, endpoint, "Clusters", useAzurite)
+	client, err := createTableClient(accountName, accountKey, endpoint, tableClusters, useAzurite)
 	if err != nil {
 		return nil, err
 	}
-	repo := &ClusterRepository{client: client, tableName: "Clusters"}
+	repo := &ClusterRepository{client: client, tableName: tableClusters}
 	if encryptionKey != "" {
 		repo.encryptionKey = crypto.DeriveKey(encryptionKey)
 	} else {
@@ -42,7 +46,7 @@ func NewClusterRepository(accountName, accountKey, endpoint string, useAzurite b
 
 // NewTestClusterRepository creates a repository for unit testing.
 func NewTestClusterRepository(encryptionKey string) *ClusterRepository {
-	repo := &ClusterRepository{tableName: "Clusters"}
+	repo := &ClusterRepository{tableName: tableClusters}
 	if encryptionKey != "" {
 		repo.encryptionKey = crypto.DeriveKey(encryptionKey)
 	}
@@ -126,12 +130,12 @@ func (r *ClusterRepository) Create(cluster *models.Cluster) error {
 	}
 	entityBytes, err := json.Marshal(entity)
 	if err != nil {
-		return dberrors.NewDatabaseError("marshal", err)
+		return dberrors.NewDatabaseError(opMarshal, err)
 	}
 
 	_, err = r.client.AddEntity(ctx, entityBytes, nil)
 	if err != nil {
-		return mapAzureError("create", err)
+		return mapAzureError(opCreate, err)
 	}
 	return nil
 }
@@ -139,14 +143,14 @@ func (r *ClusterRepository) Create(cluster *models.Cluster) error {
 func (r *ClusterRepository) FindByID(id string) (*models.Cluster, error) {
 	ctx := context.Background()
 
-	resp, err := r.client.GetEntity(ctx, "clusters", id, nil)
+	resp, err := r.client.GetEntity(ctx, pkClusters, id, nil)
 	if err != nil {
 		return nil, mapAzureError("find_by_id", err)
 	}
 
 	var entity clusterEntity
 	if err := json.Unmarshal(resp.Value, &entity); err != nil {
-		return nil, dberrors.NewDatabaseError("unmarshal", err)
+		return nil, dberrors.NewDatabaseError(opUnmarshal, err)
 	}
 	return r.clusterEntityToModel(&entity)
 }
@@ -162,12 +166,12 @@ func (r *ClusterRepository) Update(cluster *models.Cluster) error {
 	}
 	entityBytes, err := json.Marshal(entity)
 	if err != nil {
-		return dberrors.NewDatabaseError("marshal", err)
+		return dberrors.NewDatabaseError(opMarshal, err)
 	}
 
 	_, err = r.client.UpdateEntity(ctx, entityBytes, nil)
 	if err != nil {
-		return mapAzureError("update", err)
+		return mapAzureError(opUpdate, err)
 	}
 	return nil
 }
@@ -175,9 +179,9 @@ func (r *ClusterRepository) Update(cluster *models.Cluster) error {
 func (r *ClusterRepository) Delete(id string) error {
 	ctx := context.Background()
 
-	_, err := r.client.DeleteEntity(ctx, "clusters", id, nil)
+	_, err := r.client.DeleteEntity(ctx, pkClusters, id, nil)
 	if err != nil {
-		return mapAzureError("delete", err)
+		return mapAzureError(opDelete, err)
 	}
 	return nil
 }
@@ -185,14 +189,14 @@ func (r *ClusterRepository) Delete(id string) error {
 func (r *ClusterRepository) List() ([]models.Cluster, error) {
 	ctx := context.Background()
 
-	filter := "PartitionKey eq 'clusters'"
+	filter := filterPKClusters
 	pager := r.client.NewListEntitiesPager(&aztables.ListEntitiesOptions{
 		Filter: &filter,
 	})
 
 	entities, err := collectEntitiesTyped[clusterEntity](ctx, pager, nil, 0)
 	if err != nil {
-		return nil, mapAzureError("list", err)
+		return nil, mapAzureError(opList, err)
 	}
 
 	results := make([]models.Cluster, 0, len(entities))
@@ -209,7 +213,7 @@ func (r *ClusterRepository) List() ([]models.Cluster, error) {
 func (r *ClusterRepository) FindDefault() (*models.Cluster, error) {
 	ctx := context.Background()
 
-	filter := "PartitionKey eq 'clusters'"
+	filter := filterPKClusters
 	pager := r.client.NewListEntitiesPager(&aztables.ListEntitiesOptions{
 		Filter: &filter,
 	})
@@ -235,7 +239,7 @@ func (r *ClusterRepository) SetDefault(id string) error {
 	// Find the current default and unset it.
 	// SetDefault needs to read-modify-write, so we use the entity struct for the
 	// read (typed deserialization), then marshal back for the write.
-	filter := "PartitionKey eq 'clusters'"
+	filter := filterPKClusters
 	pager := r.client.NewListEntitiesPager(&aztables.ListEntitiesOptions{
 		Filter: &filter,
 	})
@@ -252,7 +256,7 @@ func (r *ClusterRepository) SetDefault(id string) error {
 		e.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
 		entityBytes, err := json.Marshal(e)
 		if err != nil {
-			return dberrors.NewDatabaseError("marshal", err)
+			return dberrors.NewDatabaseError(opMarshal, err)
 		}
 		if _, err := r.client.UpdateEntity(ctx, entityBytes, nil); err != nil {
 			return mapAzureError("set_default", err)
@@ -282,7 +286,7 @@ func (r *ClusterRepository) clusterToEntity(c *models.Cluster) (map[string]inter
 	}
 
 	return map[string]interface{}{
-		"PartitionKey":   "clusters",
+		"PartitionKey":   pkClusters,
 		"RowKey":         c.ID,
 		"ID":             c.ID,
 		"Name":           c.Name,

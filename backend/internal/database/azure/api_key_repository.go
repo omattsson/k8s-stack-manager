@@ -11,6 +11,9 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/data/aztables"
 )
 
+const tableAPIKeys = "APIKeys"
+
+
 // APIKeyRepository implements models.APIKeyRepository for Azure Table Storage.
 // Partition key: UserID, Row key: key ID.
 type APIKeyRepository struct {
@@ -20,16 +23,16 @@ type APIKeyRepository struct {
 
 // NewAPIKeyRepository creates a new Azure Table Storage API key repository.
 func NewAPIKeyRepository(accountName, accountKey, endpoint string, useAzurite bool) (*APIKeyRepository, error) {
-	client, err := createTableClient(accountName, accountKey, endpoint, "APIKeys", useAzurite)
+	client, err := createTableClient(accountName, accountKey, endpoint, tableAPIKeys, useAzurite)
 	if err != nil {
 		return nil, err
 	}
-	return &APIKeyRepository{client: client, tableName: "APIKeys"}, nil
+	return &APIKeyRepository{client: client, tableName: tableAPIKeys}, nil
 }
 
 // NewTestAPIKeyRepository creates an APIKeyRepository for unit testing without connecting.
 func NewTestAPIKeyRepository() *APIKeyRepository {
-	return &APIKeyRepository{tableName: "APIKeys"}
+	return &APIKeyRepository{tableName: tableAPIKeys}
 }
 
 // SetTestClient injects a mock client for testing.
@@ -83,7 +86,7 @@ func (r *APIKeyRepository) Create(key *models.APIKey) error {
 		key.ID = newID()
 	}
 	if key.UserID == "" || key.Name == "" {
-		return dberrors.NewDatabaseError("create", dberrors.ErrValidation)
+		return dberrors.NewDatabaseError(opCreate, dberrors.ErrValidation)
 	}
 
 	key.CreatedAt = now
@@ -104,12 +107,12 @@ func (r *APIKeyRepository) Create(key *models.APIKey) error {
 
 	entityBytes, err := json.Marshal(entity)
 	if err != nil {
-		return dberrors.NewDatabaseError("marshal", err)
+		return dberrors.NewDatabaseError(opMarshal, err)
 	}
 
 	_, err = r.client.AddEntity(ctx, entityBytes, nil)
 	if err != nil {
-		return mapAzureError("create", err)
+		return mapAzureError(opCreate, err)
 	}
 	return nil
 }
@@ -124,7 +127,7 @@ func (r *APIKeyRepository) FindByID(userID, keyID string) (*models.APIKey, error
 
 	var entity apiKeyEntity
 	if err := json.Unmarshal(resp.Value, &entity); err != nil {
-		return nil, dberrors.NewDatabaseError("unmarshal", err)
+		return nil, dberrors.NewDatabaseError(opUnmarshal, err)
 	}
 
 	return entity.toModel(), nil
@@ -187,14 +190,14 @@ func (r *APIKeyRepository) UpdateLastUsed(userID, keyID string, t time.Time) err
 	// entity struct, update the field, and re-marshal for the write.
 	var entity apiKeyEntity
 	if err := json.Unmarshal(resp.Value, &entity); err != nil {
-		return dberrors.NewDatabaseError("unmarshal", err)
+		return dberrors.NewDatabaseError(opUnmarshal, err)
 	}
 
 	entity.LastUsedAt = t.UTC().Format(time.RFC3339)
 
 	entityBytes, err := json.Marshal(entity)
 	if err != nil {
-		return dberrors.NewDatabaseError("marshal", err)
+		return dberrors.NewDatabaseError(opMarshal, err)
 	}
 
 	_, err = r.client.UpdateEntity(ctx, entityBytes, nil)
@@ -209,7 +212,7 @@ func (r *APIKeyRepository) Delete(userID, keyID string) error {
 
 	_, err := r.client.DeleteEntity(ctx, userID, keyID, nil)
 	if err != nil {
-		return mapAzureError("delete", err)
+		return mapAzureError(opDelete, err)
 	}
 	return nil
 }

@@ -120,7 +120,7 @@ func (h *QuickDeployHandler) QuickDeploy(c *gin.Context) {
 
 	var req quickDeployRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request format"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": msgInvalidRequestFormat})
 		return
 	}
 
@@ -132,7 +132,7 @@ func (h *QuickDeployHandler) QuickDeploy(c *gin.Context) {
 	// 1. Fetch and verify template.
 	tmpl, err := h.templateRepo.FindByID(templateID)
 	if err != nil {
-		status, message := mapError(err, "Template")
+		status, message := mapError(err, entityTemplate)
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
@@ -169,7 +169,7 @@ func (h *QuickDeployHandler) QuickDeploy(c *gin.Context) {
 	}
 
 	if err := h.definitionRepo.Create(def); err != nil {
-		status, message := mapError(err, "Stack definition")
+		status, message := mapError(err, entityStackDefinition)
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
@@ -214,7 +214,7 @@ func (h *QuickDeployHandler) QuickDeploy(c *gin.Context) {
 				}
 			}
 			cleanupDefinition()
-			status, message := mapError(err, "Chart config")
+			status, message := mapError(err, entityChartConfig)
 			c.JSON(status, gin.H{"error": message})
 			return
 		}
@@ -302,7 +302,7 @@ func (h *QuickDeployHandler) QuickDeploy(c *gin.Context) {
 			"namespace", inst.Namespace,
 			"error", nsErr,
 		)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
 		return
 	}
 	if existingInst != nil {
@@ -318,7 +318,7 @@ func (h *QuickDeployHandler) QuickDeploy(c *gin.Context) {
 
 	if err := h.instanceRepo.Create(inst); err != nil {
 		cleanupAll()
-		status, message := mapError(err, "Stack instance")
+		status, message := mapError(err, entityStackInstance)
 		c.JSON(status, gin.H{"error": message})
 		return
 	}

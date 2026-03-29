@@ -10,6 +10,12 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// API key handler message constants.
+const (
+	msgForbidden = "Forbidden"
+)
+
+
 // APIKeyHandler handles API key management endpoints.
 type APIKeyHandler struct {
 	apiKeyRepo models.APIKeyRepository
@@ -61,7 +67,7 @@ func (h *APIKeyHandler) CreateAPIKey(c *gin.Context) {
 	}
 
 	if !canAccessUserKeys(c, userID) {
-		c.JSON(http.StatusForbidden, gin.H{"error": "Forbidden"})
+		c.JSON(http.StatusForbidden, gin.H{"error": msgForbidden})
 		return
 	}
 
@@ -74,13 +80,13 @@ func (h *APIKeyHandler) CreateAPIKey(c *gin.Context) {
 
 	var req CreateAPIKeyRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request format"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": msgInvalidRequestFormat})
 		return
 	}
 
 	rawKey, prefix, hash, err := models.GenerateAPIKey()
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
 		return
 	}
 
@@ -143,7 +149,7 @@ func (h *APIKeyHandler) ListAPIKeys(c *gin.Context) {
 	}
 
 	if !canAccessUserKeys(c, userID) {
-		c.JSON(http.StatusForbidden, gin.H{"error": "Forbidden"})
+		c.JSON(http.StatusForbidden, gin.H{"error": msgForbidden})
 		return
 	}
 
@@ -156,7 +162,7 @@ func (h *APIKeyHandler) ListAPIKeys(c *gin.Context) {
 
 	keys, err := h.apiKeyRepo.ListByUser(userID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
 		return
 	}
 
@@ -186,7 +192,7 @@ func (h *APIKeyHandler) DeleteAPIKey(c *gin.Context) {
 	}
 
 	if !canAccessUserKeys(c, userID) {
-		c.JSON(http.StatusForbidden, gin.H{"error": "Forbidden"})
+		c.JSON(http.StatusForbidden, gin.H{"error": msgForbidden})
 		return
 	}
 

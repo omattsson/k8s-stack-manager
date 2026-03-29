@@ -10,6 +10,9 @@ import (
 	"backend/pkg/dberrors"
 )
 
+const tableInstanceQuotaOverrides = "InstanceQuotaOverrides"
+
+
 const instanceQuotaRowKey = "quota"
 
 // InstanceQuotaOverrideRepository implements models.InstanceQuotaOverrideRepository for Azure Table Storage.
@@ -21,16 +24,16 @@ type InstanceQuotaOverrideRepository struct {
 
 // NewInstanceQuotaOverrideRepository creates a new Azure Table Storage instance quota override repository.
 func NewInstanceQuotaOverrideRepository(accountName, accountKey, endpoint string, useAzurite bool) (*InstanceQuotaOverrideRepository, error) {
-	client, err := createTableClient(accountName, accountKey, endpoint, "InstanceQuotaOverrides", useAzurite)
+	client, err := createTableClient(accountName, accountKey, endpoint, tableInstanceQuotaOverrides, useAzurite)
 	if err != nil {
 		return nil, err
 	}
-	return &InstanceQuotaOverrideRepository{client: client, tableName: "InstanceQuotaOverrides"}, nil
+	return &InstanceQuotaOverrideRepository{client: client, tableName: tableInstanceQuotaOverrides}, nil
 }
 
 // NewTestInstanceQuotaOverrideRepository creates a repository for unit testing.
 func NewTestInstanceQuotaOverrideRepository() *InstanceQuotaOverrideRepository {
-	return &InstanceQuotaOverrideRepository{tableName: "InstanceQuotaOverrides"}
+	return &InstanceQuotaOverrideRepository{tableName: tableInstanceQuotaOverrides}
 }
 
 // SetTestClient injects a mock client for testing.
@@ -79,7 +82,7 @@ func (r *InstanceQuotaOverrideRepository) GetByInstanceID(ctx context.Context, i
 
 	var entity instanceQuotaOverrideEntity
 	if err := json.Unmarshal(resp.Value, &entity); err != nil {
-		return nil, dberrors.NewDatabaseError("unmarshal", err)
+		return nil, dberrors.NewDatabaseError(opUnmarshal, err)
 	}
 
 	return entity.toModel(), nil
@@ -107,12 +110,12 @@ func (r *InstanceQuotaOverrideRepository) Upsert(ctx context.Context, override *
 		entity := instanceQuotaOverrideToEntity(override)
 		entityBytes, marshalErr := json.Marshal(entity)
 		if marshalErr != nil {
-			return dberrors.NewDatabaseError("marshal", marshalErr)
+			return dberrors.NewDatabaseError(opMarshal, marshalErr)
 		}
 
 		_, addErr := r.client.AddEntity(ctx, entityBytes, nil)
 		if addErr != nil {
-			return mapAzureError("create", addErr)
+			return mapAzureError(opCreate, addErr)
 		}
 		return nil
 	}
@@ -121,12 +124,12 @@ func (r *InstanceQuotaOverrideRepository) Upsert(ctx context.Context, override *
 	entity := instanceQuotaOverrideToEntity(override)
 	entityBytes, err := json.Marshal(entity)
 	if err != nil {
-		return dberrors.NewDatabaseError("marshal", err)
+		return dberrors.NewDatabaseError(opMarshal, err)
 	}
 
 	_, err = r.client.UpdateEntity(ctx, entityBytes, nil)
 	if err != nil {
-		return mapAzureError("update", err)
+		return mapAzureError(opUpdate, err)
 	}
 	return nil
 }
@@ -135,7 +138,7 @@ func (r *InstanceQuotaOverrideRepository) Upsert(ctx context.Context, override *
 func (r *InstanceQuotaOverrideRepository) Delete(ctx context.Context, instanceID string) error {
 	_, err := r.client.DeleteEntity(ctx, instanceID, instanceQuotaRowKey, nil)
 	if err != nil {
-		return mapAzureError("delete", err)
+		return mapAzureError(opDelete, err)
 	}
 	return nil
 }

@@ -11,6 +11,23 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/data/aztables"
 )
 
+// User repository constants.
+const (
+	tableUsers      = "Users"
+	fieldUsername    = "Username"
+	fieldEmail       = "Email"
+	fieldDisplayName = "DisplayName"
+	fieldRole        = "Role"
+	fieldPasswordHash = "PasswordHash"
+	fieldAuthProvider = "AuthProvider"
+	fieldExternalID   = "ExternalID"
+	fieldCreatedAt    = "CreatedAt"
+	fieldUpdatedAt    = "UpdatedAt"
+	fieldPartitionKey = "PartitionKey"
+	fieldRowKey       = "RowKey"
+)
+
+
 // UserRepository implements models.UserRepository for Azure Table Storage.
 // Partition key: "users", Row key: username.
 type UserRepository struct {
@@ -28,16 +45,16 @@ func derefString(s *string) string {
 
 // NewUserRepository creates a new Azure Table Storage user repository.
 func NewUserRepository(accountName, accountKey, endpoint string, useAzurite bool) (*UserRepository, error) {
-	client, err := createTableClient(accountName, accountKey, endpoint, "Users", useAzurite)
+	client, err := createTableClient(accountName, accountKey, endpoint, tableUsers, useAzurite)
 	if err != nil {
 		return nil, err
 	}
-	return &UserRepository{client: client, tableName: "Users"}, nil
+	return &UserRepository{client: client, tableName: tableUsers}, nil
 }
 
 // NewTestUserRepository creates a UserRepository for unit testing without connecting.
 func NewTestUserRepository() *UserRepository {
-	return &UserRepository{tableName: "Users"}
+	return &UserRepository{tableName: tableUsers}
 }
 
 // SetTestClient injects a mock client for testing.
@@ -90,35 +107,35 @@ func (r *UserRepository) Create(user *models.User) error {
 		user.ID = newID()
 	}
 	if user.Username == "" {
-		return dberrors.NewDatabaseError("create", dberrors.ErrValidation)
+		return dberrors.NewDatabaseError(opCreate, dberrors.ErrValidation)
 	}
 
 	user.CreatedAt = now
 	user.UpdatedAt = now
 
 	entity := map[string]interface{}{
-		"PartitionKey": "users",
-		"RowKey":       user.Username,
+		fieldPartitionKey: pkUsers,
+		fieldRowKey:       user.Username,
 		"ID":           user.ID,
-		"Username":     user.Username,
-		"PasswordHash": user.PasswordHash,
-		"DisplayName":  user.DisplayName,
-		"Role":         user.Role,
-		"AuthProvider": user.AuthProvider,
-		"ExternalID":   derefString(user.ExternalID),
-		"Email":        user.Email,
-		"CreatedAt":    now.Format(time.RFC3339),
-		"UpdatedAt":    now.Format(time.RFC3339),
+		fieldUsername:     user.Username,
+		fieldPasswordHash: user.PasswordHash,
+		fieldDisplayName:  user.DisplayName,
+		fieldRole:         user.Role,
+		fieldAuthProvider: user.AuthProvider,
+		fieldExternalID:   derefString(user.ExternalID),
+		fieldEmail:        user.Email,
+		fieldCreatedAt:    now.Format(time.RFC3339),
+		fieldUpdatedAt:    now.Format(time.RFC3339),
 	}
 
 	entityBytes, err := json.Marshal(entity)
 	if err != nil {
-		return dberrors.NewDatabaseError("marshal", err)
+		return dberrors.NewDatabaseError(opMarshal, err)
 	}
 
 	_, err = r.client.AddEntity(ctx, entityBytes, nil)
 	if err != nil {
-		return mapAzureError("create", err)
+		return mapAzureError(opCreate, err)
 	}
 	return nil
 }
@@ -127,7 +144,7 @@ func (r *UserRepository) FindByID(id string) (*models.User, error) {
 	ctx := context.Background()
 
 	// ID is not the row key, so we must scan with a filter.
-	filter := "PartitionKey eq 'users' and ID eq '" + id + "'"
+	filter := odataPartitionKeyEq + pkUsers + "' and ID eq '" + id + "'"
 	top := int32(1)
 	pager := r.client.NewListEntitiesPager(&aztables.ListEntitiesOptions{
 		Filter: &filter,
@@ -149,14 +166,14 @@ func (r *UserRepository) FindByUsername(username string) (*models.User, error) {
 	ctx := context.Background()
 
 	// Direct point query — PK="users", RK=username.
-	resp, err := r.client.GetEntity(ctx, "users", username, nil)
+	resp, err := r.client.GetEntity(ctx, pkUsers, username, nil)
 	if err != nil {
 		return nil, mapAzureError("find_by_username", err)
 	}
 
 	var entity userEntity
 	if err := json.Unmarshal(resp.Value, &entity); err != nil {
-		return nil, dberrors.NewDatabaseError("unmarshal", err)
+		return nil, dberrors.NewDatabaseError(opUnmarshal, err)
 	}
 
 	return entity.toModel(), nil
@@ -165,7 +182,7 @@ func (r *UserRepository) FindByUsername(username string) (*models.User, error) {
 func (r *UserRepository) FindByExternalID(provider, externalID string) (*models.User, error) {
 	ctx := context.Background()
 
-	filter := "PartitionKey eq 'users' and AuthProvider eq '" + escapeODataString(provider) + "' and ExternalID eq '" + escapeODataString(externalID) + "'"
+	filter := odataPartitionKeyEq + pkUsers + "' and AuthProvider eq '" + escapeODataString(provider) + "' and ExternalID eq '" + escapeODataString(externalID) + "'"
 	top := int32(1)
 	pager := r.client.NewListEntitiesPager(&aztables.ListEntitiesOptions{
 		Filter: &filter,
@@ -189,28 +206,28 @@ func (r *UserRepository) Update(user *models.User) error {
 	user.UpdatedAt = now
 
 	entity := map[string]interface{}{
-		"PartitionKey": "users",
-		"RowKey":       user.Username,
+		fieldPartitionKey: pkUsers,
+		fieldRowKey:       user.Username,
 		"ID":           user.ID,
-		"Username":     user.Username,
-		"PasswordHash": user.PasswordHash,
-		"DisplayName":  user.DisplayName,
-		"Role":         user.Role,
-		"AuthProvider": user.AuthProvider,
-		"ExternalID":   derefString(user.ExternalID),
-		"Email":        user.Email,
-		"CreatedAt":    user.CreatedAt.Format(time.RFC3339),
-		"UpdatedAt":    now.Format(time.RFC3339),
+		fieldUsername:     user.Username,
+		fieldPasswordHash: user.PasswordHash,
+		fieldDisplayName:  user.DisplayName,
+		fieldRole:         user.Role,
+		fieldAuthProvider: user.AuthProvider,
+		fieldExternalID:   derefString(user.ExternalID),
+		fieldEmail:        user.Email,
+		fieldCreatedAt:    user.CreatedAt.Format(time.RFC3339),
+		fieldUpdatedAt:    now.Format(time.RFC3339),
 	}
 
 	entityBytes, err := json.Marshal(entity)
 	if err != nil {
-		return dberrors.NewDatabaseError("marshal", err)
+		return dberrors.NewDatabaseError(opMarshal, err)
 	}
 
 	_, err = r.client.UpdateEntity(ctx, entityBytes, nil)
 	if err != nil {
-		return mapAzureError("update", err)
+		return mapAzureError(opUpdate, err)
 	}
 	return nil
 }
@@ -224,9 +241,9 @@ func (r *UserRepository) Delete(id string) error {
 		return err
 	}
 
-	_, err = r.client.DeleteEntity(ctx, "users", user.Username, nil)
+	_, err = r.client.DeleteEntity(ctx, pkUsers, user.Username, nil)
 	if err != nil {
-		return mapAzureError("delete", err)
+		return mapAzureError(opDelete, err)
 	}
 	return nil
 }
@@ -234,14 +251,14 @@ func (r *UserRepository) Delete(id string) error {
 func (r *UserRepository) List() ([]models.User, error) {
 	ctx := context.Background()
 
-	filter := "PartitionKey eq 'users'"
+	filter := odataPartitionKeyEq + pkUsers + "'"
 	pager := r.client.NewListEntitiesPager(&aztables.ListEntitiesOptions{
 		Filter: &filter,
 	})
 
 	entities, err := collectEntitiesTyped[userEntity](ctx, pager, nil, 0)
 	if err != nil {
-		return nil, mapAzureError("list", err)
+		return nil, mapAzureError(opList, err)
 	}
 
 	users := make([]models.User, 0, len(entities))

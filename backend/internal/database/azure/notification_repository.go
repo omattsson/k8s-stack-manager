@@ -14,6 +14,10 @@ import (
 	"github.com/google/uuid"
 )
 
+const tableNotifications = "Notifications"
+const opMarkRead = "mark_read"
+
+
 // NotificationRepository implements models.NotificationRepository for Azure Table Storage.
 // Partition key: UserID, Row key: reverse_timestamp + uuid (newest first).
 type NotificationRepository struct {
@@ -23,16 +27,16 @@ type NotificationRepository struct {
 
 // NewNotificationRepository creates a new Azure Table Storage notification repository.
 func NewNotificationRepository(accountName, accountKey, endpoint string, useAzurite bool) (*NotificationRepository, error) {
-	client, err := createTableClient(accountName, accountKey, endpoint, "Notifications", useAzurite)
+	client, err := createTableClient(accountName, accountKey, endpoint, tableNotifications, useAzurite)
 	if err != nil {
 		return nil, err
 	}
-	return &NotificationRepository{client: client, tableName: "Notifications"}, nil
+	return &NotificationRepository{client: client, tableName: tableNotifications}, nil
 }
 
 // NewTestNotificationRepository creates a repository for unit testing without connecting.
 func NewTestNotificationRepository() *NotificationRepository {
-	return &NotificationRepository{tableName: "Notifications"}
+	return &NotificationRepository{tableName: tableNotifications}
 }
 
 // SetTestClient injects a mock client for testing.
@@ -100,18 +104,18 @@ func (r *NotificationRepository) Create(ctx context.Context, notification *model
 
 	entityBytes, err := json.Marshal(entity)
 	if err != nil {
-		return dberrors.NewDatabaseError("marshal", err)
+		return dberrors.NewDatabaseError(opMarshal, err)
 	}
 
 	_, err = r.client.AddEntity(ctx, entityBytes, nil)
 	if err != nil {
-		return mapAzureError("create", err)
+		return mapAzureError(opCreate, err)
 	}
 	return nil
 }
 
 func (r *NotificationRepository) ListByUser(ctx context.Context, userID string, unreadOnly bool, limit, offset int) ([]models.Notification, int64, error) {
-	filter := "PartitionKey eq '" + escapeODataString(userID) + "'"
+	filter := odataPartitionKeyEq + escapeODataString(userID) + "'"
 	if unreadOnly {
 		filter += " and IsRead eq false"
 	}
@@ -122,7 +126,7 @@ func (r *NotificationRepository) ListByUser(ctx context.Context, userID string, 
 
 	entities, err := collectEntitiesTyped[notificationEntity](ctx, pager, nil, 0)
 	if err != nil {
-		return nil, 0, mapAzureError("list", err)
+		return nil, 0, mapAzureError(opList, err)
 	}
 
 	total := int64(len(entities))
@@ -144,7 +148,7 @@ func (r *NotificationRepository) ListByUser(ctx context.Context, userID string, 
 }
 
 func (r *NotificationRepository) CountUnread(ctx context.Context, userID string) (int64, error) {
-	filter := "PartitionKey eq '" + escapeODataString(userID) + "' and IsRead eq false"
+	filter := odataPartitionKeyEq + escapeODataString(userID) + "' and IsRead eq false"
 
 	pager := r.client.NewListEntitiesPager(&aztables.ListEntitiesOptions{
 		Filter: &filter,
@@ -159,7 +163,7 @@ func (r *NotificationRepository) CountUnread(ctx context.Context, userID string)
 
 func (r *NotificationRepository) MarkAsRead(ctx context.Context, id string, userID string) error {
 	// Find the entity first by scanning the user's partition.
-	filter := "PartitionKey eq '" + escapeODataString(userID) + "' and ID eq '" + escapeODataString(id) + "'"
+	filter := odataPartitionKeyEq + escapeODataString(userID) + "' and ID eq '" + escapeODataString(id) + "'"
 	top := int32(1)
 	pager := r.client.NewListEntitiesPager(&aztables.ListEntitiesOptions{
 		Filter: &filter,
@@ -168,10 +172,10 @@ func (r *NotificationRepository) MarkAsRead(ctx context.Context, id string, user
 
 	entities, err := collectEntitiesTyped[notificationEntity](ctx, pager, nil, 1)
 	if err != nil {
-		return mapAzureError("mark_read", err)
+		return mapAzureError(opMarkRead, err)
 	}
 	if len(entities) == 0 {
-		return dberrors.NewDatabaseError("mark_read", dberrors.ErrNotFound)
+		return dberrors.NewDatabaseError(opMarkRead, dberrors.ErrNotFound)
 	}
 
 	e := entities[0]
@@ -179,18 +183,18 @@ func (r *NotificationRepository) MarkAsRead(ctx context.Context, id string, user
 
 	entityBytes, err := json.Marshal(e)
 	if err != nil {
-		return dberrors.NewDatabaseError("marshal", err)
+		return dberrors.NewDatabaseError(opMarshal, err)
 	}
 
 	_, err = r.client.UpsertEntity(ctx, entityBytes, nil)
 	if err != nil {
-		return mapAzureError("mark_read", err)
+		return mapAzureError(opMarkRead, err)
 	}
 	return nil
 }
 
 func (r *NotificationRepository) MarkAllAsRead(ctx context.Context, userID string) error {
-	filter := "PartitionKey eq '" + escapeODataString(userID) + "' and IsRead eq false"
+	filter := odataPartitionKeyEq + escapeODataString(userID) + "' and IsRead eq false"
 	pager := r.client.NewListEntitiesPager(&aztables.ListEntitiesOptions{
 		Filter: &filter,
 	})
@@ -204,7 +208,7 @@ func (r *NotificationRepository) MarkAllAsRead(ctx context.Context, userID strin
 		e.IsRead = true
 		entityBytes, marshalErr := json.Marshal(e)
 		if marshalErr != nil {
-			return dberrors.NewDatabaseError("marshal", marshalErr)
+			return dberrors.NewDatabaseError(opMarshal, marshalErr)
 		}
 		if _, upsertErr := r.client.UpsertEntity(ctx, entityBytes, nil); upsertErr != nil {
 			return mapAzureError("mark_all_read", upsertErr)

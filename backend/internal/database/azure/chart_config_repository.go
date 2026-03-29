@@ -11,6 +11,9 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/data/aztables"
 )
 
+const tableChartConfigs = "ChartConfigs"
+
+
 // ChartConfigRepository implements models.ChartConfigRepository for Azure Table Storage.
 // Partition key: stack_definition_id, Row key: chart config ID.
 type ChartConfigRepository struct {
@@ -20,16 +23,16 @@ type ChartConfigRepository struct {
 
 // NewChartConfigRepository creates a new Azure Table Storage chart config repository.
 func NewChartConfigRepository(accountName, accountKey, endpoint string, useAzurite bool) (*ChartConfigRepository, error) {
-	client, err := createTableClient(accountName, accountKey, endpoint, "ChartConfigs", useAzurite)
+	client, err := createTableClient(accountName, accountKey, endpoint, tableChartConfigs, useAzurite)
 	if err != nil {
 		return nil, err
 	}
-	return &ChartConfigRepository{client: client, tableName: "ChartConfigs"}, nil
+	return &ChartConfigRepository{client: client, tableName: tableChartConfigs}, nil
 }
 
 // NewTestChartConfigRepository creates a repository for unit testing.
 func NewTestChartConfigRepository() *ChartConfigRepository {
-	return &ChartConfigRepository{tableName: "ChartConfigs"}
+	return &ChartConfigRepository{tableName: tableChartConfigs}
 }
 
 // SetTestClient injects a mock client for testing.
@@ -77,19 +80,19 @@ func (r *ChartConfigRepository) Create(config *models.ChartConfig) error {
 		config.ID = newID()
 	}
 	if config.StackDefinitionID == "" {
-		return dberrors.NewDatabaseError("create", dberrors.ErrValidation)
+		return dberrors.NewDatabaseError(opCreate, dberrors.ErrValidation)
 	}
 	config.CreatedAt = now
 
 	entity := chartConfigToEntity(config)
 	entityBytes, err := json.Marshal(entity)
 	if err != nil {
-		return dberrors.NewDatabaseError("marshal", err)
+		return dberrors.NewDatabaseError(opMarshal, err)
 	}
 
 	_, err = r.client.AddEntity(ctx, entityBytes, nil)
 	if err != nil {
-		return mapAzureError("create", err)
+		return mapAzureError(opCreate, err)
 	}
 	return nil
 }
@@ -122,12 +125,12 @@ func (r *ChartConfigRepository) Update(config *models.ChartConfig) error {
 	entity := chartConfigToEntity(config)
 	entityBytes, err := json.Marshal(entity)
 	if err != nil {
-		return dberrors.NewDatabaseError("marshal", err)
+		return dberrors.NewDatabaseError(opMarshal, err)
 	}
 
 	_, err = r.client.UpdateEntity(ctx, entityBytes, nil)
 	if err != nil {
-		return mapAzureError("update", err)
+		return mapAzureError(opUpdate, err)
 	}
 	return nil
 }
@@ -143,7 +146,7 @@ func (r *ChartConfigRepository) Delete(id string) error {
 
 	_, err = r.client.DeleteEntity(ctx, config.StackDefinitionID, id, nil)
 	if err != nil {
-		return mapAzureError("delete", err)
+		return mapAzureError(opDelete, err)
 	}
 	return nil
 }

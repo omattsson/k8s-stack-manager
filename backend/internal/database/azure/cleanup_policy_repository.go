@@ -11,6 +11,9 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/data/aztables"
 )
 
+const tableCleanupPolicies = "CleanupPolicies"
+
+
 const cleanupPolicyPartitionKey = "policy"
 
 // CleanupPolicyRepository implements models.CleanupPolicyRepository for Azure Table Storage.
@@ -22,16 +25,16 @@ type CleanupPolicyRepository struct {
 
 // NewCleanupPolicyRepository creates a new Azure Table Storage cleanup policy repository.
 func NewCleanupPolicyRepository(accountName, accountKey, endpoint string, useAzurite bool) (*CleanupPolicyRepository, error) {
-	client, err := createTableClient(accountName, accountKey, endpoint, "CleanupPolicies", useAzurite)
+	client, err := createTableClient(accountName, accountKey, endpoint, tableCleanupPolicies, useAzurite)
 	if err != nil {
 		return nil, err
 	}
-	return &CleanupPolicyRepository{client: client, tableName: "CleanupPolicies"}, nil
+	return &CleanupPolicyRepository{client: client, tableName: tableCleanupPolicies}, nil
 }
 
 // NewTestCleanupPolicyRepository creates a repository for unit testing.
 func NewTestCleanupPolicyRepository() *CleanupPolicyRepository {
-	return &CleanupPolicyRepository{tableName: "CleanupPolicies"}
+	return &CleanupPolicyRepository{tableName: tableCleanupPolicies}
 }
 
 // SetTestClient injects a mock client for testing.
@@ -95,12 +98,12 @@ func (r *CleanupPolicyRepository) Create(policy *models.CleanupPolicy) error {
 	entity := r.toEntity(policy)
 	entityBytes, err := json.Marshal(entity)
 	if err != nil {
-		return dberrors.NewDatabaseError("marshal", err)
+		return dberrors.NewDatabaseError(opMarshal, err)
 	}
 
 	_, err = r.client.AddEntity(ctx, entityBytes, nil)
 	if err != nil {
-		return mapAzureError("create", err)
+		return mapAzureError(opCreate, err)
 	}
 	return nil
 }
@@ -115,7 +118,7 @@ func (r *CleanupPolicyRepository) FindByID(id string) (*models.CleanupPolicy, er
 
 	var entity cleanupPolicyEntity
 	if err := json.Unmarshal(resp.Value, &entity); err != nil {
-		return nil, dberrors.NewDatabaseError("unmarshal", err)
+		return nil, dberrors.NewDatabaseError(opUnmarshal, err)
 	}
 	return entity.toModel(), nil
 }
@@ -131,12 +134,12 @@ func (r *CleanupPolicyRepository) Update(policy *models.CleanupPolicy) error {
 	entity := r.toEntity(policy)
 	entityBytes, err := json.Marshal(entity)
 	if err != nil {
-		return dberrors.NewDatabaseError("marshal", err)
+		return dberrors.NewDatabaseError(opMarshal, err)
 	}
 
 	_, err = r.client.UpdateEntity(ctx, entityBytes, nil)
 	if err != nil {
-		return mapAzureError("update", err)
+		return mapAzureError(opUpdate, err)
 	}
 	return nil
 }
@@ -146,7 +149,7 @@ func (r *CleanupPolicyRepository) Delete(id string) error {
 
 	_, err := r.client.DeleteEntity(ctx, cleanupPolicyPartitionKey, id, nil)
 	if err != nil {
-		return mapAzureError("delete", err)
+		return mapAzureError(opDelete, err)
 	}
 	return nil
 }
@@ -161,7 +164,7 @@ func (r *CleanupPolicyRepository) List() ([]models.CleanupPolicy, error) {
 
 	entities, err := collectEntitiesTyped[cleanupPolicyEntity](ctx, pager, nil, 0)
 	if err != nil {
-		return nil, mapAzureError("list", err)
+		return nil, mapAzureError(opList, err)
 	}
 
 	results := make([]models.CleanupPolicy, 0, len(entities))

@@ -12,6 +12,9 @@ import (
 	"github.com/google/uuid"
 )
 
+const logKeyUserID = "user_id"
+
+
 // NotificationHandler handles notification endpoints.
 type NotificationHandler struct {
 	repo models.NotificationRepository
@@ -72,15 +75,15 @@ func (h *NotificationHandler) List(c *gin.Context) {
 
 	notifications, total, err := h.repo.ListByUser(c.Request.Context(), userID, unreadOnly, limit, offset)
 	if err != nil {
-		slog.Error("Failed to list notifications", "error", err, "user_id", userID)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
+		slog.Error("Failed to list notifications", "error", err, logKeyUserID, userID)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
 		return
 	}
 
 	unreadCount, err := h.repo.CountUnread(c.Request.Context(), userID)
 	if err != nil {
-		slog.Error("Failed to count unread notifications", "error", err, "user_id", userID)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
+		slog.Error("Failed to count unread notifications", "error", err, logKeyUserID, userID)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
 		return
 	}
 
@@ -106,8 +109,8 @@ func (h *NotificationHandler) CountUnread(c *gin.Context) {
 
 	count, err := h.repo.CountUnread(c.Request.Context(), userID)
 	if err != nil {
-		slog.Error("Failed to count unread notifications", "error", err, "user_id", userID)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
+		slog.Error("Failed to count unread notifications", "error", err, logKeyUserID, userID)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
 		return
 	}
 
@@ -139,7 +142,7 @@ func (h *NotificationHandler) MarkAsRead(c *gin.Context) {
 	if err := h.repo.MarkAsRead(c.Request.Context(), id, userID); err != nil {
 		status, message := mapError(err, "Notification")
 		if status >= http.StatusInternalServerError {
-			slog.Error("Failed to mark notification as read", "error", err, "id", id, "user_id", userID)
+			slog.Error("Failed to mark notification as read", "error", err, "id", id, logKeyUserID, userID)
 		}
 		c.JSON(status, gin.H{"error": message})
 		return
@@ -162,8 +165,8 @@ func (h *NotificationHandler) MarkAllAsRead(c *gin.Context) {
 	userID := middleware.GetUserIDFromContext(c)
 
 	if err := h.repo.MarkAllAsRead(c.Request.Context(), userID); err != nil {
-		slog.Error("Failed to mark all notifications as read", "error", err, "user_id", userID)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
+		slog.Error("Failed to mark all notifications as read", "error", err, logKeyUserID, userID)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
 		return
 	}
 
@@ -211,7 +214,7 @@ func (h *NotificationHandler) UpdatePreferences(c *gin.Context) {
 
 	var reqs []updatePreferenceRequest
 	if err := c.ShouldBindJSON(&reqs); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request format"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": msgInvalidRequestFormat})
 		return
 	}
 
@@ -245,8 +248,8 @@ func (h *NotificationHandler) UpdatePreferences(c *gin.Context) {
 	// Return updated preferences.
 	prefs, err := h.repo.GetPreferences(c.Request.Context(), userID)
 	if err != nil {
-		slog.Error("Failed to get updated preferences", "error", err, "user_id", userID)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
+		slog.Error("Failed to get updated preferences", "error", err, logKeyUserID, userID)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
 		return
 	}
 

@@ -10,6 +10,12 @@ import (
 	"github.com/google/uuid"
 )
 
+// Shared values handler message constants.
+const (
+	entitySharedValues = "Shared values"
+)
+
+
 // SharedValuesHandler provides CRUD endpoints for cluster-scoped shared values.
 type SharedValuesHandler struct {
 	repo        models.SharedValuesRepository
@@ -39,14 +45,14 @@ func (h *SharedValuesHandler) ListSharedValues(c *gin.Context) {
 	clusterID := c.Param("id")
 
 	if _, err := h.clusterRepo.FindByID(clusterID); err != nil {
-		status, message := mapError(err, "Cluster")
+		status, message := mapError(err, entityCluster)
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
 
 	values, err := h.repo.ListByCluster(clusterID)
 	if err != nil {
-		status, message := mapError(err, "Shared values")
+		status, message := mapError(err, entitySharedValues)
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
@@ -72,14 +78,14 @@ func (h *SharedValuesHandler) CreateSharedValues(c *gin.Context) {
 	clusterID := c.Param("id")
 
 	if _, err := h.clusterRepo.FindByID(clusterID); err != nil {
-		status, message := mapError(err, "Cluster")
+		status, message := mapError(err, entityCluster)
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
 
 	var sv models.SharedValues
 	if err := c.ShouldBindJSON(&sv); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request format"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": msgInvalidRequestFormat})
 		return
 	}
 
@@ -93,7 +99,7 @@ func (h *SharedValuesHandler) CreateSharedValues(c *gin.Context) {
 
 	if err := h.repo.Create(&sv); err != nil {
 		slog.Error("Failed to create shared values", "cluster_id", clusterID, "error", err)
-		status, message := mapError(err, "Shared values")
+		status, message := mapError(err, entitySharedValues)
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
@@ -121,21 +127,21 @@ func (h *SharedValuesHandler) UpdateSharedValues(c *gin.Context) {
 	valueID := c.Param("valueId")
 
 	if _, err := h.clusterRepo.FindByID(clusterID); err != nil {
-		status, message := mapError(err, "Cluster")
+		status, message := mapError(err, entityCluster)
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
 
 	existing, err := h.repo.FindByClusterAndID(clusterID, valueID)
 	if err != nil {
-		status, message := mapError(err, "Shared values")
+		status, message := mapError(err, entitySharedValues)
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
 
 	var input models.SharedValues
 	if err := c.ShouldBindJSON(&input); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request format"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": msgInvalidRequestFormat})
 		return
 	}
 
@@ -151,7 +157,7 @@ func (h *SharedValuesHandler) UpdateSharedValues(c *gin.Context) {
 
 	if err := h.repo.Update(&input); err != nil {
 		slog.Error("Failed to update shared values", "id", valueID, "error", err)
-		status, message := mapError(err, "Shared values")
+		status, message := mapError(err, entitySharedValues)
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
@@ -175,14 +181,14 @@ func (h *SharedValuesHandler) DeleteSharedValues(c *gin.Context) {
 	valueID := c.Param("valueId")
 
 	if _, err := h.repo.FindByClusterAndID(clusterID, valueID); err != nil {
-		status, message := mapError(err, "Shared values")
+		status, message := mapError(err, entitySharedValues)
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
 
 	if err := h.repo.Delete(valueID); err != nil {
 		slog.Error("Failed to delete shared values", "id", valueID, "error", err)
-		status, message := mapError(err, "Shared values")
+		status, message := mapError(err, entitySharedValues)
 		c.JSON(status, gin.H{"error": message})
 		return
 	}

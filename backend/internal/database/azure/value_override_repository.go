@@ -11,6 +11,9 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/data/aztables"
 )
 
+const tableValueOverrides = "ValueOverrides"
+
+
 // ValueOverrideRepository implements models.ValueOverrideRepository for Azure Table Storage.
 // Partition key: stack_instance_id, Row key: chart_config_id.
 type ValueOverrideRepository struct {
@@ -20,16 +23,16 @@ type ValueOverrideRepository struct {
 
 // NewValueOverrideRepository creates a new Azure Table Storage value override repository.
 func NewValueOverrideRepository(accountName, accountKey, endpoint string, useAzurite bool) (*ValueOverrideRepository, error) {
-	client, err := createTableClient(accountName, accountKey, endpoint, "ValueOverrides", useAzurite)
+	client, err := createTableClient(accountName, accountKey, endpoint, tableValueOverrides, useAzurite)
 	if err != nil {
 		return nil, err
 	}
-	return &ValueOverrideRepository{client: client, tableName: "ValueOverrides"}, nil
+	return &ValueOverrideRepository{client: client, tableName: tableValueOverrides}, nil
 }
 
 // NewTestValueOverrideRepository creates a repository for unit testing.
 func NewTestValueOverrideRepository() *ValueOverrideRepository {
-	return &ValueOverrideRepository{tableName: "ValueOverrides"}
+	return &ValueOverrideRepository{tableName: tableValueOverrides}
 }
 
 // SetTestClient injects a mock client for testing.
@@ -67,19 +70,19 @@ func (r *ValueOverrideRepository) Create(override *models.ValueOverride) error {
 		override.ID = newID()
 	}
 	if override.StackInstanceID == "" || override.ChartConfigID == "" {
-		return dberrors.NewDatabaseError("create", dberrors.ErrValidation)
+		return dberrors.NewDatabaseError(opCreate, dberrors.ErrValidation)
 	}
 	override.UpdatedAt = now
 
 	entity := valueOverrideToEntity(override)
 	entityBytes, err := json.Marshal(entity)
 	if err != nil {
-		return dberrors.NewDatabaseError("marshal", err)
+		return dberrors.NewDatabaseError(opMarshal, err)
 	}
 
 	_, err = r.client.AddEntity(ctx, entityBytes, nil)
 	if err != nil {
-		return mapAzureError("create", err)
+		return mapAzureError(opCreate, err)
 	}
 	return nil
 }
@@ -117,7 +120,7 @@ func (r *ValueOverrideRepository) FindByInstanceAndChart(instanceID, chartConfig
 
 	var entity valueOverrideEntity
 	if err := json.Unmarshal(resp.Value, &entity); err != nil {
-		return nil, dberrors.NewDatabaseError("unmarshal", err)
+		return nil, dberrors.NewDatabaseError(opUnmarshal, err)
 	}
 	return entity.toModel(), nil
 }
@@ -130,12 +133,12 @@ func (r *ValueOverrideRepository) Update(override *models.ValueOverride) error {
 	entity := valueOverrideToEntity(override)
 	entityBytes, err := json.Marshal(entity)
 	if err != nil {
-		return dberrors.NewDatabaseError("marshal", err)
+		return dberrors.NewDatabaseError(opMarshal, err)
 	}
 
 	_, err = r.client.UpdateEntity(ctx, entityBytes, nil)
 	if err != nil {
-		return mapAzureError("update", err)
+		return mapAzureError(opUpdate, err)
 	}
 	return nil
 }
@@ -151,7 +154,7 @@ func (r *ValueOverrideRepository) Delete(id string) error {
 
 	_, err = r.client.DeleteEntity(ctx, override.StackInstanceID, override.ChartConfigID, nil)
 	if err != nil {
-		return mapAzureError("delete", err)
+		return mapAzureError(opDelete, err)
 	}
 	return nil
 }

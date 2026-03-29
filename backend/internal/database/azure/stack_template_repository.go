@@ -11,6 +11,10 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/data/aztables"
 )
 
+const tableStackTemplates = "StackTemplates"
+const filterTplPKGlobal = odataPartitionKeyEq + pkGlobal + "'"
+
+
 // StackTemplateRepository implements models.StackTemplateRepository for Azure Table Storage.
 // Partition key: "global", Row key: template ID.
 type StackTemplateRepository struct {
@@ -20,16 +24,16 @@ type StackTemplateRepository struct {
 
 // NewStackTemplateRepository creates a new Azure Table Storage stack template repository.
 func NewStackTemplateRepository(accountName, accountKey, endpoint string, useAzurite bool) (*StackTemplateRepository, error) {
-	client, err := createTableClient(accountName, accountKey, endpoint, "StackTemplates", useAzurite)
+	client, err := createTableClient(accountName, accountKey, endpoint, tableStackTemplates, useAzurite)
 	if err != nil {
 		return nil, err
 	}
-	return &StackTemplateRepository{client: client, tableName: "StackTemplates"}, nil
+	return &StackTemplateRepository{client: client, tableName: tableStackTemplates}, nil
 }
 
 // NewTestStackTemplateRepository creates a repository for unit testing.
 func NewTestStackTemplateRepository() *StackTemplateRepository {
-	return &StackTemplateRepository{tableName: "StackTemplates"}
+	return &StackTemplateRepository{tableName: tableStackTemplates}
 }
 
 // SetTestClient injects a mock client for testing.
@@ -82,12 +86,12 @@ func (r *StackTemplateRepository) Create(template *models.StackTemplate) error {
 	entity := stackTemplateToEntity(template)
 	entityBytes, err := json.Marshal(entity)
 	if err != nil {
-		return dberrors.NewDatabaseError("marshal", err)
+		return dberrors.NewDatabaseError(opMarshal, err)
 	}
 
 	_, err = r.client.AddEntity(ctx, entityBytes, nil)
 	if err != nil {
-		return mapAzureError("create", err)
+		return mapAzureError(opCreate, err)
 	}
 	return nil
 }
@@ -95,14 +99,14 @@ func (r *StackTemplateRepository) Create(template *models.StackTemplate) error {
 func (r *StackTemplateRepository) FindByID(id string) (*models.StackTemplate, error) {
 	ctx := context.Background()
 
-	resp, err := r.client.GetEntity(ctx, "global", id, nil)
+	resp, err := r.client.GetEntity(ctx, pkGlobal, id, nil)
 	if err != nil {
 		return nil, mapAzureError("find_by_id", err)
 	}
 
 	var entity stackTemplateEntity
 	if err := json.Unmarshal(resp.Value, &entity); err != nil {
-		return nil, dberrors.NewDatabaseError("unmarshal", err)
+		return nil, dberrors.NewDatabaseError(opUnmarshal, err)
 	}
 	return entity.toModel(), nil
 }
@@ -115,12 +119,12 @@ func (r *StackTemplateRepository) Update(template *models.StackTemplate) error {
 	entity := stackTemplateToEntity(template)
 	entityBytes, err := json.Marshal(entity)
 	if err != nil {
-		return dberrors.NewDatabaseError("marshal", err)
+		return dberrors.NewDatabaseError(opMarshal, err)
 	}
 
 	_, err = r.client.UpdateEntity(ctx, entityBytes, nil)
 	if err != nil {
-		return mapAzureError("update", err)
+		return mapAzureError(opUpdate, err)
 	}
 	return nil
 }
@@ -128,9 +132,9 @@ func (r *StackTemplateRepository) Update(template *models.StackTemplate) error {
 func (r *StackTemplateRepository) Delete(id string) error {
 	ctx := context.Background()
 
-	_, err := r.client.DeleteEntity(ctx, "global", id, nil)
+	_, err := r.client.DeleteEntity(ctx, pkGlobal, id, nil)
 	if err != nil {
-		return mapAzureError("delete", err)
+		return mapAzureError(opDelete, err)
 	}
 	return nil
 }
@@ -138,14 +142,14 @@ func (r *StackTemplateRepository) Delete(id string) error {
 func (r *StackTemplateRepository) List() ([]models.StackTemplate, error) {
 	ctx := context.Background()
 
-	filter := "PartitionKey eq 'global'"
+	filter := filterTplPKGlobal
 	pager := r.client.NewListEntitiesPager(&aztables.ListEntitiesOptions{
 		Filter: &filter,
 	})
 
 	entities, err := collectEntitiesTyped[stackTemplateEntity](ctx, pager, nil, 0)
 	if err != nil {
-		return nil, mapAzureError("list", err)
+		return nil, mapAzureError(opList, err)
 	}
 
 	results := make([]models.StackTemplate, 0, len(entities))
@@ -158,7 +162,7 @@ func (r *StackTemplateRepository) List() ([]models.StackTemplate, error) {
 func (r *StackTemplateRepository) ListPublished() ([]models.StackTemplate, error) {
 	ctx := context.Background()
 
-	filter := "PartitionKey eq 'global' and IsPublished eq true"
+	filter := filterTplPKGlobal + " and IsPublished eq true"
 	pager := r.client.NewListEntitiesPager(&aztables.ListEntitiesOptions{
 		Filter: &filter,
 	})
@@ -178,7 +182,7 @@ func (r *StackTemplateRepository) ListPublished() ([]models.StackTemplate, error
 func (r *StackTemplateRepository) ListByOwner(ownerID string) ([]models.StackTemplate, error) {
 	ctx := context.Background()
 
-	filter := "PartitionKey eq 'global' and OwnerID eq '" + ownerID + "'"
+	filter := filterTplPKGlobal + " and OwnerID eq '" + ownerID + "'"
 	pager := r.client.NewListEntitiesPager(&aztables.ListEntitiesOptions{
 		Filter: &filter,
 	})
@@ -197,7 +201,7 @@ func (r *StackTemplateRepository) ListByOwner(ownerID string) ([]models.StackTem
 
 func stackTemplateToEntity(t *models.StackTemplate) map[string]interface{} {
 	return map[string]interface{}{
-		"PartitionKey":  "global",
+		"PartitionKey":  pkGlobal,
 		"RowKey":        t.ID,
 		"ID":            t.ID,
 		"Name":          t.Name,

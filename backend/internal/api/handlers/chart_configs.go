@@ -27,14 +27,14 @@ func (h *DefinitionHandler) AddChartConfig(c *gin.Context) {
 
 	// Verify definition exists.
 	if _, err := h.definitionRepo.FindByID(defID); err != nil {
-		status, message := mapError(err, "Stack definition")
+		status, message := mapError(err, entityStackDefinition)
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
 
 	var chart models.ChartConfig
 	if err := c.ShouldBindJSON(&chart); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request format"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": msgInvalidRequestFormat})
 		return
 	}
 
@@ -48,7 +48,7 @@ func (h *DefinitionHandler) AddChartConfig(c *gin.Context) {
 	}
 
 	if err := h.chartRepo.Create(&chart); err != nil {
-		status, message := mapError(err, "Chart config")
+		status, message := mapError(err, entityChartConfig)
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
@@ -74,14 +74,14 @@ func (h *DefinitionHandler) UpdateChartConfig(c *gin.Context) {
 
 	existing, err := h.chartRepo.FindByID(chartID)
 	if err != nil {
-		status, message := mapError(err, "Chart config")
+		status, message := mapError(err, entityChartConfig)
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
 
 	var update models.ChartConfig
 	if err := c.ShouldBindJSON(&update); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request format"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": msgInvalidRequestFormat})
 		return
 	}
 
@@ -99,7 +99,7 @@ func (h *DefinitionHandler) UpdateChartConfig(c *gin.Context) {
 	}
 
 	if err := h.chartRepo.Update(existing); err != nil {
-		status, message := mapError(err, "Chart config")
+		status, message := mapError(err, entityChartConfig)
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
@@ -124,7 +124,7 @@ func (h *DefinitionHandler) DeleteChartConfig(c *gin.Context) {
 	// Look up the chart config to get its ChartName.
 	chart, err := h.chartRepo.FindByID(chartID)
 	if err != nil {
-		status, message := mapError(err, "Chart config")
+		status, message := mapError(err, entityChartConfig)
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
@@ -146,7 +146,7 @@ func (h *DefinitionHandler) DeleteChartConfig(c *gin.Context) {
 	}
 
 	if err := h.chartRepo.Delete(chartID); err != nil {
-		status, message := mapError(err, "Chart config")
+		status, message := mapError(err, entityChartConfig)
 		c.JSON(status, gin.H{"error": message})
 		return
 	}

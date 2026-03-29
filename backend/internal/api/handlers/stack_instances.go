@@ -32,6 +32,17 @@ type NamespaceConflictResponse struct {
 // MaxTTLMinutes is the maximum allowed TTL value (30 days).
 const MaxTTLMinutes = 43200
 
+// Stack instance handler message constants.
+const (
+	msgInstanceIDRequired    = "Instance ID is required"
+	msgDeployerNotConfigured = "Deployment service not configured"
+	msgTTLExceedsMax         = "TTL must not exceed %d minutes (30 days)"
+)
+
+// Slog structured logging key constants.
+const logKeyInstanceID = "instance_id"
+
+
 // rfc1123InvalidChars matches any character not allowed in an RFC1123 label.
 var rfc1123InvalidChars = regexp.MustCompile(`[^a-z0-9-]`)
 
@@ -183,7 +194,7 @@ func (h *InstanceHandler) ListInstances(c *gin.Context) {
 		instances, err = h.instanceRepo.List()
 	}
 	if err != nil {
-		status, message := mapError(err, "Stack instance")
+		status, message := mapError(err, entityStackInstance)
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
@@ -205,7 +216,7 @@ func (h *InstanceHandler) GetRecentInstances(c *gin.Context) {
 
 	instances, err := h.instanceRepo.ListByOwner(userID)
 	if err != nil {
-		status, message := mapError(err, "Stack instance")
+		status, message := mapError(err, entityStackInstance)
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
@@ -248,7 +259,7 @@ type createInstanceRequest struct {
 func (h *InstanceHandler) CreateInstance(c *gin.Context) {
 	var req createInstanceRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request format"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": msgInvalidRequestFormat})
 		return
 	}
 
@@ -277,7 +288,7 @@ func (h *InstanceHandler) CreateInstance(c *gin.Context) {
 		inst.TTLMinutes = *req.TTLMinutes
 	}
 	if inst.TTLMinutes > MaxTTLMinutes {
-		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("TTL must not exceed %d minutes (30 days)", MaxTTLMinutes)})
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf(msgTTLExceedsMax, MaxTTLMinutes)})
 		return
 	}
 	// Compute expiry timestamp from TTL.
@@ -314,7 +325,7 @@ func (h *InstanceHandler) CreateInstance(c *gin.Context) {
 			count, listErr := h.instanceRepo.CountByClusterAndOwner(inst.ClusterID, inst.OwnerID)
 			if listErr != nil {
 				slog.Error("Failed to count instances for per-user limit check", "error", listErr, "cluster_id", inst.ClusterID)
-				c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
+				c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
 				return
 			}
 			if count >= cl.MaxInstancesPerUser {
@@ -345,13 +356,13 @@ func (h *InstanceHandler) CreateInstance(c *gin.Context) {
 
 	// Verify definition exists.
 	if _, err := h.definitionRepo.FindByID(inst.StackDefinitionID); err != nil {
-		status, message := mapError(err, "Stack definition")
+		status, message := mapError(err, entityStackDefinition)
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
 
 	if err := h.instanceRepo.Create(&inst); err != nil {
-		status, message := mapError(err, "Stack instance")
+		status, message := mapError(err, entityStackInstance)
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
@@ -371,13 +382,13 @@ func (h *InstanceHandler) CreateInstance(c *gin.Context) {
 func (h *InstanceHandler) GetInstance(c *gin.Context) {
 	id := c.Param("id")
 	if id == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Instance ID is required"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": msgInstanceIDRequired})
 		return
 	}
 
 	inst, err := h.instanceRepo.FindByID(id)
 	if err != nil {
-		status, message := mapError(err, "Stack instance")
+		status, message := mapError(err, entityStackInstance)
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
@@ -400,13 +411,13 @@ func (h *InstanceHandler) GetInstance(c *gin.Context) {
 func (h *InstanceHandler) UpdateInstance(c *gin.Context) {
 	id := c.Param("id")
 	if id == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Instance ID is required"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": msgInstanceIDRequired})
 		return
 	}
 
 	existing, err := h.instanceRepo.FindByID(id)
 	if err != nil {
-		status, message := mapError(err, "Stack instance")
+		status, message := mapError(err, entityStackInstance)
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
@@ -426,7 +437,7 @@ func (h *InstanceHandler) UpdateInstance(c *gin.Context) {
 		TTLMinutes *int    `json:"ttl_minutes"`
 	}
 	if err := c.ShouldBindJSON(&update); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request format"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": msgInvalidRequestFormat})
 		return
 	}
 
@@ -445,7 +456,7 @@ func (h *InstanceHandler) UpdateInstance(c *gin.Context) {
 	if update.TTLMinutes != nil {
 		ttl := *update.TTLMinutes
 		if ttl > MaxTTLMinutes {
-			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("TTL must not exceed %d minutes (30 days)", MaxTTLMinutes)})
+			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf(msgTTLExceedsMax, MaxTTLMinutes)})
 			return
 		}
 		existing.TTLMinutes = ttl
@@ -463,7 +474,7 @@ func (h *InstanceHandler) UpdateInstance(c *gin.Context) {
 	}
 
 	if err := h.instanceRepo.Update(existing); err != nil {
-		status, message := mapError(err, "Stack instance")
+		status, message := mapError(err, entityStackInstance)
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
@@ -483,21 +494,21 @@ func (h *InstanceHandler) UpdateInstance(c *gin.Context) {
 func (h *InstanceHandler) DeleteInstance(c *gin.Context) {
 	id := c.Param("id")
 	if id == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Instance ID is required"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": msgInstanceIDRequired})
 		return
 	}
 
 	// Clean up per-chart branch overrides before deleting.
 	if h.branchOverrideRepo != nil {
 		if err := h.branchOverrideRepo.DeleteByInstance(id); err != nil {
-			slog.Error("failed to delete branch overrides for stack instance", "instance_id", id, "error", err)
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
+			slog.Error("failed to delete branch overrides for stack instance", logKeyInstanceID, id, "error", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
 			return
 		}
 	}
 
 	if err := h.instanceRepo.Delete(id); err != nil {
-		status, message := mapError(err, "Stack instance")
+		status, message := mapError(err, entityStackInstance)
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
@@ -519,7 +530,7 @@ func (h *InstanceHandler) CloneInstance(c *gin.Context) {
 	id := c.Param("id")
 	source, err := h.instanceRepo.FindByID(id)
 	if err != nil {
-		status, message := mapError(err, "Stack instance")
+		status, message := mapError(err, entityStackInstance)
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
@@ -565,7 +576,7 @@ func (h *InstanceHandler) CloneInstance(c *gin.Context) {
 	}
 
 	if err := h.instanceRepo.Create(clone); err != nil {
-		status, message := mapError(err, "Stack instance")
+		status, message := mapError(err, entityStackInstance)
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
@@ -606,21 +617,21 @@ func (h *InstanceHandler) ExportChartValues(c *gin.Context) {
 
 	inst, err := h.instanceRepo.FindByID(instanceID)
 	if err != nil {
-		status, message := mapError(err, "Stack instance")
+		status, message := mapError(err, entityStackInstance)
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
 
 	chart, err := h.chartConfigRepo.FindByID(chartID)
 	if err != nil {
-		status, message := mapError(err, "Chart config")
+		status, message := mapError(err, entityChartConfig)
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
 
 	def, err := h.definitionRepo.FindByID(inst.StackDefinitionID)
 	if err != nil {
-		status, message := mapError(err, "Stack definition")
+		status, message := mapError(err, entityStackDefinition)
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
@@ -675,7 +686,7 @@ func (h *InstanceHandler) ExportChartValues(c *gin.Context) {
 
 	yamlData, err := h.valuesGen.GenerateValues(c.Request.Context(), params)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
 		return
 	}
 
@@ -697,21 +708,21 @@ func (h *InstanceHandler) ExportAllValues(c *gin.Context) {
 
 	inst, err := h.instanceRepo.FindByID(instanceID)
 	if err != nil {
-		status, message := mapError(err, "Stack instance")
+		status, message := mapError(err, entityStackInstance)
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
 
 	def, err := h.definitionRepo.FindByID(inst.StackDefinitionID)
 	if err != nil {
-		status, message := mapError(err, "Stack definition")
+		status, message := mapError(err, entityStackDefinition)
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
 
 	charts, err := h.chartConfigRepo.ListByDefinition(def.ID)
 	if err != nil {
-		status, message := mapError(err, "Chart configs")
+		status, message := mapError(err, entityChartConfigs)
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
@@ -761,7 +772,7 @@ func (h *InstanceHandler) ExportAllValues(c *gin.Context) {
 
 	allValues, err := h.valuesGen.ExportAsZip(c.Request.Context(), params)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
 		return
 	}
 
@@ -783,18 +794,18 @@ func (h *InstanceHandler) ExportAllValues(c *gin.Context) {
 func (h *InstanceHandler) DeployInstance(c *gin.Context) {
 	id := c.Param("id")
 	if id == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Instance ID is required"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": msgInstanceIDRequired})
 		return
 	}
 
 	if h.deployManager == nil {
-		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Deployment service not configured"})
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": msgDeployerNotConfigured})
 		return
 	}
 
 	inst, err := h.instanceRepo.FindByID(id)
 	if err != nil {
-		status, message := mapError(err, "Stack instance")
+		status, message := mapError(err, entityStackInstance)
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
@@ -820,14 +831,14 @@ func (h *InstanceHandler) DeployInstance(c *gin.Context) {
 
 	def, err := h.definitionRepo.FindByID(inst.StackDefinitionID)
 	if err != nil {
-		status, message := mapError(err, "Stack definition")
+		status, message := mapError(err, entityStackDefinition)
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
 
 	charts, err := h.chartConfigRepo.ListByDefinition(def.ID)
 	if err != nil {
-		status, message := mapError(err, "Chart configs")
+		status, message := mapError(err, entityChartConfigs)
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
@@ -844,10 +855,10 @@ func (h *InstanceHandler) DeployInstance(c *gin.Context) {
 		if err != nil {
 			slog.Error("Failed to list template chart configs",
 				"template_id", def.SourceTemplateID,
-				"instance_id", id,
+				logKeyInstanceID, id,
 				"error", err,
 			)
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
+			c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
 			return
 		}
 		for _, tc := range templateCharts {
@@ -860,10 +871,10 @@ func (h *InstanceHandler) DeployInstance(c *gin.Context) {
 	overrides, err := h.overrideRepo.ListByInstance(inst.ID)
 	if err != nil {
 		slog.Error("Failed to list value overrides",
-			"instance_id", id,
+			logKeyInstanceID, id,
 			"error", err,
 		)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
 		return
 	}
 	for _, ov := range overrides {
@@ -876,10 +887,10 @@ func (h *InstanceHandler) DeployInstance(c *gin.Context) {
 		branchOverrides, err := h.branchOverrideRepo.List(inst.ID)
 		if err != nil {
 			slog.Error("Failed to list branch overrides",
-				"instance_id", id,
+				logKeyInstanceID, id,
 				"error", err,
 			)
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
+			c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
 			return
 		}
 		for _, bo := range branchOverrides {
@@ -918,10 +929,10 @@ func (h *InstanceHandler) DeployInstance(c *gin.Context) {
 		if err != nil {
 			slog.Error("Failed to generate values for chart",
 				"chart", ch.ChartName,
-				"instance_id", id,
+				logKeyInstanceID, id,
 				"error", err,
 			)
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
+			c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
 			return
 		}
 
@@ -941,10 +952,10 @@ func (h *InstanceHandler) DeployInstance(c *gin.Context) {
 	logID, err := h.deployManager.Deploy(c.Request.Context(), req)
 	if err != nil {
 		slog.Error("Failed to start deployment",
-			"instance_id", id,
+			logKeyInstanceID, id,
 			"error", err,
 		)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
 		return
 	}
 
@@ -965,18 +976,18 @@ func (h *InstanceHandler) DeployInstance(c *gin.Context) {
 func (h *InstanceHandler) StopInstance(c *gin.Context) {
 	id := c.Param("id")
 	if id == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Instance ID is required"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": msgInstanceIDRequired})
 		return
 	}
 
 	if h.deployManager == nil {
-		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Deployment service not configured"})
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": msgDeployerNotConfigured})
 		return
 	}
 
 	inst, err := h.instanceRepo.FindByID(id)
 	if err != nil {
-		status, message := mapError(err, "Stack instance")
+		status, message := mapError(err, entityStackInstance)
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
@@ -993,14 +1004,14 @@ func (h *InstanceHandler) StopInstance(c *gin.Context) {
 	// Fetch chart configs so StopWithCharts can run helm uninstall per chart.
 	def, err := h.definitionRepo.FindByID(inst.StackDefinitionID)
 	if err != nil {
-		status, message := mapError(err, "Stack definition")
+		status, message := mapError(err, entityStackDefinition)
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
 
 	charts, err := h.chartConfigRepo.ListByDefinition(def.ID)
 	if err != nil {
-		status, message := mapError(err, "Chart configs")
+		status, message := mapError(err, entityChartConfigs)
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
@@ -1020,10 +1031,10 @@ func (h *InstanceHandler) StopInstance(c *gin.Context) {
 	logID, err := h.deployManager.StopWithCharts(c.Request.Context(), inst, chartInfos)
 	if err != nil {
 		slog.Error("Failed to start stop operation",
-			"instance_id", id,
+			logKeyInstanceID, id,
 			"error", err,
 		)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
 		return
 	}
 
@@ -1045,18 +1056,18 @@ func (h *InstanceHandler) StopInstance(c *gin.Context) {
 func (h *InstanceHandler) CleanInstance(c *gin.Context) {
 	id := c.Param("id")
 	if id == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Instance ID is required"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": msgInstanceIDRequired})
 		return
 	}
 
 	if h.deployManager == nil {
-		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Deployment service not configured"})
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": msgDeployerNotConfigured})
 		return
 	}
 
 	inst, err := h.instanceRepo.FindByID(id)
 	if err != nil {
-		status, message := mapError(err, "Stack instance")
+		status, message := mapError(err, entityStackInstance)
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
@@ -1075,14 +1086,14 @@ func (h *InstanceHandler) CleanInstance(c *gin.Context) {
 
 	def, err := h.definitionRepo.FindByID(inst.StackDefinitionID)
 	if err != nil {
-		status, message := mapError(err, "Stack definition")
+		status, message := mapError(err, entityStackDefinition)
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
 
 	charts, err := h.chartConfigRepo.ListByDefinition(def.ID)
 	if err != nil {
-		status, message := mapError(err, "Chart configs")
+		status, message := mapError(err, entityChartConfigs)
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
@@ -1090,10 +1101,10 @@ func (h *InstanceHandler) CleanInstance(c *gin.Context) {
 	logID, err := h.deployManager.Clean(c.Request.Context(), inst, charts)
 	if err != nil {
 		slog.Error("Failed to start clean operation",
-			"instance_id", id,
+			logKeyInstanceID, id,
 			"error", err,
 		)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
 		return
 	}
 
@@ -1112,7 +1123,7 @@ func (h *InstanceHandler) CleanInstance(c *gin.Context) {
 func (h *InstanceHandler) GetDeployLog(c *gin.Context) {
 	id := c.Param("id")
 	if id == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Instance ID is required"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": msgInstanceIDRequired})
 		return
 	}
 
@@ -1123,7 +1134,7 @@ func (h *InstanceHandler) GetDeployLog(c *gin.Context) {
 
 	// Verify instance exists.
 	if _, err := h.instanceRepo.FindByID(id); err != nil {
-		status, message := mapError(err, "Stack instance")
+		status, message := mapError(err, entityStackInstance)
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
@@ -1151,13 +1162,13 @@ func (h *InstanceHandler) GetDeployLog(c *gin.Context) {
 func (h *InstanceHandler) GetInstanceStatus(c *gin.Context) {
 	id := c.Param("id")
 	if id == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Instance ID is required"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": msgInstanceIDRequired})
 		return
 	}
 
 	inst, err := h.instanceRepo.FindByID(id)
 	if err != nil {
-		status, message := mapError(err, "Stack instance")
+		status, message := mapError(err, entityStackInstance)
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
@@ -1175,7 +1186,7 @@ func (h *InstanceHandler) GetInstanceStatus(c *gin.Context) {
 		client, clientErr := h.registry.GetK8sClient(inst.ClusterID)
 		if clientErr != nil {
 			slog.Warn("Failed to get k8s client for instance status",
-				"instance_id", id,
+				logKeyInstanceID, id,
 				"cluster_id", inst.ClusterID,
 				"error", clientErr,
 			)
@@ -1191,11 +1202,11 @@ func (h *InstanceHandler) GetInstanceStatus(c *gin.Context) {
 		nsStatus, err := client.GetNamespaceStatus(c.Request.Context(), inst.Namespace)
 		if err != nil {
 			slog.Error("Failed to get namespace status",
-				"instance_id", id,
+				logKeyInstanceID, id,
 				"namespace", inst.Namespace,
 				"error", err,
 			)
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
+			c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
 			return
 		}
 		c.JSON(http.StatusOK, nsStatus)
@@ -1220,7 +1231,7 @@ func (h *InstanceHandler) checkNamespaceUniqueness(c *gin.Context, namespace, in
 			"namespace", namespace,
 			"error", err,
 		)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
 		return true
 	}
 
@@ -1291,13 +1302,13 @@ type extendTTLRequest struct {
 func (h *InstanceHandler) ExtendTTL(c *gin.Context) {
 	id := c.Param("id")
 	if id == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Instance ID is required"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": msgInstanceIDRequired})
 		return
 	}
 
 	inst, err := h.instanceRepo.FindByID(id)
 	if err != nil {
-		status, message := mapError(err, "Stack instance")
+		status, message := mapError(err, entityStackInstance)
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
@@ -1314,7 +1325,7 @@ func (h *InstanceHandler) ExtendTTL(c *gin.Context) {
 	// Body is optional — only bind if the client sent content.
 	if c.Request.ContentLength != 0 {
 		if err := c.ShouldBindJSON(&req); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request format"})
+			c.JSON(http.StatusBadRequest, gin.H{"error": msgInvalidRequestFormat})
 			return
 		}
 	}
@@ -1328,7 +1339,7 @@ func (h *InstanceHandler) ExtendTTL(c *gin.Context) {
 		return
 	}
 	if ttl > MaxTTLMinutes {
-		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("TTL must not exceed %d minutes (30 days)", MaxTTLMinutes)})
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf(msgTTLExceedsMax, MaxTTLMinutes)})
 		return
 	}
 
@@ -1338,7 +1349,7 @@ func (h *InstanceHandler) ExtendTTL(c *gin.Context) {
 	inst.UpdatedAt = time.Now().UTC()
 
 	if err := h.instanceRepo.Update(inst); err != nil {
-		status, message := mapError(err, "Stack instance")
+		status, message := mapError(err, entityStackInstance)
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
@@ -1410,16 +1421,16 @@ func (h *InstanceHandler) CompareInstances(c *gin.Context) {
 	// Fetch definitions.
 	leftDef, err := h.definitionRepo.FindByID(leftInst.StackDefinitionID)
 	if err != nil {
-		slog.Error("compare: failed to fetch left definition", "instance_id", leftID, "error", err)
-		status, message := mapError(err, "Stack definition")
+		slog.Error("compare: failed to fetch left definition", logKeyInstanceID, leftID, "error", err)
+		status, message := mapError(err, entityStackDefinition)
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
 
 	rightDef, err := h.definitionRepo.FindByID(rightInst.StackDefinitionID)
 	if err != nil {
-		slog.Error("compare: failed to fetch right definition", "instance_id", rightID, "error", err)
-		status, message := mapError(err, "Stack definition")
+		slog.Error("compare: failed to fetch right definition", logKeyInstanceID, rightID, "error", err)
+		status, message := mapError(err, entityStackDefinition)
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
@@ -1428,29 +1439,29 @@ func (h *InstanceHandler) CompareInstances(c *gin.Context) {
 	leftCharts, err := h.chartConfigRepo.ListByDefinition(leftDef.ID)
 	if err != nil {
 		slog.Error("compare: failed to fetch left chart configs", "definition_id", leftDef.ID, "error", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
 		return
 	}
 
 	rightCharts, err := h.chartConfigRepo.ListByDefinition(rightDef.ID)
 	if err != nil {
 		slog.Error("compare: failed to fetch right chart configs", "definition_id", rightDef.ID, "error", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
 		return
 	}
 
 	// Fetch overrides for both instances.
 	leftOverrides, err := h.overrideRepo.ListByInstance(leftID)
 	if err != nil {
-		slog.Error("compare: failed to fetch left overrides", "instance_id", leftID, "error", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
+		slog.Error("compare: failed to fetch left overrides", logKeyInstanceID, leftID, "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
 		return
 	}
 
 	rightOverrides, err := h.overrideRepo.ListByInstance(rightID)
 	if err != nil {
-		slog.Error("compare: failed to fetch right overrides", "instance_id", rightID, "error", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
+		slog.Error("compare: failed to fetch right overrides", logKeyInstanceID, rightID, "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
 		return
 	}
 
@@ -1489,7 +1500,7 @@ func (h *InstanceHandler) CompareInstances(c *gin.Context) {
 		})
 		if err != nil {
 			slog.Error("compare: failed to generate left values", "chart", ch.ChartName, "error", err)
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
+			c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
 			return
 		}
 		leftValuesMap[ch.ChartName] = string(yamlBytes)
@@ -1513,7 +1524,7 @@ func (h *InstanceHandler) CompareInstances(c *gin.Context) {
 		})
 		if err != nil {
 			slog.Error("compare: failed to generate right values", "chart", ch.ChartName, "error", err)
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
+			c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
 			return
 		}
 		rightValuesMap[ch.ChartName] = string(yamlBytes)

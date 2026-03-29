@@ -19,6 +19,12 @@ import (
 	"github.com/google/uuid"
 )
 
+// OIDC handler message constants.
+const (
+	errMsgAuthFailed = "auth_failed"
+)
+
+
 // OIDCHandler handles OpenID Connect authentication endpoints.
 type OIDCHandler struct {
 	provider   *auth.Provider
@@ -73,14 +79,14 @@ func (h *OIDCHandler) Authorize(c *gin.Context) {
 	state, err := auth.GenerateState()
 	if err != nil {
 		slog.Error("Failed to generate OIDC state", "error", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
 		return
 	}
 
 	verifier, challenge, err := auth.GenerateCodeVerifier()
 	if err != nil {
 		slog.Error("Failed to generate PKCE code verifier", "error", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
 		return
 	}
 
@@ -190,7 +196,7 @@ func (h *OIDCHandler) provisionUser(oidcUser *auth.OIDCUser) (*models.User, erro
 				slog.Error("Failed to update OIDC user", "user_id", user.ID, "error", updateErr)
 				// Abort authentication to avoid issuing a token with
 				// unpersisted changes (e.g., elevated role or new email).
-				return nil, fmt.Errorf("auth_failed")
+				return nil, fmt.Errorf(errMsgAuthFailed)
 			}
 		}
 		return user, nil
@@ -200,7 +206,7 @@ func (h *OIDCHandler) provisionUser(oidcUser *auth.OIDCUser) (*models.User, erro
 	// to user creation when the user genuinely doesn't exist.
 	if err != nil && !isNotFoundError(err) {
 		slog.Error("Failed to look up OIDC user", "external_id", oidcUser.Subject, "error", err)
-		return nil, fmt.Errorf("auth_failed")
+		return nil, fmt.Errorf(errMsgAuthFailed)
 	}
 
 	// User not found — check auto-provisioning.
@@ -237,7 +243,7 @@ func (h *OIDCHandler) provisionUser(oidcUser *auth.OIDCUser) (*models.User, erro
 			}
 		}
 		slog.Error("Failed to create OIDC user", "username", username, "error", createErr)
-		return nil, fmt.Errorf("auth_failed")
+		return nil, fmt.Errorf(errMsgAuthFailed)
 	}
 
 	slog.Info("OIDC user provisioned", "user_id", newUser.ID, "username", username)

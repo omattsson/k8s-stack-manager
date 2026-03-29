@@ -14,6 +14,12 @@ import (
 	"github.com/google/uuid"
 )
 
+// Stack definition handler message constants.
+const (
+	msgDefinitionIDRequired = "Definition ID is required"
+)
+
+
 // supportedSchemaVersions lists the schema versions that the import endpoint can accept.
 var supportedSchemaVersions = map[string]bool{
 	"1.0": true,
@@ -102,7 +108,7 @@ func NewDefinitionHandlerWithVersions(
 func (h *DefinitionHandler) ListDefinitions(c *gin.Context) {
 	defs, err := h.definitionRepo.List()
 	if err != nil {
-		status, message := mapError(err, "Stack definition")
+		status, message := mapError(err, entityStackDefinition)
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
@@ -123,7 +129,7 @@ func (h *DefinitionHandler) ListDefinitions(c *gin.Context) {
 func (h *DefinitionHandler) CreateDefinition(c *gin.Context) {
 	var def models.StackDefinition
 	if err := c.ShouldBindJSON(&def); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request format"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": msgInvalidRequestFormat})
 		return
 	}
 
@@ -143,7 +149,7 @@ func (h *DefinitionHandler) CreateDefinition(c *gin.Context) {
 	}
 
 	if err := h.definitionRepo.Create(&def); err != nil {
-		status, message := mapError(err, "Stack definition")
+		status, message := mapError(err, entityStackDefinition)
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
@@ -163,20 +169,20 @@ func (h *DefinitionHandler) CreateDefinition(c *gin.Context) {
 func (h *DefinitionHandler) GetDefinition(c *gin.Context) {
 	id := c.Param("id")
 	if id == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Definition ID is required"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": msgDefinitionIDRequired})
 		return
 	}
 
 	def, err := h.definitionRepo.FindByID(id)
 	if err != nil {
-		status, message := mapError(err, "Stack definition")
+		status, message := mapError(err, entityStackDefinition)
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
 
 	charts, err := h.chartRepo.ListByDefinition(id)
 	if err != nil {
-		status, message := mapError(err, "Chart configs")
+		status, message := mapError(err, entityChartConfigs)
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
@@ -202,20 +208,20 @@ func (h *DefinitionHandler) GetDefinition(c *gin.Context) {
 func (h *DefinitionHandler) UpdateDefinition(c *gin.Context) {
 	id := c.Param("id")
 	if id == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Definition ID is required"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": msgDefinitionIDRequired})
 		return
 	}
 
 	existing, err := h.definitionRepo.FindByID(id)
 	if err != nil {
-		status, message := mapError(err, "Stack definition")
+		status, message := mapError(err, entityStackDefinition)
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
 
 	var update models.StackDefinition
 	if err := c.ShouldBindJSON(&update); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request format"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": msgInvalidRequestFormat})
 		return
 	}
 
@@ -230,7 +236,7 @@ func (h *DefinitionHandler) UpdateDefinition(c *gin.Context) {
 	}
 
 	if err := h.definitionRepo.Update(existing); err != nil {
-		status, message := mapError(err, "Stack definition")
+		status, message := mapError(err, entityStackDefinition)
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
@@ -251,7 +257,7 @@ func (h *DefinitionHandler) UpdateDefinition(c *gin.Context) {
 func (h *DefinitionHandler) DeleteDefinition(c *gin.Context) {
 	id := c.Param("id")
 	if id == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Definition ID is required"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": msgDefinitionIDRequired})
 		return
 	}
 
@@ -269,7 +275,7 @@ func (h *DefinitionHandler) DeleteDefinition(c *gin.Context) {
 	}
 
 	if err := h.definitionRepo.Delete(id); err != nil {
-		status, message := mapError(err, "Stack definition")
+		status, message := mapError(err, entityStackDefinition)
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
@@ -291,13 +297,13 @@ func (h *DefinitionHandler) DeleteDefinition(c *gin.Context) {
 func (h *DefinitionHandler) ExportDefinition(c *gin.Context) {
 	id := c.Param("id")
 	if id == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Definition ID is required"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": msgDefinitionIDRequired})
 		return
 	}
 
 	def, err := h.definitionRepo.FindByID(id)
 	if err != nil {
-		status, message := mapError(err, "Stack definition")
+		status, message := mapError(err, entityStackDefinition)
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
@@ -305,7 +311,7 @@ func (h *DefinitionHandler) ExportDefinition(c *gin.Context) {
 	charts, err := h.chartRepo.ListByDefinition(id)
 	if err != nil {
 		slog.Error("failed to list charts for export", "definition_id", id, "error", err)
-		status, message := mapError(err, "Chart configs")
+		status, message := mapError(err, entityChartConfigs)
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
@@ -351,7 +357,7 @@ func (h *DefinitionHandler) ExportDefinition(c *gin.Context) {
 func (h *DefinitionHandler) ImportDefinition(c *gin.Context) {
 	var bundle DefinitionExportBundle
 	if err := c.ShouldBindJSON(&bundle); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request format"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": msgInvalidRequestFormat})
 		return
 	}
 
@@ -403,7 +409,7 @@ func (h *DefinitionHandler) ImportDefinition(c *gin.Context) {
 
 	if err := h.definitionRepo.Create(&def); err != nil {
 		slog.Error("failed to create imported definition", "error", err)
-		status, message := mapError(err, "Stack definition")
+		status, message := mapError(err, entityStackDefinition)
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
@@ -430,7 +436,7 @@ func (h *DefinitionHandler) ImportDefinition(c *gin.Context) {
 				"definition_id", def.ID,
 				"error", err,
 			)
-			status, message := mapError(err, "Chart config")
+			status, message := mapError(err, entityChartConfig)
 			c.JSON(status, gin.H{"error": message})
 			return
 		}
@@ -457,13 +463,13 @@ func (h *DefinitionHandler) ImportDefinition(c *gin.Context) {
 func (h *DefinitionHandler) CheckUpgrade(c *gin.Context) {
 	id := c.Param("id")
 	if id == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Definition ID is required"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": msgDefinitionIDRequired})
 		return
 	}
 
 	def, err := h.definitionRepo.FindByID(id)
 	if err != nil {
-		status, message := mapError(err, "Stack definition")
+		status, message := mapError(err, entityStackDefinition)
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
@@ -490,14 +496,14 @@ func (h *DefinitionHandler) CheckUpgrade(c *gin.Context) {
 	var snapshot models.TemplateSnapshot
 	if err := json.Unmarshal([]byte(latest.Snapshot), &snapshot); err != nil {
 		slog.Error("failed to unmarshal latest version snapshot", "version_id", latest.ID, "error", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
 		return
 	}
 
 	// Get the definition's current charts.
 	currentCharts, err := h.chartRepo.ListByDefinition(id)
 	if err != nil {
-		status, message := mapError(err, "Chart configs")
+		status, message := mapError(err, entityChartConfigs)
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
@@ -578,13 +584,13 @@ func computeUpgradeChanges(defCharts []models.ChartConfig, templateCharts []mode
 func (h *DefinitionHandler) ApplyUpgrade(c *gin.Context) {
 	id := c.Param("id")
 	if id == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Definition ID is required"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": msgDefinitionIDRequired})
 		return
 	}
 
 	def, err := h.definitionRepo.FindByID(id)
 	if err != nil {
-		status, message := mapError(err, "Stack definition")
+		status, message := mapError(err, entityStackDefinition)
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
@@ -608,14 +614,14 @@ func (h *DefinitionHandler) ApplyUpgrade(c *gin.Context) {
 	var snapshot models.TemplateSnapshot
 	if err := json.Unmarshal([]byte(latest.Snapshot), &snapshot); err != nil {
 		slog.Error("failed to unmarshal version snapshot for upgrade", "version_id", latest.ID, "error", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
 		return
 	}
 
 	// Get the definition's current charts.
 	currentCharts, err := h.chartRepo.ListByDefinition(id)
 	if err != nil {
-		status, message := mapError(err, "Chart configs")
+		status, message := mapError(err, entityChartConfigs)
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
@@ -647,7 +653,7 @@ func (h *DefinitionHandler) ApplyUpgrade(c *gin.Context) {
 					"definition_id", def.ID,
 					"error", err,
 				)
-				status, message := mapError(err, "Chart config")
+				status, message := mapError(err, entityChartConfig)
 				c.JSON(status, gin.H{"error": message})
 				return
 			}
@@ -664,7 +670,7 @@ func (h *DefinitionHandler) ApplyUpgrade(c *gin.Context) {
 				"definition_id", def.ID,
 				"error", err,
 			)
-			status, message := mapError(err, "Chart config")
+			status, message := mapError(err, entityChartConfig)
 			c.JSON(status, gin.H{"error": message})
 			return
 		}
@@ -676,7 +682,7 @@ func (h *DefinitionHandler) ApplyUpgrade(c *gin.Context) {
 	def.UpdatedAt = now
 
 	if err := h.definitionRepo.Update(def); err != nil {
-		status, message := mapError(err, "Stack definition")
+		status, message := mapError(err, entityStackDefinition)
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
@@ -684,7 +690,7 @@ func (h *DefinitionHandler) ApplyUpgrade(c *gin.Context) {
 	// Return the updated definition with its charts.
 	updatedCharts, err := h.chartRepo.ListByDefinition(id)
 	if err != nil {
-		status, message := mapError(err, "Chart configs")
+		status, message := mapError(err, entityChartConfigs)
 		c.JSON(status, gin.H{"error": message})
 		return
 	}

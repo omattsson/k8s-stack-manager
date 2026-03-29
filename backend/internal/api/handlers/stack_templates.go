@@ -13,6 +13,13 @@ import (
 	"github.com/google/uuid"
 )
 
+// Stack template handler message constants.
+const (
+	msgTemplateIDRequired = "Template ID is required"
+	entityTemplateCharts  = "Template charts"
+)
+
+
 // TemplateHandler handles stack template and template chart endpoints.
 type TemplateHandler struct {
 	templateRepo    models.StackTemplateRepository
@@ -87,7 +94,7 @@ func (h *TemplateHandler) ListTemplates(c *gin.Context) {
 		templates, err = h.templateRepo.ListPublished()
 	}
 	if err != nil {
-		status, message := mapError(err, "Template")
+		status, message := mapError(err, entityTemplate)
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
@@ -154,7 +161,7 @@ func (h *TemplateHandler) ListTemplates(c *gin.Context) {
 func (h *TemplateHandler) CreateTemplate(c *gin.Context) {
 	var tmpl models.StackTemplate
 	if err := c.ShouldBindJSON(&tmpl); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request format"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": msgInvalidRequestFormat})
 		return
 	}
 
@@ -170,7 +177,7 @@ func (h *TemplateHandler) CreateTemplate(c *gin.Context) {
 	}
 
 	if err := h.templateRepo.Create(&tmpl); err != nil {
-		status, message := mapError(err, "Template")
+		status, message := mapError(err, entityTemplate)
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
@@ -190,20 +197,20 @@ func (h *TemplateHandler) CreateTemplate(c *gin.Context) {
 func (h *TemplateHandler) GetTemplate(c *gin.Context) {
 	id := c.Param("id")
 	if id == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Template ID is required"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": msgTemplateIDRequired})
 		return
 	}
 
 	tmpl, err := h.templateRepo.FindByID(id)
 	if err != nil {
-		status, message := mapError(err, "Template")
+		status, message := mapError(err, entityTemplate)
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
 
 	charts, err := h.chartRepo.ListByTemplate(id)
 	if err != nil {
-		status, message := mapError(err, "Template charts")
+		status, message := mapError(err, entityTemplateCharts)
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
@@ -229,20 +236,20 @@ func (h *TemplateHandler) GetTemplate(c *gin.Context) {
 func (h *TemplateHandler) UpdateTemplate(c *gin.Context) {
 	id := c.Param("id")
 	if id == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Template ID is required"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": msgTemplateIDRequired})
 		return
 	}
 
 	existing, err := h.templateRepo.FindByID(id)
 	if err != nil {
-		status, message := mapError(err, "Template")
+		status, message := mapError(err, entityTemplate)
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
 
 	var update models.StackTemplate
 	if err := c.ShouldBindJSON(&update); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request format"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": msgInvalidRequestFormat})
 		return
 	}
 
@@ -259,7 +266,7 @@ func (h *TemplateHandler) UpdateTemplate(c *gin.Context) {
 	}
 
 	if err := h.templateRepo.Update(existing); err != nil {
-		status, message := mapError(err, "Template")
+		status, message := mapError(err, entityTemplate)
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
@@ -280,7 +287,7 @@ func (h *TemplateHandler) UpdateTemplate(c *gin.Context) {
 func (h *TemplateHandler) DeleteTemplate(c *gin.Context) {
 	id := c.Param("id")
 	if id == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Template ID is required"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": msgTemplateIDRequired})
 		return
 	}
 
@@ -294,7 +301,7 @@ func (h *TemplateHandler) DeleteTemplate(c *gin.Context) {
 	}
 
 	if err := h.templateRepo.Delete(id); err != nil {
-		status, message := mapError(err, "Template")
+		status, message := mapError(err, entityTemplate)
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
@@ -315,7 +322,7 @@ func (h *TemplateHandler) PublishTemplate(c *gin.Context) {
 	id := c.Param("id")
 	tmpl, err := h.templateRepo.FindByID(id)
 	if err != nil {
-		status, message := mapError(err, "Template")
+		status, message := mapError(err, entityTemplate)
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
@@ -324,7 +331,7 @@ func (h *TemplateHandler) PublishTemplate(c *gin.Context) {
 	tmpl.UpdatedAt = time.Now().UTC()
 
 	if err := h.templateRepo.Update(tmpl); err != nil {
-		status, message := mapError(err, "Template")
+		status, message := mapError(err, entityTemplate)
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
@@ -404,7 +411,7 @@ func (h *TemplateHandler) UnpublishTemplate(c *gin.Context) {
 	id := c.Param("id")
 	tmpl, err := h.templateRepo.FindByID(id)
 	if err != nil {
-		status, message := mapError(err, "Template")
+		status, message := mapError(err, entityTemplate)
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
@@ -413,7 +420,7 @@ func (h *TemplateHandler) UnpublishTemplate(c *gin.Context) {
 	tmpl.UpdatedAt = time.Now().UTC()
 
 	if err := h.templateRepo.Update(tmpl); err != nil {
-		status, message := mapError(err, "Template")
+		status, message := mapError(err, entityTemplate)
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
@@ -437,7 +444,7 @@ func (h *TemplateHandler) InstantiateTemplate(c *gin.Context) {
 	id := c.Param("id")
 	tmpl, err := h.templateRepo.FindByID(id)
 	if err != nil {
-		status, message := mapError(err, "Template")
+		status, message := mapError(err, entityTemplate)
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
@@ -447,7 +454,7 @@ func (h *TemplateHandler) InstantiateTemplate(c *gin.Context) {
 		Description string `json:"description"`
 	}
 	if err := c.ShouldBindJSON(&input); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request format"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": msgInvalidRequestFormat})
 		return
 	}
 	if input.Name == "" {
@@ -469,7 +476,7 @@ func (h *TemplateHandler) InstantiateTemplate(c *gin.Context) {
 	}
 
 	if err := h.definitionRepo.Create(def); err != nil {
-		status, message := mapError(err, "Stack definition")
+		status, message := mapError(err, entityStackDefinition)
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
@@ -477,7 +484,7 @@ func (h *TemplateHandler) InstantiateTemplate(c *gin.Context) {
 	// Copy template charts into chart configs.
 	templateCharts, err := h.chartRepo.ListByTemplate(tmpl.ID)
 	if err != nil {
-		status, message := mapError(err, "Template charts")
+		status, message := mapError(err, entityTemplateCharts)
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
@@ -497,7 +504,7 @@ func (h *TemplateHandler) InstantiateTemplate(c *gin.Context) {
 			CreatedAt:         now,
 		}
 		if err := h.chartConfigRepo.Create(&cc); err != nil {
-			status, message := mapError(err, "Chart config")
+			status, message := mapError(err, entityChartConfig)
 			c.JSON(status, gin.H{"error": message})
 			return
 		}
@@ -523,7 +530,7 @@ func (h *TemplateHandler) CloneTemplate(c *gin.Context) {
 	id := c.Param("id")
 	source, err := h.templateRepo.FindByID(id)
 	if err != nil {
-		status, message := mapError(err, "Template")
+		status, message := mapError(err, entityTemplate)
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
@@ -543,7 +550,7 @@ func (h *TemplateHandler) CloneTemplate(c *gin.Context) {
 	}
 
 	if err := h.templateRepo.Create(clone); err != nil {
-		status, message := mapError(err, "Template")
+		status, message := mapError(err, entityTemplate)
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
@@ -551,7 +558,7 @@ func (h *TemplateHandler) CloneTemplate(c *gin.Context) {
 	// Copy charts.
 	charts, err := h.chartRepo.ListByTemplate(source.ID)
 	if err != nil {
-		status, message := mapError(err, "Template charts")
+		status, message := mapError(err, entityTemplateCharts)
 		c.JSON(status, gin.H{"error": message})
 		return
 	}

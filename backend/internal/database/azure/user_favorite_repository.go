@@ -14,6 +14,9 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/data/aztables"
 )
 
+const tableUserFavorites = "UserFavorites"
+
+
 // UserFavoriteRepository implements models.UserFavoriteRepository for Azure Table Storage.
 // Partition key: UserID, Row key: "entityType:entityID" (composite for uniqueness).
 type UserFavoriteRepository struct {
@@ -23,16 +26,16 @@ type UserFavoriteRepository struct {
 
 // NewUserFavoriteRepository creates a new Azure Table Storage user favorite repository.
 func NewUserFavoriteRepository(accountName, accountKey, endpoint string, useAzurite bool) (*UserFavoriteRepository, error) {
-	client, err := createTableClient(accountName, accountKey, endpoint, "UserFavorites", useAzurite)
+	client, err := createTableClient(accountName, accountKey, endpoint, tableUserFavorites, useAzurite)
 	if err != nil {
 		return nil, err
 	}
-	return &UserFavoriteRepository{client: client, tableName: "UserFavorites"}, nil
+	return &UserFavoriteRepository{client: client, tableName: tableUserFavorites}, nil
 }
 
 // NewTestUserFavoriteRepository creates a repository for unit testing without connecting.
 func NewTestUserFavoriteRepository() *UserFavoriteRepository {
-	return &UserFavoriteRepository{tableName: "UserFavorites"}
+	return &UserFavoriteRepository{tableName: tableUserFavorites}
 }
 
 // SetTestClient injects a mock client for testing.
@@ -72,7 +75,7 @@ func (r *UserFavoriteRepository) Add(fav *models.UserFavorite) error {
 
 	entityBytes, err := json.Marshal(entity)
 	if err != nil {
-		return dberrors.NewDatabaseError("marshal", err)
+		return dberrors.NewDatabaseError(opMarshal, err)
 	}
 
 	// Idempotent upsert — don't error on duplicate.
@@ -104,7 +107,7 @@ func (r *UserFavoriteRepository) List(userID string) ([]*models.UserFavorite, er
 
 	entities, err := collectEntitiesTyped[userFavoriteEntity](ctx, pager, nil, 0)
 	if err != nil {
-		return nil, mapAzureError("list", err)
+		return nil, mapAzureError(opList, err)
 	}
 
 	favorites := make([]*models.UserFavorite, 0, len(entities))

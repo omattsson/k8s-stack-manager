@@ -11,6 +11,10 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/data/aztables"
 )
 
+const tableStackInstances = "StackInstances"
+const filterPKGlobal = odataPartitionKeyEq + pkGlobal + "'"
+
+
 // StackInstanceRepository implements models.StackInstanceRepository for Azure Table Storage.
 // Partition key: "global", Row key: instance ID.
 type StackInstanceRepository struct {
@@ -20,16 +24,16 @@ type StackInstanceRepository struct {
 
 // NewStackInstanceRepository creates a new Azure Table Storage stack instance repository.
 func NewStackInstanceRepository(accountName, accountKey, endpoint string, useAzurite bool) (*StackInstanceRepository, error) {
-	client, err := createTableClient(accountName, accountKey, endpoint, "StackInstances", useAzurite)
+	client, err := createTableClient(accountName, accountKey, endpoint, tableStackInstances, useAzurite)
 	if err != nil {
 		return nil, err
 	}
-	return &StackInstanceRepository{client: client, tableName: "StackInstances"}, nil
+	return &StackInstanceRepository{client: client, tableName: tableStackInstances}, nil
 }
 
 // NewTestStackInstanceRepository creates a repository for unit testing.
 func NewTestStackInstanceRepository() *StackInstanceRepository {
-	return &StackInstanceRepository{tableName: "StackInstances"}
+	return &StackInstanceRepository{tableName: tableStackInstances}
 }
 
 // SetTestClient injects a mock client for testing.
@@ -100,12 +104,12 @@ func (r *StackInstanceRepository) Create(instance *models.StackInstance) error {
 	entity := stackInstanceToEntity(instance)
 	entityBytes, err := json.Marshal(entity)
 	if err != nil {
-		return dberrors.NewDatabaseError("marshal", err)
+		return dberrors.NewDatabaseError(opMarshal, err)
 	}
 
 	_, err = r.client.AddEntity(ctx, entityBytes, nil)
 	if err != nil {
-		return mapAzureError("create", err)
+		return mapAzureError(opCreate, err)
 	}
 	return nil
 }
@@ -113,14 +117,14 @@ func (r *StackInstanceRepository) Create(instance *models.StackInstance) error {
 func (r *StackInstanceRepository) FindByID(id string) (*models.StackInstance, error) {
 	ctx := context.Background()
 
-	resp, err := r.client.GetEntity(ctx, "global", id, nil)
+	resp, err := r.client.GetEntity(ctx, pkGlobal, id, nil)
 	if err != nil {
 		return nil, mapAzureError("find_by_id", err)
 	}
 
 	var entity stackInstanceEntity
 	if err := json.Unmarshal(resp.Value, &entity); err != nil {
-		return nil, dberrors.NewDatabaseError("unmarshal", err)
+		return nil, dberrors.NewDatabaseError(opUnmarshal, err)
 	}
 	return entity.toModel(), nil
 }
@@ -133,12 +137,12 @@ func (r *StackInstanceRepository) Update(instance *models.StackInstance) error {
 	entity := stackInstanceToEntity(instance)
 	entityBytes, err := json.Marshal(entity)
 	if err != nil {
-		return dberrors.NewDatabaseError("marshal", err)
+		return dberrors.NewDatabaseError(opMarshal, err)
 	}
 
 	_, err = r.client.UpdateEntity(ctx, entityBytes, nil)
 	if err != nil {
-		return mapAzureError("update", err)
+		return mapAzureError(opUpdate, err)
 	}
 	return nil
 }
@@ -146,9 +150,9 @@ func (r *StackInstanceRepository) Update(instance *models.StackInstance) error {
 func (r *StackInstanceRepository) Delete(id string) error {
 	ctx := context.Background()
 
-	_, err := r.client.DeleteEntity(ctx, "global", id, nil)
+	_, err := r.client.DeleteEntity(ctx, pkGlobal, id, nil)
 	if err != nil {
-		return mapAzureError("delete", err)
+		return mapAzureError(opDelete, err)
 	}
 	return nil
 }
@@ -156,7 +160,7 @@ func (r *StackInstanceRepository) Delete(id string) error {
 func (r *StackInstanceRepository) FindByNamespace(namespace string) (*models.StackInstance, error) {
 	ctx := context.Background()
 
-	filter := "PartitionKey eq 'global' and Namespace eq '" + escapeODataString(namespace) + "'"
+	filter := filterPKGlobal + " and Namespace eq '" + escapeODataString(namespace) + "'"
 	top := int32(1)
 	pager := r.client.NewListEntitiesPager(&aztables.ListEntitiesOptions{
 		Filter: &filter,
@@ -177,14 +181,14 @@ func (r *StackInstanceRepository) FindByNamespace(namespace string) (*models.Sta
 func (r *StackInstanceRepository) List() ([]models.StackInstance, error) {
 	ctx := context.Background()
 
-	filter := "PartitionKey eq 'global'"
+	filter := filterPKGlobal
 	pager := r.client.NewListEntitiesPager(&aztables.ListEntitiesOptions{
 		Filter: &filter,
 	})
 
 	entities, err := collectEntitiesTyped[stackInstanceEntity](ctx, pager, nil, 0)
 	if err != nil {
-		return nil, mapAzureError("list", err)
+		return nil, mapAzureError(opList, err)
 	}
 
 	results := make([]models.StackInstance, 0, len(entities))
@@ -197,7 +201,7 @@ func (r *StackInstanceRepository) List() ([]models.StackInstance, error) {
 func (r *StackInstanceRepository) ListByOwner(ownerID string) ([]models.StackInstance, error) {
 	ctx := context.Background()
 
-	filter := "PartitionKey eq 'global' and OwnerID eq '" + escapeODataString(ownerID) + "'"
+	filter := filterPKGlobal + " and OwnerID eq '" + escapeODataString(ownerID) + "'"
 	pager := r.client.NewListEntitiesPager(&aztables.ListEntitiesOptions{
 		Filter: &filter,
 	})
@@ -221,7 +225,7 @@ func (r *StackInstanceRepository) FindByCluster(clusterID string) ([]models.Stac
 	// entities where the property is absent (pre-existing rows). Scan the full
 	// partition and filter in-memory instead.
 	if clusterID == "" {
-		filter := "PartitionKey eq 'global'"
+		filter := filterPKGlobal
 		pager := r.client.NewListEntitiesPager(&aztables.ListEntitiesOptions{
 			Filter: &filter,
 		})
@@ -240,7 +244,7 @@ func (r *StackInstanceRepository) FindByCluster(clusterID string) ([]models.Stac
 		return results, nil
 	}
 
-	filter := "PartitionKey eq 'global' and ClusterID eq '" + escapeODataString(clusterID) + "'"
+	filter := filterPKGlobal + " and ClusterID eq '" + escapeODataString(clusterID) + "'"
 	pager := r.client.NewListEntitiesPager(&aztables.ListEntitiesOptions{
 		Filter: &filter,
 	})
@@ -276,7 +280,7 @@ func (r *StackInstanceRepository) ListExpired() ([]*models.StackInstance, error)
 	now := time.Now().UTC()
 
 	// Pre-filter to running instances; only they can expire.
-	filter := "PartitionKey eq 'global' and Status eq 'running'"
+	filter := filterPKGlobal + " and Status eq 'running'"
 	pager := r.client.NewListEntitiesPager(&aztables.ListEntitiesOptions{
 		Filter: &filter,
 	})
@@ -307,7 +311,7 @@ func (r *StackInstanceRepository) ListExpired() ([]*models.StackInstance, error)
 
 func stackInstanceToEntity(i *models.StackInstance) map[string]interface{} {
 	entity := map[string]interface{}{
-		"PartitionKey":      "global",
+		"PartitionKey":      pkGlobal,
 		"RowKey":            i.ID,
 		"ID":                i.ID,
 		"StackDefinitionID": i.StackDefinitionID,

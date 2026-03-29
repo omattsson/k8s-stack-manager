@@ -18,6 +18,19 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/data/aztables"
 )
 
+// TableRepository constants for Items storage.
+const (
+	tableItems          = "items"
+	errItemTypeAssert   = "entity must be *models.Item"
+	fieldVersion        = "Version"
+	fieldItemCreatedAt  = "CreatedAt"
+	fieldItemUpdatedAt  = "UpdatedAt"
+	fieldItemName       = "Name"
+	fieldItemPrice      = "Price"
+	fieldItemRowKey     = "RowKey"
+	fieldItemPartKey    = "PartitionKey"
+)
+
 // nextID generates a collision-resistant numeric ID using a cryptographically
 // secure random component. We use 48 bits of randomness to keep collision
 // probability extremely low even under concurrency across multiple instances.
@@ -111,7 +124,7 @@ func NewTestTableRepository(tableName string) *TableRepository {
 func (r *TableRepository) Create(ctx context.Context, entity interface{}) error {
 	item, ok := entity.(*models.Item)
 	if !ok {
-		return dberrors.NewDatabaseError("type_assertion", errors.New("entity must be *models.Item"))
+		return dberrors.NewDatabaseError(opTypeAssertion, errors.New(errItemTypeAssert))
 	}
 
 	// Initialize version for new entities (consistent with GORM default:1 and MockRepository)
@@ -126,33 +139,33 @@ func (r *TableRepository) Create(ctx context.Context, entity interface{}) error 
 	if item.ID == 0 {
 		id, err := nextID()
 		if err != nil {
-			return dberrors.NewDatabaseError("create", err)
+			return dberrors.NewDatabaseError(opCreate, err)
 		}
 		item.ID = id
 	}
 
 	entityJSON := map[string]interface{}{
-		"PartitionKey": "items",
-		"RowKey":       strconv.FormatUint(uint64(item.ID), 10),
-		"Name":         item.Name,
-		"Price":        item.Price,
-		"Version":      item.Version,
-		"CreatedAt":    now.Format(time.RFC3339),
-		"UpdatedAt":    now.Format(time.RFC3339),
+		fieldItemPartKey: tableItems,
+		fieldItemRowKey:       strconv.FormatUint(uint64(item.ID), 10),
+		fieldItemName:         item.Name,
+		fieldItemPrice:        item.Price,
+		fieldVersion:      item.Version,
+		fieldItemCreatedAt:    now.Format(time.RFC3339),
+		fieldItemUpdatedAt:    now.Format(time.RFC3339),
 	}
 
 	entityBytes, err := json.Marshal(entityJSON)
 	if err != nil {
-		return dberrors.NewDatabaseError("marshal", err)
+		return dberrors.NewDatabaseError(opMarshal, err)
 	}
 
 	_, err = r.client.AddEntity(ctx, entityBytes, nil)
 	if err != nil {
 		var respErr *azcore.ResponseError
 		if errors.As(err, &respErr) && respErr.ErrorCode == "EntityAlreadyExists" {
-			return dberrors.NewDatabaseError("create", dberrors.ErrDuplicateKey)
+			return dberrors.NewDatabaseError(opCreate, dberrors.ErrDuplicateKey)
 		}
-		return dberrors.NewDatabaseError("create", err)
+		return dberrors.NewDatabaseError(opCreate, err)
 	}
 
 	item.CreatedAt = now
@@ -164,52 +177,52 @@ func (r *TableRepository) Create(ctx context.Context, entity interface{}) error 
 func (r *TableRepository) FindByID(ctx context.Context, id uint, dest interface{}) error {
 	item, ok := dest.(*models.Item)
 	if !ok {
-		return dberrors.NewDatabaseError("type_assertion", fmt.Errorf("dest must be *models.Item"))
+		return dberrors.NewDatabaseError(opTypeAssertion, fmt.Errorf("dest must be *models.Item"))
 	}
 
 	// Get the entity
-	result, err := r.client.GetEntity(ctx, "items", strconv.FormatUint(uint64(id), 10), nil)
+	result, err := r.client.GetEntity(ctx, tableItems, strconv.FormatUint(uint64(id), 10), nil)
 	if err != nil {
 		var respErr *azcore.ResponseError
 		if errors.As(err, &respErr) && respErr.StatusCode == 404 {
-			return dberrors.NewDatabaseError("find", dberrors.ErrNotFound)
+			return dberrors.NewDatabaseError(opFind, dberrors.ErrNotFound)
 		}
-		return dberrors.NewDatabaseError("find", err)
+		return dberrors.NewDatabaseError(opFind, err)
 	}
 
 	// Parse the entity
 	var entityData map[string]interface{}
 	if err := json.Unmarshal(result.Value, &entityData); err != nil {
-		return dberrors.NewDatabaseError("unmarshal", err)
+		return dberrors.NewDatabaseError(opUnmarshal, err)
 	}
 
 	// Map entity to item
 	item.ID = id
 
-	name, ok := entityData["Name"].(string)
+	name, ok := entityData[fieldItemName].(string)
 	if !ok {
-		return dberrors.NewDatabaseError("unmarshal", fmt.Errorf("missing or invalid Name field"))
+		return dberrors.NewDatabaseError(opUnmarshal, fmt.Errorf("missing or invalid Name field"))
 	}
 	item.Name = name
 
-	price, ok := entityData["Price"].(float64)
+	price, ok := entityData[fieldItemPrice].(float64)
 	if !ok {
-		return dberrors.NewDatabaseError("unmarshal", fmt.Errorf("missing or invalid Price field"))
+		return dberrors.NewDatabaseError(opUnmarshal, fmt.Errorf("missing or invalid Price field"))
 	}
 	item.Price = price
 
 	// Default to version 1 when the Version field is missing or invalid to
 	// keep optimistic-lock semantics consistent with the GORM repository.
 	item.Version = 1
-	if v, ok := entityData["Version"]; ok {
+	if v, ok := entityData[fieldVersion]; ok {
 		if vf, ok := v.(float64); ok && vf > 0 {
 			item.Version = uint(vf)
 		}
 	}
 
-	createdAtStr, ok := entityData["CreatedAt"].(string)
+	createdAtStr, ok := entityData[fieldItemCreatedAt].(string)
 	if !ok {
-		return dberrors.NewDatabaseError("unmarshal", fmt.Errorf("missing or invalid CreatedAt field"))
+		return dberrors.NewDatabaseError(opUnmarshal, fmt.Errorf("missing or invalid CreatedAt field"))
 	}
 	createdAt, err := time.Parse(time.RFC3339, createdAtStr)
 	if err != nil {
@@ -217,9 +230,9 @@ func (r *TableRepository) FindByID(ctx context.Context, id uint, dest interface{
 	}
 	item.CreatedAt = createdAt
 
-	updatedAtStr, ok := entityData["UpdatedAt"].(string)
+	updatedAtStr, ok := entityData[fieldItemUpdatedAt].(string)
 	if !ok {
-		return dberrors.NewDatabaseError("unmarshal", fmt.Errorf("missing or invalid UpdatedAt field"))
+		return dberrors.NewDatabaseError(opUnmarshal, fmt.Errorf("missing or invalid UpdatedAt field"))
 	}
 	updatedAt, err := time.Parse(time.RFC3339, updatedAtStr)
 	if err != nil {
@@ -237,27 +250,27 @@ func (r *TableRepository) FindByID(ctx context.Context, id uint, dest interface{
 func (r *TableRepository) Update(ctx context.Context, entity interface{}) error {
 	item, ok := entity.(*models.Item)
 	if !ok {
-		return dberrors.NewDatabaseError("type_assertion", fmt.Errorf("entity must be *models.Item"))
+		return dberrors.NewDatabaseError(opTypeAssertion, fmt.Errorf(errItemTypeAssert))
 	}
 
 	if item.ID == 0 {
-		return dberrors.NewDatabaseError("update", dberrors.ErrValidation)
+		return dberrors.NewDatabaseError(opUpdate, dberrors.ErrValidation)
 	}
 
 	// Fetch existing entity (also validates existence)
-	existing, err := r.client.GetEntity(ctx, "items", strconv.FormatUint(uint64(item.ID), 10), nil)
+	existing, err := r.client.GetEntity(ctx, tableItems, strconv.FormatUint(uint64(item.ID), 10), nil)
 	if err != nil {
 		var respErr *azcore.ResponseError
 		if errors.As(err, &respErr) && respErr.StatusCode == 404 {
-			return dberrors.NewDatabaseError("update", dberrors.ErrNotFound)
+			return dberrors.NewDatabaseError(opUpdate, dberrors.ErrNotFound)
 		}
-		return dberrors.NewDatabaseError("find", err)
+		return dberrors.NewDatabaseError(opFind, err)
 	}
 
 	// Parse existing entity once for version checking and CreatedAt preservation.
 	var existingData map[string]interface{}
 	if err := json.Unmarshal(existing.Value, &existingData); err != nil {
-		return dberrors.NewDatabaseError("unmarshal", err)
+		return dberrors.NewDatabaseError(opUnmarshal, err)
 	}
 
 	// Optimistic locking: compare version if the entity is Versionable
@@ -268,7 +281,7 @@ func (r *TableRepository) Update(ctx context.Context, entity interface{}) error 
 		// consistent with the model default and FindByID behavior.
 		storedVersionUint := uint(1)
 
-		if storedVersion, ok := existingData["Version"]; ok {
+		if storedVersion, ok := existingData[fieldVersion]; ok {
 			switch v := storedVersion.(type) {
 			case float64:
 				// Only treat strictly positive values as valid stored versions.
@@ -284,7 +297,7 @@ func (r *TableRepository) Update(ctx context.Context, entity interface{}) error 
 		}
 
 		if currentVersion != storedVersionUint {
-			return dberrors.NewDatabaseError("update", errors.New("version mismatch"))
+			return dberrors.NewDatabaseError(opUpdate, errors.New("version mismatch"))
 		}
 
 		// Increment version for the update
@@ -298,7 +311,7 @@ func (r *TableRepository) Update(ctx context.Context, entity interface{}) error 
 	// updating don't accidentally clobber it with a zero time.
 	createdAt := item.CreatedAt
 	if createdAt.IsZero() {
-		if caStr, ok := existingData["CreatedAt"].(string); ok {
+		if caStr, ok := existingData[fieldItemCreatedAt].(string); ok {
 			if parsed, parseErr := time.Parse(time.RFC3339, caStr); parseErr == nil {
 				createdAt = parsed
 			}
@@ -306,18 +319,18 @@ func (r *TableRepository) Update(ctx context.Context, entity interface{}) error 
 	}
 
 	entityJson := map[string]interface{}{
-		"PartitionKey": "items",
-		"RowKey":       strconv.FormatUint(uint64(item.ID), 10),
-		"Name":         item.Name,
-		"Price":        item.Price,
-		"Version":      item.Version,
-		"CreatedAt":    createdAt.Format(time.RFC3339),
-		"UpdatedAt":    now.Format(time.RFC3339),
+		fieldItemPartKey: tableItems,
+		fieldItemRowKey:       strconv.FormatUint(uint64(item.ID), 10),
+		fieldItemName:         item.Name,
+		fieldItemPrice:        item.Price,
+		fieldVersion:      item.Version,
+		fieldItemCreatedAt:    createdAt.Format(time.RFC3339),
+		fieldItemUpdatedAt:    now.Format(time.RFC3339),
 	}
 
 	entityBytes, err := json.Marshal(entityJson)
 	if err != nil {
-		return dberrors.NewDatabaseError("marshal", err)
+		return dberrors.NewDatabaseError(opMarshal, err)
 	}
 
 	// Use ETag from the GET response for conditional update
@@ -333,9 +346,9 @@ func (r *TableRepository) Update(ctx context.Context, entity interface{}) error 
 			if ver, ok := entity.(models.Versionable); ok {
 				ver.SetVersion(ver.GetVersion() - 1) // Roll back
 			}
-			return dberrors.NewDatabaseError("update", errors.New("version mismatch"))
+			return dberrors.NewDatabaseError(opUpdate, errors.New("version mismatch"))
 		}
-		return dberrors.NewDatabaseError("update", err)
+		return dberrors.NewDatabaseError(opUpdate, err)
 	}
 
 	item.UpdatedAt = now
@@ -346,20 +359,20 @@ func (r *TableRepository) Update(ctx context.Context, entity interface{}) error 
 func (r *TableRepository) Delete(ctx context.Context, entity interface{}) error {
 	item, ok := entity.(*models.Item)
 	if !ok {
-		return dberrors.NewDatabaseError("type_assertion", fmt.Errorf("entity must be *models.Item"))
+		return dberrors.NewDatabaseError(opTypeAssertion, fmt.Errorf(errItemTypeAssert))
 	}
 
 	if item.ID == 0 {
-		return dberrors.NewDatabaseError("delete", dberrors.ErrValidation)
+		return dberrors.NewDatabaseError(opDelete, dberrors.ErrValidation)
 	}
 
-	_, err := r.client.DeleteEntity(ctx, "items", strconv.FormatUint(uint64(item.ID), 10), nil)
+	_, err := r.client.DeleteEntity(ctx, tableItems, strconv.FormatUint(uint64(item.ID), 10), nil)
 	if err != nil {
 		var respErr *azcore.ResponseError
 		if errors.As(err, &respErr) && respErr.StatusCode == 404 {
-			return dberrors.NewDatabaseError("delete", dberrors.ErrNotFound)
+			return dberrors.NewDatabaseError(opDelete, dberrors.ErrNotFound)
 		}
-		return dberrors.NewDatabaseError("delete", err)
+		return dberrors.NewDatabaseError(opDelete, err)
 	}
 
 	return nil
@@ -369,7 +382,7 @@ func (r *TableRepository) Delete(ctx context.Context, entity interface{}) error 
 func (r *TableRepository) List(ctx context.Context, dest interface{}, conditions ...interface{}) error {
 	items, ok := dest.(*[]models.Item)
 	if !ok {
-		return dberrors.NewDatabaseError("type_assertion", fmt.Errorf("dest must be *[]models.Item"))
+		return dberrors.NewDatabaseError(opTypeAssertion, fmt.Errorf("dest must be *[]models.Item"))
 	}
 
 	// Process conditions
@@ -419,50 +432,50 @@ func (r *TableRepository) List(ctx context.Context, dest interface{}, conditions
 	for pager.More() {
 		response, err := pager.NextPage(ctx)
 		if err != nil {
-			return dberrors.NewDatabaseError("list", err)
+			return dberrors.NewDatabaseError(opList, err)
 		}
 
 		for _, entityBytes := range response.Entities {
 			var entityData map[string]interface{}
 			if err := json.Unmarshal(entityBytes, &entityData); err != nil {
-				return dberrors.NewDatabaseError("unmarshal", err)
+				return dberrors.NewDatabaseError(opUnmarshal, err)
 			}
 
-			rowKey, ok := entityData["RowKey"].(string)
+			rowKey, ok := entityData[fieldItemRowKey].(string)
 			if !ok || rowKey == "" {
-				return dberrors.NewDatabaseError("list", fmt.Errorf("entity missing or invalid RowKey"))
+				return dberrors.NewDatabaseError(opList, fmt.Errorf("entity missing or invalid RowKey"))
 			}
 			id, err := strconv.ParseUint(rowKey, 10, 64)
 			if err != nil {
-				return dberrors.NewDatabaseError("list", fmt.Errorf("invalid RowKey %q: %w", rowKey, err))
+				return dberrors.NewDatabaseError(opList, fmt.Errorf("invalid RowKey %q: %w", rowKey, err))
 			}
 
-			createdAtStr, ok := entityData["CreatedAt"].(string)
+			createdAtStr, ok := entityData[fieldItemCreatedAt].(string)
 			if !ok || createdAtStr == "" {
-				return dberrors.NewDatabaseError("list", fmt.Errorf("entity missing or invalid CreatedAt"))
+				return dberrors.NewDatabaseError(opList, fmt.Errorf("entity missing or invalid CreatedAt"))
 			}
 			createdAt, err := time.Parse(time.RFC3339, createdAtStr)
 			if err != nil {
-				return dberrors.NewDatabaseError("list", fmt.Errorf("invalid CreatedAt %q: %w", createdAtStr, err))
+				return dberrors.NewDatabaseError(opList, fmt.Errorf("invalid CreatedAt %q: %w", createdAtStr, err))
 			}
 
-			updatedAtStr, ok := entityData["UpdatedAt"].(string)
+			updatedAtStr, ok := entityData[fieldItemUpdatedAt].(string)
 			if !ok || updatedAtStr == "" {
-				return dberrors.NewDatabaseError("list", fmt.Errorf("entity missing or invalid UpdatedAt"))
+				return dberrors.NewDatabaseError(opList, fmt.Errorf("entity missing or invalid UpdatedAt"))
 			}
 			updatedAt, err := time.Parse(time.RFC3339, updatedAtStr)
 			if err != nil {
-				return dberrors.NewDatabaseError("list", fmt.Errorf("invalid UpdatedAt %q: %w", updatedAtStr, err))
+				return dberrors.NewDatabaseError(opList, fmt.Errorf("invalid UpdatedAt %q: %w", updatedAtStr, err))
 			}
 
-			name, ok := entityData["Name"].(string)
+			name, ok := entityData[fieldItemName].(string)
 			if !ok {
-				return dberrors.NewDatabaseError("list", fmt.Errorf("entity missing or invalid Name"))
+				return dberrors.NewDatabaseError(opList, fmt.Errorf("entity missing or invalid Name"))
 			}
 
-			price, ok := entityData["Price"].(float64)
+			price, ok := entityData[fieldItemPrice].(float64)
 			if !ok {
-				return dberrors.NewDatabaseError("list", fmt.Errorf("entity missing or invalid Price"))
+				return dberrors.NewDatabaseError(opList, fmt.Errorf("entity missing or invalid Price"))
 			}
 
 			item := models.Item{
@@ -476,7 +489,7 @@ func (r *TableRepository) List(ctx context.Context, dest interface{}, conditions
 			}
 
 			// Populate Version if present; default to 1 when absent or invalid
-			if v, ok := entityData["Version"]; ok {
+			if v, ok := entityData[fieldVersion]; ok {
 				if vf, ok := v.(float64); ok {
 					item.Version = uint(vf)
 				} else {

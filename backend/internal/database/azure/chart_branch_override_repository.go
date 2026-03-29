@@ -12,6 +12,9 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/data/aztables"
 )
 
+const tableChartBranchOverrides = "ChartBranchOverrides"
+
+
 // ChartBranchOverrideRepository implements models.ChartBranchOverrideRepository for Azure Table Storage.
 // Partition key: stack_instance_id, Row key: chart_config_id.
 type ChartBranchOverrideRepository struct {
@@ -21,16 +24,16 @@ type ChartBranchOverrideRepository struct {
 
 // NewChartBranchOverrideRepository creates a new Azure Table Storage chart branch override repository.
 func NewChartBranchOverrideRepository(accountName, accountKey, endpoint string, useAzurite bool) (*ChartBranchOverrideRepository, error) {
-	client, err := createTableClient(accountName, accountKey, endpoint, "ChartBranchOverrides", useAzurite)
+	client, err := createTableClient(accountName, accountKey, endpoint, tableChartBranchOverrides, useAzurite)
 	if err != nil {
 		return nil, err
 	}
-	return &ChartBranchOverrideRepository{client: client, tableName: "ChartBranchOverrides"}, nil
+	return &ChartBranchOverrideRepository{client: client, tableName: tableChartBranchOverrides}, nil
 }
 
 // NewTestChartBranchOverrideRepository creates a repository for unit testing.
 func NewTestChartBranchOverrideRepository() *ChartBranchOverrideRepository {
-	return &ChartBranchOverrideRepository{tableName: "ChartBranchOverrides"}
+	return &ChartBranchOverrideRepository{tableName: tableChartBranchOverrides}
 }
 
 // SetTestClient injects a mock client for testing.
@@ -70,7 +73,7 @@ func (r *ChartBranchOverrideRepository) List(instanceID string) ([]*models.Chart
 
 	entities, err := collectEntitiesTyped[chartBranchOverrideEntity](ctx, pager, nil, 0)
 	if err != nil {
-		return nil, mapAzureError("list", err)
+		return nil, mapAzureError(opList, err)
 	}
 
 	results := make([]*models.ChartBranchOverride, 0, len(entities))
@@ -90,7 +93,7 @@ func (r *ChartBranchOverrideRepository) Get(instanceID, chartConfigID string) (*
 
 	var entity chartBranchOverrideEntity
 	if err := json.Unmarshal(resp.Value, &entity); err != nil {
-		return nil, dberrors.NewDatabaseError("unmarshal", err)
+		return nil, dberrors.NewDatabaseError(opUnmarshal, err)
 	}
 	return entity.toModel(), nil
 }
@@ -110,7 +113,7 @@ func (r *ChartBranchOverrideRepository) Set(override *models.ChartBranchOverride
 	entity := chartBranchOverrideToEntity(override)
 	entityBytes, err := json.Marshal(entity)
 	if err != nil {
-		return dberrors.NewDatabaseError("marshal", err)
+		return dberrors.NewDatabaseError(opMarshal, err)
 	}
 
 	// Upsert — replace if exists, create if not.
@@ -128,7 +131,7 @@ func (r *ChartBranchOverrideRepository) Delete(instanceID, chartConfigID string)
 
 	_, err := r.client.DeleteEntity(ctx, instanceID, chartConfigID, nil)
 	if err != nil {
-		return mapAzureError("delete", err)
+		return mapAzureError(opDelete, err)
 	}
 	return nil
 }

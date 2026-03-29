@@ -8,6 +8,22 @@ import (
 	"backend/pkg/dberrors"
 )
 
+// Common error messages shared across handlers.
+const (
+	msgInternalServerError  = "Internal server error"
+	msgInvalidRequestFormat = "Invalid request format"
+)
+
+// Common entity names used with mapError across multiple handler files.
+const (
+	entityStackInstance   = "Stack instance"
+	entityStackDefinition = "Stack definition"
+	entityChartConfig     = "Chart config"
+	entityChartConfigs    = "Chart configs"
+	entityTemplate        = "Template"
+	entityCluster         = "Cluster"
+)
+
 // mapError translates a repository error into an appropriate HTTP status code
 // and a safe, user-facing message. entityName is used to build contextual
 // "not found" / "already exists" messages (e.g. "Stack definition").
@@ -43,5 +59,5 @@ func mapError(err error, entityName string) (int, string) {
 	}
 
 	// Never leak internal error details.
-	return http.StatusInternalServerError, "Internal server error"
+	return http.StatusInternalServerError, msgInternalServerError
 }

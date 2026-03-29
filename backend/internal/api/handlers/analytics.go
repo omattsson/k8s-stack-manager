@@ -12,6 +12,12 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// Analytics handler message constants.
+const (
+	msgAnalyticsListInstances = "analytics: failed to list instances"
+)
+
+
 // maxDeployLogWorkers limits the number of concurrent goroutines used to
 // fetch deploy log summaries in collectDeploySummaries, preventing excessive
 // fan-out against the backing store.
@@ -92,28 +98,28 @@ func (h *AnalyticsHandler) GetOverview(c *gin.Context) {
 	templates, err := h.templateRepo.List()
 	if err != nil {
 		slog.Error("analytics: failed to list templates", "error", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
 		return
 	}
 
 	definitions, err := h.definitionRepo.List()
 	if err != nil {
 		slog.Error("analytics: failed to list definitions", "error", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
 		return
 	}
 
 	instances, err := h.instanceRepo.List()
 	if err != nil {
-		slog.Error("analytics: failed to list instances", "error", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
+		slog.Error(msgAnalyticsListInstances, "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
 		return
 	}
 
 	users, err := h.userRepo.List()
 	if err != nil {
 		slog.Error("analytics: failed to list users", "error", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
 		return
 	}
 
@@ -154,7 +160,7 @@ func (h *AnalyticsHandler) GetTemplateStats(c *gin.Context) {
 	templates, err := h.templateRepo.List()
 	if err != nil {
 		slog.Error("analytics: failed to list templates", "error", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
 		return
 	}
 
@@ -162,7 +168,7 @@ func (h *AnalyticsHandler) GetTemplateStats(c *gin.Context) {
 	allDefinitions, err := h.definitionRepo.List()
 	if err != nil {
 		slog.Error("analytics: failed to list definitions", "error", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
 		return
 	}
 	defsByTemplate := make(map[string][]models.StackDefinition)
@@ -175,8 +181,8 @@ func (h *AnalyticsHandler) GetTemplateStats(c *gin.Context) {
 	// Fetch all instances and group by StackDefinitionID.
 	allInstances, err := h.instanceRepo.List()
 	if err != nil {
-		slog.Error("analytics: failed to list instances", "error", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
+		slog.Error(msgAnalyticsListInstances, "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
 		return
 	}
 	instancesByDef := make(map[string][]models.StackInstance)
@@ -244,14 +250,14 @@ func (h *AnalyticsHandler) GetUserStats(c *gin.Context) {
 	users, err := h.userRepo.List()
 	if err != nil {
 		slog.Error("analytics: failed to list users", "error", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
 		return
 	}
 
 	allInstances, err := h.instanceRepo.List()
 	if err != nil {
-		slog.Error("analytics: failed to list instances", "error", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
+		slog.Error(msgAnalyticsListInstances, "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
 		return
 	}
 

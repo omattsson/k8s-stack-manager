@@ -12,6 +12,17 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/data/aztables"
 )
 
+// Deployment log repository constants.
+const (
+	tableDeploymentLogs = "DeploymentLogs"
+	fieldDLAction       = "Action"
+	fieldDLStatus       = "Status"
+	fieldDLStartedAt    = "StartedAt"
+	fieldDLPartitionKey = "PartitionKey"
+	fieldDLRowKey       = "RowKey"
+)
+
+
 // escapeODataString escapes single quotes in a string value for use in OData
 // filter expressions. OData uses doubled single quotes (”) as the escape
 // sequence for a literal single quote within a string literal.
@@ -29,16 +40,16 @@ type DeploymentLogRepository struct {
 
 // NewDeploymentLogRepository creates a new Azure Table Storage deployment log repository.
 func NewDeploymentLogRepository(accountName, accountKey, endpoint string, useAzurite bool) (*DeploymentLogRepository, error) {
-	client, err := createTableClient(accountName, accountKey, endpoint, "DeploymentLogs", useAzurite)
+	client, err := createTableClient(accountName, accountKey, endpoint, tableDeploymentLogs, useAzurite)
 	if err != nil {
 		return nil, err
 	}
-	return &DeploymentLogRepository{client: client, tableName: "DeploymentLogs"}, nil
+	return &DeploymentLogRepository{client: client, tableName: tableDeploymentLogs}, nil
 }
 
 // NewTestDeploymentLogRepository creates a repository for unit testing.
 func NewTestDeploymentLogRepository() *DeploymentLogRepository {
-	return &DeploymentLogRepository{tableName: "DeploymentLogs"}
+	return &DeploymentLogRepository{tableName: tableDeploymentLogs}
 }
 
 // SetTestClient injects a mock client for testing.
@@ -94,12 +105,12 @@ func (r *DeploymentLogRepository) Create(ctx context.Context, log *models.Deploy
 	entity := deploymentLogToEntity(log, pk, rk)
 	entityBytes, err := json.Marshal(entity)
 	if err != nil {
-		return dberrors.NewDatabaseError("marshal", err)
+		return dberrors.NewDatabaseError(opMarshal, err)
 	}
 
 	_, err = r.client.AddEntity(ctx, entityBytes, nil)
 	if err != nil {
-		return mapAzureError("create", err)
+		return mapAzureError(opCreate, err)
 	}
 	return nil
 }
@@ -136,19 +147,19 @@ func (r *DeploymentLogRepository) Update(ctx context.Context, log *models.Deploy
 	entity := deploymentLogToEntity(log, pk, rk)
 	entityBytes, err := json.Marshal(entity)
 	if err != nil {
-		return dberrors.NewDatabaseError("marshal", err)
+		return dberrors.NewDatabaseError(opMarshal, err)
 	}
 
 	_, err = r.client.UpdateEntity(ctx, entityBytes, nil)
 	if err != nil {
-		return mapAzureError("update", err)
+		return mapAzureError(opUpdate, err)
 	}
 	return nil
 }
 
 func (r *DeploymentLogRepository) ListByInstance(ctx context.Context, instanceID string) ([]models.DeploymentLog, error) {
 
-	filter := "PartitionKey eq '" + escapeODataString(instanceID) + "'"
+	filter := odataPartitionKeyEq + escapeODataString(instanceID) + "'"
 	pager := r.client.NewListEntitiesPager(&aztables.ListEntitiesOptions{
 		Filter: &filter,
 	})
@@ -167,7 +178,7 @@ func (r *DeploymentLogRepository) ListByInstance(ctx context.Context, instanceID
 
 func (r *DeploymentLogRepository) GetLatestByInstance(ctx context.Context, instanceID string) (*models.DeploymentLog, error) {
 
-	filter := "PartitionKey eq '" + escapeODataString(instanceID) + "'"
+	filter := odataPartitionKeyEq + escapeODataString(instanceID) + "'"
 	top := int32(1)
 	pager := r.client.NewListEntitiesPager(&aztables.ListEntitiesOptions{
 		Filter: &filter,
@@ -211,7 +222,7 @@ func (r *DeploymentLogRepository) SummarizeByInstance(ctx context.Context, insta
 	cutoff := time.Now().UTC().Add(-90 * 24 * time.Hour)
 	cutoffRK := reverseTimestamp(cutoff)
 
-	filter := "PartitionKey eq '" + escapeODataString(instanceID) + "' and RowKey lt '" + cutoffRK + "'"
+	filter := odataPartitionKeyEq + escapeODataString(instanceID) + "' and RowKey lt '" + cutoffRK + "'"
 	pager := r.client.NewListEntitiesPager(&aztables.ListEntitiesOptions{
 		Filter: &filter,
 	})
@@ -257,15 +268,15 @@ func (r *DeploymentLogRepository) SummarizeByInstance(ctx context.Context, insta
 
 func deploymentLogToEntity(log *models.DeploymentLog, pk, rk string) map[string]interface{} {
 	entity := map[string]interface{}{
-		"PartitionKey":    pk,
-		"RowKey":          rk,
+		fieldDLPartitionKey:    pk,
+		fieldDLRowKey:          rk,
 		"ID":              log.ID,
 		"StackInstanceID": log.StackInstanceID,
-		"Action":          log.Action,
-		"Status":          log.Status,
+		fieldDLAction:          log.Action,
+		fieldDLStatus:          log.Status,
 		"Output":          log.Output,
 		"ErrorMessage":    log.ErrorMessage,
-		"StartedAt":       log.StartedAt.Format(time.RFC3339),
+		fieldDLStartedAt:       log.StartedAt.Format(time.RFC3339),
 	}
 	if log.CompletedAt != nil {
 		entity["CompletedAt"] = log.CompletedAt.Format(time.RFC3339)

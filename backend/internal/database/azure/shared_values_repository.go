@@ -12,6 +12,9 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/data/aztables"
 )
 
+const tableSharedValues = "SharedValues"
+
+
 // SharedValuesRepository implements models.SharedValuesRepository for Azure Table Storage.
 // Partition key: ClusterID, Row key: SharedValues ID (UUID).
 type SharedValuesRepository struct {
@@ -21,16 +24,16 @@ type SharedValuesRepository struct {
 
 // NewSharedValuesRepository creates a new Azure Table Storage shared values repository.
 func NewSharedValuesRepository(accountName, accountKey, endpoint string, useAzurite bool) (*SharedValuesRepository, error) {
-	client, err := createTableClient(accountName, accountKey, endpoint, "SharedValues", useAzurite)
+	client, err := createTableClient(accountName, accountKey, endpoint, tableSharedValues, useAzurite)
 	if err != nil {
 		return nil, err
 	}
-	return &SharedValuesRepository{client: client, tableName: "SharedValues"}, nil
+	return &SharedValuesRepository{client: client, tableName: tableSharedValues}, nil
 }
 
 // NewTestSharedValuesRepository creates a repository for unit testing.
 func NewTestSharedValuesRepository() *SharedValuesRepository {
-	return &SharedValuesRepository{tableName: "SharedValues"}
+	return &SharedValuesRepository{tableName: tableSharedValues}
 }
 
 // SetTestClient injects a mock client for testing.
@@ -83,12 +86,12 @@ func (r *SharedValuesRepository) Create(sv *models.SharedValues) error {
 	entity := sharedValuesToEntity(sv)
 	entityBytes, err := json.Marshal(entity)
 	if err != nil {
-		return dberrors.NewDatabaseError("marshal", err)
+		return dberrors.NewDatabaseError(opMarshal, err)
 	}
 
 	_, err = r.client.AddEntity(ctx, entityBytes, nil)
 	if err != nil {
-		return mapAzureError("create", err)
+		return mapAzureError(opCreate, err)
 	}
 	return nil
 }
@@ -125,7 +128,7 @@ func (r *SharedValuesRepository) FindByClusterAndID(clusterID, id string) (*mode
 
 	var entity sharedValuesEntity
 	if err := json.Unmarshal(resp.Value, &entity); err != nil {
-		return nil, dberrors.NewDatabaseError("unmarshal", err)
+		return nil, dberrors.NewDatabaseError(opUnmarshal, err)
 	}
 
 	return entity.toModel(), nil
@@ -143,12 +146,12 @@ func (r *SharedValuesRepository) Update(sv *models.SharedValues) error {
 	entity := sharedValuesToEntity(sv)
 	entityBytes, err := json.Marshal(entity)
 	if err != nil {
-		return dberrors.NewDatabaseError("marshal", err)
+		return dberrors.NewDatabaseError(opMarshal, err)
 	}
 
 	_, err = r.client.UpdateEntity(ctx, entityBytes, nil)
 	if err != nil {
-		return mapAzureError("update", err)
+		return mapAzureError(opUpdate, err)
 	}
 	return nil
 }
@@ -164,7 +167,7 @@ func (r *SharedValuesRepository) Delete(id string) error {
 
 	_, err = r.client.DeleteEntity(ctx, sv.ClusterID, sv.ID, nil)
 	if err != nil {
-		return mapAzureError("delete", err)
+		return mapAzureError(opDelete, err)
 	}
 	return nil
 }

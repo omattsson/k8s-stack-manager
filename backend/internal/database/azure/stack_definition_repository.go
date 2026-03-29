@@ -11,6 +11,10 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/data/aztables"
 )
 
+const tableStackDefinitions = "StackDefinitions"
+const filterDefPKGlobal = odataPartitionKeyEq + pkGlobal + "'"
+
+
 // StackDefinitionRepository implements models.StackDefinitionRepository for Azure Table Storage.
 // Partition key: "global", Row key: definition ID.
 type StackDefinitionRepository struct {
@@ -20,16 +24,16 @@ type StackDefinitionRepository struct {
 
 // NewStackDefinitionRepository creates a new Azure Table Storage stack definition repository.
 func NewStackDefinitionRepository(accountName, accountKey, endpoint string, useAzurite bool) (*StackDefinitionRepository, error) {
-	client, err := createTableClient(accountName, accountKey, endpoint, "StackDefinitions", useAzurite)
+	client, err := createTableClient(accountName, accountKey, endpoint, tableStackDefinitions, useAzurite)
 	if err != nil {
 		return nil, err
 	}
-	return &StackDefinitionRepository{client: client, tableName: "StackDefinitions"}, nil
+	return &StackDefinitionRepository{client: client, tableName: tableStackDefinitions}, nil
 }
 
 // NewTestStackDefinitionRepository creates a repository for unit testing.
 func NewTestStackDefinitionRepository() *StackDefinitionRepository {
-	return &StackDefinitionRepository{tableName: "StackDefinitions"}
+	return &StackDefinitionRepository{tableName: tableStackDefinitions}
 }
 
 // SetTestClient injects a mock client for testing.
@@ -80,12 +84,12 @@ func (r *StackDefinitionRepository) Create(definition *models.StackDefinition) e
 	entity := stackDefinitionToEntity(definition)
 	entityBytes, err := json.Marshal(entity)
 	if err != nil {
-		return dberrors.NewDatabaseError("marshal", err)
+		return dberrors.NewDatabaseError(opMarshal, err)
 	}
 
 	_, err = r.client.AddEntity(ctx, entityBytes, nil)
 	if err != nil {
-		return mapAzureError("create", err)
+		return mapAzureError(opCreate, err)
 	}
 	return nil
 }
@@ -93,14 +97,14 @@ func (r *StackDefinitionRepository) Create(definition *models.StackDefinition) e
 func (r *StackDefinitionRepository) FindByID(id string) (*models.StackDefinition, error) {
 	ctx := context.Background()
 
-	resp, err := r.client.GetEntity(ctx, "global", id, nil)
+	resp, err := r.client.GetEntity(ctx, pkGlobal, id, nil)
 	if err != nil {
 		return nil, mapAzureError("find_by_id", err)
 	}
 
 	var entity stackDefinitionEntity
 	if err := json.Unmarshal(resp.Value, &entity); err != nil {
-		return nil, dberrors.NewDatabaseError("unmarshal", err)
+		return nil, dberrors.NewDatabaseError(opUnmarshal, err)
 	}
 	return entity.toModel(), nil
 }
@@ -113,12 +117,12 @@ func (r *StackDefinitionRepository) Update(definition *models.StackDefinition) e
 	entity := stackDefinitionToEntity(definition)
 	entityBytes, err := json.Marshal(entity)
 	if err != nil {
-		return dberrors.NewDatabaseError("marshal", err)
+		return dberrors.NewDatabaseError(opMarshal, err)
 	}
 
 	_, err = r.client.UpdateEntity(ctx, entityBytes, nil)
 	if err != nil {
-		return mapAzureError("update", err)
+		return mapAzureError(opUpdate, err)
 	}
 	return nil
 }
@@ -126,9 +130,9 @@ func (r *StackDefinitionRepository) Update(definition *models.StackDefinition) e
 func (r *StackDefinitionRepository) Delete(id string) error {
 	ctx := context.Background()
 
-	_, err := r.client.DeleteEntity(ctx, "global", id, nil)
+	_, err := r.client.DeleteEntity(ctx, pkGlobal, id, nil)
 	if err != nil {
-		return mapAzureError("delete", err)
+		return mapAzureError(opDelete, err)
 	}
 	return nil
 }
@@ -136,14 +140,14 @@ func (r *StackDefinitionRepository) Delete(id string) error {
 func (r *StackDefinitionRepository) List() ([]models.StackDefinition, error) {
 	ctx := context.Background()
 
-	filter := "PartitionKey eq 'global'"
+	filter := odataPartitionKeyEq + "global'"
 	pager := r.client.NewListEntitiesPager(&aztables.ListEntitiesOptions{
 		Filter: &filter,
 	})
 
 	entities, err := collectEntitiesTyped[stackDefinitionEntity](ctx, pager, nil, 0)
 	if err != nil {
-		return nil, mapAzureError("list", err)
+		return nil, mapAzureError(opList, err)
 	}
 
 	results := make([]models.StackDefinition, 0, len(entities))
@@ -156,7 +160,7 @@ func (r *StackDefinitionRepository) List() ([]models.StackDefinition, error) {
 func (r *StackDefinitionRepository) ListByOwner(ownerID string) ([]models.StackDefinition, error) {
 	ctx := context.Background()
 
-	filter := "PartitionKey eq 'global' and OwnerID eq '" + ownerID + "'"
+	filter := filterDefPKGlobal + " and OwnerID eq '" + ownerID + "'"
 	pager := r.client.NewListEntitiesPager(&aztables.ListEntitiesOptions{
 		Filter: &filter,
 	})
@@ -176,7 +180,7 @@ func (r *StackDefinitionRepository) ListByOwner(ownerID string) ([]models.StackD
 func (r *StackDefinitionRepository) ListByTemplate(templateID string) ([]models.StackDefinition, error) {
 	ctx := context.Background()
 
-	filter := "PartitionKey eq 'global' and SourceTemplateID eq '" + templateID + "'"
+	filter := filterDefPKGlobal + " and SourceTemplateID eq '" + templateID + "'"
 	pager := r.client.NewListEntitiesPager(&aztables.ListEntitiesOptions{
 		Filter: &filter,
 	})
@@ -195,7 +199,7 @@ func (r *StackDefinitionRepository) ListByTemplate(templateID string) ([]models.
 
 func stackDefinitionToEntity(d *models.StackDefinition) map[string]interface{} {
 	return map[string]interface{}{
-		"PartitionKey":          "global",
+		"PartitionKey":          pkGlobal,
 		"RowKey":                d.ID,
 		"ID":                    d.ID,
 		"Name":                  d.Name,

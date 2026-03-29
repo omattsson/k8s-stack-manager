@@ -10,6 +10,12 @@ import (
 	"github.com/google/uuid"
 )
 
+// Template chart handler message constants.
+const (
+	entityTemplateChart = "Template chart"
+)
+
+
 // AddTemplateChart godoc
 // @Summary     Add a chart to a template
 // @Description Add a new chart configuration to a stack template
@@ -27,14 +33,14 @@ func (h *TemplateHandler) AddTemplateChart(c *gin.Context) {
 
 	// Verify template exists.
 	if _, err := h.templateRepo.FindByID(templateID); err != nil {
-		status, message := mapError(err, "Template")
+		status, message := mapError(err, entityTemplate)
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
 
 	var chart models.TemplateChartConfig
 	if err := c.ShouldBindJSON(&chart); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request format"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": msgInvalidRequestFormat})
 		return
 	}
 
@@ -48,7 +54,7 @@ func (h *TemplateHandler) AddTemplateChart(c *gin.Context) {
 	}
 
 	if err := h.chartRepo.Create(&chart); err != nil {
-		status, message := mapError(err, "Template chart")
+		status, message := mapError(err, entityTemplateChart)
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
@@ -74,14 +80,14 @@ func (h *TemplateHandler) UpdateTemplateChart(c *gin.Context) {
 
 	existing, err := h.chartRepo.FindByID(chartID)
 	if err != nil {
-		status, message := mapError(err, "Template chart")
+		status, message := mapError(err, entityTemplateChart)
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
 
 	var update models.TemplateChartConfig
 	if err := c.ShouldBindJSON(&update); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request format"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": msgInvalidRequestFormat})
 		return
 	}
 
@@ -101,7 +107,7 @@ func (h *TemplateHandler) UpdateTemplateChart(c *gin.Context) {
 	}
 
 	if err := h.chartRepo.Update(existing); err != nil {
-		status, message := mapError(err, "Template chart")
+		status, message := mapError(err, entityTemplateChart)
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
@@ -123,7 +129,7 @@ func (h *TemplateHandler) DeleteTemplateChart(c *gin.Context) {
 	chartID := c.Param("chartId")
 
 	if err := h.chartRepo.Delete(chartID); err != nil {
-		status, message := mapError(err, "Template chart")
+		status, message := mapError(err, entityTemplateChart)
 		c.JSON(status, gin.H{"error": message})
 		return
 	}

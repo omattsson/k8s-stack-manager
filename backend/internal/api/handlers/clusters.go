@@ -17,6 +17,20 @@ import (
 	apimachineryversion "k8s.io/apimachinery/pkg/version"
 )
 
+// Cluster handler message constants.
+const (
+	msgClusterRegistryUnavailable = "Cluster client registry is not available"
+	msgFailedConnectCluster       = "Failed to connect to cluster"
+	msgQuotaMgmtUnavailable       = "Resource quota management is not available"
+	msgFailedGetK8sClient         = "Failed to get K8s client"
+	msgClusterIDRequired          = "Cluster ID is required"
+	entityResourceQuotaConfig     = "Resource quota config"
+)
+
+// Slog structured logging key constants.
+const logKeyClusterID = "cluster_id"
+
+
 // CreateClusterRequest is the input payload for creating a cluster.
 type CreateClusterRequest struct {
 	Name                string `json:"name" binding:"required"`
@@ -91,7 +105,7 @@ func NewClusterHandlerWithQuotas(
 func (h *ClusterHandler) ListClusters(c *gin.Context) {
 	clusters, err := h.clusterRepo.List()
 	if err != nil {
-		status, message := mapError(err, "Cluster")
+		status, message := mapError(err, entityCluster)
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
@@ -115,7 +129,7 @@ func (h *ClusterHandler) ListClusters(c *gin.Context) {
 func (h *ClusterHandler) CreateCluster(c *gin.Context) {
 	var req CreateClusterRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request format"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": msgInvalidRequestFormat})
 		return
 	}
 
@@ -138,14 +152,14 @@ func (h *ClusterHandler) CreateCluster(c *gin.Context) {
 	}
 
 	if err := h.clusterRepo.Create(cl); err != nil {
-		status, message := mapError(err, "Cluster")
+		status, message := mapError(err, entityCluster)
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
 
 	if req.IsDefault {
 		if err := h.clusterRepo.SetDefault(cl.ID); err != nil {
-			slog.Error("Failed to set new cluster as default", "cluster_id", cl.ID, "error", err)
+			slog.Error("Failed to set new cluster as default", logKeyClusterID, cl.ID, "error", err)
 			// Return 201 with consistent schema; surface warning via header.
 			cl.KubeconfigData = ""
 			cl.KubeconfigPath = ""
@@ -164,7 +178,7 @@ func (h *ClusterHandler) CreateCluster(c *gin.Context) {
 		_, err := h.clusterRepo.FindDefault()
 		if err != nil && errors.Is(err, dberrors.ErrNotFound) {
 			if setErr := h.clusterRepo.SetDefault(cl.ID); setErr != nil {
-				slog.Error("Failed to auto-set first cluster as default", "cluster_id", cl.ID, "error", setErr)
+				slog.Error("Failed to auto-set first cluster as default", logKeyClusterID, cl.ID, "error", setErr)
 			} else {
 				cl.IsDefault = true
 				if h.registry != nil {
@@ -198,7 +212,7 @@ func (h *ClusterHandler) GetCluster(c *gin.Context) {
 
 	cl, err := h.clusterRepo.FindByID(id)
 	if err != nil {
-		status, message := mapError(err, "Cluster")
+		status, message := mapError(err, entityCluster)
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
@@ -225,14 +239,14 @@ func (h *ClusterHandler) UpdateCluster(c *gin.Context) {
 
 	existing, err := h.clusterRepo.FindByID(id)
 	if err != nil {
-		status, message := mapError(err, "Cluster")
+		status, message := mapError(err, entityCluster)
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
 
 	var req UpdateClusterRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request format"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": msgInvalidRequestFormat})
 		return
 	}
 
@@ -269,7 +283,7 @@ func (h *ClusterHandler) UpdateCluster(c *gin.Context) {
 		if *req.IsDefault && !existing.IsDefault {
 			// Use SetDefault to atomically unset the old default and set the new one.
 			if err := h.clusterRepo.SetDefault(id); err != nil {
-				status, message := mapError(err, "Cluster")
+				status, message := mapError(err, entityCluster)
 				c.JSON(status, gin.H{"error": message})
 				return
 			}
@@ -287,7 +301,7 @@ func (h *ClusterHandler) UpdateCluster(c *gin.Context) {
 	}
 
 	if err := h.clusterRepo.Update(existing); err != nil {
-		status, message := mapError(err, "Cluster")
+		status, message := mapError(err, entityCluster)
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
@@ -326,7 +340,7 @@ func (h *ClusterHandler) DeleteCluster(c *gin.Context) {
 
 	// Verify cluster exists.
 	if _, err := h.clusterRepo.FindByID(id); err != nil {
-		status, message := mapError(err, "Cluster")
+		status, message := mapError(err, entityCluster)
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
@@ -334,8 +348,8 @@ func (h *ClusterHandler) DeleteCluster(c *gin.Context) {
 	// Check for instances using this cluster.
 	instances, err := h.instanceRepo.FindByCluster(id)
 	if err != nil {
-		slog.Error("Failed to check cluster instances", "cluster_id", id, "error", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
+		slog.Error("Failed to check cluster instances", logKeyClusterID, id, "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
 		return
 	}
 	if len(instances) > 0 {
@@ -344,7 +358,7 @@ func (h *ClusterHandler) DeleteCluster(c *gin.Context) {
 	}
 
 	if err := h.clusterRepo.Delete(id); err != nil {
-		status, message := mapError(err, "Cluster")
+		status, message := mapError(err, entityCluster)
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
@@ -375,20 +389,20 @@ func (h *ClusterHandler) TestClusterConnection(c *gin.Context) {
 
 	// Verify cluster exists.
 	if _, err := h.clusterRepo.FindByID(id); err != nil {
-		status, message := mapError(err, "Cluster")
+		status, message := mapError(err, entityCluster)
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
 
 	if h.registry == nil {
-		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Cluster client registry is not available"})
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": msgClusterRegistryUnavailable})
 		return
 	}
 
 	k8sClient, err := h.registry.GetK8sClient(id)
 	if err != nil {
-		slog.Error("Failed to build k8s client for cluster", "cluster_id", id, "error", err)
-		c.JSON(http.StatusBadGateway, gin.H{"error": "Failed to connect to cluster"})
+		slog.Error("Failed to build k8s client for cluster", logKeyClusterID, id, "error", err)
+		c.JSON(http.StatusBadGateway, gin.H{"error": msgFailedConnectCluster})
 		return
 	}
 
@@ -401,7 +415,7 @@ func (h *ClusterHandler) TestClusterConnection(c *gin.Context) {
 	if restClient := k8sClient.Clientset().Discovery().RESTClient(); restClient != nil {
 		result := restClient.Get().AbsPath("/version").Do(ctx)
 		if err := result.Error(); err != nil {
-			slog.Error("Cluster connectivity test failed", "cluster_id", id, "error", err)
+			slog.Error("Cluster connectivity test failed", logKeyClusterID, id, "error", err)
 			h.registry.InvalidateClient(id)
 			c.JSON(http.StatusBadGateway, gin.H{"status": "error", "message": "Cluster is unreachable"})
 			return
@@ -415,7 +429,7 @@ func (h *ClusterHandler) TestClusterConnection(c *gin.Context) {
 		// Fallback for test fakes that don't implement RESTClient.
 		v, err := k8sClient.Clientset().Discovery().ServerVersion()
 		if err != nil {
-			slog.Error("Cluster connectivity test failed", "cluster_id", id, "error", err)
+			slog.Error("Cluster connectivity test failed", logKeyClusterID, id, "error", err)
 			h.registry.InvalidateClient(id)
 			c.JSON(http.StatusBadGateway, gin.H{"status": "error", "message": "Cluster is unreachable"})
 			return
@@ -448,7 +462,7 @@ func (h *ClusterHandler) SetDefaultCluster(c *gin.Context) {
 	id := c.Param("id")
 
 	if err := h.clusterRepo.SetDefault(id); err != nil {
-		status, message := mapError(err, "Cluster")
+		status, message := mapError(err, entityCluster)
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
@@ -475,31 +489,31 @@ func (h *ClusterHandler) SetDefaultCluster(c *gin.Context) {
 func (h *ClusterHandler) GetClusterHealthSummary(c *gin.Context) {
 	id := c.Param("id")
 	if id == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Cluster ID is required"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": msgClusterIDRequired})
 		return
 	}
 
 	if _, err := h.clusterRepo.FindByID(id); err != nil {
-		status, message := mapError(err, "Cluster")
+		status, message := mapError(err, entityCluster)
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
 
 	if h.registry == nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Cluster client registry is not available"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": msgClusterRegistryUnavailable})
 		return
 	}
 
 	k8sClient, err := h.registry.GetK8sClient(id)
 	if err != nil {
-		slog.Error("Failed to get K8s client", "error", err, "cluster_id", id)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to connect to cluster"})
+		slog.Error(msgFailedGetK8sClient, "error", err, logKeyClusterID, id)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": msgFailedConnectCluster})
 		return
 	}
 
 	summary, err := k8sClient.GetClusterSummary(c.Request.Context())
 	if err != nil {
-		slog.Error("Failed to get cluster summary", "error", err, "cluster_id", id)
+		slog.Error("Failed to get cluster summary", "error", err, logKeyClusterID, id)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to retrieve cluster health"})
 		return
 	}
@@ -522,31 +536,31 @@ func (h *ClusterHandler) GetClusterHealthSummary(c *gin.Context) {
 func (h *ClusterHandler) GetClusterNodes(c *gin.Context) {
 	id := c.Param("id")
 	if id == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Cluster ID is required"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": msgClusterIDRequired})
 		return
 	}
 
 	if _, err := h.clusterRepo.FindByID(id); err != nil {
-		status, message := mapError(err, "Cluster")
+		status, message := mapError(err, entityCluster)
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
 
 	if h.registry == nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Cluster client registry is not available"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": msgClusterRegistryUnavailable})
 		return
 	}
 
 	k8sClient, err := h.registry.GetK8sClient(id)
 	if err != nil {
-		slog.Error("Failed to get K8s client", "error", err, "cluster_id", id)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to connect to cluster"})
+		slog.Error(msgFailedGetK8sClient, "error", err, logKeyClusterID, id)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": msgFailedConnectCluster})
 		return
 	}
 
 	nodes, err := k8sClient.GetNodeStatuses(c.Request.Context())
 	if err != nil {
-		slog.Error("Failed to get node statuses", "error", err, "cluster_id", id)
+		slog.Error("Failed to get node statuses", "error", err, logKeyClusterID, id)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to retrieve node statuses"})
 		return
 	}
@@ -569,31 +583,31 @@ func (h *ClusterHandler) GetClusterNodes(c *gin.Context) {
 func (h *ClusterHandler) GetClusterNamespaces(c *gin.Context) {
 	id := c.Param("id")
 	if id == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Cluster ID is required"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": msgClusterIDRequired})
 		return
 	}
 
 	if _, err := h.clusterRepo.FindByID(id); err != nil {
-		status, message := mapError(err, "Cluster")
+		status, message := mapError(err, entityCluster)
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
 
 	if h.registry == nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Cluster client registry is not available"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": msgClusterRegistryUnavailable})
 		return
 	}
 
 	k8sClient, err := h.registry.GetK8sClient(id)
 	if err != nil {
-		slog.Error("Failed to get K8s client", "error", err, "cluster_id", id)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to connect to cluster"})
+		slog.Error(msgFailedGetK8sClient, "error", err, logKeyClusterID, id)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": msgFailedConnectCluster})
 		return
 	}
 
 	namespaces, err := k8sClient.ListStackNamespaces(c.Request.Context())
 	if err != nil {
-		slog.Error("Failed to list cluster namespaces", "error", err, "cluster_id", id)
+		slog.Error("Failed to list cluster namespaces", "error", err, logKeyClusterID, id)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to retrieve namespaces"})
 		return
 	}
@@ -627,19 +641,19 @@ func (h *ClusterHandler) GetQuotas(c *gin.Context) {
 
 	// Verify cluster exists.
 	if _, err := h.clusterRepo.FindByID(id); err != nil {
-		status, message := mapError(err, "Cluster")
+		status, message := mapError(err, entityCluster)
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
 
 	if h.quotaRepo == nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Resource quota management is not available"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": msgQuotaMgmtUnavailable})
 		return
 	}
 
 	quota, err := h.quotaRepo.GetByClusterID(c.Request.Context(), id)
 	if err != nil {
-		status, message := mapError(err, "Resource quota config")
+		status, message := mapError(err, entityResourceQuotaConfig)
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
@@ -666,19 +680,19 @@ func (h *ClusterHandler) UpdateQuotas(c *gin.Context) {
 
 	// Verify cluster exists.
 	if _, err := h.clusterRepo.FindByID(id); err != nil {
-		status, message := mapError(err, "Cluster")
+		status, message := mapError(err, entityCluster)
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
 
 	if h.quotaRepo == nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Resource quota management is not available"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": msgQuotaMgmtUnavailable})
 		return
 	}
 
 	var req UpdateQuotaRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request format"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": msgInvalidRequestFormat})
 		return
 	}
 
@@ -698,7 +712,7 @@ func (h *ClusterHandler) UpdateQuotas(c *gin.Context) {
 	}
 
 	if err := h.quotaRepo.Upsert(c.Request.Context(), config); err != nil {
-		status, message := mapError(err, "Resource quota config")
+		status, message := mapError(err, entityResourceQuotaConfig)
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
@@ -706,7 +720,7 @@ func (h *ClusterHandler) UpdateQuotas(c *gin.Context) {
 	// Re-read the saved config so timestamps and ID are populated.
 	saved, err := h.quotaRepo.GetByClusterID(c.Request.Context(), id)
 	if err != nil {
-		slog.Error("Failed to read back saved quota config", "cluster_id", id, "error", err)
+		slog.Error("Failed to read back saved quota config", logKeyClusterID, id, "error", err)
 		c.JSON(http.StatusOK, config)
 		return
 	}
@@ -728,26 +742,26 @@ func (h *ClusterHandler) propagateQuotasToNamespaces(clusterID string, config *m
 
 	k8sClient, err := h.registry.GetK8sClient(clusterID)
 	if err != nil {
-		slog.Error("Failed to get K8s client for quota propagation", "cluster_id", clusterID, "error", err)
+		slog.Error("Failed to get K8s client for quota propagation", logKeyClusterID, clusterID, "error", err)
 		return
 	}
 
 	namespaces, err := k8sClient.ListStackNamespaces(ctx)
 	if err != nil {
-		slog.Error("Failed to list namespaces for quota propagation", "cluster_id", clusterID, "error", err)
+		slog.Error("Failed to list namespaces for quota propagation", logKeyClusterID, clusterID, "error", err)
 		return
 	}
 
 	for _, ns := range namespaces {
 		if err := k8sClient.EnsureResourceQuota(ctx, ns.Name, config); err != nil {
-			slog.Warn("Failed to apply resource quota to namespace", "namespace", ns.Name, "cluster_id", clusterID, "error", err)
+			slog.Warn("Failed to apply resource quota to namespace", "namespace", ns.Name, logKeyClusterID, clusterID, "error", err)
 			continue
 		}
 		if err := k8sClient.EnsureLimitRange(ctx, ns.Name, config); err != nil {
-			slog.Warn("Failed to apply limit range to namespace", "namespace", ns.Name, "cluster_id", clusterID, "error", err)
+			slog.Warn("Failed to apply limit range to namespace", "namespace", ns.Name, logKeyClusterID, clusterID, "error", err)
 			continue
 		}
-		slog.Info("Applied resource quota to namespace", "namespace", ns.Name, "cluster_id", clusterID)
+		slog.Info("Applied resource quota to namespace", "namespace", ns.Name, logKeyClusterID, clusterID)
 	}
 }
 
@@ -767,18 +781,18 @@ func (h *ClusterHandler) DeleteQuotas(c *gin.Context) {
 
 	// Verify cluster exists.
 	if _, err := h.clusterRepo.FindByID(id); err != nil {
-		status, message := mapError(err, "Cluster")
+		status, message := mapError(err, entityCluster)
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
 
 	if h.quotaRepo == nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Resource quota management is not available"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": msgQuotaMgmtUnavailable})
 		return
 	}
 
 	if err := h.quotaRepo.Delete(c.Request.Context(), id); err != nil {
-		status, message := mapError(err, "Resource quota config")
+		status, message := mapError(err, entityResourceQuotaConfig)
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
@@ -799,7 +813,7 @@ type NamespaceResourceUsage struct {
 
 // ClusterUtilization represents aggregated resource utilization for a cluster.
 type ClusterUtilization struct {
-	ClusterID  string                   `json:"cluster_id"`
+	ClusterID  string                   `json:logKeyClusterID`
 	Namespaces []NamespaceResourceUsage `json:"namespaces"`
 }
 
@@ -819,27 +833,27 @@ func (h *ClusterHandler) GetUtilization(c *gin.Context) {
 
 	// Verify cluster exists.
 	if _, err := h.clusterRepo.FindByID(id); err != nil {
-		status, message := mapError(err, "Cluster")
+		status, message := mapError(err, entityCluster)
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
 
 	if h.registry == nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Cluster client registry is not available"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": msgClusterRegistryUnavailable})
 		return
 	}
 
 	k8sClient, err := h.registry.GetK8sClient(id)
 	if err != nil {
-		slog.Error("Failed to get K8s client for utilization", "error", err, "cluster_id", id)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to connect to cluster"})
+		slog.Error("Failed to get K8s client for utilization", "error", err, logKeyClusterID, id)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": msgFailedConnectCluster})
 		return
 	}
 
 	ctx := c.Request.Context()
 	namespaces, err := k8sClient.ListStackNamespaces(ctx)
 	if err != nil {
-		slog.Error("Failed to list namespaces for utilization", "error", err, "cluster_id", id)
+		slog.Error("Failed to list namespaces for utilization", "error", err, logKeyClusterID, id)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to retrieve namespaces"})
 		return
 	}

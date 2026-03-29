@@ -18,6 +18,15 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// Admin handler message constants.
+const (
+	msgK8sClientUnavailable = "Kubernetes client is not available"
+)
+
+const logKeyNamespace = "namespace"
+
+
+
 // OrphanedNamespaceResponse is the JSON representation of an orphaned namespace.
 type OrphanedNamespaceResponse struct {
 	CreatedAt      time.Time           `json:"created_at"`
@@ -62,14 +71,14 @@ func (h *AdminHandler) ListOrphanedNamespaces(c *gin.Context) {
 	ctx := c.Request.Context()
 
 	if h.registry == nil {
-		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Kubernetes client is not available"})
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": msgK8sClientUnavailable})
 		return
 	}
 
 	clients, err := h.registry.GetDefaultClients()
 	if err != nil {
 		slog.Error("Failed to get default cluster clients", "error", err)
-		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Kubernetes client is not available"})
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": msgK8sClientUnavailable})
 		return
 	}
 	k8sClient := clients.K8s
@@ -80,7 +89,7 @@ func (h *AdminHandler) ListOrphanedNamespaces(c *gin.Context) {
 	namespaces, err := k8sClient.ListStackNamespaces(ctx)
 	if err != nil {
 		slog.Error("Failed to list stack namespaces", "error", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
 		return
 	}
 
@@ -102,7 +111,7 @@ func (h *AdminHandler) ListOrphanedNamespaces(c *gin.Context) {
 					counts, countErr := k8sClient.GetResourceCounts(ctx, ns.Name)
 					if countErr != nil {
 						slog.Warn("Failed to get resource counts for orphaned namespace",
-							"namespace", ns.Name, "error", countErr)
+							logKeyNamespace, ns.Name, "error", countErr)
 					} else {
 						resp.ResourceCounts = counts
 					}
@@ -112,7 +121,7 @@ func (h *AdminHandler) ListOrphanedNamespaces(c *gin.Context) {
 						releases, relErr := helmExecutor.ListReleases(ctx, ns.Name)
 						if relErr != nil {
 							slog.Warn("Failed to list helm releases in orphaned namespace",
-								"namespace", ns.Name, "error", relErr)
+								logKeyNamespace, ns.Name, "error", relErr)
 							resp.HelmReleases = []string{}
 						} else {
 							resp.HelmReleases = releases
@@ -127,7 +136,7 @@ func (h *AdminHandler) ListOrphanedNamespaces(c *gin.Context) {
 				orphaned = append(orphaned, resp)
 			} else {
 				slog.Warn("Error checking namespace against DB",
-					"namespace", ns.Name, "error", err)
+					logKeyNamespace, ns.Name, "error", err)
 			}
 		}
 		// If FindByNamespace succeeds, the namespace has a matching instance — skip it.
@@ -157,17 +166,17 @@ func (h *AdminHandler) ListOrphanedNamespaces(c *gin.Context) {
 // @Security     BearerAuth
 func (h *AdminHandler) DeleteOrphanedNamespace(c *gin.Context) {
 	ctx := c.Request.Context()
-	namespace := c.Param("namespace")
+	namespace := c.Param(logKeyNamespace)
 
 	if h.registry == nil {
-		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Kubernetes client is not available"})
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": msgK8sClientUnavailable})
 		return
 	}
 
 	clients, err := h.registry.GetDefaultClients()
 	if err != nil {
 		slog.Error("Failed to get default cluster clients", "error", err)
-		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Kubernetes client is not available"})
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": msgK8sClientUnavailable})
 		return
 	}
 	k8sClient := clients.K8s
@@ -194,8 +203,8 @@ func (h *AdminHandler) DeleteOrphanedNamespace(c *gin.Context) {
 	var dbErr *dberrors.DatabaseError
 	if !errors.As(err, &dbErr) || !errors.Is(dbErr.Err, dberrors.ErrNotFound) {
 		// Unexpected error querying the DB.
-		slog.Error("Failed to verify namespace orphan status", "namespace", namespace, "error", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
+		slog.Error("Failed to verify namespace orphan status", logKeyNamespace, namespace, "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
 		return
 	}
 
@@ -204,7 +213,7 @@ func (h *AdminHandler) DeleteOrphanedNamespace(c *gin.Context) {
 		releases, listErr := helmExecutor.ListReleases(ctx, namespace)
 		if listErr != nil {
 			slog.Warn("Failed to list releases for cleanup, proceeding with namespace deletion",
-				"namespace", namespace, "error", listErr)
+				logKeyNamespace, namespace, "error", listErr)
 		} else {
 			for _, release := range releases {
 				output, unErr := helmExecutor.Uninstall(ctx, deployer.UninstallRequest{
@@ -213,10 +222,10 @@ func (h *AdminHandler) DeleteOrphanedNamespace(c *gin.Context) {
 				})
 				if unErr != nil {
 					slog.Warn("Failed to uninstall release during orphan cleanup",
-						"namespace", namespace, "release", release, "output", output, "error", unErr)
+						logKeyNamespace, namespace, "release", release, "output", output, "error", unErr)
 				} else {
 					slog.Info("Uninstalled orphaned release",
-						"namespace", namespace, "release", release)
+						logKeyNamespace, namespace, "release", release)
 				}
 			}
 		}
@@ -224,13 +233,13 @@ func (h *AdminHandler) DeleteOrphanedNamespace(c *gin.Context) {
 
 	// Delete the K8s namespace.
 	if err := k8sClient.DeleteNamespace(ctx, namespace); err != nil {
-		slog.Error("Failed to delete orphaned namespace", "namespace", namespace, "error", err)
+		slog.Error("Failed to delete orphaned namespace", logKeyNamespace, namespace, "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error": "Failed to delete namespace",
 		})
 		return
 	}
 
-	slog.Info("Orphaned namespace deleted", "namespace", namespace)
+	slog.Info("Orphaned namespace deleted", logKeyNamespace, namespace)
 	c.JSON(http.StatusOK, gin.H{"message": fmt.Sprintf("Namespace %q deleted successfully", namespace)})
 }

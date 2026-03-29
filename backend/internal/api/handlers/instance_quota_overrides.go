@@ -10,6 +10,15 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// Instance quota override handler message constants.
+const (
+	entityInstanceQuotaOverride = "Instance quota override"
+)
+
+const logKeyIQOInstanceID = "instance_id"
+
+
+
 // InstanceQuotaOverrideHandler handles per-instance resource quota override endpoints.
 type InstanceQuotaOverrideHandler struct {
 	overrideRepo models.InstanceQuotaOverrideRepository
@@ -54,9 +63,9 @@ func (h *InstanceQuotaOverrideHandler) GetQuotaOverride(c *gin.Context) {
 
 	inst, err := h.instanceRepo.FindByID(instanceID)
 	if err != nil {
-		status, message := mapError(err, "Stack instance")
+		status, message := mapError(err, entityStackInstance)
 		if status == http.StatusInternalServerError {
-			slog.Error("failed to find stack instance", "instance_id", instanceID, "error", err)
+			slog.Error(msgFailedFindStackInstance, logKeyIQOInstanceID, instanceID, "error", err)
 		}
 		c.JSON(status, gin.H{"error": message})
 		return
@@ -71,9 +80,9 @@ func (h *InstanceQuotaOverrideHandler) GetQuotaOverride(c *gin.Context) {
 
 	override, err := h.overrideRepo.GetByInstanceID(c.Request.Context(), instanceID)
 	if err != nil {
-		status, message := mapError(err, "Instance quota override")
+		status, message := mapError(err, entityInstanceQuotaOverride)
 		if status == http.StatusInternalServerError {
-			slog.Error("failed to get quota override", "instance_id", instanceID, "error", err)
+			slog.Error("failed to get quota override", logKeyIQOInstanceID, instanceID, "error", err)
 		}
 		c.JSON(status, gin.H{"error": message})
 		return
@@ -102,9 +111,9 @@ func (h *InstanceQuotaOverrideHandler) SetQuotaOverride(c *gin.Context) {
 
 	inst, err := h.instanceRepo.FindByID(instanceID)
 	if err != nil {
-		status, message := mapError(err, "Stack instance")
+		status, message := mapError(err, entityStackInstance)
 		if status == http.StatusInternalServerError {
-			slog.Error("failed to find stack instance", "instance_id", instanceID, "error", err)
+			slog.Error(msgFailedFindStackInstance, logKeyIQOInstanceID, instanceID, "error", err)
 		}
 		c.JSON(status, gin.H{"error": message})
 		return
@@ -119,7 +128,7 @@ func (h *InstanceQuotaOverrideHandler) SetQuotaOverride(c *gin.Context) {
 
 	var input setQuotaOverrideRequest
 	if err := c.ShouldBindJSON(&input); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request format"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": msgInvalidRequestFormat})
 		return
 	}
 
@@ -134,9 +143,9 @@ func (h *InstanceQuotaOverrideHandler) SetQuotaOverride(c *gin.Context) {
 	}
 
 	if err := h.overrideRepo.Upsert(c.Request.Context(), override); err != nil {
-		status, message := mapError(err, "Instance quota override")
+		status, message := mapError(err, entityInstanceQuotaOverride)
 		if status == http.StatusInternalServerError {
-			slog.Error("failed to upsert quota override", "instance_id", instanceID, "error", err)
+			slog.Error("failed to upsert quota override", logKeyIQOInstanceID, instanceID, "error", err)
 		}
 		c.JSON(status, gin.H{"error": message})
 		return
@@ -145,9 +154,9 @@ func (h *InstanceQuotaOverrideHandler) SetQuotaOverride(c *gin.Context) {
 	// Re-read to return the persisted state (includes ID, timestamps).
 	saved, err := h.overrideRepo.GetByInstanceID(c.Request.Context(), instanceID)
 	if err != nil {
-		status, message := mapError(err, "Instance quota override")
+		status, message := mapError(err, entityInstanceQuotaOverride)
 		if status == http.StatusInternalServerError {
-			slog.Error("failed to re-read quota override after upsert", "instance_id", instanceID, "error", err)
+			slog.Error("failed to re-read quota override after upsert", logKeyIQOInstanceID, instanceID, "error", err)
 		}
 		c.JSON(status, gin.H{"error": message})
 		return
@@ -173,9 +182,9 @@ func (h *InstanceQuotaOverrideHandler) DeleteQuotaOverride(c *gin.Context) {
 
 	inst, err := h.instanceRepo.FindByID(instanceID)
 	if err != nil {
-		status, message := mapError(err, "Stack instance")
+		status, message := mapError(err, entityStackInstance)
 		if status == http.StatusInternalServerError {
-			slog.Error("failed to find stack instance", "instance_id", instanceID, "error", err)
+			slog.Error(msgFailedFindStackInstance, logKeyIQOInstanceID, instanceID, "error", err)
 		}
 		c.JSON(status, gin.H{"error": message})
 		return
@@ -189,9 +198,9 @@ func (h *InstanceQuotaOverrideHandler) DeleteQuotaOverride(c *gin.Context) {
 	}
 
 	if err := h.overrideRepo.Delete(c.Request.Context(), instanceID); err != nil {
-		status, message := mapError(err, "Instance quota override")
+		status, message := mapError(err, entityInstanceQuotaOverride)
 		if status == http.StatusInternalServerError {
-			slog.Error("failed to delete quota override", "instance_id", instanceID, "error", err)
+			slog.Error("failed to delete quota override", logKeyIQOInstanceID, instanceID, "error", err)
 		}
 		c.JSON(status, gin.H{"error": message})
 		return

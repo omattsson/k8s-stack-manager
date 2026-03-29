@@ -17,6 +17,9 @@ import (
 // MaxBulkTemplates is the maximum number of templates allowed per bulk template operation.
 const MaxBulkTemplates = 50
 
+const logKeyBulkTemplateID = "template_id"
+
+
 // BulkTemplateRequest is the request body for bulk template operations.
 type BulkTemplateRequest struct {
 	TemplateIDs []string `json:"template_ids" binding:"required"`
@@ -24,7 +27,7 @@ type BulkTemplateRequest struct {
 
 // BulkTemplateResultItem represents the result of a single template in a bulk operation.
 type BulkTemplateResultItem struct {
-	TemplateID   string `json:"template_id"`
+	TemplateID   string `json:logKeyBulkTemplateID`
 	TemplateName string `json:"template_name"`
 	Status       string `json:"status"` // "success" or "error"
 	Error        string `json:"error,omitempty"`
@@ -98,9 +101,9 @@ func (h *TemplateHandler) executeBulkTemplateOperation(c *gin.Context, opName st
 			if errors.Is(err, dberrors.ErrNotFound) {
 				result.Error = "template not found"
 			} else {
-				result.Error = "Internal server error"
+				result.Error = msgInternalServerError
 				slog.Error("bulk "+opName+" FindByID failed",
-					"template_id", id,
+					logKeyBulkTemplateID, id,
 					"error", err,
 				)
 			}
@@ -125,7 +128,7 @@ func (h *TemplateHandler) executeBulkTemplateOperation(c *gin.Context, opName st
 			result.Error = err.Error()
 			resp.Failed++
 			slog.Warn("bulk "+opName+" failed for template",
-				"template_id", id,
+				logKeyBulkTemplateID, id,
 				"error", err,
 			)
 		} else {
@@ -161,7 +164,7 @@ func (h *TemplateHandler) BulkDeleteTemplates(c *gin.Context) {
 		if h.definitionRepo != nil {
 			defs, err := h.definitionRepo.ListByTemplate(tmpl.ID)
 			if err != nil {
-				slog.Error("bulk delete: failed to check definitions", "template_id", tmpl.ID, "error", err)
+				slog.Error("bulk delete: failed to check definitions", logKeyBulkTemplateID, tmpl.ID, "error", err)
 				return fmt.Errorf("failed to check linked definitions")
 			}
 			if len(defs) > 0 {
@@ -170,7 +173,7 @@ func (h *TemplateHandler) BulkDeleteTemplates(c *gin.Context) {
 		}
 
 		if err := h.templateRepo.Delete(tmpl.ID); err != nil {
-			slog.Error("bulk delete: failed to delete template", "template_id", tmpl.ID, "error", err)
+			slog.Error("bulk delete: failed to delete template", logKeyBulkTemplateID, tmpl.ID, "error", err)
 			return fmt.Errorf("failed to delete template")
 		}
 
@@ -200,7 +203,7 @@ func (h *TemplateHandler) BulkPublishTemplates(c *gin.Context) {
 		tmpl.UpdatedAt = timeNow()
 
 		if err := h.templateRepo.Update(tmpl); err != nil {
-			slog.Error("bulk publish: failed to update template", "template_id", tmpl.ID, "error", err)
+			slog.Error("bulk publish: failed to update template", logKeyBulkTemplateID, tmpl.ID, "error", err)
 			return fmt.Errorf("failed to publish template")
 		}
 
@@ -235,7 +238,7 @@ func (h *TemplateHandler) BulkUnpublishTemplates(c *gin.Context) {
 		tmpl.UpdatedAt = timeNow()
 
 		if err := h.templateRepo.Update(tmpl); err != nil {
-			slog.Error("bulk unpublish: failed to update template", "template_id", tmpl.ID, "error", err)
+			slog.Error("bulk unpublish: failed to update template", logKeyBulkTemplateID, tmpl.ID, "error", err)
 			return fmt.Errorf("failed to unpublish template")
 		}
 

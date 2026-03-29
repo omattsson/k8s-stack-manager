@@ -27,7 +27,7 @@ func (h *InstanceHandler) GetOverrides(c *gin.Context) {
 
 	// Verify instance exists.
 	if _, err := h.instanceRepo.FindByID(instanceID); err != nil {
-		status, message := mapError(err, "Stack instance")
+		status, message := mapError(err, entityStackInstance)
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
@@ -62,7 +62,7 @@ func (h *InstanceHandler) SetOverride(c *gin.Context) {
 	// Verify instance exists.
 	inst, err := h.instanceRepo.FindByID(instanceID)
 	if err != nil {
-		status, message := mapError(err, "Stack instance")
+		status, message := mapError(err, entityStackInstance)
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
@@ -71,7 +71,7 @@ func (h *InstanceHandler) SetOverride(c *gin.Context) {
 		Values string `json:"values"`
 	}
 	if err := c.ShouldBindJSON(&input); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request format"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": msgInvalidRequestFormat})
 		return
 	}
 

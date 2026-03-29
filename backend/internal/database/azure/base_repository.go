@@ -13,6 +13,27 @@ import (
 	"github.com/google/uuid"
 )
 
+// Common OData filter prefix and partition key constants.
+const (
+	odataPartitionKeyEq = "PartitionKey eq '"
+	pkGlobal            = "global"
+	pkUsers             = "users"
+	pkClusters          = "clusters"
+)
+
+// Common database operation names used in error wrapping.
+const (
+	opCreate        = "create"
+	opFind          = "find"
+	opUpdate        = "update"
+	opDelete        = "delete"
+	opList          = "list"
+	opMarshal       = "marshal"
+	opUnmarshal     = "unmarshal"
+	opTypeAssertion = "type_assertion"
+)
+
+
 // newID generates a new UUID string for use as an entity ID.
 func newID() string {
 	return uuid.New().String()

@@ -152,7 +152,7 @@ func (h *AuditLogHandler) ExportAuditLogs(c *gin.Context) {
 	result, err := h.auditRepo.List(filters)
 	if err != nil {
 		slog.Error("failed to export audit logs", "error", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
 		return
 	}
 	logs := result.Data
@@ -165,7 +165,7 @@ func (h *AuditLogHandler) ExportAuditLogs(c *gin.Context) {
 		w := csv.NewWriter(&buf)
 		if err := w.Write([]string{"ID", "Timestamp", "UserID", "Username", "Action", "EntityType", "EntityID", "Details"}); err != nil {
 			slog.Error("failed to write CSV header", "error", err)
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
+			c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
 			return
 		}
 		for _, l := range logs {
@@ -180,14 +180,14 @@ func (h *AuditLogHandler) ExportAuditLogs(c *gin.Context) {
 				l.Details,
 			}); err != nil {
 				slog.Error("failed to write CSV row", "error", err)
-				c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
+				c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
 				return
 			}
 		}
 		w.Flush()
 		if err := w.Error(); err != nil {
 			slog.Error("CSV flush error", "error", err)
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
+			c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
 			return
 		}
 

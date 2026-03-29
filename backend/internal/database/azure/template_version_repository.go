@@ -12,6 +12,9 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/data/aztables"
 )
 
+const tableTemplateVersions = "TemplateVersions"
+
+
 // TemplateVersionRepository implements models.TemplateVersionRepository for Azure Table Storage.
 // Partition key: template_id, Row key: version_id.
 type TemplateVersionRepository struct {
@@ -21,7 +24,7 @@ type TemplateVersionRepository struct {
 
 // NewTestTemplateVersionRepository creates a repository for unit testing.
 func NewTestTemplateVersionRepository() *TemplateVersionRepository {
-	return &TemplateVersionRepository{tableName: "TemplateVersions"}
+	return &TemplateVersionRepository{tableName: tableTemplateVersions}
 }
 
 // SetTestClient injects a mock client for testing.
@@ -43,11 +46,11 @@ type templateVersionEntity struct {
 
 // NewTemplateVersionRepository creates a new Azure Table Storage template version repository.
 func NewTemplateVersionRepository(accountName, accountKey, endpoint string, useAzurite bool) (*TemplateVersionRepository, error) {
-	client, err := createTableClient(accountName, accountKey, endpoint, "TemplateVersions", useAzurite)
+	client, err := createTableClient(accountName, accountKey, endpoint, tableTemplateVersions, useAzurite)
 	if err != nil {
 		return nil, err
 	}
-	return &TemplateVersionRepository{client: client, tableName: "TemplateVersions"}, nil
+	return &TemplateVersionRepository{client: client, tableName: tableTemplateVersions}, nil
 }
 
 func templateVersionToEntity(v *models.TemplateVersion) *templateVersionEntity {
@@ -81,12 +84,12 @@ func (r *TemplateVersionRepository) Create(ctx context.Context, version *models.
 	entity := templateVersionToEntity(version)
 	entityBytes, err := json.Marshal(entity)
 	if err != nil {
-		return dberrors.NewDatabaseError("marshal", err)
+		return dberrors.NewDatabaseError(opMarshal, err)
 	}
 
 	_, err = r.client.AddEntity(ctx, entityBytes, nil)
 	if err != nil {
-		return mapAzureError("create", err)
+		return mapAzureError(opCreate, err)
 	}
 	return nil
 }
@@ -102,12 +105,12 @@ func (r *TemplateVersionRepository) ListByTemplate(ctx context.Context, template
 	for pager.More() {
 		page, err := pager.NextPage(ctx)
 		if err != nil {
-			return nil, dberrors.NewDatabaseError("list", err)
+			return nil, dberrors.NewDatabaseError(opList, err)
 		}
 		for _, raw := range page.Entities {
 			var entity templateVersionEntity
 			if err := json.Unmarshal(raw, &entity); err != nil {
-				return nil, dberrors.NewDatabaseError("unmarshal", err)
+				return nil, dberrors.NewDatabaseError(opUnmarshal, err)
 			}
 			versions = append(versions, *entityToTemplateVersion(&entity))
 		}
@@ -132,18 +135,18 @@ func (r *TemplateVersionRepository) GetByID(ctx context.Context, templateID, id 
 	for pager.More() {
 		page, err := pager.NextPage(ctx)
 		if err != nil {
-			return nil, dberrors.NewDatabaseError("find", err)
+			return nil, dberrors.NewDatabaseError(opFind, err)
 		}
 		for _, raw := range page.Entities {
 			var entity templateVersionEntity
 			if err := json.Unmarshal(raw, &entity); err != nil {
-				return nil, dberrors.NewDatabaseError("unmarshal", err)
+				return nil, dberrors.NewDatabaseError(opUnmarshal, err)
 			}
 			return entityToTemplateVersion(&entity), nil
 		}
 	}
 
-	return nil, dberrors.NewDatabaseError("find", dberrors.ErrNotFound)
+	return nil, dberrors.NewDatabaseError(opFind, dberrors.ErrNotFound)
 }
 
 // GetLatestByTemplate returns the most recent version for a template.
@@ -153,7 +156,7 @@ func (r *TemplateVersionRepository) GetLatestByTemplate(ctx context.Context, tem
 		return nil, err
 	}
 	if len(versions) == 0 {
-		return nil, dberrors.NewDatabaseError("find", dberrors.ErrNotFound)
+		return nil, dberrors.NewDatabaseError(opFind, dberrors.ErrNotFound)
 	}
 	// ListByTemplate already returns newest first.
 	return &versions[0], nil

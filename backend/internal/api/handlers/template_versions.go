@@ -12,6 +12,12 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// Template version handler message constants.
+const (
+	entityTemplateVersion = "Template version"
+)
+
+
 // TemplateVersionHandler handles template version endpoints.
 type TemplateVersionHandler struct {
 	versionRepo  models.TemplateVersionRepository
@@ -49,14 +55,14 @@ func (h *TemplateVersionHandler) ListVersions(c *gin.Context) {
 
 	// Verify template exists.
 	if _, err := h.templateRepo.FindByID(id); err != nil {
-		status, message := mapError(err, "Template")
+		status, message := mapError(err, entityTemplate)
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
 
 	versions, err := h.versionRepo.ListByTemplate(c.Request.Context(), id)
 	if err != nil {
-		status, message := mapError(err, "Template version")
+		status, message := mapError(err, entityTemplateVersion)
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
@@ -97,7 +103,7 @@ func (h *TemplateVersionHandler) GetVersion(c *gin.Context) {
 
 	version, err := h.versionRepo.GetByID(c.Request.Context(), templateID, versionID)
 	if err != nil {
-		status, message := mapError(err, "Template version")
+		status, message := mapError(err, entityTemplateVersion)
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
@@ -105,7 +111,7 @@ func (h *TemplateVersionHandler) GetVersion(c *gin.Context) {
 	var snapshot models.TemplateSnapshot
 	if err := json.Unmarshal([]byte(version.Snapshot), &snapshot); err != nil {
 		slog.Error("Failed to unmarshal template version snapshot", "error", err, "version_id", version.ID)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
 		return
 	}
 
@@ -161,25 +167,25 @@ func (h *TemplateVersionHandler) DiffVersions(c *gin.Context) {
 
 	left, err := h.versionRepo.GetByID(c.Request.Context(), templateID, v1ID)
 	if err != nil {
-		status, message := mapError(err, "Template version")
+		status, message := mapError(err, entityTemplateVersion)
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
 
 	right, err := h.versionRepo.GetByID(c.Request.Context(), templateID, v2ID)
 	if err != nil {
-		status, message := mapError(err, "Template version")
+		status, message := mapError(err, entityTemplateVersion)
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
 
 	var leftSnapshot, rightSnapshot models.TemplateSnapshot
 	if err := json.Unmarshal([]byte(left.Snapshot), &leftSnapshot); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
 		return
 	}
 	if err := json.Unmarshal([]byte(right.Snapshot), &rightSnapshot); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
 		return
 	}
 

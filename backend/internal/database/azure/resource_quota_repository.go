@@ -10,6 +10,9 @@ import (
 	"backend/pkg/dberrors"
 )
 
+const tableResourceQuotaConfigs = "ResourceQuotaConfigs"
+
+
 const quotaRowKey = "quota"
 
 // ResourceQuotaRepository implements models.ResourceQuotaRepository for Azure Table Storage.
@@ -21,16 +24,16 @@ type ResourceQuotaRepository struct {
 
 // NewResourceQuotaRepository creates a new Azure Table Storage resource quota repository.
 func NewResourceQuotaRepository(accountName, accountKey, endpoint string, useAzurite bool) (*ResourceQuotaRepository, error) {
-	client, err := createTableClient(accountName, accountKey, endpoint, "ResourceQuotaConfigs", useAzurite)
+	client, err := createTableClient(accountName, accountKey, endpoint, tableResourceQuotaConfigs, useAzurite)
 	if err != nil {
 		return nil, err
 	}
-	return &ResourceQuotaRepository{client: client, tableName: "ResourceQuotaConfigs"}, nil
+	return &ResourceQuotaRepository{client: client, tableName: tableResourceQuotaConfigs}, nil
 }
 
 // NewTestResourceQuotaRepository creates a repository for unit testing.
 func NewTestResourceQuotaRepository() *ResourceQuotaRepository {
-	return &ResourceQuotaRepository{tableName: "ResourceQuotaConfigs"}
+	return &ResourceQuotaRepository{tableName: tableResourceQuotaConfigs}
 }
 
 // SetTestClient injects a mock client for testing.
@@ -79,7 +82,7 @@ func (r *ResourceQuotaRepository) GetByClusterID(ctx context.Context, clusterID 
 
 	var entity resourceQuotaEntity
 	if err := json.Unmarshal(resp.Value, &entity); err != nil {
-		return nil, dberrors.NewDatabaseError("unmarshal", err)
+		return nil, dberrors.NewDatabaseError(opUnmarshal, err)
 	}
 
 	return entity.toModel(), nil
@@ -107,12 +110,12 @@ func (r *ResourceQuotaRepository) Upsert(ctx context.Context, config *models.Res
 		entity := resourceQuotaToEntity(config)
 		entityBytes, marshalErr := json.Marshal(entity)
 		if marshalErr != nil {
-			return dberrors.NewDatabaseError("marshal", marshalErr)
+			return dberrors.NewDatabaseError(opMarshal, marshalErr)
 		}
 
 		_, addErr := r.client.AddEntity(ctx, entityBytes, nil)
 		if addErr != nil {
-			return mapAzureError("create", addErr)
+			return mapAzureError(opCreate, addErr)
 		}
 		return nil
 	}
@@ -121,12 +124,12 @@ func (r *ResourceQuotaRepository) Upsert(ctx context.Context, config *models.Res
 	entity := resourceQuotaToEntity(config)
 	entityBytes, err := json.Marshal(entity)
 	if err != nil {
-		return dberrors.NewDatabaseError("marshal", err)
+		return dberrors.NewDatabaseError(opMarshal, err)
 	}
 
 	_, err = r.client.UpdateEntity(ctx, entityBytes, nil)
 	if err != nil {
-		return mapAzureError("update", err)
+		return mapAzureError(opUpdate, err)
 	}
 	return nil
 }
@@ -135,7 +138,7 @@ func (r *ResourceQuotaRepository) Upsert(ctx context.Context, config *models.Res
 func (r *ResourceQuotaRepository) Delete(ctx context.Context, clusterID string) error {
 	_, err := r.client.DeleteEntity(ctx, clusterID, quotaRowKey, nil)
 	if err != nil {
-		return mapAzureError("delete", err)
+		return mapAzureError(opDelete, err)
 	}
 	return nil
 }

@@ -11,6 +11,9 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/data/aztables"
 )
 
+const tableTemplateChartConfigs = "TemplateChartConfigs"
+
+
 // TemplateChartConfigRepository implements models.TemplateChartConfigRepository for Azure Table Storage.
 // Partition key: stack_template_id, Row key: chart config ID.
 type TemplateChartConfigRepository struct {
@@ -20,16 +23,16 @@ type TemplateChartConfigRepository struct {
 
 // NewTemplateChartConfigRepository creates a new Azure Table Storage template chart config repository.
 func NewTemplateChartConfigRepository(accountName, accountKey, endpoint string, useAzurite bool) (*TemplateChartConfigRepository, error) {
-	client, err := createTableClient(accountName, accountKey, endpoint, "TemplateChartConfigs", useAzurite)
+	client, err := createTableClient(accountName, accountKey, endpoint, tableTemplateChartConfigs, useAzurite)
 	if err != nil {
 		return nil, err
 	}
-	return &TemplateChartConfigRepository{client: client, tableName: "TemplateChartConfigs"}, nil
+	return &TemplateChartConfigRepository{client: client, tableName: tableTemplateChartConfigs}, nil
 }
 
 // NewTestTemplateChartConfigRepository creates a repository for unit testing.
 func NewTestTemplateChartConfigRepository() *TemplateChartConfigRepository {
-	return &TemplateChartConfigRepository{tableName: "TemplateChartConfigs"}
+	return &TemplateChartConfigRepository{tableName: tableTemplateChartConfigs}
 }
 
 // SetTestClient injects a mock client for testing.
@@ -81,19 +84,19 @@ func (r *TemplateChartConfigRepository) Create(config *models.TemplateChartConfi
 		config.ID = newID()
 	}
 	if config.StackTemplateID == "" {
-		return dberrors.NewDatabaseError("create", dberrors.ErrValidation)
+		return dberrors.NewDatabaseError(opCreate, dberrors.ErrValidation)
 	}
 	config.CreatedAt = now
 
 	entity := templateChartConfigToEntity(config)
 	entityBytes, err := json.Marshal(entity)
 	if err != nil {
-		return dberrors.NewDatabaseError("marshal", err)
+		return dberrors.NewDatabaseError(opMarshal, err)
 	}
 
 	_, err = r.client.AddEntity(ctx, entityBytes, nil)
 	if err != nil {
-		return mapAzureError("create", err)
+		return mapAzureError(opCreate, err)
 	}
 	return nil
 }
@@ -127,12 +130,12 @@ func (r *TemplateChartConfigRepository) Update(config *models.TemplateChartConfi
 	entity := templateChartConfigToEntity(config)
 	entityBytes, err := json.Marshal(entity)
 	if err != nil {
-		return dberrors.NewDatabaseError("marshal", err)
+		return dberrors.NewDatabaseError(opMarshal, err)
 	}
 
 	_, err = r.client.UpdateEntity(ctx, entityBytes, nil)
 	if err != nil {
-		return mapAzureError("update", err)
+		return mapAzureError(opUpdate, err)
 	}
 	return nil
 }
@@ -148,7 +151,7 @@ func (r *TemplateChartConfigRepository) Delete(id string) error {
 
 	_, err = r.client.DeleteEntity(ctx, config.StackTemplateID, id, nil)
 	if err != nil {
-		return mapAzureError("delete", err)
+		return mapAzureError(opDelete, err)
 	}
 	return nil
 }

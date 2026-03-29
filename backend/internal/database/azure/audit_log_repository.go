@@ -16,6 +16,13 @@ import (
 	"github.com/google/uuid"
 )
 
+// Audit log repository constants.
+const (
+	tableAuditLogs   = "AuditLogs"
+	auditDateFormat  = "2006-01"
+)
+
+
 // AuditLogRepository implements models.AuditLogRepository for Azure Table Storage.
 // Partition key: YYYY-MM (from timestamp), Row key: reverse_timestamp + uuid.
 // This ensures recent-first ordering within each monthly partition.
@@ -26,16 +33,16 @@ type AuditLogRepository struct {
 
 // NewAuditLogRepository creates a new Azure Table Storage audit log repository.
 func NewAuditLogRepository(accountName, accountKey, endpoint string, useAzurite bool) (*AuditLogRepository, error) {
-	client, err := createTableClient(accountName, accountKey, endpoint, "AuditLogs", useAzurite)
+	client, err := createTableClient(accountName, accountKey, endpoint, tableAuditLogs, useAzurite)
 	if err != nil {
 		return nil, err
 	}
-	return &AuditLogRepository{client: client, tableName: "AuditLogs"}, nil
+	return &AuditLogRepository{client: client, tableName: tableAuditLogs}, nil
 }
 
 // NewTestAuditLogRepository creates a repository for unit testing.
 func NewTestAuditLogRepository() *AuditLogRepository {
-	return &AuditLogRepository{tableName: "AuditLogs"}
+	return &AuditLogRepository{tableName: tableAuditLogs}
 }
 
 // SetTestClient injects a mock client for testing.
@@ -104,7 +111,7 @@ func (r *AuditLogRepository) Create(log *models.AuditLog) error {
 		log.ID = uuid.New().String()
 	}
 
-	pk := log.Timestamp.Format("2006-01")
+	pk := log.Timestamp.Format(auditDateFormat)
 	rk := reverseTimestamp(log.Timestamp) + "_" + log.ID
 
 	entity := map[string]interface{}{
@@ -122,12 +129,12 @@ func (r *AuditLogRepository) Create(log *models.AuditLog) error {
 
 	entityBytes, err := json.Marshal(entity)
 	if err != nil {
-		return dberrors.NewDatabaseError("marshal", err)
+		return dberrors.NewDatabaseError(opMarshal, err)
 	}
 
 	_, err = r.client.AddEntity(ctx, entityBytes, nil)
 	if err != nil {
-		return mapAzureError("create", err)
+		return mapAzureError(opCreate, err)
 	}
 	return nil
 }
@@ -140,14 +147,14 @@ func (r *AuditLogRepository) List(filters models.AuditLogFilters) (*models.Audit
 
 	// Date range maps to partition key range.
 	if filters.StartDate != nil && filters.EndDate != nil {
-		startPK := filters.StartDate.Format("2006-01")
-		endPK := filters.EndDate.Format("2006-01")
+		startPK := filters.StartDate.Format(auditDateFormat)
+		endPK := filters.EndDate.Format(auditDateFormat)
 		filterParts = append(filterParts, "PartitionKey ge '"+startPK+"' and PartitionKey le '"+endPK+"'")
 	} else if filters.StartDate != nil {
-		startPK := filters.StartDate.Format("2006-01")
+		startPK := filters.StartDate.Format(auditDateFormat)
 		filterParts = append(filterParts, "PartitionKey ge '"+startPK+"'")
 	} else if filters.EndDate != nil {
-		endPK := filters.EndDate.Format("2006-01")
+		endPK := filters.EndDate.Format(auditDateFormat)
 		filterParts = append(filterParts, "PartitionKey le '"+endPK+"'")
 	}
 
@@ -169,7 +176,7 @@ func (r *AuditLogRepository) List(filters models.AuditLogFilters) (*models.Audit
 	if filters.Cursor != "" {
 		cursorPK, cursorRK, err := decodeCursor(filters.Cursor)
 		if err != nil {
-			return nil, dberrors.NewDatabaseError("list", fmt.Errorf("%w: %s", dberrors.ErrValidation, err.Error()))
+			return nil, dberrors.NewDatabaseError(opList, fmt.Errorf("%w: %s", dberrors.ErrValidation, err.Error()))
 		}
 		escapedPK := escapeODataString(cursorPK)
 		escapedRK := escapeODataString(cursorRK)
@@ -227,7 +234,7 @@ func (r *AuditLogRepository) List(filters models.AuditLogFilters) (*models.Audit
 
 	entities, err := collectEntitiesTyped[auditLogEntity](ctx, pager, fn, maxResults)
 	if err != nil {
-		return nil, mapAzureError("list", err)
+		return nil, mapAzureError(opList, err)
 	}
 
 	result := &models.AuditLogResult{}
