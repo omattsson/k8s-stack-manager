@@ -10,6 +10,11 @@ export default defineConfig({
     css: true,
     exclude: ['e2e/**', 'node_modules/**'],
     testTimeout: 15000,
+    coverage: {
+      provider: 'v8',
+      reporter: ['text', 'lcov'],
+      reportsDirectory: './coverage',
+    },
   },
   server: {
     port: 3000,

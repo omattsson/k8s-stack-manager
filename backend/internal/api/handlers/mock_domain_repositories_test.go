@@ -1342,3 +1342,68 @@ func (m *MockTemplateVersionRepository) SetFetchError(err error) {
 	defer m.mu.Unlock()
 	m.fetchErr = err
 }
+
+// ---- MockInstanceQuotaOverrideRepository ----
+
+// MockInstanceQuotaOverrideRepository is an in-memory mock for models.InstanceQuotaOverrideRepository.
+type MockInstanceQuotaOverrideRepository struct {
+	mu    sync.RWMutex
+	items map[string]*models.InstanceQuotaOverride // keyed by StackInstanceID
+	err   error
+}
+
+func NewMockInstanceQuotaOverrideRepository() *MockInstanceQuotaOverrideRepository {
+	return &MockInstanceQuotaOverrideRepository{items: make(map[string]*models.InstanceQuotaOverride)}
+}
+
+func (m *MockInstanceQuotaOverrideRepository) GetByInstanceID(_ context.Context, instanceID string) (*models.InstanceQuotaOverride, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.err != nil {
+		return nil, m.err
+	}
+	o, ok := m.items[instanceID]
+	if !ok {
+		return nil, errors.New("not found")
+	}
+	cp := *o
+	return &cp, nil
+}
+
+func (m *MockInstanceQuotaOverrideRepository) Upsert(_ context.Context, override *models.InstanceQuotaOverride) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.err != nil {
+		return m.err
+	}
+	if override.ID == "" {
+		override.ID = "iqo-" + override.StackInstanceID
+	}
+	now := time.Now().UTC()
+	if override.CreatedAt.IsZero() {
+		override.CreatedAt = now
+	}
+	override.UpdatedAt = now
+	cp := *override
+	m.items[override.StackInstanceID] = &cp
+	return nil
+}
+
+func (m *MockInstanceQuotaOverrideRepository) Delete(_ context.Context, instanceID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.err != nil {
+		return m.err
+	}
+	if _, ok := m.items[instanceID]; !ok {
+		return errors.New("not found")
+	}
+	delete(m.items, instanceID)
+	return nil
+}
+
+func (m *MockInstanceQuotaOverrideRepository) SetError(err error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.err = err
+}

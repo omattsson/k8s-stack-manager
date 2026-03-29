@@ -192,6 +192,36 @@ func TestUpdateChartConfig(t *testing.T) {
 			},
 			wantStatus: http.StatusBadRequest,
 		},
+		{
+			name:    "validation error — empty chart name",
+			chartID: "chart-1",
+			body:    `{"chart_name":"","repository_url":"https://charts.example.com"}`,
+			setupChart: func(repo *MockChartConfigRepository) {
+				repo.Create(&models.ChartConfig{
+					ID: "chart-1", StackDefinitionID: "def-1",
+					ChartName: "nginx", CreatedAt: time.Now().UTC(),
+				})
+			},
+			wantStatus: http.StatusBadRequest,
+			checkBody: func(t *testing.T, body []byte) {
+				var resp map[string]string
+				require.NoError(t, json.Unmarshal(body, &resp))
+				assert.Contains(t, resp["error"], "chart_name is required")
+			},
+		},
+		{
+			name:    "repo update error returns 500",
+			chartID: "chart-1",
+			body:    `{"chart_name":"updated-nginx"}`,
+			setupChart: func(repo *MockChartConfigRepository) {
+				repo.Create(&models.ChartConfig{
+					ID: "chart-1", StackDefinitionID: "def-1",
+					ChartName: "nginx", CreatedAt: time.Now().UTC(),
+				})
+				repo.SetError(assert.AnError)
+			},
+			wantStatus: http.StatusInternalServerError,
+		},
 	}
 
 	for _, tt := range tests {

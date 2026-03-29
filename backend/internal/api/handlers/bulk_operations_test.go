@@ -670,5 +670,115 @@ func TestBulkOperationReturnsInstanceName(t *testing.T) {
 	assert.Equal(t, "my-stack", resp.Results[0].InstanceName)
 }
 
+// setupBulkRouterWithBranches creates a test gin engine with a branchOverrideRepo wired in.
+func setupBulkRouterWithBranches(
+	instanceRepo *MockStackInstanceRepository,
+	branchOverrideRepo *MockChartBranchOverrideRepository,
+	callerID, callerUsername, callerRole string,
+) *gin.Engine {
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.Use(func(c *gin.Context) {
+		if callerID != "" {
+			c.Set("userID", callerID)
+		}
+		if callerUsername != "" {
+			c.Set("username", callerUsername)
+		}
+		if callerRole != "" {
+			c.Set("role", callerRole)
+		}
+		c.Next()
+	})
+
+	valuesGen := helm.NewValuesGenerator()
+	userRepo := NewMockUserRepository()
+
+	h := NewInstanceHandlerWithDeployer(
+		instanceRepo, NewMockValueOverrideRepository(), branchOverrideRepo,
+		NewMockStackDefinitionRepository(), NewMockChartConfigRepository(),
+		NewMockStackTemplateRepository(), NewMockTemplateChartConfigRepository(),
+		valuesGen, userRepo,
+		nil, nil, nil, nil, nil,
+		0,
+	)
+
+	bulk := r.Group("/api/v1/stack-instances/bulk")
+	{
+		bulk.POST("/delete", h.BulkDelete)
+	}
+	return r
+}
+
+func TestBulkDelete_WithBranchOverrides(t *testing.T) {
+	t.Parallel()
+
+	t.Run("deletes branch overrides before deleting instance", func(t *testing.T) {
+		t.Parallel()
+
+		instRepo := NewMockStackInstanceRepository()
+		branchRepo := NewMockChartBranchOverrideRepository()
+
+		seedInstance(t, instRepo, "i1", "stack-a", "d1", "uid-1", models.StackStatusDraft)
+
+		// Seed a branch override for the instance.
+		_ = branchRepo.Set(&models.ChartBranchOverride{
+			StackInstanceID: "i1",
+			ChartConfigID:   "cc-1",
+			Branch:          "feature/test",
+		})
+
+		router := setupBulkRouterWithBranches(instRepo, branchRepo, "uid-1", "testuser", "admin")
+
+		body, _ := json.Marshal(BulkOperationRequest{InstanceIDs: []string{"i1"}})
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest(http.MethodPost, "/api/v1/stack-instances/bulk/delete", bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		var resp BulkOperationResponse
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+		assert.Equal(t, 1, resp.Succeeded)
+		assert.Equal(t, 0, resp.Failed)
+
+		// Instance should be deleted.
+		_, err := instRepo.FindByID("i1")
+		assert.Error(t, err)
+
+		// Branch overrides for the instance should also be gone.
+		overrides, _ := branchRepo.List("i1")
+		assert.Empty(t, overrides)
+	})
+
+	t.Run("branch override delete error fails the instance", func(t *testing.T) {
+		t.Parallel()
+
+		instRepo := NewMockStackInstanceRepository()
+		branchRepo := NewMockChartBranchOverrideRepository()
+
+		seedInstance(t, instRepo, "i1", "stack-a", "d1", "uid-1", models.StackStatusDraft)
+		branchRepo.SetError(assert.AnError)
+
+		router := setupBulkRouterWithBranches(instRepo, branchRepo, "uid-1", "testuser", "admin")
+
+		body, _ := json.Marshal(BulkOperationRequest{InstanceIDs: []string{"i1"}})
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest(http.MethodPost, "/api/v1/stack-instances/bulk/delete", bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		var resp BulkOperationResponse
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+		assert.Equal(t, 0, resp.Succeeded)
+		assert.Equal(t, 1, resp.Failed)
+
+		// Instance should still exist since branch override delete failed.
+		_, err := instRepo.FindByID("i1")
+		assert.NoError(t, err)
+	})
+}
+
 // Ensure unused imports don't cause issues.
 var _ = time.Now

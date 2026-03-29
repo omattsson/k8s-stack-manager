@@ -17,6 +17,7 @@ const mockApi = vi.hoisted(() => ({
 vi.mock('axios', () => ({
   default: {
     create: vi.fn(() => mockApi),
+    isAxiosError: vi.fn((err: unknown) => err != null && typeof err === 'object' && 'response' in err),
   },
 }));
 
@@ -34,6 +35,7 @@ function mockResponse<T>(data: T): AxiosResponse<T> {
 // Import the services — they bind to the mocked axios instance created above
 import {
   authService,
+  oidcService,
   templateService,
   definitionService,
   instanceService,
@@ -48,6 +50,7 @@ import {
   analyticsService,
   sharedValuesService,
   cleanupPolicyService,
+  notificationService,
 } from '../client';
 
 beforeEach(() => {
@@ -1180,5 +1183,421 @@ describe('cleanupPolicyService', () => {
     api.get.mockRejectedValueOnce(new Error('Forbidden'));
 
     await expect(cleanupPolicyService.list()).rejects.toThrow('Forbidden');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// oidcService
+// ---------------------------------------------------------------------------
+describe('oidcService', () => {
+  it('getConfig sends GET to /api/v1/auth/oidc/config', async () => {
+    const api = mockApi;
+    const data = { enabled: true, provider_name: 'Azure AD', local_auth_enabled: true };
+    api.get.mockResolvedValueOnce(mockResponse(data));
+
+    const result = await oidcService.getConfig();
+    expect(api.get).toHaveBeenCalledWith('/api/v1/auth/oidc/config');
+    expect(result).toEqual(data);
+  });
+
+  it('getConfig throws on error', async () => {
+    const api = mockApi;
+    api.get.mockRejectedValueOnce(new Error('Network error'));
+
+    await expect(oidcService.getConfig()).rejects.toThrow('Network error');
+  });
+
+  it('getAuthorizeUrl sends GET with redirect param', async () => {
+    const api = mockApi;
+    const data = { redirect_url: 'https://provider.example.com/authorize' };
+    api.get.mockResolvedValueOnce(mockResponse(data));
+
+    const result = await oidcService.getAuthorizeUrl('/dashboard');
+    expect(api.get).toHaveBeenCalledWith('/api/v1/auth/oidc/authorize', { params: { redirect: '/dashboard' } });
+    expect(result).toEqual(data);
+  });
+
+  it('getAuthorizeUrl sends GET without params when redirect omitted', async () => {
+    const api = mockApi;
+    const data = { redirect_url: 'https://provider.example.com/authorize' };
+    api.get.mockResolvedValueOnce(mockResponse(data));
+
+    await oidcService.getAuthorizeUrl();
+    expect(api.get).toHaveBeenCalledWith('/api/v1/auth/oidc/authorize', { params: undefined });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// templateService — bulk operations & versioning
+// ---------------------------------------------------------------------------
+describe('templateService — bulk & versioning', () => {
+  it('bulkDelete sends POST with template IDs', async () => {
+    const api = mockApi;
+    const data = { results: [{ id: 't1', success: true }] };
+    api.post.mockResolvedValueOnce(mockResponse(data));
+
+    const result = await templateService.bulkDelete(['t1', 't2']);
+    expect(api.post).toHaveBeenCalledWith('/api/v1/templates/bulk/delete', { template_ids: ['t1', 't2'] });
+    expect(result).toEqual(data);
+  });
+
+  it('bulkPublish sends POST with template IDs', async () => {
+    const api = mockApi;
+    const data = { results: [{ id: 't1', success: true }] };
+    api.post.mockResolvedValueOnce(mockResponse(data));
+
+    const result = await templateService.bulkPublish(['t1']);
+    expect(api.post).toHaveBeenCalledWith('/api/v1/templates/bulk/publish', { template_ids: ['t1'] });
+    expect(result).toEqual(data);
+  });
+
+  it('bulkUnpublish sends POST with template IDs', async () => {
+    const api = mockApi;
+    const data = { results: [{ id: 't1', success: true }] };
+    api.post.mockResolvedValueOnce(mockResponse(data));
+
+    const result = await templateService.bulkUnpublish(['t1']);
+    expect(api.post).toHaveBeenCalledWith('/api/v1/templates/bulk/unpublish', { template_ids: ['t1'] });
+    expect(result).toEqual(data);
+  });
+
+  it('listVersions sends GET with template ID', async () => {
+    const api = mockApi;
+    const data = [{ id: 'v1', version: '1.0' }];
+    api.get.mockResolvedValueOnce(mockResponse(data));
+
+    const result = await templateService.listVersions('t1');
+    expect(api.get).toHaveBeenCalledWith('/api/v1/templates/t1/versions');
+    expect(result).toEqual(data);
+  });
+
+  it('getVersion sends GET with template and version IDs', async () => {
+    const api = mockApi;
+    const data = { id: 'v1', version: '1.0' };
+    api.get.mockResolvedValueOnce(mockResponse(data));
+
+    const result = await templateService.getVersion('t1', 'v1');
+    expect(api.get).toHaveBeenCalledWith('/api/v1/templates/t1/versions/v1');
+    expect(result).toEqual(data);
+  });
+
+  it('diffVersions sends GET with left and right version IDs', async () => {
+    const api = mockApi;
+    const data = { left: {}, right: {}, diffs: [] };
+    api.get.mockResolvedValueOnce(mockResponse(data));
+
+    const result = await templateService.diffVersions('t1', 'v1', 'v2');
+    expect(api.get).toHaveBeenCalledWith('/api/v1/templates/t1/versions/diff', { params: { left: 'v1', right: 'v2' } });
+    expect(result).toEqual(data);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// definitionService — export/import/upgrade
+// ---------------------------------------------------------------------------
+describe('definitionService — export/import/upgrade', () => {
+  it('exportDefinition sends GET and returns bundle', async () => {
+    const api = mockApi;
+    const bundle = { definition: { name: 'My Stack' }, charts: [] };
+    api.get.mockResolvedValueOnce(mockResponse(bundle));
+
+    const result = await definitionService.exportDefinition('d1');
+    expect(api.get).toHaveBeenCalledWith('/api/v1/stack-definitions/d1/export');
+    expect(result).toEqual(bundle);
+  });
+
+  it('importDefinition sends POST with bundle', async () => {
+    const api = mockApi;
+    const bundle = { definition: { name: 'My Stack' }, charts: [] };
+    const created = { id: 'd2', name: 'My Stack' };
+    api.post.mockResolvedValueOnce(mockResponse(created));
+
+    const result = await definitionService.importDefinition(bundle as never);
+    expect(api.post).toHaveBeenCalledWith('/api/v1/stack-definitions/import', bundle);
+    expect(result).toEqual(created);
+  });
+
+  it('checkUpgrade sends GET to upgrade/check endpoint', async () => {
+    const api = mockApi;
+    const data = { has_upgrade: true, changes: ['new chart'] };
+    api.get.mockResolvedValueOnce(mockResponse(data));
+
+    const result = await definitionService.checkUpgrade('d1');
+    expect(api.get).toHaveBeenCalledWith('/api/v1/stack-definitions/d1/check-upgrade');
+    expect(result).toEqual(data);
+  });
+
+  it('applyUpgrade sends POST to upgrade/apply endpoint', async () => {
+    const api = mockApi;
+    const updated = { id: 'd1', name: 'Updated Stack' };
+    api.post.mockResolvedValueOnce(mockResponse(updated));
+
+    const result = await definitionService.applyUpgrade('d1');
+    expect(api.post).toHaveBeenCalledWith('/api/v1/stack-definitions/d1/upgrade');
+    expect(result).toEqual(updated);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// instanceService — bulk operations & compare & quota overrides
+// ---------------------------------------------------------------------------
+describe('instanceService — bulk & compare & quotas', () => {
+  it('bulkDeploy sends POST with instance IDs', async () => {
+    const api = mockApi;
+    const data = { results: [{ instance_id: 'i1', success: true }] };
+    api.post.mockResolvedValueOnce(mockResponse(data));
+
+    const result = await instanceService.bulkDeploy(['i1', 'i2']);
+    expect(api.post).toHaveBeenCalledWith('/api/v1/stack-instances/bulk/deploy', { instance_ids: ['i1', 'i2'] });
+    expect(result).toEqual(data);
+  });
+
+  it('bulkStop sends POST with instance IDs', async () => {
+    const api = mockApi;
+    const data = { results: [{ instance_id: 'i1', success: true }] };
+    api.post.mockResolvedValueOnce(mockResponse(data));
+
+    const result = await instanceService.bulkStop(['i1']);
+    expect(api.post).toHaveBeenCalledWith('/api/v1/stack-instances/bulk/stop', { instance_ids: ['i1'] });
+    expect(result).toEqual(data);
+  });
+
+  it('bulkClean sends POST with instance IDs', async () => {
+    const api = mockApi;
+    const data = { results: [{ instance_id: 'i1', success: true }] };
+    api.post.mockResolvedValueOnce(mockResponse(data));
+
+    const result = await instanceService.bulkClean(['i1']);
+    expect(api.post).toHaveBeenCalledWith('/api/v1/stack-instances/bulk/clean', { instance_ids: ['i1'] });
+    expect(result).toEqual(data);
+  });
+
+  it('bulkDelete sends POST with instance IDs', async () => {
+    const api = mockApi;
+    const data = { results: [{ instance_id: 'i1', success: true }] };
+    api.post.mockResolvedValueOnce(mockResponse(data));
+
+    const result = await instanceService.bulkDelete(['i1']);
+    expect(api.post).toHaveBeenCalledWith('/api/v1/stack-instances/bulk/delete', { instance_ids: ['i1'] });
+    expect(result).toEqual(data);
+  });
+
+  it('compareInstances sends GET with left and right IDs', async () => {
+    const api = mockApi;
+    const data = { left: {}, right: {}, value_diffs: [] };
+    api.get.mockResolvedValueOnce(mockResponse(data));
+
+    const result = await instanceService.compareInstances('i1', 'i2');
+    expect(api.get).toHaveBeenCalledWith('/api/v1/stack-instances/compare', { params: { left: 'i1', right: 'i2' } });
+    expect(result).toEqual(data);
+  });
+
+  it('getQuotaOverride sends GET and returns override', async () => {
+    const api = mockApi;
+    const data = { id: 'qo1', cpu_request: '100m' };
+    api.get.mockResolvedValueOnce(mockResponse(data));
+
+    const result = await instanceService.getQuotaOverride('i1');
+    expect(api.get).toHaveBeenCalledWith('/api/v1/stack-instances/i1/quota-overrides');
+    expect(result).toEqual(data);
+  });
+
+  it('getQuotaOverride returns null on 404', async () => {
+    const api = mockApi;
+    api.get.mockRejectedValueOnce({ response: { status: 404 } });
+
+    const result = await instanceService.getQuotaOverride('i1');
+    expect(result).toBeNull();
+  });
+
+  it('setQuotaOverride sends PUT with override data', async () => {
+    const api = mockApi;
+    const overrideData = { cpu_request: '200m', memory_request: '256Mi' };
+    const data = { id: 'qo1', ...overrideData };
+    api.put.mockResolvedValueOnce(mockResponse(data));
+
+    const result = await instanceService.setQuotaOverride('i1', overrideData as never);
+    expect(api.put).toHaveBeenCalledWith('/api/v1/stack-instances/i1/quota-overrides', overrideData);
+    expect(result).toEqual(data);
+  });
+
+  it('deleteQuotaOverride sends DELETE', async () => {
+    const api = mockApi;
+    api.delete.mockResolvedValueOnce(mockResponse(undefined));
+
+    await instanceService.deleteQuotaOverride('i1');
+    expect(api.delete).toHaveBeenCalledWith('/api/v1/stack-instances/i1/quota-overrides');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// clusterService — quotas & utilization
+// ---------------------------------------------------------------------------
+describe('clusterService — quotas & utilization', () => {
+  it('getQuotas sends GET with encoded cluster ID', async () => {
+    const api = mockApi;
+    const data = { cpu_limit: '4', memory_limit: '8Gi' };
+    api.get.mockResolvedValueOnce(mockResponse(data));
+
+    const result = await clusterService.getQuotas('c1');
+    expect(api.get).toHaveBeenCalledWith('/api/v1/clusters/c1/quotas');
+    expect(result).toEqual(data);
+  });
+
+  it('getQuotas returns null on 404', async () => {
+    const api = mockApi;
+    api.get.mockRejectedValueOnce({ response: { status: 404 } });
+
+    const result = await clusterService.getQuotas('c1');
+    expect(result).toBeNull();
+  });
+
+  it('updateQuotas sends PUT with quota config', async () => {
+    const api = mockApi;
+    const config = { cpu_limit: '8', memory_limit: '16Gi' };
+    const data = { id: 'q1', ...config };
+    api.put.mockResolvedValueOnce(mockResponse(data));
+
+    const result = await clusterService.updateQuotas('c1', config as never);
+    expect(api.put).toHaveBeenCalledWith('/api/v1/clusters/c1/quotas', config);
+    expect(result).toEqual(data);
+  });
+
+  it('deleteQuotas sends DELETE with encoded cluster ID', async () => {
+    const api = mockApi;
+    api.delete.mockResolvedValueOnce(mockResponse(undefined));
+
+    await clusterService.deleteQuotas('c1');
+    expect(api.delete).toHaveBeenCalledWith('/api/v1/clusters/c1/quotas');
+  });
+
+  it('getUtilization sends GET with encoded cluster ID', async () => {
+    const api = mockApi;
+    const data = { namespaces: [{ name: 'ns1', cpu_usage: '100m' }] };
+    api.get.mockResolvedValueOnce(mockResponse(data));
+
+    const result = await clusterService.getUtilization('c1');
+    expect(api.get).toHaveBeenCalledWith('/api/v1/clusters/c1/utilization');
+    expect(result).toEqual(data);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// auditService.export
+// ---------------------------------------------------------------------------
+describe('auditService — export', () => {
+  it('export sends GET with format and filter params as blob', async () => {
+    const api = mockApi;
+    const blob = new Blob(['data']);
+    api.get.mockResolvedValueOnce({
+      ...mockResponse(blob),
+      headers: { 'content-disposition': 'filename=audit-logs.csv' },
+    });
+
+    // Mock DOM APIs for download
+    const mockLink = { href: '', setAttribute: vi.fn(), click: vi.fn(), remove: vi.fn() };
+    vi.spyOn(document, 'createElement').mockReturnValue(mockLink as unknown as HTMLElement);
+    vi.spyOn(document.body, 'appendChild').mockReturnValue(document.body);
+    const mockCreateObjectURL = vi.fn().mockReturnValue('blob:url');
+    const mockRevokeObjectURL = vi.fn();
+    globalThis.URL.createObjectURL = mockCreateObjectURL;
+    globalThis.URL.revokeObjectURL = mockRevokeObjectURL;
+
+    await auditService.export({ user_id: 'u1', action: 'create' }, 'csv');
+
+    expect(api.get).toHaveBeenCalledWith('/api/v1/audit-logs/export', {
+      params: expect.any(URLSearchParams),
+      responseType: 'blob',
+    });
+    expect(mockLink.setAttribute).toHaveBeenCalledWith('download', 'audit-logs.csv');
+    expect(mockLink.click).toHaveBeenCalled();
+    expect(mockRevokeObjectURL).toHaveBeenCalledWith('blob:url');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// notificationService
+// ---------------------------------------------------------------------------
+describe('notificationService', () => {
+  it('list sends GET with params', async () => {
+    const api = mockApi;
+    const data = { notifications: [], total: 0, unread_count: 0 };
+    api.get.mockResolvedValueOnce(mockResponse(data));
+
+    const result = await notificationService.list(true, 10, 0);
+    expect(api.get).toHaveBeenCalledWith('/api/v1/notifications', {
+      params: { unread_only: true, limit: 10, offset: 0 },
+    });
+    expect(result).toEqual(data);
+  });
+
+  it('list sends GET without optional params', async () => {
+    const api = mockApi;
+    const data = { notifications: [], total: 0, unread_count: 0 };
+    api.get.mockResolvedValueOnce(mockResponse(data));
+
+    await notificationService.list();
+    expect(api.get).toHaveBeenCalledWith('/api/v1/notifications', { params: {} });
+  });
+
+  it('list throws on error', async () => {
+    const api = mockApi;
+    api.get.mockRejectedValueOnce(new Error('Network'));
+
+    await expect(notificationService.list()).rejects.toThrow('Network');
+  });
+
+  it('countUnread sends GET to /api/v1/notifications/count', async () => {
+    const api = mockApi;
+    const data = { unread_count: 5 };
+    api.get.mockResolvedValueOnce(mockResponse(data));
+
+    const result = await notificationService.countUnread();
+    expect(api.get).toHaveBeenCalledWith('/api/v1/notifications/count');
+    expect(result).toEqual(data);
+  });
+
+  it('markAsRead sends POST to notification read endpoint', async () => {
+    const api = mockApi;
+    const data = { id: 'n1', is_read: true };
+    api.post.mockResolvedValueOnce(mockResponse(data));
+
+    const result = await notificationService.markAsRead('n1');
+    expect(api.post).toHaveBeenCalledWith('/api/v1/notifications/n1/read');
+    expect(result).toEqual(data);
+  });
+
+  it('markAllAsRead sends POST to read-all endpoint', async () => {
+    const api = mockApi;
+    api.post.mockResolvedValueOnce(mockResponse(undefined));
+
+    await notificationService.markAllAsRead();
+    expect(api.post).toHaveBeenCalledWith('/api/v1/notifications/read-all');
+  });
+
+  it('getPreferences sends GET to preferences endpoint', async () => {
+    const api = mockApi;
+    const data = [{ event_type: 'deploy', enabled: true }];
+    api.get.mockResolvedValueOnce(mockResponse(data));
+
+    const result = await notificationService.getPreferences();
+    expect(api.get).toHaveBeenCalledWith('/api/v1/notifications/preferences');
+    expect(result).toEqual(data);
+  });
+
+  it('updatePreferences sends PUT with preferences array', async () => {
+    const api = mockApi;
+    const prefs = [{ event_type: 'deploy', enabled: false }];
+    api.put.mockResolvedValueOnce(mockResponse(undefined));
+
+    await notificationService.updatePreferences(prefs);
+    expect(api.put).toHaveBeenCalledWith('/api/v1/notifications/preferences', { preferences: prefs });
+  });
+
+  it('updatePreferences throws on error', async () => {
+    const api = mockApi;
+    api.put.mockRejectedValueOnce(new Error('Forbidden'));
+
+    await expect(notificationService.updatePreferences([])).rejects.toThrow('Forbidden');
   });
 });
