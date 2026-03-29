@@ -94,6 +94,74 @@ const Notifications = () => {
     }
   };
 
+  const emptyMessage = filter === 'unread' ? 'No unread notifications' : 'No notifications yet';
+
+  let notificationContent;
+  if (loading) {
+    notificationContent = <LoadingState label="Loading notifications..." />;
+  } else if (notifications.length === 0) {
+    notificationContent = (
+      <Paper sx={{ p: 4, textAlign: 'center' }}>
+        <Typography color="text.secondary">
+          {emptyMessage}
+        </Typography>
+      </Paper>
+    );
+  } else {
+    notificationContent = (
+      <Paper>
+        <List disablePadding>
+          {notifications.map((notification, index) => (
+            <ListItem key={notification.id} disablePadding divider={index < notifications.length - 1}>
+              <ListItemButton
+                onClick={() => handleClickNotification(notification)}
+                sx={{
+                  bgcolor: notification.is_read ? 'transparent' : 'action.hover',
+                  py: 2,
+                  px: 2.5,
+                }}
+              >
+                <ListItemIcon sx={{ minWidth: 40 }}>
+                  {notificationIcon(notification.type)}
+                </ListItemIcon>
+                <ListItemText
+                  primary={notification.title}
+                  secondary={
+                    <Box component="span" sx={{ display: 'flex', flexDirection: 'column', gap: 0.25 }}>
+                      <Typography variant="body2" color="text.secondary" component="span">
+                        {notification.message}
+                      </Typography>
+                      <Typography variant="caption" color="text.disabled" component="span">
+                        {timeAgo(notification.created_at)}
+                      </Typography>
+                    </Box>
+                  }
+                  slotProps={{
+                    primary: {
+                      fontWeight: notification.is_read ? 400 : 600,
+                    },
+                  }}
+                />
+              </ListItemButton>
+            </ListItem>
+          ))}
+        </List>
+        <TablePagination
+          component="div"
+          count={total}
+          page={page}
+          onPageChange={(_, newPage) => setPage(newPage)}
+          rowsPerPage={rowsPerPage}
+          onRowsPerPageChange={(e) => {
+            setRowsPerPage(Number.parseInt(e.target.value, 10));
+            setPage(0);
+          }}
+          rowsPerPageOptions={PAGE_SIZE_OPTIONS}
+        />
+      </Paper>
+    );
+  }
+
   return (
     <Box>
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
@@ -127,66 +195,7 @@ const Notifications = () => {
 
       {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
 
-      {loading ? (
-        <LoadingState label="Loading notifications..." />
-      ) : notifications.length === 0 ? (
-        <Paper sx={{ p: 4, textAlign: 'center' }}>
-          <Typography color="text.secondary">
-            {filter === 'unread' ? 'No unread notifications' : 'No notifications yet'}
-          </Typography>
-        </Paper>
-      ) : (
-        <Paper>
-          <List disablePadding>
-            {notifications.map((notification, index) => (
-              <ListItem key={notification.id} disablePadding divider={index < notifications.length - 1}>
-                <ListItemButton
-                  onClick={() => handleClickNotification(notification)}
-                  sx={{
-                    bgcolor: notification.is_read ? 'transparent' : 'action.hover',
-                    py: 2,
-                    px: 2.5,
-                  }}
-                >
-                  <ListItemIcon sx={{ minWidth: 40 }}>
-                    {notificationIcon(notification.type)}
-                  </ListItemIcon>
-                  <ListItemText
-                    primary={notification.title}
-                    secondary={
-                      <Box component="span" sx={{ display: 'flex', flexDirection: 'column', gap: 0.25 }}>
-                        <Typography variant="body2" color="text.secondary" component="span">
-                          {notification.message}
-                        </Typography>
-                        <Typography variant="caption" color="text.disabled" component="span">
-                          {timeAgo(notification.created_at)}
-                        </Typography>
-                      </Box>
-                    }
-                    slotProps={{
-                      primary: {
-                        fontWeight: notification.is_read ? 400 : 600,
-                      },
-                    }}
-                  />
-                </ListItemButton>
-              </ListItem>
-            ))}
-          </List>
-          <TablePagination
-            component="div"
-            count={total}
-            page={page}
-            onPageChange={(_, newPage) => setPage(newPage)}
-            rowsPerPage={rowsPerPage}
-            onRowsPerPageChange={(e) => {
-              setRowsPerPage(Number.parseInt(e.target.value, 10));
-              setPage(0);
-            }}
-            rowsPerPageOptions={PAGE_SIZE_OPTIONS}
-          />
-        </Paper>
-      )}
+{notificationContent}
     </Box>
   );
 };

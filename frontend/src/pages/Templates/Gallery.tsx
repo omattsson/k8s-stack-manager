@@ -235,6 +235,12 @@ const Gallery = () => {
     return <Alert severity="error">{error}</Alert>;
   }
 
+  const templatePlural = selectedTemplates.length === 1 ? '' : 's';
+  const bulkActionLabel = bulkAction ? BULK_ACTION_LABELS[bulkAction] : '';
+  const bulkConfirmMessage = bulkAction === 'delete'
+    ? `You are about to permanently delete ${selectedTemplates.length} template${templatePlural}: ${selectedTemplates.map((t) => t.name).join(', ')}. This action cannot be undone.`
+    : `${bulkActionLabel} ${selectedTemplates.length} template${templatePlural}?`;
+
   return (
     <Box>
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
@@ -510,15 +516,11 @@ const Gallery = () => {
       {/* Bulk Confirm Dialog */}
       <ConfirmDialog
         open={bulkConfirmOpen}
-        title={`Confirm Bulk ${bulkAction ? BULK_ACTION_LABELS[bulkAction] : ''}`}
-        message={
-          bulkAction === 'delete'
-            ? `You are about to permanently delete ${selectedTemplates.length} template${selectedTemplates.length === 1 ? '' : 's'}: ${selectedTemplates.map((t) => t.name).join(', ')}. This action cannot be undone.`
-            : `${bulkAction ? BULK_ACTION_LABELS[bulkAction] : ''} ${selectedTemplates.length} template${selectedTemplates.length === 1 ? '' : 's'}?`
-        }
+        title={`Confirm Bulk ${bulkActionLabel}`}
+        message={bulkConfirmMessage}
         onConfirm={handleBulkConfirm}
         onCancel={handleBulkConfirmCancel}
-        confirmText={bulkAction ? BULK_ACTION_LABELS[bulkAction] : 'Confirm'}
+        confirmText={bulkActionLabel || 'Confirm'}
       />
 
       {/* Bulk Results Dialog */}

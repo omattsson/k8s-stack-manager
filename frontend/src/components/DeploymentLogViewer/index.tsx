@@ -65,7 +65,7 @@ const DeploymentLogViewer = ({ logs, loading }: DeploymentLogViewerProps) => {
   // Auto-scroll when a running log's output updates
   useEffect(() => {
     const activeLog = logs.find((l) => l.status === 'running');
-    if (activeLog && expanded === activeLog.id) {
+    if (expanded === activeLog?.id) {
       bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
     }
   }, [logs, expanded]);

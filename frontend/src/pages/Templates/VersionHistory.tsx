@@ -247,7 +247,11 @@ const VersionHistory = ({ templateId }: VersionHistoryProps) => {
                   <Box sx={{ display: 'flex', justifyContent: 'center', py: 2 }}>
                     <CircularProgress size={24} />
                   </Box>
-                ) : expandedSnapshot?.snapshot ? (
+                  ) : !expandedSnapshot?.snapshot ? (
+                    <Typography color="text.secondary" variant="body2">
+                      Snapshot data not available.
+                    </Typography>
+                  ) : (
                   <Box>
                     <Typography variant="subtitle2" gutterBottom>
                       Template Snapshot
@@ -267,8 +271,8 @@ const VersionHistory = ({ templateId }: VersionHistoryProps) => {
                     <Typography variant="subtitle2" gutterBottom>
                       Charts ({expandedSnapshot.snapshot.charts.length})
                     </Typography>
-                    {expandedSnapshot.snapshot.charts.map((chart, ci) => (
-                      <Paper key={ci} variant="outlined" sx={{ p: 2, mb: 1 }}>
+                    {expandedSnapshot.snapshot.charts.map((chart) => (
+                      <Paper key={chart.chart_name} variant="outlined" sx={{ p: 2, mb: 1 }}>
                         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.5 }}>
                           <Typography variant="body2" fontWeight="bold">
                             {chart.chart_name}
@@ -286,10 +290,6 @@ const VersionHistory = ({ templateId }: VersionHistoryProps) => {
                       </Paper>
                     ))}
                   </Box>
-                ) : (
-                  <Typography color="text.secondary" variant="body2">
-                    Snapshot data not available.
-                  </Typography>
                 )}
               </Box>
             </Collapse>
@@ -323,8 +323,8 @@ const VersionHistory = ({ templateId }: VersionHistoryProps) => {
               {diffData.chart_diffs.length === 0 ? (
                 <Typography color="text.secondary">No differences found.</Typography>
               ) : (
-                diffData.chart_diffs.map((chartDiff, i) => (
-                  <Box key={i} sx={{ mb: 3 }}>
+                diffData.chart_diffs.map((chartDiff) => (
+                  <Box key={chartDiff.chart_name} sx={{ mb: 3 }}>
                     <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
                       <Typography variant="subtitle1" fontWeight="bold">
                         {chartDiff.chart_name}

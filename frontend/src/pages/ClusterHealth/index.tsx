@@ -391,8 +391,9 @@ const ClusterHealth = () => {
                       const hasMemQuota = hasQuota(ns.memory_used, ns.memory_limit);
                       const cpuPercent = resourcePercent(ns.cpu_used, ns.cpu_limit);
                       const memPercent = resourcePercent(ns.memory_used, ns.memory_limit);
-                      const podPercent = ns.pod_limit > 0 ? Math.round((ns.pod_count / ns.pod_limit) * 100) : 0;
-                      return (
+                      const podPercent = ns.pod_limit > 0 ? Math.round((ns.pod_count / ns.pod_limit) * 100) : 0;                        const cpuColor = cpuPercent > 90 ? 'error' : cpuPercent > 70 ? 'warning' : 'success';
+                        const memColor = memPercent > 90 ? 'error' : memPercent > 70 ? 'warning' : 'success';
+                        const podColor = podPercent > 90 ? 'error' : podPercent > 70 ? 'warning' : 'success';                      return (
                         <TableRow key={ns.namespace}>
                           <TableCell>
                             <Typography variant="body2" fontWeight="medium">
@@ -406,7 +407,7 @@ const ClusterHealth = () => {
                                   <LinearProgress
                                     variant="determinate"
                                     value={Math.min(cpuPercent, 100)}
-                                    color={cpuPercent > 90 ? 'error' : cpuPercent > 70 ? 'warning' : 'success'}
+                                    color={cpuColor}
                                   />
                                 </Box>
                                 <Typography variant="body2" sx={{ minWidth: 110, textAlign: 'right' }}>
@@ -424,7 +425,7 @@ const ClusterHealth = () => {
                                   <LinearProgress
                                     variant="determinate"
                                     value={Math.min(memPercent, 100)}
-                                    color={memPercent > 90 ? 'error' : memPercent > 70 ? 'warning' : 'success'}
+                                    color={memColor}
                                   />
                                 </Box>
                                 <Typography variant="body2" sx={{ minWidth: 130, textAlign: 'right' }}>
@@ -443,7 +444,7 @@ const ClusterHealth = () => {
                                     <LinearProgress
                                       variant="determinate"
                                       value={Math.min(podPercent, 100)}
-                                      color={podPercent > 90 ? 'error' : podPercent > 70 ? 'warning' : 'success'}
+                                      color={podColor}
                                     />
                                   </Box>
                                   <Typography variant="body2" sx={{ minWidth: 70, textAlign: 'right' }}>

@@ -16,7 +16,8 @@ export const axiosConfig = {
 
 // WebSocket base URL. In production, derived from the current page origin;
 // in development, points directly at the backend dev server.
+const wsProtocol = globalThis.location?.protocol === 'https:' ? 'wss' : 'ws';
 export const WS_BASE_URL =
   process.env.NODE_ENV === 'production'
-    ? `${globalThis.location.protocol === 'https:' ? 'wss' : 'ws'}://${globalThis.location.host}`
+    ? `${wsProtocol}://${globalThis.location.host}`
     : 'ws://localhost:8081';

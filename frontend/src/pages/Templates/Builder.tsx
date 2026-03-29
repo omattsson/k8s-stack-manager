@@ -235,7 +235,7 @@ const Builder = () => {
         )}
 
         {charts.map((chart, index) => (
-          <Box key={index} sx={{ mb: 3, p: 2, border: 1, borderColor: 'divider', borderRadius: 1 }}>
+          <Box key={chart.chart_name || `new-chart-${index}`} sx={{ mb: 3, p: 2, border: 1, borderColor: 'divider', borderRadius: 1 }}>
             <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
               <Typography variant="subtitle1">Chart #{index + 1}</Typography>
               <IconButton onClick={() => removeChart(index)} size="small" color="error" aria-label={`Remove chart ${index + 1}`}>

@@ -100,11 +100,11 @@ function parseConditionToForm(condition: string): Pick<PolicyFormState, 'conditi
   if (condition === 'ttl_expired') {
     return { conditionPreset: 'ttl_expired', idleDays: '7', stoppedAgeDays: '14', customCondition: '' };
   }
-  const idleMatch = condition.match(/^idle_days:(\d+)$/);
+  const idleMatch = /^idle_days:(\d+)$/.exec(condition);
   if (idleMatch) {
     return { conditionPreset: 'idle_days', idleDays: idleMatch[1], stoppedAgeDays: '14', customCondition: '' };
   }
-  const stoppedMatch = condition.match(/^status:stopped,age_days:(\d+)$/);
+  const stoppedMatch = /^status:stopped,age_days:(\d+)$/.exec(condition);
   if (stoppedMatch) {
     return { conditionPreset: 'stopped_age', idleDays: '7', stoppedAgeDays: stoppedMatch[1], customCondition: '' };
   }
@@ -113,9 +113,9 @@ function parseConditionToForm(condition: string): Pick<PolicyFormState, 'conditi
 
 function formatCondition(condition: string): string {
   if (condition === 'ttl_expired') return 'TTL expired';
-  const idleMatch = condition.match(/^idle_days:(\d+)$/);
+  const idleMatch = /^idle_days:(\d+)$/.exec(condition);
   if (idleMatch) return `Idle > ${idleMatch[1]} days`;
-  const stoppedMatch = condition.match(/^status:stopped,age_days:(\d+)$/);
+  const stoppedMatch = /^status:stopped,age_days:(\d+)$/.exec(condition);
   if (stoppedMatch) return `Stopped, Age > ${stoppedMatch[1]} days`;
   return condition;
 }

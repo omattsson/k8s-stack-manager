@@ -65,7 +65,8 @@ const getPrimaryUrl = (status: NamespaceStatus): string | null => {
     for (const svc of chart.services || []) {
       if (svc.type === 'LoadBalancer' && svc.external_ip) {
         const port = (svc.ports || [])[0]?.replace(/\/.*/, '') || '';
-        return `http://${svc.external_ip}${port ? `:${port}` : ''}`;
+        const portSuffix = port ? `:${port}` : '';
+        return `http://${svc.external_ip}${portSuffix}`;
       }
     }
   }
@@ -556,12 +557,13 @@ const Dashboard = () => {
           {(['healthy', 'degraded', 'unreachable'] as const).map((status) => {
             const count = clusters.filter((c) => c.health_status === status).length;
             if (count === 0) return null;
+            const clusterStatusColor = status === 'healthy' ? 'success' : status === 'degraded' ? 'warning' : 'error';
             return (
               <Chip
                 key={status}
                 label={`${count} ${status}`}
                 size="small"
-                color={status === 'healthy' ? 'success' : status === 'degraded' ? 'warning' : 'error'}
+                color={clusterStatusColor}
                 variant="outlined"
               />
             );

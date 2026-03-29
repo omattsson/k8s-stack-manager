@@ -53,7 +53,8 @@ const buildEntries = (status: NamespaceStatus): AccessEntry[] => {
 
       if (svc.type === 'LoadBalancer' && svc.external_ip) {
         const port = (svc.ports || [])[0]?.replace(/\/.*/, '') || '';
-        const url = `http://${svc.external_ip}${port ? `:${port}` : ''}`;
+        const portSuffix = port ? `:${port}` : '';
+        const url = `http://${svc.external_ip}${portSuffix}`;
         entries.push({
           chartName: chart.chart_name || chart.release_name,
           serviceName: svc.name,

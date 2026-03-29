@@ -180,7 +180,9 @@ const Form = () => {
               <MenuItem value="">
                 <em>Default cluster</em>
               </MenuItem>
-              {clusters.map((c) => (
+              {clusters.map((c) => {
+                const healthColor = c.health_status === 'healthy' ? 'success' : c.health_status === 'degraded' ? 'warning' : c.health_status === 'unreachable' ? 'error' : 'default';
+                return (
                 <MenuItem key={c.id} value={c.id}>
                   <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                     {c.name}
@@ -190,14 +192,15 @@ const Form = () => {
                     <Chip
                       label={c.health_status || 'unknown'}
                       size="small"
-                      color={c.health_status === 'healthy' ? 'success' : c.health_status === 'degraded' ? 'warning' : c.health_status === 'unreachable' ? 'error' : 'default'}
+                      color={healthColor}
                     />
                     {c.is_default && (
                       <Chip label="Default" size="small" variant="outlined" color="primary" />
                     )}
                   </Box>
                 </MenuItem>
-              ))}
+                );
+              })}
             </TextField>
           )}
 

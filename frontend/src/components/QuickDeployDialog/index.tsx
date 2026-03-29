@@ -91,6 +91,8 @@ const QuickDeployDialog = ({ open, onClose, template }: QuickDeployDialogProps) 
     }
   };
 
+  const deployButtonLabel = deploying ? 'Deploying...' : (error ? 'Retry' : 'Deploy');
+
   return (
     <Dialog open={open} onClose={deploying ? undefined : onClose} maxWidth="sm" fullWidth>
       <DialogTitle>
@@ -161,7 +163,7 @@ const QuickDeployDialog = ({ open, onClose, template }: QuickDeployDialogProps) 
           disabled={deploying}
           startIcon={deploying ? <CircularProgress size={18} /> : <RocketLaunchIcon />}
         >
-          {deploying ? 'Deploying...' : error ? 'Retry' : 'Deploy'}
+          {deployButtonLabel}
         </Button>
       </DialogActions>
     </Dialog>

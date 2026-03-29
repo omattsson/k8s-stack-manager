@@ -125,6 +125,73 @@ const NotificationCenter = () => {
 
   const open = Boolean(anchorEl);
 
+  let notificationListContent;
+  if (loading) {
+    notificationListContent = (
+      <Box sx={{ display: 'flex', justifyContent: 'center', py: 4 }}>
+        <CircularProgress size={28} />
+      </Box>
+    );
+  } else if (notifications.length === 0) {
+    notificationListContent = (
+      <Box sx={{ py: 4, textAlign: 'center' }}>
+        <Typography color="text.secondary" variant="body2">
+          No notifications yet
+        </Typography>
+      </Box>
+    );
+  } else {
+    notificationListContent = (
+      <List disablePadding sx={{ overflow: 'auto', maxHeight: 340 }}>
+        {notifications.map((notification) => (
+          <ListItem key={notification.id} disablePadding>
+            <ListItemButton
+              onClick={() => handleClickNotification(notification)}
+              sx={{
+                bgcolor: notification.is_read ? 'transparent' : 'action.hover',
+                py: 1.5,
+                px: 2,
+              }}
+            >
+              <ListItemIcon sx={{ minWidth: 36 }}>
+                {notificationIcon(notification.type)}
+              </ListItemIcon>
+              <ListItemText
+                primary={notification.title}
+                secondary={
+                  <Box component="span" sx={{ display: 'flex', flexDirection: 'column', gap: 0.25 }}>
+                    <Typography
+                      variant="body2"
+                      color="text.secondary"
+                      component="span"
+                      sx={{
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap',
+                      }}
+                    >
+                      {notification.message}
+                    </Typography>
+                    <Typography variant="caption" color="text.disabled" component="span">
+                      {timeAgo(notification.created_at)}
+                    </Typography>
+                  </Box>
+                }
+                slotProps={{
+                  primary: {
+                    variant: 'body2',
+                    fontWeight: notification.is_read ? 400 : 600,
+                    noWrap: true,
+                  },
+                }}
+              />
+            </ListItemButton>
+          </ListItem>
+        ))}
+      </List>
+    );
+  }
+
   return (
     <>
       <Tooltip title="Notifications">
@@ -178,65 +245,7 @@ const NotificationCenter = () => {
         <Divider />
 
         {/* Notification list */}
-        {loading ? (
-          <Box sx={{ display: 'flex', justifyContent: 'center', py: 4 }}>
-            <CircularProgress size={28} />
-          </Box>
-        ) : notifications.length === 0 ? (
-          <Box sx={{ py: 4, textAlign: 'center' }}>
-            <Typography color="text.secondary" variant="body2">
-              No notifications yet
-            </Typography>
-          </Box>
-        ) : (
-          <List disablePadding sx={{ overflow: 'auto', maxHeight: 340 }}>
-            {notifications.map((notification) => (
-              <ListItem key={notification.id} disablePadding>
-                <ListItemButton
-                  onClick={() => handleClickNotification(notification)}
-                  sx={{
-                    bgcolor: notification.is_read ? 'transparent' : 'action.hover',
-                    py: 1.5,
-                    px: 2,
-                  }}
-                >
-                  <ListItemIcon sx={{ minWidth: 36 }}>
-                    {notificationIcon(notification.type)}
-                  </ListItemIcon>
-                  <ListItemText
-                    primary={notification.title}
-                    secondary={
-                      <Box component="span" sx={{ display: 'flex', flexDirection: 'column', gap: 0.25 }}>
-                        <Typography
-                          variant="body2"
-                          color="text.secondary"
-                          component="span"
-                          sx={{
-                            overflow: 'hidden',
-                            textOverflow: 'ellipsis',
-                            whiteSpace: 'nowrap',
-                          }}
-                        >
-                          {notification.message}
-                        </Typography>
-                        <Typography variant="caption" color="text.disabled" component="span">
-                          {timeAgo(notification.created_at)}
-                        </Typography>
-                      </Box>
-                    }
-                    slotProps={{
-                      primary: {
-                        variant: 'body2',
-                        fontWeight: notification.is_read ? 400 : 600,
-                        noWrap: true,
-                      },
-                    }}
-                  />
-                </ListItemButton>
-              </ListItem>
-            ))}
-          </List>
-        )}
+        {notificationListContent}
 
         {/* Footer */}
         <Divider />

@@ -23,19 +23,18 @@ const YamlEditor = ({ value, onChange, label, height = '300px', readOnly = false
   };
 
   const handleChange = useCallback(
-    (newValue: string | undefined) => {
-      const val = newValue ?? '';
+    (newValue = '') => {
       // Validate YAML
       try {
-        if (val.trim()) {
-          yaml.load(val);
+        if (newValue.trim()) {
+          yaml.load(newValue);
         }
         setValidationError(null);
       } catch (e: unknown) {
         const message = e instanceof Error ? e.message : 'Invalid YAML';
         setValidationError(message);
       }
-      onChange(val);
+      onChange(newValue);
     },
     [onChange],
   );

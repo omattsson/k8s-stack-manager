@@ -204,7 +204,7 @@ const Form = () => {
       link.download = `${name || 'definition'}-export.json`;
       document.body.appendChild(link);
       link.click();
-      document.body.removeChild(link);
+      link.remove();
       URL.revokeObjectURL(url);
       showSuccess('Definition exported successfully');
     } catch {
@@ -295,7 +295,7 @@ const Form = () => {
           const lockedValues = matchingTemplateChart?.locked_values || '';
 
           return (
-          <Box key={index} sx={{ mb: 3, p: 2, border: 1, borderColor: 'divider', borderRadius: 1 }}>
+          <Box key={chart.chart_name || `new-chart-${index}`} sx={{ mb: 3, p: 2, border: 1, borderColor: 'divider', borderRadius: 1 }}>
             <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                 <Typography variant="subtitle1">Chart #{index + 1}</Typography>

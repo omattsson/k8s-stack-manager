@@ -141,7 +141,7 @@ const List = () => {
                     {def.source_template_id ? (
                       <Box sx={{ display: 'flex', gap: 0.5, alignItems: 'center', flexWrap: 'wrap' }}>
                         <Chip
-                          label={`Template${def.source_template_version ? ` v${def.source_template_version}` : ''}`}
+                          label={def.source_template_version ? `Template v${def.source_template_version}` : 'Template'}
                           size="small"
                           variant="outlined"
                           onClick={(e) => {

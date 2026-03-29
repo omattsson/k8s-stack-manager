@@ -1094,9 +1094,9 @@ export const auditService = {
     const contentDisposition = response.headers['content-disposition'];
     let filename = `audit-logs.${format}`;
     if (contentDisposition) {
-      const match = contentDisposition.match(/filename=([^;]+)/);
+      const match = /filename=([^;]+)/.exec(contentDisposition);
       if (match) {
-        filename = match[1].trim().replace(/(^")|("$)/g, '');
+        filename = match[1].trim().replaceAll(/(^")|("$)/g, '');
       }
     }
 

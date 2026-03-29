@@ -34,7 +34,7 @@ const PodStatusDisplay = ({ status, loading }: PodStatusDisplayProps) => {
     <Box>
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
         <Typography variant="subtitle2">Cluster Status:</Typography>
-        <Chip label={status.status} size="small" color={chartStatusColor(status.status) as 'success' | 'info' | 'warning' | 'error' | 'default'} />
+        <Chip label={status.status} size="small" color={chartStatusColor(status.status)} />
         <Typography variant="caption" color="text.secondary" sx={{ ml: 'auto' }}>
           Last checked: {new Date(status.last_checked).toLocaleString()}
         </Typography>
@@ -44,7 +44,7 @@ const PodStatusDisplay = ({ status, loading }: PodStatusDisplayProps) => {
         <Paper key={chart.release_name} sx={{ p: 2, mb: 2 }} variant="outlined">
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
             <Typography variant="subtitle2">{chart.chart_name}</Typography>
-            <Chip label={chart.status} size="small" color={chartStatusColor(chart.status) as 'success' | 'info' | 'warning' | 'error' | 'default'} />
+            <Chip label={chart.status} size="small" color={chartStatusColor(chart.status)} />
           </Box>
 
           {(chart.deployments || []).length > 0 && (
