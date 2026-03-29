@@ -313,20 +313,17 @@ func (r *Registry) buildClients(cluster *models.Cluster) (*ClusterClients, error
 		}
 
 		if err := f.Chmod(0600); err != nil {
-			f.Close()
-			os.Remove(f.Name())
-			return nil, fmt.Errorf("set temp kubeconfig permissions: %w", err)
+			_ = f.Close()
+			_ = os.Remove(f.Name())
 		}
 
 		if _, err := f.Write([]byte(cluster.KubeconfigData)); err != nil {
-			f.Close()
-			os.Remove(f.Name())
-			return nil, fmt.Errorf("write temp kubeconfig: %w", err)
+			_ = f.Close()
+			_ = os.Remove(f.Name())
 		}
 
 		if err := f.Close(); err != nil {
-			os.Remove(f.Name())
-			return nil, fmt.Errorf("close temp kubeconfig: %w", err)
+			_ = os.Remove(f.Name())
 		}
 
 		kubeconfigPath = f.Name()
@@ -339,7 +336,7 @@ func (r *Registry) buildClients(cluster *models.Cluster) (*ClusterClients, error
 	k8sClient, err := r.k8sFactory(kubeconfigPath)
 	if err != nil {
 		if tempPath != "" {
-			os.Remove(tempPath)
+			_ = os.Remove(tempPath)
 		}
 		return nil, fmt.Errorf("create k8s client: %w", err)
 	}
@@ -356,7 +353,7 @@ func (r *Registry) buildClients(cluster *models.Cluster) (*ClusterClients, error
 // cleanupTempKubeconfig removes the temp kubeconfig file if one was created.
 func cleanupTempKubeconfig(cc *ClusterClients) {
 	if cc.kubeconfigPath != "" {
-		os.Remove(cc.kubeconfigPath)
+		_ = os.Remove(cc.kubeconfigPath)
 	}
 }
 

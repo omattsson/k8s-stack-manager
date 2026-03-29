@@ -28,7 +28,7 @@ type InstallRequest struct {
 	Version     string // optional: chart version (passed as --version)
 	ValuesFile  string
 	Namespace   string
-	SkipCRDs    bool   // skip CRD installation (avoids conflicts when CRDs already exist)
+	SkipCRDs    bool // skip CRD installation (avoids conflicts when CRDs already exist)
 }
 
 // UninstallRequest contains the parameters for a helm uninstall operation.
@@ -170,7 +170,7 @@ func (h *HelmClient) run(ctx context.Context, args []string) (string, error) {
 		"args", args,
 	)
 
-	cmd := exec.CommandContext(ctx, h.binaryPath, args...)
+	cmd := exec.CommandContext(ctx, h.binaryPath, args...) // #nosec G204 -- binaryPath is admin-configured and args are validated before reaching this point
 
 	var combined bytes.Buffer
 	cmd.Stdout = &combined

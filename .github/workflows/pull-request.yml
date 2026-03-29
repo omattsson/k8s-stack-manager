@@ -40,6 +40,7 @@ jobs:
             ci
             chore
             revert
+            deps
 
       - name: Check files changed
         id: files
