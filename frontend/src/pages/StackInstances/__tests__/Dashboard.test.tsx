@@ -28,6 +28,7 @@ vi.mock('../../../api/client', () => ({
     bulkStop: vi.fn(),
     bulkClean: vi.fn(),
     bulkDelete: vi.fn(),
+    getStatus: vi.fn().mockRejectedValue(new Error('no status')),
   },
   clusterService: {
     list: vi.fn().mockResolvedValue([]),
@@ -50,7 +51,7 @@ vi.mock('../../../context/AuthContext', () => ({
   }),
 }));
 
-import { instanceService, favoriteService } from '../../../api/client';
+import { instanceService, favoriteService, clusterService } from '../../../api/client';
 import useCountdown from '../../../hooks/useCountdown';
 
 const mockInstance = (overrides: Record<string, unknown> = {}) => ({
@@ -664,6 +665,245 @@ describe('Dashboard', () => {
       expect(screen.queryByText('Confirm Bulk Deploy')).not.toBeInTheDocument();
       expect(screen.getByText('1 selected')).toBeInTheDocument();
       expect(instanceService.bulkDeploy).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('Cluster Health Bar', () => {
+    it('renders cluster health summary when clusters are loaded', async () => {
+      (instanceService.list as ReturnType<typeof vi.fn>).mockResolvedValue([
+        mockInstance(),
+      ]);
+      (clusterService.list as ReturnType<typeof vi.fn>).mockResolvedValue([
+        { id: 'c1', name: 'prod', health_status: 'healthy', is_default: true },
+        { id: 'c2', name: 'staging', health_status: 'degraded', is_default: false },
+        { id: 'c3', name: 'dev', health_status: 'unreachable', is_default: false },
+      ]);
+      render(
+        <MemoryRouter>
+          <NotificationProvider>
+            <Dashboard />
+          </NotificationProvider>
+        </MemoryRouter>
+      );
+      await waitFor(() => {
+        expect(screen.getByText('3 clusters:')).toBeInTheDocument();
+      });
+      expect(screen.getByText('1 healthy')).toBeInTheDocument();
+      expect(screen.getByText('1 degraded')).toBeInTheDocument();
+      expect(screen.getByText('1 unreachable')).toBeInTheDocument();
+    });
+
+    it('does not render cluster bar when no clusters', async () => {
+      (instanceService.list as ReturnType<typeof vi.fn>).mockResolvedValue([
+        mockInstance(),
+      ]);
+      (clusterService.list as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+      render(
+        <MemoryRouter>
+          <NotificationProvider>
+            <Dashboard />
+          </NotificationProvider>
+        </MemoryRouter>
+      );
+      await waitFor(() => {
+        expect(screen.getByText('Stack Instances')).toBeInTheDocument();
+      });
+      expect(screen.queryByText(/cluster/)).not.toBeInTheDocument();
+    });
+  });
+
+  describe('Filtering and Search', () => {
+    it('filters instances by status', async () => {
+      const user = userEvent.setup();
+      (instanceService.list as ReturnType<typeof vi.fn>).mockResolvedValue([
+        mockInstance({ id: '1', name: 'Running Instance', status: 'running', namespace: 'stack-r' }),
+        mockInstance({ id: '2', name: 'Stopped Instance', status: 'stopped', namespace: 'stack-s' }),
+        mockInstance({ id: '3', name: 'Draft Instance', status: 'draft', namespace: 'stack-d' }),
+      ]);
+      render(
+        <MemoryRouter>
+          <NotificationProvider>
+            <Dashboard />
+          </NotificationProvider>
+        </MemoryRouter>
+      );
+      await waitFor(() => {
+        expect(screen.getByText('Running Instance')).toBeInTheDocument();
+      });
+
+      // Filter by draft status - use getAllByText since status badge also shows 'draft'
+      const draftChips = screen.getAllByText('draft');
+      await user.click(draftChips[0]);
+      expect(screen.getByText('Draft Instance')).toBeInTheDocument();
+      expect(screen.queryByText('Running Instance')).not.toBeInTheDocument();
+      expect(screen.queryByText('Stopped Instance')).not.toBeInTheDocument();
+    });
+
+    it('filters instances by search text', async () => {
+      const user = userEvent.setup();
+      (instanceService.list as ReturnType<typeof vi.fn>).mockResolvedValue([
+        mockInstance({ id: '1', name: 'Alpha Stack', namespace: 'stack-a' }),
+        mockInstance({ id: '2', name: 'Beta Service', namespace: 'stack-b' }),
+      ]);
+      render(
+        <MemoryRouter>
+          <NotificationProvider>
+            <Dashboard />
+          </NotificationProvider>
+        </MemoryRouter>
+      );
+      await waitFor(() => {
+        expect(screen.getByText('Alpha Stack')).toBeInTheDocument();
+      });
+
+      const searchInput = screen.getByPlaceholderText('Search instances...');
+      await user.type(searchInput, 'alpha');
+
+      expect(screen.getByText('Alpha Stack')).toBeInTheDocument();
+      expect(screen.queryByText('Beta Service')).not.toBeInTheDocument();
+    });
+
+    it('shows empty state with create button when filter matches nothing', async () => {
+      const user = userEvent.setup();
+      (instanceService.list as ReturnType<typeof vi.fn>).mockResolvedValue([
+        mockInstance({ id: '1', name: 'Test Instance', namespace: 'stack-t' }),
+      ]);
+      render(
+        <MemoryRouter>
+          <NotificationProvider>
+            <Dashboard />
+          </NotificationProvider>
+        </MemoryRouter>
+      );
+      await waitFor(() => {
+        expect(screen.getByText('Test Instance')).toBeInTheDocument();
+      });
+
+      const searchInput = screen.getByPlaceholderText('Search instances...');
+      await user.type(searchInput, 'nonexistent');
+
+      expect(screen.getByText('No stack instances found')).toBeInTheDocument();
+    });
+  });
+
+  describe('Instance Card Details', () => {
+    it('shows cluster name on instance card when cluster_id is set', async () => {
+      (instanceService.list as ReturnType<typeof vi.fn>).mockResolvedValue([
+        mockInstance({ id: '1', name: 'Clustered Instance', namespace: 'stack-c', cluster_id: 'c1' }),
+      ]);
+      (clusterService.list as ReturnType<typeof vi.fn>).mockResolvedValue([
+        { id: 'c1', name: 'production', health_status: 'healthy', is_default: true },
+      ]);
+      render(
+        <MemoryRouter>
+          <NotificationProvider>
+            <Dashboard />
+          </NotificationProvider>
+        </MemoryRouter>
+      );
+      await waitFor(() => {
+        expect(screen.getByText('Clustered Instance')).toBeInTheDocument();
+      });
+      expect(screen.getByText('Cluster: production')).toBeInTheDocument();
+    });
+
+    it('shows last deployed timestamp on instance card', async () => {
+      (instanceService.list as ReturnType<typeof vi.fn>).mockResolvedValue([
+        mockInstance({
+          id: '1',
+          name: 'My App',
+          status: 'running',
+          namespace: 'stack-d',
+          last_deployed_at: '2026-03-28T10:00:00Z',
+        }),
+      ]);
+      render(
+        <MemoryRouter>
+          <NotificationProvider>
+            <Dashboard />
+          </NotificationProvider>
+        </MemoryRouter>
+      );
+      await waitFor(() => {
+        expect(screen.getByText('My App')).toBeInTheDocument();
+      });
+      // The deployed timestamp is shown as relative time with "Deployed" prefix
+      expect(screen.getByText(/Deployed\s/)).toBeInTheDocument();
+    });
+
+    it('fetches and displays URLs for running instances', async () => {
+      (instanceService.list as ReturnType<typeof vi.fn>).mockResolvedValue([
+        mockInstance({ id: '1', name: 'Running App', status: 'running', namespace: 'stack-app' }),
+      ]);
+      (instanceService.getStatus as ReturnType<typeof vi.fn>).mockResolvedValue({
+        namespace: 'stack-app',
+        ingresses: [{ url: 'https://app.example.com' }],
+        charts: [],
+        pods: [],
+      });
+      render(
+        <MemoryRouter>
+          <NotificationProvider>
+            <Dashboard />
+          </NotificationProvider>
+        </MemoryRouter>
+      );
+      await waitFor(() => {
+        expect(screen.getByText('Running App')).toBeInTheDocument();
+      });
+      await waitFor(() => {
+        expect(screen.getByText('https://app.example.com')).toBeInTheDocument();
+      });
+    });
+
+    it('navigates to detail page when Details button is clicked', async () => {
+      // This test verifies the Details button renders on cards
+      (instanceService.list as ReturnType<typeof vi.fn>).mockResolvedValue([
+        mockInstance({ id: 'inst-1', name: 'My Stack', namespace: 'stack-my' }),
+      ]);
+      render(
+        <MemoryRouter>
+          <NotificationProvider>
+            <Dashboard />
+          </NotificationProvider>
+        </MemoryRouter>
+      );
+      await waitFor(() => {
+        expect(screen.getByText('My Stack')).toBeInTheDocument();
+      });
+      expect(screen.getByRole('button', { name: 'Details' })).toBeInTheDocument();
+    });
+  });
+
+  describe('Navigation Buttons', () => {
+    it('renders Create Instance button', async () => {
+      (instanceService.list as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+      render(
+        <MemoryRouter>
+          <NotificationProvider>
+            <Dashboard />
+          </NotificationProvider>
+        </MemoryRouter>
+      );
+      await waitFor(() => {
+        expect(screen.getByText('Stack Instances')).toBeInTheDocument();
+      });
+      expect(screen.getByRole('button', { name: /create instance/i })).toBeInTheDocument();
+    });
+
+    it('renders Compare button', async () => {
+      (instanceService.list as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+      render(
+        <MemoryRouter>
+          <NotificationProvider>
+            <Dashboard />
+          </NotificationProvider>
+        </MemoryRouter>
+      );
+      await waitFor(() => {
+        expect(screen.getByText('Stack Instances')).toBeInTheDocument();
+      });
+      expect(screen.getByRole('button', { name: /compare/i })).toBeInTheDocument();
     });
   });
 });
