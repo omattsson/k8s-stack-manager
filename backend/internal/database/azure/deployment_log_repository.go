@@ -234,36 +234,48 @@ func (r *DeploymentLogRepository) SummarizeByInstance(ctx context.Context, insta
 
 	summary := &models.DeployLogSummary{InstanceID: instanceID}
 	for _, e := range entities {
-		// Only deploy actions contribute to deploy-related counters.
-		if e.Action == models.DeployActionDeploy {
-			summary.DeployCount++
-			switch e.Status {
-			case models.DeployLogSuccess:
-				summary.SuccessCount++
-			case models.DeployLogError:
-				summary.ErrorCount++
-			}
-		}
-
-		// Track the latest timestamp across all actions (deploy, stop, clean, etc.).
-		var ts time.Time
-		if e.CompletedAt != "" {
-			if parsed, pErr := time.Parse(time.RFC3339, e.CompletedAt); pErr == nil {
-				ts = parsed
-			}
-		}
-		if ts.IsZero() {
-			if parsed, pErr := time.Parse(time.RFC3339, e.StartedAt); pErr == nil {
-				ts = parsed
-			}
-		}
-		if !ts.IsZero() && (summary.LastDeployAt == nil || ts.After(*summary.LastDeployAt)) {
-			cp := ts
-			summary.LastDeployAt = &cp
-		}
+		accumulateDeployLogSummary(summary, &e)
 	}
 
 	return summary, nil
+}
+
+// accumulateDeployLogSummary updates the summary counters and latest timestamp
+// from a single deployment log entity.
+func accumulateDeployLogSummary(summary *models.DeployLogSummary, e *deployLogSummaryEntity) {
+	// Only deploy actions contribute to deploy-related counters.
+	if e.Action == models.DeployActionDeploy {
+		summary.DeployCount++
+		switch e.Status {
+		case models.DeployLogSuccess:
+			summary.SuccessCount++
+		case models.DeployLogError:
+			summary.ErrorCount++
+		}
+	}
+
+	// Track the latest timestamp across all actions (deploy, stop, clean, etc.).
+	ts := parseDeployLogTimestamp(e.CompletedAt, e.StartedAt)
+	if !ts.IsZero() && (summary.LastDeployAt == nil || ts.After(*summary.LastDeployAt)) {
+		cp := ts
+		summary.LastDeployAt = &cp
+	}
+}
+
+// parseDeployLogTimestamp returns the best available timestamp from a deployment log,
+// preferring CompletedAt over StartedAt. Returns zero time if neither parses.
+func parseDeployLogTimestamp(completedAt, startedAt string) time.Time {
+	if completedAt != "" {
+		if parsed, err := time.Parse(time.RFC3339, completedAt); err == nil {
+			return parsed
+		}
+	}
+	if startedAt != "" {
+		if parsed, err := time.Parse(time.RFC3339, startedAt); err == nil {
+			return parsed
+		}
+	}
+	return time.Time{}
 }
 
 func deploymentLogToEntity(log *models.DeploymentLog, pk, rk string) map[string]interface{} {

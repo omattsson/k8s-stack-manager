@@ -481,19 +481,32 @@ func (h *TemplateHandler) InstantiateTemplate(c *gin.Context) {
 		return
 	}
 
-	// Copy template charts into chart configs.
-	templateCharts, err := h.chartRepo.ListByTemplate(tmpl.ID)
+	chartConfigs, err := h.copyTemplateChartsToDefinition(tmpl.ID, def.ID, now)
 	if err != nil {
-		status, message := mapError(err, entityTemplateCharts)
+		status, message := mapError(err, entityChartConfig)
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
 
-	var chartConfigs []models.ChartConfig
+	c.JSON(http.StatusCreated, gin.H{
+		"definition": def,
+		"charts":     chartConfigs,
+	})
+}
+
+// copyTemplateChartsToDefinition copies all template chart configs into chart configs
+// for the given definition and returns the created configs.
+func (h *TemplateHandler) copyTemplateChartsToDefinition(templateID, defID string, now time.Time) ([]models.ChartConfig, error) {
+	templateCharts, err := h.chartRepo.ListByTemplate(templateID)
+	if err != nil {
+		return nil, err
+	}
+
+	chartConfigs := make([]models.ChartConfig, 0, len(templateCharts))
 	for _, tc := range templateCharts {
 		cc := models.ChartConfig{
 			ID:                uuid.New().String(),
-			StackDefinitionID: def.ID,
+			StackDefinitionID: defID,
 			ChartName:         tc.ChartName,
 			RepositoryURL:     tc.RepositoryURL,
 			SourceRepoURL:     tc.SourceRepoURL,
@@ -504,17 +517,12 @@ func (h *TemplateHandler) InstantiateTemplate(c *gin.Context) {
 			CreatedAt:         now,
 		}
 		if err := h.chartConfigRepo.Create(&cc); err != nil {
-			status, message := mapError(err, entityChartConfig)
-			c.JSON(status, gin.H{"error": message})
-			return
+			return nil, err
 		}
 		chartConfigs = append(chartConfigs, cc)
 	}
 
-	c.JSON(http.StatusCreated, gin.H{
-		"definition": def,
-		"charts":     chartConfigs,
-	})
+	return chartConfigs, nil
 }
 
 // CloneTemplate godoc

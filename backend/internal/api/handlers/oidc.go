@@ -176,30 +176,7 @@ func (h *OIDCHandler) provisionUser(oidcUser *auth.OIDCUser) (*models.User, erro
 	// Try to find existing user by external ID.
 	user, err := h.userRepo.FindByExternalID("oidc", oidcUser.Subject)
 	if err == nil && user != nil {
-		// Update user if details changed.
-		changed := false
-		if oidcUser.Email != "" && user.Email != oidcUser.Email {
-			user.Email = oidcUser.Email
-			changed = true
-		}
-		if oidcUser.Name != "" && user.DisplayName != oidcUser.Name {
-			user.DisplayName = oidcUser.Name
-			changed = true
-		}
-		newRole := h.provider.MapRole(oidcUser.Roles)
-		if newRole != user.Role {
-			user.Role = newRole
-			changed = true
-		}
-		if changed {
-			if updateErr := h.userRepo.Update(user); updateErr != nil {
-				slog.Error("Failed to update OIDC user", "user_id", user.ID, "error", updateErr)
-				// Abort authentication to avoid issuing a token with
-				// unpersisted changes (e.g., elevated role or new email).
-				return nil, fmt.Errorf(errMsgAuthFailed)
-			}
-		}
-		return user, nil
+		return h.updateExistingOIDCUser(user, oidcUser)
 	}
 
 	// Distinguish "not found" from unexpected DB errors — only proceed
@@ -214,14 +191,40 @@ func (h *OIDCHandler) provisionUser(oidcUser *auth.OIDCUser) (*models.User, erro
 		return nil, fmt.Errorf("no_account")
 	}
 
-	// Determine username — prefer email, fall back to name, then subject.
-	username := oidcUser.Email
-	if username == "" {
-		username = oidcUser.Name
+	return h.createOIDCUser(oidcUser)
+}
+
+// updateExistingOIDCUser syncs changed fields (email, display name, role) from the
+// IdP response into the local user record.
+func (h *OIDCHandler) updateExistingOIDCUser(user *models.User, oidcUser *auth.OIDCUser) (*models.User, error) {
+	changed := false
+	if oidcUser.Email != "" && user.Email != oidcUser.Email {
+		user.Email = oidcUser.Email
+		changed = true
 	}
-	if username == "" {
-		username = oidcUser.Subject
+	if oidcUser.Name != "" && user.DisplayName != oidcUser.Name {
+		user.DisplayName = oidcUser.Name
+		changed = true
 	}
+	newRole := h.provider.MapRole(oidcUser.Roles)
+	if newRole != user.Role {
+		user.Role = newRole
+		changed = true
+	}
+	if changed {
+		if updateErr := h.userRepo.Update(user); updateErr != nil {
+			slog.Error("Failed to update OIDC user", "user_id", user.ID, "error", updateErr)
+			// Abort authentication to avoid issuing a token with
+			// unpersisted changes (e.g., elevated role or new email).
+			return nil, fmt.Errorf(errMsgAuthFailed)
+		}
+	}
+	return user, nil
+}
+
+// createOIDCUser provisions a new local user from the OIDC identity.
+func (h *OIDCHandler) createOIDCUser(oidcUser *auth.OIDCUser) (*models.User, error) {
+	username := deriveOIDCUsername(oidcUser)
 
 	newUser := &models.User{
 		ID:           uuid.New().String(),
@@ -237,7 +240,7 @@ func (h *OIDCHandler) provisionUser(oidcUser *auth.OIDCUser) (*models.User, erro
 		// Race condition: another request created the user between our check and create.
 		// Retry the lookup to return the existing user.
 		if isDuplicateError(createErr) {
-			user, err = h.userRepo.FindByExternalID("oidc", oidcUser.Subject)
+			user, err := h.userRepo.FindByExternalID("oidc", oidcUser.Subject)
 			if err == nil && user != nil {
 				return user, nil
 			}
@@ -248,6 +251,18 @@ func (h *OIDCHandler) provisionUser(oidcUser *auth.OIDCUser) (*models.User, erro
 
 	slog.Info("OIDC user provisioned", "user_id", newUser.ID, "username", username)
 	return newUser, nil
+}
+
+// deriveOIDCUsername picks a username from the OIDC user info, preferring
+// email, then name, then subject as a fallback.
+func deriveOIDCUsername(oidcUser *auth.OIDCUser) string {
+	if oidcUser.Email != "" {
+		return oidcUser.Email
+	}
+	if oidcUser.Name != "" {
+		return oidcUser.Name
+	}
+	return oidcUser.Subject
 }
 
 func deriveProviderName(providerURL string) string {

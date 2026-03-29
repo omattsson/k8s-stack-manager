@@ -40,6 +40,15 @@ const (
 	defaultShutdownTimeout = 5 * time.Second
 )
 
+// must logs a fatal error and exits if err is non-nil.
+// Used to reduce repetitive error-checking boilerplate during startup.
+func must(name string, err error) {
+	if err != nil {
+		slog.Error("Failed to create "+name, "error", err)
+		os.Exit(1)
+	}
+}
+
 // @title           Backend API
 // @version         1.0
 // @description     This is the API documentation for the backend service
@@ -90,88 +99,33 @@ func main() {
 	azCfg := cfg.AzureTable
 
 	userRepo, err := azure.NewUserRepository(azCfg.AccountName, azCfg.AccountKey, azCfg.Endpoint, azCfg.UseAzurite)
-	if err != nil {
-		slog.Error("Failed to create user repository", "error", err)
-		os.Exit(1)
-	}
-
+	must("user repository", err)
 	templateRepo, err := azure.NewStackTemplateRepository(azCfg.AccountName, azCfg.AccountKey, azCfg.Endpoint, azCfg.UseAzurite)
-	if err != nil {
-		slog.Error("Failed to create stack template repository", "error", err)
-		os.Exit(1)
-	}
-
+	must("stack template repository", err)
 	templateChartRepo, err := azure.NewTemplateChartConfigRepository(azCfg.AccountName, azCfg.AccountKey, azCfg.Endpoint, azCfg.UseAzurite)
-	if err != nil {
-		slog.Error("Failed to create template chart config repository", "error", err)
-		os.Exit(1)
-	}
-
+	must("template chart config repository", err)
 	definitionRepo, err := azure.NewStackDefinitionRepository(azCfg.AccountName, azCfg.AccountKey, azCfg.Endpoint, azCfg.UseAzurite)
-	if err != nil {
-		slog.Error("Failed to create stack definition repository", "error", err)
-		os.Exit(1)
-	}
-
+	must("stack definition repository", err)
 	chartConfigRepo, err := azure.NewChartConfigRepository(azCfg.AccountName, azCfg.AccountKey, azCfg.Endpoint, azCfg.UseAzurite)
-	if err != nil {
-		slog.Error("Failed to create chart config repository", "error", err)
-		os.Exit(1)
-	}
-
+	must("chart config repository", err)
 	instanceRepo, err := azure.NewStackInstanceRepository(azCfg.AccountName, azCfg.AccountKey, azCfg.Endpoint, azCfg.UseAzurite)
-	if err != nil {
-		slog.Error("Failed to create stack instance repository", "error", err)
-		os.Exit(1)
-	}
-
+	must("stack instance repository", err)
 	overrideRepo, err := azure.NewValueOverrideRepository(azCfg.AccountName, azCfg.AccountKey, azCfg.Endpoint, azCfg.UseAzurite)
-	if err != nil {
-		slog.Error("Failed to create value override repository", "error", err)
-		os.Exit(1)
-	}
-
+	must("value override repository", err)
 	branchOverrideRepo, err := azure.NewChartBranchOverrideRepository(azCfg.AccountName, azCfg.AccountKey, azCfg.Endpoint, azCfg.UseAzurite)
-	if err != nil {
-		slog.Error("Failed to create chart branch override repository", "error", err)
-		os.Exit(1)
-	}
-
+	must("chart branch override repository", err)
 	auditRepo, err := azure.NewAuditLogRepository(azCfg.AccountName, azCfg.AccountKey, azCfg.Endpoint, azCfg.UseAzurite)
-	if err != nil {
-		slog.Error("Failed to create audit log repository", "error", err)
-		os.Exit(1)
-	}
-
+	must("audit log repository", err)
 	apiKeyRepo, err := azure.NewAPIKeyRepository(azCfg.AccountName, azCfg.AccountKey, azCfg.Endpoint, azCfg.UseAzurite)
-	if err != nil {
-		slog.Error("Failed to create API key repository", "error", err)
-		os.Exit(1)
-	}
-
+	must("API key repository", err)
 	deployLogRepo, err := azure.NewDeploymentLogRepository(azCfg.AccountName, azCfg.AccountKey, azCfg.Endpoint, azCfg.UseAzurite)
-	if err != nil {
-		slog.Error("Failed to create deployment log repository", "error", err)
-		os.Exit(1)
-	}
-
+	must("deployment log repository", err)
 	sharedValuesRepo, err := azure.NewSharedValuesRepository(azCfg.AccountName, azCfg.AccountKey, azCfg.Endpoint, azCfg.UseAzurite)
-	if err != nil {
-		slog.Error("Failed to create shared values repository", "error", err)
-		os.Exit(1)
-	}
-
+	must("shared values repository", err)
 	quotaRepo, err := azure.NewResourceQuotaRepository(azCfg.AccountName, azCfg.AccountKey, azCfg.Endpoint, azCfg.UseAzurite)
-	if err != nil {
-		slog.Error("Failed to create resource quota repository", "error", err)
-		os.Exit(1)
-	}
-
+	must("resource quota repository", err)
 	quotaOverrideRepo, err := azure.NewInstanceQuotaOverrideRepository(azCfg.AccountName, azCfg.AccountKey, azCfg.Endpoint, azCfg.UseAzurite)
-	if err != nil {
-		slog.Error("Failed to create instance quota override repository", "error", err)
-		os.Exit(1)
-	}
+	must("instance quota override repository", err)
 
 	// ------------------------------------------------------------------
 	// Phase 1: Create domain services
@@ -195,10 +149,7 @@ func main() {
 
 	// Create cluster repository
 	clusterRepo, err := azure.NewClusterRepository(azCfg.AccountName, azCfg.AccountKey, azCfg.Endpoint, azCfg.UseAzurite, cfg.Deployment.KubeconfigEncryptionKey)
-	if err != nil {
-		slog.Error("Failed to create cluster repository", "error", err)
-		os.Exit(1)
-	}
+	must("cluster repository", err)
 
 	// Auto-create default cluster from KUBECONFIG_PATH for single-cluster migration
 	ensureDefaultCluster(clusterRepo, instanceRepo, cfg)
@@ -302,10 +253,7 @@ func main() {
 	notificationHandler := handlers.NewNotificationHandler(notificationRepo)
 
 	favoriteRepo, err := azure.NewUserFavoriteRepository(azCfg.AccountName, azCfg.AccountKey, azCfg.Endpoint, azCfg.UseAzurite)
-	if err != nil {
-		slog.Error("Failed to create user favorite repository", "error", err)
-		os.Exit(1)
-	}
+	must("user favorite repository", err)
 	favoriteHandler := handlers.NewFavoriteHandler(favoriteRepo)
 
 	quickDeployHandler := handlers.NewQuickDeployHandler(
@@ -322,10 +270,7 @@ func main() {
 	// Phase 6.2: Cleanup policies
 	// ------------------------------------------------------------------
 	cleanupPolicyRepo, err := azure.NewCleanupPolicyRepository(azCfg.AccountName, azCfg.AccountKey, azCfg.Endpoint, azCfg.UseAzurite)
-	if err != nil {
-		slog.Error("Failed to create cleanup policy repository", "error", err)
-		os.Exit(1)
-	}
+	must("cleanup policy repository", err)
 
 	cleanupExecutor := deployer.NewCleanupExecutor(deployManager, definitionRepo, chartConfigRepo, instanceRepo)
 	cleanupScheduler := scheduler.NewScheduler(cleanupPolicyRepo, instanceRepo, auditRepo, cleanupExecutor)
@@ -404,39 +349,70 @@ func main() {
 	<-quit
 	slog.Info("Shutting down server...")
 
-	// 1. Stop HTTP server — no new requests
 	shutdownTimeout := cfg.Server.ShutdownTimeout
 	if shutdownTimeout == 0 {
 		shutdownTimeout = defaultShutdownTimeout
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+
+	gracefulShutdown(srv, shutdownTimeout, shutdownDeps{
+		reaper:           reaper,
+		cleanupScheduler: cleanupScheduler,
+		deployManager:    deployManager,
+		healthPoller:     healthPoller,
+		k8sWatcher:       k8sWatcher,
+		hub:              hub,
+		clusterRegistry:  clusterRegistry,
+		watcherCancel:    watcherCancel,
+		oidcStateStore:   oidcStateStore,
+		repo:             repo,
+	})
+}
+
+// shutdownDeps holds all dependencies that need to be stopped during graceful shutdown.
+type shutdownDeps struct {
+	reaper           *ttl.Reaper
+	cleanupScheduler *scheduler.Scheduler
+	deployManager    *deployer.Manager
+	healthPoller     *cluster.HealthPoller
+	k8sWatcher       *k8s.Watcher
+	hub              *websocket.Hub
+	clusterRegistry  *cluster.Registry
+	watcherCancel    context.CancelFunc
+	oidcStateStore   *auth.StateStore
+	repo             models.Repository
+}
+
+// gracefulShutdown stops all services in the correct order.
+func gracefulShutdown(srv *http.Server, timeout time.Duration, deps shutdownDeps) {
+	// 1. Stop HTTP server — no new requests.
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
 	if err := srv.Shutdown(ctx); err != nil {
 		slog.Error("Server forced to shutdown", "error", err)
 	}
 
-	// 2. Stop producers of deploy work
-	reaper.Stop()
-	cleanupScheduler.Stop()
+	// 2. Stop producers of deploy work.
+	deps.reaper.Stop()
+	deps.cleanupScheduler.Stop()
 
-	// 3. Now safe to wait for in-flight deploys
-	deployManager.Shutdown()
+	// 3. Now safe to wait for in-flight deploys.
+	deps.deployManager.Shutdown()
 
-	// 4. Stop remaining services
-	healthPoller.Stop()
-	if k8sWatcher != nil {
-		k8sWatcher.Stop()
+	// 4. Stop remaining services.
+	deps.healthPoller.Stop()
+	if deps.k8sWatcher != nil {
+		deps.k8sWatcher.Stop()
 	}
-	hub.Shutdown()
-	clusterRegistry.Close()
-	watcherCancel()
-	if oidcStateStore != nil {
-		oidcStateStore.Stop()
+	deps.hub.Shutdown()
+	deps.clusterRegistry.Close()
+	deps.watcherCancel()
+	if deps.oidcStateStore != nil {
+		deps.oidcStateStore.Stop()
 	}
 
-	// 5. Close data layer
-	if closeErr := repo.Close(); closeErr != nil {
+	// 5. Close data layer.
+	if closeErr := deps.repo.Close(); closeErr != nil {
 		slog.Error("Failed to close repository", "error", closeErr)
 	}
 

@@ -351,52 +351,15 @@ func (c *DatabaseConfig) DSN() string {
 
 // LoadConfig loads configuration from environment variables
 func LoadConfig() (*Config, error) {
-	// Load .env file if it exists
-	envFile := os.Getenv("ENV_FILE")
-	if envFile == "" {
-		envFile = ".env"
-	}
-
-	if _, err := os.Stat(envFile); err == nil {
-		if err := godotenv.Load(envFile); err != nil {
-			return nil, fmt.Errorf("error loading %s: %w", envFile, err)
-		}
+	if err := loadDotEnv(); err != nil {
+		return nil, err
 	}
 
 	cfg := &Config{
-		App: AppConfig{
-			Name:                      getEnv("APP_NAME", "backend-api"),
-			Environment:               getEnv("GO_ENV", "development"),
-			DefaultInstanceTTLMinutes: int(getEnvInt32("DEFAULT_INSTANCE_TTL_MINUTES", 0)),
-			Debug:                     getEnvBool("APP_DEBUG", true),
-		},
-		Database: DatabaseConfig{
-			Host:            getEnv("DB_HOST", "localhost"),
-			Port:            getEnv("DB_PORT", "3306"),
-			User:            getEnv("DB_USER", "root"),
-			Password:        getEnv("DB_PASSWORD", ""),
-			DBName:          getEnv("DB_NAME", "app"),
-			MaxOpenConns:    getEnvInt32("DB_MAX_OPEN_CONNS", defaultMaxOpenConns),
-			MaxIdleConns:    getEnvInt32("DB_MAX_IDLE_CONNS", defaultMaxIdleConns),
-			ConnMaxLifetime: getEnvDuration("DB_CONN_MAX_LIFETIME", defaultConnMaxLifetime),
-		},
-		AzureTable: AzureTableConfig{
-			AccountName:   getEnv("AZURE_TABLE_ACCOUNT_NAME", ""),
-			AccountKey:    getEnv("AZURE_TABLE_ACCOUNT_KEY", ""),
-			Endpoint:      getEnv("AZURE_TABLE_ENDPOINT", ""),
-			TableName:     getEnv("AZURE_TABLE_NAME", "items"),
-			UseAzureTable: getEnvBool("USE_AZURE_TABLE", false),
-			UseAzurite:    getEnvBool("USE_AZURITE", false),
-		},
-		Server: ServerConfig{
-			Host:            getEnv("SERVER_HOST", ""),
-			Port:            getEnv("SERVER_PORT", "8081"),
-			ReadTimeout:     getEnvDuration("SERVER_READ_TIMEOUT", defaultReadTimeout),
-			WriteTimeout:    getEnvDuration("SERVER_WRITE_TIMEOUT", defaultWriteTimeout),
-			IdleTimeout:     getEnvDuration("SERVER_IDLE_TIMEOUT", defaultIdleTimeout),
-			ShutdownTimeout: getEnvDuration("SERVER_SHUTDOWN_TIMEOUT", defaultShutdownTimeout),
-			RateLimit:       getEnvInt32("RATE_LIMIT", 100),
-		},
+		App:        loadAppConfig(),
+		Database:   loadDatabaseConfig(),
+		AzureTable: loadAzureTableConfig(),
+		Server:     loadServerConfig(),
 		CORS: CORSConfig{
 			AllowedOrigins: getEnv("CORS_ALLOWED_ORIGINS", "*"),
 		},
@@ -404,42 +367,10 @@ func LoadConfig() (*Config, error) {
 			Level: getEnv("LOG_LEVEL", "info"),
 			File:  getEnv("LOG_FILE", ""),
 		},
-		Auth: AuthConfig{
-			JWTSecret:        getEnv("JWT_SECRET", ""),
-			JWTExpiration:    getEnvDuration("JWT_EXPIRATION", 24*time.Hour),
-			AdminUsername:    getEnv("ADMIN_USERNAME", "admin"),
-			AdminPassword:    getEnv("ADMIN_PASSWORD", ""),
-			SelfRegistration: getEnvBool("SELF_REGISTRATION", false),
-			DefaultBranch:    getEnv("DEFAULT_BRANCH", "master"),
-		},
-		GitProvider: GitProviderConfig{
-			AzureDevOpsPAT:        getEnv("AZURE_DEVOPS_PAT", ""),
-			AzureDevOpsDefaultOrg: getEnv("AZURE_DEVOPS_DEFAULT_ORG", ""),
-			GitLabToken:           getEnv("GITLAB_TOKEN", ""),
-			GitLabBaseURL:         getEnv("GITLAB_BASE_URL", ""),
-		},
-		Deployment: DeploymentConfig{
-			HelmBinary:                getEnv("HELM_BINARY", "helm"),
-			KubeconfigPath:            getEnv("KUBECONFIG_PATH", getEnv("KUBECONFIG", "")),
-			KubeconfigEncryptionKey:   getEnv("KUBECONFIG_ENCRYPTION_KEY", ""),
-			DeploymentTimeout:         getEnvDuration("DEPLOYMENT_TIMEOUT", 10*time.Minute),
-			ClusterHealthPollInterval: getEnvDuration("CLUSTER_HEALTH_POLL_INTERVAL", 60*time.Second),
-			MaxConcurrentDeploys:      getEnvInt32("MAX_CONCURRENT_DEPLOYS", 5),
-		},
-		OIDC: OIDCConfig{
-			Enabled:       getEnvBool("OIDC_ENABLED", false),
-			ProviderURL:   getEnv("OIDC_PROVIDER_URL", ""),
-			ClientID:      getEnv("OIDC_CLIENT_ID", ""),
-			ClientSecret:  getEnv("OIDC_CLIENT_SECRET", ""),
-			RedirectURL:   getEnv("OIDC_REDIRECT_URL", ""),
-			Scopes:        parseCSV(getEnv("OIDC_SCOPES", "openid,profile,email")),
-			RoleClaim:     getEnv("OIDC_ROLE_CLAIM", "roles"),
-			AdminRoles:    parseCSV(getEnv("OIDC_ADMIN_ROLES", "")),
-			DevOpsRoles:   parseCSV(getEnv("OIDC_DEVOPS_ROLES", "")),
-			AutoProvision: getEnvBool("OIDC_AUTO_PROVISION", true),
-			LocalAuth:     getEnvBool("OIDC_LOCAL_AUTH", true),
-			StateTTL:      getEnvDuration("OIDC_STATE_TTL", 5*time.Minute),
-		},
+		Auth:        loadAuthConfig(),
+		GitProvider: loadGitProviderConfig(),
+		Deployment:  loadDeploymentConfig(),
+		OIDC:        loadOIDCConfig(),
 	}
 
 	// Validate the configuration
@@ -448,6 +379,114 @@ func LoadConfig() (*Config, error) {
 	}
 
 	return cfg, nil
+}
+
+// loadDotEnv loads the .env file if it exists.
+func loadDotEnv() error {
+	envFile := os.Getenv("ENV_FILE")
+	if envFile == "" {
+		envFile = ".env"
+	}
+
+	if _, err := os.Stat(envFile); err == nil {
+		if err := godotenv.Load(envFile); err != nil {
+			return fmt.Errorf("error loading %s: %w", envFile, err)
+		}
+	}
+	return nil
+}
+
+func loadAppConfig() AppConfig {
+	return AppConfig{
+		Name:                      getEnv("APP_NAME", "backend-api"),
+		Environment:               getEnv("GO_ENV", "development"),
+		DefaultInstanceTTLMinutes: int(getEnvInt32("DEFAULT_INSTANCE_TTL_MINUTES", 0)),
+		Debug:                     getEnvBool("APP_DEBUG", true),
+	}
+}
+
+func loadDatabaseConfig() DatabaseConfig {
+	return DatabaseConfig{
+		Host:            getEnv("DB_HOST", "localhost"),
+		Port:            getEnv("DB_PORT", "3306"),
+		User:            getEnv("DB_USER", "root"),
+		Password:        getEnv("DB_PASSWORD", ""),
+		DBName:          getEnv("DB_NAME", "app"),
+		MaxOpenConns:    getEnvInt32("DB_MAX_OPEN_CONNS", defaultMaxOpenConns),
+		MaxIdleConns:    getEnvInt32("DB_MAX_IDLE_CONNS", defaultMaxIdleConns),
+		ConnMaxLifetime: getEnvDuration("DB_CONN_MAX_LIFETIME", defaultConnMaxLifetime),
+	}
+}
+
+func loadAzureTableConfig() AzureTableConfig {
+	return AzureTableConfig{
+		AccountName:   getEnv("AZURE_TABLE_ACCOUNT_NAME", ""),
+		AccountKey:    getEnv("AZURE_TABLE_ACCOUNT_KEY", ""),
+		Endpoint:      getEnv("AZURE_TABLE_ENDPOINT", ""),
+		TableName:     getEnv("AZURE_TABLE_NAME", "items"),
+		UseAzureTable: getEnvBool("USE_AZURE_TABLE", false),
+		UseAzurite:    getEnvBool("USE_AZURITE", false),
+	}
+}
+
+func loadServerConfig() ServerConfig {
+	return ServerConfig{
+		Host:            getEnv("SERVER_HOST", ""),
+		Port:            getEnv("SERVER_PORT", "8081"),
+		ReadTimeout:     getEnvDuration("SERVER_READ_TIMEOUT", defaultReadTimeout),
+		WriteTimeout:    getEnvDuration("SERVER_WRITE_TIMEOUT", defaultWriteTimeout),
+		IdleTimeout:     getEnvDuration("SERVER_IDLE_TIMEOUT", defaultIdleTimeout),
+		ShutdownTimeout: getEnvDuration("SERVER_SHUTDOWN_TIMEOUT", defaultShutdownTimeout),
+		RateLimit:       getEnvInt32("RATE_LIMIT", 100),
+	}
+}
+
+func loadAuthConfig() AuthConfig {
+	return AuthConfig{
+		JWTSecret:        getEnv("JWT_SECRET", ""),
+		JWTExpiration:    getEnvDuration("JWT_EXPIRATION", 24*time.Hour),
+		AdminUsername:    getEnv("ADMIN_USERNAME", "admin"),
+		AdminPassword:    getEnv("ADMIN_PASSWORD", ""),
+		SelfRegistration: getEnvBool("SELF_REGISTRATION", false),
+		DefaultBranch:    getEnv("DEFAULT_BRANCH", "master"),
+	}
+}
+
+func loadGitProviderConfig() GitProviderConfig {
+	return GitProviderConfig{
+		AzureDevOpsPAT:        getEnv("AZURE_DEVOPS_PAT", ""),
+		AzureDevOpsDefaultOrg: getEnv("AZURE_DEVOPS_DEFAULT_ORG", ""),
+		GitLabToken:           getEnv("GITLAB_TOKEN", ""),
+		GitLabBaseURL:         getEnv("GITLAB_BASE_URL", ""),
+	}
+}
+
+func loadDeploymentConfig() DeploymentConfig {
+	return DeploymentConfig{
+		HelmBinary:                getEnv("HELM_BINARY", "helm"),
+		KubeconfigPath:            getEnv("KUBECONFIG_PATH", getEnv("KUBECONFIG", "")),
+		KubeconfigEncryptionKey:   getEnv("KUBECONFIG_ENCRYPTION_KEY", ""),
+		DeploymentTimeout:         getEnvDuration("DEPLOYMENT_TIMEOUT", 10*time.Minute),
+		ClusterHealthPollInterval: getEnvDuration("CLUSTER_HEALTH_POLL_INTERVAL", 60*time.Second),
+		MaxConcurrentDeploys:      getEnvInt32("MAX_CONCURRENT_DEPLOYS", 5),
+	}
+}
+
+func loadOIDCConfig() OIDCConfig {
+	return OIDCConfig{
+		Enabled:       getEnvBool("OIDC_ENABLED", false),
+		ProviderURL:   getEnv("OIDC_PROVIDER_URL", ""),
+		ClientID:      getEnv("OIDC_CLIENT_ID", ""),
+		ClientSecret:  getEnv("OIDC_CLIENT_SECRET", ""),
+		RedirectURL:   getEnv("OIDC_REDIRECT_URL", ""),
+		Scopes:        parseCSV(getEnv("OIDC_SCOPES", "openid,profile,email")),
+		RoleClaim:     getEnv("OIDC_ROLE_CLAIM", "roles"),
+		AdminRoles:    parseCSV(getEnv("OIDC_ADMIN_ROLES", "")),
+		DevOpsRoles:   parseCSV(getEnv("OIDC_DEVOPS_ROLES", "")),
+		AutoProvision: getEnvBool("OIDC_AUTO_PROVISION", true),
+		LocalAuth:     getEnvBool("OIDC_LOCAL_AUTH", true),
+		StateTTL:      getEnvDuration("OIDC_STATE_TTL", 5*time.Minute),
+	}
 }
 
 // Helper functions for environment variables

@@ -142,33 +142,58 @@ func (r *AuditLogRepository) Create(log *models.AuditLog) error {
 func (r *AuditLogRepository) List(filters models.AuditLogFilters) (*models.AuditLogResult, error) {
 	ctx := context.Background()
 
-	// Build filter parts.
-	var filterParts []string
+	filterParts, err := buildAuditODataFilters(filters)
+	if err != nil {
+		return nil, err
+	}
+
+	opts := combineODataFilters(filterParts)
+	pager := r.client.NewListEntitiesPager(opts)
+
+	// Only apply fine-grained timestamp filter when dates are set
+	// (partition key filtering is coarse — monthly granularity).
+	var fn func(*auditLogEntity) bool
+	if filters.StartDate != nil || filters.EndDate != nil {
+		fn = auditTimestampFilter(filters.StartDate, filters.EndDate)
+	}
+
+	maxResults := auditMaxResults(filters)
+	entities, err := collectEntitiesTyped[auditLogEntity](ctx, pager, fn, maxResults)
+	if err != nil {
+		return nil, mapAzureError(opList, err)
+	}
+
+	return buildAuditLogResult(entities, filters), nil
+}
+
+// buildAuditODataFilters constructs OData filter clauses from the given filters.
+func buildAuditODataFilters(filters models.AuditLogFilters) ([]string, error) {
+	var parts []string
 
 	// Date range maps to partition key range.
 	if filters.StartDate != nil && filters.EndDate != nil {
 		startPK := filters.StartDate.Format(auditDateFormat)
 		endPK := filters.EndDate.Format(auditDateFormat)
-		filterParts = append(filterParts, "PartitionKey ge '"+startPK+"' and PartitionKey le '"+endPK+"'")
+		parts = append(parts, "PartitionKey ge '"+startPK+"' and PartitionKey le '"+endPK+"'")
 	} else if filters.StartDate != nil {
 		startPK := filters.StartDate.Format(auditDateFormat)
-		filterParts = append(filterParts, "PartitionKey ge '"+startPK+"'")
+		parts = append(parts, "PartitionKey ge '"+startPK+"'")
 	} else if filters.EndDate != nil {
 		endPK := filters.EndDate.Format(auditDateFormat)
-		filterParts = append(filterParts, "PartitionKey le '"+endPK+"'")
+		parts = append(parts, "PartitionKey le '"+endPK+"'")
 	}
 
 	if filters.UserID != "" {
-		filterParts = append(filterParts, "UserID eq '"+escapeODataString(filters.UserID)+"'")
+		parts = append(parts, "UserID eq '"+escapeODataString(filters.UserID)+"'")
 	}
 	if filters.EntityType != "" {
-		filterParts = append(filterParts, "EntityType eq '"+escapeODataString(filters.EntityType)+"'")
+		parts = append(parts, "EntityType eq '"+escapeODataString(filters.EntityType)+"'")
 	}
 	if filters.EntityID != "" {
-		filterParts = append(filterParts, "EntityID eq '"+escapeODataString(filters.EntityID)+"'")
+		parts = append(parts, "EntityID eq '"+escapeODataString(filters.EntityID)+"'")
 	}
 	if filters.Action != "" {
-		filterParts = append(filterParts, "Action eq '"+escapeODataString(filters.Action)+"'")
+		parts = append(parts, "Action eq '"+escapeODataString(filters.Action)+"'")
 	}
 
 	// Cursor-based pagination: decode the opaque cursor into PK+RK and build a
@@ -184,96 +209,99 @@ func (r *AuditLogRepository) List(filters models.AuditLogFilters) (*models.Audit
 			"(PartitionKey gt '%s') or (PartitionKey eq '%s' and RowKey gt '%s')",
 			escapedPK, escapedPK, escapedRK,
 		)
-		filterParts = append(filterParts, cursorFilter)
+		parts = append(parts, cursorFilter)
 	}
 
-	var opts *aztables.ListEntitiesOptions
-	if len(filterParts) > 0 {
-		combined := filterParts[0]
-		for i := 1; i < len(filterParts); i++ {
-			combined += " and " + filterParts[i]
-		}
-		opts = &aztables.ListEntitiesOptions{Filter: &combined}
+	return parts, nil
+}
+
+// combineODataFilters joins filter parts with " and " and returns ListEntitiesOptions.
+func combineODataFilters(parts []string) *aztables.ListEntitiesOptions {
+	if len(parts) == 0 {
+		return nil
 	}
+	combined := parts[0]
+	for i := 1; i < len(parts); i++ {
+		combined += " and " + parts[i]
+	}
+	return &aztables.ListEntitiesOptions{Filter: &combined}
+}
 
-	pager := r.client.NewListEntitiesPager(opts)
-
-	// Apply fine-grained timestamp filtering client-side if needed.
-	filterFn := func(e *auditLogEntity) bool {
+// auditTimestampFilter returns a client-side filter function that checks
+// whether an entity's timestamp falls within the given date range.
+func auditTimestampFilter(startDate, endDate *time.Time) func(*auditLogEntity) bool {
+	return func(e *auditLogEntity) bool {
 		ts, _ := time.Parse(time.RFC3339, e.Timestamp)
-		if filters.StartDate != nil && ts.Before(*filters.StartDate) {
+		if startDate != nil && ts.Before(*startDate) {
 			return false
 		}
-		if filters.EndDate != nil && ts.After(*filters.EndDate) {
+		if endDate != nil && ts.After(*endDate) {
 			return false
 		}
 		return true
 	}
+}
 
-	// Only apply timestamp filter if dates are set (partition key filtering is coarse).
-	var fn func(*auditLogEntity) bool
-	if filters.StartDate != nil || filters.EndDate != nil {
-		fn = filterFn
-	}
-
-	// Determine how many entities to collect based on pagination mode.
-	var maxResults int
-	useCursor := filters.Cursor != ""
-
-	if useCursor {
+// auditMaxResults calculates the maximum entities to fetch based on pagination mode.
+func auditMaxResults(filters models.AuditLogFilters) int {
+	if filters.Cursor != "" {
 		// Cursor mode: fetch limit+1 to detect if more results exist.
 		if filters.Limit > 0 {
-			maxResults = filters.Limit + 1
+			return filters.Limit + 1
 		}
-	} else {
-		// Offset/limit mode: fetch offset+limit with early termination.
-		if filters.Limit > 0 {
-			maxResults = filters.Offset + filters.Limit
-		}
+		return 0
 	}
-
-	entities, err := collectEntitiesTyped[auditLogEntity](ctx, pager, fn, maxResults)
-	if err != nil {
-		return nil, mapAzureError(opList, err)
+	// Offset/limit mode: fetch offset+limit with early termination.
+	if filters.Limit > 0 {
+		return filters.Offset + filters.Limit
 	}
+	return 0
+}
 
+// buildAuditLogResult applies pagination (cursor or offset/limit) and converts entities to models.
+func buildAuditLogResult(entities []auditLogEntity, filters models.AuditLogFilters) *models.AuditLogResult {
 	result := &models.AuditLogResult{}
 
-	if useCursor {
-		// Cursor-based: total is unknown (would require full scan).
+	if filters.Cursor != "" {
 		result.Total = -1
-
 		if filters.Limit > 0 && len(entities) > filters.Limit {
-			// More results exist beyond this page.
 			entities = entities[:filters.Limit]
 			lastEntity := entities[filters.Limit-1]
 			result.NextCursor = encodeCursor(lastEntity.PartitionKey, lastEntity.RowKey)
 		}
 	} else {
-		// Offset/limit mode: if we hit maxResults, total is at least that many (but unknown exact).
-		// If we got fewer than maxResults, we know the exact total.
-		if maxResults > 0 && len(entities) >= maxResults {
-			result.Total = -1 // exact total unknown due to early termination
-		} else {
-			result.Total = int64(len(entities))
-		}
-
-		// Apply offset.
-		offset := filters.Offset
-		if offset > len(entities) {
-			offset = len(entities)
-		}
-		entities = entities[offset:]
-
-		// Apply limit.
-		if filters.Limit > 0 && filters.Limit < len(entities) {
-			entities = entities[:filters.Limit]
-		}
+		applyOffsetLimitPagination(result, &entities, filters)
 	}
 
 	result.Data = make([]models.AuditLog, 0, len(entities))
 	for _, e := range entities {
 		result.Data = append(result.Data, e.toModel())
 	}
-	return result, nil
+	return result
+}
+
+// applyOffsetLimitPagination sets Total and trims the entities slice for offset/limit mode.
+func applyOffsetLimitPagination(result *models.AuditLogResult, entities *[]auditLogEntity, filters models.AuditLogFilters) {
+	maxResults := 0
+	if filters.Limit > 0 {
+		maxResults = filters.Offset + filters.Limit
+	}
+
+	if maxResults > 0 && len(*entities) >= maxResults {
+		result.Total = -1 // exact total unknown due to early termination
+	} else {
+		result.Total = int64(len(*entities))
+	}
+
+	// Apply offset.
+	offset := filters.Offset
+	if offset > len(*entities) {
+		offset = len(*entities)
+	}
+	*entities = (*entities)[offset:]
+
+	// Apply limit.
+	if filters.Limit > 0 && filters.Limit < len(*entities) {
+		*entities = (*entities)[:filters.Limit]
+	}
 }
