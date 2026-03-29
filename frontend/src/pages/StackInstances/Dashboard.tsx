@@ -551,7 +551,7 @@ const Dashboard = () => {
       {clusters.length > 0 && (
         <Paper variant="outlined" sx={{ p: 1.5, mb: 3, display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
           <Typography variant="body2" color="text.secondary">
-            {clusters.length} cluster{clusters.length !== 1 ? 's' : ''}:
+            {clusters.length} cluster{clusters.length === 1 ? '' : 's'}:
           </Typography>
           {(['healthy', 'degraded', 'unreachable'] as const).map((status) => {
             const count = clusters.filter((c) => c.health_status === status).length;
@@ -688,7 +688,7 @@ const Dashboard = () => {
             </Alert>
           )}
           <Typography variant="body1" sx={{ mb: 1 }}>
-            {bulkAction ? BULK_ACTION_LABELS[bulkAction] : ''} {selectedInstances.length} instance{selectedInstances.length !== 1 ? 's' : ''}:
+            {bulkAction ? BULK_ACTION_LABELS[bulkAction] : ''} {selectedInstances.length} instance{selectedInstances.length === 1 ? '' : 's'}:
           </Typography>
           <List dense>
             {selectedInstances.map((inst) => (

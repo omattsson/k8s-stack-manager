@@ -72,8 +72,8 @@ api.interceptors.response.use(
   (error) => {
     if (error.response?.status === 401) {
       localStorage.removeItem('token');
-      if (window.location.pathname !== '/login') {
-        window.location.href = '/login';
+      if (globalThis.location.pathname !== '/login') {
+        globalThis.location.href = '/login';
       }
     }
     return Promise.reject(error);
@@ -1100,14 +1100,14 @@ export const auditService = {
       }
     }
 
-    const url = window.URL.createObjectURL(new Blob([response.data]));
+    const url = globalThis.URL.createObjectURL(new Blob([response.data]));
     const link = document.createElement('a');
     link.href = url;
     link.setAttribute('download', filename);
     document.body.appendChild(link);
     link.click();
     link.remove();
-    window.URL.revokeObjectURL(url);
+    globalThis.URL.revokeObjectURL(url);
   },
 };
 

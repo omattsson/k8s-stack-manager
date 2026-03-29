@@ -91,7 +91,7 @@ const Layout = ({ children }: LayoutProps) => {
 
   const [desktopOpen, setDesktopOpen] = useState(() => {
     const stored = localStorage.getItem(STORAGE_KEY);
-    return stored !== null ? stored === 'true' : true;
+    return stored === null ? true : stored === 'true';
   });
   const [mobileOpen, setMobileOpen] = useState(false);
 
@@ -242,7 +242,7 @@ const Layout = ({ children }: LayoutProps) => {
             </ListItemIcon>
             <ListItemText
               primary={mode === 'dark' ? 'Light mode' : 'Dark mode'}
-              primaryTypographyProps={{ variant: 'body2' }}
+              slotProps={{ primary: { variant: 'body2' } }}
             />
           </ListItemButton>
         ) : (
@@ -293,7 +293,7 @@ const Layout = ({ children }: LayoutProps) => {
               >
                 <ListItemText
                   primary="Profile"
-                  primaryTypographyProps={{ variant: 'body2', textAlign: 'center' }}
+                  slotProps={{ primary: { variant: 'body2', textAlign: 'center' } }}
                 />
               </ListItemButton>
               <ListItemButton
@@ -302,7 +302,7 @@ const Layout = ({ children }: LayoutProps) => {
               >
                 <ListItemText
                   primary="Logout"
-                  primaryTypographyProps={{ variant: 'body2', textAlign: 'center' }}
+                  slotProps={{ primary: { variant: 'body2', textAlign: 'center' } }}
                 />
               </ListItemButton>
             </Box>

@@ -198,14 +198,14 @@ const Detail = () => {
         showSuccess('Branch override saved');
       } catch {
         // Revert to previous value on failure
-        if (previousValue !== undefined) {
-          setBranchOverrides((prev) => ({ ...prev, [chartId]: previousValue }));
-        } else {
+        if (previousValue === undefined) {
           setBranchOverrides((prev) => {
             const next = { ...prev };
             delete next[chartId];
             return next;
           });
+        } else {
+          setBranchOverrides((prev) => ({ ...prev, [chartId]: previousValue }));
         }
         setError('Failed to set branch override');
       }

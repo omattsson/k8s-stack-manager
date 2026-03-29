@@ -245,7 +245,7 @@ const Builder = () => {
             <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
               <Box sx={{ display: 'flex', gap: 2 }}>
                 <TextField label="Chart Name" value={chart.chart_name} onChange={(e) => updateChart(index, 'chart_name', e.target.value)} fullWidth required size="small" />
-                <TextField label="Deploy Order" type="number" value={chart.deploy_order} onChange={(e) => updateChart(index, 'deploy_order', parseInt(e.target.value) || 0)} sx={{ width: 120 }} size="small" />
+                <TextField label="Deploy Order" type="number" value={chart.deploy_order} onChange={(e) => updateChart(index, 'deploy_order', Number.parseInt(e.target.value) || 0)} sx={{ width: 120 }} size="small" />
               </Box>
               <TextField label="Repository URL" value={chart.repository_url} onChange={(e) => updateChart(index, 'repository_url', e.target.value)} fullWidth size="small" />
               <TextField label="Source Repo URL" value={chart.source_repo_url} onChange={(e) => updateChart(index, 'source_repo_url', e.target.value)} fullWidth size="small" />

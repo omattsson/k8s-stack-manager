@@ -239,9 +239,9 @@ const Compare = () => {
                     id={`chart-tab-${index}`}
                     aria-controls={`chart-tabpanel-${index}`}
                     icon={
-                      !chart.has_differences ? (
+                      chart.has_differences ? undefined : (
                         <CheckCircleOutlineIcon color="success" fontSize="small" />
-                      ) : undefined
+                      )
                     }
                     iconPosition="end"
                   />

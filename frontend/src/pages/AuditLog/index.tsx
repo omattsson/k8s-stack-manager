@@ -271,7 +271,7 @@ const AuditLog = () => {
             onPageChange={(_e, newPage) => setPage(newPage)}
             rowsPerPage={rowsPerPage}
             onRowsPerPageChange={(e) => {
-              setRowsPerPage(parseInt(e.target.value, 10));
+              setRowsPerPage(Number.parseInt(e.target.value, 10));
               setPage(0);
             }}
           />

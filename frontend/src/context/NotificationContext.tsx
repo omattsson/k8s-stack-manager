@@ -32,11 +32,11 @@ export const NotificationProvider = ({ children }: { children: ReactNode }) => {
   }, []);
 
   const enqueue = useCallback((notification: Notification) => {
-    if (!current) {
+    if (current) {
+      setQueue((prev) => [...prev, notification]);
+    } else {
       setCurrent(notification);
       setOpen(true);
-    } else {
-      setQueue((prev) => [...prev, notification]);
     }
   }, [current]);
 
@@ -79,7 +79,7 @@ export const NotificationProvider = ({ children }: { children: ReactNode }) => {
         autoHideDuration={current?.autoHideDuration}
         onClose={handleClose}
         anchorOrigin={{ vertical: 'bottom', horizontal: 'left' }}
-        TransitionProps={{ onExited: handleExited }}
+        slotProps={{ transition: { onExited: handleExited } }}
       >
         {current ? (
           <Alert

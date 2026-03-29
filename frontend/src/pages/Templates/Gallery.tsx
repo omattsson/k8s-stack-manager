@@ -108,9 +108,8 @@ const Gallery = () => {
         if (tab === 0 && !t.is_published) return false;
         if (tab === 1 && t.owner_id !== user?.id) return false;
         if (tab === 2 && t.is_published) return false;
-      } else {
-        // Regular users only see published
-        if (!t.is_published) return false;
+      } else if (!t.is_published) {
+        return false;
       }
 
       if (category !== 'All' && t.category !== category) return false;
@@ -464,7 +463,7 @@ const Gallery = () => {
                     )}
                     {template.definition_count != null && template.definition_count > 0 && (
                       <Chip
-                        label={`Used by ${template.definition_count} definition${template.definition_count !== 1 ? 's' : ''}`}
+                        label={`Used by ${template.definition_count} definition${template.definition_count === 1 ? '' : 's'}`}
                         size="small"
                         variant="outlined"
                       />
@@ -514,8 +513,8 @@ const Gallery = () => {
         title={`Confirm Bulk ${bulkAction ? BULK_ACTION_LABELS[bulkAction] : ''}`}
         message={
           bulkAction === 'delete'
-            ? `You are about to permanently delete ${selectedTemplates.length} template${selectedTemplates.length !== 1 ? 's' : ''}: ${selectedTemplates.map((t) => t.name).join(', ')}. This action cannot be undone.`
-            : `${bulkAction ? BULK_ACTION_LABELS[bulkAction] : ''} ${selectedTemplates.length} template${selectedTemplates.length !== 1 ? 's' : ''}?`
+            ? `You are about to permanently delete ${selectedTemplates.length} template${selectedTemplates.length === 1 ? '' : 's'}: ${selectedTemplates.map((t) => t.name).join(', ')}. This action cannot be undone.`
+            : `${bulkAction ? BULK_ACTION_LABELS[bulkAction] : ''} ${selectedTemplates.length} template${selectedTemplates.length === 1 ? '' : 's'}?`
         }
         onConfirm={handleBulkConfirm}
         onCancel={handleBulkConfirmCancel}

@@ -347,8 +347,10 @@ const Profile = () => {
                     <Switch
                       checked={pref.enabled}
                       onChange={() => handleTogglePref(pref.event_type)}
-                      inputProps={{
-                        'aria-label': `Toggle ${EVENT_TYPE_LABELS[pref.event_type] || pref.event_type}`,
+                      slotProps={{
+                        input: {
+                          'aria-label': `Toggle ${EVENT_TYPE_LABELS[pref.event_type] || pref.event_type}`,
+                        },
                       }}
                     />
                   </TableCell>

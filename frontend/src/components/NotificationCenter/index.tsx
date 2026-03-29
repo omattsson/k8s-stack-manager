@@ -224,10 +224,12 @@ const NotificationCenter = () => {
                         </Typography>
                       </Box>
                     }
-                    primaryTypographyProps={{
-                      variant: 'body2',
-                      fontWeight: notification.is_read ? 400 : 600,
-                      noWrap: true,
+                    slotProps={{
+                      primary: {
+                        variant: 'body2',
+                        fontWeight: notification.is_read ? 400 : 600,
+                        noWrap: true,
+                      },
                     }}
                   />
                 </ListItemButton>

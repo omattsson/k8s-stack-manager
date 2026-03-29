@@ -35,12 +35,12 @@ const AuthCallback = () => {
     }
 
     // Token and redirect come from the URL fragment
-    const fragment = parseFragment(window.location.hash);
+    const fragment = parseFragment(globalThis.location.hash);
     const token = fragment.get('token');
     const redirect = fragment.get('redirect');
 
     // Clear the fragment from the URL immediately
-    window.history.replaceState(null, '', window.location.pathname + window.location.search);
+    globalThis.history.replaceState(null, '', globalThis.location.pathname + globalThis.location.search);
 
     if (!token) {
       setError('Something went wrong. Please try again.');

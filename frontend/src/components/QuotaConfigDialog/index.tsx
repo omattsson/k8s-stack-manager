@@ -177,7 +177,7 @@ const QuotaConfigDialog = ({ open, onClose, clusterId, clusterName }: QuotaConfi
                 label="Pod Limit"
                 type="number"
                 value={form.pod_limit}
-                onChange={(e) => setForm({ ...form, pod_limit: parseInt(e.target.value, 10) || 0 })}
+                onChange={(e) => setForm({ ...form, pod_limit: Number.parseInt(e.target.value, 10) || 0 })}
                 fullWidth
                 helperText="Maximum number of pods per namespace (0 = unlimited)"
               />

@@ -381,7 +381,7 @@ const Clusters = () => {
               label="Max Namespaces"
               type="number"
               value={form.max_namespaces}
-              onChange={(e) => setForm({ ...form, max_namespaces: parseInt(e.target.value, 10) || 0 })}
+              onChange={(e) => setForm({ ...form, max_namespaces: Number.parseInt(e.target.value, 10) || 0 })}
               fullWidth
               helperText="0 = unlimited"
             />
@@ -389,7 +389,7 @@ const Clusters = () => {
               label="Max Instances Per User"
               type="number"
               value={form.max_instances_per_user ?? 0}
-              onChange={(e) => setForm({ ...form, max_instances_per_user: parseInt(e.target.value, 10) || 0 })}
+              onChange={(e) => setForm({ ...form, max_instances_per_user: Number.parseInt(e.target.value, 10) || 0 })}
               fullWidth
               helperText="Maximum stack instances a single user can create on this cluster (0 = unlimited)"
             />

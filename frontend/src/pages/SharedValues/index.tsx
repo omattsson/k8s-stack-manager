@@ -145,8 +145,8 @@ const SharedValuesPage = () => {
       return;
     }
 
-    const priority = parseInt(form.priority, 10);
-    if (isNaN(priority)) {
+    const priority = Number.parseInt(form.priority, 10);
+    if (Number.isNaN(priority)) {
       setFormError('Priority must be a number');
       return;
     }

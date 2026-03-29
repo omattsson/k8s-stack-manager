@@ -202,7 +202,7 @@ const VersionHistory = ({ templateId }: VersionHistoryProps) => {
                       onChange={() => handleToggleCompare(version.id)}
                       onClick={(e) => e.stopPropagation()}
                       size="small"
-                      inputProps={{ 'aria-label': `Select version ${version.version} for comparison` }}
+                      slotProps={{ input: { 'aria-label': `Select version ${version.version} for comparison` } }}
                     />
                   </Tooltip>
                   <IconButton

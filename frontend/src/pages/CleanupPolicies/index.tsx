@@ -129,7 +129,7 @@ function describeCron(cron: string): string {
   }
   if (dom === '*' && mon === '*' && dow !== '*') {
     const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-    const dayName = days[parseInt(dow)] ?? dow;
+    const dayName = days[Number.parseInt(dow)] ?? dow;
     return `Weekly on ${dayName} at ${hour}:${min.padStart(2, '0')}`;
   }
   return cron;
@@ -405,7 +405,7 @@ const CleanupPolicies = () => {
                       checked={policy.enabled}
                       onChange={() => handleToggleEnabled(policy)}
                       size="small"
-                      inputProps={{ 'aria-label': `Toggle ${policy.name}` }}
+                      slotProps={{ input: { 'aria-label': `Toggle ${policy.name}` } }}
                     />
                   </TableCell>
                   <TableCell>
@@ -507,7 +507,7 @@ const CleanupPolicies = () => {
                 type="number"
                 value={form.idleDays}
                 onChange={(e) => setForm({ ...form, idleDays: e.target.value })}
-                inputProps={{ min: 1 }}
+                slotProps={{ htmlInput: { min: 1 } }}
                 helperText={`Matches instances idle for more than ${form.idleDays} days`}
               />
             )}
@@ -517,7 +517,7 @@ const CleanupPolicies = () => {
                 type="number"
                 value={form.stoppedAgeDays}
                 onChange={(e) => setForm({ ...form, stoppedAgeDays: e.target.value })}
-                inputProps={{ min: 1 }}
+                slotProps={{ htmlInput: { min: 1 } }}
                 helperText={`Matches stopped instances older than ${form.stoppedAgeDays} days`}
               />
             )}

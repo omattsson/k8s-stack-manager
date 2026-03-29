@@ -63,7 +63,7 @@ const TtlSelector = ({ value, onChange, disabled }: TtlSelectorProps) => {
           label="Minutes"
           value={value}
           onChange={(e) => {
-            const v = Math.max(1, parseInt(e.target.value, 10) || 1);
+            const v = Math.max(1, Number.parseInt(e.target.value, 10) || 1);
             onChange(v);
           }}
           disabled={disabled}

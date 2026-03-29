@@ -102,7 +102,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
   const loginWithOIDC = useCallback(async (redirect?: string) => {
     const result = await oidcService.getAuthorizeUrl(redirect);
-    window.location.href = result.redirect_url;
+    globalThis.location.href = result.redirect_url;
   }, []);
 
   const handleOIDCCallback = useCallback((token: string) => {

@@ -37,10 +37,10 @@ const AUTO_REFRESH_INTERVAL = 30000;
 
 const parseResource = (value: string): number => {
   if (!value) return 0;
-  if (value.endsWith('Gi')) return parseFloat(value) * 1024;
-  if (value.endsWith('Mi')) return parseFloat(value);
-  if (value.endsWith('m')) return parseFloat(value);
-  const n = parseFloat(value);
+  if (value.endsWith('Gi')) return Number.parseFloat(value) * 1024;
+  if (value.endsWith('Mi')) return Number.parseFloat(value);
+  if (value.endsWith('m')) return Number.parseFloat(value);
+  const n = Number.parseFloat(value);
   return Number.isFinite(n) ? n : 0;
 };
 

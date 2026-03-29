@@ -163,8 +163,10 @@ const Notifications = () => {
                         </Typography>
                       </Box>
                     }
-                    primaryTypographyProps={{
-                      fontWeight: notification.is_read ? 400 : 600,
+                    slotProps={{
+                      primary: {
+                        fontWeight: notification.is_read ? 400 : 600,
+                      },
                     }}
                   />
                 </ListItemButton>
@@ -178,7 +180,7 @@ const Notifications = () => {
             onPageChange={(_, newPage) => setPage(newPage)}
             rowsPerPage={rowsPerPage}
             onRowsPerPageChange={(e) => {
-              setRowsPerPage(parseInt(e.target.value, 10));
+              setRowsPerPage(Number.parseInt(e.target.value, 10));
               setPage(0);
             }}
             rowsPerPageOptions={PAGE_SIZE_OPTIONS}

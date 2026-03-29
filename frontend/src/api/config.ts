@@ -18,5 +18,5 @@ export const axiosConfig = {
 // in development, points directly at the backend dev server.
 export const WS_BASE_URL =
   process.env.NODE_ENV === 'production'
-    ? `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.host}`
+    ? `${globalThis.location.protocol === 'https:' ? 'wss' : 'ws'}://${globalThis.location.host}`
     : 'ws://localhost:8081';
