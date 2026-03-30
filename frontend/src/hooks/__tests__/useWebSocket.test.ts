@@ -18,7 +18,7 @@ function createMockRWSClass() {
     this.readyState = WebSocket.OPEN;
     this.send = vi.fn();
     this.close = vi.fn();
-    mockWsInstance = this;
+    mockWsInstance = this; // eslint-disable-line @typescript-eslint/no-this-alias
   });
   return MockRWS;
 }
