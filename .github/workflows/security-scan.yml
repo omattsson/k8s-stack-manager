@@ -34,7 +34,7 @@ jobs:
           exit-code: '0'
 
       - name: Upload backend Trivy results to GitHub Security
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: trivy-backend.sarif
           category: trivy-backend
@@ -59,7 +59,7 @@ jobs:
           exit-code: '0'
 
       - name: Upload frontend Trivy results to GitHub Security
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: trivy-frontend.sarif
           category: trivy-frontend
@@ -84,7 +84,7 @@ jobs:
           exit-code: '0'
 
       - name: Upload Helm Trivy results to GitHub Security
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: trivy-helm.sarif
           category: trivy-helm
