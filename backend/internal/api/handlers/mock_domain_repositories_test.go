@@ -26,6 +26,7 @@ type MockUserRepository struct {
 	byName     map[string]*models.User // by Username
 	createErr  error
 	findErr    error
+	updateErr  error
 	createFunc func(user *models.User) error // optional override for Create; called under lock
 }
 
@@ -99,6 +100,9 @@ func (m *MockUserRepository) FindByExternalID(provider, externalID string) (*mod
 func (m *MockUserRepository) Update(user *models.User) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.updateErr != nil {
+		return m.updateErr
+	}
 	if _, ok := m.users[user.ID]; !ok {
 		return errors.New("not found")
 	}

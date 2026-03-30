@@ -1601,3 +1601,517 @@ describe('notificationService', () => {
     await expect(notificationService.updatePreferences([])).rejects.toThrow('Forbidden');
   });
 });
+
+// ---------------------------------------------------------------------------
+// Error-path tests for all service methods not covered above
+// ---------------------------------------------------------------------------
+
+describe('templateService — error paths', () => {
+  it('get throws on error', async () => {
+    mockApi.get.mockRejectedValueOnce(new Error('Not Found'));
+    await expect(templateService.get('t1')).rejects.toThrow('Not Found');
+  });
+
+  it('create throws on error', async () => {
+    mockApi.post.mockRejectedValueOnce(new Error('Validation'));
+    await expect(templateService.create({ name: 'x' })).rejects.toThrow('Validation');
+  });
+
+  it('update throws on error', async () => {
+    mockApi.put.mockRejectedValueOnce(new Error('Conflict'));
+    await expect(templateService.update('t1', { name: 'x' })).rejects.toThrow('Conflict');
+  });
+
+  it('delete throws on error', async () => {
+    mockApi.delete.mockRejectedValueOnce(new Error('Forbidden'));
+    await expect(templateService.delete('t1')).rejects.toThrow('Forbidden');
+  });
+
+  it('publish throws on error', async () => {
+    mockApi.post.mockRejectedValueOnce(new Error('Bad Request'));
+    await expect(templateService.publish('t1')).rejects.toThrow('Bad Request');
+  });
+
+  it('unpublish throws on error', async () => {
+    mockApi.post.mockRejectedValueOnce(new Error('Bad Request'));
+    await expect(templateService.unpublish('t1')).rejects.toThrow('Bad Request');
+  });
+
+  it('instantiate throws on error', async () => {
+    mockApi.post.mockRejectedValueOnce(new Error('Server Error'));
+    await expect(templateService.instantiate('t1', { name: 'x', owner: 'u1' } as never)).rejects.toThrow('Server Error');
+  });
+
+  it('clone throws on error', async () => {
+    mockApi.post.mockRejectedValueOnce(new Error('Not Found'));
+    await expect(templateService.clone('t1')).rejects.toThrow('Not Found');
+  });
+
+  it('addChart throws on error', async () => {
+    mockApi.post.mockRejectedValueOnce(new Error('Validation'));
+    await expect(templateService.addChart('t1', { chart_name: 'x' } as never)).rejects.toThrow('Validation');
+  });
+
+  it('updateChart throws on error', async () => {
+    mockApi.put.mockRejectedValueOnce(new Error('Conflict'));
+    await expect(templateService.updateChart('t1', 'c1', {} as never)).rejects.toThrow('Conflict');
+  });
+
+  it('deleteChart throws on error', async () => {
+    mockApi.delete.mockRejectedValueOnce(new Error('Forbidden'));
+    await expect(templateService.deleteChart('t1', 'c1')).rejects.toThrow('Forbidden');
+  });
+
+  it('quickDeploy throws on error', async () => {
+    mockApi.post.mockRejectedValueOnce(new Error('Deploy failed'));
+    await expect(templateService.quickDeploy('t1', {} as never)).rejects.toThrow('Deploy failed');
+  });
+
+  it('bulkDelete throws on error', async () => {
+    mockApi.post.mockRejectedValueOnce(new Error('Forbidden'));
+    await expect(templateService.bulkDelete(['t1'])).rejects.toThrow('Forbidden');
+  });
+
+  it('bulkPublish throws on error', async () => {
+    mockApi.post.mockRejectedValueOnce(new Error('Forbidden'));
+    await expect(templateService.bulkPublish(['t1'])).rejects.toThrow('Forbidden');
+  });
+
+  it('bulkUnpublish throws on error', async () => {
+    mockApi.post.mockRejectedValueOnce(new Error('Forbidden'));
+    await expect(templateService.bulkUnpublish(['t1'])).rejects.toThrow('Forbidden');
+  });
+
+  it('listVersions throws on error', async () => {
+    mockApi.get.mockRejectedValueOnce(new Error('Not Found'));
+    await expect(templateService.listVersions('t1')).rejects.toThrow('Not Found');
+  });
+
+  it('getVersion throws on error', async () => {
+    mockApi.get.mockRejectedValueOnce(new Error('Not Found'));
+    await expect(templateService.getVersion('t1', 'v1')).rejects.toThrow('Not Found');
+  });
+
+  it('diffVersions throws on error', async () => {
+    mockApi.get.mockRejectedValueOnce(new Error('Bad Request'));
+    await expect(templateService.diffVersions('t1', 'v1', 'v2')).rejects.toThrow('Bad Request');
+  });
+});
+
+describe('definitionService — error paths', () => {
+  it('get throws on error', async () => {
+    mockApi.get.mockRejectedValueOnce(new Error('Not Found'));
+    await expect(definitionService.get('d1')).rejects.toThrow('Not Found');
+  });
+
+  it('create throws on error', async () => {
+    mockApi.post.mockRejectedValueOnce(new Error('Validation'));
+    await expect(definitionService.create({ name: 'x' })).rejects.toThrow('Validation');
+  });
+
+  it('update throws on error', async () => {
+    mockApi.put.mockRejectedValueOnce(new Error('Conflict'));
+    await expect(definitionService.update('d1', { name: 'x' })).rejects.toThrow('Conflict');
+  });
+
+  it('delete throws on error', async () => {
+    mockApi.delete.mockRejectedValueOnce(new Error('Forbidden'));
+    await expect(definitionService.delete('d1')).rejects.toThrow('Forbidden');
+  });
+
+  it('addChart throws on error', async () => {
+    mockApi.post.mockRejectedValueOnce(new Error('Validation'));
+    await expect(definitionService.addChart('d1', { chart_name: 'x' } as never)).rejects.toThrow('Validation');
+  });
+
+  it('updateChart throws on error', async () => {
+    mockApi.put.mockRejectedValueOnce(new Error('Conflict'));
+    await expect(definitionService.updateChart('d1', 'c1', {} as never)).rejects.toThrow('Conflict');
+  });
+
+  it('deleteChart throws on error', async () => {
+    mockApi.delete.mockRejectedValueOnce(new Error('Forbidden'));
+    await expect(definitionService.deleteChart('d1', 'c1')).rejects.toThrow('Forbidden');
+  });
+
+  it('exportDefinition throws on error', async () => {
+    mockApi.get.mockRejectedValueOnce(new Error('Not Found'));
+    await expect(definitionService.exportDefinition('d1')).rejects.toThrow('Not Found');
+  });
+
+  it('importDefinition throws on error', async () => {
+    mockApi.post.mockRejectedValueOnce(new Error('Validation'));
+    await expect(definitionService.importDefinition({} as never)).rejects.toThrow('Validation');
+  });
+
+  it('checkUpgrade throws on error', async () => {
+    mockApi.get.mockRejectedValueOnce(new Error('Not Found'));
+    await expect(definitionService.checkUpgrade('d1')).rejects.toThrow('Not Found');
+  });
+
+  it('applyUpgrade throws on error', async () => {
+    mockApi.post.mockRejectedValueOnce(new Error('Conflict'));
+    await expect(definitionService.applyUpgrade('d1')).rejects.toThrow('Conflict');
+  });
+});
+
+describe('instanceService — error paths', () => {
+  it('get throws on error', async () => {
+    mockApi.get.mockRejectedValueOnce(new Error('Not Found'));
+    await expect(instanceService.get('i1')).rejects.toThrow('Not Found');
+  });
+
+  it('create throws on error', async () => {
+    mockApi.post.mockRejectedValueOnce(new Error('Validation'));
+    await expect(instanceService.create({ name: 'x' })).rejects.toThrow('Validation');
+  });
+
+  it('update throws on error', async () => {
+    mockApi.put.mockRejectedValueOnce(new Error('Conflict'));
+    await expect(instanceService.update('i1', { name: 'x' })).rejects.toThrow('Conflict');
+  });
+
+  it('delete throws on error', async () => {
+    mockApi.delete.mockRejectedValueOnce(new Error('Forbidden'));
+    await expect(instanceService.delete('i1')).rejects.toThrow('Forbidden');
+  });
+
+  it('clone throws on error', async () => {
+    mockApi.post.mockRejectedValueOnce(new Error('Not Found'));
+    await expect(instanceService.clone('i1')).rejects.toThrow('Not Found');
+  });
+
+  it('getOverrides throws on error', async () => {
+    mockApi.get.mockRejectedValueOnce(new Error('Server Error'));
+    await expect(instanceService.getOverrides('i1')).rejects.toThrow('Server Error');
+  });
+
+  it('setOverride throws on error', async () => {
+    mockApi.put.mockRejectedValueOnce(new Error('Validation'));
+    await expect(instanceService.setOverride('i1', 'c1', { values: 'x' })).rejects.toThrow('Validation');
+  });
+
+  it('exportValues throws on error', async () => {
+    mockApi.get.mockRejectedValueOnce(new Error('Not Found'));
+    await expect(instanceService.exportValues('i1')).rejects.toThrow('Not Found');
+  });
+
+  it('deploy throws on error', async () => {
+    mockApi.post.mockRejectedValueOnce(new Error('Deploy failed'));
+    await expect(instanceService.deploy('i1')).rejects.toThrow('Deploy failed');
+  });
+
+  it('stop throws on error', async () => {
+    mockApi.post.mockRejectedValueOnce(new Error('Stop failed'));
+    await expect(instanceService.stop('i1')).rejects.toThrow('Stop failed');
+  });
+
+  it('clean throws on error', async () => {
+    mockApi.post.mockRejectedValueOnce(new Error('Clean failed'));
+    await expect(instanceService.clean('i1')).rejects.toThrow('Clean failed');
+  });
+
+  it('getDeployLog throws on error', async () => {
+    mockApi.get.mockRejectedValueOnce(new Error('Not Found'));
+    await expect(instanceService.getDeployLog('i1')).rejects.toThrow('Not Found');
+  });
+
+  it('getStatus throws on error', async () => {
+    mockApi.get.mockRejectedValueOnce(new Error('Unavailable'));
+    await expect(instanceService.getStatus('i1')).rejects.toThrow('Unavailable');
+  });
+
+  it('extend throws on error', async () => {
+    mockApi.post.mockRejectedValueOnce(new Error('Bad Request'));
+    await expect(instanceService.extend('i1', 60)).rejects.toThrow('Bad Request');
+  });
+
+  it('recent throws on error', async () => {
+    mockApi.get.mockRejectedValueOnce(new Error('Server Error'));
+    await expect(instanceService.recent()).rejects.toThrow('Server Error');
+  });
+
+  it('bulkDeploy throws on error', async () => {
+    mockApi.post.mockRejectedValueOnce(new Error('Forbidden'));
+    await expect(instanceService.bulkDeploy(['i1'])).rejects.toThrow('Forbidden');
+  });
+
+  it('bulkStop throws on error', async () => {
+    mockApi.post.mockRejectedValueOnce(new Error('Forbidden'));
+    await expect(instanceService.bulkStop(['i1'])).rejects.toThrow('Forbidden');
+  });
+
+  it('bulkClean throws on error', async () => {
+    mockApi.post.mockRejectedValueOnce(new Error('Forbidden'));
+    await expect(instanceService.bulkClean(['i1'])).rejects.toThrow('Forbidden');
+  });
+
+  it('bulkDelete throws on error', async () => {
+    mockApi.post.mockRejectedValueOnce(new Error('Forbidden'));
+    await expect(instanceService.bulkDelete(['i1'])).rejects.toThrow('Forbidden');
+  });
+
+  it('compareInstances throws on error', async () => {
+    mockApi.get.mockRejectedValueOnce(new Error('Bad Request'));
+    await expect(instanceService.compareInstances('i1', 'i2')).rejects.toThrow('Bad Request');
+  });
+
+  it('getQuotaOverride throws on non-404 error', async () => {
+    mockApi.get.mockRejectedValueOnce(new Error('Server Error'));
+    await expect(instanceService.getQuotaOverride('i1')).rejects.toThrow('Server Error');
+  });
+
+  it('setQuotaOverride throws on error', async () => {
+    mockApi.put.mockRejectedValueOnce(new Error('Validation'));
+    await expect(instanceService.setQuotaOverride('i1', {} as never)).rejects.toThrow('Validation');
+  });
+
+  it('deleteQuotaOverride throws on error', async () => {
+    mockApi.delete.mockRejectedValueOnce(new Error('Not Found'));
+    await expect(instanceService.deleteQuotaOverride('i1')).rejects.toThrow('Not Found');
+  });
+});
+
+describe('clusterService — error paths', () => {
+  it('get throws on error', async () => {
+    mockApi.get.mockRejectedValueOnce(new Error('Not Found'));
+    await expect(clusterService.get('c1')).rejects.toThrow('Not Found');
+  });
+
+  it('create throws on error', async () => {
+    mockApi.post.mockRejectedValueOnce(new Error('Validation'));
+    await expect(clusterService.create({} as never)).rejects.toThrow('Validation');
+  });
+
+  it('update throws on error', async () => {
+    mockApi.put.mockRejectedValueOnce(new Error('Conflict'));
+    await expect(clusterService.update('c1', {} as never)).rejects.toThrow('Conflict');
+  });
+
+  it('delete throws on error', async () => {
+    mockApi.delete.mockRejectedValueOnce(new Error('Forbidden'));
+    await expect(clusterService.delete('c1')).rejects.toThrow('Forbidden');
+  });
+
+  it('testConnection throws on error', async () => {
+    mockApi.post.mockRejectedValueOnce(new Error('Connection refused'));
+    await expect(clusterService.testConnection('c1')).rejects.toThrow('Connection refused');
+  });
+
+  it('setDefault throws on error', async () => {
+    mockApi.post.mockRejectedValueOnce(new Error('Not Found'));
+    await expect(clusterService.setDefault('c1')).rejects.toThrow('Not Found');
+  });
+
+  it('getHealthSummary throws on error', async () => {
+    mockApi.get.mockRejectedValueOnce(new Error('Unavailable'));
+    await expect(clusterService.getHealthSummary('c1')).rejects.toThrow('Unavailable');
+  });
+
+  it('getNodes throws on error', async () => {
+    mockApi.get.mockRejectedValueOnce(new Error('Unavailable'));
+    await expect(clusterService.getNodes('c1')).rejects.toThrow('Unavailable');
+  });
+
+  it('getNamespaces throws on error', async () => {
+    mockApi.get.mockRejectedValueOnce(new Error('Unavailable'));
+    await expect(clusterService.getNamespaces('c1')).rejects.toThrow('Unavailable');
+  });
+
+  it('getQuotas throws on non-404 error', async () => {
+    mockApi.get.mockRejectedValueOnce(new Error('Server Error'));
+    await expect(clusterService.getQuotas('c1')).rejects.toThrow('Server Error');
+  });
+
+  it('updateQuotas throws on error', async () => {
+    mockApi.put.mockRejectedValueOnce(new Error('Validation'));
+    await expect(clusterService.updateQuotas('c1', {} as never)).rejects.toThrow('Validation');
+  });
+
+  it('deleteQuotas throws on error', async () => {
+    mockApi.delete.mockRejectedValueOnce(new Error('Forbidden'));
+    await expect(clusterService.deleteQuotas('c1')).rejects.toThrow('Forbidden');
+  });
+
+  it('getUtilization throws on error', async () => {
+    mockApi.get.mockRejectedValueOnce(new Error('Unavailable'));
+    await expect(clusterService.getUtilization('c1')).rejects.toThrow('Unavailable');
+  });
+});
+
+describe('gitService — error paths', () => {
+  it('validateBranch throws on error', async () => {
+    mockApi.get.mockRejectedValueOnce(new Error('Server Error'));
+    await expect(gitService.validateBranch('repo', 'main')).rejects.toThrow('Server Error');
+  });
+
+  it('providers throws on error', async () => {
+    mockApi.get.mockRejectedValueOnce(new Error('Server Error'));
+    await expect(gitService.providers()).rejects.toThrow('Server Error');
+  });
+});
+
+describe('userService — error paths', () => {
+  it('list throws on error', async () => {
+    mockApi.get.mockRejectedValueOnce(new Error('Forbidden'));
+    await expect(userService.list()).rejects.toThrow('Forbidden');
+  });
+
+  it('create throws on error', async () => {
+    mockApi.post.mockRejectedValueOnce(new Error('Conflict'));
+    await expect(userService.create({ username: 'x', password: 'y' } as never)).rejects.toThrow('Conflict');
+  });
+
+  it('delete throws on error', async () => {
+    mockApi.delete.mockRejectedValueOnce(new Error('Not Found'));
+    await expect(userService.delete('u1')).rejects.toThrow('Not Found');
+  });
+});
+
+describe('apiKeyService — error paths', () => {
+  it('list throws on error', async () => {
+    mockApi.get.mockRejectedValueOnce(new Error('Forbidden'));
+    await expect(apiKeyService.list('u1')).rejects.toThrow('Forbidden');
+  });
+
+  it('create throws on error', async () => {
+    mockApi.post.mockRejectedValueOnce(new Error('Validation'));
+    await expect(apiKeyService.create('u1', { name: 'k' } as never)).rejects.toThrow('Validation');
+  });
+
+  it('delete throws on error', async () => {
+    mockApi.delete.mockRejectedValueOnce(new Error('Not Found'));
+    await expect(apiKeyService.delete('u1', 'k1')).rejects.toThrow('Not Found');
+  });
+});
+
+describe('adminService — error paths', () => {
+  it('deleteOrphanedNamespace throws on error', async () => {
+    mockApi.delete.mockRejectedValueOnce(new Error('Server Error'));
+    await expect(adminService.deleteOrphanedNamespace('ns1')).rejects.toThrow('Server Error');
+  });
+});
+
+describe('favoriteService — error paths', () => {
+  it('list throws on error', async () => {
+    mockApi.get.mockRejectedValueOnce(new Error('Server Error'));
+    await expect(favoriteService.list()).rejects.toThrow('Server Error');
+  });
+
+  it('add throws on error', async () => {
+    mockApi.post.mockRejectedValueOnce(new Error('Conflict'));
+    await expect(favoriteService.add('template', 't1')).rejects.toThrow('Conflict');
+  });
+
+  it('remove throws on error', async () => {
+    mockApi.delete.mockRejectedValueOnce(new Error('Not Found'));
+    await expect(favoriteService.remove('template', 't1')).rejects.toThrow('Not Found');
+  });
+
+  it('check throws on error', async () => {
+    mockApi.get.mockRejectedValueOnce(new Error('Server Error'));
+    await expect(favoriteService.check('template', 't1')).rejects.toThrow('Server Error');
+  });
+});
+
+describe('branchOverrideService — error paths', () => {
+  it('list throws on error', async () => {
+    mockApi.get.mockRejectedValueOnce(new Error('Not Found'));
+    await expect(branchOverrideService.list('i1')).rejects.toThrow('Not Found');
+  });
+
+  it('set throws on error', async () => {
+    mockApi.put.mockRejectedValueOnce(new Error('Validation'));
+    await expect(branchOverrideService.set('i1', 'c1', 'main')).rejects.toThrow('Validation');
+  });
+
+  it('delete throws on error', async () => {
+    mockApi.delete.mockRejectedValueOnce(new Error('Not Found'));
+    await expect(branchOverrideService.delete('i1', 'c1')).rejects.toThrow('Not Found');
+  });
+});
+
+describe('analyticsService — error paths', () => {
+  it('getTemplateStats throws on error', async () => {
+    mockApi.get.mockRejectedValueOnce(new Error('Server Error'));
+    await expect(analyticsService.getTemplateStats()).rejects.toThrow('Server Error');
+  });
+
+  it('getUserStats throws on error', async () => {
+    mockApi.get.mockRejectedValueOnce(new Error('Forbidden'));
+    await expect(analyticsService.getUserStats()).rejects.toThrow('Forbidden');
+  });
+});
+
+describe('sharedValuesService — error paths', () => {
+  it('list throws on error', async () => {
+    mockApi.get.mockRejectedValueOnce(new Error('Not Found'));
+    await expect(sharedValuesService.list('c1')).rejects.toThrow('Not Found');
+  });
+
+  it('create throws on error', async () => {
+    mockApi.post.mockRejectedValueOnce(new Error('Validation'));
+    await expect(sharedValuesService.create('c1', { name: 'x' })).rejects.toThrow('Validation');
+  });
+
+  it('update throws on error', async () => {
+    mockApi.put.mockRejectedValueOnce(new Error('Conflict'));
+    await expect(sharedValuesService.update('c1', 'sv1', { values: 'x' })).rejects.toThrow('Conflict');
+  });
+
+  it('delete throws on error', async () => {
+    mockApi.delete.mockRejectedValueOnce(new Error('Not Found'));
+    await expect(sharedValuesService.delete('c1', 'sv1')).rejects.toThrow('Not Found');
+  });
+});
+
+describe('cleanupPolicyService — error paths', () => {
+  it('create throws on error', async () => {
+    mockApi.post.mockRejectedValueOnce(new Error('Validation'));
+    await expect(cleanupPolicyService.create({ name: 'x' })).rejects.toThrow('Validation');
+  });
+
+  it('update throws on error', async () => {
+    mockApi.put.mockRejectedValueOnce(new Error('Conflict'));
+    await expect(cleanupPolicyService.update('cp1', { name: 'x' })).rejects.toThrow('Conflict');
+  });
+
+  it('delete throws on error', async () => {
+    mockApi.delete.mockRejectedValueOnce(new Error('Forbidden'));
+    await expect(cleanupPolicyService.delete('cp1')).rejects.toThrow('Forbidden');
+  });
+
+  it('run throws on error', async () => {
+    mockApi.post.mockRejectedValueOnce(new Error('Server Error'));
+    await expect(cleanupPolicyService.run('cp1', true)).rejects.toThrow('Server Error');
+  });
+});
+
+describe('oidcService — error paths', () => {
+  it('getAuthorizeUrl throws on error', async () => {
+    mockApi.get.mockRejectedValueOnce(new Error('Server Error'));
+    await expect(oidcService.getAuthorizeUrl('/dash')).rejects.toThrow('Server Error');
+  });
+});
+
+describe('notificationService — error paths', () => {
+  it('countUnread throws on error', async () => {
+    mockApi.get.mockRejectedValueOnce(new Error('Server Error'));
+    await expect(notificationService.countUnread()).rejects.toThrow('Server Error');
+  });
+
+  it('markAsRead throws on error', async () => {
+    mockApi.post.mockRejectedValueOnce(new Error('Not Found'));
+    await expect(notificationService.markAsRead('n1')).rejects.toThrow('Not Found');
+  });
+
+  it('markAllAsRead throws on error', async () => {
+    mockApi.post.mockRejectedValueOnce(new Error('Server Error'));
+    await expect(notificationService.markAllAsRead()).rejects.toThrow('Server Error');
+  });
+
+  it('getPreferences throws on error', async () => {
+    mockApi.get.mockRejectedValueOnce(new Error('Server Error'));
+    await expect(notificationService.getPreferences()).rejects.toThrow('Server Error');
+  });
+});

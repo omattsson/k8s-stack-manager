@@ -484,6 +484,221 @@ func TestRunCleanupPolicyNoScheduler(t *testing.T) {
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
 }
 
+// configurableCleanupPolicyRepo allows per-method error injection for testing error paths.
+type configurableCleanupPolicyRepo struct {
+	findByIDFn func(id string) (*models.CleanupPolicy, error)
+	createErr  error
+	updateErr  error
+	deleteErr  error
+}
+
+func (r *configurableCleanupPolicyRepo) Create(p *models.CleanupPolicy) error { return r.createErr }
+func (r *configurableCleanupPolicyRepo) FindByID(id string) (*models.CleanupPolicy, error) {
+	if r.findByIDFn != nil {
+		return r.findByIDFn(id)
+	}
+	return &models.CleanupPolicy{ID: id, Name: "existing", Action: "stop", Condition: "idle_days:7", Schedule: "0 2 * * *", ClusterID: "all"}, nil
+}
+func (r *configurableCleanupPolicyRepo) Update(_ *models.CleanupPolicy) error { return r.updateErr }
+func (r *configurableCleanupPolicyRepo) Delete(_ string) error                { return r.deleteErr }
+func (r *configurableCleanupPolicyRepo) List() ([]models.CleanupPolicy, error) {
+	return nil, nil
+}
+func (r *configurableCleanupPolicyRepo) ListEnabled() ([]models.CleanupPolicy, error) {
+	return nil, nil
+}
+
+func TestCreateCleanupPolicyErrors(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		body       string
+		repo       models.CleanupPolicyRepository
+		wantStatus int
+	}{
+		{
+			name:       "malformed JSON body",
+			body:       `{not valid json`,
+			repo:       newMockCleanupPolicyRepo(),
+			wantStatus: http.StatusBadRequest,
+		},
+		{
+			name:       "invalid condition passes validation but fails ParseCondition",
+			body:       `{"name":"test","action":"stop","condition":"unknown_key:foo","schedule":"0 2 * * *","cluster_id":"all"}`,
+			repo:       newMockCleanupPolicyRepo(),
+			wantStatus: http.StatusBadRequest,
+		},
+		{
+			name:       "invalid idle_days value",
+			body:       `{"name":"test","action":"stop","condition":"idle_days:abc","schedule":"0 2 * * *","cluster_id":"all"}`,
+			repo:       newMockCleanupPolicyRepo(),
+			wantStatus: http.StatusBadRequest,
+		},
+		{
+			name: "duplicate key error from repo",
+			body: `{"name":"test","action":"stop","condition":"idle_days:7","schedule":"0 2 * * *","cluster_id":"all"}`,
+			repo: &configurableCleanupPolicyRepo{
+				createErr: dberrors.NewDatabaseError("create", dberrors.ErrDuplicateKey),
+			},
+			wantStatus: http.StatusConflict,
+		},
+		{
+			name: "internal error from repo",
+			body: `{"name":"test","action":"stop","condition":"idle_days:7","schedule":"0 2 * * *","cluster_id":"all"}`,
+			repo: &configurableCleanupPolicyRepo{
+				createErr: errors.New("unexpected db failure"),
+			},
+			wantStatus: http.StatusInternalServerError,
+		},
+		{
+			name: "validation error from repo",
+			body: `{"name":"test","action":"stop","condition":"idle_days:7","schedule":"0 2 * * *","cluster_id":"all"}`,
+			repo: &configurableCleanupPolicyRepo{
+				createErr: dberrors.NewDatabaseError("create", dberrors.ErrValidation),
+			},
+			wantStatus: http.StatusBadRequest,
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			router := setupCleanupPolicyRouter(tt.repo, nil)
+
+			w := httptest.NewRecorder()
+			req, _ := http.NewRequest("POST", "/api/v1/admin/cleanup-policies", bytes.NewBufferString(tt.body))
+			req.Header.Set("Content-Type", "application/json")
+			router.ServeHTTP(w, req)
+
+			assert.Equal(t, tt.wantStatus, w.Code)
+		})
+	}
+}
+
+func TestUpdateCleanupPolicyErrors(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		id         string
+		body       string
+		repo       models.CleanupPolicyRepository
+		wantStatus int
+	}{
+		{
+			name: "FindByID returns internal error",
+			id:   "p1",
+			body: `{"name":"test","action":"stop","condition":"idle_days:7","schedule":"0 2 * * *","cluster_id":"all"}`,
+			repo: &configurableCleanupPolicyRepo{
+				findByIDFn: func(_ string) (*models.CleanupPolicy, error) {
+					return nil, errors.New("db connection lost")
+				},
+			},
+			wantStatus: http.StatusInternalServerError,
+		},
+		{
+			name: "malformed JSON body after FindByID succeeds",
+			id:   "p1",
+			body: `{not valid json`,
+			repo: &configurableCleanupPolicyRepo{},
+			wantStatus: http.StatusBadRequest,
+		},
+		{
+			name: "invalid condition on update",
+			id:   "p1",
+			body: `{"name":"test","action":"stop","condition":"unknown_key:foo","schedule":"0 2 * * *","cluster_id":"all"}`,
+			repo: &configurableCleanupPolicyRepo{},
+			wantStatus: http.StatusBadRequest,
+		},
+		{
+			name: "repo Update returns duplicate/conflict",
+			id:   "p1",
+			body: `{"name":"test","action":"stop","condition":"idle_days:7","schedule":"0 2 * * *","cluster_id":"all"}`,
+			repo: &configurableCleanupPolicyRepo{
+				updateErr: dberrors.NewDatabaseError("update", dberrors.ErrDuplicateKey),
+			},
+			wantStatus: http.StatusConflict,
+		},
+		{
+			name: "repo Update returns internal error",
+			id:   "p1",
+			body: `{"name":"test","action":"stop","condition":"idle_days:7","schedule":"0 2 * * *","cluster_id":"all"}`,
+			repo: &configurableCleanupPolicyRepo{
+				updateErr: errors.New("unexpected failure"),
+			},
+			wantStatus: http.StatusInternalServerError,
+		},
+		{
+			name: "repo Update returns not found",
+			id:   "p1",
+			body: `{"name":"test","action":"stop","condition":"idle_days:7","schedule":"0 2 * * *","cluster_id":"all"}`,
+			repo: &configurableCleanupPolicyRepo{
+				updateErr: dberrors.NewDatabaseError("update", dberrors.ErrNotFound),
+			},
+			wantStatus: http.StatusNotFound,
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			router := setupCleanupPolicyRouter(tt.repo, nil)
+
+			w := httptest.NewRecorder()
+			req, _ := http.NewRequest("PUT", "/api/v1/admin/cleanup-policies/"+tt.id, bytes.NewBufferString(tt.body))
+			req.Header.Set("Content-Type", "application/json")
+			router.ServeHTTP(w, req)
+
+			assert.Equal(t, tt.wantStatus, w.Code)
+		})
+	}
+}
+
+func TestDeleteCleanupPolicyErrors(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		id         string
+		repo       models.CleanupPolicyRepository
+		wantStatus int
+	}{
+		{
+			name: "internal error on delete",
+			id:   "p1",
+			repo: &configurableCleanupPolicyRepo{
+				deleteErr: errors.New("db failure"),
+			},
+			wantStatus: http.StatusInternalServerError,
+		},
+		{
+			name: "not found on delete",
+			id:   "p1",
+			repo: &configurableCleanupPolicyRepo{
+				deleteErr: dberrors.NewDatabaseError("delete", dberrors.ErrNotFound),
+			},
+			wantStatus: http.StatusNotFound,
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			router := setupCleanupPolicyRouter(tt.repo, nil)
+
+			w := httptest.NewRecorder()
+			req, _ := http.NewRequest("DELETE", "/api/v1/admin/cleanup-policies/"+tt.id, nil)
+			router.ServeHTTP(w, req)
+
+			assert.Equal(t, tt.wantStatus, w.Code)
+		})
+	}
+}
+
 // cleanupMockInstanceRepo implements models.StackInstanceRepository for handler tests.
 type cleanupMockInstanceRepo struct {
 	instances []models.StackInstance

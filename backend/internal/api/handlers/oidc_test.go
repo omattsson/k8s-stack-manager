@@ -724,6 +724,169 @@ func TestCallback_DuplicateKeyRetryFails(t *testing.T) {
 		"must redirect to login with error when retry also fails")
 }
 
+// ---- deriveOIDCUsername ----
+
+func TestDeriveOIDCUsername(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		user     *auth.OIDCUser
+		expected string
+	}{
+		{
+			name:     "prefers email when present",
+			user:     &auth.OIDCUser{Email: "alice@example.com", Name: "Alice", Subject: "sub-001"},
+			expected: "alice@example.com",
+		},
+		{
+			name:     "falls back to name when email is empty",
+			user:     &auth.OIDCUser{Email: "", Name: "Alice", Subject: "sub-001"},
+			expected: "Alice",
+		},
+		{
+			name:     "falls back to subject when email and name are empty",
+			user:     &auth.OIDCUser{Email: "", Name: "", Subject: "sub-001"},
+			expected: "sub-001",
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tt.expected, deriveOIDCUsername(tt.user))
+		})
+	}
+}
+
+// ---- isSafeRedirect ----
+
+func TestIsSafeRedirect(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		target string
+		want   bool
+	}{
+		{name: "empty string", target: "", want: false},
+		{name: "root path", target: "/", want: true},
+		{name: "relative path", target: "/dashboard", want: true},
+		{name: "nested relative path", target: "/admin/users", want: true},
+		{name: "protocol-relative URL", target: "//evil.com", want: false},
+		{name: "absolute URL with scheme", target: "https://evil.com/path", want: false},
+		{name: "javascript scheme", target: "javascript:alert(1)", want: false},
+		{name: "no leading slash", target: "dashboard", want: false},
+		{name: "path with query params", target: "/page?foo=bar", want: true},
+		{name: "path with fragment", target: "/page#section", want: true},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tt.want, isSafeRedirect(tt.target))
+		})
+	}
+}
+
+// ---- Authorize unsafe redirect ----
+
+func TestOIDCAuthorize_UnsafeRedirectFallsBackToRoot(t *testing.T) {
+	t.Parallel()
+
+	h, stateStore, _ := newOIDCHandlerSetup(t, false)
+	r := setupOIDCRouter(h.Authorize, http.MethodGet, "/api/v1/auth/oidc/authorize")
+
+	w := httptest.NewRecorder()
+	req, err := http.NewRequest(http.MethodGet, "/api/v1/auth/oidc/authorize?redirect=//evil.com", nil)
+	require.NoError(t, err)
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var resp map[string]string
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+
+	// Extract the state nonce to verify stored redirect was sanitized to "/".
+	parsedURL, err := url.Parse(resp["redirect_url"])
+	require.NoError(t, err)
+	stateVal := parsedURL.Query().Get("state")
+	require.NotEmpty(t, stateVal)
+
+	authState, ok := stateStore.Retrieve(stateVal)
+	require.True(t, ok)
+	assert.Equal(t, "/", authState.RedirectURL, "unsafe redirect must be sanitized to /")
+}
+
+// ---- provisionUser error paths ----
+
+func TestCallback_FindByExternalIDReturnsUnexpectedError(t *testing.T) {
+	t.Parallel()
+
+	h, stateStore, userRepo := newOIDCHandlerSetup(t, false)
+
+	// Make FindByExternalID return a non-not-found error.
+	userRepo.findErr = errors.New("database connection lost")
+
+	stateStore.Store(&auth.AuthState{
+		State:        "valid-state-dberr",
+		CodeVerifier: "test-verifier",
+		RedirectURL:  "/",
+		CreatedAt:    time.Now(),
+	})
+
+	r := setupOIDCRouter(h.Callback, http.MethodGet, "/api/v1/auth/oidc/callback")
+
+	w := httptest.NewRecorder()
+	req, err := http.NewRequest(http.MethodGet, "/api/v1/auth/oidc/callback?code=test-code&state=valid-state-dberr", nil)
+	require.NoError(t, err)
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusFound, w.Code)
+	assert.Contains(t, w.Header().Get("Location"), "/login?error=auth_failed",
+		"unexpected DB error during lookup should redirect with auth_failed")
+}
+
+func TestCallback_UpdateExistingUserFails(t *testing.T) {
+	t.Parallel()
+
+	h, stateStore, userRepo := newOIDCHandlerSetup(t, false)
+
+	// Pre-seed an existing user with outdated fields to trigger an update.
+	existingUser := &models.User{
+		ID:           "update-fail-001",
+		Username:     "oidcuser@example.com",
+		DisplayName:  "Old Name",
+		Role:         "user",
+		AuthProvider: "oidc",
+		ExternalID:   stringPtr("oidc-user-001"),
+		Email:        "old@example.com",
+	}
+	require.NoError(t, userRepo.Create(existingUser))
+
+	// Make Update fail.
+	userRepo.updateErr = errors.New("db write failed")
+
+	stateStore.Store(&auth.AuthState{
+		State:        "valid-state-update-fail",
+		CodeVerifier: "test-verifier",
+		RedirectURL:  "/",
+		CreatedAt:    time.Now(),
+	})
+
+	r := setupOIDCRouter(h.Callback, http.MethodGet, "/api/v1/auth/oidc/callback")
+
+	w := httptest.NewRecorder()
+	req, err := http.NewRequest(http.MethodGet, "/api/v1/auth/oidc/callback?code=test-code&state=valid-state-update-fail", nil)
+	require.NoError(t, err)
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusFound, w.Code)
+	assert.Contains(t, w.Header().Get("Location"), "/login?error=auth_failed",
+		"update failure should redirect with auth_failed")
+}
+
 // ---- helper function tests ----
 
 func TestIsDuplicateError(t *testing.T) {

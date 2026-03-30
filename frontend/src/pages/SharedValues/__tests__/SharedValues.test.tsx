@@ -189,6 +189,140 @@ describe('SharedValues Page', () => {
     });
   });
 
+  it('opens edit dialog with pre-filled form', async () => {
+    const user = userEvent.setup();
+    (clusterService.list as ReturnType<typeof vi.fn>).mockResolvedValue(mockClusters);
+    (sharedValuesService.list as ReturnType<typeof vi.fn>).mockResolvedValue(mockSharedValues);
+
+    render(
+      <MemoryRouter>
+        <NotificationProvider>
+          <SharedValuesPage />
+        </NotificationProvider>
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('Base Config')).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole('button', { name: /edit base config/i }));
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+    expect(screen.getByDisplayValue('Base Config')).toBeInTheDocument();
+    expect(screen.getByDisplayValue('Base configuration values')).toBeInTheDocument();
+  });
+
+  it('shows delete confirmation dialog and deletes', async () => {
+    const user = userEvent.setup();
+    (clusterService.list as ReturnType<typeof vi.fn>).mockResolvedValue(mockClusters);
+    (sharedValuesService.list as ReturnType<typeof vi.fn>).mockResolvedValue(mockSharedValues);
+    (sharedValuesService.delete as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+
+    render(
+      <MemoryRouter>
+        <NotificationProvider>
+          <SharedValuesPage />
+        </NotificationProvider>
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('Base Config')).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole('button', { name: /delete base config/i }));
+    expect(screen.getByText(/are you sure you want to delete/i)).toBeInTheDocument();
+
+    // Re-mock for post-delete refresh
+    (sharedValuesService.list as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    await user.click(screen.getByRole('button', { name: /^delete$/i }));
+
+    await waitFor(() => {
+      expect(sharedValuesService.delete).toHaveBeenCalledWith('c1', 'sv1');
+    });
+  });
+
+  it('shows validation error for empty name on save', async () => {
+    const user = userEvent.setup();
+    (clusterService.list as ReturnType<typeof vi.fn>).mockResolvedValue(mockClusters);
+    (sharedValuesService.list as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+
+    render(
+      <MemoryRouter>
+        <NotificationProvider>
+          <SharedValuesPage />
+        </NotificationProvider>
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('No shared values configured for this cluster.')).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole('button', { name: /add shared values/i }));
+    // Submit without name
+    await user.click(screen.getByRole('button', { name: /save/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText('Name is required')).toBeInTheDocument();
+    });
+  });
+
+  it('shows validation error for invalid priority', async () => {
+    const user = userEvent.setup();
+    (clusterService.list as ReturnType<typeof vi.fn>).mockResolvedValue(mockClusters);
+    (sharedValuesService.list as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+
+    render(
+      <MemoryRouter>
+        <NotificationProvider>
+          <SharedValuesPage />
+        </NotificationProvider>
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('No shared values configured for this cluster.')).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole('button', { name: /add shared values/i }));
+    fireEvent.change(screen.getByLabelText(/^Name/), { target: { value: 'Test' } });
+    fireEvent.change(screen.getByLabelText(/Priority/), { target: { value: 'abc' } });
+    await user.click(screen.getByRole('button', { name: /save/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText('Priority must be a number')).toBeInTheDocument();
+    });
+  });
+
+  it('shows error when save fails', async () => {
+    const user = userEvent.setup();
+    (clusterService.list as ReturnType<typeof vi.fn>).mockResolvedValue(mockClusters);
+    (sharedValuesService.list as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    (sharedValuesService.create as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('fail'));
+
+    render(
+      <MemoryRouter>
+        <NotificationProvider>
+          <SharedValuesPage />
+        </NotificationProvider>
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('No shared values configured for this cluster.')).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole('button', { name: /add shared values/i }));
+    fireEvent.change(screen.getByLabelText(/^Name/), { target: { value: 'Test Config' } });
+    fireEvent.change(screen.getByLabelText(/Values \(YAML\)/), { target: { value: 'key: val' } });
+    await user.click(screen.getByRole('button', { name: /save/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText('Failed to save shared values')).toBeInTheDocument();
+    });
+  });
+
   it('shows info message when no clusters exist', async () => {
     (clusterService.list as ReturnType<typeof vi.fn>).mockResolvedValue([]);
 

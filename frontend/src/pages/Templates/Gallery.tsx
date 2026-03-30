@@ -44,6 +44,23 @@ import { getRecentTemplates } from '../../utils/recentTemplates';
 
 const CATEGORIES = ['All', 'Web', 'API', 'Data', 'Infrastructure', 'Other'];
 
+const matchesTab = (t: StackTemplate, tab: number, isDevOps: boolean, userId?: string): boolean => {
+  if (isDevOps) {
+    if (tab === 0 && !t.is_published) return false;
+    if (tab === 1 && t.owner_id !== userId) return false;
+    if (tab === 2 && t.is_published) return false;
+    return true;
+  }
+  return t.is_published;
+};
+
+const matchesSearchAndCategory = (t: StackTemplate, search: string, category: string): boolean => {
+  if (category !== 'All' && t.category !== category) return false;
+  if (!search) return true;
+  const q = search.toLowerCase();
+  return t.name.toLowerCase().includes(q) || t.description.toLowerCase().includes(q);
+};
+
 type BulkAction = 'delete' | 'publish' | 'unpublish';
 
 const BULK_ACTION_LABELS: Record<BulkAction, string> = {
@@ -51,6 +68,94 @@ const BULK_ACTION_LABELS: Record<BulkAction, string> = {
   publish: 'Publish',
   unpublish: 'Unpublish',
 };
+
+interface TemplateCardProps {
+  template: StackTemplate;
+  isSelected: boolean;
+  bulkSelectionEnabled: boolean;
+  isFavorite: boolean;
+  isDevOps: boolean;
+  userId?: string;
+  onToggleSelect: (id: string) => void;
+  onNavigate: (path: string) => void;
+  onQuickDeploy: (t: StackTemplate) => void;
+}
+
+const TemplateCard = ({ template, isSelected, bulkSelectionEnabled, isFavorite, isDevOps, userId, onToggleSelect, onNavigate, onQuickDeploy }: TemplateCardProps) => (
+  <Card
+    sx={{
+      height: '100%',
+      display: 'flex',
+      flexDirection: 'column',
+      outline: isSelected ? 2 : 0,
+      outlineColor: 'primary.main',
+      outlineStyle: 'solid',
+    }}
+  >
+    <CardContent sx={{ flex: 1 }}>
+      <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, minWidth: 0 }}>
+          {bulkSelectionEnabled && (
+            <Checkbox
+              checked={isSelected}
+              onChange={() => onToggleSelect(template.id)}
+              onClick={(e) => e.stopPropagation()}
+              slotProps={{ input: { 'aria-label': `Select ${template.name}` } }}
+              size="small"
+            />
+          )}
+          <FavoriteButton entityType="template" entityId={template.id} size="small" initialFavorited={isFavorite} />
+          <Typography variant="h6" component="h2" noWrap>
+            {template.name}
+          </Typography>
+        </Box>
+        <Box sx={{ display: 'flex', gap: 0.5, alignItems: 'center' }}>
+          {!template.is_published && <Chip label="Draft" size="small" color="warning" />}
+        </Box>
+      </Box>
+      <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+        {template.description || 'No description'}
+      </Typography>
+      {template.owner_username && (
+        <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+          By {template.owner_username}
+        </Typography>
+      )}
+      <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
+        {template.category && <Chip label={template.category} size="small" variant="outlined" />}
+        {template.version && <Chip label={`v${template.version}`} size="small" variant="outlined" />}
+        {template.charts && <Chip label={`${template.charts.length} charts`} size="small" variant="outlined" />}
+        {template.definition_count != null && template.definition_count > 0 && (
+          <Chip
+            label={`Used by ${template.definition_count} definition${template.definition_count === 1 ? '' : 's'}`}
+            size="small"
+            variant="outlined"
+          />
+        )}
+      </Box>
+    </CardContent>
+    <CardActions>
+      <Button size="small" onClick={() => onNavigate(`/templates/${template.id}`)}>
+        View
+      </Button>
+      {template.is_published && (
+        <Button size="small" color="primary" startIcon={<RocketLaunchIcon />} onClick={() => onQuickDeploy(template)}>
+          Quick Deploy
+        </Button>
+      )}
+      {template.is_published && (
+        <Button size="small" onClick={() => onNavigate(`/templates/${template.id}/use`)}>
+          Use Template
+        </Button>
+      )}
+      {isDevOps && template.owner_id === userId && (
+        <Button size="small" onClick={() => onNavigate(`/templates/${template.id}/edit`)}>
+          Edit
+        </Button>
+      )}
+    </CardActions>
+  </Card>
+);
 
 const Gallery = () => {
   const [templates, setTemplates] = useState<StackTemplate[]>([]);
@@ -102,25 +207,9 @@ const Gallery = () => {
   }, [tab]);
 
   const filtered = useMemo(() => {
-    return templates.filter((t) => {
-      // Tab filtering
-      if (isDevOps) {
-        if (tab === 0 && !t.is_published) return false;
-        if (tab === 1 && t.owner_id !== user?.id) return false;
-        if (tab === 2 && t.is_published) return false;
-      } else if (!t.is_published) {
-        return false;
-      }
-
-      if (category !== 'All' && t.category !== category) return false;
-      if (
-        search &&
-        !t.name.toLowerCase().includes(search.toLowerCase()) &&
-        !t.description.toLowerCase().includes(search.toLowerCase())
-      )
-        return false;
-      return true;
-    });
+    return templates.filter((t) =>
+      matchesTab(t, tab, isDevOps, user?.id) && matchesSearchAndCategory(t, search, category),
+    );
   }, [templates, tab, category, search, isDevOps, user?.id]);
 
   // Bulk selection is enabled on My Templates (tab 1) and All Drafts (tab 2) for devops users
@@ -418,90 +507,17 @@ const Gallery = () => {
         <Grid container spacing={3}>
           {filtered.map((template) => (
             <Grid key={template.id} size={{ xs: 12, sm: 6, md: 4 }}>
-              <Card
-                sx={{
-                  height: '100%',
-                  display: 'flex',
-                  flexDirection: 'column',
-                  outline: selectedIds.has(template.id) ? 2 : 0,
-                  outlineColor: 'primary.main',
-                  outlineStyle: 'solid',
-                }}
-              >
-                <CardContent sx={{ flex: 1 }}>
-                  <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
-                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, minWidth: 0 }}>
-                      {bulkSelectionEnabled && (
-                        <Checkbox
-                          checked={selectedIds.has(template.id)}
-                          onChange={() => toggleSelect(template.id)}
-                          onClick={(e) => e.stopPropagation()}
-                          slotProps={{ input: { 'aria-label': `Select ${template.name}` } }}
-                          size="small"
-                        />
-                      )}
-                      <FavoriteButton entityType="template" entityId={template.id} size="small" initialFavorited={favoriteIds.has(template.id)} />
-                      <Typography variant="h6" component="h2" noWrap>
-                        {template.name}
-                      </Typography>
-                    </Box>
-                    <Box sx={{ display: 'flex', gap: 0.5, alignItems: 'center' }}>
-                      {!template.is_published && <Chip label="Draft" size="small" color="warning" />}
-                    </Box>
-                  </Box>
-                  <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
-                    {template.description || 'No description'}
-                  </Typography>
-                  {template.owner_username && (
-                    <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
-                      By {template.owner_username}
-                    </Typography>
-                  )}
-                  <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
-                    {template.category && (
-                      <Chip label={template.category} size="small" variant="outlined" />
-                    )}
-                    {template.version && (
-                      <Chip label={`v${template.version}`} size="small" variant="outlined" />
-                    )}
-                    {template.charts && (
-                      <Chip label={`${template.charts.length} charts`} size="small" variant="outlined" />
-                    )}
-                    {template.definition_count != null && template.definition_count > 0 && (
-                      <Chip
-                        label={`Used by ${template.definition_count} definition${template.definition_count === 1 ? '' : 's'}`}
-                        size="small"
-                        variant="outlined"
-                      />
-                    )}
-                  </Box>
-                </CardContent>
-                <CardActions>
-                  <Button size="small" onClick={() => navigate(`/templates/${template.id}`)}>
-                    View
-                  </Button>
-                  {template.is_published && (
-                    <Button
-                      size="small"
-                      color="primary"
-                      startIcon={<RocketLaunchIcon />}
-                      onClick={() => setQuickDeployTemplate(template)}
-                    >
-                      Quick Deploy
-                    </Button>
-                  )}
-                  {template.is_published && (
-                    <Button size="small" onClick={() => navigate(`/templates/${template.id}/use`)}>
-                      Use Template
-                    </Button>
-                  )}
-                  {isDevOps && template.owner_id === user?.id && (
-                    <Button size="small" onClick={() => navigate(`/templates/${template.id}/edit`)}>
-                      Edit
-                    </Button>
-                  )}
-                </CardActions>
-              </Card>
+              <TemplateCard
+                template={template}
+                isSelected={selectedIds.has(template.id)}
+                bulkSelectionEnabled={bulkSelectionEnabled}
+                isFavorite={favoriteIds.has(template.id)}
+                isDevOps={isDevOps}
+                userId={user?.id}
+                onToggleSelect={toggleSelect}
+                onNavigate={navigate}
+                onQuickDeploy={setQuickDeployTemplate}
+              />
             </Grid>
           ))}
         </Grid>

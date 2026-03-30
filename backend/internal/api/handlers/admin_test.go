@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -187,6 +188,121 @@ func TestListOrphanedNamespaces(t *testing.T) {
 
 		assert.Equal(t, http.StatusServiceUnavailable, w.Code)
 	})
+
+	t.Run("without details omits resource counts and releases", func(t *testing.T) {
+		t.Parallel()
+		clientset := fake.NewSimpleClientset()
+		ctx := context.Background()
+
+		_, err := clientset.CoreV1().Namespaces().Create(ctx, &corev1.Namespace{
+			ObjectMeta: metav1.ObjectMeta{Name: "stack-orphan-test"},
+		}, metav1.CreateOptions{})
+		require.NoError(t, err)
+
+		k8sClient := k8s.NewClientFromInterface(clientset)
+		instanceRepo := NewMockStackInstanceRepository()
+		helmExec := &mockAdminHelmExecutor{}
+
+		router := setupAdminRouter(k8sClient, helmExec, instanceRepo, "admin")
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest(http.MethodGet, "/api/v1/admin/orphaned-namespaces", nil)
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		var result []OrphanedNamespaceResponse
+		err = json.Unmarshal(w.Body.Bytes(), &result)
+		require.NoError(t, err)
+		require.Len(t, result, 1)
+		assert.Nil(t, result[0].ResourceCounts)
+		assert.Equal(t, []string{}, result[0].HelmReleases)
+	})
+
+	t.Run("details with nil helm executor returns empty releases", func(t *testing.T) {
+		t.Parallel()
+		clientset := fake.NewSimpleClientset()
+		ctx := context.Background()
+
+		_, err := clientset.CoreV1().Namespaces().Create(ctx, &corev1.Namespace{
+			ObjectMeta: metav1.ObjectMeta{Name: "stack-orphan-nohelm"},
+		}, metav1.CreateOptions{})
+		require.NoError(t, err)
+
+		k8sClient := k8s.NewClientFromInterface(clientset)
+		instanceRepo := NewMockStackInstanceRepository()
+
+		// Pass nil helm executor
+		router := setupAdminRouter(k8sClient, nil, instanceRepo, "admin")
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest(http.MethodGet, "/api/v1/admin/orphaned-namespaces?details=true", nil)
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		var result []OrphanedNamespaceResponse
+		err = json.Unmarshal(w.Body.Bytes(), &result)
+		require.NoError(t, err)
+		require.Len(t, result, 1)
+		assert.Equal(t, []string{}, result[0].HelmReleases)
+	})
+
+	t.Run("non-not-found error from FindByNamespace is logged and skipped", func(t *testing.T) {
+		t.Parallel()
+		clientset := fake.NewSimpleClientset()
+		ctx := context.Background()
+
+		_, err := clientset.CoreV1().Namespaces().Create(ctx, &corev1.Namespace{
+			ObjectMeta: metav1.ObjectMeta{Name: "stack-errns-user"},
+		}, metav1.CreateOptions{})
+		require.NoError(t, err)
+
+		k8sClient := k8s.NewClientFromInterface(clientset)
+		instanceRepo := NewMockStackInstanceRepository()
+		// Inject a generic error for FindByNamespace
+		instanceRepo.fetchErr = errors.New("connection reset")
+		helmExec := &mockAdminHelmExecutor{}
+
+		router := setupAdminRouter(k8sClient, helmExec, instanceRepo, "admin")
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest(http.MethodGet, "/api/v1/admin/orphaned-namespaces", nil)
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		var result []OrphanedNamespaceResponse
+		err = json.Unmarshal(w.Body.Bytes(), &result)
+		require.NoError(t, err)
+		// Namespace with non-not-found error should be skipped, not included
+		assert.Empty(t, result)
+	})
+
+	t.Run("details with listReleases error returns empty releases", func(t *testing.T) {
+		t.Parallel()
+		clientset := fake.NewSimpleClientset()
+		ctx := context.Background()
+
+		_, err := clientset.CoreV1().Namespaces().Create(ctx, &corev1.Namespace{
+			ObjectMeta: metav1.ObjectMeta{Name: "stack-orphan-relerr"},
+		}, metav1.CreateOptions{})
+		require.NoError(t, err)
+
+		k8sClient := k8s.NewClientFromInterface(clientset)
+		instanceRepo := NewMockStackInstanceRepository()
+		helmExec := &mockAdminHelmExecutor{
+			listReleasesFunc: func(_ context.Context, _ string) ([]string, error) {
+				return nil, errors.New("helm error")
+			},
+		}
+
+		router := setupAdminRouter(k8sClient, helmExec, instanceRepo, "admin")
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest(http.MethodGet, "/api/v1/admin/orphaned-namespaces?details=true", nil)
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		var result []OrphanedNamespaceResponse
+		err = json.Unmarshal(w.Body.Bytes(), &result)
+		require.NoError(t, err)
+		require.Len(t, result, 1)
+		assert.Equal(t, []string{}, result[0].HelmReleases)
+	})
 }
 
 func TestDeleteOrphanedNamespace(t *testing.T) {
@@ -276,5 +392,126 @@ func TestDeleteOrphanedNamespace(t *testing.T) {
 		router.ServeHTTP(w, req)
 
 		assert.Equal(t, http.StatusForbidden, w.Code)
+	})
+
+	t.Run("returns 503 when registry is nil", func(t *testing.T) {
+		t.Parallel()
+		instanceRepo := NewMockStackInstanceRepository()
+
+		router := setupAdminRouter(nil, nil, instanceRepo, "admin")
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest(http.MethodDelete, "/api/v1/admin/orphaned-namespaces/stack-orphan-bob", nil)
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusServiceUnavailable, w.Code)
+	})
+
+	t.Run("rejects invalid RFC1123 namespace", func(t *testing.T) {
+		t.Parallel()
+		clientset := fake.NewSimpleClientset()
+		k8sClient := k8s.NewClientFromInterface(clientset)
+		instanceRepo := NewMockStackInstanceRepository()
+		helmExec := &mockAdminHelmExecutor{}
+
+		router := setupAdminRouter(k8sClient, helmExec, instanceRepo, "admin")
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest(http.MethodDelete, "/api/v1/admin/orphaned-namespaces/stack-INVALID_UPPER", nil)
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+	})
+
+	t.Run("returns 500 on unexpected DB error during orphan check", func(t *testing.T) {
+		t.Parallel()
+		clientset := fake.NewSimpleClientset()
+		k8sClient := k8s.NewClientFromInterface(clientset)
+		instanceRepo := NewMockStackInstanceRepository()
+		instanceRepo.fetchErr = errors.New("db connection lost")
+		helmExec := &mockAdminHelmExecutor{}
+
+		router := setupAdminRouter(k8sClient, helmExec, instanceRepo, "admin")
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest(http.MethodDelete, "/api/v1/admin/orphaned-namespaces/stack-orphan-bob", nil)
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusInternalServerError, w.Code)
+	})
+
+	t.Run("continues deletion when helm listReleases fails", func(t *testing.T) {
+		t.Parallel()
+		clientset := fake.NewSimpleClientset()
+		ctx := context.Background()
+
+		_, err := clientset.CoreV1().Namespaces().Create(ctx, &corev1.Namespace{
+			ObjectMeta: metav1.ObjectMeta{Name: "stack-orphan-helmerr"},
+		}, metav1.CreateOptions{})
+		require.NoError(t, err)
+
+		k8sClient := k8s.NewClientFromInterface(clientset)
+		instanceRepo := NewMockStackInstanceRepository()
+		helmExec := &mockAdminHelmExecutor{
+			listReleasesFunc: func(_ context.Context, _ string) ([]string, error) {
+				return nil, errors.New("helm list failed")
+			},
+		}
+
+		router := setupAdminRouter(k8sClient, helmExec, instanceRepo, "admin")
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest(http.MethodDelete, "/api/v1/admin/orphaned-namespaces/stack-orphan-helmerr", nil)
+		router.ServeHTTP(w, req)
+
+		// Should still succeed — listReleases error is best-effort
+		assert.Equal(t, http.StatusOK, w.Code)
+	})
+
+	t.Run("continues deletion when helm uninstall fails", func(t *testing.T) {
+		t.Parallel()
+		clientset := fake.NewSimpleClientset()
+		ctx := context.Background()
+
+		_, err := clientset.CoreV1().Namespaces().Create(ctx, &corev1.Namespace{
+			ObjectMeta: metav1.ObjectMeta{Name: "stack-orphan-unierr"},
+		}, metav1.CreateOptions{})
+		require.NoError(t, err)
+
+		k8sClient := k8s.NewClientFromInterface(clientset)
+		instanceRepo := NewMockStackInstanceRepository()
+		helmExec := &mockAdminHelmExecutor{
+			listReleasesFunc: func(_ context.Context, _ string) ([]string, error) {
+				return []string{"failing-release"}, nil
+			},
+			uninstallFunc: func(_ context.Context, _ deployer.UninstallRequest) (string, error) {
+				return "", errors.New("uninstall failed")
+			},
+		}
+
+		router := setupAdminRouter(k8sClient, helmExec, instanceRepo, "admin")
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest(http.MethodDelete, "/api/v1/admin/orphaned-namespaces/stack-orphan-unierr", nil)
+		router.ServeHTTP(w, req)
+
+		// Should still succeed — uninstall error is best-effort
+		assert.Equal(t, http.StatusOK, w.Code)
+	})
+
+	t.Run("deletes namespace without helm executor", func(t *testing.T) {
+		t.Parallel()
+		clientset := fake.NewSimpleClientset()
+		ctx := context.Background()
+
+		_, err := clientset.CoreV1().Namespaces().Create(ctx, &corev1.Namespace{
+			ObjectMeta: metav1.ObjectMeta{Name: "stack-orphan-nohelm"},
+		}, metav1.CreateOptions{})
+		require.NoError(t, err)
+
+		k8sClient := k8s.NewClientFromInterface(clientset)
+		instanceRepo := NewMockStackInstanceRepository()
+
+		router := setupAdminRouter(k8sClient, nil, instanceRepo, "admin")
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest(http.MethodDelete, "/api/v1/admin/orphaned-namespaces/stack-orphan-nohelm", nil)
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
 	})
 }

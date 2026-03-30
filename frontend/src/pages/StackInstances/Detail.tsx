@@ -394,6 +394,62 @@ const Detail = () => {
     return '';
   };
 
+  const canDeploy = instance?.status === 'draft' || instance?.status === 'stopped' || instance?.status === 'error';
+  const canStop = instance?.status === 'running' || instance?.status === 'deploying';
+  const canClean = instance?.status === 'running' || instance?.status === 'stopped' || instance?.status === 'error';
+
+  const renderStatusActions = (status: string) => (
+    <>
+      {canDeploy && (
+        <Button variant="contained" color="success" onClick={handleDeploy} disabled={deploying}>
+          {deploying ? 'Deploying...' : 'Deploy'}
+        </Button>
+      )}
+      {status === 'stopping' && (
+        <Button variant="contained" color="warning" disabled>Stopping...</Button>
+      )}
+      {status === 'cleaning' && (
+        <Button variant="outlined" color="error" disabled>Cleaning...</Button>
+      )}
+      {canStop && (
+        <Button variant="contained" color="warning" onClick={handleStop} disabled={stopping}>
+          {stopping ? 'Stopping...' : 'Stop'}
+        </Button>
+      )}
+      {canClean && (
+        <Button variant="outlined" color="error" onClick={() => setCleanDialogOpen(true)} disabled={cleaning}>
+          {cleaning ? 'Cleaning...' : 'Clean Namespace'}
+        </Button>
+      )}
+    </>
+  );
+
+  const LIFECYCLE_STEPS = ['draft', 'deploying', 'running'];
+
+  const renderLifecycle = (status: string) => {
+    const activeStep = LIFECYCLE_STEPS.indexOf(status);
+    const isTerminal = status === 'error' || status === 'stopped' || status === 'stopping' || status === 'cleaning';
+
+    return (
+      <Box sx={{ mb: 2 }}>
+        <Typography variant="subtitle2" gutterBottom>Status Lifecycle</Typography>
+        {isTerminal ? (
+          <Alert severity={status === 'error' ? 'error' : 'warning'} sx={{ py: 0.5 }}>
+            Instance is {status}
+          </Alert>
+        ) : (
+          <Stepper activeStep={activeStep} alternativeLabel>
+            {LIFECYCLE_STEPS.map((label) => (
+              <Step key={label} completed={activeStep > LIFECYCLE_STEPS.indexOf(label)}>
+                <StepLabel>{label}</StepLabel>
+              </Step>
+            ))}
+          </Stepper>
+        )}
+      </Box>
+    );
+  };
+
   if (loading) {
     return <LoadingState label="Loading instance..." />;
   }
@@ -449,31 +505,7 @@ const Detail = () => {
             )}
           </Box>
           <Box sx={{ display: 'flex', gap: 1 }}>
-            {(instance.status === 'draft' || instance.status === 'stopped' || instance.status === 'error') && (
-              <Button variant="contained" color="success" onClick={handleDeploy} disabled={deploying}>
-                {deploying ? 'Deploying...' : 'Deploy'}
-              </Button>
-            )}
-            {instance.status === 'stopping' && (
-              <Button variant="contained" color="warning" disabled>
-                Stopping...
-              </Button>
-            )}
-            {instance.status === 'cleaning' && (
-              <Button variant="outlined" color="error" disabled>
-                Cleaning...
-              </Button>
-            )}
-            {(instance.status === 'running' || instance.status === 'deploying') && (
-              <Button variant="contained" color="warning" onClick={handleStop} disabled={stopping}>
-                {stopping ? 'Stopping...' : 'Stop'}
-              </Button>
-            )}
-            {(instance.status === 'running' || instance.status === 'stopped' || instance.status === 'error') && (
-              <Button variant="outlined" color="error" onClick={() => setCleanDialogOpen(true)} disabled={cleaning}>
-                {cleaning ? 'Cleaning...' : 'Clean Namespace'}
-              </Button>
-            )}
+            {renderStatusActions(instance.status)}
             <Button variant="outlined" onClick={handleExport}>Export Values</Button>
             <Button variant="outlined" onClick={handleClone}>Clone</Button>
             <Button variant="outlined" color="error" onClick={() => setDeleteOpen(true)}>Delete</Button>
@@ -482,33 +514,7 @@ const Detail = () => {
 
         <Divider sx={{ my: 2 }} />
 
-        {(() => {
-          const LIFECYCLE_STEPS = ['draft', 'deploying', 'running'];
-          const activeStep = LIFECYCLE_STEPS.indexOf(instance.status);
-          const isError = instance.status === 'error';
-          const isStopped = instance.status === 'stopped';
-          const isStopping = instance.status === 'stopping';
-          const isCleaning = instance.status === 'cleaning';
-
-          return (
-            <Box sx={{ mb: 2 }}>
-              <Typography variant="subtitle2" gutterBottom>Status Lifecycle</Typography>
-              {isError || isStopped || isStopping || isCleaning ? (
-                <Alert severity={isError ? 'error' : 'warning'} sx={{ py: 0.5 }}>
-                  Instance is {instance.status}
-                </Alert>
-              ) : (
-                <Stepper activeStep={activeStep} alternativeLabel>
-                  {LIFECYCLE_STEPS.map((label) => (
-                    <Step key={label} completed={activeStep > LIFECYCLE_STEPS.indexOf(label)}>
-                      <StepLabel>{label}</StepLabel>
-                    </Step>
-                  ))}
-                </Stepper>
-              )}
-            </Box>
-          );
-        })()}
+        {renderLifecycle(instance.status)}
 
         {(instance.status === 'running' || instance.status === 'deploying' || instance.status === 'error' || instance.status === 'stopping' || instance.status === 'cleaning') && (
           <Box sx={{ mb: 2 }}>

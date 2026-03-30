@@ -73,6 +73,81 @@ const getPrimaryUrl = (status: NamespaceStatus): string | null => {
   return null;
 };
 
+interface InstanceCardProps {
+  instance: StackInstance;
+  isSelected: boolean;
+  isFavorite: boolean;
+  clusterName?: string;
+  url?: string;
+  onToggleSelect: (id: string) => void;
+  onNavigate: (path: string) => void;
+}
+
+const InstanceCard = ({ instance, isSelected, isFavorite, clusterName, url, onToggleSelect, onNavigate }: InstanceCardProps) => (
+  <Card
+    sx={{
+      height: '100%',
+      display: 'flex',
+      flexDirection: 'column',
+      outline: isSelected ? 2 : 0,
+      outlineColor: 'primary.main',
+      outlineStyle: 'solid',
+    }}
+  >
+    <CardContent sx={{ flex: 1 }}>
+      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, minWidth: 0 }}>
+          <Checkbox
+            checked={isSelected}
+            onChange={() => onToggleSelect(instance.id)}
+            onClick={(e) => e.stopPropagation()}
+            slotProps={{ input: { 'aria-label': `Select ${instance.name}` } }}
+            size="small"
+          />
+          <FavoriteButton entityType="instance" entityId={instance.id} size="small" initialFavorited={isFavorite} />
+          <Typography variant="h6" component="h2" noWrap>
+            {instance.name}
+          </Typography>
+        </Box>
+        <StatusBadge status={instance.status} />
+      </Box>
+      <Typography variant="body2" color="text.secondary">Branch: {instance.branch}</Typography>
+      <Typography variant="body2" color="text.secondary">Namespace: {instance.namespace}</Typography>
+      {instance.definition && (
+        <Typography variant="body2" color="text.secondary">Definition: {instance.definition.name}</Typography>
+      )}
+      {clusterName && (
+        <Typography variant="body2" color="text.secondary">Cluster: {clusterName}</Typography>
+      )}
+      {url && (
+        <Link
+          href={url}
+          target="_blank"
+          rel="noopener noreferrer"
+          variant="body2"
+          sx={{ display: 'block', mt: 0.5, fontFamily: 'monospace', fontSize: '0.75rem' }}
+          noWrap
+        >
+          {url}
+        </Link>
+      )}
+      <ExpiryChip instance={instance} />
+      {instance.last_deployed_at && (
+        <Tooltip title={new Date(instance.last_deployed_at).toLocaleString()} arrow>
+          <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5 }}>
+            Deployed {timeAgo(instance.last_deployed_at)}
+          </Typography>
+        </Tooltip>
+      )}
+    </CardContent>
+    <CardActions>
+      <Button size="small" onClick={() => onNavigate(`/stack-instances/${instance.id}`)}>
+        Details
+      </Button>
+    </CardActions>
+  </Card>
+);
+
 const Dashboard = () => {
   const [instances, setInstances] = useState<StackInstance[]>([]);
   const [clusters, setClusters] = useState<Cluster[]>([]);
@@ -599,79 +674,15 @@ const Dashboard = () => {
           <Grid container spacing={3} aria-live="polite">
             {filtered.map((instance) => (
               <Grid key={instance.id} size={{ xs: 12, sm: 6, md: 4 }}>
-                <Card
-                  sx={{
-                    height: '100%',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    outline: selectedIds.has(instance.id) ? 2 : 0,
-                    outlineColor: 'primary.main',
-                    outlineStyle: 'solid',
-                  }}
-                >
-                  <CardContent sx={{ flex: 1 }}>
-                    <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
-                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, minWidth: 0 }}>
-                        <Checkbox
-                          checked={selectedIds.has(instance.id)}
-                          onChange={() => toggleSelect(instance.id)}
-                          onClick={(e) => e.stopPropagation()}
-                          slotProps={{ input: { 'aria-label': `Select ${instance.name}` } }}
-                          size="small"
-                        />
-                        <FavoriteButton entityType="instance" entityId={instance.id} size="small" initialFavorited={favoriteInstanceIds.has(instance.id)} />
-                        <Typography variant="h6" component="h2" noWrap>
-                          {instance.name}
-                        </Typography>
-                      </Box>
-                      <StatusBadge status={instance.status} />
-                    </Box>
-                    <Typography variant="body2" color="text.secondary">
-                      Branch: {instance.branch}
-                    </Typography>
-                    <Typography variant="body2" color="text.secondary">
-                      Namespace: {instance.namespace}
-                    </Typography>
-                    {instance.definition && (
-                      <Typography variant="body2" color="text.secondary">
-                        Definition: {instance.definition.name}
-                      </Typography>
-                    )}
-                    {instance.cluster_id && (() => {
-                      const clusterName = clusterNameMap.get(instance.cluster_id);
-                      return clusterName ? (
-                        <Typography variant="body2" color="text.secondary">
-                          Cluster: {clusterName}
-                        </Typography>
-                      ) : null;
-                    })()}
-                    {instanceUrls[instance.id] && (
-                      <Link
-                        href={instanceUrls[instance.id]}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        variant="body2"
-                        sx={{ display: 'block', mt: 0.5, fontFamily: 'monospace', fontSize: '0.75rem' }}
-                        noWrap
-                      >
-                        {instanceUrls[instance.id]}
-                      </Link>
-                    )}
-                    <ExpiryChip instance={instance} />
-                    {instance.last_deployed_at && (
-                      <Tooltip title={new Date(instance.last_deployed_at).toLocaleString()} arrow>
-                        <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5 }}>
-                          Deployed {timeAgo(instance.last_deployed_at)}
-                        </Typography>
-                      </Tooltip>
-                    )}
-                  </CardContent>
-                  <CardActions>
-                    <Button size="small" onClick={() => navigate(`/stack-instances/${instance.id}`)}>
-                      Details
-                    </Button>
-                  </CardActions>
-                </Card>
+                <InstanceCard
+                  instance={instance}
+                  isSelected={selectedIds.has(instance.id)}
+                  isFavorite={favoriteInstanceIds.has(instance.id)}
+                  clusterName={instance.cluster_id ? clusterNameMap.get(instance.cluster_id) : undefined}
+                  url={instanceUrls[instance.id]}
+                  onToggleSelect={toggleSelect}
+                  onNavigate={navigate}
+                />
               </Grid>
             ))}
           </Grid>

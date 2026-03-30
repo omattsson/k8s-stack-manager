@@ -245,6 +245,167 @@ describe('Profile Page', () => {
     });
   });
 
+  it('shows validation error when submitting empty key name', async () => {
+    (apiKeyService.list as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+
+    const user = userEvent.setup();
+    render(
+      <MemoryRouter>
+        <Profile />
+      </MemoryRouter>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /generate api key/i })).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole('button', { name: /generate api key/i }));
+    // Submit without filling name
+    await user.click(screen.getByRole('button', { name: /^generate$/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText('Key name is required')).toBeInTheDocument();
+    });
+  });
+
+  it('shows error when generate key API fails', async () => {
+    (apiKeyService.list as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    (apiKeyService.create as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('Server error'));
+
+    const user = userEvent.setup();
+    render(
+      <MemoryRouter>
+        <Profile />
+      </MemoryRouter>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /generate api key/i })).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole('button', { name: /generate api key/i }));
+    await user.type(screen.getByLabelText(/key name/i), 'Failing Key');
+    await user.click(screen.getByRole('button', { name: /^generate$/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText('Failed to generate API key')).toBeInTheDocument();
+    });
+  });
+
+  it('shows error when revoking a key fails', async () => {
+    (apiKeyService.list as ReturnType<typeof vi.fn>).mockResolvedValue(mockApiKeys);
+    (apiKeyService.delete as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('Server error'));
+
+    const user = userEvent.setup();
+    render(
+      <MemoryRouter>
+        <Profile />
+      </MemoryRouter>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('CI Key')).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole('button', { name: /revoke key ci key/i }));
+    await user.click(screen.getByRole('button', { name: /^revoke$/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText('Failed to revoke API key')).toBeInTheDocument();
+    });
+  });
+
+  it('renders copy button in raw key modal', async () => {
+    (apiKeyService.list as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    (apiKeyService.create as ReturnType<typeof vi.fn>).mockResolvedValue({
+      id: 'k-copy',
+      name: 'Copy Key',
+      prefix: 'sk_copy11',
+      raw_key: 'sk_copy11xyz',
+      created_at: '2026-03-18T00:00:00Z',
+    });
+
+    const user = userEvent.setup();
+    render(
+      <MemoryRouter>
+        <Profile />
+      </MemoryRouter>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /generate api key/i })).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole('button', { name: /generate api key/i }));
+    await user.type(screen.getByLabelText(/key name/i), 'Copy Key');
+    await user.click(screen.getByRole('button', { name: /^generate$/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText('sk_copy11xyz')).toBeInTheDocument();
+    });
+
+    // Copy button is rendered in the raw key modal
+    expect(screen.getByRole('button', { name: /copy api key/i })).toBeInTheDocument();
+
+    // Close modal via Done button
+    await user.click(screen.getByRole('button', { name: /done/i }));
+
+    await waitFor(() => {
+      expect(screen.queryByText('sk_copy11xyz')).not.toBeInTheDocument();
+    });
+  });
+
+  it('shows OIDC auth chip when authProvider is set', async () => {
+    (useAuth as ReturnType<typeof vi.fn>).mockReturnValue({
+      user: currentUser,
+      isAuthenticated: true,
+      isLoading: false,
+      login: vi.fn(),
+      logout: vi.fn(),
+      authProvider: 'azure-ad',
+      oidcConfig: { provider_name: 'Azure AD' },
+      authEmail: 'alice@example.com',
+    });
+    (apiKeyService.list as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+
+    render(
+      <MemoryRouter>
+        <Profile />
+      </MemoryRouter>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText(/SSO via Azure AD/)).toBeInTheDocument();
+      expect(screen.getByText('alice@example.com')).toBeInTheDocument();
+    });
+  });
+
+  it('toggles notification preference and saves', async () => {
+    (apiKeyService.list as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+
+    const user = userEvent.setup();
+    render(
+      <MemoryRouter>
+        <Profile />
+      </MemoryRouter>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('Notification Preferences')).toBeInTheDocument();
+    });
+
+    // Toggle the first preference
+    const toggles = screen.getAllByRole('checkbox');
+    expect(toggles.length).toBeGreaterThanOrEqual(1);
+    await user.click(toggles[0]);
+
+    // Save preferences
+    await user.click(screen.getByRole('button', { name: /save/i }));
+    await waitFor(() => {
+      expect(notificationService.updatePreferences).toHaveBeenCalled();
+    });
+  });
+
   it('includes expires_at when generate form has an expiry date', async () => {
     (apiKeyService.list as ReturnType<typeof vi.fn>).mockResolvedValue([]);
     (apiKeyService.create as ReturnType<typeof vi.fn>).mockResolvedValue({

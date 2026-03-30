@@ -64,7 +64,7 @@ backend:
 
   # Secret environment variables (stored in Secret).
   secrets:
-    JWT_SECRET: ""               # MUST be provided — minimum 16 chars
+    JWT_SECRET: "sdafhavnbuhy23458y717341fdjhnbyr2347rue847u1+837"               # MUST be provided — minimum 16 chars
     ADMIN_PASSWORD: admin
     AZURE_TABLE_ACCOUNT_KEY: "Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw=="
     KUBECONFIG_ENCRYPTION_KEY: ""

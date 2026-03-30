@@ -1875,3 +1875,908 @@ func TestManager_Deploy_FirstChartFails_NoRollback(t *testing.T) {
 	assert.NoError(t, err)
 	assert.NotContains(t, finalLog.Output, "Rollback:")
 }
+
+// ---- mergeQuotaOverride tests ----
+
+func TestMergeQuotaOverride(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		cluster  *models.ResourceQuotaConfig
+		override *models.InstanceQuotaOverride
+		want     *models.ResourceQuotaConfig
+	}{
+		{
+			name: "all fields overridden",
+			cluster: &models.ResourceQuotaConfig{
+				CPURequest:    "100m",
+				CPULimit:      "500m",
+				MemoryRequest: "128Mi",
+				MemoryLimit:   "512Mi",
+				StorageLimit:  "1Gi",
+				PodLimit:      10,
+			},
+			override: &models.InstanceQuotaOverride{
+				CPURequest:    "200m",
+				CPULimit:      "1000m",
+				MemoryRequest: "256Mi",
+				MemoryLimit:   "1Gi",
+				StorageLimit:  "5Gi",
+				PodLimit:      intPtr(20),
+			},
+			want: &models.ResourceQuotaConfig{
+				CPURequest:    "200m",
+				CPULimit:      "1000m",
+				MemoryRequest: "256Mi",
+				MemoryLimit:   "1Gi",
+				StorageLimit:  "5Gi",
+				PodLimit:      20,
+			},
+		},
+		{
+			name: "no fields overridden",
+			cluster: &models.ResourceQuotaConfig{
+				CPURequest:    "100m",
+				CPULimit:      "500m",
+				MemoryRequest: "128Mi",
+				MemoryLimit:   "512Mi",
+				StorageLimit:  "1Gi",
+				PodLimit:      10,
+			},
+			override: &models.InstanceQuotaOverride{},
+			want: &models.ResourceQuotaConfig{
+				CPURequest:    "100m",
+				CPULimit:      "500m",
+				MemoryRequest: "128Mi",
+				MemoryLimit:   "512Mi",
+				StorageLimit:  "1Gi",
+				PodLimit:      10,
+			},
+		},
+		{
+			name: "partial override - only CPU",
+			cluster: &models.ResourceQuotaConfig{
+				CPURequest:    "100m",
+				CPULimit:      "500m",
+				MemoryRequest: "128Mi",
+				MemoryLimit:   "512Mi",
+				StorageLimit:  "1Gi",
+				PodLimit:      10,
+			},
+			override: &models.InstanceQuotaOverride{
+				CPURequest: "250m",
+				CPULimit:   "750m",
+			},
+			want: &models.ResourceQuotaConfig{
+				CPURequest:    "250m",
+				CPULimit:      "750m",
+				MemoryRequest: "128Mi",
+				MemoryLimit:   "512Mi",
+				StorageLimit:  "1Gi",
+				PodLimit:      10,
+			},
+		},
+		{
+			name: "override PodLimit to zero",
+			cluster: &models.ResourceQuotaConfig{
+				PodLimit: 10,
+			},
+			override: &models.InstanceQuotaOverride{
+				PodLimit: intPtr(0),
+			},
+			want: &models.ResourceQuotaConfig{
+				PodLimit: 0,
+			},
+		},
+		{
+			name: "nil PodLimit keeps cluster value",
+			cluster: &models.ResourceQuotaConfig{
+				PodLimit: 10,
+			},
+			override: &models.InstanceQuotaOverride{
+				PodLimit: nil,
+			},
+			want: &models.ResourceQuotaConfig{
+				PodLimit: 10,
+			},
+		},
+		{
+			name:    "empty cluster with overrides",
+			cluster: &models.ResourceQuotaConfig{},
+			override: &models.InstanceQuotaOverride{
+				CPURequest:   "500m",
+				MemoryLimit:  "2Gi",
+				StorageLimit: "10Gi",
+				PodLimit:     intPtr(50),
+			},
+			want: &models.ResourceQuotaConfig{
+				CPURequest:   "500m",
+				MemoryLimit:  "2Gi",
+				StorageLimit: "10Gi",
+				PodLimit:     50,
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := mergeQuotaOverride(tt.cluster, tt.override)
+			assert.Equal(t, tt.want.CPURequest, got.CPURequest)
+			assert.Equal(t, tt.want.CPULimit, got.CPULimit)
+			assert.Equal(t, tt.want.MemoryRequest, got.MemoryRequest)
+			assert.Equal(t, tt.want.MemoryLimit, got.MemoryLimit)
+			assert.Equal(t, tt.want.StorageLimit, got.StorageLimit)
+			assert.Equal(t, tt.want.PodLimit, got.PodLimit)
+		})
+	}
+}
+
+func intPtr(n int) *int {
+	return &n
+}
+
+// ---- applyNamespaceQuotas tests ----
+
+// mockQuotaRepo implements models.ResourceQuotaRepository for tests.
+type mockQuotaRepo struct {
+	quota *models.ResourceQuotaConfig
+	err   error
+}
+
+func (m *mockQuotaRepo) GetByClusterID(_ context.Context, _ string) (*models.ResourceQuotaConfig, error) {
+	if m.err != nil {
+		return nil, m.err
+	}
+	return m.quota, nil
+}
+
+func (m *mockQuotaRepo) Upsert(_ context.Context, _ *models.ResourceQuotaConfig) error {
+	return nil
+}
+
+func (m *mockQuotaRepo) Delete(_ context.Context, _ string) error {
+	return nil
+}
+
+// mockQuotaOverrideRepo implements models.InstanceQuotaOverrideRepository for tests.
+type mockQuotaOverrideRepo struct {
+	override *models.InstanceQuotaOverride
+	err      error
+}
+
+func (m *mockQuotaOverrideRepo) GetByInstanceID(_ context.Context, _ string) (*models.InstanceQuotaOverride, error) {
+	if m.err != nil {
+		return nil, m.err
+	}
+	return m.override, nil
+}
+
+func (m *mockQuotaOverrideRepo) Upsert(_ context.Context, _ *models.InstanceQuotaOverride) error {
+	return nil
+}
+
+func (m *mockQuotaOverrideRepo) Delete(_ context.Context, _ string) error {
+	return nil
+}
+
+func TestManager_ApplyNamespaceQuotas_SkipsWhenEmpty(t *testing.T) {
+	t.Parallel()
+
+	instanceRepo := newMockInstanceRepo()
+	inst := &models.StackInstance{
+		ID:        "inst-quota-empty",
+		Name:      "quota-empty",
+		Namespace: "stack-quota-empty",
+		ClusterID: "cluster-1",
+		Status:    models.StackStatusRunning,
+	}
+	require.NoError(t, instanceRepo.Create(inst))
+
+	mgr := NewManager(ManagerConfig{
+		Registry:      &mockClusterResolver{helm: &mockHelmExecutor{}},
+		InstanceRepo:  instanceRepo,
+		DeployLogRepo: newMockDeployLogRepo(),
+		Hub:           &mockBroadcaster{},
+		MaxConcurrent: 2,
+		QuotaRepo:     &mockQuotaRepo{quota: &models.ResourceQuotaConfig{}},
+	})
+
+	err := mgr.applyNamespaceQuotas(context.Background(), inst.ID, inst.Namespace)
+	assert.NoError(t, err)
+}
+
+func TestManager_ApplyNamespaceQuotas_InstanceNotFound(t *testing.T) {
+	t.Parallel()
+
+	instanceRepo := newMockInstanceRepo()
+
+	mgr := NewManager(ManagerConfig{
+		Registry:      &mockClusterResolver{helm: &mockHelmExecutor{}},
+		InstanceRepo:  instanceRepo,
+		DeployLogRepo: newMockDeployLogRepo(),
+		Hub:           &mockBroadcaster{},
+		MaxConcurrent: 2,
+		QuotaRepo:     &mockQuotaRepo{quota: &models.ResourceQuotaConfig{CPULimit: "1"}},
+	})
+
+	err := mgr.applyNamespaceQuotas(context.Background(), "nonexistent", "ns")
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "finding instance")
+}
+
+func TestManager_ApplyNamespaceQuotas_ResolveClusterError(t *testing.T) {
+	t.Parallel()
+
+	instanceRepo := newMockInstanceRepo()
+	inst := &models.StackInstance{
+		ID:        "inst-quota-resolve-err",
+		Name:      "quota-resolve-err",
+		Namespace: "stack-quota-resolve-err",
+		ClusterID: "bad-cluster",
+		Status:    models.StackStatusRunning,
+	}
+	require.NoError(t, instanceRepo.Create(inst))
+
+	mgr := NewManager(ManagerConfig{
+		Registry: &mockClusterResolver{
+			helm:       &mockHelmExecutor{},
+			resolveErr: fmt.Errorf("cluster not found"),
+		},
+		InstanceRepo:  instanceRepo,
+		DeployLogRepo: newMockDeployLogRepo(),
+		Hub:           &mockBroadcaster{},
+		MaxConcurrent: 2,
+		QuotaRepo:     &mockQuotaRepo{quota: &models.ResourceQuotaConfig{CPULimit: "1"}},
+	})
+
+	err := mgr.applyNamespaceQuotas(context.Background(), inst.ID, inst.Namespace)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "resolving cluster")
+}
+
+func TestManager_ApplyNamespaceQuotas_FallsBackOnQuotaRepoError(t *testing.T) {
+	t.Parallel()
+
+	instanceRepo := newMockInstanceRepo()
+	inst := &models.StackInstance{
+		ID:        "inst-quota-repo-err",
+		Name:      "quota-repo-err",
+		Namespace: "stack-quota-repo-err",
+		ClusterID: "cluster-1",
+		Status:    models.StackStatusRunning,
+	}
+	require.NoError(t, instanceRepo.Create(inst))
+
+	// When quota repo errors, it falls back to empty config (skips)
+	mgr := NewManager(ManagerConfig{
+		Registry:      &mockClusterResolver{helm: &mockHelmExecutor{}},
+		InstanceRepo:  instanceRepo,
+		DeployLogRepo: newMockDeployLogRepo(),
+		Hub:           &mockBroadcaster{},
+		MaxConcurrent: 2,
+		QuotaRepo:     &mockQuotaRepo{err: fmt.Errorf("quota repo error")},
+	})
+
+	// When GetByClusterID errors, it falls back to empty quota config, which is skipped.
+	err := mgr.applyNamespaceQuotas(context.Background(), inst.ID, inst.Namespace)
+	assert.NoError(t, err)
+}
+
+func TestManager_ApplyNamespaceQuotas_WithOverride(t *testing.T) {
+	t.Parallel()
+
+	instanceRepo := newMockInstanceRepo()
+	inst := &models.StackInstance{
+		ID:        "inst-quota-override",
+		Name:      "quota-override",
+		Namespace: "stack-quota-override",
+		ClusterID: "cluster-1",
+		Status:    models.StackStatusRunning,
+	}
+	require.NoError(t, instanceRepo.Create(inst))
+
+	fakeCS := fake.NewSimpleClientset(&corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{Name: inst.Namespace},
+	})
+	k8sClient := k8s.NewClientFromInterface(fakeCS)
+
+	mgr := NewManager(ManagerConfig{
+		Registry:      &mockClusterResolver{helm: &mockHelmExecutor{}, k8sClient: k8sClient},
+		InstanceRepo:  instanceRepo,
+		DeployLogRepo: newMockDeployLogRepo(),
+		Hub:           &mockBroadcaster{},
+		MaxConcurrent: 2,
+		QuotaRepo: &mockQuotaRepo{
+			quota: &models.ResourceQuotaConfig{
+				CPURequest:    "100m",
+				CPULimit:      "500m",
+				MemoryRequest: "128Mi",
+				MemoryLimit:   "512Mi",
+			},
+		},
+		QuotaOverrideRepo: &mockQuotaOverrideRepo{
+			override: &models.InstanceQuotaOverride{
+				CPULimit:    "1000m",
+				MemoryLimit: "1Gi",
+			},
+		},
+	})
+
+	err := mgr.applyNamespaceQuotas(context.Background(), inst.ID, inst.Namespace)
+	assert.NoError(t, err)
+}
+
+func TestManager_ApplyNamespaceQuotas_K8sClientError(t *testing.T) {
+	t.Parallel()
+
+	instanceRepo := newMockInstanceRepo()
+	inst := &models.StackInstance{
+		ID:        "inst-quota-k8s-err",
+		Name:      "quota-k8s-err",
+		Namespace: "stack-quota-k8s-err",
+		ClusterID: "cluster-1",
+		Status:    models.StackStatusRunning,
+	}
+	require.NoError(t, instanceRepo.Create(inst))
+
+	mgr := NewManager(ManagerConfig{
+		Registry: &mockClusterResolver{
+			helm:   &mockHelmExecutor{},
+			k8sErr: fmt.Errorf("k8s client unavailable"),
+		},
+		InstanceRepo:  instanceRepo,
+		DeployLogRepo: newMockDeployLogRepo(),
+		Hub:           &mockBroadcaster{},
+		MaxConcurrent: 2,
+		QuotaRepo: &mockQuotaRepo{
+			quota: &models.ResourceQuotaConfig{
+				CPULimit: "500m",
+			},
+		},
+	})
+
+	err := mgr.applyNamespaceQuotas(context.Background(), inst.ID, inst.Namespace)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "getting k8s client")
+}
+
+func TestManager_ApplyNamespaceQuotas_OverrideRepoError_UsesClusterDefaults(t *testing.T) {
+	t.Parallel()
+
+	instanceRepo := newMockInstanceRepo()
+	inst := &models.StackInstance{
+		ID:        "inst-quota-ov-err",
+		Name:      "quota-ov-err",
+		Namespace: "stack-quota-ov-err",
+		ClusterID: "cluster-1",
+		Status:    models.StackStatusRunning,
+	}
+	require.NoError(t, instanceRepo.Create(inst))
+
+	fakeCS := fake.NewSimpleClientset(&corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{Name: inst.Namespace},
+	})
+	k8sClient := k8s.NewClientFromInterface(fakeCS)
+
+	mgr := NewManager(ManagerConfig{
+		Registry:      &mockClusterResolver{helm: &mockHelmExecutor{}, k8sClient: k8sClient},
+		InstanceRepo:  instanceRepo,
+		DeployLogRepo: newMockDeployLogRepo(),
+		Hub:           &mockBroadcaster{},
+		MaxConcurrent: 2,
+		QuotaRepo: &mockQuotaRepo{
+			quota: &models.ResourceQuotaConfig{
+				CPURequest:    "100m",
+				CPULimit:      "500m",
+				MemoryRequest: "128Mi",
+				MemoryLimit:   "256Mi",
+			},
+		},
+		QuotaOverrideRepo: &mockQuotaOverrideRepo{
+			err: fmt.Errorf("override repo error"),
+		},
+	})
+
+	// When override repo errors, cluster defaults are still applied.
+	err := mgr.applyNamespaceQuotas(context.Background(), inst.ID, inst.Namespace)
+	assert.NoError(t, err)
+}
+
+// ---- finalizeClean error path tests ----
+
+func TestManager_FinalizeClean_InstanceNotFound(t *testing.T) {
+	t.Parallel()
+
+	instanceRepo := newMockInstanceRepo()
+	logRepo := newMockDeployLogRepo()
+
+	mgr := NewManager(ManagerConfig{
+		Registry:      &mockClusterResolver{helm: &mockHelmExecutor{}},
+		InstanceRepo:  instanceRepo,
+		DeployLogRepo: logRepo,
+		Hub:           nil,
+		MaxConcurrent: 2,
+	})
+
+	// Should not panic when instance is not found.
+	orphanLog := &models.DeploymentLog{ID: "log-clean-orphan", StackInstanceID: "nonexistent-id"}
+	assert.NotPanics(t, func() {
+		mgr.finalizeClean("nonexistent-id", orphanLog, "some output", nil)
+	})
+}
+
+func TestManager_FinalizeClean_Success(t *testing.T) {
+	t.Parallel()
+
+	instanceRepo := newMockInstanceRepo()
+	logRepo := newMockDeployLogRepo()
+	hub := &mockBroadcaster{}
+
+	inst := &models.StackInstance{
+		ID:        "inst-fin-clean-ok",
+		Name:      "finalize-clean-ok",
+		Namespace: "stack-fin-clean-ok",
+		Status:    models.StackStatusCleaning,
+	}
+	require.NoError(t, instanceRepo.Create(inst))
+
+	deployLog := &models.DeploymentLog{
+		ID:              "log-fin-clean-ok",
+		StackInstanceID: inst.ID,
+		Action:          models.DeployActionClean,
+		Status:          models.DeployLogRunning,
+		StartedAt:       time.Now().UTC(),
+	}
+	require.NoError(t, logRepo.Create(context.Background(), deployLog))
+
+	mgr := NewManager(ManagerConfig{
+		Registry:      &mockClusterResolver{helm: &mockHelmExecutor{}},
+		InstanceRepo:  instanceRepo,
+		DeployLogRepo: logRepo,
+		Hub:           hub,
+		MaxConcurrent: 2,
+	})
+
+	mgr.finalizeClean(inst.ID, deployLog, "namespace deleted", nil)
+
+	final, err := instanceRepo.FindByID(inst.ID)
+	assert.NoError(t, err)
+	assert.Equal(t, models.StackStatusDraft, final.Status)
+	assert.Empty(t, final.ErrorMessage)
+	assert.Nil(t, final.LastDeployedAt)
+
+	finalLog, err := logRepo.FindByID(context.Background(), deployLog.ID)
+	assert.NoError(t, err)
+	assert.Equal(t, models.DeployLogSuccess, finalLog.Status)
+	assert.Equal(t, "namespace deleted", finalLog.Output)
+	assert.NotNil(t, finalLog.CompletedAt)
+
+	assert.Greater(t, hub.messageCount(), 0)
+}
+
+func TestManager_FinalizeClean_Error(t *testing.T) {
+	t.Parallel()
+
+	instanceRepo := newMockInstanceRepo()
+	logRepo := newMockDeployLogRepo()
+	hub := &mockBroadcaster{}
+
+	inst := &models.StackInstance{
+		ID:        "inst-fin-clean-err",
+		Name:      "finalize-clean-err",
+		Namespace: "stack-fin-clean-err",
+		Status:    models.StackStatusCleaning,
+	}
+	require.NoError(t, instanceRepo.Create(inst))
+
+	deployLog := &models.DeploymentLog{
+		ID:              "log-fin-clean-err",
+		StackInstanceID: inst.ID,
+		Action:          models.DeployActionClean,
+		Status:          models.DeployLogRunning,
+		StartedAt:       time.Now().UTC(),
+	}
+	require.NoError(t, logRepo.Create(context.Background(), deployLog))
+
+	mgr := NewManager(ManagerConfig{
+		Registry:      &mockClusterResolver{helm: &mockHelmExecutor{}},
+		InstanceRepo:  instanceRepo,
+		DeployLogRepo: logRepo,
+		Hub:           hub,
+		MaxConcurrent: 2,
+	})
+
+	cleanErr := fmt.Errorf("deleting namespace %q: context deadline exceeded", "stack-fin-clean-err")
+	mgr.finalizeClean(inst.ID, deployLog, "partial output", cleanErr)
+
+	final, err := instanceRepo.FindByID(inst.ID)
+	assert.NoError(t, err)
+	assert.Equal(t, models.StackStatusError, final.Status)
+	assert.Equal(t, `deleting namespace "stack-fin-clean-err": operation failed`, final.ErrorMessage)
+
+	finalLog, err := logRepo.FindByID(context.Background(), deployLog.ID)
+	assert.NoError(t, err)
+	assert.Equal(t, models.DeployLogError, finalLog.Status)
+	assert.Equal(t, `deleting namespace "stack-fin-clean-err": operation failed`, finalLog.ErrorMessage)
+	assert.Equal(t, "partial output", finalLog.Output)
+	assert.NotNil(t, finalLog.CompletedAt)
+
+	assert.Greater(t, hub.messageCount(), 0)
+}
+
+// ---- executeDeploy improvements: OCI chart ref, values file ----
+
+func TestManager_ExecuteDeploy_OCIChartRef(t *testing.T) {
+	t.Parallel()
+
+	instanceRepo := newMockInstanceRepo()
+	logRepo := newMockDeployLogRepo()
+	hub := &mockBroadcaster{}
+
+	inst := &models.StackInstance{
+		ID:                "inst-oci",
+		StackDefinitionID: "def-1",
+		Name:              "oci-test",
+		Namespace:         "stack-oci-test",
+		OwnerID:           "user-1",
+		Branch:            "main",
+		Status:            models.StackStatusDraft,
+	}
+	require.NoError(t, instanceRepo.Create(inst))
+
+	helmMock := &mockHelmExecutor{}
+
+	mgr := NewManager(ManagerConfig{
+		Registry:      &mockClusterResolver{helm: helmMock},
+		InstanceRepo:  instanceRepo,
+		DeployLogRepo: logRepo,
+		Hub:           hub,
+		MaxConcurrent: 2,
+	})
+
+	req := DeployRequest{
+		Instance:   inst,
+		Definition: &models.StackDefinition{ID: "def-1", Name: "test-def"},
+		Charts: []ChartDeployInfo{
+			{
+				ChartConfig: models.ChartConfig{
+					ChartName:     "myapp",
+					ChartPath:     "myapp",
+					RepositoryURL: "oci://registry.example.com/charts",
+					ChartVersion:  "1.2.3",
+					DeployOrder:   1,
+				},
+				ValuesYAML: []byte("key: value\n"),
+			},
+		},
+		Owner: "testuser",
+	}
+
+	logID, err := mgr.Deploy(context.Background(), req)
+	assert.NoError(t, err)
+	assert.NotEmpty(t, logID)
+
+	// Wait for async completion.
+	time.Sleep(300 * time.Millisecond)
+
+	// Verify the install was called with the OCI chart ref (repo+path combined).
+	helmMock.mu.Lock()
+	require.Len(t, helmMock.installCalls, 1)
+	call := helmMock.installCalls[0]
+	helmMock.mu.Unlock()
+
+	assert.Equal(t, "oci://registry.example.com/charts/myapp", call.ChartPath)
+	assert.Empty(t, call.RepoURL, "OCI charts should not use --repo")
+	assert.Equal(t, "1.2.3", call.Version)
+	assert.Equal(t, "myapp", call.ReleaseName)
+	assert.NotEmpty(t, call.ValuesFile, "values file should be set")
+	assert.Equal(t, "stack-oci-test", call.Namespace)
+}
+
+func TestManager_ExecuteDeploy_HTTPRepoRef(t *testing.T) {
+	t.Parallel()
+
+	instanceRepo := newMockInstanceRepo()
+	logRepo := newMockDeployLogRepo()
+	hub := &mockBroadcaster{}
+
+	inst := &models.StackInstance{
+		ID:                "inst-http-repo",
+		StackDefinitionID: "def-1",
+		Name:              "http-repo-test",
+		Namespace:         "stack-http-repo-test",
+		OwnerID:           "user-1",
+		Branch:            "main",
+		Status:            models.StackStatusDraft,
+	}
+	require.NoError(t, instanceRepo.Create(inst))
+
+	helmMock := &mockHelmExecutor{}
+
+	mgr := NewManager(ManagerConfig{
+		Registry:      &mockClusterResolver{helm: helmMock},
+		InstanceRepo:  instanceRepo,
+		DeployLogRepo: logRepo,
+		Hub:           hub,
+		MaxConcurrent: 2,
+	})
+
+	req := DeployRequest{
+		Instance:   inst,
+		Definition: &models.StackDefinition{ID: "def-1", Name: "test-def"},
+		Charts: []ChartDeployInfo{
+			{
+				ChartConfig: models.ChartConfig{
+					ChartName:     "nginx-ingress",
+					ChartPath:     "nginx-ingress",
+					RepositoryURL: "https://charts.example.com/stable",
+					ChartVersion:  "4.0.0",
+					DeployOrder:   1,
+				},
+			},
+		},
+		Owner: "testuser",
+	}
+
+	logID, err := mgr.Deploy(context.Background(), req)
+	assert.NoError(t, err)
+	assert.NotEmpty(t, logID)
+
+	// Wait for async completion.
+	time.Sleep(300 * time.Millisecond)
+
+	helmMock.mu.Lock()
+	require.Len(t, helmMock.installCalls, 1)
+	call := helmMock.installCalls[0]
+	helmMock.mu.Unlock()
+
+	assert.Equal(t, "nginx-ingress", call.ChartPath)
+	assert.Equal(t, "https://charts.example.com/stable", call.RepoURL, "HTTP repos should pass --repo separately")
+	assert.Equal(t, "4.0.0", call.Version)
+}
+
+func TestManager_ExecuteDeploy_ValuesFileWritten(t *testing.T) {
+	t.Parallel()
+
+	instanceRepo := newMockInstanceRepo()
+	logRepo := newMockDeployLogRepo()
+	hub := &mockBroadcaster{}
+
+	inst := &models.StackInstance{
+		ID:                "inst-values-file",
+		StackDefinitionID: "def-1",
+		Name:              "values-file-test",
+		Namespace:         "stack-values-file-test",
+		OwnerID:           "user-1",
+		Branch:            "main",
+		Status:            models.StackStatusDraft,
+	}
+	require.NoError(t, instanceRepo.Create(inst))
+
+	helmMock := &mockHelmExecutor{}
+
+	mgr := NewManager(ManagerConfig{
+		Registry:      &mockClusterResolver{helm: helmMock},
+		InstanceRepo:  instanceRepo,
+		DeployLogRepo: logRepo,
+		Hub:           hub,
+		MaxConcurrent: 2,
+	})
+
+	req := DeployRequest{
+		Instance:   inst,
+		Definition: &models.StackDefinition{ID: "def-1", Name: "test-def"},
+		Charts: []ChartDeployInfo{
+			{
+				ChartConfig: models.ChartConfig{
+					ChartName:   "chart-with-values",
+					DeployOrder: 1,
+				},
+				ValuesYAML: []byte("replicas: 3\nimage: nginx:latest\n"),
+			},
+			{
+				ChartConfig: models.ChartConfig{
+					ChartName:   "chart-no-values",
+					DeployOrder: 2,
+				},
+				ValuesYAML: nil,
+			},
+		},
+		Owner: "testuser",
+	}
+
+	logID, err := mgr.Deploy(context.Background(), req)
+	assert.NoError(t, err)
+	assert.NotEmpty(t, logID)
+
+	// Wait for async completion.
+	time.Sleep(300 * time.Millisecond)
+
+	helmMock.mu.Lock()
+	require.Len(t, helmMock.installCalls, 2)
+	firstCall := helmMock.installCalls[0]
+	secondCall := helmMock.installCalls[1]
+	helmMock.mu.Unlock()
+
+	assert.NotEmpty(t, firstCall.ValuesFile, "chart with values should have a values file")
+	assert.Contains(t, firstCall.ValuesFile, "chart-with-values-values.yaml")
+	assert.Empty(t, secondCall.ValuesFile, "chart without values should not have a values file")
+}
+
+// ---- Deploy/Stop/Clean synchronous error paths (resolve, helm executor) ----
+
+func TestManager_Deploy_ResolveClusterError(t *testing.T) {
+	t.Parallel()
+
+	mgr := NewManager(ManagerConfig{
+		Registry:      &mockClusterResolver{resolveErr: fmt.Errorf("cluster not found")},
+		InstanceRepo:  newMockInstanceRepo(),
+		DeployLogRepo: newMockDeployLogRepo(),
+		Hub:           &mockBroadcaster{},
+		MaxConcurrent: 2,
+	})
+
+	_, err := mgr.Deploy(context.Background(), DeployRequest{
+		Instance:   &models.StackInstance{ID: "inst-resolve-err"},
+		Definition: &models.StackDefinition{ID: "def-1"},
+		Charts:     []ChartDeployInfo{},
+	})
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "resolving cluster")
+}
+
+func TestManager_Deploy_HelmExecutorError(t *testing.T) {
+	t.Parallel()
+
+	mgr := NewManager(ManagerConfig{
+		Registry:      &mockClusterResolver{helmErr: fmt.Errorf("no executor")},
+		InstanceRepo:  newMockInstanceRepo(),
+		DeployLogRepo: newMockDeployLogRepo(),
+		Hub:           &mockBroadcaster{},
+		MaxConcurrent: 2,
+	})
+
+	_, err := mgr.Deploy(context.Background(), DeployRequest{
+		Instance:   &models.StackInstance{ID: "inst-helm-err"},
+		Definition: &models.StackDefinition{ID: "def-1"},
+		Charts:     []ChartDeployInfo{},
+	})
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "getting cluster clients")
+}
+
+func TestManager_Deploy_NilHelmExecutor(t *testing.T) {
+	t.Parallel()
+
+	mgr := NewManager(ManagerConfig{
+		Registry:      &mockClusterResolver{helm: nil},
+		InstanceRepo:  newMockInstanceRepo(),
+		DeployLogRepo: newMockDeployLogRepo(),
+		Hub:           &mockBroadcaster{},
+		MaxConcurrent: 2,
+	})
+
+	_, err := mgr.Deploy(context.Background(), DeployRequest{
+		Instance:   &models.StackInstance{ID: "inst-nil-helm"},
+		Definition: &models.StackDefinition{ID: "def-1"},
+		Charts:     []ChartDeployInfo{},
+	})
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "helm executor is nil")
+}
+
+func TestSanitizeDeployError_DeleteNamespace(t *testing.T) {
+	t.Parallel()
+
+	err := fmt.Errorf("deleting namespace %q: context deadline exceeded", "stack-test")
+	got := sanitizeDeployError(err)
+	assert.Equal(t, `deleting namespace "stack-test": operation failed`, got)
+}
+
+func TestManager_Clean_CancelledContext(t *testing.T) {
+	t.Parallel()
+
+	mgr := NewManager(ManagerConfig{
+		Registry:      &mockClusterResolver{helm: &mockHelmExecutor{}},
+		InstanceRepo:  newMockInstanceRepo(),
+		DeployLogRepo: newMockDeployLogRepo(),
+		Hub:           &mockBroadcaster{},
+		MaxConcurrent: 2,
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err := mgr.Clean(ctx, &models.StackInstance{ID: "inst-clean-cancel"}, nil)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "request cancelled")
+}
+
+func TestManager_Clean_NilRegistry(t *testing.T) {
+	t.Parallel()
+
+	mgr := NewManager(ManagerConfig{
+		Registry:      nil,
+		InstanceRepo:  newMockInstanceRepo(),
+		DeployLogRepo: newMockDeployLogRepo(),
+		Hub:           &mockBroadcaster{},
+		MaxConcurrent: 2,
+	})
+
+	_, err := mgr.Clean(context.Background(), &models.StackInstance{ID: "inst-clean-nil-reg"}, nil)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "cluster registry is not configured")
+}
+
+func TestManager_Clean_K8sClientError(t *testing.T) {
+	t.Parallel()
+
+	mgr := NewManager(ManagerConfig{
+		Registry: &mockClusterResolver{
+			helm:   &mockHelmExecutor{},
+			k8sErr: fmt.Errorf("no k8s client"),
+		},
+		InstanceRepo:  newMockInstanceRepo(),
+		DeployLogRepo: newMockDeployLogRepo(),
+		Hub:           &mockBroadcaster{},
+		MaxConcurrent: 2,
+	})
+
+	_, err := mgr.Clean(context.Background(), &models.StackInstance{ID: "inst-clean-k8s-err"}, nil)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "getting cluster k8s client")
+}
+
+func TestManager_StopWithCharts_CancelledContext(t *testing.T) {
+	t.Parallel()
+
+	mgr := NewManager(ManagerConfig{
+		Registry:      &mockClusterResolver{helm: &mockHelmExecutor{}},
+		InstanceRepo:  newMockInstanceRepo(),
+		DeployLogRepo: newMockDeployLogRepo(),
+		Hub:           &mockBroadcaster{},
+		MaxConcurrent: 2,
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err := mgr.StopWithCharts(ctx, &models.StackInstance{ID: "inst-stop-cancel"}, nil)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "request cancelled")
+}
+
+func TestManager_StopWithCharts_NilHelmExecutor(t *testing.T) {
+	t.Parallel()
+
+	mgr := NewManager(ManagerConfig{
+		Registry:      &mockClusterResolver{helm: nil},
+		InstanceRepo:  newMockInstanceRepo(),
+		DeployLogRepo: newMockDeployLogRepo(),
+		Hub:           &mockBroadcaster{},
+		MaxConcurrent: 2,
+	})
+
+	_, err := mgr.StopWithCharts(context.Background(), &models.StackInstance{ID: "inst-stop-nil-helm"}, nil)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "helm executor is nil")
+}
+
+func TestManager_Clean_NilHelmExecutor(t *testing.T) {
+	t.Parallel()
+
+	mgr := NewManager(ManagerConfig{
+		Registry:      &mockClusterResolver{helm: nil},
+		InstanceRepo:  newMockInstanceRepo(),
+		DeployLogRepo: newMockDeployLogRepo(),
+		Hub:           &mockBroadcaster{},
+		MaxConcurrent: 2,
+	})
+
+	_, err := mgr.Clean(context.Background(), &models.StackInstance{ID: "inst-clean-nil-helm"}, nil)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "helm executor is nil")
+}

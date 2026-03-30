@@ -707,3 +707,154 @@ func TestMaxLengthConstants(t *testing.T) {
 	assert.Equal(t, 50, MaxInstanceNameLength)
 	assert.Equal(t, 63, MaxNamespaceLength)
 }
+
+// ---------------------------------------------------------------------------
+// ResourceQuotaConfig.Validate
+// ---------------------------------------------------------------------------
+
+func TestResourceQuotaConfigValidate(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		config  ResourceQuotaConfig
+		wantErr bool
+		errMsg  string
+	}{
+		{
+			name: "valid config",
+			config: ResourceQuotaConfig{
+				ClusterID: "c1",
+				PodLimit:  10,
+				CPULimit:  "2",
+			},
+			wantErr: false,
+		},
+		{
+			name: "valid with zero pod limit",
+			config: ResourceQuotaConfig{
+				ClusterID: "c1",
+				PodLimit:  0,
+			},
+			wantErr: false,
+		},
+		{
+			name: "missing cluster_id",
+			config: ResourceQuotaConfig{
+				PodLimit: 10,
+			},
+			wantErr: true,
+			errMsg:  "cluster_id is required",
+		},
+		{
+			name: "negative pod_limit",
+			config: ResourceQuotaConfig{
+				ClusterID: "c1",
+				PodLimit:  -1,
+			},
+			wantErr: true,
+			errMsg:  "pod_limit must be non-negative",
+		},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			err := tt.config.Validate()
+			if tt.wantErr {
+				assert.EqualError(t, err, tt.errMsg)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// InstanceQuotaOverride.Validate
+// ---------------------------------------------------------------------------
+
+func TestInstanceQuotaOverrideValidate(t *testing.T) {
+	t.Parallel()
+
+	positivePod := 5
+	negativePod := -1
+
+	tests := []struct {
+		name     string
+		override InstanceQuotaOverride
+		wantErr  bool
+		errMsg   string
+	}{
+		{
+			name: "valid override with pod limit",
+			override: InstanceQuotaOverride{
+				StackInstanceID: "si1",
+				PodLimit:        &positivePod,
+			},
+			wantErr: false,
+		},
+		{
+			name: "valid override with nil pod limit",
+			override: InstanceQuotaOverride{
+				StackInstanceID: "si1",
+				PodLimit:        nil,
+			},
+			wantErr: false,
+		},
+		{
+			name: "missing stack_instance_id",
+			override: InstanceQuotaOverride{
+				PodLimit: &positivePod,
+			},
+			wantErr: true,
+			errMsg:  "stack_instance_id is required",
+		},
+		{
+			name: "negative pod_limit",
+			override: InstanceQuotaOverride{
+				StackInstanceID: "si1",
+				PodLimit:        &negativePod,
+			},
+			wantErr: true,
+			errMsg:  "pod_limit must be non-negative",
+		},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			err := tt.override.Validate()
+			if tt.wantErr {
+				assert.EqualError(t, err, tt.errMsg)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Base model tests
+// ---------------------------------------------------------------------------
+
+func TestBaseModel(t *testing.T) {
+	t.Parallel()
+
+	b := Base{ID: 42}
+	assert.Equal(t, uint(42), b.ID)
+	assert.True(t, b.CreatedAt.IsZero(), "zero value CreatedAt")
+	assert.True(t, b.UpdatedAt.IsZero(), "zero value UpdatedAt")
+	assert.Nil(t, b.DeletedAt, "nil DeletedAt by default")
+}
+
+// ---------------------------------------------------------------------------
+// Repository interface compliance (compile-time check)
+// ---------------------------------------------------------------------------
+
+func TestGenericRepositoryImplementsRepository(t *testing.T) {
+	t.Parallel()
+
+	// This test verifies that GenericRepository satisfies the Repository interface.
+	var _ Repository = (*GenericRepository)(nil)
+}

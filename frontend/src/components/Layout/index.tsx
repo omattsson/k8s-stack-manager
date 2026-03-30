@@ -175,52 +175,143 @@ const Layout = ({ children }: LayoutProps) => {
     </>
   );
 
+  const renderDrawerHeader = (open: boolean) => (
+    <Toolbar
+      sx={{
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: open ? 'space-between' : 'center',
+        px: open ? 2 : 0,
+      }}
+    >
+      {open ? (
+        <Typography
+          variant="h6"
+          noWrap
+          component={RouterLink}
+          to="/"
+          sx={{ color: 'inherit', textDecoration: 'none', fontWeight: 700 }}
+        >
+          K8s Stack Manager
+        </Typography>
+      ) : (
+        <Tooltip title="K8s Stack Manager" placement="right" arrow>
+          <IconButton component={RouterLink} to="/" size="small" aria-label="Home">
+            <HubOutlined color="primary" />
+          </IconButton>
+        </Tooltip>
+      )}
+      {!isMobile && (
+        <IconButton
+          onClick={() => setDesktopOpen((prev) => !prev)}
+          size="small"
+          aria-label={open ? 'Collapse sidebar' : 'Expand sidebar'}
+        >
+          <ChevronLeftIcon
+            sx={{
+              transition: 'transform 0.2s',
+              transform: open ? 'rotate(0deg)' : 'rotate(180deg)',
+            }}
+          />
+        </IconButton>
+      )}
+    </Toolbar>
+  );
+
+  const renderDarkModeToggle = (open: boolean) => (
+    <Box sx={{ px: open ? 2 : 1, py: 1, display: 'flex', alignItems: 'center', justifyContent: open ? 'flex-start' : 'center' }}>
+      {open ? (
+        <ListItemButton
+          onClick={toggleMode}
+          sx={{ borderRadius: 1, py: 0.5 }}
+        >
+          <ListItemIcon sx={{ minWidth: 0, mr: 2, justifyContent: 'center', color: 'text.secondary' }}>
+            {mode === 'dark' ? <LightModeOutlined /> : <DarkModeOutlined />}
+          </ListItemIcon>
+          <ListItemText
+            primary={mode === 'dark' ? 'Light mode' : 'Dark mode'}
+            slotProps={{ primary: { variant: 'body2' } }}
+          />
+        </ListItemButton>
+      ) : (
+        <Tooltip title={mode === 'dark' ? 'Light mode' : 'Dark mode'} placement="right" arrow>
+          <IconButton onClick={toggleMode} size="small" aria-label="Toggle dark mode">
+            {mode === 'dark' ? <LightModeOutlined /> : <DarkModeOutlined />}
+          </IconButton>
+        </Tooltip>
+      )}
+    </Box>
+  );
+
+  const roleChipColor = user?.role === 'admin' ? 'error' as const : user?.role === 'devops' ? 'warning' as const : 'default' as const;
+
+  const renderUserSectionExpanded = () => (
+    <>
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+        <AccountCircleOutlined sx={{ color: 'text.secondary' }} />
+        <Box sx={{ overflow: 'hidden' }}>
+          <Typography variant="body2" fontWeight={600} noWrap>
+            {user?.username}
+          </Typography>
+          <Chip
+            label={user?.role}
+            size="small"
+            color={roleChipColor}
+            sx={{ height: 20, fontSize: '0.7rem' }}
+          />
+        </Box>
+      </Box>
+      <Box sx={{ display: 'flex', gap: 1 }}>
+        <ListItemButton
+          component={RouterLink}
+          to="/profile"
+          selected={location.pathname === '/profile'}
+          sx={{ borderRadius: 1, py: 0.5, flex: 1, justifyContent: 'center' }}
+        >
+          <ListItemText
+            primary="Profile"
+            slotProps={{ primary: { variant: 'body2', textAlign: 'center' } }}
+          />
+        </ListItemButton>
+        <ListItemButton
+          onClick={logout}
+          sx={{ borderRadius: 1, py: 0.5, flex: 1, justifyContent: 'center' }}
+        >
+          <ListItemText
+            primary="Logout"
+            slotProps={{ primary: { variant: 'body2', textAlign: 'center' } }}
+          />
+        </ListItemButton>
+      </Box>
+    </>
+  );
+
+  const renderUserSectionCollapsed = () => (
+    <>
+      <Tooltip title="Profile" placement="right" arrow>
+        <IconButton
+          component={RouterLink}
+          to="/profile"
+          size="small"
+          aria-label="Profile"
+          color={location.pathname === '/profile' ? 'primary' : 'default'}
+        >
+          <AccountCircleOutlined />
+        </IconButton>
+      </Tooltip>
+      <Tooltip title="Logout" placement="right" arrow>
+        <IconButton onClick={logout} size="small" aria-label="Logout">
+          <LogoutIcon />
+        </IconButton>
+      </Tooltip>
+    </>
+  );
+
   const drawerContent = (open: boolean) => (
     <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-      {/* Header */}
-      <Toolbar
-        sx={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: open ? 'space-between' : 'center',
-          px: open ? 2 : 0,
-        }}
-      >
-        {open ? (
-          <Typography
-            variant="h6"
-            noWrap
-            component={RouterLink}
-            to="/"
-            sx={{ color: 'inherit', textDecoration: 'none', fontWeight: 700 }}
-          >
-            K8s Stack Manager
-          </Typography>
-        ) : (
-          <Tooltip title="K8s Stack Manager" placement="right" arrow>
-            <IconButton component={RouterLink} to="/" size="small" aria-label="Home">
-              <HubOutlined color="primary" />
-            </IconButton>
-          </Tooltip>
-        )}
-        {!isMobile && (
-          <IconButton
-            onClick={() => setDesktopOpen((prev) => !prev)}
-            size="small"
-            aria-label={open ? 'Collapse sidebar' : 'Expand sidebar'}
-          >
-            <ChevronLeftIcon
-              sx={{
-                transition: 'transform 0.2s',
-                transform: open ? 'rotate(0deg)' : 'rotate(180deg)',
-              }}
-            />
-          </IconButton>
-        )}
-      </Toolbar>
+      {renderDrawerHeader(open)}
       <Divider />
 
-      {/* Navigation */}
       <List component="nav" aria-label="Main navigation" sx={{ flex: 1, overflow: 'auto', pt: 1 }}>
         {renderNavSection(mainNav, 'Main', open)}
         {hasAtLeastRole(user?.role, 'devops') &&
@@ -229,32 +320,9 @@ const Layout = ({ children }: LayoutProps) => {
           renderNavSection(adminNav, 'Administration', open)}
       </List>
 
-      {/* Dark mode toggle */}
       <Divider />
-      <Box sx={{ px: open ? 2 : 1, py: 1, display: 'flex', alignItems: 'center', justifyContent: open ? 'flex-start' : 'center' }}>
-        {open ? (
-          <ListItemButton
-            onClick={toggleMode}
-            sx={{ borderRadius: 1, py: 0.5 }}
-          >
-            <ListItemIcon sx={{ minWidth: 0, mr: 2, justifyContent: 'center', color: 'text.secondary' }}>
-              {mode === 'dark' ? <LightModeOutlined /> : <DarkModeOutlined />}
-            </ListItemIcon>
-            <ListItemText
-              primary={mode === 'dark' ? 'Light mode' : 'Dark mode'}
-              slotProps={{ primary: { variant: 'body2' } }}
-            />
-          </ListItemButton>
-        ) : (
-          <Tooltip title={mode === 'dark' ? 'Light mode' : 'Dark mode'} placement="right" arrow>
-            <IconButton onClick={toggleMode} size="small" aria-label="Toggle dark mode">
-              {mode === 'dark' ? <LightModeOutlined /> : <DarkModeOutlined />}
-            </IconButton>
-          </Tooltip>
-        )}
-      </Box>
+      {renderDarkModeToggle(open)}
 
-      {/* Notifications + User section */}
       <Divider />
       <Box sx={{ p: open ? 2 : 1, display: 'flex', flexDirection: 'column', alignItems: open ? 'stretch' : 'center', gap: 1 }}>
         {!isMobile && (
@@ -262,71 +330,7 @@ const Layout = ({ children }: LayoutProps) => {
             <NotificationCenter />
           </Box>
         )}
-        {open ? (
-          <>
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-              <AccountCircleOutlined sx={{ color: 'text.secondary' }} />
-              <Box sx={{ overflow: 'hidden' }}>
-                <Typography variant="body2" fontWeight={600} noWrap>
-                  {user?.username}
-                </Typography>
-                <Chip
-                  label={user?.role}
-                  size="small"
-                  color={
-                    user?.role === 'admin'
-                      ? 'error'
-                      : user?.role === 'devops'
-                        ? 'warning'
-                        : 'default'
-                  }
-                  sx={{ height: 20, fontSize: '0.7rem' }}
-                />
-              </Box>
-            </Box>
-            <Box sx={{ display: 'flex', gap: 1 }}>
-              <ListItemButton
-                component={RouterLink}
-                to="/profile"
-                selected={location.pathname === '/profile'}
-                sx={{ borderRadius: 1, py: 0.5, flex: 1, justifyContent: 'center' }}
-              >
-                <ListItemText
-                  primary="Profile"
-                  slotProps={{ primary: { variant: 'body2', textAlign: 'center' } }}
-                />
-              </ListItemButton>
-              <ListItemButton
-                onClick={logout}
-                sx={{ borderRadius: 1, py: 0.5, flex: 1, justifyContent: 'center' }}
-              >
-                <ListItemText
-                  primary="Logout"
-                  slotProps={{ primary: { variant: 'body2', textAlign: 'center' } }}
-                />
-              </ListItemButton>
-            </Box>
-          </>
-        ) : (
-          <>
-            <Tooltip title="Profile" placement="right" arrow>
-              <IconButton
-                component={RouterLink}
-                to="/profile"
-                size="small"
-                aria-label="Profile"
-                color={location.pathname === '/profile' ? 'primary' : 'default'}
-              >
-                <AccountCircleOutlined />
-              </IconButton>
-            </Tooltip>
-            <Tooltip title="Logout" placement="right" arrow>
-              <IconButton onClick={logout} size="small" aria-label="Logout">
-                <LogoutIcon />
-              </IconButton>
-            </Tooltip>
-          </>
-        )}
+        {open ? renderUserSectionExpanded() : renderUserSectionCollapsed()}
       </Box>
     </Box>
   );

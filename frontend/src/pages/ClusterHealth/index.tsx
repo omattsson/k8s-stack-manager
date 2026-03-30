@@ -35,6 +35,59 @@ import LoadingState from '../../components/LoadingState';
 
 const AUTO_REFRESH_INTERVAL = 30000;
 
+const ResourceBar = ({ percent, used, limit, minLabelWidth }: { percent: number; used: string; limit: string; minLabelWidth: number }) => (
+  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+    <Box sx={{ flexGrow: 1, minWidth: 80 }}>
+      <LinearProgress variant="determinate" value={Math.min(percent, 100)} color={getUsageColor(percent)} />
+    </Box>
+    <Typography variant="body2" sx={{ minWidth: minLabelWidth, textAlign: 'right' }}>
+      {used} / {limit} ({percent}%)
+    </Typography>
+  </Box>
+);
+
+const NamespaceUsageRow = ({ ns }: { ns: NamespaceResourceUsage }) => {
+  const hasCpuQuota = hasQuota(ns.cpu_used, ns.cpu_limit);
+  const hasMemQuota = hasQuota(ns.memory_used, ns.memory_limit);
+  const cpuPercent = resourcePercent(ns.cpu_used, ns.cpu_limit);
+  const memPercent = resourcePercent(ns.memory_used, ns.memory_limit);
+  const podPercent = ns.pod_limit > 0 ? Math.round((ns.pod_count / ns.pod_limit) * 100) : 0;
+
+  return (
+    <TableRow>
+      <TableCell>
+        <Typography variant="body2" fontWeight="medium">{ns.namespace}</Typography>
+      </TableCell>
+      <TableCell>
+        {hasCpuQuota
+          ? <ResourceBar percent={cpuPercent} used={ns.cpu_used} limit={ns.cpu_limit} minLabelWidth={110} />
+          : <Typography variant="body2" color="text.secondary">No quota</Typography>}
+      </TableCell>
+      <TableCell>
+        {hasMemQuota
+          ? <ResourceBar percent={memPercent} used={ns.memory_used} limit={ns.memory_limit} minLabelWidth={130} />
+          : <Typography variant="body2" color="text.secondary">No quota</Typography>}
+      </TableCell>
+      <TableCell>
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+          {ns.pod_limit > 0 ? (
+            <>
+              <Box sx={{ flexGrow: 1, minWidth: 60 }}>
+                <LinearProgress variant="determinate" value={Math.min(podPercent, 100)} color={getUsageColor(podPercent)} />
+              </Box>
+              <Typography variant="body2" sx={{ minWidth: 70, textAlign: 'right' }}>
+                {ns.pod_count} / {ns.pod_limit}
+              </Typography>
+            </>
+          ) : (
+            <Typography variant="body2">{ns.pod_count} (no limit)</Typography>
+          )}
+        </Box>
+      </TableCell>
+    </TableRow>
+  );
+};
+
 const parseResource = (value: string): number => {
   if (!value) return 0;
   if (value.endsWith('Gi')) return Number.parseFloat(value) * 1024;
@@ -53,6 +106,12 @@ const resourcePercent = (used: string, total: string): number => {
 };
 
 const hasQuota = (used: string, limit: string): boolean => !!(used || limit);
+
+const getUsageColor = (percent: number): 'error' | 'warning' | 'success' => {
+  if (percent > 90) return 'error';
+  if (percent > 70) return 'warning';
+  return 'success';
+};
 
 const nodeHealthColor = (ready: number, total: number): 'success' | 'warning' | 'error' => {
   if (total === 0) return 'error';
@@ -386,81 +445,9 @@ const ClusterHealth = () => {
                     </TableRow>
                   </TableHead>
                   <TableBody>
-                    {utilization.map((ns) => {
-                      const hasCpuQuota = hasQuota(ns.cpu_used, ns.cpu_limit);
-                      const hasMemQuota = hasQuota(ns.memory_used, ns.memory_limit);
-                      const cpuPercent = resourcePercent(ns.cpu_used, ns.cpu_limit);
-                      const memPercent = resourcePercent(ns.memory_used, ns.memory_limit);
-                      const podPercent = ns.pod_limit > 0 ? Math.round((ns.pod_count / ns.pod_limit) * 100) : 0;                        const cpuColor = cpuPercent > 90 ? 'error' : cpuPercent > 70 ? 'warning' : 'success';
-                        const memColor = memPercent > 90 ? 'error' : memPercent > 70 ? 'warning' : 'success';
-                        const podColor = podPercent > 90 ? 'error' : podPercent > 70 ? 'warning' : 'success';                      return (
-                        <TableRow key={ns.namespace}>
-                          <TableCell>
-                            <Typography variant="body2" fontWeight="medium">
-                              {ns.namespace}
-                            </Typography>
-                          </TableCell>
-                          <TableCell>
-                            {hasCpuQuota ? (
-                              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                                <Box sx={{ flexGrow: 1, minWidth: 80 }}>
-                                  <LinearProgress
-                                    variant="determinate"
-                                    value={Math.min(cpuPercent, 100)}
-                                    color={cpuColor}
-                                  />
-                                </Box>
-                                <Typography variant="body2" sx={{ minWidth: 110, textAlign: 'right' }}>
-                                  {ns.cpu_used} / {ns.cpu_limit} ({cpuPercent}%)
-                                </Typography>
-                              </Box>
-                            ) : (
-                              <Typography variant="body2" color="text.secondary">No quota</Typography>
-                            )}
-                          </TableCell>
-                          <TableCell>
-                            {hasMemQuota ? (
-                              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                                <Box sx={{ flexGrow: 1, minWidth: 80 }}>
-                                  <LinearProgress
-                                    variant="determinate"
-                                    value={Math.min(memPercent, 100)}
-                                    color={memColor}
-                                  />
-                                </Box>
-                                <Typography variant="body2" sx={{ minWidth: 130, textAlign: 'right' }}>
-                                  {ns.memory_used} / {ns.memory_limit} ({memPercent}%)
-                                </Typography>
-                              </Box>
-                            ) : (
-                              <Typography variant="body2" color="text.secondary">No quota</Typography>
-                            )}
-                          </TableCell>
-                          <TableCell>
-                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                              {ns.pod_limit > 0 ? (
-                                <>
-                                  <Box sx={{ flexGrow: 1, minWidth: 60 }}>
-                                    <LinearProgress
-                                      variant="determinate"
-                                      value={Math.min(podPercent, 100)}
-                                      color={podColor}
-                                    />
-                                  </Box>
-                                  <Typography variant="body2" sx={{ minWidth: 70, textAlign: 'right' }}>
-                                    {ns.pod_count} / {ns.pod_limit}
-                                  </Typography>
-                                </>
-                              ) : (
-                                <Typography variant="body2">
-                                  {ns.pod_count} (no limit)
-                                </Typography>
-                              )}
-                            </Box>
-                          </TableCell>
-                        </TableRow>
-                      );
-                    })}
+                    {utilization.map((ns) => (
+                      <NamespaceUsageRow key={ns.namespace} ns={ns} />
+                    ))}
                   </TableBody>
                 </Table>
               </TableContainer>

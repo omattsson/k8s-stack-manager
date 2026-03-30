@@ -795,5 +795,140 @@ func TestSetDefaultCluster_WithRegistry(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code)
 }
 
+// ---- UpdateQuotas validation error ----
+
+func TestUpdateQuotas_ValidationError(t *testing.T) {
+	t.Parallel()
+	clusterRepo := NewMockClusterRepository()
+	instanceRepo := NewMockStackInstanceRepository()
+	quotaRepo := NewMockResourceQuotaRepository()
+	seedCluster(clusterRepo, "cl-1", "test-cluster")
+	r := setupClusterRouterWithQuotas(clusterRepo, instanceRepo, nil, quotaRepo, "admin")
+
+	// pod_limit < 0 triggers validation error
+	body, _ := json.Marshal(UpdateQuotaRequest{PodLimit: -1})
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("PUT", "/api/v1/clusters/cl-1/quotas", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+// ---- GetQuotas additional coverage ----
+
+func TestGetQuotas_ClusterNotFound(t *testing.T) {
+	t.Parallel()
+	clusterRepo := NewMockClusterRepository()
+	instanceRepo := NewMockStackInstanceRepository()
+	quotaRepo := NewMockResourceQuotaRepository()
+	r := setupClusterRouterWithQuotas(clusterRepo, instanceRepo, nil, quotaRepo, "devops")
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/api/v1/clusters/nonexistent/quotas", nil)
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusNotFound, w.Code)
+}
+
+func TestGetQuotas_QuotaRepoNil(t *testing.T) {
+	t.Parallel()
+	clusterRepo := NewMockClusterRepository()
+	instanceRepo := NewMockStackInstanceRepository()
+	seedCluster(clusterRepo, "cl-1", "test-cluster")
+	r := setupClusterRouterWithQuotas(clusterRepo, instanceRepo, nil, nil, "devops")
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/api/v1/clusters/cl-1/quotas", nil)
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
+}
+
+func TestGetQuotas_Success(t *testing.T) {
+	t.Parallel()
+	clusterRepo := NewMockClusterRepository()
+	instanceRepo := NewMockStackInstanceRepository()
+	quotaRepo := NewMockResourceQuotaRepository()
+	seedCluster(clusterRepo, "cl-1", "test-cluster")
+
+	// Pre-seed a quota config
+	quotaRepo.Upsert(nil, &models.ResourceQuotaConfig{
+		ClusterID: "cl-1",
+		CPULimit:  "4",
+	})
+
+	r := setupClusterRouterWithQuotas(clusterRepo, instanceRepo, nil, quotaRepo, "devops")
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/api/v1/clusters/cl-1/quotas", nil)
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+}
+
+func TestGetQuotas_NotConfigured(t *testing.T) {
+	t.Parallel()
+	clusterRepo := NewMockClusterRepository()
+	instanceRepo := NewMockStackInstanceRepository()
+	quotaRepo := NewMockResourceQuotaRepository()
+	seedCluster(clusterRepo, "cl-1", "test-cluster")
+	r := setupClusterRouterWithQuotas(clusterRepo, instanceRepo, nil, quotaRepo, "devops")
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/api/v1/clusters/cl-1/quotas", nil)
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusNotFound, w.Code)
+}
+
+// ---- DeleteQuotas success ----
+
+func TestDeleteQuotas_Success(t *testing.T) {
+	t.Parallel()
+	clusterRepo := NewMockClusterRepository()
+	instanceRepo := NewMockStackInstanceRepository()
+	quotaRepo := NewMockResourceQuotaRepository()
+	seedCluster(clusterRepo, "cl-1", "test-cluster")
+
+	quotaRepo.Upsert(nil, &models.ResourceQuotaConfig{
+		ClusterID: "cl-1",
+		CPULimit:  "4",
+	})
+
+	r := setupClusterRouterWithQuotas(clusterRepo, instanceRepo, nil, quotaRepo, "admin")
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("DELETE", "/api/v1/clusters/cl-1/quotas", nil)
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusNoContent, w.Code)
+}
+
+// ---- UpdateQuotas with registry triggers propagation ----
+
+func TestUpdateQuotas_WithRegistryTriggersPropagation(t *testing.T) {
+	t.Parallel()
+	clusterRepo := NewMockClusterRepository()
+	instanceRepo := NewMockStackInstanceRepository()
+	quotaRepo := NewMockResourceQuotaRepository()
+	seedCluster(clusterRepo, "cl-1", "test-cluster")
+
+	fakeCS := fake.NewSimpleClientset(
+		&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "stack-app1-user1"}},
+	)
+	k8sClient := k8s.NewClientFromInterface(fakeCS)
+	registry := cluster.NewRegistryForTest("cl-1", k8sClient, &mockClusterHelmExecutor{})
+	r := setupClusterRouterWithQuotas(clusterRepo, instanceRepo, registry, quotaRepo, "admin")
+
+	body, _ := json.Marshal(map[string]interface{}{"cpu_limit": "4", "memory_limit": "8Gi", "pod_limit": 10})
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("PUT", "/api/v1/clusters/cl-1/quotas", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+}
+
 // helper
 func boolPtr(b bool) *bool { return &b }

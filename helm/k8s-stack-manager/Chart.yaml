@@ -3,7 +3,7 @@ name: k8s-stack-manager
 description: Helm-based stack manager with Go backend, React frontend, and Azurite for Azure Table Storage
 type: application
 version: 0.1.0
-appVersion: "1.0.0"
+appVersion: "latest"
 keywords:
   - kubernetes
   - helm
