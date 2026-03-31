@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"backend/internal/cache"
 	"backend/internal/models"
 
 	"github.com/gin-gonic/gin"
@@ -60,6 +61,9 @@ type UserStats struct {
 
 // ---- Handler ----
 
+// analyticsCacheTTL is the default TTL for analytics response caching.
+const analyticsCacheTTL = 30 * time.Second
+
 // AnalyticsHandler provides read-only aggregation endpoints over existing data.
 type AnalyticsHandler struct {
 	templateRepo   models.StackTemplateRepository
@@ -67,6 +71,8 @@ type AnalyticsHandler struct {
 	instanceRepo   models.StackInstanceRepository
 	deployLogRepo  models.DeploymentLogRepository
 	userRepo       models.UserRepository
+	overviewCache  *cache.TTLCache[*OverviewStats]
+	templateCache  *cache.TTLCache[[]TemplateStats]
 }
 
 // NewAnalyticsHandler creates a new AnalyticsHandler.
@@ -83,6 +89,8 @@ func NewAnalyticsHandler(
 		instanceRepo:   instanceRepo,
 		deployLogRepo:  deployLogRepo,
 		userRepo:       userRepo,
+		overviewCache:  cache.New[*OverviewStats](analyticsCacheTTL, analyticsCacheTTL),
+		templateCache:  cache.New[[]TemplateStats](analyticsCacheTTL, analyticsCacheTTL),
 	}
 }
 
@@ -95,6 +103,11 @@ func NewAnalyticsHandler(
 // @Failure     500 {object} map[string]string
 // @Router      /api/v1/analytics/overview [get]
 func (h *AnalyticsHandler) GetOverview(c *gin.Context) {
+	if cached, ok := h.overviewCache.Get("overview"); ok {
+		c.JSON(http.StatusOK, cached)
+		return
+	}
+
 	templates, err := h.templateRepo.List()
 	if err != nil {
 		slog.Error("analytics: failed to list templates", "error", err)
@@ -138,14 +151,16 @@ func (h *AnalyticsHandler) GetOverview(c *gin.Context) {
 		}
 	}
 
-	c.JSON(http.StatusOK, OverviewStats{
+	stats := &OverviewStats{
 		TotalTemplates:   len(templates),
 		TotalDefinitions: len(definitions),
 		TotalInstances:   len(instances),
 		RunningInstances: running,
 		TotalDeploys:     totalDeploys,
 		TotalUsers:       len(users),
-	})
+	}
+	h.overviewCache.Set("overview", stats)
+	c.JSON(http.StatusOK, stats)
 }
 
 // GetTemplateStats godoc
@@ -157,6 +172,11 @@ func (h *AnalyticsHandler) GetOverview(c *gin.Context) {
 // @Failure     500 {object} map[string]string
 // @Router      /api/v1/analytics/templates [get]
 func (h *AnalyticsHandler) GetTemplateStats(c *gin.Context) {
+	if cached, ok := h.templateCache.Get("templates"); ok {
+		c.JSON(http.StatusOK, cached)
+		return
+	}
+
 	templates, err := h.templateRepo.List()
 	if err != nil {
 		slog.Error("analytics: failed to list templates", "error", err)
@@ -235,6 +255,7 @@ func (h *AnalyticsHandler) GetTemplateStats(c *gin.Context) {
 		})
 	}
 
+	h.templateCache.Set("templates", result)
 	c.JSON(http.StatusOK, result)
 }
 

@@ -1,11 +1,14 @@
 package handlers
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"log/slog"
 	"net/http"
 	"time"
 
 	"backend/internal/api/middleware"
+	"backend/internal/cache"
 	"backend/internal/config"
 	"backend/internal/models"
 
@@ -16,13 +19,25 @@ import (
 
 // AuthHandler handles authentication and user management endpoints.
 type AuthHandler struct {
-	userRepo models.UserRepository
-	cfg      *config.AuthConfig
+	userRepo   models.UserRepository
+	cfg        *config.AuthConfig
+	loginCache *cache.TTLCache[*models.User]
 }
 
 // NewAuthHandler creates a new AuthHandler.
 func NewAuthHandler(userRepo models.UserRepository, cfg *config.AuthConfig) *AuthHandler {
-	return &AuthHandler{userRepo: userRepo, cfg: cfg}
+	h := &AuthHandler{userRepo: userRepo, cfg: cfg}
+	if cfg.LoginCacheTTL > 0 {
+		h.loginCache = cache.New[*models.User](cfg.LoginCacheTTL, cfg.LoginCacheTTL)
+	}
+	return h
+}
+
+// loginCacheKey derives a cache key from the username and stored password hash.
+// The hash changes when the password changes, automatically invalidating the entry.
+func loginCacheKey(username, passwordHash string) string {
+	h := sha256.Sum256([]byte(username + ":" + passwordHash))
+	return hex.EncodeToString(h[:])
 }
 
 // LoginRequest represents the login request body.
@@ -69,9 +84,24 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		return
 	}
 
-	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(req.Password)); err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid username or password"})
-		return
+	// Check login cache to skip expensive bcrypt comparison on repeated logins.
+	cacheKey := loginCacheKey(req.Username, user.PasswordHash)
+	cacheHit := false
+	if h.loginCache != nil {
+		if cached, ok := h.loginCache.Get(cacheKey); ok {
+			user = cached
+			cacheHit = true
+		}
+	}
+
+	if !cacheHit {
+		if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(req.Password)); err != nil {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid username or password"})
+			return
+		}
+		if h.loginCache != nil {
+			h.loginCache.Set(cacheKey, user)
+		}
 	}
 
 	token, err := middleware.GenerateToken(user.ID, user.Username, user.Role, h.cfg.JWTSecret, h.cfg.JWTExpiration)

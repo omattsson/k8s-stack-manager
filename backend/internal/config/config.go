@@ -37,6 +37,7 @@ type CORSConfig struct {
 type AuthConfig struct {
 	JWTSecret        string
 	JWTExpiration    time.Duration
+	LoginCacheTTL    time.Duration
 	AdminUsername    string
 	AdminPassword    string
 	DefaultBranch    string
@@ -445,6 +446,7 @@ func loadAuthConfig() AuthConfig {
 	return AuthConfig{
 		JWTSecret:        getEnv("JWT_SECRET", ""),
 		JWTExpiration:    getEnvDuration("JWT_EXPIRATION", 24*time.Hour),
+		LoginCacheTTL:    getEnvDuration("LOGIN_CACHE_TTL", 30*time.Second),
 		AdminUsername:    getEnv("ADMIN_USERNAME", "admin"),
 		AdminPassword:    getEnv("ADMIN_PASSWORD", ""),
 		SelfRegistration: getEnvBool("SELF_REGISTRATION", false),
