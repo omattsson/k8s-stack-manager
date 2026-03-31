@@ -69,6 +69,10 @@ func (m *mockInstanceRepo) CountByClusterAndOwner(string, string) (int, error) {
 	return 0, nil
 }
 
+func (m *mockInstanceRepo) CountAll() (int, error)                              { return 0, nil }
+func (m *mockInstanceRepo) CountByStatus(_ string) (int, error)                 { return 0, nil }
+func (m *mockInstanceRepo) ExistsByDefinitionAndStatus(_, _ string) (bool, error) { return false, nil }
+
 func (m *mockInstanceRepo) ListExpired() ([]*models.StackInstance, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()

@@ -43,5 +43,8 @@ type StackInstanceRepository interface {
 	ListByOwner(ownerID string) ([]StackInstance, error)
 	FindByCluster(clusterID string) ([]StackInstance, error)
 	CountByClusterAndOwner(clusterID, ownerID string) (int, error)
+	CountAll() (int, error)
+	CountByStatus(status string) (int, error)
+	ExistsByDefinitionAndStatus(definitionID, status string) (bool, error)
 	ListExpired() ([]*StackInstance, error)
 }

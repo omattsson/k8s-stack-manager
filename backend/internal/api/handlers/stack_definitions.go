@@ -261,15 +261,14 @@ func (h *DefinitionHandler) DeleteDefinition(c *gin.Context) {
 		return
 	}
 
-	// Check for running instances.
+	// Check for running or deploying instances using a targeted query
+	// instead of loading all instances (avoids full-table scan).
 	if h.instanceRepo != nil {
-		instances, err := h.instanceRepo.List()
-		if err == nil {
-			for _, inst := range instances {
-				if inst.StackDefinitionID == id && (inst.Status == models.StackStatusRunning || inst.Status == models.StackStatusDeploying) {
-					c.JSON(http.StatusConflict, gin.H{"error": "Cannot delete definition: running instances exist"})
-					return
-				}
+		for _, status := range []string{models.StackStatusRunning, models.StackStatusDeploying} {
+			exists, err := h.instanceRepo.ExistsByDefinitionAndStatus(id, status)
+			if err == nil && exists {
+				c.JSON(http.StatusConflict, gin.H{"error": "Cannot delete definition: running instances exist"})
+				return
 			}
 		}
 	}

@@ -735,7 +735,10 @@ func (r *cleanupMockInstanceRepo) CountByClusterAndOwner(clusterID, ownerID stri
 	}
 	return count, nil
 }
-func (r *cleanupMockInstanceRepo) ListExpired() ([]*models.StackInstance, error) { return nil, nil }
+func (r *cleanupMockInstanceRepo) CountAll() (int, error)                              { return len(r.instances), nil }
+func (r *cleanupMockInstanceRepo) CountByStatus(_ string) (int, error)                 { return 0, nil }
+func (r *cleanupMockInstanceRepo) ExistsByDefinitionAndStatus(_, _ string) (bool, error) { return false, nil }
+func (r *cleanupMockInstanceRepo) ListExpired() ([]*models.StackInstance, error)        { return nil, nil }
 
 // cleanupMockAuditRepo implements models.AuditLogRepository for handler tests.
 type cleanupMockAuditRepo struct {

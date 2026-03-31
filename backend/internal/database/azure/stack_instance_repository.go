@@ -198,6 +198,49 @@ func (r *StackInstanceRepository) List() ([]models.StackInstance, error) {
 	return results, nil
 }
 
+func (r *StackInstanceRepository) CountAll() (int, error) {
+	ctx := context.Background()
+	filter := filterPKGlobal
+	pager := r.client.NewListEntitiesPager(&aztables.ListEntitiesOptions{
+		Filter: &filter,
+	})
+	entities, err := collectEntitiesTyped[stackInstanceEntity](ctx, pager, nil, 0)
+	if err != nil {
+		return 0, mapAzureError(opList, err)
+	}
+	return len(entities), nil
+}
+
+func (r *StackInstanceRepository) CountByStatus(status string) (int, error) {
+	ctx := context.Background()
+	filter := filterPKGlobal + " and Status eq '" + escapeODataString(status) + "'"
+	pager := r.client.NewListEntitiesPager(&aztables.ListEntitiesOptions{
+		Filter: &filter,
+	})
+	entities, err := collectEntitiesTyped[stackInstanceEntity](ctx, pager, nil, 0)
+	if err != nil {
+		return 0, mapAzureError(opList, err)
+	}
+	return len(entities), nil
+}
+
+func (r *StackInstanceRepository) ExistsByDefinitionAndStatus(definitionID, status string) (bool, error) {
+	ctx := context.Background()
+	filter := filterPKGlobal +
+		" and StackDefinitionID eq '" + escapeODataString(definitionID) + "'" +
+		" and Status eq '" + escapeODataString(status) + "'"
+	top := int32(1)
+	pager := r.client.NewListEntitiesPager(&aztables.ListEntitiesOptions{
+		Filter: &filter,
+		Top:    &top,
+	})
+	entities, err := collectEntitiesTyped[stackInstanceEntity](ctx, pager, nil, 1)
+	if err != nil {
+		return false, mapAzureError(opList, err)
+	}
+	return len(entities) > 0, nil
+}
+
 func (r *StackInstanceRepository) ListByOwner(ownerID string) ([]models.StackInstance, error) {
 	ctx := context.Background()
 

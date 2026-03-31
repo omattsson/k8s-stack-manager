@@ -682,6 +682,44 @@ func (m *MockStackInstanceRepository) CountByClusterAndOwner(clusterID, ownerID 
 	return count, nil
 }
 
+func (m *MockStackInstanceRepository) CountAll() (int, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.err != nil {
+		return 0, m.err
+	}
+	return len(m.items), nil
+}
+
+func (m *MockStackInstanceRepository) CountByStatus(status string) (int, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.err != nil {
+		return 0, m.err
+	}
+	count := 0
+	for _, i := range m.items {
+		if i.Status == status {
+			count++
+		}
+	}
+	return count, nil
+}
+
+func (m *MockStackInstanceRepository) ExistsByDefinitionAndStatus(definitionID, status string) (bool, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.err != nil {
+		return false, m.err
+	}
+	for _, i := range m.items {
+		if i.StackDefinitionID == definitionID && i.Status == status {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 func (m *MockStackInstanceRepository) ListExpired() ([]*models.StackInstance, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()

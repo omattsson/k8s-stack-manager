@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"log/slog"
 	"net/http"
+	"runtime"
 	"time"
 
 	"backend/internal/api/middleware"
@@ -16,6 +17,11 @@ import (
 	"github.com/google/uuid"
 	"golang.org/x/crypto/bcrypt"
 )
+
+// bcryptSem limits concurrent bcrypt operations to the number of CPU cores.
+// bcrypt is intentionally CPU-expensive (~200ms). Without a limit, 100 concurrent
+// logins would spawn 100 goroutines all competing for CPU, starving other requests.
+var bcryptSem = make(chan struct{}, runtime.NumCPU())
 
 // AuthHandler handles authentication and user management endpoints.
 type AuthHandler struct {
@@ -95,7 +101,12 @@ func (h *AuthHandler) Login(c *gin.Context) {
 	}
 
 	if !cacheHit {
-		if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(req.Password)); err != nil {
+		// Limit concurrent bcrypt to NumCPU to prevent CPU starvation under spike.
+		bcryptSem <- struct{}{}
+		bcryptErr := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(req.Password))
+		<-bcryptSem
+
+		if bcryptErr != nil {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid username or password"})
 			return
 		}

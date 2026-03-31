@@ -465,6 +465,10 @@ func (m *mockInstanceRepo) CountByClusterAndOwner(_, _ string) (int, error) {
 	return 0, nil
 }
 
+func (m *mockInstanceRepo) CountAll() (int, error)                              { return 0, nil }
+func (m *mockInstanceRepo) CountByStatus(_ string) (int, error)                 { return 0, nil }
+func (m *mockInstanceRepo) ExistsByDefinitionAndStatus(_, _ string) (bool, error) { return false, nil }
+
 func (m *mockInstanceRepo) ListExpired() ([]*models.StackInstance, error) {
 	return nil, nil
 }

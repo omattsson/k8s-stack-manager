@@ -112,8 +112,11 @@ func (r *mockInstanceRepo) FindByCluster(clusterID string) ([]models.StackInstan
 	}
 	return result, nil
 }
-func (r *mockInstanceRepo) CountByClusterAndOwner(string, string) (int, error) { return 0, nil }
-func (r *mockInstanceRepo) ListExpired() ([]*models.StackInstance, error)      { return nil, nil }
+func (r *mockInstanceRepo) CountByClusterAndOwner(string, string) (int, error)   { return 0, nil }
+func (r *mockInstanceRepo) CountAll() (int, error)                               { return 0, nil }
+func (r *mockInstanceRepo) CountByStatus(string) (int, error)                    { return 0, nil }
+func (r *mockInstanceRepo) ExistsByDefinitionAndStatus(string, string) (bool, error) { return false, nil }
+func (r *mockInstanceRepo) ListExpired() ([]*models.StackInstance, error)        { return nil, nil }
 
 // mockAuditRepo is a minimal in-memory mock for AuditLogRepository.
 type mockAuditRepo struct {
