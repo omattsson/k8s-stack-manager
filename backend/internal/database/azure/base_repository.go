@@ -62,7 +62,7 @@ func createTableClient(accountName, accountKey, endpoint, tableName string, useA
 			accountName,
 			accountKey,
 			serviceURL),
-		nil,
+		SharedClientOptions(DefaultTransportConfig()),
 	)
 	if err != nil {
 		return nil, dberrors.NewDatabaseError("azure_client", err)

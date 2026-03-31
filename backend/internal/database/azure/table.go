@@ -73,7 +73,7 @@ func NewTableRepository(accountName, accountKey, endpoint, tableName string, use
 			accountName,
 			accountKey,
 			serviceURL),
-		nil,
+		SharedClientOptions(DefaultTransportConfig()),
 	)
 	if err != nil {
 		return nil, dberrors.NewDatabaseError("azure_client", err)
