@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	_ "net/http/pprof"
 	"os"
 	"os/signal"
 	"syscall"
@@ -323,6 +324,21 @@ func main() {
 	if err := cleanupScheduler.Start(); err != nil {
 		slog.Error("Failed to start cleanup scheduler", "error", err)
 		os.Exit(1)
+	}
+
+	// Start pprof server on a separate port when PPROF_ENABLED=true.
+	// Access at http://localhost:6060/debug/pprof/
+	if os.Getenv("PPROF_ENABLED") == "true" {
+		pprofAddr := os.Getenv("PPROF_ADDR")
+		if pprofAddr == "" {
+			pprofAddr = ":6060"
+		}
+		go func() {
+			slog.Info("pprof server starting", "addr", pprofAddr)
+			if err := http.ListenAndServe(pprofAddr, nil); err != nil {
+				slog.Error("pprof server failed", "error", err)
+			}
+		}()
 	}
 
 	// Create server with timeouts

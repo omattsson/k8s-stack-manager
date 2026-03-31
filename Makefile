@@ -1,4 +1,4 @@
-.PHONY: dev seed dev-backend dev-frontend dev-local dev-local-backend dev-local-frontend prod prod-backend prod-frontend build clean prune test test-backend test-backend-integration test-backend-all test-frontend test-e2e integration-infra-start integration-infra-stop install docs fmt lint azurite-start azurite-stop azurite-clear loadtest loadtest-start loadtest-start-backend loadtest-start-frontend loadtest-stop loadtest-stop-backend loadtest-stop-frontend loadtest-backend loadtest-backend-run loadtest-frontend loadtest-frontend-run
+.PHONY: dev seed dev-backend dev-frontend dev-local dev-local-backend dev-local-frontend prod prod-backend prod-frontend build clean prune test test-backend test-backend-integration test-backend-all test-frontend test-e2e integration-infra-start integration-infra-stop install docs fmt lint azurite-start azurite-stop azurite-clear loadtest loadtest-start loadtest-start-backend loadtest-start-frontend loadtest-stop loadtest-stop-backend loadtest-stop-frontend loadtest-backend loadtest-backend-run loadtest-stress loadtest-stress-run loadtest-frontend loadtest-frontend-run
 
 # Development mode for both services
 dev:
@@ -194,6 +194,7 @@ LOADTEST_ENV = \
 	SELF_REGISTRATION=true \
 	HELM_BINARY=$${HELM_BINARY:-helm} \
 	KUBECONFIG_PATH=$${KUBECONFIG_PATH:-$$HOME/.kube/config} \
+	PPROF_ENABLED=$${PPROF_ENABLED:-true} PPROF_ADDR=$${PPROF_ADDR:-:6060} \
 	RATE_LIMIT=10000 PORT=8081 GIN_MODE=release
 
 loadtest-start-backend: azurite-start ## Build and start backend in release mode for load testing
@@ -258,6 +259,15 @@ loadtest-backend-run: ## Run k6 tests (assumes backend already running)
 	@echo ""
 	@echo "Running backend WebSocket load test..."
 	k6 run loadtest/backend/k6-websocket.js
+
+loadtest-stress: loadtest-start-backend ## Run stress/optimization load tests (starts/stops backend)
+	@$(MAKE) loadtest-stress-run || ($(MAKE) loadtest-stop-backend; exit 1)
+	@$(MAKE) loadtest-stop-backend
+
+loadtest-stress-run: ## Run k6 stress tests (assumes backend already running)
+	@command -v k6 >/dev/null 2>&1 || { echo "k6 not found. Install: brew install k6"; exit 1; }
+	@echo "Running stress/optimization load tests..."
+	k6 run loadtest/backend/k6-stress.js
 
 loadtest-frontend: loadtest-start ## Run Playwright frontend load tests (starts/stops backend + frontend)
 	@$(MAKE) loadtest-frontend-run || ($(MAKE) loadtest-stop; exit 1)
