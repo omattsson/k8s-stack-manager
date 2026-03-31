@@ -6,6 +6,10 @@
 //   k6 run --vus 50 --duration 5m loadtest/backend/k6-api.js   # 50 VUs for 5 min
 //   k6 run --env API_URL=http://backend:8081 loadtest/backend/k6-api.js  # custom URL
 //
+// Auth strategy: setup() logs in once as admin, creates an API key, and
+// passes it to all scenario functions.  This avoids hammering bcrypt on
+// every VU iteration.
+//
 // Environment variables:
 //   API_URL           - Backend URL (default: http://localhost:8081)
 //   ADMIN_USERNAME    - Admin user (default: admin)
@@ -94,6 +98,10 @@ function authHeaders(token) {
   return { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` };
 }
 
+function apiKeyHeaders(apiKey) {
+  return { 'Content-Type': 'application/json', 'X-API-Key': apiKey };
+}
+
 // ── Helpers ─────────────────────────────────────────────────────────
 function login(username, password) {
   const res = http.post(
@@ -110,7 +118,6 @@ function login(username, password) {
       try { return JSON.parse(r.body).token !== undefined; } catch { return false; }
     },
   });
-  errorRate.add(!ok);
 
   if (res.status !== 200) return null;
   return JSON.parse(res.body).token;
@@ -128,8 +135,68 @@ function registerUser(suffix) {
   return { username, password: 'loadtest123' };
 }
 
+// ── Setup & Teardown ────────────────────────────────────────────────
+export function setup() {
+  // Login once as admin
+  const loginRes = http.post(
+    `${BASE_URL}/api/v1/auth/login`,
+    JSON.stringify({ username: ADMIN_USER, password: ADMIN_PASS }),
+    { headers: jsonHeaders },
+  );
+  if (loginRes.status !== 200) {
+    throw new Error(`setup: admin login failed (status ${loginRes.status})`);
+  }
+  const token = JSON.parse(loginRes.body).token;
+
+  // Get admin user ID
+  const meRes = http.get(`${BASE_URL}/api/v1/auth/me`, {
+    headers: authHeaders(token),
+  });
+  if (meRes.status !== 200) {
+    throw new Error(`setup: GET /auth/me failed (status ${meRes.status})`);
+  }
+  const userId = JSON.parse(meRes.body).id;
+
+  // Create an API key for load testing
+  const keyRes = http.post(
+    `${BASE_URL}/api/v1/users/${userId}/api-keys`,
+    JSON.stringify({ name: 'k6-loadtest' }),
+    { headers: authHeaders(token) },
+  );
+  if (keyRes.status !== 201 && keyRes.status !== 200) {
+    throw new Error(`setup: create API key failed (status ${keyRes.status})`);
+  }
+  const keyBody = JSON.parse(keyRes.body);
+
+  console.log(`setup: created API key ${keyBody.id} for user ${userId}`);
+  return { apiKey: keyBody.raw_key, userId: userId, apiKeyId: keyBody.id };
+}
+
+export function teardown(data) {
+  if (!data || !data.apiKeyId) return;
+
+  // Login to get a token for cleanup
+  const loginRes = http.post(
+    `${BASE_URL}/api/v1/auth/login`,
+    JSON.stringify({ username: ADMIN_USER, password: ADMIN_PASS }),
+    { headers: jsonHeaders },
+  );
+  if (loginRes.status !== 200) {
+    console.warn('teardown: admin login failed, skipping API key cleanup');
+    return;
+  }
+  const token = JSON.parse(loginRes.body).token;
+
+  const delRes = http.del(
+    `${BASE_URL}/api/v1/users/${data.userId}/api-keys/${data.apiKeyId}`,
+    null,
+    { headers: authHeaders(token) },
+  );
+  console.log(`teardown: deleted API key ${data.apiKeyId} (status ${delRes.status})`);
+}
+
 // ── Smoke Test ──────────────────────────────────────────────────────
-export function smokeTest() {
+export function smokeTest(data) {
   group('Health Checks', () => {
     const endpoints = ['/health', '/health/live', '/health/ready'];
     for (const ep of endpoints) {
@@ -149,11 +216,17 @@ export function smokeTest() {
   });
 
   group('Auth Flow', () => {
+    // Keep one login call to validate the auth endpoint still works
     const token = login(ADMIN_USER, ADMIN_PASS);
-    if (!token) return;
+    if (!token) {
+      errorRate.add(true);
+      return;
+    }
+    errorRate.add(false);
 
+    // Use API key for the "me" check
     const me = http.get(`${BASE_URL}/api/v1/auth/me`, {
-      headers: authHeaders(token),
+      headers: apiKeyHeaders(data.apiKey),
       tags: { name: 'GET /auth/me' },
     });
     apiCalls.add(1);
@@ -165,22 +238,8 @@ export function smokeTest() {
 }
 
 // ── Load Test ───────────────────────────────────────────────────────
-export function loadTest() {
-  // Each VU registers a unique user, then runs through typical workflows
-  const user = registerUser(__ITER);
-  if (!user) {
-    // Fall back to admin if registration is disabled
-    runWorkflows(ADMIN_USER, ADMIN_PASS);
-    return;
-  }
-  runWorkflows(user.username, user.password);
-}
-
-function runWorkflows(username, password) {
-  const token = login(username, password);
-  if (!token) return;
-
-  const headers = authHeaders(token);
+export function loadTest(data) {
+  const headers = apiKeyHeaders(data.apiKey);
 
   // ── Browse (read-heavy, most common) ──────────────────
   group('Browse Templates', () => {
@@ -387,11 +446,8 @@ function runWorkflows(username, password) {
 }
 
 // ── Analytics Test ─────────────────────────────────────────────────
-export function analyticsTest() {
-  const token = login(ADMIN_USER, ADMIN_PASS);
-  if (!token) return;
-
-  const headers = authHeaders(token);
+export function analyticsTest(data) {
+  const headers = apiKeyHeaders(data.apiKey);
 
   group('Analytics Overview', () => {
     const res = http.get(`${BASE_URL}/api/v1/analytics/overview`, {
@@ -452,11 +508,8 @@ export function analyticsTest() {
 }
 
 // ── Nested CRUD Test ───────────────────────────────────────────────
-export function nestedCrudTest() {
-  const token = login(ADMIN_USER, ADMIN_PASS);
-  if (!token) return;
-
-  const headers = authHeaders(token);
+export function nestedCrudTest(data) {
+  const headers = apiKeyHeaders(data.apiKey);
   const suffix = `${__VU}-${__ITER}-${Date.now()}`;
 
   let defId = null;

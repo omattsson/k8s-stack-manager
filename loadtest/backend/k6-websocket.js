@@ -1,6 +1,10 @@
 // k6 WebSocket Load Test for k8s-stack-manager
 // Tests WebSocket connection handling under concurrent load.
 //
+// Auth strategy: setup() logs in once, creates an API key, and obtains a JWT
+// token.  All VUs reuse the same token for WS connections (WebSocket requires
+// JWT — API key auth is not supported on the WS upgrade path).
+//
 // Usage:
 //   k6 run loadtest/backend/k6-websocket.js
 //   k6 run --vus 100 --duration 2m loadtest/backend/k6-websocket.js
@@ -40,19 +44,79 @@ const WS_URL = BASE_URL.replace(/^http/, 'ws') + '/ws';
 const ADMIN_USER = __ENV.ADMIN_USERNAME || 'admin';
 const ADMIN_PASS = __ENV.ADMIN_PASSWORD || 'admin';
 
-export default function () {
-  // Get a token for authenticated WebSocket (optional — WS may not require auth)
+const jsonHeaders = { 'Content-Type': 'application/json' };
+
+function authHeaders(token) {
+  return { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` };
+}
+
+// ── Setup & Teardown ────────────────────────────────────────────────
+export function setup() {
+  // Login once as admin
   const loginRes = http.post(
     `${BASE_URL}/api/v1/auth/login`,
     JSON.stringify({ username: ADMIN_USER, password: ADMIN_PASS }),
-    { headers: { 'Content-Type': 'application/json' } },
+    { headers: jsonHeaders },
   );
-
-  let wsUrl = WS_URL;
-  if (loginRes.status === 200) {
-    const token = JSON.parse(loginRes.body).token;
-    wsUrl = `${WS_URL}?token=${token}`;
+  if (loginRes.status !== 200) {
+    throw new Error(`setup: admin login failed (status ${loginRes.status})`);
   }
+  const token = JSON.parse(loginRes.body).token;
+
+  // Get admin user ID
+  const meRes = http.get(`${BASE_URL}/api/v1/auth/me`, {
+    headers: authHeaders(token),
+  });
+  if (meRes.status !== 200) {
+    throw new Error(`setup: GET /auth/me failed (status ${meRes.status})`);
+  }
+  const userId = JSON.parse(meRes.body).id;
+
+  // Create an API key for cleanup (WS uses JWT, but we manage lifecycle via API key)
+  const keyRes = http.post(
+    `${BASE_URL}/api/v1/users/${userId}/api-keys`,
+    JSON.stringify({ name: 'k6-websocket' }),
+    { headers: authHeaders(token) },
+  );
+  if (keyRes.status !== 201 && keyRes.status !== 200) {
+    throw new Error(`setup: create API key failed (status ${keyRes.status})`);
+  }
+  const keyBody = JSON.parse(keyRes.body);
+
+  console.log(`setup: created API key ${keyBody.id} for user ${userId}`);
+  return {
+    token: token,
+    apiKey: keyBody.raw_key,
+    userId: userId,
+    apiKeyId: keyBody.id,
+  };
+}
+
+export function teardown(data) {
+  if (!data || !data.apiKeyId) return;
+
+  const loginRes = http.post(
+    `${BASE_URL}/api/v1/auth/login`,
+    JSON.stringify({ username: ADMIN_USER, password: ADMIN_PASS }),
+    { headers: jsonHeaders },
+  );
+  if (loginRes.status !== 200) {
+    console.warn('teardown: admin login failed, skipping API key cleanup');
+    return;
+  }
+  const token = JSON.parse(loginRes.body).token;
+
+  const delRes = http.del(
+    `${BASE_URL}/api/v1/users/${data.userId}/api-keys/${data.apiKeyId}`,
+    null,
+    { headers: authHeaders(token) },
+  );
+  console.log(`teardown: deleted API key ${data.apiKeyId} (status ${delRes.status})`);
+}
+
+export default function (data) {
+  // Reuse the JWT token obtained in setup — avoids bcrypt on every VU iteration
+  const wsUrl = data.token ? `${WS_URL}?token=${data.token}` : WS_URL;
 
   const startTime = Date.now();
   const res = ws.connect(wsUrl, {}, function (socket) {

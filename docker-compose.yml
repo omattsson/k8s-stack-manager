@@ -109,7 +109,7 @@ services:
       - "10002:10002"  # Table
     volumes:
       - azurite_data:/data
-    command: azurite --tableHost 0.0.0.0 --blobHost 0.0.0.0 --queueHost 0.0.0.0
+    command: azurite --tableHost 0.0.0.0 --blobHost 0.0.0.0 --queueHost 0.0.0.0 --silent
     healthcheck:
       test: ["CMD-SHELL", "node -e \"require('net').createConnection(10002,'127.0.0.1').on('connect',()=>process.exit(0)).on('error',()=>process.exit(1))\""]
       interval: 10s

@@ -2,6 +2,10 @@
 // Targets specific bottlenecks: rate limiting, bulk ops, write contention,
 // pagination, auth overhead, and sustained load (soak).
 //
+// Auth strategy: setup() logs in once as admin, creates an API key, and
+// passes it to all scenario functions.  This avoids hammering bcrypt on
+// every VU iteration.
+//
 // Usage:
 //   k6 run loadtest/backend/k6-stress.js                                    # all scenarios
 //   k6 run --env SCENARIO=spike loadtest/backend/k6-stress.js               # single scenario
@@ -159,6 +163,10 @@ function authHeaders(token) {
   return { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` };
 }
 
+function apiKeyHeaders(apiKey) {
+  return { 'Content-Type': 'application/json', 'X-API-Key': apiKey };
+}
+
 // ── Helpers ─────────────────────────────────────────────────────────
 function login(username, password) {
   const start = Date.now();
@@ -230,13 +238,72 @@ function deleteResource(headers, path) {
   return res;
 }
 
+// ── Setup & Teardown ────────────────────────────────────────────────
+export function setup() {
+  // Login once as admin
+  const loginRes = http.post(
+    `${BASE_URL}/api/v1/auth/login`,
+    JSON.stringify({ username: ADMIN_USER, password: ADMIN_PASS }),
+    { headers: jsonHeaders },
+  );
+  if (loginRes.status !== 200) {
+    throw new Error(`setup: admin login failed (status ${loginRes.status})`);
+  }
+  const token = JSON.parse(loginRes.body).token;
+
+  // Get admin user ID
+  const meRes = http.get(`${BASE_URL}/api/v1/auth/me`, {
+    headers: authHeaders(token),
+  });
+  if (meRes.status !== 200) {
+    throw new Error(`setup: GET /auth/me failed (status ${meRes.status})`);
+  }
+  const userId = JSON.parse(meRes.body).id;
+
+  // Create an API key for stress testing
+  const keyRes = http.post(
+    `${BASE_URL}/api/v1/users/${userId}/api-keys`,
+    JSON.stringify({ name: 'k6-stress' }),
+    { headers: authHeaders(token) },
+  );
+  if (keyRes.status !== 201 && keyRes.status !== 200) {
+    throw new Error(`setup: create API key failed (status ${keyRes.status})`);
+  }
+  const keyBody = JSON.parse(keyRes.body);
+
+  console.log(`setup: created API key ${keyBody.id} for user ${userId}`);
+  return { apiKey: keyBody.raw_key, userId: userId, apiKeyId: keyBody.id };
+}
+
+export function teardown(data) {
+  if (!data || !data.apiKeyId) return;
+
+  const loginRes = http.post(
+    `${BASE_URL}/api/v1/auth/login`,
+    JSON.stringify({ username: ADMIN_USER, password: ADMIN_PASS }),
+    { headers: jsonHeaders },
+  );
+  if (loginRes.status !== 200) {
+    console.warn('teardown: admin login failed, skipping API key cleanup');
+    return;
+  }
+  const token = JSON.parse(loginRes.body).token;
+
+  const delRes = http.del(
+    `${BASE_URL}/api/v1/users/${data.userId}/api-keys/${data.apiKeyId}`,
+    null,
+    { headers: authHeaders(token) },
+  );
+  console.log(`teardown: deleted API key ${data.apiKeyId} (status ${delRes.status})`);
+}
+
 // ═══════════════════════════════════════════════════════════════════
 // 1. RATE LIMITER STRESS
 // ═══════════════════════════════════════════════════════════════════
 // Fires requests at 200/sec against a 100/min limit.
 // Reveals: rate limiter accuracy, memory use under burst, 429 response time.
 
-export function rateLimitStress() {
+export function rateLimitStress(data) {
   const res = http.get(`${BASE_URL}/api/v1/ping`, {
     tags: { name: 'GET /ping (rate-limit)' },
   });
@@ -263,10 +330,8 @@ export function rateLimitStress() {
 // Creates N instances then bulk-stops/deletes them.
 // Reveals: DB transaction overhead, goroutine pressure, per-item error handling.
 
-export function bulkOpsStress() {
-  const token = login(ADMIN_USER, ADMIN_PASS);
-  if (!token) return;
-  const headers = authHeaders(token);
+export function bulkOpsStress(data) {
+  const headers = apiKeyHeaders(data.apiKey);
   const suffix = `${__VU}-${__ITER}-${Date.now()}`;
 
   // Create a definition + multiple instances for bulk testing
@@ -341,15 +406,13 @@ export function bulkOpsStress() {
 // the other half re-authenticate every request.
 // Reveals: JWT parsing overhead, middleware cost, token validation scaling.
 
-export function authContentionTest() {
+export function authContentionTest(data) {
   concurrentUsers.add(1);
-  const reuseToken = __VU % 2 === 0;
+  const useApiKey = __VU % 2 === 0;
 
-  if (reuseToken) {
-    // Strategy A: login once, reuse token for multiple requests
-    const token = login(ADMIN_USER, ADMIN_PASS);
-    if (!token) return;
-    const headers = authHeaders(token);
+  if (useApiKey) {
+    // Strategy A: API key — no bcrypt, fast auth path
+    const headers = apiKeyHeaders(data.apiKey);
 
     for (let i = 0; i < 10; i++) {
       const endpoint = [
@@ -362,15 +425,15 @@ export function authContentionTest() {
 
       const res = http.get(`${BASE_URL}${endpoint}`, {
         headers,
-        tags: { name: `GET ${endpoint} (cached-token)` },
+        tags: { name: `GET ${endpoint} (api-key)` },
       });
       apiCalls.add(1);
-      const ok = check(res, { 'cached-token 200': (r) => r.status === 200 });
+      const ok = check(res, { 'api-key 200': (r) => r.status === 200 });
       errorRate.add(!ok);
       sleep(0.1);
     }
   } else {
-    // Strategy B: re-authenticate every request (worst case)
+    // Strategy B: re-authenticate every request (bcrypt-heavy, the slow path being measured)
     for (let i = 0; i < 5; i++) {
       const token = login(ADMIN_USER, ADMIN_PASS);
       if (!token) continue;
@@ -396,10 +459,8 @@ export function authContentionTest() {
 // Hammers list endpoints with varying offsets and limits.
 // Reveals: missing DB indexes, O(n) offset scans, slow COUNT queries.
 
-export function paginationStress() {
-  const token = login(ADMIN_USER, ADMIN_PASS);
-  if (!token) return;
-  const headers = authHeaders(token);
+export function paginationStress(data) {
+  const headers = apiKeyHeaders(data.apiKey);
 
   const endpoints = [
     { path: '/api/v1/audit-logs', supportsOffset: true },
@@ -463,10 +524,8 @@ export function paginationStress() {
 // Reveals: optimistic locking effectiveness, version mismatch handling,
 // DB row-level lock contention.
 
-export function writeContentionTest() {
-  const token = login(ADMIN_USER, ADMIN_PASS);
-  if (!token) return;
-  const headers = authHeaders(token);
+export function writeContentionTest(data) {
+  const headers = apiKeyHeaders(data.apiKey);
 
   // All VUs share a small set of definition IDs (created by first VUs)
   const sharedSuffix = `contention-${__ITER % 3}`; // Only 3 shared resources
@@ -583,11 +642,9 @@ export function writeContentionTest() {
 // Instant 0→100 VUs. Reveals: connection pool starvation, goroutine
 // explosion, response time degradation under sudden load.
 
-export function spikeTest() {
+export function spikeTest(data) {
   concurrentUsers.add(1);
-  const token = login(ADMIN_USER, ADMIN_PASS);
-  if (!token) { concurrentUsers.add(-1); return; }
-  const headers = authHeaders(token);
+  const headers = apiKeyHeaders(data.apiKey);
 
   // Fire a batch of parallel reads (what happens when 100 users all
   // load the dashboard at the same instant)
@@ -616,10 +673,8 @@ export function spikeTest() {
 // exhaustion, GC pauses, DB connection leaks, goroutine leaks.
 // Compare p50/p95/p99 at start vs end of the test.
 
-export function soakTest() {
-  const token = login(ADMIN_USER, ADMIN_PASS);
-  if (!token) return;
-  const headers = authHeaders(token);
+export function soakTest(data) {
+  const headers = apiKeyHeaders(data.apiKey);
   const suffix = `${__VU}-${__ITER}-${Date.now()}`;
 
   // Mix of reads and writes to simulate realistic sustained load

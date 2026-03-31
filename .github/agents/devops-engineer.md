@@ -1,7 +1,7 @@
 ---
 name: DevOps Engineer
 description: Expert infrastructure engineer for Docker, CI/CD, deployment, nginx, and build system work. Maintains reliable, secure, and reproducible environments.
-model: Claude Sonnet 4.6 (copilot)
+model: Claude Opus 4.6 (copilot)
 tools:
   - search/codebase
   - terminal
