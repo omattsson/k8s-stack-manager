@@ -1,7 +1,6 @@
 {
   "annotations": { "list": [] },
   "editable": true,
-  "fiscalYearStartMonth": 0,
   "graphTooltip": 1,
   "id": null,
   "links": [],
@@ -83,7 +82,7 @@
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         {
-          "expr": "sum by (http_route) (rate(http_server_request_duration_seconds_count[1m]))",
+          "expr": "topk(10, sum by (http_route) (rate(http_server_request_duration_seconds_count[1m])))",
           "legendFormat": "{{ http_route }}"
         }
       ],
@@ -95,17 +94,58 @@
       }
     },
     {
-      "title": "Recent Traces",
-      "type": "traces",
-      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 16 },
-      "datasource": { "type": "jaeger", "uid": "jaeger" },
+      "title": "Azure Table — Operation Duration (p95)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         {
-          "queryType": "search",
-          "service": "k8s-stack-manager",
-          "limit": 20
+          "expr": "histogram_quantile(0.95, sum(rate(db_operation_duration_seconds_bucket[1m])) by (le, operation))",
+          "legendFormat": "{{ operation }}"
         }
-      ]
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": { "drawStyle": "line", "fillOpacity": 10 }
+        }
+      }
+    },
+    {
+      "title": "Azure Table — Operations/s by Table",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "sum by (table) (rate(db_operation_count_total[1m]))",
+          "legendFormat": "{{ table }}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "custom": { "drawStyle": "bars", "fillOpacity": 50 }
+        }
+      }
+    },
+    {
+      "title": "Request Duration by Route (p95)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 24 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "topk(10, histogram_quantile(0.95, sum(rate(http_server_request_duration_seconds_bucket[1m])) by (le, http_route)))",
+          "legendFormat": "{{ http_route }}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": { "drawStyle": "line", "fillOpacity": 5 }
+        }
+      }
     }
   ],
   "schemaVersion": 39,
