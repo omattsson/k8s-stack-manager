@@ -12,8 +12,8 @@ processors:
     send_batch_size: 1024
 
 exporters:
-  otlp/jaeger:
-    endpoint: "jaeger:4317"
+  otlp/tempo:
+    endpoint: "tempo:4317"
     tls:
       insecure: true
   prometheus:
@@ -26,12 +26,15 @@ extensions:
     endpoint: "0.0.0.0:13133"
 
 service:
+  telemetry:
+    metrics:
+      address: "0.0.0.0:8888"
   extensions: [health_check]
   pipelines:
     traces:
       receivers: [otlp]
       processors: [batch]
-      exporters: [otlp/jaeger]
+      exporters: [otlp/tempo]
     metrics:
       receivers: [otlp]
       processors: [batch]

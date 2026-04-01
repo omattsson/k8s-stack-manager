@@ -60,6 +60,13 @@ services:
       - KUBECONFIG_PATH=${KUBECONFIG_PATH:-}
       - DEPLOYMENT_TIMEOUT=${DEPLOYMENT_TIMEOUT:-10m}
       - MAX_CONCURRENT_DEPLOYS=${MAX_CONCURRENT_DEPLOYS:-5}
+      # OpenTelemetry (requires --profile otel)
+      - OTEL_ENABLED=${OTEL_ENABLED:-false}
+      - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-otel-collector:4317}
+      - OTEL_SERVICE_NAME=${OTEL_SERVICE_NAME:-k8s-stack-manager}
+      - OTEL_TRACE_SAMPLE_RATE=${OTEL_TRACE_SAMPLE_RATE:-1.0}
+      # Rate limiting
+      - RATE_LIMIT=${RATE_LIMIT:-100}
       # Stack defaults
       - DEFAULT_BRANCH=${DEFAULT_BRANCH:-master}
     depends_on:
@@ -133,8 +140,8 @@ services:
     volumes:
       - ./config/otel/collector-config.yaml:/etc/otelcol-contrib/config.yaml:ro
     depends_on:
-      jaeger:
-        condition: service_started
+      tempo:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "/otelcol-contrib", "validate", "--config", "/etc/otelcol-contrib/config.yaml"]
       interval: 30s
@@ -144,16 +151,18 @@ services:
     networks:
       - backend-net
 
-  jaeger:
-    image: jaegertracing/jaeger:2.17.0
-    container_name: app-jaeger
+  tempo:
+    image: grafana/tempo:2.7.2
+    container_name: app-tempo
     profiles: [otel]
+    command: ["-config.file=/etc/tempo.yaml"]
+    volumes:
+      - ./config/otel/tempo.yaml:/etc/tempo.yaml:ro
+      - tempo_data:/var/tempo
     ports:
-      - "16686:16686"  # Jaeger UI
-    environment:
-      - COLLECTOR_OTLP_GRPC_HOST_PORT=0.0.0.0:4317
+      - "127.0.0.1:3200:3200"   # Tempo HTTP API (localhost only)
     healthcheck:
-      test: ["CMD-SHELL", "wget --spider -q http://localhost:16686/ || exit 1"]
+      test: ["CMD-SHELL", "wget --spider -q http://localhost:3200/ready || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -179,7 +188,7 @@ services:
       - backend-net
 
   grafana:
-    image: grafana/grafana:11.6.0
+    image: grafana/grafana:12.3.1
     container_name: app-grafana
     profiles: [otel]
     ports:
@@ -188,6 +197,7 @@ services:
       - GF_AUTH_ANONYMOUS_ENABLED=true
       - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
       - GF_AUTH_DISABLE_LOGIN_FORM=true
+      - GF_METRICS_ENABLED=true
       - GF_INSTALL_PLUGINS=
     volumes:
       - ./config/otel/grafana/provisioning:/etc/grafana/provisioning:ro
@@ -195,7 +205,7 @@ services:
     depends_on:
       prometheus:
         condition: service_healthy
-      jaeger:
+      tempo:
         condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "wget --spider -q http://localhost:3000/api/health || exit 1"]
@@ -211,6 +221,7 @@ volumes:
   frontend_node_modules:
   azurite_data: {}
   grafana_data: {}
+  tempo_data: {}
 
 networks:
   backend-net:

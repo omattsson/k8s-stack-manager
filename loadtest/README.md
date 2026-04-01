@@ -177,7 +177,7 @@ When the backend runs with `OTEL_ENABLED=true`, all k6 requests include W3C `tra
 ### Starting the observability stack
 
 ```bash
-make dev-otel   # starts backend + frontend + otel-collector + jaeger + prometheus + grafana
+make dev-otel   # starts backend + frontend + otel-collector + tempo + prometheus + grafana
 ```
 
 ### Viewing traces
