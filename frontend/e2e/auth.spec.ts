@@ -29,6 +29,7 @@ test.describe('Authentication', () => {
 
   test('invalid credentials show error message', async ({ page }) => {
     await page.goto('/login');
+    await expect(page.getByRole('heading', { level: 1, name: 'Sign In' })).toBeVisible({ timeout: 10_000 });
     await page.getByLabel('Username').fill('admin');
     await page.getByLabel('Password').fill('wrongpassword');
     await page.getByRole('button', { name: 'Sign In' }).click();

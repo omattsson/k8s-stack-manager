@@ -8,15 +8,15 @@ type StackInstance struct {
 	UpdatedAt         time.Time  `json:"updated_at"`
 	LastDeployedAt    *time.Time `json:"last_deployed_at,omitempty"`
 	ExpiresAt         *time.Time `json:"expires_at,omitempty"`
-	ID                string     `json:"id"`
-	StackDefinitionID string     `json:"stack_definition_id"`
-	Name              string     `json:"name"`
-	Namespace         string     `json:"namespace"`
-	OwnerID           string     `json:"owner_id"`
-	Branch            string     `json:"branch"`
-	ClusterID         string     `json:"cluster_id,omitempty"`
-	Status            string     `json:"status"`
-	ErrorMessage      string     `json:"error_message,omitempty"`
+	ID                string     `json:"id" gorm:"primaryKey;size:36"`
+	StackDefinitionID string     `json:"stack_definition_id" gorm:"size:36"`
+	Name              string     `json:"name" gorm:"size:255"`
+	Namespace         string     `json:"namespace" gorm:"size:255"`
+	OwnerID           string     `json:"owner_id" gorm:"size:36"`
+	Branch            string     `json:"branch" gorm:"size:255"`
+	ClusterID         string     `json:"cluster_id,omitempty" gorm:"size:36"`
+	Status            string     `json:"status" gorm:"size:50"`
+	ErrorMessage      string     `json:"error_message,omitempty" gorm:"type:text"`
 	TTLMinutes        int        `json:"ttl_minutes"`
 }
 

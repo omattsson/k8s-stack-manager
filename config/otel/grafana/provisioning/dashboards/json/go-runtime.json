@@ -14,6 +14,10 @@
         {
           "expr": "sum by (job) (go_goroutines)",
           "legendFormat": "{{ job }}"
+        },
+        {
+          "expr": "go_goroutine_count{job=\"k8s-stack-manager-backend\"}",
+          "legendFormat": "backend (otel)"
         }
       ],
       "fieldConfig": {
@@ -43,6 +47,10 @@
         {
           "expr": "sum by (job) (go_memstats_heap_sys_bytes)",
           "legendFormat": "{{ job }} sys"
+        },
+        {
+          "expr": "go_memory_used{job=\"k8s-stack-manager-backend\"}",
+          "legendFormat": "backend {{go_memory_type}} (otel)"
         }
       ],
       "fieldConfig": {
@@ -97,10 +105,15 @@
         {
           "expr": "sum by (job) (go_memstats_heap_objects)",
           "legendFormat": "{{ job }}"
+        },
+        {
+          "expr": "rate(go_memory_allocated{job=\"k8s-stack-manager-backend\"}[1m])",
+          "legendFormat": "backend alloc rate (otel)"
         }
       ],
       "fieldConfig": {
         "defaults": {
+          "unit": "Bps",
           "custom": { "drawStyle": "line", "fillOpacity": 10 }
         }
       }
@@ -208,6 +221,14 @@
         {
           "expr": "go_memstats_stack_inuse_bytes",
           "legendFormat": "stack in-use"
+        },
+        {
+          "expr": "go_memory_used{job=\"k8s-stack-manager-backend\",go_memory_type=\"stack\"}",
+          "legendFormat": "backend stack (otel)"
+        },
+        {
+          "expr": "go_memory_limit{job=\"k8s-stack-manager-backend\"}",
+          "legendFormat": "backend limit (otel)"
         }
       ],
       "fieldConfig": {
@@ -230,6 +251,10 @@
         {
           "expr": "go_sched_gomaxprocs_threads",
           "legendFormat": "GOMAXPROCS"
+        },
+        {
+          "expr": "go_processor_limit{job=\"k8s-stack-manager-backend\"}",
+          "legendFormat": "backend GOMAXPROCS (otel)"
         }
       ],
       "fieldConfig": {

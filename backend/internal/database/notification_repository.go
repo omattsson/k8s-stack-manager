@@ -11,6 +11,9 @@ import (
 	"gorm.io/gorm/clause"
 )
 
+// Compile-time interface check.
+var _ models.NotificationRepository = (*GORMNotificationRepository)(nil)
+
 // GORMNotificationRepository implements NotificationRepository using GORM.
 type GORMNotificationRepository struct {
 	db *gorm.DB

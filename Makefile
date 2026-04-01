@@ -201,6 +201,22 @@ LOADTEST_ENV = \
 	PPROF_ENABLED=$${PPROF_ENABLED:-true} PPROF_ADDR=$${PPROF_ADDR:-:6060} \
 	RATE_LIMIT=10000 PORT=8081 GIN_MODE=release
 
+# Env vars for MySQL + OTel load testing
+LOADTEST_MYSQL_ENV = \
+	USE_AZURE_TABLE=false APP_DEBUG=false \
+	DB_HOST=$${DB_HOST:-127.0.0.1} DB_PORT=$${DB_PORT:-3306} \
+	DB_USER=$${DB_USER:-root} DB_PASSWORD=$${DB_PASSWORD:-rootpassword} DB_NAME=$${DB_NAME:-app} \
+	DB_MAX_OPEN_CONNS=$${DB_MAX_OPEN_CONNS:-200} DB_MAX_IDLE_CONNS=$${DB_MAX_IDLE_CONNS:-20} \
+	JWT_SECRET=$${JWT_SECRET:-dev-secret-change-in-production-minimum-16-chars} \
+	ADMIN_USERNAME=$${ADMIN_USERNAME:-admin} ADMIN_PASSWORD=$${ADMIN_PASSWORD:-admin} \
+	SELF_REGISTRATION=true \
+	HELM_BINARY=$${HELM_BINARY:-helm} \
+	KUBECONFIG_PATH=$${KUBECONFIG_PATH:-$$HOME/.kube/config} \
+	PPROF_ENABLED=$${PPROF_ENABLED:-true} PPROF_ADDR=$${PPROF_ADDR:-:6060} \
+	OTEL_ENABLED=true OTEL_EXPORTER_OTLP_ENDPOINT=localhost:4317 \
+	OTEL_SERVICE_NAME=k8s-stack-manager OTEL_TRACE_SAMPLE_RATE=1.0 \
+	RATE_LIMIT=10000 PORT=8081 GIN_MODE=release
+
 loadtest-start-backend: azurite-start ## Build and start backend in release mode for load testing
 	@echo "Building backend (release mode)..."
 	@cd backend && mkdir -p tmp
@@ -280,6 +296,63 @@ loadtest-frontend: loadtest-start ## Run Playwright frontend load tests (starts/
 loadtest-frontend-run: ## Run Playwright load tests (assumes backend already running)
 	@echo "Running frontend load tests (workers=$${LOAD_WORKERS:-5})..."
 	cd frontend && NODE_PATH=node_modules npx playwright test --config=../loadtest/frontend/playwright.config.ts
+
+mysql-start: ## Start MySQL container for load testing
+	docker compose --profile mysql up -d mysql
+	@echo "Waiting for MySQL to be ready..."
+	@n=0; while ! docker compose --profile mysql exec mysql mysqladmin ping -h localhost --silent 2>/dev/null; do \
+		n=$$((n+1)); \
+		if [ $$n -ge 30 ]; then echo "ERROR: MySQL failed to start after 30s"; exit 1; fi; \
+		sleep 1; \
+	done
+	@echo "MySQL is ready on :3306"
+
+mysql-stop: ## Stop MySQL container
+	docker compose --profile mysql down
+
+otel-start: ## Start OTel observability stack (Collector, Prometheus, Tempo, Grafana)
+	docker compose --profile otel up -d otel-collector prometheus tempo grafana
+	@echo "Waiting for OTel Collector..."
+	@n=0; while ! curl -sf http://localhost:13133 >/dev/null 2>&1; do \
+		n=$$((n+1)); \
+		if [ $$n -ge 30 ]; then echo "ERROR: OTel Collector failed to start after 30s"; exit 1; fi; \
+		sleep 1; \
+	done
+	@echo "OTel stack ready: Grafana http://localhost:3001, Prometheus http://localhost:9090"
+
+otel-stop: ## Stop OTel stack
+	docker compose --profile otel down
+
+loadtest-mysql-start: mysql-start otel-start ## Start MySQL + OTel + mysqld-exporter for load testing
+	docker compose --profile mysql --profile mysql-otel up -d mysqld-exporter || true
+	@echo "Building backend (release mode)..."
+	@cd backend && mkdir -p tmp
+	@cd backend && go build -o tmp/main ./api/main.go
+	@echo "Starting backend (MySQL + OTel, GIN_MODE=release, RATE_LIMIT=10000)..."
+	@cd backend && ( $(LOADTEST_MYSQL_ENV) ./tmp/main > tmp/loadtest-mysql.log 2>&1 & echo $$! > tmp/loadtest-mysql.pid )
+	@n=0; while ! curl -sf http://localhost:8081/health/live >/dev/null 2>&1; do \
+		n=$$((n+1)); \
+		if [ $$n -ge 30 ]; then echo "ERROR: Backend failed to start after 30s. See backend/tmp/loadtest-mysql.log"; exit 1; fi; \
+		sleep 1; \
+	done
+	@echo "Backend ready on :8081 (MySQL + OTel, logs: backend/tmp/loadtest-mysql.log)"
+
+loadtest-mysql-stop: ## Stop MySQL load test backend + infrastructure
+	@if [ -f backend/tmp/loadtest-mysql.pid ]; then \
+		echo "Stopping backend (PID: $$(cat backend/tmp/loadtest-mysql.pid))..."; \
+		kill $$(cat backend/tmp/loadtest-mysql.pid) 2>/dev/null || true; \
+		rm -f backend/tmp/loadtest-mysql.pid; \
+	fi
+	@$(MAKE) otel-stop
+	@$(MAKE) mysql-stop
+
+loadtest-mysql-backend: loadtest-mysql-start ## Run k6 backend load tests with MySQL + OTel
+	@$(MAKE) loadtest-backend-run || ($(MAKE) loadtest-mysql-stop; exit 1)
+	@$(MAKE) loadtest-mysql-stop
+
+loadtest-mysql-stress: loadtest-mysql-start ## Run k6 stress tests with MySQL + OTel
+	@$(MAKE) loadtest-stress-run || ($(MAKE) loadtest-mysql-stop; exit 1)
+	@$(MAKE) loadtest-mysql-stop
 
 # ── Helm / Kubernetes ────────────────────────────────────────────────
 HELM_CHART     := helm/k8s-stack-manager

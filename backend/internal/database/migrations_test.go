@@ -42,6 +42,19 @@ func setupTestDBWithAllTables(t *testing.T) *gorm.DB {
 		&models.ResourceQuotaConfig{},
 		&models.TemplateVersion{},
 		&models.InstanceQuotaOverride{},
+		&models.AuditLog{},
+		&models.APIKey{},
+		&models.StackDefinition{},
+		&models.StackTemplate{},
+		&models.StackInstance{},
+		&models.ChartConfig{},
+		&models.TemplateChartConfig{},
+		&models.ValueOverride{},
+		&models.ChartBranchOverride{},
+		&models.DeploymentLog{},
+		&models.SharedValues{},
+		&models.CleanupPolicy{},
+		&models.UserFavorite{},
 	))
 	return db
 }

@@ -7,12 +7,12 @@ import "time"
 type SharedValues struct {
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`
-	ID          string    `json:"id"`
-	ClusterID   string    `json:"cluster_id"`
-	Name        string    `json:"name"`
-	Description string    `json:"description"`
-	Values      string    `json:"values"`   // YAML content
-	Priority    int       `json:"priority"` // Lower = applied first
+	ID          string    `json:"id" gorm:"primaryKey;size:36"`
+	ClusterID   string    `json:"cluster_id" gorm:"size:36"`
+	Name        string    `json:"name" gorm:"size:255"`
+	Description string    `json:"description" gorm:"type:text"`
+	Values      string    `json:"values" gorm:"type:longtext"` // YAML content
+	Priority    int       `json:"priority"`                    // Lower = applied first
 }
 
 // SharedValuesRepository defines data access operations for shared values.

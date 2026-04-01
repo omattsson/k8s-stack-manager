@@ -35,18 +35,15 @@ func (d *Database) AutoMigrate() error {
 		Name:        "add_indexes",
 		Description: "Add indexes for performance optimization",
 		Up: func(tx *gorm.DB) error {
-			// Add composite index on items
-			var count int64
-			tx.Raw("SELECT COUNT(1) FROM information_schema.statistics WHERE table_schema = DATABASE() AND table_name = 'items' AND index_name = 'idx_items_name_price'").Scan(&count)
-			if count == 0 {
+			// Add composite index on items (idempotent via HasIndex check)
+			if !tx.Migrator().HasIndex(&models.Item{}, "idx_items_name_price") {
 				if err := tx.Exec("CREATE INDEX idx_items_name_price ON items(name, price)").Error; err != nil {
 					return err
 				}
 			}
 
-			// Add unique index on username
-			tx.Raw("SELECT COUNT(1) FROM information_schema.statistics WHERE table_schema = DATABASE() AND table_name = 'users' AND index_name = 'idx_users_username'").Scan(&count)
-			if count == 0 {
+			// Add unique index on username (may already exist from uniqueIndex tag)
+			if !tx.Migrator().HasIndex(&models.User{}, "idx_users_username") {
 				if err := tx.Exec("CREATE UNIQUE INDEX idx_users_username ON users(username)").Error; err != nil {
 					return err
 				}
@@ -119,7 +116,8 @@ func (d *Database) AutoMigrate() error {
 				return err
 			}
 			// Add max_instances_per_user column to clusters using GORM's dialect-agnostic migrator.
-			if !tx.Migrator().HasColumn(&models.Cluster{}, "MaxInstancesPerUser") {
+			// Skip if clusters table doesn't exist yet (created in migration 000009).
+			if tx.Migrator().HasTable(&models.Cluster{}) && !tx.Migrator().HasColumn(&models.Cluster{}, "MaxInstancesPerUser") {
 				if err := tx.Migrator().AddColumn(&models.Cluster{}, "MaxInstancesPerUser"); err != nil {
 					return err
 				}
@@ -197,9 +195,7 @@ func (d *Database) AutoMigrate() error {
 			}
 			// Add UNIQUE index on (auth_provider, external_id) for FindByExternalID queries.
 			// MySQL allows multiple NULLs in a unique index, so local users (NULL external_id) won't collide.
-			var count int64
-			tx.Raw("SELECT COUNT(*) FROM information_schema.statistics WHERE table_schema = DATABASE() AND table_name = 'users' AND index_name = 'idx_users_auth_provider_external_id'").Scan(&count)
-			if count == 0 {
+			if !tx.Migrator().HasIndex(&models.User{}, "idx_users_auth_provider_external_id") {
 				if err := tx.Exec("CREATE UNIQUE INDEX idx_users_auth_provider_external_id ON users (auth_provider, external_id)").Error; err != nil {
 					return err
 				}
@@ -214,6 +210,299 @@ func (d *Database) AutoMigrate() error {
 						return err
 					}
 				}
+			}
+			return nil
+		},
+	})
+
+	// Create clusters table
+	migrator.AddMigration(schema.Migration{
+		Version:     "20231201000009",
+		Name:        "create_clusters_table",
+		Description: "Create clusters table for multi-cluster support",
+		Up: func(tx *gorm.DB) error {
+			return tx.AutoMigrate(&models.Cluster{})
+		},
+		Down: func(tx *gorm.DB) error {
+			return tx.Migrator().DropTable(&models.Cluster{})
+		},
+	})
+
+	// Create stack_definitions and stack_templates tables
+	migrator.AddMigration(schema.Migration{
+		Version:     "20231201000010",
+		Name:        "create_stack_definitions_and_templates",
+		Description: "Create stack_definitions and stack_templates tables",
+		Up: func(tx *gorm.DB) error {
+			if err := tx.AutoMigrate(&models.StackDefinition{}); err != nil {
+				return err
+			}
+			return tx.AutoMigrate(&models.StackTemplate{})
+		},
+		Down: func(tx *gorm.DB) error {
+			if err := tx.Migrator().DropTable(&models.StackTemplate{}); err != nil {
+				return err
+			}
+			return tx.Migrator().DropTable(&models.StackDefinition{})
+		},
+	})
+
+	// Create stack_instances table
+	migrator.AddMigration(schema.Migration{
+		Version:     "20231201000011",
+		Name:        "create_stack_instances",
+		Description: "Create stack_instances table",
+		Up: func(tx *gorm.DB) error {
+			return tx.AutoMigrate(&models.StackInstance{})
+		},
+		Down: func(tx *gorm.DB) error {
+			return tx.Migrator().DropTable(&models.StackInstance{})
+		},
+	})
+
+	// Create chart_configs and template_chart_configs tables
+	migrator.AddMigration(schema.Migration{
+		Version:     "20231201000012",
+		Name:        "create_chart_configs",
+		Description: "Create chart_configs and template_chart_configs tables",
+		Up: func(tx *gorm.DB) error {
+			if err := tx.AutoMigrate(&models.ChartConfig{}); err != nil {
+				return err
+			}
+			return tx.AutoMigrate(&models.TemplateChartConfig{})
+		},
+		Down: func(tx *gorm.DB) error {
+			if err := tx.Migrator().DropTable(&models.TemplateChartConfig{}); err != nil {
+				return err
+			}
+			return tx.Migrator().DropTable(&models.ChartConfig{})
+		},
+	})
+
+	// Create value_overrides and chart_branch_overrides tables
+	migrator.AddMigration(schema.Migration{
+		Version:     "20231201000013",
+		Name:        "create_value_and_branch_overrides",
+		Description: "Create value_overrides and chart_branch_overrides tables",
+		Up: func(tx *gorm.DB) error {
+			if err := tx.AutoMigrate(&models.ValueOverride{}); err != nil {
+				return err
+			}
+			return tx.AutoMigrate(&models.ChartBranchOverride{})
+		},
+		Down: func(tx *gorm.DB) error {
+			if err := tx.Migrator().DropTable(&models.ChartBranchOverride{}); err != nil {
+				return err
+			}
+			return tx.Migrator().DropTable(&models.ValueOverride{})
+		},
+	})
+
+	// Create deployment_logs table
+	migrator.AddMigration(schema.Migration{
+		Version:     "20231201000014",
+		Name:        "create_deployment_logs",
+		Description: "Create deployment_logs table for recording deploy/stop/clean operations",
+		Up: func(tx *gorm.DB) error {
+			return tx.AutoMigrate(&models.DeploymentLog{})
+		},
+		Down: func(tx *gorm.DB) error {
+			return tx.Migrator().DropTable(&models.DeploymentLog{})
+		},
+	})
+
+	// Create audit_logs table
+	migrator.AddMigration(schema.Migration{
+		Version:     "20231201000015",
+		Name:        "create_audit_logs",
+		Description: "Create audit_logs table for user action auditing",
+		Up: func(tx *gorm.DB) error {
+			return tx.AutoMigrate(&models.AuditLog{})
+		},
+		Down: func(tx *gorm.DB) error {
+			return tx.Migrator().DropTable(&models.AuditLog{})
+		},
+	})
+
+	// Create api_keys table
+	migrator.AddMigration(schema.Migration{
+		Version:     "20231201000016",
+		Name:        "create_api_keys",
+		Description: "Create api_keys table for programmatic access",
+		Up: func(tx *gorm.DB) error {
+			return tx.AutoMigrate(&models.APIKey{})
+		},
+		Down: func(tx *gorm.DB) error {
+			return tx.Migrator().DropTable(&models.APIKey{})
+		},
+	})
+
+	// Create shared_values table
+	migrator.AddMigration(schema.Migration{
+		Version:     "20231201000017",
+		Name:        "create_shared_values",
+		Description: "Create shared_values table for per-cluster shared Helm values",
+		Up: func(tx *gorm.DB) error {
+			return tx.AutoMigrate(&models.SharedValues{})
+		},
+		Down: func(tx *gorm.DB) error {
+			return tx.Migrator().DropTable(&models.SharedValues{})
+		},
+	})
+
+	// Create cleanup_policies table
+	migrator.AddMigration(schema.Migration{
+		Version:     "20231201000018",
+		Name:        "create_cleanup_policies",
+		Description: "Create cleanup_policies table for automated maintenance",
+		Up: func(tx *gorm.DB) error {
+			return tx.AutoMigrate(&models.CleanupPolicy{})
+		},
+		Down: func(tx *gorm.DB) error {
+			return tx.Migrator().DropTable(&models.CleanupPolicy{})
+		},
+	})
+
+	// Create user_favorites table
+	migrator.AddMigration(schema.Migration{
+		Version:     "20231201000019",
+		Name:        "create_user_favorites",
+		Description: "Create user_favorites table for user bookmarks",
+		Up: func(tx *gorm.DB) error {
+			return tx.AutoMigrate(&models.UserFavorite{})
+		},
+		Down: func(tx *gorm.DB) error {
+			return tx.Migrator().DropTable(&models.UserFavorite{})
+		},
+	})
+
+	// Add indexes for common query patterns on domain tables
+	migrator.AddMigration(schema.Migration{
+		Version:     "20231201000020",
+		Name:        "add_domain_indexes",
+		Description: "Add indexes for common query patterns on domain tables",
+		Up: func(tx *gorm.DB) error {
+			type idxDef struct {
+				table string
+				name  string
+				sql   string
+			}
+			indexes := []idxDef{
+				{"stack_definitions", "idx_stack_definitions_owner_id", "CREATE INDEX idx_stack_definitions_owner_id ON stack_definitions(owner_id)"},
+				{"stack_templates", "idx_stack_templates_owner_id", "CREATE INDEX idx_stack_templates_owner_id ON stack_templates(owner_id)"},
+				{"stack_templates", "idx_stack_templates_is_published", "CREATE INDEX idx_stack_templates_is_published ON stack_templates(is_published)"},
+				{"stack_instances", "idx_stack_instances_owner_id", "CREATE INDEX idx_stack_instances_owner_id ON stack_instances(owner_id)"},
+				{"stack_instances", "idx_stack_instances_status", "CREATE INDEX idx_stack_instances_status ON stack_instances(status)"},
+				{"stack_instances", "idx_stack_instances_cluster_id", "CREATE INDEX idx_stack_instances_cluster_id ON stack_instances(cluster_id)"},
+				{"stack_instances", "idx_stack_instances_definition_id", "CREATE INDEX idx_stack_instances_definition_id ON stack_instances(stack_definition_id)"},
+				{"chart_configs", "idx_chart_configs_definition_id", "CREATE INDEX idx_chart_configs_definition_id ON chart_configs(stack_definition_id)"},
+				{"template_chart_configs", "idx_template_chart_configs_template_id", "CREATE INDEX idx_template_chart_configs_template_id ON template_chart_configs(stack_template_id)"},
+				{"value_overrides", "idx_value_overrides_instance_id", "CREATE INDEX idx_value_overrides_instance_id ON value_overrides(stack_instance_id)"},
+				{"chart_branch_overrides", "idx_chart_branch_overrides_instance_id", "CREATE INDEX idx_chart_branch_overrides_instance_id ON chart_branch_overrides(stack_instance_id)"},
+				{"deployment_logs", "idx_deployment_logs_instance_id", "CREATE INDEX idx_deployment_logs_instance_id ON deployment_logs(stack_instance_id)"},
+				{"audit_logs", "idx_audit_logs_user_id", "CREATE INDEX idx_audit_logs_user_id ON audit_logs(user_id)"},
+				{"audit_logs", "idx_audit_logs_entity", "CREATE INDEX idx_audit_logs_entity ON audit_logs(entity_type, entity_id)"},
+				{"audit_logs", "idx_audit_logs_timestamp", "CREATE INDEX idx_audit_logs_timestamp ON audit_logs(timestamp)"},
+				{"api_keys", "idx_api_keys_user_id", "CREATE INDEX idx_api_keys_user_id ON api_keys(user_id)"},
+				{"api_keys", "idx_api_keys_prefix", "CREATE INDEX idx_api_keys_prefix ON api_keys(prefix)"},
+				{"shared_values", "idx_shared_values_cluster_id", "CREATE INDEX idx_shared_values_cluster_id ON shared_values(cluster_id)"},
+				{"user_favorites", "idx_user_favorites_user_id", "CREATE INDEX idx_user_favorites_user_id ON user_favorites(user_id)"},
+				{"user_favorites", "idx_user_favorites_entity", "CREATE UNIQUE INDEX idx_user_favorites_entity ON user_favorites(user_id, entity_type, entity_id)"},
+			}
+			for _, idx := range indexes {
+				var count int64
+				tx.Raw("SELECT COUNT(1) FROM information_schema.statistics WHERE table_schema = DATABASE() AND table_name = ? AND index_name = ?", idx.table, idx.name).Scan(&count)
+				if count == 0 {
+					if err := tx.Exec(idx.sql).Error; err != nil {
+						return err
+					}
+				}
+			}
+			return nil
+		},
+		Down: func(tx *gorm.DB) error {
+			indexes := []struct{ table, name string }{
+				{"user_favorites", "idx_user_favorites_entity"},
+				{"user_favorites", "idx_user_favorites_user_id"},
+				{"shared_values", "idx_shared_values_cluster_id"},
+				{"api_keys", "idx_api_keys_prefix"},
+				{"api_keys", "idx_api_keys_user_id"},
+				{"audit_logs", "idx_audit_logs_timestamp"},
+				{"audit_logs", "idx_audit_logs_entity"},
+				{"audit_logs", "idx_audit_logs_user_id"},
+				{"deployment_logs", "idx_deployment_logs_instance_id"},
+				{"chart_branch_overrides", "idx_chart_branch_overrides_instance_id"},
+				{"value_overrides", "idx_value_overrides_instance_id"},
+				{"template_chart_configs", "idx_template_chart_configs_template_id"},
+				{"chart_configs", "idx_chart_configs_definition_id"},
+				{"stack_instances", "idx_stack_instances_definition_id"},
+				{"stack_instances", "idx_stack_instances_cluster_id"},
+				{"stack_instances", "idx_stack_instances_status"},
+				{"stack_instances", "idx_stack_instances_owner_id"},
+				{"stack_templates", "idx_stack_templates_is_published"},
+				{"stack_templates", "idx_stack_templates_owner_id"},
+				{"stack_definitions", "idx_stack_definitions_owner_id"},
+			}
+			for _, idx := range indexes {
+				_ = tx.Exec("DROP INDEX " + idx.name + " ON " + idx.table).Error
+			}
+			return nil
+		},
+	})
+
+	// Migration 21: Add composite/covering indexes to eliminate full table scans
+	migrator.AddMigration(schema.Migration{
+		Version:     "20231201000021",
+		Name:        "add_query_covering_indexes",
+		Description: "Add composite and covering indexes for common query patterns to eliminate full table scans",
+		Up: func(tx *gorm.DB) error {
+			type idxDef struct {
+				table string
+				name  string
+				sql   string
+			}
+			indexes := []idxDef{
+				// stack_instances: ListPaged() ORDER BY created_at DESC
+				{"stack_instances", "idx_stack_instances_created_at", "CREATE INDEX idx_stack_instances_created_at ON stack_instances(created_at DESC)"},
+				// stack_instances: status filter + ordering for dashboard queries
+				{"stack_instances", "idx_stack_instances_status_created", "CREATE INDEX idx_stack_instances_status_created ON stack_instances(status, created_at DESC)"},
+				// stack_definitions: List() ORDER BY created_at
+				{"stack_definitions", "idx_stack_definitions_created_at", "CREATE INDEX idx_stack_definitions_created_at ON stack_definitions(created_at DESC)"},
+				// deployment_logs: covering index for SummarizeByInstance WHERE instance+action+started_at
+				{"deployment_logs", "idx_deployment_logs_instance_action_started", "CREATE INDEX idx_deployment_logs_instance_action_started ON deployment_logs(stack_instance_id, action, started_at, status)"},
+				// deployment_logs: covering index for MAX(completed_at) query
+				{"deployment_logs", "idx_deployment_logs_instance_started_completed", "CREATE INDEX idx_deployment_logs_instance_started_completed ON deployment_logs(stack_instance_id, started_at, completed_at)"},
+				// audit_logs: filtered list with action + timestamp ordering
+				{"audit_logs", "idx_audit_logs_action_timestamp", "CREATE INDEX idx_audit_logs_action_timestamp ON audit_logs(action, timestamp DESC)"},
+				// stack_templates: List() ORDER BY created_at
+				{"stack_templates", "idx_stack_templates_created_at", "CREATE INDEX idx_stack_templates_created_at ON stack_templates(created_at DESC)"},
+				// notifications: user inbox query (user + read status + ordering)
+				{"notifications", "idx_notifications_user_read_created", "CREATE INDEX idx_notifications_user_read_created ON notifications(user_id, is_read, created_at DESC)"},
+			}
+			for _, idx := range indexes {
+				var count int64
+				tx.Raw("SELECT COUNT(1) FROM information_schema.statistics WHERE table_schema = DATABASE() AND table_name = ? AND index_name = ?", idx.table, idx.name).Scan(&count)
+				if count == 0 {
+					if err := tx.Exec(idx.sql).Error; err != nil {
+						return err
+					}
+				}
+			}
+			return nil
+		},
+		Down: func(tx *gorm.DB) error {
+			indexes := []struct{ table, name string }{
+				{"notifications", "idx_notifications_user_read_created"},
+				{"stack_templates", "idx_stack_templates_created_at"},
+				{"audit_logs", "idx_audit_logs_action_timestamp"},
+				{"deployment_logs", "idx_deployment_logs_instance_started_completed"},
+				{"deployment_logs", "idx_deployment_logs_instance_action_started"},
+				{"stack_definitions", "idx_stack_definitions_created_at"},
+				{"stack_instances", "idx_stack_instances_status_created"},
+				{"stack_instances", "idx_stack_instances_created_at"},
+			}
+			for _, idx := range indexes {
+				_ = tx.Exec("DROP INDEX " + idx.name + " ON " + idx.table).Error
 			}
 			return nil
 		},

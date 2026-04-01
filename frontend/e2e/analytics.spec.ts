@@ -41,14 +41,14 @@ test.describe('Analytics Page', () => {
   });
 
   test('refresh button reloads data', async ({ page }) => {
-    // Wait for initial load
-    await expect(page.getByText('Templates')).toBeVisible({ timeout: 10_000 });
+    // Wait for initial load — use #main-content to avoid matching the nav sidebar link
+    await expect(page.locator('#main-content').getByText('Templates')).toBeVisible({ timeout: 10_000 });
 
     // Click refresh
     await page.getByRole('button', { name: 'Refresh' }).click();
 
     // Page should still show data after refresh (no errors)
-    await expect(page.getByRole('paragraph').filter({ hasText: 'Templates' })).toBeVisible({ timeout: 10_000 });
+    await expect(page.locator('#main-content').getByText('Templates')).toBeVisible({ timeout: 10_000 });
     await expect(page.getByText('Template Usage')).toBeVisible();
     await expect(page.getByText('User Activity')).toBeVisible();
   });

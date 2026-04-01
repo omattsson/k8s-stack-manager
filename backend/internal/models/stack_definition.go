@@ -4,13 +4,13 @@ import "time"
 
 // StackDefinition represents a user's stack configuration.
 type StackDefinition struct {
-	ID                    string    `json:"id"`
-	Name                  string    `json:"name"`
-	Description           string    `json:"description"`
-	OwnerID               string    `json:"owner_id"`
-	SourceTemplateID      string    `json:"source_template_id,omitempty"`
-	SourceTemplateVersion string    `json:"source_template_version,omitempty"`
-	DefaultBranch         string    `json:"default_branch"`
+	ID                    string    `json:"id" gorm:"primaryKey;size:36"`
+	Name                  string    `json:"name" gorm:"size:255"`
+	Description           string    `json:"description" gorm:"type:text"`
+	OwnerID               string    `json:"owner_id" gorm:"size:36"`
+	SourceTemplateID      string    `json:"source_template_id,omitempty" gorm:"size:36"`
+	SourceTemplateVersion string    `json:"source_template_version,omitempty" gorm:"size:50"`
+	DefaultBranch         string    `json:"default_branch" gorm:"size:255"`
 	CreatedAt             time.Time `json:"created_at"`
 	UpdatedAt             time.Time `json:"updated_at"`
 }

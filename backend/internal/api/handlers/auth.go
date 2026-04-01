@@ -39,10 +39,11 @@ func NewAuthHandler(userRepo models.UserRepository, cfg *config.AuthConfig) *Aut
 	return h
 }
 
-// loginCacheKey derives a cache key from the username and stored password hash.
-// The hash changes when the password changes, automatically invalidating the entry.
-func loginCacheKey(username, passwordHash string) string {
-	h := sha256.Sum256([]byte(username + ":" + passwordHash))
+// loginCacheKey derives a cache key from the username, stored password hash,
+// and the submitted password. Including the submitted password ensures that
+// only the correct password produces a cache hit.
+func loginCacheKey(username, passwordHash, submittedPassword string) string {
+	h := sha256.Sum256([]byte(username + ":" + passwordHash + ":" + submittedPassword))
 	return hex.EncodeToString(h[:])
 }
 
@@ -91,7 +92,7 @@ func (h *AuthHandler) Login(c *gin.Context) {
 	}
 
 	// Check login cache to skip expensive bcrypt comparison on repeated logins.
-	cacheKey := loginCacheKey(req.Username, user.PasswordHash)
+	cacheKey := loginCacheKey(req.Username, user.PasswordHash, req.Password)
 	cacheHit := false
 	if h.loginCache != nil {
 		if cached, ok := h.loginCache.Get(cacheKey); ok {

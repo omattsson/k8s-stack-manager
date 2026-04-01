@@ -4,14 +4,14 @@ import "time"
 
 // ChartConfig represents a Helm chart configuration within a stack definition.
 type ChartConfig struct {
-	ID                string    `json:"id"`
-	StackDefinitionID string    `json:"stack_definition_id"`
-	ChartName         string    `json:"chart_name"`
-	RepositoryURL     string    `json:"repository_url"`
-	SourceRepoURL     string    `json:"source_repo_url"`
-	ChartPath         string    `json:"chart_path"`
-	ChartVersion      string    `json:"chart_version"`
-	DefaultValues     string    `json:"default_values"`
+	ID                string    `json:"id" gorm:"primaryKey;size:36"`
+	StackDefinitionID string    `json:"stack_definition_id" gorm:"size:36"`
+	ChartName         string    `json:"chart_name" gorm:"size:255"`
+	RepositoryURL     string    `json:"repository_url" gorm:"size:500"`
+	SourceRepoURL     string    `json:"source_repo_url" gorm:"size:500"`
+	ChartPath         string    `json:"chart_path" gorm:"size:500"`
+	ChartVersion      string    `json:"chart_version" gorm:"size:50"`
+	DefaultValues     string    `json:"default_values" gorm:"type:longtext"`
 	DeployOrder       int       `json:"deploy_order"`
 	CreatedAt         time.Time `json:"created_at"`
 }

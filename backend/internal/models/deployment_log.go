@@ -9,12 +9,12 @@ import (
 type DeploymentLog struct {
 	StartedAt       time.Time  `json:"started_at"`
 	CompletedAt     *time.Time `json:"completed_at,omitempty"`
-	ID              string     `json:"id"`
-	StackInstanceID string     `json:"stack_instance_id"`
-	Action          string     `json:"action"` // "deploy", "stop", or "clean"
-	Status          string     `json:"status"` // "running", "success", "error"
-	Output          string     `json:"output"`
-	ErrorMessage    string     `json:"error_message,omitempty"`
+	ID              string     `json:"id" gorm:"primaryKey;size:36"`
+	StackInstanceID string     `json:"stack_instance_id" gorm:"size:36"`
+	Action          string     `json:"action" gorm:"size:50"` // "deploy", "stop", or "clean"
+	Status          string     `json:"status" gorm:"size:50"` // "running", "success", "error"
+	Output          string     `json:"output" gorm:"type:longtext"`
+	ErrorMessage    string     `json:"error_message,omitempty" gorm:"type:text"`
 }
 
 // Deployment log action constants.
