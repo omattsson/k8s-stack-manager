@@ -108,6 +108,29 @@ Azurite service name.
 {{- end }}
 
 {{/*
+OTel Collector labels.
+*/}}
+{{- define "k8s-stack-manager.otel.labels" -}}
+{{ include "k8s-stack-manager.labels" . }}
+app.kubernetes.io/name: {{ include "k8s-stack-manager.fullname" . }}-otel-collector
+app.kubernetes.io/component: otel-collector
+{{- end }}
+
+{{/*
+OTel Collector selector labels.
+*/}}
+{{- define "k8s-stack-manager.otel.selectorLabels" -}}
+app.kubernetes.io/name: {{ include "k8s-stack-manager.fullname" . }}-otel-collector
+{{- end }}
+
+{{/*
+OTel Collector service name.
+*/}}
+{{- define "k8s-stack-manager.otel.serviceName" -}}
+{{ include "k8s-stack-manager.fullname" . }}-otel-collector
+{{- end }}
+
+{{/*
 Backend image.
 */}}
 {{- define "k8s-stack-manager.backend.image" -}}

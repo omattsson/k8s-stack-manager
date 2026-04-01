@@ -119,6 +119,65 @@ services:
     networks:
       - backend-net
 
+  # -- OpenTelemetry (profile: otel) ----------------------------------------
+  # Start with: docker compose --profile otel up
+  # Or use:     make dev-otel
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.120.0
+    container_name: app-otel-collector
+    profiles: [otel]
+    ports:
+      - "4317:4317"   # OTLP gRPC
+      - "4318:4318"   # OTLP HTTP
+    volumes:
+      - ./config/otel/collector-config.yaml:/etc/otelcol-contrib/config.yaml:ro
+    depends_on:
+      jaeger:
+        condition: service_started
+    healthcheck:
+      test: ["CMD-SHELL", "wget --spider -q http://localhost:13133/ || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - backend-net
+
+  jaeger:
+    image: jaegertracing/jaeger:2.6
+    container_name: app-jaeger
+    profiles: [otel]
+    ports:
+      - "16686:16686"  # Jaeger UI
+    environment:
+      - COLLECTOR_OTLP_GRPC_HOST_PORT=0.0.0.0:4317
+    healthcheck:
+      test: ["CMD-SHELL", "wget --spider -q http://localhost:16686/ || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - backend-net
+
+  prometheus:
+    image: prom/prometheus:v3.3.0
+    container_name: app-prometheus
+    profiles: [otel]
+    ports:
+      - "9090:9090"   # Prometheus UI
+    volumes:
+      - ./config/otel/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    healthcheck:
+      test: ["CMD-SHELL", "wget --spider -q http://localhost:9090/-/healthy || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - backend-net
+
 volumes:
   backend_go_mod:
   frontend_node_modules:

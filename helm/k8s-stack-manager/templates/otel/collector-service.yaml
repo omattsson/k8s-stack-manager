@@ -1,0 +1,19 @@
+{{- if .Values.otel.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "k8s-stack-manager.otel.serviceName" . }}
+  labels:
+    {{- include "k8s-stack-manager.otel.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  ports:
+    - name: otlp-grpc
+      port: 4317
+      targetPort: otlp-grpc
+    - name: otlp-http
+      port: 4318
+      targetPort: otlp-http
+  selector:
+    {{- include "k8s-stack-manager.otel.selectorLabels" . | nindent 4 }}
+{{- end }}

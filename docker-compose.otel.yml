@@ -1,0 +1,14 @@
+# Override file that injects OTel environment variables into the backend.
+# Usage: docker compose --profile otel -f docker-compose.yml -f docker-compose.otel.yml up
+#
+# Separated from the main compose file so that `make dev` (without OTel)
+# never sets OTEL_ENABLED, keeping the default behaviour unchanged.
+services:
+  backend:
+    environment:
+      - OTEL_ENABLED=true
+      - OTEL_EXPORTER_OTLP_ENDPOINT=otel-collector:4317
+      - OTEL_SERVICE_NAME=k8s-stack-manager
+    depends_on:
+      otel-collector:
+        condition: service_healthy
