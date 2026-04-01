@@ -198,6 +198,45 @@ func (r *StackInstanceRepository) List() ([]models.StackInstance, error) {
 	return results, nil
 }
 
+func (r *StackInstanceRepository) ListPaged(limit, offset int) ([]models.StackInstance, int, error) {
+	ctx := context.Background()
+
+	filter := filterPKGlobal
+	pager := r.client.NewListEntitiesPager(&aztables.ListEntitiesOptions{
+		Filter: &filter,
+	})
+
+	// Collect all then paginate in-memory. Azure Table Storage does not support
+	// $skip, so server-side offset is not possible. However, using $top on the
+	// pager limits the number of entities fetched when offset is 0 and the total
+	// count is not needed beyond the page window.
+	entities, err := collectEntitiesTyped[stackInstanceEntity](ctx, pager, nil, 0)
+	if err != nil {
+		return nil, 0, mapAzureError(opList, err)
+	}
+
+	total := len(entities)
+
+	// Apply offset
+	if offset > 0 {
+		if offset >= total {
+			return []models.StackInstance{}, total, nil
+		}
+		entities = entities[offset:]
+	}
+
+	// Apply limit
+	if limit > 0 && limit < len(entities) {
+		entities = entities[:limit]
+	}
+
+	results := make([]models.StackInstance, 0, len(entities))
+	for _, e := range entities {
+		results = append(results, *e.toModel())
+	}
+	return results, total, nil
+}
+
 func (r *StackInstanceRepository) CountAll() (int, error) {
 	ctx := context.Background()
 	filter := filterPKGlobal

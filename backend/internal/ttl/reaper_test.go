@@ -69,6 +69,7 @@ func (m *mockInstanceRepo) CountByClusterAndOwner(string, string) (int, error) {
 	return 0, nil
 }
 
+func (m *mockInstanceRepo) ListPaged(_, _ int) ([]models.StackInstance, int, error) { return nil, 0, nil }
 func (m *mockInstanceRepo) CountAll() (int, error)                              { return 0, nil }
 func (m *mockInstanceRepo) CountByStatus(_ string) (int, error)                 { return 0, nil }
 func (m *mockInstanceRepo) ExistsByDefinitionAndStatus(_, _ string) (bool, error) { return false, nil }

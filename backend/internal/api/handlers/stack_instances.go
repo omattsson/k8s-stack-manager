@@ -7,10 +7,12 @@ import (
 	"net/http"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
 	"backend/internal/api/middleware"
+	"backend/internal/cache"
 	"backend/internal/cluster"
 	"backend/internal/deployer"
 	"backend/internal/helm"
@@ -107,6 +109,7 @@ type InstanceHandler struct {
 	deployLogRepo      models.DeploymentLogRepository
 	clusterRepo        models.ClusterRepository
 	defaultTTLMinutes  int
+	listCache          *cache.TTLCache[[]models.StackInstance]
 }
 
 // NewInstanceHandler creates a new InstanceHandler.
@@ -133,6 +136,7 @@ func NewInstanceHandler(
 		valuesGen:          valuesGen,
 		userRepo:           userRepo,
 		defaultTTLMinutes:  defaultTTLMinutes,
+		listCache:          cache.New[[]models.StackInstance](5*time.Second, 5*time.Second),
 	}
 }
 
@@ -170,15 +174,18 @@ func NewInstanceHandlerWithDeployer(
 		deployLogRepo:      deployLogRepo,
 		clusterRepo:        clusterRepo,
 		defaultTTLMinutes:  defaultTTLMinutes,
+		listCache:          cache.New[[]models.StackInstance](5*time.Second, 5*time.Second),
 	}
 }
 
 // ListInstances godoc
 // @Summary     List stack instances
-// @Description List all stack instances, optionally filtered by owner
+// @Description List all stack instances, optionally filtered by owner. Supports pagination via limit/offset.
 // @Tags        stack-instances
 // @Produce     json
-// @Param       owner query    string false "Filter by owner (use 'me' for current user)"
+// @Param       owner  query    string false "Filter by owner (use 'me' for current user)"
+// @Param       limit  query    int    false "Maximum number of results (default: all)"
+// @Param       offset query    int    false "Number of results to skip (default: 0)"
 // @Success     200   {array}  models.StackInstance
 // @Failure     500   {object} map[string]string
 // @Router      /api/v1/stack-instances [get]
@@ -191,12 +198,40 @@ func (h *InstanceHandler) ListInstances(c *gin.Context) {
 		userID := middleware.GetUserIDFromContext(c)
 		instances, err = h.instanceRepo.ListByOwner(userID)
 	} else {
-		instances, err = h.instanceRepo.List()
+		// Use a short-lived cache for the full list to absorb concurrent dashboard loads.
+		cacheKey := "all"
+		if cached, ok := h.listCache.Get(cacheKey); ok {
+			instances = cached
+		} else {
+			instances, err = h.instanceRepo.List()
+			if err != nil {
+				status, message := mapError(err, entityStackInstance)
+				c.JSON(status, gin.H{"error": message})
+				return
+			}
+			h.listCache.Set(cacheKey, instances)
+		}
 	}
 	if err != nil {
 		status, message := mapError(err, entityStackInstance)
 		c.JSON(status, gin.H{"error": message})
 		return
+	}
+
+	// Apply pagination if requested.
+	if offsetStr := c.Query("offset"); offsetStr != "" {
+		if offset, parseErr := strconv.Atoi(offsetStr); parseErr == nil && offset > 0 {
+			if offset >= len(instances) {
+				instances = []models.StackInstance{}
+			} else {
+				instances = instances[offset:]
+			}
+		}
+	}
+	if limitStr := c.Query("limit"); limitStr != "" {
+		if limit, parseErr := strconv.Atoi(limitStr); parseErr == nil && limit > 0 && limit < len(instances) {
+			instances = instances[:limit]
+		}
 	}
 
 	c.JSON(http.StatusOK, instances)

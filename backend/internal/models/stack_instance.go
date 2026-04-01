@@ -40,6 +40,7 @@ type StackInstanceRepository interface {
 	Update(instance *StackInstance) error
 	Delete(id string) error
 	List() ([]StackInstance, error)
+	ListPaged(limit, offset int) ([]StackInstance, int, error)
 	ListByOwner(ownerID string) ([]StackInstance, error)
 	FindByCluster(clusterID string) ([]StackInstance, error)
 	CountByClusterAndOwner(clusterID, ownerID string) (int, error)

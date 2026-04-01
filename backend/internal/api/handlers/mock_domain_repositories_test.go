@@ -682,6 +682,28 @@ func (m *MockStackInstanceRepository) CountByClusterAndOwner(clusterID, ownerID 
 	return count, nil
 }
 
+func (m *MockStackInstanceRepository) ListPaged(limit, offset int) ([]models.StackInstance, int, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.err != nil {
+		return nil, 0, m.err
+	}
+	all := make([]models.StackInstance, 0, len(m.items))
+	for _, i := range m.items {
+		all = append(all, *i)
+	}
+	total := len(all)
+	if offset > 0 && offset < total {
+		all = all[offset:]
+	} else if offset >= total {
+		return []models.StackInstance{}, total, nil
+	}
+	if limit > 0 && limit < len(all) {
+		all = all[:limit]
+	}
+	return all, total, nil
+}
+
 func (m *MockStackInstanceRepository) CountAll() (int, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
