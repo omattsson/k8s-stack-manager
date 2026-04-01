@@ -86,6 +86,7 @@ make loadtest-stress-run      # run only (backend must be running)
 | `write-contention` | 20 | 1min | Optimistic locking under concurrent updates. Version mismatch (409) rate. Row-lock contention. |
 | `spike` | 0→100 | 1min | Connection pool starvation. Goroutine explosion. Response degradation under instant load. |
 | `soak` | 30 | 10min | Memory leaks. Connection pool exhaustion. GC pauses. Goroutine leaks. P95 drift over time. |
+| `otel-overhead` | 20 | 1min | Latency impact of OpenTelemetry instrumentation. Compare p50/p95/p99 with `OTEL_ENABLED=true` vs `false`. |
 
 **Thresholds**:
 - `http_req_duration` p(95) < 800ms, p(99) < 2000ms
@@ -94,11 +95,13 @@ make loadtest-stress-run      # run only (backend must be running)
 - `pagination_duration` p(95) < 600ms
 - `auth_duration` p(95) < 200ms
 - `write_duration` p(95) < 500ms
+- `otel_overhead_duration` p(95) < 600ms
 
 **Custom Metrics**:
 - `rate_limit_429s` — Count of expected 429 responses during rate-limit test
 - `optimistic_lock_409s` — Count of version mismatch conflicts during write-contention
 - `concurrent_users` — Active VU gauge (useful for correlating with response time)
+- `otel_overhead_duration` — Per-request latency trend used for OTel overhead comparison
 
 ### Environment Variables (k6)
 
@@ -166,6 +169,45 @@ make loadtest-backend-run      # Run k6 tests (backend must be running)
 make loadtest-frontend-run     # Run Playwright tests (backend must be running)
 make loadtest-stop             # Stop the backend
 ```
+
+## OpenTelemetry Trace Correlation
+
+When the backend runs with `OTEL_ENABLED=true`, all k6 requests include W3C `traceparent` headers. This links every k6 iteration to a backend trace, making it easy to drill into individual requests in the observability stack.
+
+### Starting the observability stack
+
+```bash
+make dev-otel   # starts backend + frontend + otel-collector + jaeger + prometheus + grafana
+```
+
+### Viewing traces
+
+- **Jaeger** at http://localhost:16686 -- search by service name `k8s-stack-manager` to see traces linked to k6 iterations. Each request carries a unique trace ID via the `traceparent` header.
+- **Grafana** at http://localhost:3001 -- pre-configured with Prometheus (metrics) and Jaeger (traces) data sources.
+
+### Measuring OTel overhead
+
+Run the `otel-overhead` scenario twice -- once with instrumentation enabled, once without -- and compare the `otel_overhead_duration` metric:
+
+```bash
+# 1. Start backend with OTel enabled
+OTEL_ENABLED=true make loadtest-start
+
+# Run the overhead scenario
+k6 run --env SCENARIO=otel-overhead loadtest/backend/k6-stress.js --out json=otel-on.json
+
+make loadtest-stop
+
+# 2. Start backend with OTel disabled
+OTEL_ENABLED=false make loadtest-start
+
+# Run the same scenario
+k6 run --env SCENARIO=otel-overhead loadtest/backend/k6-stress.js --out json=otel-off.json
+
+make loadtest-stop
+```
+
+Compare the p50/p95/p99 values of `otel_overhead_duration` between the two runs. Typical overhead should be under 5% for read-heavy workloads.
 
 ## Interpreting Results
 

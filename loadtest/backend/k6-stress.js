@@ -31,6 +31,7 @@ const paginationDuration = new Trend('pagination_duration', true);
 const authDuration = new Trend('auth_duration', true);
 const writeDuration = new Trend('write_duration', true);
 const concurrentUsers = new Gauge('concurrent_users');
+const otelOverheadDuration = new Trend('otel_overhead_duration', true);
 
 // ── Scenario Selection ─────────────────────────────────────────────
 const SELECTED = __ENV.SCENARIO || '';
@@ -140,6 +141,17 @@ export const options = {
         tags: { scenario: 'soak' },
       },
     }),
+
+    // 8. OTel overhead: compare latency with/without OTEL_ENABLED
+    ...(isEnabled('otel-overhead') && {
+      'otel-overhead': {
+        executor: 'constant-vus',
+        vus: 20,
+        duration: '1m',
+        exec: 'otelOverheadTest',
+        tags: { scenario: 'otel-overhead' },
+      },
+    }),
   },
 
   thresholds: {
@@ -149,6 +161,7 @@ export const options = {
     pagination_duration: ['p(95)<600'],
     auth_duration: ['p(95)<200'],
     write_duration: ['p(95)<500'],
+    otel_overhead_duration: ['p(95)<600'],
   },
 };
 
@@ -157,14 +170,24 @@ const BASE_URL = __ENV.API_URL || 'http://localhost:8081';
 const ADMIN_USER = __ENV.ADMIN_USERNAME || 'admin';
 const ADMIN_PASS = __ENV.ADMIN_PASSWORD || 'admin';
 
-const jsonHeaders = { 'Content-Type': 'application/json' };
+// ── W3C Trace Context ──────────────────────────────────────────────
+// Generate a W3C traceparent header for trace correlation.
+// When the backend runs with OTEL_ENABLED=true, these headers link
+// k6 iterations to backend traces visible in Jaeger / Grafana.
+function traceparent() {
+  // version-traceid-spanid-flags (sampled)
+  const hex = (n) => [...Array(n)].map(() => Math.floor(Math.random() * 16).toString(16)).join('');
+  return `00-${hex(32)}-${hex(16)}-01`;
+}
+
+const jsonHeaders = { 'Content-Type': 'application/json', traceparent: traceparent() };
 
 function authHeaders(token) {
-  return { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` };
+  return { 'Content-Type': 'application/json', Authorization: `Bearer ${token}`, traceparent: traceparent() };
 }
 
 function apiKeyHeaders(apiKey) {
-  return { 'Content-Type': 'application/json', 'X-API-Key': apiKey };
+  return { 'Content-Type': 'application/json', 'X-API-Key': apiKey, traceparent: traceparent() };
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────
@@ -781,4 +804,61 @@ export function soakTest(data) {
   }
 
   sleep(1 + Math.random()); // 1-2s think time
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// 8. OTEL OVERHEAD TEST
+// ═══════════════════════════════════════════════════════════════════
+// Rapidly hits a mix of read endpoints to measure baseline latency.
+// Run twice — once with OTEL_ENABLED=true, once with OTEL_ENABLED=false —
+// then compare otel_overhead_duration p50/p95/p99 between the two runs.
+//
+// Usage:
+//   # With OTel enabled (start backend with OTEL_ENABLED=true):
+//   k6 run --env SCENARIO=otel-overhead loadtest/backend/k6-stress.js --out json=otel-on.json
+//
+//   # With OTel disabled (start backend with OTEL_ENABLED=false or unset):
+//   k6 run --env SCENARIO=otel-overhead loadtest/backend/k6-stress.js --out json=otel-off.json
+
+export function otelOverheadTest(data) {
+  const headers = apiKeyHeaders(data.apiKey);
+
+  // Read-only endpoints that represent typical dashboard/browse patterns
+  const endpoints = [
+    { path: '/api/v1/stack-instances', name: 'GET /instances (otel)' },
+    { path: '/api/v1/templates', name: 'GET /templates (otel)' },
+    { path: '/api/v1/stack-definitions', name: 'GET /definitions (otel)' },
+    { path: '/api/v1/analytics/overview', name: 'GET /analytics (otel)' },
+    { path: '/api/v1/favorites', name: 'GET /favorites (otel)' },
+    { path: '/api/v1/notifications/count', name: 'GET /notif-count (otel)' },
+    { path: '/api/v1/audit-logs?limit=20', name: 'GET /audit-logs (otel)' },
+  ];
+
+  for (const ep of endpoints) {
+    const res = http.get(`${BASE_URL}${ep.path}`, {
+      headers,
+      tags: { name: ep.name },
+    });
+    otelOverheadDuration.add(res.timings.duration);
+    apiCalls.add(1);
+    const ok = check(res, { 'otel-overhead 200': (r) => r.status === 200 });
+    errorRate.add(!ok);
+  }
+
+  // Also fire a parallel batch (simulates dashboard initial load)
+  const responses = http.batch([
+    ['GET', `${BASE_URL}/api/v1/stack-instances`, null, { headers, tags: { name: 'batch GET /instances (otel)' } }],
+    ['GET', `${BASE_URL}/api/v1/templates`, null, { headers, tags: { name: 'batch GET /templates (otel)' } }],
+    ['GET', `${BASE_URL}/api/v1/analytics/overview`, null, { headers, tags: { name: 'batch GET /analytics (otel)' } }],
+    ['GET', `${BASE_URL}/api/v1/notifications/count`, null, { headers, tags: { name: 'batch GET /notif-count (otel)' } }],
+  ]);
+
+  for (const res of responses) {
+    otelOverheadDuration.add(res.timings.duration);
+    apiCalls.add(1);
+    const ok = check(res, { 'otel-overhead-batch 200': (r) => r.status === 200 });
+    errorRate.add(!ok);
+  }
+
+  sleep(0.1); // minimal think time to maximize throughput
 }

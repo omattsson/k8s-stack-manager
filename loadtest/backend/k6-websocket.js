@@ -44,10 +44,20 @@ const WS_URL = BASE_URL.replace(/^http/, 'ws') + '/ws';
 const ADMIN_USER = __ENV.ADMIN_USERNAME || 'admin';
 const ADMIN_PASS = __ENV.ADMIN_PASSWORD || 'admin';
 
-const jsonHeaders = { 'Content-Type': 'application/json' };
+// ── W3C Trace Context ──────────────────────────────────────────────
+// Generate a W3C traceparent header for trace correlation.
+// When the backend runs with OTEL_ENABLED=true, these headers link
+// k6 iterations to backend traces visible in Jaeger / Grafana.
+function traceparent() {
+  // version-traceid-spanid-flags (sampled)
+  const hex = (n) => [...Array(n)].map(() => Math.floor(Math.random() * 16).toString(16)).join('');
+  return `00-${hex(32)}-${hex(16)}-01`;
+}
+
+const jsonHeaders = { 'Content-Type': 'application/json', traceparent: traceparent() };
 
 function authHeaders(token) {
-  return { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` };
+  return { 'Content-Type': 'application/json', Authorization: `Bearer ${token}`, traceparent: traceparent() };
 }
 
 // ── Setup & Teardown ────────────────────────────────────────────────
