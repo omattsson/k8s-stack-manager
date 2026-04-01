@@ -1,29 +1,44 @@
 package handlers
 
 import (
+	"context"
 	"net/http"
 	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/metric"
 )
 
 // RateLimiter implements a simple rate limiting middleware
 type RateLimiter struct {
-	sync.RWMutex                        // size: 8
-	window       time.Duration          // size: 8
-	requests     map[string][]time.Time // size: 8 (pointer)
-	done         chan struct{}          // size: 8
-	limit        int                    // size: 4
-	stopOnce     sync.Once              // ensures Stop is idempotent
+	sync.RWMutex                             // size: 8
+	window        time.Duration              // size: 8
+	requests      map[string][]time.Time     // size: 8 (pointer)
+	done          chan struct{}              // size: 8
+	rejectedTotal metric.Int64Counter        // size: 8 (interface)
+	limit         int                        // size: 4
+	stopOnce      sync.Once                  // ensures Stop is idempotent
 }
 
 func NewRateLimiter(limit int, window time.Duration) *RateLimiter {
+	meter := otel.Meter("rate_limiter")
+	rejectedTotal, err := meter.Int64Counter(
+		"rate_limiter.rejected_total",
+		metric.WithDescription("Total number of rate-limited (429) responses"),
+		metric.WithUnit("{request}"),
+	)
+	if err != nil {
+		otel.Handle(err)
+	}
+
 	rl := &RateLimiter{
-		requests: make(map[string][]time.Time),
-		limit:    limit,
-		window:   window,
-		done:     make(chan struct{}),
+		requests:      make(map[string][]time.Time),
+		limit:         limit,
+		window:        window,
+		done:          make(chan struct{}),
+		rejectedTotal: rejectedTotal,
 	}
 	go rl.cleanup()
 	return rl
@@ -58,6 +73,9 @@ func (rl *RateLimiter) RateLimit() gin.HandlerFunc {
 
 		if len(valid) >= rl.limit {
 			rl.Unlock()
+			if rl.rejectedTotal != nil {
+				rl.rejectedTotal.Add(context.Background(), 1)
+			}
 			c.JSON(http.StatusTooManyRequests, gin.H{"error": "rate limit exceeded"})
 			c.Abort()
 			return

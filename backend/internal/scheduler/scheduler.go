@@ -5,12 +5,17 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"sync"
 	"time"
 
 	"backend/internal/models"
 
 	"github.com/robfig/cron/v3"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/metric"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // ActionExecutor performs cleanup actions on stack instances.
@@ -150,8 +155,28 @@ func (s *Scheduler) executePolicy(policy models.CleanupPolicy) {
 }
 
 func (s *Scheduler) executePolicyWithOptions(policy *models.CleanupPolicy, dryRun bool) ([]CleanupResult, error) {
+	ctx, span := schedulerTracer.Start(context.Background(), "cleanup.execute_policy",
+		trace.WithAttributes(
+			attribute.String("policy.id", policy.ID),
+			attribute.String("policy.action", policy.Action),
+			attribute.String("policy.cluster", policy.ClusterID),
+			attribute.Bool("policy.dry_run", dryRun),
+		),
+	)
+	defer span.End()
+
+	dryRunStr := strconv.FormatBool(dryRun)
+	sMetrics.executionsTotal.Add(ctx, 1,
+		metric.WithAttributes(
+			attribute.String("action", policy.Action),
+			attribute.String("dry_run", dryRunStr),
+		),
+	)
+
 	filter, err := ParseCondition(policy.Condition)
 	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
 		return nil, fmt.Errorf("parsing condition: %w", err)
 	}
 
@@ -160,11 +185,15 @@ func (s *Scheduler) executePolicyWithOptions(policy *models.CleanupPolicy, dryRu
 	if policy.ClusterID == "all" {
 		instances, err = s.instanceRepo.List()
 		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
 			return nil, fmt.Errorf("listing instances: %w", err)
 		}
 	} else {
 		instances, err = s.instanceRepo.FindByCluster(policy.ClusterID)
 		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
 			return nil, fmt.Errorf("finding instances by cluster: %w", err)
 		}
 	}
@@ -186,15 +215,15 @@ func (s *Scheduler) executePolicyWithOptions(policy *models.CleanupPolicy, dryRu
 		if dryRun {
 			result.Status = "dry_run"
 		} else if s.executor != nil {
-			ctx, cancel := context.WithTimeout(s.ctx, 5*time.Minute)
+			execCtx, cancel := context.WithTimeout(s.ctx, 5*time.Minute)
 			var execErr error
 			switch policy.Action {
 			case "stop":
-				execErr = s.executor.StopInstance(ctx, inst)
+				execErr = s.executor.StopInstance(execCtx, inst)
 			case "clean":
-				execErr = s.executor.CleanInstance(ctx, inst)
+				execErr = s.executor.CleanInstance(execCtx, inst)
 			case "delete":
-				execErr = s.executor.DeleteInstance(ctx, inst)
+				execErr = s.executor.DeleteInstance(execCtx, inst)
 			default:
 				execErr = fmt.Errorf("unknown cleanup action: %s", policy.Action)
 			}
@@ -214,6 +243,8 @@ func (s *Scheduler) executePolicyWithOptions(policy *models.CleanupPolicy, dryRu
 		results = append(results, result)
 	}
 
+	span.SetAttributes(attribute.Int("cleanup.matched_count", len(results)))
+	span.SetStatus(codes.Ok, "")
 	return results, nil
 }
 

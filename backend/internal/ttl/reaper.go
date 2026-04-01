@@ -9,6 +9,9 @@ import (
 
 	"backend/internal/models"
 	"backend/internal/websocket"
+
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
 )
 
 // InstanceStopper can stop a running stack instance (e.g. Helm uninstall).
@@ -79,11 +82,20 @@ func (r *Reaper) Stop() {
 }
 
 func (r *Reaper) processExpired() {
+	start := time.Now()
+	ctx, span := reaperTracer.Start(context.Background(), "ttl.reap_cycle")
+
 	expired, err := r.instanceRepo.ListExpired()
 	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		span.End()
+		rMetrics.reapDuration.Record(ctx, time.Since(start).Seconds())
 		slog.Error("Failed to list expired instances", "error", err)
 		return
 	}
+
+	span.SetAttributes(attribute.Int("ttl.expired_count", len(expired)))
 
 	for _, inst := range expired {
 		// Attempt Helm uninstall via stopper if available.
@@ -95,6 +107,7 @@ func (r *Reaper) processExpired() {
 				// Stop initiated; async process handles status transitions.
 				slog.Info("Expired instance stop initiated via deployer", "instance_id", inst.ID)
 				r.logExpiry(inst)
+				rMetrics.expiredTotal.Add(ctx, 1)
 				continue
 			}
 		}
@@ -109,9 +122,14 @@ func (r *Reaper) processExpired() {
 		}
 
 		r.logExpiry(inst)
+		rMetrics.expiredTotal.Add(ctx, 1)
 
 		slog.Info("Instance expired and stopped", "instance_id", inst.ID)
 	}
+
+	span.SetStatus(codes.Ok, "")
+	span.End()
+	rMetrics.reapDuration.Record(ctx, time.Since(start).Seconds())
 }
 
 // logExpiry creates an audit log entry and broadcasts a WebSocket message for an expired instance.

@@ -17,6 +17,7 @@ import (
 	"backend/internal/websocket"
 
 	"github.com/google/uuid"
+	"go.opentelemetry.io/otel/attribute"
 )
 
 // maxInstanceErrorLen is the maximum length of error messages stored on
@@ -192,8 +193,17 @@ func (m *Manager) executeDeploy(helm HelmExecutor, instanceID string, deployLog 
 	m.semaphore <- struct{}{}
 	defer func() { <-m.semaphore }()
 
+	// Start a root span for the background deployment (the HTTP request context
+	// is long gone by the time this goroutine runs).
+	_, _, finishSpan := startDeploySpan(context.Background(), "deployer.deploy",
+		attribute.String("instance.id", instanceID),
+		attribute.String("namespace", namespace),
+		attribute.String("log.id", deployLog.ID),
+	)
+
 	var allOutput string
 	var deployErr error
+	defer func() { finishSpan(deployErr) }()
 
 	// Create a temp directory for values files.
 	tmpDir, err := os.MkdirTemp("", "deploy-"+instanceID+"-")
@@ -480,8 +490,15 @@ func (m *Manager) executeStopWithCharts(helm HelmExecutor, instanceID string, de
 	m.semaphore <- struct{}{}
 	defer func() { <-m.semaphore }()
 
+	_, _, finishSpan := startDeploySpan(context.Background(), "deployer.undeploy",
+		attribute.String("instance.id", instanceID),
+		attribute.String("namespace", namespace),
+		attribute.String("log.id", deployLog.ID),
+	)
+
 	var allOutput string
 	var stopErr error
+	defer func() { finishSpan(stopErr) }()
 
 	// Use a bounded context derived from the shutdown context so that
 	// operations are cancelled both on timeout and on server shutdown.
@@ -700,8 +717,15 @@ func (m *Manager) executeClean(helm HelmExecutor, k8sClient *k8s.Client, instanc
 	m.semaphore <- struct{}{}
 	defer func() { <-m.semaphore }()
 
+	_, _, finishSpan := startDeploySpan(context.Background(), "deployer.clean",
+		attribute.String("instance.id", instanceID),
+		attribute.String("namespace", namespace),
+		attribute.String("log.id", deployLog.ID),
+	)
+
 	var allOutput string
 	var cleanErr error
+	defer func() { finishSpan(cleanErr) }()
 
 	// Use a bounded context derived from the shutdown context so that
 	// operations are cancelled both on timeout and on server shutdown.

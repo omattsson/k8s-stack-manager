@@ -122,9 +122,13 @@ func NewTestTableRepository(tableName string) *TableRepository {
 
 // Create implements the Repository interface
 func (r *TableRepository) Create(ctx context.Context, entity interface{}) error {
+	ctx, _, finishSpan := startDBSpan(ctx, opCreate, r.tableName)
+
 	item, ok := entity.(*models.Item)
 	if !ok {
-		return dberrors.NewDatabaseError(opTypeAssertion, errors.New(errItemTypeAssert))
+		dbErr := dberrors.NewDatabaseError(opTypeAssertion, errors.New(errItemTypeAssert))
+		finishSpan(dbErr)
+		return dbErr
 	}
 
 	// Initialize version for new entities (consistent with GORM default:1 and MockRepository)
@@ -139,7 +143,9 @@ func (r *TableRepository) Create(ctx context.Context, entity interface{}) error 
 	if item.ID == 0 {
 		id, err := nextID()
 		if err != nil {
-			return dberrors.NewDatabaseError(opCreate, err)
+			dbErr := dberrors.NewDatabaseError(opCreate, err)
+			finishSpan(dbErr)
+			return dbErr
 		}
 		item.ID = id
 	}
@@ -156,25 +162,35 @@ func (r *TableRepository) Create(ctx context.Context, entity interface{}) error 
 
 	entityBytes, err := json.Marshal(entityJSON)
 	if err != nil {
-		return dberrors.NewDatabaseError(opMarshal, err)
+		dbErr := dberrors.NewDatabaseError(opMarshal, err)
+		finishSpan(dbErr)
+		return dbErr
 	}
 
 	_, err = r.client.AddEntity(ctx, entityBytes, nil)
 	if err != nil {
 		var respErr *azcore.ResponseError
 		if errors.As(err, &respErr) && respErr.ErrorCode == "EntityAlreadyExists" {
-			return dberrors.NewDatabaseError(opCreate, dberrors.ErrDuplicateKey)
+			dbErr := dberrors.NewDatabaseError(opCreate, dberrors.ErrDuplicateKey)
+			finishSpan(dbErr)
+			return dbErr
 		}
-		return dberrors.NewDatabaseError(opCreate, err)
+		dbErr := dberrors.NewDatabaseError(opCreate, err)
+		finishSpan(dbErr)
+		return dbErr
 	}
 
 	item.CreatedAt = now
 	item.UpdatedAt = now
+	finishSpan(nil)
 	return nil
 }
 
 // FindByID implements the Repository interface
-func (r *TableRepository) FindByID(ctx context.Context, id uint, dest interface{}) error {
+func (r *TableRepository) FindByID(ctx context.Context, id uint, dest interface{}) (retErr error) {
+	ctx, _, finishSpan := startDBSpan(ctx, opFind, r.tableName)
+	defer func() { finishSpan(retErr) }()
+
 	item, ok := dest.(*models.Item)
 	if !ok {
 		return dberrors.NewDatabaseError(opTypeAssertion, fmt.Errorf("dest must be *models.Item"))
@@ -247,7 +263,10 @@ func (r *TableRepository) FindByID(ctx context.Context, id uint, dest interface{
 // For models that implement Versionable (e.g. Item), optimistic locking is enforced:
 // the entity is fetched first to compare versions, and the ETag from the GET response
 // is passed to UpdateEntity so Azure Table Storage rejects stale writes.
-func (r *TableRepository) Update(ctx context.Context, entity interface{}) error {
+func (r *TableRepository) Update(ctx context.Context, entity interface{}) (retErr error) {
+	ctx, _, finishSpan := startDBSpan(ctx, opUpdate, r.tableName)
+	defer func() { finishSpan(retErr) }()
+
 	item, ok := entity.(*models.Item)
 	if !ok {
 		return dberrors.NewDatabaseError(opTypeAssertion, fmt.Errorf(errItemTypeAssert))
@@ -356,7 +375,10 @@ func (r *TableRepository) Update(ctx context.Context, entity interface{}) error 
 }
 
 // Delete implements the Repository interface
-func (r *TableRepository) Delete(ctx context.Context, entity interface{}) error {
+func (r *TableRepository) Delete(ctx context.Context, entity interface{}) (retErr error) {
+	ctx, _, finishSpan := startDBSpan(ctx, opDelete, r.tableName)
+	defer func() { finishSpan(retErr) }()
+
 	item, ok := entity.(*models.Item)
 	if !ok {
 		return dberrors.NewDatabaseError(opTypeAssertion, fmt.Errorf(errItemTypeAssert))
@@ -379,7 +401,10 @@ func (r *TableRepository) Delete(ctx context.Context, entity interface{}) error 
 }
 
 // List implements the Repository interface
-func (r *TableRepository) List(ctx context.Context, dest interface{}, conditions ...interface{}) error {
+func (r *TableRepository) List(ctx context.Context, dest interface{}, conditions ...interface{}) (retErr error) {
+	ctx, _, finishSpan := startDBSpan(ctx, opList, r.tableName)
+	defer func() { finishSpan(retErr) }()
+
 	items, ok := dest.(*[]models.Item)
 	if !ok {
 		return dberrors.NewDatabaseError(opTypeAssertion, fmt.Errorf("dest must be *[]models.Item"))

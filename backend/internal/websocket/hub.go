@@ -3,6 +3,7 @@
 package websocket
 
 import (
+	"context"
 	"log/slog"
 	"sync"
 )
@@ -73,32 +74,40 @@ func (h *Hub) Run() {
 			h.mu.Lock()
 			h.clients[client] = true
 			h.mu.Unlock()
+			hubMetrics.connectionsActive.Add(context.Background(), 1)
 			slog.Info("WebSocket client registered", "clients", h.ClientCount())
 		case client := <-h.unregister:
 			h.mu.Lock()
 			if _, ok := h.clients[client]; ok {
 				delete(h.clients, client)
 				close(client.send)
+				hubMetrics.connectionsActive.Add(context.Background(), -1)
 			}
 			h.mu.Unlock()
 			slog.Info("WebSocket client unregistered", "clients", h.ClientCount())
 		case message := <-h.broadcast:
 			h.mu.RLock()
 			var slow []*Client
+			var sent int64
 			for client := range h.clients {
 				select {
 				case client.send <- message:
+					sent++
 				default:
 					slow = append(slow, client)
 				}
 			}
 			h.mu.RUnlock()
+			if sent > 0 {
+				hubMetrics.messagesSentTotal.Add(context.Background(), sent)
+			}
 			if len(slow) > 0 {
 				h.mu.Lock()
 				for _, client := range slow {
 					if _, ok := h.clients[client]; ok {
 						delete(h.clients, client)
 						close(client.send)
+						hubMetrics.connectionsActive.Add(context.Background(), -1)
 					}
 				}
 				h.mu.Unlock()
@@ -156,8 +165,12 @@ func (h *Hub) ClientCount() int {
 func (h *Hub) closeAllClients() {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	count := int64(len(h.clients))
 	for client := range h.clients {
 		close(client.send)
 		delete(h.clients, client)
+	}
+	if count > 0 {
+		hubMetrics.connectionsActive.Add(context.Background(), -count)
 	}
 }

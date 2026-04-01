@@ -93,6 +93,8 @@ func (e *stackInstanceEntity) toModel() *models.StackInstance {
 
 func (r *StackInstanceRepository) Create(instance *models.StackInstance) error {
 	ctx := context.Background()
+	ctx, _, finishSpan := startDBSpan(ctx, opCreate, r.tableName)
+
 	now := time.Now().UTC()
 
 	if instance.ID == "" {
@@ -104,56 +106,78 @@ func (r *StackInstanceRepository) Create(instance *models.StackInstance) error {
 	entity := stackInstanceToEntity(instance)
 	entityBytes, err := json.Marshal(entity)
 	if err != nil {
-		return dberrors.NewDatabaseError(opMarshal, err)
+		dbErr := dberrors.NewDatabaseError(opMarshal, err)
+		finishSpan(dbErr)
+		return dbErr
 	}
 
 	_, err = r.client.AddEntity(ctx, entityBytes, nil)
 	if err != nil {
-		return mapAzureError(opCreate, err)
+		dbErr := mapAzureError(opCreate, err)
+		finishSpan(dbErr)
+		return dbErr
 	}
+	finishSpan(nil)
 	return nil
 }
 
 func (r *StackInstanceRepository) FindByID(id string) (*models.StackInstance, error) {
 	ctx := context.Background()
+	ctx, _, finishSpan := startDBSpan(ctx, opFind, r.tableName)
 
 	resp, err := r.client.GetEntity(ctx, pkGlobal, id, nil)
 	if err != nil {
-		return nil, mapAzureError("find_by_id", err)
+		dbErr := mapAzureError("find_by_id", err)
+		finishSpan(dbErr)
+		return nil, dbErr
 	}
 
 	var entity stackInstanceEntity
 	if err := json.Unmarshal(resp.Value, &entity); err != nil {
-		return nil, dberrors.NewDatabaseError(opUnmarshal, err)
+		dbErr := dberrors.NewDatabaseError(opUnmarshal, err)
+		finishSpan(dbErr)
+		return nil, dbErr
 	}
+	finishSpan(nil)
 	return entity.toModel(), nil
 }
 
 func (r *StackInstanceRepository) Update(instance *models.StackInstance) error {
 	ctx := context.Background()
+	ctx, _, finishSpan := startDBSpan(ctx, opUpdate, r.tableName)
+
 	now := time.Now().UTC()
 	instance.UpdatedAt = now
 
 	entity := stackInstanceToEntity(instance)
 	entityBytes, err := json.Marshal(entity)
 	if err != nil {
-		return dberrors.NewDatabaseError(opMarshal, err)
+		dbErr := dberrors.NewDatabaseError(opMarshal, err)
+		finishSpan(dbErr)
+		return dbErr
 	}
 
 	_, err = r.client.UpdateEntity(ctx, entityBytes, nil)
 	if err != nil {
-		return mapAzureError(opUpdate, err)
+		dbErr := mapAzureError(opUpdate, err)
+		finishSpan(dbErr)
+		return dbErr
 	}
+	finishSpan(nil)
 	return nil
 }
 
 func (r *StackInstanceRepository) Delete(id string) error {
 	ctx := context.Background()
+	ctx, _, finishSpan := startDBSpan(ctx, opDelete, r.tableName)
 
 	_, err := r.client.DeleteEntity(ctx, pkGlobal, id, nil)
 	if err != nil {
-		return mapAzureError(opDelete, err)
+		dbErr := mapAzureError(opDelete, err)
+		finishSpan(dbErr)
+		return dbErr
 	}
+	finishSpan(nil)
 	return nil
 }
 
@@ -180,6 +204,7 @@ func (r *StackInstanceRepository) FindByNamespace(namespace string) (*models.Sta
 
 func (r *StackInstanceRepository) List() ([]models.StackInstance, error) {
 	ctx := context.Background()
+	ctx, _, finishSpan := startDBSpan(ctx, opList, r.tableName)
 
 	filter := filterPKGlobal
 	pager := r.client.NewListEntitiesPager(&aztables.ListEntitiesOptions{
@@ -188,13 +213,16 @@ func (r *StackInstanceRepository) List() ([]models.StackInstance, error) {
 
 	entities, err := collectEntitiesTyped[stackInstanceEntity](ctx, pager, nil, 0)
 	if err != nil {
-		return nil, mapAzureError(opList, err)
+		dbErr := mapAzureError(opList, err)
+		finishSpan(dbErr)
+		return nil, dbErr
 	}
 
 	results := make([]models.StackInstance, 0, len(entities))
 	for _, e := range entities {
 		results = append(results, *e.toModel())
 	}
+	finishSpan(nil)
 	return results, nil
 }
 
