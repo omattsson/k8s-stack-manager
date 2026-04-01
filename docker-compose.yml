@@ -136,16 +136,16 @@ services:
       jaeger:
         condition: service_started
     healthcheck:
-      test: ["CMD-SHELL", "wget --spider -q http://localhost:13133/ || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 10s
+      test: ["CMD", "/otelcol-contrib", "validate", "--config", "/etc/otelcol-contrib/config.yaml"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
     networks:
       - backend-net
 
   jaeger:
-    image: jaegertracing/jaeger:2.6
+    image: jaegertracing/jaeger:2.17.0
     container_name: app-jaeger
     profiles: [otel]
     ports:

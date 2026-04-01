@@ -17,9 +17,9 @@ import (
 	"go.opentelemetry.io/otel/propagation"
 	sdklog "go.opentelemetry.io/otel/sdk/log"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
+	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
-	semconv "go.opentelemetry.io/otel/semconv/v1.26.0"
 )
 
 // Telemetry holds the initialised OTel SDK providers.
@@ -42,16 +42,11 @@ func Init(cfg config.OtelConfig) (*Telemetry, error) {
 	ctx := context.Background()
 
 	// Build a resource describing this service.
-	res, err := resource.Merge(
-		resource.Default(),
-		resource.NewWithAttributes(
-			semconv.SchemaURL,
-			semconv.ServiceNameKey.String(cfg.ServiceName),
-		),
+	// Use attribute.String directly to avoid semconv schema version conflicts
+	// between resource.Default() (latest) and pinned semconv versions.
+	res := resource.NewWithAttributes("",
+		attribute.String("service.name", cfg.ServiceName),
 	)
-	if err != nil {
-		return nil, err
-	}
 
 	// --- Trace ---
 	traceExporter, err := otlptracegrpc.New(ctx,
