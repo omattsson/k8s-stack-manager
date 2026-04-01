@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // CORS middleware with configurable allowed origins.
@@ -55,12 +56,24 @@ func CORS(allowedOrigins string) gin.HandlerFunc {
 }
 
 // Logger is a middleware that logs incoming requests using structured logging.
+// When OpenTelemetry is active, trace_id and span_id are included in the log output
+// for correlation with distributed traces.
 func Logger() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		slog.Info("incoming request",
+		attrs := []any{
 			"method", c.Request.Method,
 			"path", c.Request.URL.Path,
-		)
+		}
+
+		// If a trace span exists (otelgin middleware ran before us), include IDs.
+		if spanCtx := trace.SpanFromContext(c.Request.Context()).SpanContext(); spanCtx.IsValid() {
+			attrs = append(attrs,
+				"trace_id", spanCtx.TraceID().String(),
+				"span_id", spanCtx.SpanID().String(),
+			)
+		}
+
+		slog.Info("incoming request", attrs...)
 		c.Next()
 	}
 }

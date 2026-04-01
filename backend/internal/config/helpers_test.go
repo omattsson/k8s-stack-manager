@@ -87,6 +87,72 @@ func TestGetEnvInt32(t *testing.T) {
 	}
 }
 
+func TestGetEnvFloat64(t *testing.T) {
+	// Not parallel: subtests use t.Setenv which is incompatible with t.Parallel().
+
+	tests := []struct {
+		name     string
+		envValue string
+		setEnv   bool
+		fallback float64
+		want     float64
+	}{
+		{
+			name:     "valid float",
+			envValue: "0.5",
+			setEnv:   true,
+			fallback: 1.0,
+			want:     0.5,
+		},
+		{
+			name:     "valid integer-like float",
+			envValue: "1",
+			setEnv:   true,
+			fallback: 0.5,
+			want:     1.0,
+		},
+		{
+			name:     "valid zero",
+			envValue: "0",
+			setEnv:   true,
+			fallback: 1.0,
+			want:     0.0,
+		},
+		{
+			name:     "unset returns fallback",
+			setEnv:   false,
+			fallback: 1.0,
+			want:     1.0,
+		},
+		{
+			name:     "non-numeric returns fallback",
+			envValue: "abc",
+			setEnv:   true,
+			fallback: 1.0,
+			want:     1.0,
+		},
+		{
+			name:     "empty space returns fallback",
+			envValue: "   ",
+			setEnv:   true,
+			fallback: 0.75,
+			want:     0.75,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			const envKey = "TEST_GET_ENV_FLOAT64"
+			if tt.setEnv {
+				t.Setenv(envKey, tt.envValue)
+			}
+
+			got := getEnvFloat64(envKey, tt.fallback)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
 func TestGetEnvDuration(t *testing.T) {
 	// Not parallel: subtests use t.Setenv which is incompatible with t.Parallel().
 

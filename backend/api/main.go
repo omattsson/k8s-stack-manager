@@ -18,6 +18,7 @@ import (
 	"backend/internal/k8s"
 	"backend/internal/models"
 	"backend/internal/scheduler"
+	"backend/internal/telemetry"
 	"backend/internal/ttl"
 	"backend/internal/websocket"
 	"context"
@@ -73,6 +74,13 @@ func main() {
 	cfg, err := config.LoadConfig()
 	if err != nil {
 		slog.Error("Failed to load configuration", "error", err)
+		os.Exit(1)
+	}
+
+	// Initialize OpenTelemetry (no-op when OTEL_ENABLED=false).
+	tel, err := telemetry.Init(cfg.Otel)
+	if err != nil {
+		slog.Error("Failed to initialize OpenTelemetry", "error", err)
 		os.Exit(1)
 	}
 
@@ -371,6 +379,7 @@ func main() {
 	}
 
 	gracefulShutdown(srv, shutdownTimeout, shutdownDeps{
+		telemetry:        tel,
 		reaper:           reaper,
 		cleanupScheduler: cleanupScheduler,
 		deployManager:    deployManager,
@@ -386,6 +395,7 @@ func main() {
 
 // shutdownDeps holds all dependencies that need to be stopped during graceful shutdown.
 type shutdownDeps struct {
+	telemetry        *telemetry.Telemetry
 	reaper           *ttl.Reaper
 	cleanupScheduler *scheduler.Scheduler
 	deployManager    *deployer.Manager
@@ -400,10 +410,18 @@ type shutdownDeps struct {
 
 // gracefulShutdown stops all services in the correct order.
 func gracefulShutdown(srv *http.Server, timeout time.Duration, deps shutdownDeps) {
-	// 1. Stop HTTP server — no new requests.
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
+	// 0. Flush OTel spans/metrics/logs before the HTTP server closes,
+	//    so in-flight request telemetry is exported.
+	if deps.telemetry != nil {
+		if err := deps.telemetry.Shutdown(ctx); err != nil {
+			slog.Error("Failed to shutdown OpenTelemetry", "error", err)
+		}
+	}
+
+	// 1. Stop HTTP server — no new requests.
 	if err := srv.Shutdown(ctx); err != nil {
 		slog.Error("Server forced to shutdown", "error", err)
 	}

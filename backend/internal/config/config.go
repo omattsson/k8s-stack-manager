@@ -95,6 +95,17 @@ func (c *OIDCConfig) Validate() error {
 	return nil
 }
 
+// OtelConfig holds OpenTelemetry configuration for distributed tracing, metrics, and logging.
+type OtelConfig struct {
+	// 8-byte aligned fields first
+	SampleRate float64
+	// String fields
+	Endpoint    string
+	ServiceName string
+	// Bool fields
+	Enabled bool
+}
+
 // Config holds all configuration for the application
 //
 //nolint:govet // Struct field alignment has been optimized for better memory usage
@@ -112,6 +123,7 @@ type Config struct {
 	Logging     LogConfig
 	GitProvider GitProviderConfig
 	Deployment  DeploymentConfig
+	Otel        OtelConfig
 }
 
 // AppConfig holds application-wide configuration
@@ -372,6 +384,7 @@ func LoadConfig() (*Config, error) {
 		GitProvider: loadGitProviderConfig(),
 		Deployment:  loadDeploymentConfig(),
 		OIDC:        loadOIDCConfig(),
+		Otel:        loadOtelConfig(),
 	}
 
 	// Validate the configuration
@@ -491,6 +504,15 @@ func loadOIDCConfig() OIDCConfig {
 	}
 }
 
+func loadOtelConfig() OtelConfig {
+	return OtelConfig{
+		Enabled:     getEnvBool("OTEL_ENABLED", false),
+		Endpoint:    getEnv("OTEL_EXPORTER_OTLP_ENDPOINT", "localhost:4317"),
+		ServiceName: getEnv("OTEL_SERVICE_NAME", "k8s-stack-manager"),
+		SampleRate:  getEnvFloat64("OTEL_TRACE_SAMPLE_RATE", 1.0),
+	}
+}
+
 // Helper functions for environment variables
 func getEnv(key, fallback string) string {
 	value := os.Getenv(key)
@@ -525,6 +547,20 @@ func getEnvInt32(key string, fallback int32) int32 {
 		return int32(v)
 	}
 	return fallback
+}
+
+func getEnvFloat64(key string, fallback float64) float64 {
+	value := os.Getenv(key)
+	if value == "" {
+		return fallback
+	}
+
+	v, err := strconv.ParseFloat(value, 64)
+	if err != nil {
+		return fallback
+	}
+
+	return v
 }
 
 func getEnvDuration(key string, fallback time.Duration) time.Duration {

@@ -658,3 +658,40 @@ func TestOIDCConfigLoad(t *testing.T) {
 		assert.True(t, cfg.OIDC.LocalAuth)
 	})
 }
+
+func TestOtelConfigLoad(t *testing.T) {
+	// Not parallel: subtests use t.Setenv which modifies the process environment.
+
+	t.Run("OTel disabled by default", func(t *testing.T) {
+		t.Setenv("OTEL_ENABLED", "")
+		cfg, err := config.LoadConfig()
+		require.NoError(t, err)
+		assert.False(t, cfg.Otel.Enabled)
+	})
+
+	t.Run("OTel default values", func(t *testing.T) {
+		t.Setenv("OTEL_ENABLED", "")
+		t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "")
+		t.Setenv("OTEL_SERVICE_NAME", "")
+		t.Setenv("OTEL_TRACE_SAMPLE_RATE", "")
+		cfg, err := config.LoadConfig()
+		require.NoError(t, err)
+		assert.False(t, cfg.Otel.Enabled)
+		assert.Equal(t, "localhost:4317", cfg.Otel.Endpoint)
+		assert.Equal(t, "k8s-stack-manager", cfg.Otel.ServiceName)
+		assert.Equal(t, 1.0, cfg.Otel.SampleRate)
+	})
+
+	t.Run("OTel enabled with custom values", func(t *testing.T) {
+		t.Setenv("OTEL_ENABLED", "true")
+		t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "collector:4317")
+		t.Setenv("OTEL_SERVICE_NAME", "my-service")
+		t.Setenv("OTEL_TRACE_SAMPLE_RATE", "0.25")
+		cfg, err := config.LoadConfig()
+		require.NoError(t, err)
+		assert.True(t, cfg.Otel.Enabled)
+		assert.Equal(t, "collector:4317", cfg.Otel.Endpoint)
+		assert.Equal(t, "my-service", cfg.Otel.ServiceName)
+		assert.Equal(t, 0.25, cfg.Otel.SampleRate)
+	})
+}

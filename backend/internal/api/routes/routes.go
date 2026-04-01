@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
 )
 
 // Deps holds all handler dependencies needed by SetupRoutes.
@@ -86,6 +87,9 @@ func SetupRoutes(router *gin.Engine, deps Deps) *handlers.RateLimiter {
 
 	// Add middleware
 	router.Use(middleware.RequestID())
+	if cfg.Otel.Enabled {
+		router.Use(otelgin.Middleware(cfg.Otel.ServiceName))
+	}
 	router.Use(middleware.Logger())
 	router.Use(middleware.Recovery())
 	router.Use(middleware.CORS(cfg.CORS.AllowedOrigins))
@@ -169,6 +173,11 @@ func SetupRoutes(router *gin.Engine, deps Deps) *handlers.RateLimiter {
 		// All remaining Phase 1 routes require authentication.
 		authed := v1.Group("")
 		authed.Use(authMW)
+
+		// Enrich OTel spans with authenticated user attributes.
+		if cfg.Otel.Enabled {
+			authed.Use(middleware.SpanEnrichUser())
+		}
 
 		// Attach audit middleware if an audit logger is provided.
 		if deps.AuditLogger != nil {
