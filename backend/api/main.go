@@ -413,14 +413,6 @@ func gracefulShutdown(srv *http.Server, timeout time.Duration, deps shutdownDeps
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
-	// 0. Flush OTel spans/metrics/logs before the HTTP server closes,
-	//    so in-flight request telemetry is exported.
-	if deps.telemetry != nil {
-		if err := deps.telemetry.Shutdown(ctx); err != nil {
-			slog.Error("Failed to shutdown OpenTelemetry", "error", err)
-		}
-	}
-
 	// 1. Stop HTTP server — no new requests.
 	if err := srv.Shutdown(ctx); err != nil {
 		slog.Error("Server forced to shutdown", "error", err)
@@ -445,7 +437,15 @@ func gracefulShutdown(srv *http.Server, timeout time.Duration, deps shutdownDeps
 		deps.oidcStateStore.Stop()
 	}
 
-	// 5. Close data layer.
+	// 5. Flush OTel spans/metrics/logs AFTER all services stop,
+	//    so telemetry from graceful shutdown is captured.
+	if deps.telemetry != nil {
+		if err := deps.telemetry.Shutdown(ctx); err != nil {
+			slog.Error("Failed to shutdown OpenTelemetry", "error", err)
+		}
+	}
+
+	// 6. Close data layer.
 	if closeErr := deps.repo.Close(); closeErr != nil {
 		slog.Error("Failed to close repository", "error", closeErr)
 	}

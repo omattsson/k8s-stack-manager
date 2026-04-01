@@ -15,4 +15,5 @@ data:
   OTEL_ENABLED: "true"
   OTEL_EXPORTER_OTLP_ENDPOINT: "{{ include "k8s-stack-manager.otel.serviceName" . }}:4317"
   OTEL_SERVICE_NAME: "k8s-stack-manager"
+  OTEL_TRACE_SAMPLE_RATE: {{ .Values.otel.sampleRate | quote }}
   {{- end }}

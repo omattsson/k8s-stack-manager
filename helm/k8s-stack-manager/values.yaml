@@ -188,6 +188,7 @@ azurite:
 # ---------------------------------------------------------------------------
 otel:
   enabled: false
+  sampleRate: "1.0"   # Trace sampling rate (0.0-1.0). Reduce for production.
   collector:
     image:
       repository: otel/opentelemetry-collector-contrib

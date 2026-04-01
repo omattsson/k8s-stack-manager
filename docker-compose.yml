@@ -128,8 +128,8 @@ services:
     container_name: app-otel-collector
     profiles: [otel]
     ports:
-      - "4317:4317"   # OTLP gRPC
-      - "4318:4318"   # OTLP HTTP
+      - "127.0.0.1:4317:4317"   # OTLP gRPC (localhost only)
+      - "127.0.0.1:4318:4318"   # OTLP HTTP (localhost only)
     volumes:
       - ./config/otel/collector-config.yaml:/etc/otelcol-contrib/config.yaml:ro
     depends_on:
