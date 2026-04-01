@@ -178,10 +178,38 @@ services:
     networks:
       - backend-net
 
+  grafana:
+    image: grafana/grafana:12.4.2
+    container_name: app-grafana
+    profiles: [otel]
+    ports:
+      - "3001:3000"    # Grafana UI (3001 to avoid clash with frontend :3000)
+    environment:
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
+      - GF_AUTH_DISABLE_LOGIN_FORM=true
+    volumes:
+      - ./config/otel/grafana/provisioning:/etc/grafana/provisioning:ro
+      - grafana_data:/var/lib/grafana
+    depends_on:
+      prometheus:
+        condition: service_healthy
+      jaeger:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget --spider -q http://localhost:3000/api/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    networks:
+      - backend-net
+
 volumes:
   backend_go_mod:
   frontend_node_modules:
   azurite_data: {}
+  grafana_data: {}
 
 networks:
   backend-net:
