@@ -210,7 +210,7 @@ func TestMySQLIntegration_StackInstanceRepository(t *testing.T) {
 
 func TestMySQLIntegration_ClusterRepository(t *testing.T) {
 	db := setupMySQLTestDB(t)
-	repo := NewGORMClusterRepository(db)
+	repo := NewGORMClusterRepository(db, "test-encryption-key-for-integration")
 
 	cluster := &models.Cluster{
 		Name:         "test-cluster",

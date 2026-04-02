@@ -150,7 +150,7 @@ func newAzureRepositorySet(cfg *config.Config) (*RepositorySet, error) {
 	}, nil
 }
 
-func newGORMRepositorySet(_ *config.Config, db *gorm.DB) (*RepositorySet, error) {
+func newGORMRepositorySet(cfg *config.Config, db *gorm.DB) (*RepositorySet, error) {
 	if db == nil {
 		return nil, fmt.Errorf("GORM database connection is required when USE_AZURE_TABLE is false")
 	}
@@ -170,7 +170,7 @@ func newGORMRepositorySet(_ *config.Config, db *gorm.DB) (*RepositorySet, error)
 	templateChartConfigRepo := NewGORMTemplateChartConfigRepository(db)
 	valueOverrideRepo := NewGORMValueOverrideRepository(db)
 	chartBranchOverrideRepo := NewGORMChartBranchOverrideRepository(db)
-	clusterRepo := NewGORMClusterRepository(db)
+	clusterRepo := NewGORMClusterRepository(db, cfg.Deployment.KubeconfigEncryptionKey)
 	deploymentLogRepo := NewGORMDeploymentLogRepository(db)
 	sharedValuesRepo := NewGORMSharedValuesRepository(db)
 	userFavoriteRepo := NewGORMUserFavoriteRepository(db)

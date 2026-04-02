@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // Compile-time interface check.
@@ -47,7 +48,7 @@ func (r *GORMChartBranchOverrideRepository) Get(instanceID, chartConfigID string
 	return &override, nil
 }
 
-// Set creates or updates a branch override (upsert).
+// Set creates or updates a branch override (upsert) atomically using ON CONFLICT.
 func (r *GORMChartBranchOverrideRepository) Set(override *models.ChartBranchOverride) error {
 	if err := override.Validate(); err != nil {
 		return dberrors.NewDatabaseError("set", fmt.Errorf("%w: %s", dberrors.ErrValidation, err.Error()))
@@ -55,30 +56,16 @@ func (r *GORMChartBranchOverrideRepository) Set(override *models.ChartBranchOver
 
 	now := time.Now().UTC()
 	override.UpdatedAt = now
-
-	// Check if an override already exists for this instance + chart combo.
-	var existing models.ChartBranchOverride
-	err := r.db.Where("stack_instance_id = ? AND chart_config_id = ?", override.StackInstanceID, override.ChartConfigID).
-		First(&existing).Error
-
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		// Create new.
-		if override.ID == "" {
-			override.ID = uuid.New().String()
-		}
-		if createErr := r.db.Create(override).Error; createErr != nil {
-			return dberrors.NewDatabaseError("set", createErr)
-		}
-		return nil
-	}
-	if err != nil {
-		return dberrors.NewDatabaseError("set", err)
+	if override.ID == "" {
+		override.ID = uuid.New().String()
 	}
 
-	// Update existing.
-	override.ID = existing.ID
-	if updateErr := r.db.Save(override).Error; updateErr != nil {
-		return dberrors.NewDatabaseError("set", updateErr)
+	result := r.db.Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "stack_instance_id"}, {Name: "chart_config_id"}},
+		DoUpdates: clause.AssignmentColumns([]string{"branch", "updated_at"}),
+	}).Create(override)
+	if result.Error != nil {
+		return dberrors.NewDatabaseError("set", result.Error)
 	}
 	return nil
 }

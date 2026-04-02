@@ -68,6 +68,18 @@ func (m *mockDeployLogRepo) ListByInstance(_ context.Context, instanceID string)
 	return out, nil
 }
 
+func (m *mockDeployLogRepo) ListByInstancePaginated(_ context.Context, filters models.DeploymentLogFilters) (*models.DeploymentLogResult, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.err != nil {
+		return nil, m.err
+	}
+	logs := m.items[filters.InstanceID]
+	out := make([]models.DeploymentLog, len(logs))
+	copy(out, logs)
+	return &models.DeploymentLogResult{Data: out, Total: int64(len(out))}, nil
+}
+
 func (m *mockDeployLogRepo) GetLatestByInstance(_ context.Context, instanceID string) (*models.DeploymentLog, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()

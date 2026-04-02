@@ -508,6 +508,108 @@ func (d *Database) AutoMigrate() error {
 		},
 	})
 
+	// Migration 22: Add unique constraint on chart_branch_overrides (instance + chart)
+	migrator.AddMigration(schema.Migration{
+		Version:     "20231201000022",
+		Name:        "add_chart_branch_overrides_unique_index",
+		Description: "Add unique index on chart_branch_overrides(stack_instance_id, chart_config_id) to support atomic upsert",
+		Up: func(tx *gorm.DB) error {
+			// Check if index already exists (e.g. created by GORM AutoMigrate from model tag).
+			if tx.Migrator().HasIndex(&models.ChartBranchOverride{}, "idx_instance_chart") {
+				return nil
+			}
+			return tx.Exec("CREATE UNIQUE INDEX idx_instance_chart ON chart_branch_overrides(stack_instance_id, chart_config_id)").Error
+		},
+		Down: func(tx *gorm.DB) error {
+			_ = tx.Exec("DROP INDEX idx_instance_chart ON chart_branch_overrides").Error
+			return nil
+		},
+	})
+
+	// Migration 23: Add missing composite indexes and drop redundant single-column indexes
+	migrator.AddMigration(schema.Migration{
+		Version:     "20231201000023",
+		Name:        "optimize_stack_instance_indexes",
+		Description: "Add composite indexes for TTL reaper, namespace lookup, quota enforcement, and definition status; drop redundant single-column indexes",
+		Up: func(tx *gorm.DB) error {
+			type idxDef struct {
+				table string
+				name  string
+				sql   string
+			}
+
+			// Fix #3: Composite index for TTL reaper ListExpired query
+			// Fix #4: Index on namespace for FindByNamespace (admin orphan detection)
+			// Fix #5: Composite indexes for quota enforcement and definition status checks
+			newIndexes := []idxDef{
+				{"stack_instances", "idx_stack_instances_status_expires", "CREATE INDEX idx_stack_instances_status_expires ON stack_instances(status, expires_at)"},
+				{"stack_instances", "idx_stack_instances_namespace", "CREATE INDEX idx_stack_instances_namespace ON stack_instances(namespace)"},
+				{"stack_instances", "idx_stack_instances_cluster_owner", "CREATE INDEX idx_stack_instances_cluster_owner ON stack_instances(cluster_id, owner_id)"},
+				{"stack_instances", "idx_stack_instances_def_status", "CREATE INDEX idx_stack_instances_def_status ON stack_instances(stack_definition_id, status)"},
+			}
+			for _, idx := range newIndexes {
+				var count int64
+				tx.Raw("SELECT COUNT(1) FROM information_schema.statistics WHERE table_schema = DATABASE() AND table_name = ? AND index_name = ?", idx.table, idx.name).Scan(&count)
+				if count == 0 {
+					if err := tx.Exec(idx.sql).Error; err != nil {
+						return err
+					}
+				}
+			}
+
+			// Fix #11: Drop redundant single-column indexes now covered by composites
+			// idx_stack_instances_status is covered by idx_stack_instances_status_created (migration 21)
+			//   and idx_stack_instances_status_expires (above)
+			// idx_deployment_logs_instance_id is covered by idx_deployment_logs_instance_action_started
+			//   and idx_deployment_logs_instance_started_completed (migration 21)
+			redundantIndexes := []struct{ table, name string }{
+				{"stack_instances", "idx_stack_instances_status"},
+				{"deployment_logs", "idx_deployment_logs_instance_id"},
+			}
+			for _, idx := range redundantIndexes {
+				var count int64
+				tx.Raw("SELECT COUNT(1) FROM information_schema.statistics WHERE table_schema = DATABASE() AND table_name = ? AND index_name = ?", idx.table, idx.name).Scan(&count)
+				if count > 0 {
+					if err := tx.Exec("DROP INDEX " + idx.name + " ON " + idx.table).Error; err != nil {
+						return err
+					}
+				}
+			}
+
+			return nil
+		},
+		Down: func(tx *gorm.DB) error {
+			// Re-create the single-column indexes that were dropped
+			restoreIndexes := []struct {
+				table, name, sql string
+			}{
+				{"stack_instances", "idx_stack_instances_status", "CREATE INDEX idx_stack_instances_status ON stack_instances(status)"},
+				{"deployment_logs", "idx_deployment_logs_instance_id", "CREATE INDEX idx_deployment_logs_instance_id ON deployment_logs(stack_instance_id)"},
+			}
+			for _, idx := range restoreIndexes {
+				var count int64
+				tx.Raw("SELECT COUNT(1) FROM information_schema.statistics WHERE table_schema = DATABASE() AND table_name = ? AND index_name = ?", idx.table, idx.name).Scan(&count)
+				if count == 0 {
+					if err := tx.Exec(idx.sql).Error; err != nil {
+						return err
+					}
+				}
+			}
+
+			// Drop the new composite indexes
+			dropIndexes := []struct{ table, name string }{
+				{"stack_instances", "idx_stack_instances_def_status"},
+				{"stack_instances", "idx_stack_instances_cluster_owner"},
+				{"stack_instances", "idx_stack_instances_namespace"},
+				{"stack_instances", "idx_stack_instances_status_expires"},
+			}
+			for _, idx := range dropIndexes {
+				_ = tx.Exec("DROP INDEX " + idx.name + " ON " + idx.table).Error
+			}
+			return nil
+		},
+	})
+
 	// Run migrations
 	if err := migrator.MigrateUp(); err != nil {
 		return err

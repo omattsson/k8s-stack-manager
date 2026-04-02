@@ -176,6 +176,52 @@ func (r *DeploymentLogRepository) ListByInstance(ctx context.Context, instanceID
 	return results, nil
 }
 
+// ListByInstancePaginated returns deployment logs for a given instance with
+// pagination support. In the Azure Table implementation, cursor-based pagination
+// is not natively supported, so this falls back to in-memory offset/limit.
+func (r *DeploymentLogRepository) ListByInstancePaginated(ctx context.Context, filters models.DeploymentLogFilters) (*models.DeploymentLogResult, error) {
+	filter := odataPartitionKeyEq + escapeODataString(filters.InstanceID) + "'"
+	pager := r.client.NewListEntitiesPager(&aztables.ListEntitiesOptions{
+		Filter: &filter,
+	})
+
+	entities, err := collectEntitiesTyped[deploymentLogEntity](ctx, pager, nil, 0)
+	if err != nil {
+		return nil, mapAzureError("list_by_instance", err)
+	}
+
+	total := int64(len(entities))
+
+	limit := filters.Limit
+	if limit <= 0 {
+		limit = 50
+	}
+
+	// Apply offset.
+	offset := filters.Offset
+	if offset > len(entities) {
+		offset = len(entities)
+	}
+	entities = entities[offset:]
+
+	// Apply limit.
+	var nextCursor string
+	if limit < len(entities) {
+		entities = entities[:limit]
+	}
+	_ = nextCursor // cursor not supported in Azure impl; always empty
+
+	results := make([]models.DeploymentLog, 0, len(entities))
+	for _, e := range entities {
+		results = append(results, *e.toModel())
+	}
+
+	return &models.DeploymentLogResult{
+		Data:  results,
+		Total: total,
+	}, nil
+}
+
 func (r *DeploymentLogRepository) GetLatestByInstance(ctx context.Context, instanceID string) (*models.DeploymentLog, error) {
 
 	filter := odataPartitionKeyEq + escapeODataString(instanceID) + "'"

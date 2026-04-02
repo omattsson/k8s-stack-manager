@@ -1148,11 +1148,15 @@ func (h *InstanceHandler) CleanInstance(c *gin.Context) {
 
 // GetDeployLog godoc
 // @Summary     Get deployment logs
-// @Description Get deployment log history for a stack instance
+// @Description Get deployment log history for a stack instance. Supports cursor-based pagination for efficient large dataset traversal.
 // @Tags        stack-instances
 // @Produce     json
-// @Param       id path string true "Instance ID"
-// @Success     200 {array} models.DeploymentLog
+// @Param       id     path  string true  "Instance ID"
+// @Param       limit  query int    false "Page size (default 50)"
+// @Param       offset query int    false "Offset for traditional pagination (default 0)"
+// @Param       cursor query string false "Cursor from previous page for cursor-based pagination (overrides offset)"
+// @Success     200 {object} models.DeploymentLogResult
+// @Failure     400 {object} map[string]string
 // @Failure     404 {object} map[string]string
 // @Router      /api/v1/stack-instances/{id}/deploy-log [get]
 func (h *InstanceHandler) GetDeployLog(c *gin.Context) {
@@ -1174,14 +1178,37 @@ func (h *InstanceHandler) GetDeployLog(c *gin.Context) {
 		return
 	}
 
-	logs, err := h.deployLogRepo.ListByInstance(c.Request.Context(), id)
+	filters := models.DeploymentLogFilters{
+		InstanceID: id,
+		Cursor:     c.Query("cursor"),
+	}
+
+	if limitStr := c.Query("limit"); limitStr != "" {
+		l, err := strconv.Atoi(limitStr)
+		if err != nil || l < 0 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid limit parameter"})
+			return
+		}
+		filters.Limit = l
+	}
+
+	if offsetStr := c.Query("offset"); offsetStr != "" {
+		o, err := strconv.Atoi(offsetStr)
+		if err != nil || o < 0 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid offset parameter"})
+			return
+		}
+		filters.Offset = o
+	}
+
+	result, err := h.deployLogRepo.ListByInstancePaginated(c.Request.Context(), filters)
 	if err != nil {
 		status, message := mapError(err, "Deployment log")
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
 
-	c.JSON(http.StatusOK, logs)
+	c.JSON(http.StatusOK, result)
 }
 
 // GetInstanceStatus godoc

@@ -1,6 +1,9 @@
 package database
 
 import (
+	"encoding/base64"
+	"fmt"
+	"strings"
 	"time"
 
 	"backend/internal/models"
@@ -38,6 +41,9 @@ func (r *GORMAuditLogRepository) Create(log *models.AuditLog) error {
 }
 
 // List returns audit logs matching the provided filters with pagination.
+// When filters.Cursor is set, keyset (cursor-based) pagination is used for
+// efficient traversal of large datasets. Otherwise, traditional OFFSET
+// pagination is used for backward compatibility.
 func (r *GORMAuditLogRepository) List(filters models.AuditLogFilters) (*models.AuditLogResult, error) {
 	query := r.db.Model(&models.AuditLog{})
 
@@ -60,19 +66,50 @@ func (r *GORMAuditLogRepository) List(filters models.AuditLogFilters) (*models.A
 		query = query.Where("timestamp <= ?", *filters.EndDate)
 	}
 
+	limit := filters.Limit
+	if limit <= 0 {
+		limit = 50
+	}
+
+	// Cursor-based pagination: skip COUNT and OFFSET, use keyset filtering.
+	if filters.Cursor != "" {
+		cursorTS, cursorID, err := decodeAuditCursor(filters.Cursor)
+		if err != nil {
+			return nil, dberrors.NewDatabaseError("list", fmt.Errorf("%w: %s", dberrors.ErrValidation, err.Error()))
+		}
+		// Keyset condition for DESC ordering: rows with earlier timestamp,
+		// or same timestamp but lexicographically smaller ID (tie-breaker).
+		query = query.Where(
+			"(timestamp < ?) OR (timestamp = ? AND id < ?)",
+			cursorTS, cursorTS, cursorID,
+		)
+
+		// Fetch limit+1 to detect whether a next page exists.
+		var logs []models.AuditLog
+		if err := query.Order("timestamp DESC, id DESC").Limit(limit + 1).Find(&logs).Error; err != nil {
+			return nil, dberrors.NewDatabaseError("list", err)
+		}
+
+		result := &models.AuditLogResult{
+			Total: -1, // exact total not computed in cursor mode
+		}
+		if len(logs) > limit {
+			logs = logs[:limit]
+			last := logs[limit-1]
+			result.NextCursor = encodeAuditCursor(last.Timestamp, last.ID)
+		}
+		result.Data = logs
+		return result, nil
+	}
+
+	// Traditional OFFSET pagination.
 	var total int64
 	if err := query.Count(&total).Error; err != nil {
 		return nil, dberrors.NewDatabaseError("count", err)
 	}
 
-	limit := filters.Limit
-	if limit <= 0 {
-		limit = 50
-	}
-	offset := filters.Offset
-
 	var logs []models.AuditLog
-	if err := query.Order("timestamp DESC").Limit(limit).Offset(offset).Find(&logs).Error; err != nil {
+	if err := query.Order("timestamp DESC, id DESC").Limit(limit).Offset(filters.Offset).Find(&logs).Error; err != nil {
 		return nil, dberrors.NewDatabaseError("list", err)
 	}
 
@@ -80,4 +117,28 @@ func (r *GORMAuditLogRepository) List(filters models.AuditLogFilters) (*models.A
 		Data:  logs,
 		Total: total,
 	}, nil
+}
+
+// encodeAuditCursor creates an opaque cursor from a timestamp and ID.
+func encodeAuditCursor(ts time.Time, id string) string {
+	return base64.StdEncoding.EncodeToString(
+		[]byte(ts.UTC().Format(time.RFC3339Nano) + "|" + id),
+	)
+}
+
+// decodeAuditCursor extracts a timestamp and ID from an opaque cursor.
+func decodeAuditCursor(cursor string) (time.Time, string, error) {
+	data, err := base64.StdEncoding.DecodeString(cursor)
+	if err != nil {
+		return time.Time{}, "", fmt.Errorf("invalid cursor encoding")
+	}
+	parts := strings.SplitN(string(data), "|", 2)
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		return time.Time{}, "", fmt.Errorf("invalid cursor format")
+	}
+	ts, err := time.Parse(time.RFC3339Nano, parts[0])
+	if err != nil {
+		return time.Time{}, "", fmt.Errorf("invalid cursor timestamp")
+	}
+	return ts, parts[1], nil
 }

@@ -1,14 +1,19 @@
 package database
 
 import (
+	"encoding/base64"
 	"errors"
+	"fmt"
+	"log/slog"
 	"time"
 
 	"backend/internal/models"
+	"backend/pkg/crypto"
 	"backend/pkg/dberrors"
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // Compile-time interface check.
@@ -16,12 +21,56 @@ var _ models.ClusterRepository = (*GORMClusterRepository)(nil)
 
 // GORMClusterRepository implements models.ClusterRepository using GORM.
 type GORMClusterRepository struct {
-	db *gorm.DB
+	db            *gorm.DB
+	encryptionKey []byte // nil or empty means encryption disabled
 }
 
 // NewGORMClusterRepository creates a new GORM-backed cluster repository.
-func NewGORMClusterRepository(db *gorm.DB) *GORMClusterRepository {
-	return &GORMClusterRepository{db: db}
+func NewGORMClusterRepository(db *gorm.DB, encryptionKey string) *GORMClusterRepository {
+	repo := &GORMClusterRepository{db: db}
+	if encryptionKey != "" {
+		repo.encryptionKey = crypto.DeriveKey(encryptionKey)
+	} else {
+		slog.Warn("KUBECONFIG_ENCRYPTION_KEY is not set — clusters with kubeconfig_data will be rejected; use kubeconfig_path instead")
+	}
+	return repo
+}
+
+// encryptKubeconfig encrypts KubeconfigData in-place before persisting.
+// Returns the original plaintext so the caller can restore it after the DB write.
+func (r *GORMClusterRepository) encryptKubeconfig(cluster *models.Cluster) (string, error) {
+	original := cluster.KubeconfigData
+	if original == "" {
+		return "", nil
+	}
+	if len(r.encryptionKey) == 0 {
+		return "", dberrors.NewDatabaseError("validation",
+			fmt.Errorf("kubeconfig_data cannot be stored without KUBECONFIG_ENCRYPTION_KEY configured; use kubeconfig_path instead: %w", dberrors.ErrValidation))
+	}
+	encrypted, err := crypto.Encrypt([]byte(original), r.encryptionKey)
+	if err != nil {
+		return "", dberrors.NewDatabaseError("encrypt", err)
+	}
+	cluster.KubeconfigData = base64.StdEncoding.EncodeToString(encrypted)
+	return original, nil
+}
+
+// decryptKubeconfig decrypts KubeconfigData in-place after reading from DB.
+func (r *GORMClusterRepository) decryptKubeconfig(cluster *models.Cluster) error {
+	if cluster.KubeconfigData == "" || len(r.encryptionKey) == 0 {
+		return nil
+	}
+	decoded, err := base64.StdEncoding.DecodeString(cluster.KubeconfigData)
+	if err != nil {
+		// Not base64; assume plaintext (pre-encryption data).
+		return nil
+	}
+	decrypted, err := crypto.Decrypt(decoded, r.encryptionKey)
+	if err != nil {
+		return dberrors.NewDatabaseError("decrypt kubeconfig data", err)
+	}
+	cluster.KubeconfigData = string(decrypted)
+	return nil
 }
 
 // Create inserts a new cluster record.
@@ -35,11 +84,24 @@ func (r *GORMClusterRepository) Create(cluster *models.Cluster) error {
 	now := time.Now().UTC()
 	cluster.CreatedAt = now
 	cluster.UpdatedAt = now
-	if err := r.db.Create(cluster).Error; err != nil {
-		if isDuplicateKeyError(err) {
+
+	original, err := r.encryptKubeconfig(cluster)
+	if err != nil {
+		return err
+	}
+
+	dbErr := r.db.Create(cluster).Error
+
+	// Restore plaintext so the caller's struct is not mutated.
+	if original != "" {
+		cluster.KubeconfigData = original
+	}
+
+	if dbErr != nil {
+		if isDuplicateKeyError(dbErr) {
 			return dberrors.NewDatabaseError("create", dberrors.ErrDuplicateKey)
 		}
-		return dberrors.NewDatabaseError("create", err)
+		return dberrors.NewDatabaseError("create", dbErr)
 	}
 	return nil
 }
@@ -53,17 +115,33 @@ func (r *GORMClusterRepository) FindByID(id string) (*models.Cluster, error) {
 		}
 		return nil, dberrors.NewDatabaseError("find_by_id", err)
 	}
+	if err := r.decryptKubeconfig(&cluster); err != nil {
+		return nil, err
+	}
 	return &cluster, nil
 }
 
 // Update persists changes to an existing cluster record.
 func (r *GORMClusterRepository) Update(cluster *models.Cluster) error {
 	cluster.UpdatedAt = time.Now().UTC()
-	if err := r.db.Save(cluster).Error; err != nil {
-		if isDuplicateKeyError(err) {
+
+	original, err := r.encryptKubeconfig(cluster)
+	if err != nil {
+		return err
+	}
+
+	dbErr := r.db.Save(cluster).Error
+
+	// Restore plaintext so the caller's struct is not mutated.
+	if original != "" {
+		cluster.KubeconfigData = original
+	}
+
+	if dbErr != nil {
+		if isDuplicateKeyError(dbErr) {
 			return dberrors.NewDatabaseError("update", dberrors.ErrDuplicateKey)
 		}
-		return dberrors.NewDatabaseError("update", err)
+		return dberrors.NewDatabaseError("update", dbErr)
 	}
 	return nil
 }
@@ -86,6 +164,11 @@ func (r *GORMClusterRepository) List() ([]models.Cluster, error) {
 	if err := r.db.Find(&clusters).Error; err != nil {
 		return nil, dberrors.NewDatabaseError("list", err)
 	}
+	for i := range clusters {
+		if err := r.decryptKubeconfig(&clusters[i]); err != nil {
+			return nil, err
+		}
+	}
 	return clusters, nil
 }
 
@@ -98,17 +181,29 @@ func (r *GORMClusterRepository) FindDefault() (*models.Cluster, error) {
 		}
 		return nil, dberrors.NewDatabaseError("find_default", err)
 	}
+	if err := r.decryptKubeconfig(&cluster); err != nil {
+		return nil, err
+	}
 	return &cluster, nil
 }
 
 // SetDefault unsets all existing defaults and marks the given cluster as default.
 func (r *GORMClusterRepository) SetDefault(id string) error {
 	return r.db.Transaction(func(tx *gorm.DB) error {
-		// Unset all current defaults.
-		if err := tx.Model(&models.Cluster{}).
-			Where("is_default = ?", true).
-			Update("is_default", false).Error; err != nil {
+		// Lock existing default rows to prevent concurrent SetDefault races.
+		var existing []models.Cluster
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("is_default = ?", true).Find(&existing).Error; err != nil {
 			return dberrors.NewDatabaseError("set_default", err)
+		}
+
+		// Unset all current defaults.
+		if len(existing) > 0 {
+			if err := tx.Model(&models.Cluster{}).
+				Where("is_default = ?", true).
+				Update("is_default", false).Error; err != nil {
+				return dberrors.NewDatabaseError("set_default", err)
+			}
 		}
 
 		// Set the target cluster as default.

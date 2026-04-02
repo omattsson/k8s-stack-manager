@@ -12,7 +12,7 @@ import (
 func setupClusterRepo(t *testing.T) *GORMClusterRepository {
 	t.Helper()
 	db := setupTestDBWithAllTables(t)
-	return NewGORMClusterRepository(db)
+	return NewGORMClusterRepository(db, "test-encryption-key-for-unit-tests")
 }
 
 func TestGORMClusterRepository_CRUD(t *testing.T) {

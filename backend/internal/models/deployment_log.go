@@ -31,6 +31,21 @@ const (
 	DeployLogError   = "error"
 )
 
+// DeploymentLogFilters holds optional filters and pagination for querying deployment logs.
+type DeploymentLogFilters struct {
+	InstanceID string
+	Cursor     string
+	Limit      int
+	Offset     int
+}
+
+// DeploymentLogResult holds the result of a paginated deployment log query.
+type DeploymentLogResult struct {
+	Data       []DeploymentLog `json:"data"`
+	Total      int64           `json:"total"`
+	NextCursor string          `json:"next_cursor,omitempty"`
+}
+
 // DeployLogSummary provides lightweight aggregate counts for an instance's
 // deployment logs, avoiding the need to fetch full log entities with their
 // potentially large Output and Details fields.
@@ -48,6 +63,7 @@ type DeploymentLogRepository interface {
 	FindByID(ctx context.Context, id string) (*DeploymentLog, error)
 	Update(ctx context.Context, log *DeploymentLog) error
 	ListByInstance(ctx context.Context, instanceID string) ([]DeploymentLog, error)
+	ListByInstancePaginated(ctx context.Context, filters DeploymentLogFilters) (*DeploymentLogResult, error)
 	GetLatestByInstance(ctx context.Context, instanceID string) (*DeploymentLog, error)
 	SummarizeByInstance(ctx context.Context, instanceID string) (*DeployLogSummary, error)
 }

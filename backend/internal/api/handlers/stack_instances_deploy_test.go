@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"sort"
 	"sync"
 	"testing"
 	"time"
@@ -85,6 +86,41 @@ func (m *MockDeploymentLogRepository) ListByInstance(_ context.Context, instance
 		}
 	}
 	return out, nil
+}
+
+func (m *MockDeploymentLogRepository) ListByInstancePaginated(_ context.Context, filters models.DeploymentLogFilters) (*models.DeploymentLogResult, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.err != nil {
+		return nil, m.err
+	}
+	var out []models.DeploymentLog
+	for _, log := range m.items {
+		if log.StackInstanceID == filters.InstanceID {
+			out = append(out, *log)
+		}
+	}
+	// Sort by StartedAt DESC for consistency.
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].StartedAt.After(out[j].StartedAt)
+	})
+	total := int64(len(out))
+	limit := filters.Limit
+	if limit <= 0 {
+		limit = 50
+	}
+	offset := filters.Offset
+	if offset > len(out) {
+		offset = len(out)
+	}
+	out = out[offset:]
+	if limit < len(out) {
+		out = out[:limit]
+	}
+	return &models.DeploymentLogResult{
+		Data:  out,
+		Total: total,
+	}, nil
 }
 
 func (m *MockDeploymentLogRepository) GetLatestByInstance(_ context.Context, instanceID string) (*models.DeploymentLog, error) {
@@ -521,9 +557,9 @@ func TestGetDeployLog(t *testing.T) {
 		router.ServeHTTP(w, req)
 
 		assert.Equal(t, http.StatusOK, w.Code)
-		var logs []models.DeploymentLog
-		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &logs))
-		assert.Len(t, logs, 2)
+		var result models.DeploymentLogResult
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &result))
+		assert.Len(t, result.Data, 2)
 	})
 
 	t.Run("empty logs returns empty array", func(t *testing.T) {

@@ -161,7 +161,7 @@ services:
     container_name: app-mysqld-exporter
     profiles: [mysql-otel]
     environment:
-      - MYSQLD_EXPORTER_PASSWORD=rootpassword
+      - MYSQLD_EXPORTER_PASSWORD=${DB_PASSWORD:-rootpassword}
     command:
       - "--mysqld.address=mysql:3306"
       - "--mysqld.username=root"
