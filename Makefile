@@ -300,7 +300,7 @@ loadtest-frontend-run: ## Run Playwright load tests (assumes backend already run
 mysql-start: ## Start MySQL container for load testing
 	docker compose --profile mysql up -d mysql
 	@echo "Waiting for MySQL to be ready..."
-	@n=0; while ! docker compose --profile mysql exec -T mysql mysqladmin ping -h localhost --silent 2>/dev/null; do \
+	@n=0; while ! docker compose --profile mysql exec -T mysql mysqladmin ping -h localhost -uroot -p"$${DB_PASSWORD:-rootpassword}" --silent 2>/dev/null; do \
 		n=$$((n+1)); \
 		if [ $$n -ge 30 ]; then echo "ERROR: MySQL failed to start after 30s"; exit 1; fi; \
 		sleep 1; \

@@ -31,7 +31,8 @@ func (r *BaseRepository[T]) FindByID(id string) (*T, error) {
 	return &entity, nil
 }
 
-// Delete soft-deletes a record by primary key.
+// Delete deletes a record by primary key. GORM will soft-delete if the model
+// embeds gorm.DeletedAt; otherwise it performs a hard delete.
 // Returns a DatabaseError wrapping ErrNotFound when no row was affected.
 func (r *BaseRepository[T]) Delete(id string) error {
 	var zero T

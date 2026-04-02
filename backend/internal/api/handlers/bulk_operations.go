@@ -367,7 +367,7 @@ func (h *InstanceHandler) BulkDelete(c *gin.Context) {
 				return repos.StackInstance.Delete(inst.ID)
 			})
 			if txErr != nil {
-				return "", fmt.Errorf("failed to delete instance")
+				return "", fmt.Errorf("failed to delete instance: %w", txErr)
 			}
 			return "", nil
 		}

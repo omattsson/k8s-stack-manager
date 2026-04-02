@@ -34,7 +34,7 @@ func (r *GORMUserFavoriteRepository) List(userID string) ([]*models.UserFavorite
 	return favorites, nil
 }
 
-// Add creates a new favorite. Duplicates are handled gracefully by upserting.
+// Add creates a new favorite. Duplicate key errors are treated as idempotent success.
 func (r *GORMUserFavoriteRepository) Add(fav *models.UserFavorite) error {
 	if err := fav.Validate(); err != nil {
 		return dberrors.NewDatabaseError("add", fmt.Errorf("%w: %s", dberrors.ErrValidation, err.Error()))
