@@ -324,6 +324,21 @@ func parseDeployLogTimestamp(completedAt, startedAt string) time.Time {
 	return time.Time{}
 }
 
+// SummarizeBatch returns aggregate deployment statistics for multiple instances.
+// Azure Table Storage does not support GROUP BY, so this iterates over the
+// provided instance IDs and delegates to SummarizeByInstance for each one.
+func (r *DeploymentLogRepository) SummarizeBatch(ctx context.Context, instanceIDs []string) (map[string]*models.DeployLogSummary, error) {
+	result := make(map[string]*models.DeployLogSummary, len(instanceIDs))
+	for _, id := range instanceIDs {
+		summary, err := r.SummarizeByInstance(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		result[id] = summary
+	}
+	return result, nil
+}
+
 func deploymentLogToEntity(log *models.DeploymentLog, pk, rk string) map[string]interface{} {
 	entity := map[string]interface{}{
 		fieldDLPartitionKey:    pk,

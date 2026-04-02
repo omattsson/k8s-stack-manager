@@ -159,6 +159,14 @@ func (r *StackTemplateRepository) List() ([]models.StackTemplate, error) {
 	return results, nil
 }
 
+func (r *StackTemplateRepository) Count() (int64, error) {
+	items, err := r.List()
+	if err != nil {
+		return 0, err
+	}
+	return int64(len(items)), nil
+}
+
 func (r *StackTemplateRepository) ListPublished() ([]models.StackTemplate, error) {
 	ctx := context.Background()
 

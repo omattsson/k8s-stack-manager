@@ -104,6 +104,15 @@ func (r *GORMUserRepository) Delete(id string) error {
 	return nil
 }
 
+// Count returns the total number of users.
+func (r *GORMUserRepository) Count() (int64, error) {
+	var count int64
+	if err := r.db.Model(&models.User{}).Count(&count).Error; err != nil {
+		return 0, dberrors.NewDatabaseError("count", err)
+	}
+	return count, nil
+}
+
 // List returns all users.
 func (r *GORMUserRepository) List() ([]models.User, error) {
 	var users []models.User

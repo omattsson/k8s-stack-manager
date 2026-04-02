@@ -86,6 +86,15 @@ func (r *GORMStackTemplateRepository) List() ([]models.StackTemplate, error) {
 	return templates, nil
 }
 
+// Count returns the total number of stack templates.
+func (r *GORMStackTemplateRepository) Count() (int64, error) {
+	var count int64
+	if err := r.db.Model(&models.StackTemplate{}).Count(&count).Error; err != nil {
+		return 0, dberrors.NewDatabaseError("count", err)
+	}
+	return count, nil
+}
+
 // ListPublished returns all published stack templates.
 func (r *GORMStackTemplateRepository) ListPublished() ([]models.StackTemplate, error) {
 	var templates []models.StackTemplate

@@ -157,6 +157,14 @@ func (r *StackDefinitionRepository) List() ([]models.StackDefinition, error) {
 	return results, nil
 }
 
+func (r *StackDefinitionRepository) Count() (int64, error) {
+	items, err := r.List()
+	if err != nil {
+		return 0, err
+	}
+	return int64(len(items)), nil
+}
+
 func (r *StackDefinitionRepository) ListByOwner(ownerID string) ([]models.StackDefinition, error) {
 	ctx := context.Background()
 

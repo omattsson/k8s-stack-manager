@@ -77,6 +77,12 @@ func (m *mockDefinitionRepo) ListByTemplate(_ string) ([]models.StackDefinition,
 	return m.List()
 }
 
+func (m *mockDefinitionRepo) Count() (int64, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return int64(len(m.items)), nil
+}
+
 // ---- mock chart config repo ----
 
 type mockChartConfigRepo struct {

@@ -248,6 +248,14 @@ func (r *UserRepository) Delete(id string) error {
 	return nil
 }
 
+func (r *UserRepository) Count() (int64, error) {
+	items, err := r.List()
+	if err != nil {
+		return 0, err
+	}
+	return int64(len(items)), nil
+}
+
 func (r *UserRepository) List() ([]models.User, error) {
 	ctx := context.Background()
 

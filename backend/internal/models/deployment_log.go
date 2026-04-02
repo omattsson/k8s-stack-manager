@@ -66,4 +66,5 @@ type DeploymentLogRepository interface {
 	ListByInstancePaginated(ctx context.Context, filters DeploymentLogFilters) (*DeploymentLogResult, error)
 	GetLatestByInstance(ctx context.Context, instanceID string) (*DeploymentLog, error)
 	SummarizeByInstance(ctx context.Context, instanceID string) (*DeployLogSummary, error)
+	SummarizeBatch(ctx context.Context, instanceIDs []string) (map[string]*DeployLogSummary, error)
 }

@@ -86,6 +86,15 @@ func (r *GORMStackDefinitionRepository) List() ([]models.StackDefinition, error)
 	return definitions, nil
 }
 
+// Count returns the total number of stack definitions.
+func (r *GORMStackDefinitionRepository) Count() (int64, error) {
+	var count int64
+	if err := r.db.Model(&models.StackDefinition{}).Count(&count).Error; err != nil {
+		return 0, dberrors.NewDatabaseError("count", err)
+	}
+	return count, nil
+}
+
 // ListByOwner returns all stack definitions owned by the given user.
 func (r *GORMStackDefinitionRepository) ListByOwner(ownerID string) ([]models.StackDefinition, error) {
 	var definitions []models.StackDefinition

@@ -140,6 +140,12 @@ func (m *MockUserRepository) List() ([]models.User, error) {
 	return out, nil
 }
 
+func (m *MockUserRepository) Count() (int64, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return int64(len(m.users)), nil
+}
+
 func (m *MockUserRepository) SetCreateError(err error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -259,6 +265,15 @@ func (m *MockStackTemplateRepository) ListByOwner(ownerID string) ([]models.Stac
 		}
 	}
 	return out, nil
+}
+
+func (m *MockStackTemplateRepository) Count() (int64, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.err != nil {
+		return 0, m.err
+	}
+	return int64(len(m.items)), nil
 }
 
 func (m *MockStackTemplateRepository) SetError(err error) {
@@ -451,6 +466,15 @@ func (m *MockStackDefinitionRepository) ListByTemplate(templateID string) ([]mod
 		}
 	}
 	return out, nil
+}
+
+func (m *MockStackDefinitionRepository) Count() (int64, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.err != nil {
+		return 0, m.err
+	}
+	return int64(len(m.items)), nil
 }
 
 func (m *MockStackDefinitionRepository) SetError(err error) {

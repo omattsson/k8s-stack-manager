@@ -4,7 +4,6 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
-	"sync"
 	"time"
 
 	"backend/internal/cache"
@@ -19,10 +18,6 @@ const (
 )
 
 
-// maxDeployLogWorkers limits the number of concurrent goroutines used to
-// fetch deploy log summaries in collectDeploySummaries, preventing excessive
-// fan-out against the backing store.
-const maxDeployLogWorkers = 20
 
 // ---- Response types ----
 
@@ -108,16 +103,16 @@ func (h *AnalyticsHandler) GetOverview(c *gin.Context) {
 		return
 	}
 
-	templates, err := h.templateRepo.List()
+	templateCount, err := h.templateRepo.Count()
 	if err != nil {
-		slog.Error("analytics: failed to list templates", "error", err)
+		slog.Error("analytics: failed to count templates", "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
 		return
 	}
 
-	definitions, err := h.definitionRepo.List()
+	definitionCount, err := h.definitionRepo.Count()
 	if err != nil {
-		slog.Error("analytics: failed to list definitions", "error", err)
+		slog.Error("analytics: failed to count definitions", "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
 		return
 	}
@@ -129,9 +124,9 @@ func (h *AnalyticsHandler) GetOverview(c *gin.Context) {
 		return
 	}
 
-	users, err := h.userRepo.List()
+	userCount, err := h.userRepo.Count()
 	if err != nil {
-		slog.Error("analytics: failed to list users", "error", err)
+		slog.Error("analytics: failed to count users", "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
 		return
 	}
@@ -152,12 +147,12 @@ func (h *AnalyticsHandler) GetOverview(c *gin.Context) {
 	}
 
 	stats := &OverviewStats{
-		TotalTemplates:   len(templates),
-		TotalDefinitions: len(definitions),
+		TotalTemplates:   int(templateCount),
+		TotalDefinitions: int(definitionCount),
 		TotalInstances:   len(instances),
 		RunningInstances: running,
 		TotalDeploys:     totalDeploys,
-		TotalUsers:       len(users),
+		TotalUsers:       int(userCount),
 	}
 	h.overviewCache.Set("overview", stats)
 	c.JSON(http.StatusOK, stats)
@@ -337,37 +332,22 @@ func (h *AnalyticsHandler) GetUserStats(c *gin.Context) {
 	c.JSON(http.StatusOK, result)
 }
 
-// collectDeploySummaries fetches lightweight deploy log summaries for each
-// instance concurrently and returns them indexed by instance ID. A bounded
-// worker pool of maxDeployLogWorkers goroutines prevents excessive fan-out
-// against the backing store.
+// collectDeploySummaries fetches lightweight deploy log summaries for all
+// instances in a single batched query and returns them indexed by instance ID.
 func (h *AnalyticsHandler) collectDeploySummaries(ctx context.Context, instances []models.StackInstance) map[string]*models.DeployLogSummary {
-	result := make(map[string]*models.DeployLogSummary, len(instances))
 	if len(instances) == 0 {
-		return result
+		return make(map[string]*models.DeployLogSummary)
 	}
 
-	var mu sync.Mutex
-	var wg sync.WaitGroup
-	sem := make(chan struct{}, maxDeployLogWorkers)
-
-	for _, inst := range instances {
-		wg.Add(1)
-		sem <- struct{}{} // acquire slot
-		go func(id string) {
-			defer wg.Done()
-			defer func() { <-sem }() // release slot
-
-			summary, err := h.deployLogRepo.SummarizeByInstance(ctx, id)
-			if err != nil {
-				slog.Error("analytics: failed to summarize deploy logs", "instance_id", id, "error", err)
-				return
-			}
-			mu.Lock()
-			result[id] = summary
-			mu.Unlock()
-		}(inst.ID)
+	ids := make([]string, len(instances))
+	for i, inst := range instances {
+		ids[i] = inst.ID
 	}
-	wg.Wait()
-	return result
+
+	summaries, err := h.deployLogRepo.SummarizeBatch(ctx, ids)
+	if err != nil {
+		slog.Error("analytics: failed to batch-summarize deploy logs", "count", len(ids), "error", err)
+		return make(map[string]*models.DeployLogSummary)
+	}
+	return summaries
 }

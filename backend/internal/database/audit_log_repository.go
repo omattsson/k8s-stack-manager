@@ -103,9 +103,33 @@ func (r *GORMAuditLogRepository) List(filters models.AuditLogFilters) (*models.A
 	}
 
 	// Traditional OFFSET pagination.
+	// Use an estimated count for large unfiltered result sets to avoid expensive
+	// full table scans on this append-only table. When any filter is active the
+	// result set is bounded, so exact count is acceptable.
+	hasFilters := filters.Action != "" || filters.EntityType != "" ||
+		filters.EntityID != "" || filters.UserID != "" ||
+		filters.StartDate != nil || filters.EndDate != nil
+
 	var total int64
-	if err := query.Count(&total).Error; err != nil {
-		return nil, dberrors.NewDatabaseError("count", err)
+	if hasFilters {
+		if err := query.Count(&total).Error; err != nil {
+			return nil, dberrors.NewDatabaseError("count", err)
+		}
+	} else {
+		// For unfiltered queries, try MySQL table stats estimate (~O(1)) instead
+		// of COUNT(*). Falls back to exact count for non-MySQL dialects (SQLite).
+		estimated := false
+		row := r.db.Raw("SELECT table_rows FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = 'audit_logs'").Row()
+		if row.Err() == nil {
+			if err := row.Scan(&total); err == nil && total > 0 {
+				estimated = true
+			}
+		}
+		if !estimated {
+			if err := query.Count(&total).Error; err != nil {
+				return nil, dberrors.NewDatabaseError("count", err)
+			}
+		}
 	}
 
 	var logs []models.AuditLog

@@ -24,4 +24,5 @@ type StackDefinitionRepository interface {
 	List() ([]StackDefinition, error)
 	ListByOwner(ownerID string) ([]StackDefinition, error)
 	ListByTemplate(templateID string) ([]StackDefinition, error)
+	Count() (int64, error)
 }

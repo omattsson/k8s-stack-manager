@@ -214,6 +214,86 @@ func (r *GORMDeploymentLogRepository) SummarizeByInstance(_ context.Context, ins
 	return summary, nil
 }
 
+// SummarizeBatch returns aggregate deployment statistics for multiple instances
+// in a single query, eliminating N+1 query patterns. Only logs from the last
+// 90 days are considered. Instance IDs are processed in chunks of 500 to stay
+// within MySQL's IN clause limits.
+func (r *GORMDeploymentLogRepository) SummarizeBatch(ctx context.Context, instanceIDs []string) (map[string]*models.DeployLogSummary, error) {
+	result := make(map[string]*models.DeployLogSummary, len(instanceIDs))
+	if len(instanceIDs) == 0 {
+		return result, nil
+	}
+
+	cutoff := time.Now().UTC().Add(-90 * 24 * time.Hour)
+
+	const chunkSize = 500
+	for start := 0; start < len(instanceIDs); start += chunkSize {
+		end := start + chunkSize
+		if end > len(instanceIDs) {
+			end = len(instanceIDs)
+		}
+		chunk := instanceIDs[start:end]
+
+		if err := r.summarizeBatchChunk(ctx, chunk, cutoff, result); err != nil {
+			return nil, err
+		}
+	}
+
+	return result, nil
+}
+
+// summarizeBatchRow holds the raw scan results from the batch summary query.
+// Uses sql.NullString for LastDeploy to handle cross-driver compatibility
+// (MySQL returns time.Time but SQLite returns strings for computed columns).
+type summarizeBatchRow struct {
+	InstanceID   string
+	DeployCount  int
+	SuccessCount int
+	ErrorCount   int
+	LastDeploy   sql.NullString
+}
+
+// summarizeBatchChunk executes the batch summary query for a single chunk of
+// instance IDs and merges results into the provided map.
+func (r *GORMDeploymentLogRepository) summarizeBatchChunk(
+	ctx context.Context,
+	chunk []string,
+	cutoff time.Time,
+	result map[string]*models.DeployLogSummary,
+) error {
+	var rows []summarizeBatchRow
+	err := r.db.WithContext(ctx).Model(&models.DeploymentLog{}).
+		Select(`stack_instance_id as instance_id,
+			COUNT(CASE WHEN action = ? THEN 1 END) as deploy_count,
+			COALESCE(SUM(CASE WHEN action = ? AND status = ? THEN 1 ELSE 0 END), 0) as success_count,
+			COALESCE(SUM(CASE WHEN action = ? AND status = ? THEN 1 ELSE 0 END), 0) as error_count,
+			MAX(COALESCE(completed_at, started_at)) as last_deploy`,
+			models.DeployActionDeploy,
+			models.DeployActionDeploy, models.DeployLogSuccess,
+			models.DeployActionDeploy, models.DeployLogError).
+		Where("stack_instance_id IN ? AND started_at >= ?", chunk, cutoff).
+		Group("stack_instance_id").
+		Find(&rows).Error
+	if err != nil {
+		return dberrors.NewDatabaseError("summarize_batch", err)
+	}
+
+	for _, row := range rows {
+		summary := &models.DeployLogSummary{
+			InstanceID:   row.InstanceID,
+			DeployCount:  row.DeployCount,
+			SuccessCount: row.SuccessCount,
+			ErrorCount:   row.ErrorCount,
+		}
+		if row.LastDeploy.Valid {
+			summary.LastDeployAt = parseTimestamp(row.LastDeploy.String)
+		}
+		result[row.InstanceID] = summary
+	}
+
+	return nil
+}
+
 // timestampFormats lists the formats drivers may use for datetime strings,
 // ordered from most to least common.
 var timestampFormats = []string{

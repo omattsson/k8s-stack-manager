@@ -25,4 +25,5 @@ type StackTemplateRepository interface {
 	List() ([]StackTemplate, error)
 	ListPublished() ([]StackTemplate, error)
 	ListByOwner(ownerID string) ([]StackTemplate, error)
+	Count() (int64, error)
 }

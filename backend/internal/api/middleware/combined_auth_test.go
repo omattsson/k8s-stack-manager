@@ -87,9 +87,10 @@ func (r *testUserRepo) FindByUsername(username string) (*models.User, error) { r
 func (r *testUserRepo) FindByExternalID(provider, externalID string) (*models.User, error) {
 	return nil, nil
 }
-func (r *testUserRepo) Update(user *models.User) error { return nil }
-func (r *testUserRepo) Delete(id string) error         { return nil }
-func (r *testUserRepo) List() ([]models.User, error)   { return nil, nil }
+func (r *testUserRepo) Update(user *models.User) error   { return nil }
+func (r *testUserRepo) Delete(id string) error           { return nil }
+func (r *testUserRepo) List() ([]models.User, error)     { return nil, nil }
+func (r *testUserRepo) Count() (int64, error)            { return 0, nil }
 
 // ---- helpers ----
 

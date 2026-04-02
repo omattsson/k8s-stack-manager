@@ -163,6 +163,18 @@ func (m *MockDeploymentLogRepository) SummarizeByInstance(_ context.Context, ins
 	return summary, nil
 }
 
+func (m *MockDeploymentLogRepository) SummarizeBatch(ctx context.Context, instanceIDs []string) (map[string]*models.DeployLogSummary, error) {
+	result := make(map[string]*models.DeployLogSummary, len(instanceIDs))
+	for _, id := range instanceIDs {
+		summary, err := m.SummarizeByInstance(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		result[id] = summary
+	}
+	return result, nil
+}
+
 func (m *MockDeploymentLogRepository) SetError(err error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
