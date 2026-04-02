@@ -432,7 +432,7 @@ func (h *DefinitionHandler) ImportDefinition(c *gin.Context) {
 
 	var createdCharts []models.ChartConfig
 
-	if h.txRunner != nil {
+	if h.txRunner != nil && h.txRunner.IsTransactional() {
 		// Transactional path — definition + all charts are created atomically.
 		txErr := h.txRunner.RunInTx(func(repos database.TxRepos) error {
 			if err := repos.StackDefinition.Create(&def); err != nil {

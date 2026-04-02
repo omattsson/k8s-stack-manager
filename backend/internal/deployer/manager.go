@@ -164,7 +164,7 @@ func (m *Manager) Deploy(ctx context.Context, req DeployRequest) (string, error)
 	req.Instance.Status = models.StackStatusDeploying
 	req.Instance.ErrorMessage = ""
 
-	if m.txRunner != nil {
+	if m.txRunner != nil && m.txRunner.IsTransactional() {
 		if err := m.txRunner.RunInTx(func(repos database.TxRepos) error {
 			if err := repos.DeploymentLog.Create(ctx, deployLog); err != nil {
 				return fmt.Errorf("creating deployment log: %w", err)
@@ -412,7 +412,7 @@ func (m *Manager) finalizeDeploy(instanceID string, deployLog *models.Deployment
 		)
 	}
 
-	if m.txRunner != nil {
+	if m.txRunner != nil && m.txRunner.IsTransactional() {
 		if err := m.txRunner.RunInTx(func(repos database.TxRepos) error {
 			if err := repos.StackInstance.Update(instance); err != nil {
 				return fmt.Errorf("updating instance: %w", err)
@@ -492,7 +492,7 @@ func (m *Manager) StopWithCharts(ctx context.Context, instance *models.StackInst
 	instance.Status = models.StackStatusStopping
 	instance.ErrorMessage = ""
 
-	if m.txRunner != nil {
+	if m.txRunner != nil && m.txRunner.IsTransactional() {
 		if err := m.txRunner.RunInTx(func(repos database.TxRepos) error {
 			if err := repos.DeploymentLog.Create(ctx, deployLog); err != nil {
 				return fmt.Errorf("creating deployment log: %w", err)
@@ -628,7 +628,7 @@ func (m *Manager) finalizeStop(instanceID string, deployLog *models.DeploymentLo
 		)
 	}
 
-	if m.txRunner != nil {
+	if m.txRunner != nil && m.txRunner.IsTransactional() {
 		if err := m.txRunner.RunInTx(func(repos database.TxRepos) error {
 			if err := repos.StackInstance.Update(instance); err != nil {
 				return fmt.Errorf("updating instance: %w", err)
@@ -745,7 +745,7 @@ func (m *Manager) Clean(ctx context.Context, instance *models.StackInstance, cha
 	instance.Status = models.StackStatusCleaning
 	instance.ErrorMessage = ""
 
-	if m.txRunner != nil {
+	if m.txRunner != nil && m.txRunner.IsTransactional() {
 		if err := m.txRunner.RunInTx(func(repos database.TxRepos) error {
 			if err := repos.DeploymentLog.Create(ctx, deployLog); err != nil {
 				return fmt.Errorf("creating deployment log: %w", err)
@@ -917,7 +917,7 @@ func (m *Manager) finalizeClean(instanceID string, deployLog *models.DeploymentL
 		)
 	}
 
-	if m.txRunner != nil {
+	if m.txRunner != nil && m.txRunner.IsTransactional() {
 		if err := m.txRunner.RunInTx(func(repos database.TxRepos) error {
 			if err := repos.StackInstance.Update(instance); err != nil {
 				return fmt.Errorf("updating instance: %w", err)

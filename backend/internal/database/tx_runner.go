@@ -14,6 +14,11 @@ type TxRunner interface {
 	// transaction is rolled back. The TxRepos provides transactional repository
 	// instances that share the same underlying connection.
 	RunInTx(fn func(repos TxRepos) error) error
+
+	// IsTransactional returns true if RunInTx provides real rollback semantics.
+	// Callers should use this to decide whether to rely on automatic rollback
+	// or fall back to manual compensating cleanup (e.g., for Azure Table Storage).
+	IsTransactional() bool
 }
 
 // TxRepos provides access to repository instances that share a transaction.
@@ -40,6 +45,9 @@ type GORMTxRunner struct {
 func NewGORMTxRunner(db *gorm.DB) *GORMTxRunner {
 	return &GORMTxRunner{db: db}
 }
+
+// IsTransactional returns true — GORM provides real rollback.
+func (r *GORMTxRunner) IsTransactional() bool { return true }
 
 // RunInTx executes fn within a GORM transaction. All repositories in the
 // TxRepos share the same transactional *gorm.DB, so updates are atomic.
@@ -71,6 +79,9 @@ type NoOpTxRunner struct {
 func NewNoOpTxRunner(repos TxRepos) *NoOpTxRunner {
 	return &NoOpTxRunner{repos: repos}
 }
+
+// IsTransactional returns false — no rollback support.
+func (r *NoOpTxRunner) IsTransactional() bool { return false }
 
 // RunInTx executes fn with the pre-configured repositories. No transaction
 // semantics are applied; operations run sequentially and failures are not

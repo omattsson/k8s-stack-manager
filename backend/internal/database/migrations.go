@@ -610,6 +610,23 @@ func (d *Database) AutoMigrate() error {
 		},
 	})
 
+	// Migration 24: Add unique constraint on value_overrides (instance + chart)
+	migrator.AddMigration(schema.Migration{
+		Version:     "20231201000024",
+		Name:        "add_value_overrides_unique_index",
+		Description: "Add unique index on value_overrides(stack_instance_id, chart_config_id) to enforce one override per chart per instance",
+		Up: func(tx *gorm.DB) error {
+			if tx.Migrator().HasIndex(&models.ValueOverride{}, "idx_override_instance_chart") {
+				return nil
+			}
+			return tx.Exec("CREATE UNIQUE INDEX idx_override_instance_chart ON value_overrides(stack_instance_id, chart_config_id)").Error
+		},
+		Down: func(tx *gorm.DB) error {
+			_ = tx.Exec("DROP INDEX idx_override_instance_chart ON value_overrides").Error
+			return nil
+		},
+	})
+
 	// Run migrations
 	if err := migrator.MigrateUp(); err != nil {
 		return err

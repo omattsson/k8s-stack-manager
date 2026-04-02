@@ -120,15 +120,16 @@ func (r *GORMAuditLogRepository) List(filters models.AuditLogFilters) (*models.A
 }
 
 // encodeAuditCursor creates an opaque cursor from a timestamp and ID.
+// Uses RawURLEncoding so the cursor is safe for use as a query parameter.
 func encodeAuditCursor(ts time.Time, id string) string {
-	return base64.StdEncoding.EncodeToString(
+	return base64.RawURLEncoding.EncodeToString(
 		[]byte(ts.UTC().Format(time.RFC3339Nano) + "|" + id),
 	)
 }
 
 // decodeAuditCursor extracts a timestamp and ID from an opaque cursor.
 func decodeAuditCursor(cursor string) (time.Time, string, error) {
-	data, err := base64.StdEncoding.DecodeString(cursor)
+	data, err := base64.RawURLEncoding.DecodeString(cursor)
 	if err != nil {
 		return time.Time{}, "", fmt.Errorf("invalid cursor encoding")
 	}

@@ -482,7 +482,7 @@ func (h *TemplateHandler) InstantiateTemplate(c *gin.Context) {
 		UpdatedAt:             now,
 	}
 
-	if h.txRunner != nil {
+	if h.txRunner != nil && h.txRunner.IsTransactional() {
 		// Transactional path — definition + chart configs are created atomically.
 		var chartConfigs []models.ChartConfig
 		txErr := h.txRunner.RunInTx(func(repos database.TxRepos) error {
@@ -651,7 +651,7 @@ func (h *TemplateHandler) CloneTemplate(c *gin.Context) {
 		})
 	}
 
-	if h.txRunner != nil {
+	if h.txRunner != nil && h.txRunner.IsTransactional() {
 		// Transactional path — template + chart copies are atomic.
 		txErr := h.txRunner.RunInTx(func(repos database.TxRepos) error {
 			if err := repos.StackTemplate.Create(clone); err != nil {

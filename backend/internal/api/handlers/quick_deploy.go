@@ -278,7 +278,7 @@ func (h *QuickDeployHandler) QuickDeploy(c *gin.Context) {
 	}
 
 	// Persist definition + chart configs + instance.
-	if h.txRunner != nil {
+	if h.txRunner != nil && h.txRunner.IsTransactional() {
 		// Transactional path — all creates are atomic; rollback handles cleanup.
 		txErr := h.txRunner.RunInTx(func(repos database.TxRepos) error {
 			if err := repos.StackDefinition.Create(def); err != nil {

@@ -393,7 +393,7 @@ func (h *InstanceHandler) CreateInstance(c *gin.Context) {
 		return
 	}
 
-	if h.txRunner != nil && maxInstancesPerUser > 0 {
+	if h.txRunner != nil && h.txRunner.IsTransactional() && maxInstancesPerUser > 0 {
 		// Transactional path — count check + create are serialized within
 		// a transaction, closing the TOCTOU window for concurrent creates.
 		limitMsg := fmt.Sprintf("Maximum instances per user reached for this cluster (limit: %d)", maxInstancesPerUser)
@@ -569,7 +569,7 @@ func (h *InstanceHandler) DeleteInstance(c *gin.Context) {
 		return
 	}
 
-	if h.txRunner != nil {
+	if h.txRunner != nil && h.txRunner.IsTransactional() {
 		// Transactional path — branch override cleanup + instance delete are atomic.
 		txErr := h.txRunner.RunInTx(func(repos database.TxRepos) error {
 			if err := repos.BranchOverride.DeleteByInstance(id); err != nil {
@@ -661,7 +661,7 @@ func (h *InstanceHandler) CloneInstance(c *gin.Context) {
 		return
 	}
 
-	if h.txRunner != nil {
+	if h.txRunner != nil && h.txRunner.IsTransactional() {
 		// Transactional path — instance create + override copies are atomic.
 		overrides, listErr := h.overrideRepo.ListByInstance(source.ID)
 		if listErr != nil {

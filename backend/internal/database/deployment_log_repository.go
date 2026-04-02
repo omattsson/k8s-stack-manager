@@ -30,23 +30,23 @@ func NewGORMDeploymentLogRepository(db *gorm.DB) *GORMDeploymentLogRepository {
 }
 
 // Create inserts a new deployment log record.
-func (r *GORMDeploymentLogRepository) Create(_ context.Context, log *models.DeploymentLog) error {
+func (r *GORMDeploymentLogRepository) Create(ctx context.Context, log *models.DeploymentLog) error {
 	if log.ID == "" {
 		log.ID = uuid.New().String()
 	}
 	if log.StartedAt.IsZero() {
 		log.StartedAt = time.Now().UTC()
 	}
-	if err := r.db.Create(log).Error; err != nil {
+	if err := r.db.WithContext(ctx).Create(log).Error; err != nil {
 		return dberrors.NewDatabaseError("create", err)
 	}
 	return nil
 }
 
 // FindByID returns a deployment log by its ID.
-func (r *GORMDeploymentLogRepository) FindByID(_ context.Context, id string) (*models.DeploymentLog, error) {
+func (r *GORMDeploymentLogRepository) FindByID(ctx context.Context, id string) (*models.DeploymentLog, error) {
 	var log models.DeploymentLog
-	if err := r.db.Where("id = ?", id).First(&log).Error; err != nil {
+	if err := r.db.WithContext(ctx).Where("id = ?", id).First(&log).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, dberrors.NewDatabaseError("find_by_id", dberrors.ErrNotFound)
 		}
@@ -56,17 +56,17 @@ func (r *GORMDeploymentLogRepository) FindByID(_ context.Context, id string) (*m
 }
 
 // Update persists changes to an existing deployment log record.
-func (r *GORMDeploymentLogRepository) Update(_ context.Context, log *models.DeploymentLog) error {
-	if err := r.db.Save(log).Error; err != nil {
+func (r *GORMDeploymentLogRepository) Update(ctx context.Context, log *models.DeploymentLog) error {
+	if err := r.db.WithContext(ctx).Save(log).Error; err != nil {
 		return dberrors.NewDatabaseError("update", err)
 	}
 	return nil
 }
 
 // ListByInstance returns all deployment logs for a given stack instance, ordered by started_at descending.
-func (r *GORMDeploymentLogRepository) ListByInstance(_ context.Context, instanceID string) ([]models.DeploymentLog, error) {
+func (r *GORMDeploymentLogRepository) ListByInstance(ctx context.Context, instanceID string) ([]models.DeploymentLog, error) {
 	var logs []models.DeploymentLog
-	if err := r.db.Where("stack_instance_id = ?", instanceID).
+	if err := r.db.WithContext(ctx).Where("stack_instance_id = ?", instanceID).
 		Order("started_at DESC").
 		Find(&logs).Error; err != nil {
 		return nil, dberrors.NewDatabaseError("list_by_instance", err)
@@ -132,15 +132,16 @@ func (r *GORMDeploymentLogRepository) ListByInstancePaginated(_ context.Context,
 }
 
 // encodeDeployLogCursor creates an opaque cursor from a timestamp and ID.
+// Uses RawURLEncoding so the cursor is safe for use as a query parameter.
 func encodeDeployLogCursor(ts time.Time, id string) string {
-	return base64.StdEncoding.EncodeToString(
+	return base64.RawURLEncoding.EncodeToString(
 		[]byte(ts.UTC().Format(time.RFC3339Nano) + "|" + id),
 	)
 }
 
 // decodeDeployLogCursor extracts a timestamp and ID from an opaque cursor.
 func decodeDeployLogCursor(cursor string) (time.Time, string, error) {
-	data, err := base64.StdEncoding.DecodeString(cursor)
+	data, err := base64.RawURLEncoding.DecodeString(cursor)
 	if err != nil {
 		return time.Time{}, "", fmt.Errorf("invalid cursor encoding")
 	}

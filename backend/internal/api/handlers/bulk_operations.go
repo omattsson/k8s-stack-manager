@@ -358,7 +358,7 @@ func (h *InstanceHandler) BulkClean(c *gin.Context) {
 // @Router      /api/v1/stack-instances/bulk/delete [post]
 func (h *InstanceHandler) BulkDelete(c *gin.Context) {
 	h.executeBulkOperation(c, "delete", func(_ *gin.Context, inst *models.StackInstance) (string, error) {
-		if h.txRunner != nil {
+		if h.txRunner != nil && h.txRunner.IsTransactional() {
 			// Transactional path — branch override cleanup + instance delete are atomic.
 			txErr := h.txRunner.RunInTx(func(repos database.TxRepos) error {
 				if err := repos.BranchOverride.DeleteByInstance(inst.ID); err != nil {
