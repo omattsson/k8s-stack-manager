@@ -24,7 +24,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	_ "net/http/pprof"
+	"net/http/pprof"
 	"os"
 	"os/signal"
 	"syscall"
@@ -311,14 +311,23 @@ func main() {
 
 	// Start pprof server on a separate port when PPROF_ENABLED=true.
 	// Access at http://localhost:6060/debug/pprof/
-	if os.Getenv("PPROF_ENABLED") == "true" {
-		pprofAddr := os.Getenv("PPROF_ADDR")
-		if pprofAddr == "" {
-			pprofAddr = ":6060"
+	if cfg.Server.PprofEnabled {
+		pprofMux := http.NewServeMux()
+		pprofMux.HandleFunc("/debug/pprof/", pprof.Index)
+		pprofMux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
+		pprofMux.HandleFunc("/debug/pprof/profile", pprof.Profile)
+		pprofMux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
+		pprofMux.HandleFunc("/debug/pprof/trace", pprof.Trace)
+		pprofSrv := &http.Server{
+			Addr:         cfg.Server.PprofAddr,
+			Handler:      pprofMux,
+			ReadTimeout:  30 * time.Second,
+			WriteTimeout: 30 * time.Second,
+			IdleTimeout:  60 * time.Second,
 		}
 		go func() {
-			slog.Info("pprof server starting", "addr", pprofAddr)
-			if err := http.ListenAndServe(pprofAddr, nil); err != nil {
+			slog.Info("pprof server starting", "addr", cfg.Server.PprofAddr)
+			if err := pprofSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 				slog.Error("pprof server failed", "error", err)
 			}
 		}()

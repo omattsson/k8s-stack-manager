@@ -78,9 +78,9 @@ definitions:
       status:
         description: '"success" or "error"'
         type: string
-      template_name:
+      template_id:
         type: string
-      templateID:
+      template_name:
         type: string
     type: object
   handlers.ChartConfigExportData:
@@ -2984,7 +2984,6 @@ paths:
           description: OK
           schema:
             additionalProperties:
-              format: int64
               type: integer
             type: object
         "401":

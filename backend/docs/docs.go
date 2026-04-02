@@ -2690,8 +2690,7 @@ const docTemplate = `{
                         "schema": {
                             "type": "object",
                             "additionalProperties": {
-                                "type": "integer",
-                                "format": "int64"
+                                "type": "integer"
                             }
                         }
                     },
@@ -6723,7 +6722,7 @@ const docTemplate = `{
                     "description": "\"success\" or \"error\"",
                     "type": "string"
                 },
-                "templateID": {
+                "template_id": {
                     "type": "string"
                 },
                 "template_name": {

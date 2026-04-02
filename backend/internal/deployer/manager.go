@@ -60,12 +60,12 @@ type Manager struct {
 
 // ManagerConfig holds the dependencies for creating a Manager.
 type ManagerConfig struct {
-	Registry      ClusterResolver
-	InstanceRepo  models.StackInstanceRepository
-	DeployLogRepo models.DeploymentLogRepository
-	Hub           websocket.BroadcastSender
-	TxRunner      database.TxRunner // optional: wraps instance+log updates in a transaction
-	MaxConcurrent int
+	Registry          ClusterResolver
+	InstanceRepo      models.StackInstanceRepository
+	DeployLogRepo     models.DeploymentLogRepository
+	Hub               websocket.BroadcastSender
+	TxRunner          database.TxRunner // optional: wraps instance+log updates in a transaction
+	MaxConcurrent     int
 	QuotaRepo         models.ResourceQuotaRepository         // optional: apply quotas on deploy
 	QuotaOverrideRepo models.InstanceQuotaOverrideRepository // optional: per-instance quota overrides
 }
@@ -102,8 +102,8 @@ func NewManager(cfg ManagerConfig) *Manager {
 		quotaRepo:         cfg.QuotaRepo,
 		quotaOverrideRepo: cfg.QuotaOverrideRepo,
 		semaphore:         make(chan struct{}, maxConcurrent),
-		shutdownCtx:    ctx,
-		shutdownCancel: cancel,
+		shutdownCtx:       ctx,
+		shutdownCancel:    cancel,
 	}
 }
 
@@ -212,7 +212,7 @@ func (m *Manager) executeDeploy(helm HelmExecutor, instanceID string, deployLog 
 
 	// Start a root span for the background deployment (the HTTP request context
 	// is long gone by the time this goroutine runs).
-	_, _, finishSpan := startDeploySpan(context.Background(), "deployer.deploy",
+	_, _, finishSpan := startDeploySpan(context.Background(), "deployer.deploy", //nolint:gosec // G118: intentional — Helm operations must outlive HTTP request; shutdown coordinated via sync.WaitGroup
 		attribute.String("instance.id", instanceID),
 		attribute.String("namespace", namespace),
 		attribute.String("log.id", deployLog.ID),
@@ -535,7 +535,7 @@ func (m *Manager) executeStopWithCharts(helm HelmExecutor, instanceID string, de
 	m.semaphore <- struct{}{}
 	defer func() { <-m.semaphore }()
 
-	_, _, finishSpan := startDeploySpan(context.Background(), "deployer.undeploy",
+	_, _, finishSpan := startDeploySpan(context.Background(), "deployer.undeploy", //nolint:gosec // G118: intentional — Helm operations must outlive HTTP request; shutdown coordinated via sync.WaitGroup
 		attribute.String("instance.id", instanceID),
 		attribute.String("namespace", namespace),
 		attribute.String("log.id", deployLog.ID),
@@ -790,7 +790,7 @@ func (m *Manager) executeClean(helm HelmExecutor, k8sClient *k8s.Client, instanc
 	m.semaphore <- struct{}{}
 	defer func() { <-m.semaphore }()
 
-	_, _, finishSpan := startDeploySpan(context.Background(), "deployer.clean",
+	_, _, finishSpan := startDeploySpan(context.Background(), "deployer.clean", //nolint:gosec // G118: intentional — Helm operations must outlive HTTP request; shutdown coordinated via sync.WaitGroup
 		attribute.String("instance.id", instanceID),
 		attribute.String("namespace", namespace),
 		attribute.String("log.id", deployLog.ID),

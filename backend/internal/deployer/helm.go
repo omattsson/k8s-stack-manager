@@ -6,12 +6,28 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os/exec"
 	"strings"
 	"time"
 )
+
+// errArgDashPrefix is returned when an argument starts with a dash, which could
+// cause the helm CLI to interpret it as a flag (argument injection).
+var errArgDashPrefix = errors.New("must not start with a dash")
+
+// validatePositionalArg checks that a value intended as a positional argument
+// to the helm CLI does not start with a dash. exec.Command calls the binary
+// directly (no shell), so shell injection is not possible, but a positional
+// argument starting with "-" could be misinterpreted as a helm flag.
+func validatePositionalArg(name, value string) error {
+	if strings.HasPrefix(value, "-") {
+		return fmt.Errorf("invalid %s %q: %w", name, value, errArgDashPrefix)
+	}
+	return nil
+}
 
 // HelmClient wraps the helm CLI binary for install, uninstall, and status operations.
 type HelmClient struct {
@@ -73,6 +89,19 @@ func (h *HelmClient) Timeout() time.Duration {
 // Install runs: helm upgrade --install <release> <chart> -f <valuesFile> -n <namespace> --create-namespace --timeout <timeout>
 // Returns combined stdout+stderr output and error.
 func (h *HelmClient) Install(ctx context.Context, req InstallRequest) (string, error) {
+	// Validate positional arguments to prevent argument injection. Namespace
+	// is validated upstream (RFC 1123 in StackInstance.Validate), but we
+	// re-check here as defense-in-depth since it is security-critical.
+	for _, check := range []struct{ name, value string }{
+		{"release name", req.ReleaseName},
+		{"chart path", req.ChartPath},
+		{"namespace", req.Namespace},
+	} {
+		if err := validatePositionalArg(check.name, check.value); err != nil {
+			return "", err
+		}
+	}
+
 	args := []string{
 		"upgrade", "--install",
 		req.ReleaseName,
@@ -100,6 +129,10 @@ func (h *HelmClient) Install(ctx context.Context, req InstallRequest) (string, e
 // Uninstall runs: helm uninstall <release> -n <namespace>
 // Returns combined stdout+stderr output and error.
 func (h *HelmClient) Uninstall(ctx context.Context, req UninstallRequest) (string, error) {
+	if err := validatePositionalArg("release name", req.ReleaseName); err != nil {
+		return "", err
+	}
+
 	args := []string{
 		"uninstall",
 		req.ReleaseName,
@@ -112,6 +145,10 @@ func (h *HelmClient) Uninstall(ctx context.Context, req UninstallRequest) (strin
 // Status runs: helm status <release> -n <namespace> -o json
 // Returns the parsed release status.
 func (h *HelmClient) Status(ctx context.Context, release, namespace string) (*ReleaseStatus, error) {
+	if err := validatePositionalArg("release name", release); err != nil {
+		return nil, err
+	}
+
 	args := []string{
 		"status",
 		release,
@@ -170,7 +207,7 @@ func (h *HelmClient) run(ctx context.Context, args []string) (string, error) {
 		"args", args,
 	)
 
-	cmd := exec.CommandContext(ctx, h.binaryPath, args...) // #nosec G204 -- binaryPath is admin-configured and args are validated before reaching this point
+	cmd := exec.CommandContext(ctx, h.binaryPath, args...) //nolint:gosec // G204: binaryPath is admin-configured (not user input); all positional args are validated by validatePositionalArg to prevent argument injection; flag values are safe (consumed by pflag, not parsed as flags); exec.Command uses argv directly (no shell).
 
 	var combined bytes.Buffer
 	cmd.Stdout = &combined

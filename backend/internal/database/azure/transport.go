@@ -33,7 +33,7 @@ type httpTransporter struct {
 	client *http.Client
 }
 
-func (t *httpTransporter) Do(req *http.Request) (*http.Response, error) {
+func (t *httpTransporter) Do(req *http.Request) (*http.Response, error) { //nolint:gosec // G704: URL constructed from validated config, not user input
 	return t.client.Do(req)
 }
 

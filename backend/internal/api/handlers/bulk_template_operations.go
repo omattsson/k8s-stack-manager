@@ -19,7 +19,6 @@ const MaxBulkTemplates = 50
 
 const logKeyBulkTemplateID = "template_id"
 
-
 // BulkTemplateRequest is the request body for bulk template operations.
 type BulkTemplateRequest struct {
 	TemplateIDs []string `json:"template_ids" binding:"required"`
@@ -27,7 +26,7 @@ type BulkTemplateRequest struct {
 
 // BulkTemplateResultItem represents the result of a single template in a bulk operation.
 type BulkTemplateResultItem struct {
-	TemplateID   string `json:logKeyBulkTemplateID`
+	TemplateID   string `json:"template_id"`
 	TemplateName string `json:"template_name"`
 	Status       string `json:"status"` // "success" or "error"
 	Error        string `json:"error,omitempty"`

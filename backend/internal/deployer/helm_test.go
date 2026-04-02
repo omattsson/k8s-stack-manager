@@ -2,6 +2,7 @@ package deployer
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -12,12 +13,12 @@ func TestNewHelmClient(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name           string
-		binary         string
-		kubeconfig     string
-		timeout        time.Duration
-		expectBinary   string
-		expectTimeout  time.Duration
+		name          string
+		binary        string
+		kubeconfig    string
+		timeout       time.Duration
+		expectBinary  string
+		expectTimeout time.Duration
 	}{
 		{
 			name:          "default binary and timeout",
@@ -146,4 +147,107 @@ func TestHelmClient_Install_ContextCancellation(t *testing.T) {
 	})
 
 	assert.Error(t, err)
+}
+
+func TestValidatePositionalArg(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		argName string
+		value   string
+		wantErr bool
+	}{
+		{"valid release name", "release name", "my-release", false},
+		{"valid chart path", "chart path", "oci://registry/chart", false},
+		{"valid namespace", "namespace", "test-ns", false},
+		{"single dash prefix", "release name", "-malicious", true},
+		{"double dash prefix", "release name", "--kubeconfig=/etc/secret", true},
+		{"flag injection via chart path", "chart path", "--post-renderer=evil", true},
+		{"flag injection via namespace", "namespace", "--namespace=default", true},
+		{"empty string is valid", "release name", "", false},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			err := validatePositionalArg(tt.argName, tt.value)
+			if tt.wantErr {
+				assert.Error(t, err)
+				assert.True(t, errors.Is(err, errArgDashPrefix))
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestHelmClient_Install_ArgumentInjection(t *testing.T) {
+	t.Parallel()
+
+	client := NewHelmClient("helm", "", 1*time.Minute)
+
+	tests := []struct {
+		name string
+		req  InstallRequest
+	}{
+		{
+			name: "release name with flag prefix",
+			req: InstallRequest{
+				ReleaseName: "--kubeconfig=/etc/secret",
+				ChartPath:   "nginx",
+				Namespace:   "test-ns",
+			},
+		},
+		{
+			name: "chart path with flag prefix",
+			req: InstallRequest{
+				ReleaseName: "my-release",
+				ChartPath:   "--post-renderer=evil",
+				Namespace:   "test-ns",
+			},
+		},
+		{
+			name: "namespace with flag prefix",
+			req: InstallRequest{
+				ReleaseName: "my-release",
+				ChartPath:   "nginx",
+				Namespace:   "--namespace=default",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			_, err := client.Install(context.Background(), tt.req)
+			assert.Error(t, err)
+			assert.True(t, errors.Is(err, errArgDashPrefix))
+		})
+	}
+}
+
+func TestHelmClient_Uninstall_ArgumentInjection(t *testing.T) {
+	t.Parallel()
+
+	client := NewHelmClient("helm", "", 1*time.Minute)
+
+	_, err := client.Uninstall(context.Background(), UninstallRequest{
+		ReleaseName: "--kubeconfig=/etc/secret",
+		Namespace:   "test-ns",
+	})
+	assert.Error(t, err)
+	assert.True(t, errors.Is(err, errArgDashPrefix))
+}
+
+func TestHelmClient_Status_ArgumentInjection(t *testing.T) {
+	t.Parallel()
+
+	client := NewHelmClient("helm", "", 1*time.Minute)
+
+	_, err := client.Status(context.Background(), "--kubeconfig=/etc/secret", "test-ns")
+	assert.Error(t, err)
+	assert.True(t, errors.Is(err, errArgDashPrefix))
 }

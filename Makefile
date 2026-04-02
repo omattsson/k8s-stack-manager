@@ -328,7 +328,7 @@ otel-stop: ## Stop OTel stack
 	docker compose rm -f otel-collector prometheus tempo grafana
 
 loadtest-mysql-start: ## Start MySQL + OTel + mysqld-exporter for load testing
-	RATE_LIMIT=1000000 docker compose --profile mysql --profile otel --profile mysql-otel up -d
+	RATE_LIMIT=1000000 docker compose --profile mysql --profile otel --profile mysql-otel up -d mysql otel-collector prometheus tempo grafana mysqld-exporter
 	@echo "Stopping Docker backend (load test uses a local binary instead)..."
 	@docker compose stop backend 2>/dev/null || true
 	@echo "Waiting for MySQL to be ready..."
