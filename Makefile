@@ -199,7 +199,7 @@ LOADTEST_ENV = \
 	HELM_BINARY=$${HELM_BINARY:-helm} \
 	KUBECONFIG_PATH=$${KUBECONFIG_PATH:-$$HOME/.kube/config} \
 	PPROF_ENABLED=$${PPROF_ENABLED:-true} PPROF_ADDR=$${PPROF_ADDR:-:6060} \
-	RATE_LIMIT=10000 PORT=8081 GIN_MODE=release
+	RATE_LIMIT=1000000 PORT=8081 GIN_MODE=release
 
 # Env vars for MySQL + OTel load testing
 LOADTEST_MYSQL_ENV = \
@@ -215,13 +215,15 @@ LOADTEST_MYSQL_ENV = \
 	PPROF_ENABLED=$${PPROF_ENABLED:-true} PPROF_ADDR=$${PPROF_ADDR:-:6060} \
 	OTEL_ENABLED=true OTEL_EXPORTER_OTLP_ENDPOINT=localhost:4317 \
 	OTEL_SERVICE_NAME=k8s-stack-manager OTEL_TRACE_SAMPLE_RATE=1.0 \
-	RATE_LIMIT=10000 PORT=8081 GIN_MODE=release
+	RATE_LIMIT=1000000 PORT=8081 GIN_MODE=release
 
 loadtest-start-backend: azurite-start ## Build and start backend in release mode for load testing
+	@echo "Stopping Docker backend (load test uses a local binary instead)..."
+	@docker compose stop backend 2>/dev/null || true
 	@echo "Building backend (release mode)..."
 	@cd backend && mkdir -p tmp
 	@cd backend && go build -o tmp/main ./api/main.go
-	@echo "Starting backend (GIN_MODE=release, RATE_LIMIT=10000)..."
+	@echo "Starting backend (GIN_MODE=release, RATE_LIMIT=1000000)..."
 	@cd backend && ( $(LOADTEST_ENV) ./tmp/main > tmp/loadtest.log 2>&1 & echo $$! > tmp/loadtest-backend.pid )
 	@n=0; while ! curl -sf http://localhost:8081/health/live >/dev/null 2>&1; do \
 		n=$$((n+1)); \
@@ -326,7 +328,9 @@ otel-stop: ## Stop OTel stack
 	docker compose rm -f otel-collector prometheus tempo grafana
 
 loadtest-mysql-start: ## Start MySQL + OTel + mysqld-exporter for load testing
-	docker compose --profile mysql --profile otel --profile mysql-otel up -d
+	RATE_LIMIT=1000000 docker compose --profile mysql --profile otel --profile mysql-otel up -d
+	@echo "Stopping Docker backend (load test uses a local binary instead)..."
+	@docker compose stop backend 2>/dev/null || true
 	@echo "Waiting for MySQL to be ready..."
 	@n=0; while ! docker compose --profile mysql exec -T mysql mysqladmin ping -h localhost -uroot -p"$${DB_PASSWORD:-rootpassword}" --silent 2>/dev/null; do \
 		n=$$((n+1)); \
@@ -342,7 +346,7 @@ loadtest-mysql-start: ## Start MySQL + OTel + mysqld-exporter for load testing
 	@echo "Building backend (release mode)..."
 	@cd backend && mkdir -p tmp
 	@cd backend && go build -o tmp/main ./api/main.go
-	@echo "Starting backend (MySQL + OTel, GIN_MODE=release, RATE_LIMIT=10000)..."
+	@echo "Starting backend (MySQL + OTel, GIN_MODE=release, RATE_LIMIT=1000000)..."
 	@cd backend && ( $(LOADTEST_MYSQL_ENV) ./tmp/main > tmp/loadtest-mysql.log 2>&1 & echo $$! > tmp/loadtest-mysql.pid )
 	@n=0; while ! curl -sf http://localhost:8081/health/live >/dev/null 2>&1; do \
 		n=$$((n+1)); \
