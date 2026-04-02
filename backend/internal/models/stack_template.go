@@ -23,7 +23,9 @@ type StackTemplateRepository interface {
 	Update(template *StackTemplate) error
 	Delete(id string) error
 	List() ([]StackTemplate, error)
+	ListPaged(limit, offset int) ([]StackTemplate, int64, error)
 	ListPublished() ([]StackTemplate, error)
+	ListPublishedPaged(limit, offset int) ([]StackTemplate, int64, error)
 	ListByOwner(ownerID string) ([]StackTemplate, error)
 	Count() (int64, error)
 }

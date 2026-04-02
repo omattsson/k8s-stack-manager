@@ -3,6 +3,7 @@ package handlers
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -64,6 +65,14 @@ func seedTemplate(t *testing.T, repo *MockStackTemplateRepository, id, name, own
 
 // ---- ListTemplates ----
 
+// templateListResponse is the paginated envelope returned by ListTemplates.
+type templateListResponse struct {
+	Data     []TemplateListItem `json:"data"`
+	Total    int64              `json:"total"`
+	Page     int                `json:"page"`
+	PageSize int                `json:"pageSize"`
+}
+
 func TestListTemplates(t *testing.T) {
 	t.Parallel()
 
@@ -79,10 +88,13 @@ func TestListTemplates(t *testing.T) {
 		router.ServeHTTP(w, req)
 
 		assert.Equal(t, http.StatusOK, w.Code)
-		var list []models.StackTemplate
-		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &list))
-		assert.Len(t, list, 1)
-		assert.Equal(t, "t1", list[0].ID)
+		var resp templateListResponse
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+		assert.Len(t, resp.Data, 1)
+		assert.Equal(t, "t1", resp.Data[0].ID)
+		assert.Equal(t, int64(1), resp.Total)
+		assert.Equal(t, 1, resp.Page)
+		assert.Equal(t, 25, resp.PageSize)
 	})
 
 	t.Run("admin sees all templates", func(t *testing.T) {
@@ -97,9 +109,10 @@ func TestListTemplates(t *testing.T) {
 		router.ServeHTTP(w, req)
 
 		assert.Equal(t, http.StatusOK, w.Code)
-		var list []models.StackTemplate
-		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &list))
-		assert.Len(t, list, 2)
+		var resp templateListResponse
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+		assert.Len(t, resp.Data, 2)
+		assert.Equal(t, int64(2), resp.Total)
 	})
 
 	t.Run("devops sees all templates", func(t *testing.T) {
@@ -114,9 +127,46 @@ func TestListTemplates(t *testing.T) {
 		router.ServeHTTP(w, req)
 
 		assert.Equal(t, http.StatusOK, w.Code)
-		var list []models.StackTemplate
-		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &list))
-		assert.Len(t, list, 2)
+		var resp templateListResponse
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+		assert.Len(t, resp.Data, 2)
+		assert.Equal(t, int64(2), resp.Total)
+	})
+
+	t.Run("custom page and pageSize", func(t *testing.T) {
+		t.Parallel()
+		repo := NewMockStackTemplateRepository()
+		for i := 0; i < 5; i++ {
+			seedTemplate(t, repo, fmt.Sprintf("t%d", i), fmt.Sprintf("Tmpl %d", i), "owner-1", true)
+		}
+
+		router := setupTemplateRouter(repo, NewMockTemplateChartConfigRepository(), NewMockStackDefinitionRepository(), NewMockChartConfigRepository(), "uid-1", "admin")
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest(http.MethodGet, "/api/v1/templates?page=2&pageSize=2", nil)
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		var resp templateListResponse
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+		assert.Len(t, resp.Data, 2)
+		assert.Equal(t, int64(5), resp.Total)
+		assert.Equal(t, 2, resp.Page)
+		assert.Equal(t, 2, resp.PageSize)
+	})
+
+	t.Run("pageSize capped at 100", func(t *testing.T) {
+		t.Parallel()
+		repo := NewMockStackTemplateRepository()
+
+		router := setupTemplateRouter(repo, NewMockTemplateChartConfigRepository(), NewMockStackDefinitionRepository(), NewMockChartConfigRepository(), "uid-1", "admin")
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest(http.MethodGet, "/api/v1/templates?pageSize=999", nil)
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		var resp templateListResponse
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+		assert.Equal(t, 100, resp.PageSize)
 	})
 
 	t.Run("repository error returns 500", func(t *testing.T) {

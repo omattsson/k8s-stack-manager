@@ -304,33 +304,6 @@ definitions:
     - password
     - username
     type: object
-  handlers.TemplateListItem:
-    properties:
-      category:
-        type: string
-      created_at:
-        type: string
-      default_branch:
-        type: string
-      definition_count:
-        type: integer
-      description:
-        type: string
-      id:
-        type: string
-      is_published:
-        type: boolean
-      name:
-        type: string
-      owner_id:
-        type: string
-      owner_username:
-        type: string
-      updated_at:
-        type: string
-      version:
-        type: string
-    type: object
   handlers.TemplateStats:
     properties:
       category:
@@ -4609,16 +4582,27 @@ paths:
       consumes:
       - application/json
       description: List published templates for regular users, all templates for devops/admin.
-        Includes definition_count and owner_username.
+        Includes definition_count and owner_username. Supports server-side pagination.
+      parameters:
+      - description: Page number (default 1)
+        in: query
+        minimum: 1
+        name: page
+        type: integer
+      - description: Items per page (default 25, max 100)
+        in: query
+        maximum: 100
+        minimum: 1
+        name: pageSize
+        type: integer
       produces:
       - application/json
       responses:
         "200":
-          description: OK
+          description: Paginated list with data, total, page, pageSize
           schema:
-            items:
-              $ref: '#/definitions/handlers.TemplateListItem'
-            type: array
+            additionalProperties: true
+            type: object
         "500":
           description: Internal Server Error
           schema:

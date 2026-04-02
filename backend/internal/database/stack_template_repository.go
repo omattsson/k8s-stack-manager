@@ -86,6 +86,41 @@ func (r *GORMStackTemplateRepository) List() ([]models.StackTemplate, error) {
 	return templates, nil
 }
 
+// templateListColumns are the columns selected for list views — omits description
+// to reduce allocation pressure and network overhead.
+var templateListColumns = []string{
+	"id", "name", "category", "version", "owner_id",
+	"default_branch", "is_published", "created_at", "updated_at",
+}
+
+// ListPaged returns a page of stack templates ordered by created_at DESC.
+func (r *GORMStackTemplateRepository) ListPaged(limit, offset int) ([]models.StackTemplate, int64, error) {
+	var total int64
+	if err := r.db.Model(&models.StackTemplate{}).Count(&total).Error; err != nil {
+		return nil, 0, dberrors.NewDatabaseError("count", err)
+	}
+	var templates []models.StackTemplate
+	if err := r.db.Select(templateListColumns).
+		Order("created_at DESC").Limit(limit).Offset(offset).Find(&templates).Error; err != nil {
+		return nil, 0, dberrors.NewDatabaseError("list_paged", err)
+	}
+	return templates, total, nil
+}
+
+// ListPublishedPaged returns a page of published stack templates ordered by created_at DESC.
+func (r *GORMStackTemplateRepository) ListPublishedPaged(limit, offset int) ([]models.StackTemplate, int64, error) {
+	var total int64
+	if err := r.db.Model(&models.StackTemplate{}).Where("is_published = ?", true).Count(&total).Error; err != nil {
+		return nil, 0, dberrors.NewDatabaseError("count_published", err)
+	}
+	var templates []models.StackTemplate
+	if err := r.db.Select(templateListColumns).Where("is_published = ?", true).
+		Order("created_at DESC").Limit(limit).Offset(offset).Find(&templates).Error; err != nil {
+		return nil, 0, dberrors.NewDatabaseError("list_published_paged", err)
+	}
+	return templates, total, nil
+}
+
 // Count returns the total number of stack templates.
 func (r *GORMStackTemplateRepository) Count() (int64, error) {
 	var count int64

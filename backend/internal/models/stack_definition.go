@@ -25,5 +25,6 @@ type StackDefinitionRepository interface {
 	ListPaged(limit, offset int) ([]StackDefinition, int64, error)
 	ListByOwner(ownerID string) ([]StackDefinition, error)
 	ListByTemplate(templateID string) ([]StackDefinition, error)
+	CountByTemplateIDs(templateIDs []string) (map[string]int, error)
 	Count() (int64, error)
 }

@@ -25,6 +25,7 @@ type stubUserRepo struct{}
 
 func (s *stubUserRepo) Create(_ *models.User) error                               { return nil }
 func (s *stubUserRepo) FindByID(_ string) (*models.User, error)                   { return nil, nil }
+func (s *stubUserRepo) FindByIDs(_ []string) (map[string]*models.User, error)     { return nil, nil }
 func (s *stubUserRepo) FindByUsername(_ string) (*models.User, error)              { return nil, nil }
 func (s *stubUserRepo) FindByExternalID(_, _ string) (*models.User, error)        { return nil, nil }
 func (s *stubUserRepo) Update(_ *models.User) error                               { return nil }

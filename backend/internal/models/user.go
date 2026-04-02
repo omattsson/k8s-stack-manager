@@ -20,6 +20,7 @@ type User struct {
 type UserRepository interface {
 	Create(user *User) error
 	FindByID(id string) (*User, error)
+	FindByIDs(ids []string) (map[string]*User, error)
 	FindByUsername(username string) (*User, error)
 	FindByExternalID(provider, externalID string) (*User, error)
 	Update(user *User) error

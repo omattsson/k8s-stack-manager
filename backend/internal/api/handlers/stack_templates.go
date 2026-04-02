@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"time"
 
 	"backend/internal/api/middleware"
@@ -83,22 +84,42 @@ type TemplateListItem struct {
 
 // ListTemplates godoc
 // @Summary     List stack templates
-// @Description List published templates for regular users, all templates for devops/admin. Includes definition_count and owner_username.
+// @Description List published templates for regular users, all templates for devops/admin. Includes definition_count and owner_username. Supports server-side pagination.
 // @Tags        templates
 // @Accept      json
 // @Produce     json
-// @Success     200 {array}  TemplateListItem
+// @Param       page     query    int false "Page number (default 1)"     minimum(1)
+// @Param       pageSize query    int false "Items per page (default 25, max 100)" minimum(1) maximum(100)
+// @Success     200 {object} map[string]interface{} "Paginated list with data, total, page, pageSize"
 // @Failure     500 {object} map[string]string
 // @Router      /api/v1/templates [get]
 func (h *TemplateHandler) ListTemplates(c *gin.Context) {
+	pageSize := 25
+	if ps := c.Query("pageSize"); ps != "" {
+		if v, err := strconv.Atoi(ps); err == nil && v > 0 {
+			pageSize = v
+		}
+		if pageSize > 100 {
+			pageSize = 100
+		}
+	}
+	page := 1
+	if p := c.Query("page"); p != "" {
+		if v, err := strconv.Atoi(p); err == nil && v > 0 {
+			page = v
+		}
+	}
+	offset := (page - 1) * pageSize
+
 	role := middleware.GetRoleFromContext(c)
 
 	var templates []models.StackTemplate
+	var total int64
 	var err error
 	if role == "admin" || role == "devops" {
-		templates, err = h.templateRepo.List()
+		templates, total, err = h.templateRepo.ListPaged(pageSize, offset)
 	} else {
-		templates, err = h.templateRepo.ListPublished()
+		templates, total, err = h.templateRepo.ListPublishedPaged(pageSize, offset)
 	}
 	if err != nil {
 		status, message := mapError(err, entityTemplate)
@@ -106,43 +127,42 @@ func (h *TemplateHandler) ListTemplates(c *gin.Context) {
 		return
 	}
 
-	// NOTE: This does N+1 queries (per-template definition count + per-owner username lookup).
-	// Acceptable for typical gallery sizes. Ideal optimization: batch CountByTemplateIDs(ids)
-	// and FindUsersByIDs(ids) methods to reduce to 2 queries.
+	// Batch-fetch definition counts and owner usernames (2 queries instead of N+1).
+	templateIDs := make([]string, len(templates))
+	ownerIDSet := make(map[string]struct{})
+	for i, t := range templates {
+		templateIDs[i] = t.ID
+		if t.OwnerID != "" {
+			ownerIDSet[t.OwnerID] = struct{}{}
+		}
+	}
 
-	// Build definition count map by querying only for returned template IDs.
 	defCountMap := make(map[string]int)
-	if h.definitionRepo != nil {
-		for _, t := range templates {
-			defs, err := h.definitionRepo.ListByTemplate(t.ID)
-			if err != nil {
-				slog.Warn("failed to fetch definitions for template", "template_id", t.ID, "error", err)
-				continue
-			}
-			defCountMap[t.ID] = len(defs)
+	if h.definitionRepo != nil && len(templateIDs) > 0 {
+		counts, countErr := h.definitionRepo.CountByTemplateIDs(templateIDs)
+		if countErr != nil {
+			slog.Warn("failed to batch-fetch definition counts", "error", countErr)
+		} else {
+			defCountMap = counts
 		}
 	}
 
-	// Build username map from distinct owner IDs (instead of loading all users).
 	usernameMap := make(map[string]string)
-	if h.userRepo != nil {
-		ownerIDs := make(map[string]struct{})
-		for _, t := range templates {
-			if t.OwnerID != "" {
-				ownerIDs[t.OwnerID] = struct{}{}
-			}
+	if h.userRepo != nil && len(ownerIDSet) > 0 {
+		ownerIDs := make([]string, 0, len(ownerIDSet))
+		for id := range ownerIDSet {
+			ownerIDs = append(ownerIDs, id)
 		}
-		for ownerID := range ownerIDs {
-			user, err := h.userRepo.FindByID(ownerID)
-			if err != nil {
-				slog.Warn("failed to fetch user for template listing", "owner_id", ownerID, "error", err)
-				continue
+		users, userErr := h.userRepo.FindByIDs(ownerIDs)
+		if userErr != nil {
+			slog.Warn("failed to batch-fetch users", "error", userErr)
+		} else {
+			for id, u := range users {
+				usernameMap[id] = u.Username
 			}
-			usernameMap[ownerID] = user.Username
 		}
 	}
 
-	// Assemble enriched response.
 	items := make([]TemplateListItem, len(templates))
 	for i, t := range templates {
 		items[i] = TemplateListItem{
@@ -152,7 +172,12 @@ func (h *TemplateHandler) ListTemplates(c *gin.Context) {
 		}
 	}
 
-	c.JSON(http.StatusOK, items)
+	c.JSON(http.StatusOK, gin.H{
+		"data":     items,
+		"total":    total,
+		"page":     page,
+		"pageSize": pageSize,
+	})
 }
 
 // CreateTemplate godoc

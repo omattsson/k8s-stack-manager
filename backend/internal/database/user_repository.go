@@ -56,6 +56,22 @@ func (r *GORMUserRepository) FindByID(id string) (*models.User, error) {
 	return &user, nil
 }
 
+// FindByIDs returns a map of user ID to User for the given IDs in a single query.
+func (r *GORMUserRepository) FindByIDs(ids []string) (map[string]*models.User, error) {
+	if len(ids) == 0 {
+		return make(map[string]*models.User), nil
+	}
+	var users []models.User
+	if err := r.db.Where("id IN ?", ids).Find(&users).Error; err != nil {
+		return nil, dberrors.NewDatabaseError("find_by_ids", err)
+	}
+	result := make(map[string]*models.User, len(users))
+	for i := range users {
+		result[users[i].ID] = &users[i]
+	}
+	return result, nil
+}
+
 // FindByUsername returns a user by their username.
 func (r *GORMUserRepository) FindByUsername(username string) (*models.User, error) {
 	var user models.User

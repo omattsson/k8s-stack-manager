@@ -93,6 +93,22 @@ func (m *mockDefinitionRepo) ListByTemplate(_ string) ([]models.StackDefinition,
 	return m.List()
 }
 
+func (m *mockDefinitionRepo) CountByTemplateIDs(templateIDs []string) (map[string]int, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	wanted := make(map[string]struct{}, len(templateIDs))
+	for _, id := range templateIDs {
+		wanted[id] = struct{}{}
+	}
+	result := make(map[string]int, len(templateIDs))
+	for _, d := range m.items {
+		if _, ok := wanted[d.SourceTemplateID]; ok {
+			result[d.SourceTemplateID]++
+		}
+	}
+	return result, nil
+}
+
 func (m *mockDefinitionRepo) Count() (int64, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()

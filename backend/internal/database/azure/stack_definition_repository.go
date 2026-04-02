@@ -227,6 +227,30 @@ func (r *StackDefinitionRepository) ListByTemplate(templateID string) ([]models.
 	return results, nil
 }
 
+// CountByTemplateIDs returns a map of template ID to definition count for the
+// given template IDs. Azure Table has no GROUP BY so this fetches all rows and
+// counts in memory.
+func (r *StackDefinitionRepository) CountByTemplateIDs(templateIDs []string) (map[string]int, error) {
+	if len(templateIDs) == 0 {
+		return make(map[string]int), nil
+	}
+	all, err := r.List()
+	if err != nil {
+		return nil, err
+	}
+	wanted := make(map[string]struct{}, len(templateIDs))
+	for _, id := range templateIDs {
+		wanted[id] = struct{}{}
+	}
+	result := make(map[string]int, len(templateIDs))
+	for _, d := range all {
+		if _, ok := wanted[d.SourceTemplateID]; ok {
+			result[d.SourceTemplateID]++
+		}
+	}
+	return result, nil
+}
+
 func stackDefinitionToEntity(d *models.StackDefinition) map[string]interface{} {
 	return map[string]interface{}{
 		"PartitionKey":          pkGlobal,

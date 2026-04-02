@@ -83,6 +83,18 @@ func (r *testUserRepo) FindByID(id string) (*models.User, error) {
 }
 
 func (r *testUserRepo) Create(user *models.User) error                       { return nil }
+func (r *testUserRepo) FindByIDs(ids []string) (map[string]*models.User, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	result := make(map[string]*models.User, len(ids))
+	for _, id := range ids {
+		if u, ok := r.users[id]; ok {
+			cp := *u
+			result[id] = &cp
+		}
+	}
+	return result, nil
+}
 func (r *testUserRepo) FindByUsername(username string) (*models.User, error) { return nil, nil }
 func (r *testUserRepo) FindByExternalID(provider, externalID string) (*models.User, error) {
 	return nil, nil
