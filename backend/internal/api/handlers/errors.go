@@ -8,6 +8,13 @@ import (
 	"backend/pkg/dberrors"
 )
 
+// Sentinel errors for domain-specific conditions (not database errors).
+var (
+	// ErrInstanceLimitExceeded is returned when a user has reached the
+	// maximum number of stack instances allowed on a cluster.
+	ErrInstanceLimitExceeded = errors.New("instance limit exceeded")
+)
+
 // Common error messages shared across handlers.
 const (
 	msgInternalServerError  = "Internal server error"

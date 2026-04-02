@@ -431,12 +431,12 @@ func (h *InstanceHandler) CreateInstance(c *gin.Context) {
 				return countErr
 			}
 			if count >= maxInstancesPerUser {
-				return fmt.Errorf("limit exceeded: %s", limitMsg)
+				return fmt.Errorf("%w: %s", ErrInstanceLimitExceeded, limitMsg)
 			}
 			return repos.StackInstance.Create(&inst)
 		})
 		if txErr != nil {
-			if strings.Contains(txErr.Error(), "limit exceeded") {
+			if errors.Is(txErr, ErrInstanceLimitExceeded) {
 				c.JSON(http.StatusConflict, gin.H{"error": limitMsg})
 				return
 			}

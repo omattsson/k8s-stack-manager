@@ -3,6 +3,7 @@ package azure
 import (
 	"context"
 	"encoding/json"
+	"sort"
 	"strings"
 	"time"
 
@@ -191,6 +192,16 @@ func (r *DeploymentLogRepository) ListByInstancePaginated(ctx context.Context, f
 	}
 
 	total := int64(len(entities))
+
+	// Sort by StartedAt DESC, ID DESC to match the GORM repository's ordering.
+	// Azure Table Storage does not guarantee listing order, so we must sort
+	// before applying offset/limit for deterministic pagination.
+	sort.Slice(entities, func(i, j int) bool {
+		if entities[i].StartedAt != entities[j].StartedAt {
+			return entities[i].StartedAt > entities[j].StartedAt
+		}
+		return entities[i].ID > entities[j].ID
+	})
 
 	limit := filters.Limit
 	if limit <= 0 {

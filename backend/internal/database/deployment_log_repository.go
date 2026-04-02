@@ -78,8 +78,8 @@ func (r *GORMDeploymentLogRepository) ListByInstance(ctx context.Context, instan
 // cursor-based or offset-based pagination. When filters.Cursor is set, keyset
 // pagination is used for efficient deep-page traversal. Otherwise, traditional
 // OFFSET pagination is used for backward compatibility.
-func (r *GORMDeploymentLogRepository) ListByInstancePaginated(_ context.Context, filters models.DeploymentLogFilters) (*models.DeploymentLogResult, error) {
-	query := r.db.Model(&models.DeploymentLog{}).Where("stack_instance_id = ?", filters.InstanceID)
+func (r *GORMDeploymentLogRepository) ListByInstancePaginated(ctx context.Context, filters models.DeploymentLogFilters) (*models.DeploymentLogResult, error) {
+	query := r.db.WithContext(ctx).Model(&models.DeploymentLog{}).Where("stack_instance_id = ?", filters.InstanceID)
 
 	limit := filters.Limit
 	if limit <= 0 {
@@ -157,9 +157,9 @@ func decodeDeployLogCursor(cursor string) (time.Time, string, error) {
 }
 
 // GetLatestByInstance returns the most recent deployment log for a given stack instance.
-func (r *GORMDeploymentLogRepository) GetLatestByInstance(_ context.Context, instanceID string) (*models.DeploymentLog, error) {
+func (r *GORMDeploymentLogRepository) GetLatestByInstance(ctx context.Context, instanceID string) (*models.DeploymentLog, error) {
 	var log models.DeploymentLog
-	if err := r.db.Where("stack_instance_id = ?", instanceID).
+	if err := r.db.WithContext(ctx).Where("stack_instance_id = ?", instanceID).
 		Order("started_at DESC").
 		First(&log).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -172,13 +172,13 @@ func (r *GORMDeploymentLogRepository) GetLatestByInstance(_ context.Context, ins
 
 // SummarizeByInstance returns aggregate deployment statistics for a given stack instance.
 // Only logs from the last 90 days are considered.
-func (r *GORMDeploymentLogRepository) SummarizeByInstance(_ context.Context, instanceID string) (*models.DeployLogSummary, error) {
+func (r *GORMDeploymentLogRepository) SummarizeByInstance(ctx context.Context, instanceID string) (*models.DeployLogSummary, error) {
 	cutoff := time.Now().UTC().Add(-90 * 24 * time.Hour)
 
 	summary := &models.DeployLogSummary{InstanceID: instanceID}
 
 	// Count deploy actions and their statuses.
-	row := r.db.Model(&models.DeploymentLog{}).
+	row := r.db.WithContext(ctx).Model(&models.DeploymentLog{}).
 		Select("COUNT(*) as deploy_count, "+
 			"COALESCE(SUM(CASE WHEN status = ? THEN 1 ELSE 0 END), 0) as success_count, "+
 			"COALESCE(SUM(CASE WHEN status = ? THEN 1 ELSE 0 END), 0) as error_count",
@@ -194,10 +194,10 @@ func (r *GORMDeploymentLogRepository) SummarizeByInstance(_ context.Context, ins
 	}
 
 	// Get the latest activity timestamp across all actions.
-	// Scan into sql.NullString for cross-driver compatibility (MySQL returns
-	// time.Time natively but SQLite returns strings for computed columns).
-	var lastDeployRaw sql.NullString
-	row2 := r.db.Model(&models.DeploymentLog{}).
+	// Scan into sql.NullTime — MySQL with parseTime=true returns time.Time
+	// natively for computed datetime columns.
+	var lastDeployRaw sql.NullTime
+	row2 := r.db.WithContext(ctx).Model(&models.DeploymentLog{}).
 		Select("MAX(COALESCE(completed_at, started_at))").
 		Where("stack_instance_id = ? AND started_at >= ?", instanceID, cutoff).
 		Row()
@@ -208,7 +208,8 @@ func (r *GORMDeploymentLogRepository) SummarizeByInstance(_ context.Context, ins
 		return nil, dberrors.NewDatabaseError("summarize_by_instance", err)
 	}
 	if lastDeployRaw.Valid {
-		summary.LastDeployAt = parseTimestamp(lastDeployRaw.String)
+		utc := lastDeployRaw.Time.UTC()
+		summary.LastDeployAt = &utc
 	}
 
 	return summary, nil
@@ -243,14 +244,14 @@ func (r *GORMDeploymentLogRepository) SummarizeBatch(ctx context.Context, instan
 }
 
 // summarizeBatchRow holds the raw scan results from the batch summary query.
-// Uses sql.NullString for LastDeploy to handle cross-driver compatibility
-// (MySQL returns time.Time but SQLite returns strings for computed columns).
+// Uses sql.NullTime for LastDeploy — MySQL with parseTime=true returns
+// time.Time natively for computed datetime columns.
 type summarizeBatchRow struct {
 	InstanceID   string
 	DeployCount  int
 	SuccessCount int
 	ErrorCount   int
-	LastDeploy   sql.NullString
+	LastDeploy   sql.NullTime
 }
 
 // summarizeBatchChunk executes the batch summary query for a single chunk of
@@ -286,7 +287,8 @@ func (r *GORMDeploymentLogRepository) summarizeBatchChunk(
 			ErrorCount:   row.ErrorCount,
 		}
 		if row.LastDeploy.Valid {
-			summary.LastDeployAt = parseTimestamp(row.LastDeploy.String)
+			utc := row.LastDeploy.Time.UTC()
+			summary.LastDeployAt = &utc
 		}
 		result[row.InstanceID] = summary
 	}
@@ -294,25 +296,3 @@ func (r *GORMDeploymentLogRepository) summarizeBatchChunk(
 	return nil
 }
 
-// timestampFormats lists the formats drivers may use for datetime strings,
-// ordered from most to least common.
-var timestampFormats = []string{
-	time.RFC3339Nano,
-	time.RFC3339,
-	"2006-01-02 15:04:05.999999999-07:00",
-	"2006-01-02 15:04:05.999999999Z07:00",
-	"2006-01-02T15:04:05Z",
-	"2006-01-02 15:04:05",
-}
-
-// parseTimestamp attempts to parse a timestamp string using common DB driver
-// formats. Returns nil if no format matches.
-func parseTimestamp(s string) *time.Time {
-	for _, layout := range timestampFormats {
-		if t, err := time.Parse(layout, s); err == nil {
-			utc := t.UTC()
-			return &utc
-		}
-	}
-	return nil
-}
