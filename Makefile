@@ -325,8 +325,20 @@ otel-stop: ## Stop OTel stack
 	docker compose --profile otel stop otel-collector prometheus tempo grafana
 	docker compose rm -f otel-collector prometheus tempo grafana
 
-loadtest-mysql-start: mysql-start otel-start ## Start MySQL + OTel + mysqld-exporter for load testing
-	docker compose --profile mysql --profile mysql-otel up -d mysqld-exporter || true
+loadtest-mysql-start: ## Start MySQL + OTel + mysqld-exporter for load testing
+	docker compose --profile mysql --profile otel --profile mysql-otel up -d
+	@echo "Waiting for MySQL to be ready..."
+	@n=0; while ! docker compose --profile mysql exec -T mysql mysqladmin ping -h localhost -uroot -p"$${DB_PASSWORD:-rootpassword}" --silent 2>/dev/null; do \
+		n=$$((n+1)); \
+		if [ $$n -ge 30 ]; then echo "ERROR: MySQL failed to start after 30s"; exit 1; fi; \
+		sleep 1; \
+	done
+	@echo "Waiting for OTel Collector..."
+	@n=0; while ! docker compose --profile otel exec -T otel-collector /otelcol-contrib validate --config /etc/otelcol-contrib/config.yaml >/dev/null 2>&1; do \
+		n=$$((n+1)); \
+		if [ $$n -ge 30 ]; then echo "ERROR: OTel Collector failed to start after 30s"; exit 1; fi; \
+		sleep 1; \
+	done
 	@echo "Building backend (release mode)..."
 	@cd backend && mkdir -p tmp
 	@cd backend && go build -o tmp/main ./api/main.go
@@ -345,8 +357,8 @@ loadtest-mysql-stop: ## Stop MySQL load test backend + infrastructure
 		kill $$(cat backend/tmp/loadtest-mysql.pid) 2>/dev/null || true; \
 		rm -f backend/tmp/loadtest-mysql.pid; \
 	fi
-	@$(MAKE) otel-stop
-	@$(MAKE) mysql-stop
+	docker compose --profile mysql --profile otel --profile mysql-otel stop
+	docker compose --profile mysql --profile otel --profile mysql-otel rm -f
 
 loadtest-mysql-backend: loadtest-mysql-start ## Run k6 backend load tests with MySQL + OTel
 	@$(MAKE) loadtest-backend-run || ($(MAKE) loadtest-mysql-stop; exit 1)

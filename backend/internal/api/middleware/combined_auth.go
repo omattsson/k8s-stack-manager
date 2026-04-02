@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"crypto/subtle"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -56,7 +57,12 @@ func CombinedAuth(deps APIKeyAuthDeps) gin.HandlerFunc {
 		hash := models.HashAPIKey(raw)
 
 		records, err := deps.APIKeyRepo.FindByPrefix(prefix)
-		if err != nil || len(records) == 0 {
+		if err != nil {
+			slog.Error("API key lookup failed", "error", err)
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Invalid API key"})
+			return
+		}
+		if len(records) == 0 {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Invalid API key"})
 			return
 		}
@@ -92,7 +98,10 @@ func CombinedAuth(deps APIKeyAuthDeps) gin.HandlerFunc {
 		c.Set(contextKeyUsername, user.Username)
 		c.Set(contextKeyRole, user.Role)
 
-		// Synchronous best-effort update of last-used timestamp.
-		_ = deps.APIKeyRepo.UpdateLastUsed(record.UserID, record.ID, time.Now().UTC())
+		// Async best-effort update of last-used timestamp to avoid holding a
+		// DB connection during the request and creating pool contention.
+		go func(userID, keyID string) {
+			_ = deps.APIKeyRepo.UpdateLastUsed(userID, keyID, time.Now().UTC())
+		}(record.UserID, record.ID)
 	}
 }
