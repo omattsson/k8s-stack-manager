@@ -98,7 +98,16 @@ func (r *GORMStackInstanceRepository) List() ([]models.StackInstance, error) {
 	return instances, nil
 }
 
+// listColumns are the columns fetched by ListPaged. The heavy TEXT column
+// error_message is omitted because it is only needed in the detail view.
+var listColumns = []string{
+	"id", "name", "namespace", "owner_id", "stack_definition_id",
+	"branch", "cluster_id", "status", "ttl_minutes",
+	"created_at", "updated_at", "last_deployed_at", "expires_at",
+}
+
 // ListPaged returns stack instances with limit/offset pagination and total count.
+// It selects only list-view columns, omitting large TEXT fields like error_message.
 func (r *GORMStackInstanceRepository) ListPaged(limit, offset int) ([]models.StackInstance, int, error) {
 	var total int64
 	if err := r.db.Model(&models.StackInstance{}).Count(&total).Error; err != nil {
@@ -106,7 +115,8 @@ func (r *GORMStackInstanceRepository) ListPaged(limit, offset int) ([]models.Sta
 	}
 
 	var instances []models.StackInstance
-	if err := r.db.Order("created_at DESC").Limit(limit).Offset(offset).Find(&instances).Error; err != nil {
+	if err := r.db.Select(listColumns).
+		Order("created_at DESC").Limit(limit).Offset(offset).Find(&instances).Error; err != nil {
 		return nil, 0, dberrors.NewDatabaseError("list_paged", err)
 	}
 	return instances, int(total), nil

@@ -634,13 +634,42 @@ export const definitionService = {
 /** Stack instance service for managing deployed stack instances. Maps to `/api/v1/stack-instances`. */
 export const instanceService = {
   /**
-   * List all stack instances.
-   * @returns Array of stack instances
+   * List stack instances with server-side pagination.
+   * @param params - Optional pagination parameters (page, pageSize)
+   * @returns Paginated response with data array, total count, page, and pageSize
    * @see GET /api/v1/stack-instances
    */
-  list: async (): Promise<StackInstance[]> => {
+  list: async (params?: { page?: number; pageSize?: number }): Promise<StackInstance[]> => {
     try {
-      const response = await api.get('/api/v1/stack-instances');
+      const response = await api.get('/api/v1/stack-instances', { params });
+      // The API returns { data: [...], total, page, pageSize }.
+      // Return the data array for backward compatibility with callers.
+      const body = response.data;
+      if (body && Array.isArray(body.data)) {
+        return body.data;
+      }
+      // Fallback for unexpected shapes.
+      return Array.isArray(body) ? body : [];
+    } catch (error) {
+      console.error('Failed to fetch instances:', error);
+      throw error;
+    }
+  },
+
+  /**
+   * List stack instances with full pagination metadata.
+   * @param params - Optional pagination parameters (page, pageSize)
+   * @returns Paginated response envelope with data, total, page, pageSize
+   * @see GET /api/v1/stack-instances
+   */
+  listPaged: async (params?: { page?: number; pageSize?: number }): Promise<{
+    data: StackInstance[];
+    total: number;
+    page: number;
+    pageSize: number;
+  }> => {
+    try {
+      const response = await api.get('/api/v1/stack-instances', { params });
       return response.data;
     } catch (error) {
       console.error('Failed to fetch instances:', error);

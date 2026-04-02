@@ -69,6 +69,22 @@ func (m *mockDefinitionRepo) List() ([]models.StackDefinition, error) {
 	return out, nil
 }
 
+func (m *mockDefinitionRepo) ListPaged(limit, offset int) ([]models.StackDefinition, int64, error) {
+	all, err := m.List()
+	if err != nil {
+		return nil, 0, err
+	}
+	total := int64(len(all))
+	if offset >= len(all) {
+		return []models.StackDefinition{}, total, nil
+	}
+	all = all[offset:]
+	if limit < len(all) {
+		all = all[:limit]
+	}
+	return all, total, nil
+}
+
 func (m *mockDefinitionRepo) ListByOwner(_ string) ([]models.StackDefinition, error) {
 	return m.List()
 }

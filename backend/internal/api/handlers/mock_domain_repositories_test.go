@@ -441,6 +441,27 @@ func (m *MockStackDefinitionRepository) List() ([]models.StackDefinition, error)
 	return out, nil
 }
 
+func (m *MockStackDefinitionRepository) ListPaged(limit, offset int) ([]models.StackDefinition, int64, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.err != nil {
+		return nil, 0, m.err
+	}
+	all := make([]models.StackDefinition, 0, len(m.items))
+	for _, d := range m.items {
+		all = append(all, *d)
+	}
+	total := int64(len(all))
+	if offset >= len(all) {
+		return []models.StackDefinition{}, total, nil
+	}
+	all = all[offset:]
+	if limit < len(all) {
+		all = all[:limit]
+	}
+	return all, total, nil
+}
+
 func (m *MockStackDefinitionRepository) ListByOwner(ownerID string) ([]models.StackDefinition, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()

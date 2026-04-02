@@ -86,6 +86,21 @@ func (r *GORMStackDefinitionRepository) List() ([]models.StackDefinition, error)
 	return definitions, nil
 }
 
+// ListPaged returns a page of stack definitions ordered by created_at DESC,
+// along with the total count. Only columns needed for list views are selected.
+func (r *GORMStackDefinitionRepository) ListPaged(limit, offset int) ([]models.StackDefinition, int64, error) {
+	var total int64
+	if err := r.db.Model(&models.StackDefinition{}).Count(&total).Error; err != nil {
+		return nil, 0, dberrors.NewDatabaseError("count", err)
+	}
+	var definitions []models.StackDefinition
+	if err := r.db.Select("id, name, description, owner_id, source_template_id, default_branch, created_at, updated_at").
+		Order("created_at DESC").Limit(limit).Offset(offset).Find(&definitions).Error; err != nil {
+		return nil, 0, dberrors.NewDatabaseError("list_paged", err)
+	}
+	return definitions, total, nil
+}
+
 // Count returns the total number of stack definitions.
 func (r *GORMStackDefinitionRepository) Count() (int64, error) {
 	var count int64

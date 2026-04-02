@@ -22,6 +22,7 @@ type StackDefinitionRepository interface {
 	Update(definition *StackDefinition) error
 	Delete(id string) error
 	List() ([]StackDefinition, error)
+	ListPaged(limit, offset int) ([]StackDefinition, int64, error)
 	ListByOwner(ownerID string) ([]StackDefinition, error)
 	ListByTemplate(templateID string) ([]StackDefinition, error)
 	Count() (int64, error)

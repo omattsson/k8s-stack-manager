@@ -407,11 +407,11 @@ describe('instanceService', () => {
   it('list sends GET to /api/v1/stack-instances', async () => {
     const api = mockApi;
     const instances = [{ id: 'i1', name: 'inst-1' }];
-    api.get.mockResolvedValueOnce(mockResponse(instances));
+    api.get.mockResolvedValueOnce(mockResponse({ data: instances, total: 1, page: 1, pageSize: 25 }));
 
     const result = await instanceService.list();
 
-    expect(api.get).toHaveBeenCalledWith('/api/v1/stack-instances');
+    expect(api.get).toHaveBeenCalledWith('/api/v1/stack-instances', { params: undefined });
     expect(result).toEqual(instances);
   });
 

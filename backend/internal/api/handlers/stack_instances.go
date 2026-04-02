@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"backend/internal/api/middleware"
-	"backend/internal/cache"
 	"backend/internal/cluster"
 	"backend/internal/database"
 	"backend/internal/deployer"
@@ -110,7 +109,6 @@ type InstanceHandler struct {
 	deployLogRepo      models.DeploymentLogRepository
 	clusterRepo        models.ClusterRepository
 	defaultTTLMinutes  int
-	listCache          *cache.TTLCache[[]models.StackInstance]
 	txRunner           database.TxRunner
 }
 
@@ -138,7 +136,6 @@ func NewInstanceHandler(
 		valuesGen:          valuesGen,
 		userRepo:           userRepo,
 		defaultTTLMinutes:  defaultTTLMinutes,
-		listCache:          cache.New[[]models.StackInstance](5*time.Second, 5*time.Second),
 	}
 }
 
@@ -176,7 +173,6 @@ func NewInstanceHandlerWithDeployer(
 		deployLogRepo:      deployLogRepo,
 		clusterRepo:        clusterRepo,
 		defaultTTLMinutes:  defaultTTLMinutes,
-		listCache:          cache.New[[]models.StackInstance](5*time.Second, 5*time.Second),
 	}
 }
 
@@ -185,63 +181,95 @@ func (h *InstanceHandler) SetTxRunner(tx database.TxRunner) {
 	h.txRunner = tx
 }
 
+// listPageSizeDefault is the default page size for paginated list queries.
+const listPageSizeDefault = 25
+
+// listPageSizeMax caps the maximum page size a client can request.
+const listPageSizeMax = 100
+
 // ListInstances godoc
 // @Summary     List stack instances
-// @Description List all stack instances, optionally filtered by owner. Supports pagination via limit/offset.
+// @Description List stack instances with server-side pagination. Supports page/pageSize or legacy limit/offset params. Use owner=me to filter by the authenticated user.
 // @Tags        stack-instances
 // @Produce     json
-// @Param       owner  query    string false "Filter by owner (use 'me' for current user)"
-// @Param       limit  query    int    false "Maximum number of results (default: all)"
-// @Param       offset query    int    false "Number of results to skip (default: 0)"
-// @Success     200   {array}  models.StackInstance
+// @Param       owner    query    string false "Filter by owner (use 'me' for current user)"
+// @Param       page     query    int    false "Page number (1-based, default: 1)"
+// @Param       pageSize query    int    false "Results per page (default: 25, max: 100)"
+// @Param       limit    query    int    false "Legacy: maximum number of results"
+// @Param       offset   query    int    false "Legacy: number of results to skip"
+// @Success     200   {object} map[string]interface{} "data: []StackInstance, total: int, page: int, pageSize: int"
 // @Failure     500   {object} map[string]string
 // @Router      /api/v1/stack-instances [get]
 func (h *InstanceHandler) ListInstances(c *gin.Context) {
 	owner := c.Query("owner")
 
-	var instances []models.StackInstance
-	var err error
+	// Owner-filtered list — small result set, no server-side pagination needed.
 	if owner == "me" {
 		userID := middleware.GetUserIDFromContext(c)
-		instances, err = h.instanceRepo.ListByOwner(userID)
-	} else {
-		// Use a short-lived cache for the full list to absorb concurrent dashboard loads.
-		cacheKey := "all"
-		if cached, ok := h.listCache.Get(cacheKey); ok {
-			instances = cached
-		} else {
-			instances, err = h.instanceRepo.List()
-			if err != nil {
-				status, message := mapError(err, entityStackInstance)
-				c.JSON(status, gin.H{"error": message})
-				return
-			}
-			h.listCache.Set(cacheKey, instances)
+		instances, err := h.instanceRepo.ListByOwner(userID)
+		if err != nil {
+			status, message := mapError(err, entityStackInstance)
+			c.JSON(status, gin.H{"error": message})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{
+			"data":     instances,
+			"total":    len(instances),
+			"page":     1,
+			"pageSize": len(instances),
+		})
+		return
+	}
+
+	// Determine limit and offset from query params.
+	// page/pageSize take precedence; fall back to legacy limit/offset.
+	pageSize := listPageSizeDefault
+	offset := 0
+	page := 1
+
+	if ps := c.Query("pageSize"); ps != "" {
+		if v, err := strconv.Atoi(ps); err == nil && v > 0 {
+			pageSize = v
+		}
+		if pageSize > listPageSizeMax {
+			pageSize = listPageSizeMax
 		}
 	}
+
+	if p := c.Query("page"); p != "" {
+		// Page-based pagination
+		if v, err := strconv.Atoi(p); err == nil && v > 0 {
+			page = v
+		}
+		offset = (page - 1) * pageSize
+	} else if l := c.Query("limit"); l != "" {
+		// Legacy limit/offset pagination (no page param)
+		if v, err := strconv.Atoi(l); err == nil && v > 0 {
+			pageSize = v
+			if pageSize > listPageSizeMax {
+				pageSize = listPageSizeMax
+			}
+		}
+		if o := c.Query("offset"); o != "" {
+			if v, err := strconv.Atoi(o); err == nil && v >= 0 {
+				offset = v
+			}
+		}
+	}
+
+	instances, total, err := h.instanceRepo.ListPaged(pageSize, offset)
 	if err != nil {
 		status, message := mapError(err, entityStackInstance)
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
 
-	// Apply pagination if requested.
-	if offsetStr := c.Query("offset"); offsetStr != "" {
-		if offset, parseErr := strconv.Atoi(offsetStr); parseErr == nil && offset > 0 {
-			if offset >= len(instances) {
-				instances = []models.StackInstance{}
-			} else {
-				instances = instances[offset:]
-			}
-		}
-	}
-	if limitStr := c.Query("limit"); limitStr != "" {
-		if limit, parseErr := strconv.Atoi(limitStr); parseErr == nil && limit > 0 && limit < len(instances) {
-			instances = instances[:limit]
-		}
-	}
-
-	c.JSON(http.StatusOK, instances)
+	c.JSON(http.StatusOK, gin.H{
+		"data":     instances,
+		"total":    total,
+		"page":     page,
+		"pageSize": pageSize,
+	})
 }
 
 // GetRecentInstances godoc

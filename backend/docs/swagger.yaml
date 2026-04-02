@@ -78,9 +78,9 @@ definitions:
       status:
         description: '"success" or "error"'
         type: string
-      template_id:
-        type: string
       template_name:
+        type: string
+      templateID:
         type: string
     type: object
   handlers.ChartConfigExportData:
@@ -102,7 +102,7 @@ definitions:
     type: object
   handlers.ClusterUtilization:
     properties:
-      cluster_id:
+      clusterID:
         type: string
       namespaces:
         items:
@@ -831,6 +831,17 @@ definitions:
       status:
         description: '"running", "success", "error"'
         type: string
+    type: object
+  models.DeploymentLogResult:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/models.DeploymentLog'
+        type: array
+      next_cursor:
+        type: string
+      total:
+        type: integer
     type: object
   models.InstanceQuotaOverride:
     properties:
@@ -3000,6 +3011,7 @@ paths:
           description: OK
           schema:
             additionalProperties:
+              format: int64
               type: integer
             type: object
         "401":
@@ -3140,16 +3152,27 @@ paths:
       - ping
   /api/v1/stack-definitions:
     get:
-      description: List all stack definitions
+      description: List stack definitions with server-side pagination
+      parameters:
+      - description: Page number (default 1)
+        in: query
+        minimum: 1
+        name: page
+        type: integer
+      - description: Items per page (default 25, max 100)
+        in: query
+        maximum: 100
+        minimum: 1
+        name: pageSize
+        type: integer
       produces:
       - application/json
       responses:
         "200":
-          description: OK
+          description: Paginated list with data, total, page, pageSize
           schema:
-            items:
-              $ref: '#/definitions/models.StackDefinition'
-            type: array
+            additionalProperties: true
+            type: object
         "500":
           description: Internal Server Error
           schema:
@@ -3549,21 +3572,38 @@ paths:
       - stack-definitions
   /api/v1/stack-instances:
     get:
-      description: List all stack instances, optionally filtered by owner
+      description: List stack instances with server-side pagination. Supports page/pageSize
+        or legacy limit/offset params. Use owner=me to filter by the authenticated
+        user.
       parameters:
       - description: Filter by owner (use 'me' for current user)
         in: query
         name: owner
         type: string
+      - description: 'Page number (1-based, default: 1)'
+        in: query
+        name: page
+        type: integer
+      - description: 'Results per page (default: 25, max: 100)'
+        in: query
+        name: pageSize
+        type: integer
+      - description: 'Legacy: maximum number of results'
+        in: query
+        name: limit
+        type: integer
+      - description: 'Legacy: number of results to skip'
+        in: query
+        name: offset
+        type: integer
       produces:
       - application/json
       responses:
         "200":
-          description: OK
+          description: 'data: []StackInstance, total: int, page: int, pageSize: int'
           schema:
-            items:
-              $ref: '#/definitions/models.StackInstance'
-            type: array
+            additionalProperties: true
+            type: object
         "500":
           description: Internal Server Error
           schema:
@@ -3916,12 +3956,26 @@ paths:
       - stack-instances
   /api/v1/stack-instances/{id}/deploy-log:
     get:
-      description: Get deployment log history for a stack instance
+      description: Get deployment log history for a stack instance. Supports cursor-based
+        pagination for efficient large dataset traversal.
       parameters:
       - description: Instance ID
         in: path
         name: id
         required: true
+        type: string
+      - description: Page size (default 50)
+        in: query
+        name: limit
+        type: integer
+      - description: Offset for traditional pagination (default 0)
+        in: query
+        name: offset
+        type: integer
+      - description: Cursor from previous page for cursor-based pagination (overrides
+          offset)
+        in: query
+        name: cursor
         type: string
       produces:
       - application/json
@@ -3929,9 +3983,13 @@ paths:
         "200":
           description: OK
           schema:
-            items:
-              $ref: '#/definitions/models.DeploymentLog'
-            type: array
+            $ref: '#/definitions/models.DeploymentLogResult'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
         "404":
           description: Not Found
           schema:

@@ -3,6 +3,7 @@ package azure
 import (
 	"context"
 	"encoding/json"
+	"sort"
 	"time"
 
 	"backend/internal/models"
@@ -155,6 +156,27 @@ func (r *StackDefinitionRepository) List() ([]models.StackDefinition, error) {
 		results = append(results, *e.toModel())
 	}
 	return results, nil
+}
+
+// ListPaged returns a page of stack definitions ordered by created_at DESC,
+// along with the total count. Azure Table has no LIMIT/OFFSET so this fetches
+// all rows and slices in memory.
+func (r *StackDefinitionRepository) ListPaged(limit, offset int) ([]models.StackDefinition, int64, error) {
+	all, err := r.List()
+	if err != nil {
+		return nil, 0, err
+	}
+	total := int64(len(all))
+	// Sort by CreatedAt DESC.
+	sort.Slice(all, func(i, j int) bool { return all[i].CreatedAt.After(all[j].CreatedAt) })
+	if offset >= len(all) {
+		return []models.StackDefinition{}, total, nil
+	}
+	all = all[offset:]
+	if limit < len(all) {
+		all = all[:limit]
+	}
+	return all, total, nil
 }
 
 func (r *StackDefinitionRepository) Count() (int64, error) {

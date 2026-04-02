@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"time"
 
 	"backend/internal/api/middleware"
@@ -106,21 +107,45 @@ func (h *DefinitionHandler) SetTxRunner(tx database.TxRunner) {
 
 // ListDefinitions godoc
 // @Summary     List stack definitions
-// @Description List all stack definitions
+// @Description List stack definitions with server-side pagination
 // @Tags        stack-definitions
 // @Produce     json
-// @Success     200 {array}  models.StackDefinition
+// @Param       page     query    int false "Page number (default 1)"     minimum(1)
+// @Param       pageSize query    int false "Items per page (default 25, max 100)" minimum(1) maximum(100)
+// @Success     200 {object} map[string]interface{} "Paginated list with data, total, page, pageSize"
 // @Failure     500 {object} map[string]string
 // @Router      /api/v1/stack-definitions [get]
 func (h *DefinitionHandler) ListDefinitions(c *gin.Context) {
-	defs, err := h.definitionRepo.List()
+	pageSize := 25
+	if ps := c.Query("pageSize"); ps != "" {
+		if v, err := strconv.Atoi(ps); err == nil && v > 0 {
+			pageSize = v
+		}
+		if pageSize > 100 {
+			pageSize = 100
+		}
+	}
+	page := 1
+	if p := c.Query("page"); p != "" {
+		if v, err := strconv.Atoi(p); err == nil && v > 0 {
+			page = v
+		}
+	}
+	offset := (page - 1) * pageSize
+
+	defs, total, err := h.definitionRepo.ListPaged(pageSize, offset)
 	if err != nil {
 		status, message := mapError(err, entityStackDefinition)
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
 
-	c.JSON(http.StatusOK, defs)
+	c.JSON(http.StatusOK, gin.H{
+		"data":     defs,
+		"total":    total,
+		"page":     page,
+		"pageSize": pageSize,
+	})
 }
 
 // CreateDefinition godoc
