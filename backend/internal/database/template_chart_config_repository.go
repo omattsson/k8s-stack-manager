@@ -2,11 +2,13 @@ package database
 
 import (
 	"errors"
+	"fmt"
 	"time"
 
 	"backend/internal/models"
 	"backend/pkg/dberrors"
 
+	"github.com/google/uuid"
 	"gorm.io/gorm"
 )
 
@@ -25,6 +27,13 @@ func NewGORMTemplateChartConfigRepository(db *gorm.DB) *GORMTemplateChartConfigR
 
 // Create inserts a new template chart config record.
 func (r *GORMTemplateChartConfigRepository) Create(config *models.TemplateChartConfig) error {
+	if err := config.Validate(); err != nil {
+		return dberrors.NewDatabaseError("create", fmt.Errorf("%w: %s", dberrors.ErrValidation, err.Error()))
+	}
+
+	if config.ID == "" {
+		config.ID = uuid.New().String()
+	}
 	config.CreatedAt = time.Now().UTC()
 	if err := r.db.Create(config).Error; err != nil {
 		return dberrors.NewDatabaseError("create", err)

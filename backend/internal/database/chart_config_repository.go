@@ -2,6 +2,7 @@ package database
 
 import (
 	"errors"
+	"fmt"
 	"time"
 
 	"backend/internal/models"
@@ -26,6 +27,10 @@ func NewGORMChartConfigRepository(db *gorm.DB) *GORMChartConfigRepository {
 
 // Create inserts a new chart config record.
 func (r *GORMChartConfigRepository) Create(config *models.ChartConfig) error {
+	if err := config.Validate(); err != nil {
+		return dberrors.NewDatabaseError("create", fmt.Errorf("%w: %s", dberrors.ErrValidation, err.Error()))
+	}
+
 	if config.ID == "" {
 		config.ID = uuid.New().String()
 	}

@@ -84,7 +84,7 @@ test.describe('Template Management', () => {
     await expect(page.getByRole('heading', { level: 1, name: 'Edit Template' })).toBeVisible({
       timeout: 10_000,
     });
-    const publishSwitch = page.getByRole('switch');
+    const publishSwitch = page.getByRole('switch', { name: /Draft|Published/ });
     await publishSwitch.click();
     // Wait for the async publish API call to complete
     await expect(publishSwitch).toBeChecked({ timeout: 5_000 });
@@ -102,7 +102,7 @@ test.describe('Template Management', () => {
     await expect(page.getByRole('heading', { level: 1, name: 'Edit Template' })).toBeVisible({
       timeout: 10_000,
     });
-    const unpublishSwitch = page.getByRole('switch');
+    const unpublishSwitch = page.getByRole('switch', { name: /Draft|Published/ });
     await unpublishSwitch.click();
     await expect(unpublishSwitch).not.toBeChecked({ timeout: 5_000 });
     await page.getByRole('button', { name: 'Save Template' }).click();

@@ -300,7 +300,7 @@ loadtest-frontend-run: ## Run Playwright load tests (assumes backend already run
 mysql-start: ## Start MySQL container for load testing
 	docker compose --profile mysql up -d mysql
 	@echo "Waiting for MySQL to be ready..."
-	@n=0; while ! docker compose --profile mysql exec mysql mysqladmin ping -h localhost --silent 2>/dev/null; do \
+	@n=0; while ! docker compose --profile mysql exec -T mysql mysqladmin ping -h localhost --silent 2>/dev/null; do \
 		n=$$((n+1)); \
 		if [ $$n -ge 30 ]; then echo "ERROR: MySQL failed to start after 30s"; exit 1; fi; \
 		sleep 1; \
@@ -308,12 +308,13 @@ mysql-start: ## Start MySQL container for load testing
 	@echo "MySQL is ready on :3306"
 
 mysql-stop: ## Stop MySQL container
-	docker compose --profile mysql down
+	docker compose --profile mysql stop mysql
+	docker compose --profile mysql rm -f mysql
 
 otel-start: ## Start OTel observability stack (Collector, Prometheus, Tempo, Grafana)
 	docker compose --profile otel up -d otel-collector prometheus tempo grafana
 	@echo "Waiting for OTel Collector..."
-	@n=0; while ! curl -sf http://localhost:13133 >/dev/null 2>&1; do \
+	@n=0; while ! docker compose --profile otel exec -T otel-collector /otelcol-contrib validate --config /etc/otelcol-contrib/config.yaml >/dev/null 2>&1; do \
 		n=$$((n+1)); \
 		if [ $$n -ge 30 ]; then echo "ERROR: OTel Collector failed to start after 30s"; exit 1; fi; \
 		sleep 1; \
@@ -321,7 +322,8 @@ otel-start: ## Start OTel observability stack (Collector, Prometheus, Tempo, Gra
 	@echo "OTel stack ready: Grafana http://localhost:3001, Prometheus http://localhost:9090"
 
 otel-stop: ## Stop OTel stack
-	docker compose --profile otel down
+	docker compose --profile otel stop otel-collector prometheus tempo grafana
+	docker compose rm -f otel-collector prometheus tempo grafana
 
 loadtest-mysql-start: mysql-start otel-start ## Start MySQL + OTel + mysqld-exporter for load testing
 	docker compose --profile mysql --profile mysql-otel up -d mysqld-exporter || true

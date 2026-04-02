@@ -2,11 +2,13 @@ package database
 
 import (
 	"errors"
+	"fmt"
 	"time"
 
 	"backend/internal/models"
 	"backend/pkg/dberrors"
 
+	"github.com/google/uuid"
 	"gorm.io/gorm"
 )
 
@@ -25,6 +27,13 @@ func NewGORMValueOverrideRepository(db *gorm.DB) *GORMValueOverrideRepository {
 
 // Create inserts a new value override record.
 func (r *GORMValueOverrideRepository) Create(override *models.ValueOverride) error {
+	if err := override.Validate(); err != nil {
+		return dberrors.NewDatabaseError("create", fmt.Errorf("%w: %s", dberrors.ErrValidation, err.Error()))
+	}
+
+	if override.ID == "" {
+		override.ID = uuid.New().String()
+	}
 	override.UpdatedAt = time.Now().UTC()
 	if err := r.db.Create(override).Error; err != nil {
 		return dberrors.NewDatabaseError("create", err)
