@@ -6,6 +6,7 @@ import (
 	"net/http"
 
 	"backend/internal/api/middleware"
+	"backend/internal/database"
 	"backend/internal/deployer"
 	"backend/internal/helm"
 	"backend/internal/models"
@@ -357,7 +358,21 @@ func (h *InstanceHandler) BulkClean(c *gin.Context) {
 // @Router      /api/v1/stack-instances/bulk/delete [post]
 func (h *InstanceHandler) BulkDelete(c *gin.Context) {
 	h.executeBulkOperation(c, "delete", func(_ *gin.Context, inst *models.StackInstance) (string, error) {
-		// Clean up per-chart branch overrides before deleting.
+		if h.txRunner != nil {
+			// Transactional path — branch override cleanup + instance delete are atomic.
+			txErr := h.txRunner.RunInTx(func(repos database.TxRepos) error {
+				if err := repos.BranchOverride.DeleteByInstance(inst.ID); err != nil {
+					return err
+				}
+				return repos.StackInstance.Delete(inst.ID)
+			})
+			if txErr != nil {
+				return "", fmt.Errorf("failed to delete instance")
+			}
+			return "", nil
+		}
+
+		// Non-transactional fallback (Azure Table Storage).
 		if h.branchOverrideRepo != nil {
 			if err := h.branchOverrideRepo.DeleteByInstance(inst.ID); err != nil {
 				slog.Error("failed to delete branch overrides for stack instance", "instance_id", inst.ID, "error", err)

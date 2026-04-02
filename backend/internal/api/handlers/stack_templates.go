@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"backend/internal/api/middleware"
+	"backend/internal/database"
 	"backend/internal/models"
 
 	"github.com/gin-gonic/gin"
@@ -28,6 +29,7 @@ type TemplateHandler struct {
 	chartConfigRepo models.ChartConfigRepository
 	versionRepo     models.TemplateVersionRepository
 	userRepo        models.UserRepository
+	txRunner        database.TxRunner
 }
 
 // SetUserRepo sets the optional UserRepository for enriched list responses.
@@ -65,6 +67,11 @@ func NewTemplateHandlerWithVersions(
 		chartConfigRepo: chartConfigRepo,
 		versionRepo:     versionRepo,
 	}
+}
+
+// SetTxRunner sets an optional TxRunner for transactional multi-entity operations.
+func (h *TemplateHandler) SetTxRunner(tx database.TxRunner) {
+	h.txRunner = tx
 }
 
 // TemplateListItem extends StackTemplate with computed fields for the gallery.
@@ -475,6 +482,34 @@ func (h *TemplateHandler) InstantiateTemplate(c *gin.Context) {
 		UpdatedAt:             now,
 	}
 
+	if h.txRunner != nil {
+		// Transactional path — definition + chart configs are created atomically.
+		var chartConfigs []models.ChartConfig
+		txErr := h.txRunner.RunInTx(func(repos database.TxRepos) error {
+			if err := repos.StackDefinition.Create(def); err != nil {
+				return err
+			}
+			ccs, copyErr := h.copyTemplateChartsToDefinitionTx(tmpl.ID, def.ID, now, repos)
+			if copyErr != nil {
+				return copyErr
+			}
+			chartConfigs = ccs
+			return nil
+		})
+		if txErr != nil {
+			status, message := mapError(txErr, entityStackDefinition)
+			c.JSON(status, gin.H{"error": message})
+			return
+		}
+
+		c.JSON(http.StatusCreated, gin.H{
+			"definition": def,
+			"charts":     chartConfigs,
+		})
+		return
+	}
+
+	// Non-transactional fallback (Azure Table Storage).
 	if err := h.definitionRepo.Create(def); err != nil {
 		status, message := mapError(err, entityStackDefinition)
 		c.JSON(status, gin.H{"error": message})
@@ -525,6 +560,38 @@ func (h *TemplateHandler) copyTemplateChartsToDefinition(templateID, defID strin
 	return chartConfigs, nil
 }
 
+// copyTemplateChartsToDefinitionTx is the transactional variant of
+// copyTemplateChartsToDefinition. It reads template charts via the handler's
+// chartRepo (read-only) and creates chart configs via the transactional repos.
+func (h *TemplateHandler) copyTemplateChartsToDefinitionTx(templateID, defID string, now time.Time, repos database.TxRepos) ([]models.ChartConfig, error) {
+	templateCharts, err := h.chartRepo.ListByTemplate(templateID)
+	if err != nil {
+		return nil, err
+	}
+
+	chartConfigs := make([]models.ChartConfig, 0, len(templateCharts))
+	for _, tc := range templateCharts {
+		cc := models.ChartConfig{
+			ID:                uuid.New().String(),
+			StackDefinitionID: defID,
+			ChartName:         tc.ChartName,
+			RepositoryURL:     tc.RepositoryURL,
+			SourceRepoURL:     tc.SourceRepoURL,
+			ChartPath:         tc.ChartPath,
+			ChartVersion:      tc.ChartVersion,
+			DefaultValues:     tc.DefaultValues,
+			DeployOrder:       tc.DeployOrder,
+			CreatedAt:         now,
+		}
+		if err := repos.ChartConfig.Create(&cc); err != nil {
+			return nil, err
+		}
+		chartConfigs = append(chartConfigs, cc)
+	}
+
+	return chartConfigs, nil
+}
+
 // CloneTemplate godoc
 // @Summary     Clone a stack template
 // @Description Create a new draft template that is a copy of the source (devops/admin only)
@@ -557,13 +624,7 @@ func (h *TemplateHandler) CloneTemplate(c *gin.Context) {
 		UpdatedAt:     now,
 	}
 
-	if err := h.templateRepo.Create(clone); err != nil {
-		status, message := mapError(err, entityTemplate)
-		c.JSON(status, gin.H{"error": message})
-		return
-	}
-
-	// Copy charts.
+	// Fetch source charts before any writes so we fail early on read errors.
 	charts, err := h.chartRepo.ListByTemplate(source.ID)
 	if err != nil {
 		status, message := mapError(err, entityTemplateCharts)
@@ -571,8 +632,10 @@ func (h *TemplateHandler) CloneTemplate(c *gin.Context) {
 		return
 	}
 
+	// Build chart clone models.
+	chartClones := make([]*models.TemplateChartConfig, 0, len(charts))
 	for _, ch := range charts {
-		chartClone := &models.TemplateChartConfig{
+		chartClones = append(chartClones, &models.TemplateChartConfig{
 			ID:              uuid.New().String(),
 			StackTemplateID: clone.ID,
 			ChartName:       ch.ChartName,
@@ -585,11 +648,41 @@ func (h *TemplateHandler) CloneTemplate(c *gin.Context) {
 			DeployOrder:     ch.DeployOrder,
 			Required:        ch.Required,
 			CreatedAt:       now,
-		}
-		if err := h.chartRepo.Create(chartClone); err != nil {
-			status, message := mapError(err, "Template chart")
+		})
+	}
+
+	if h.txRunner != nil {
+		// Transactional path — template + chart copies are atomic.
+		txErr := h.txRunner.RunInTx(func(repos database.TxRepos) error {
+			if err := repos.StackTemplate.Create(clone); err != nil {
+				return err
+			}
+			for _, cc := range chartClones {
+				if err := repos.TemplateChart.Create(cc); err != nil {
+					return err
+				}
+			}
+			return nil
+		})
+		if txErr != nil {
+			status, message := mapError(txErr, entityTemplate)
 			c.JSON(status, gin.H{"error": message})
 			return
+		}
+	} else {
+		// Non-transactional fallback (Azure Table Storage).
+		if err := h.templateRepo.Create(clone); err != nil {
+			status, message := mapError(err, entityTemplate)
+			c.JSON(status, gin.H{"error": message})
+			return
+		}
+
+		for _, cc := range chartClones {
+			if err := h.chartRepo.Create(cc); err != nil {
+				status, message := mapError(err, "Template chart")
+				c.JSON(status, gin.H{"error": message})
+				return
+			}
 		}
 	}
 

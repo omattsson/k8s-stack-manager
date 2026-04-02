@@ -190,6 +190,7 @@ func main() {
 		InstanceRepo:      instanceRepo,
 		DeployLogRepo:     deployLogRepo,
 		Hub:               hub,
+		TxRunner:          repos.TxRunner,
 		MaxConcurrent:     int(cfg.Deployment.MaxConcurrentDeploys),
 		QuotaRepo:         quotaRepo,
 		QuotaOverrideRepo: quotaOverrideRepo,
@@ -215,7 +216,9 @@ func main() {
 	}
 
 	templateHandler := handlers.NewTemplateHandlerWithVersions(templateRepo, templateChartRepo, definitionRepo, chartConfigRepo, templateVersionRepo)
+	templateHandler.SetTxRunner(repos.TxRunner)
 	definitionHandler := handlers.NewDefinitionHandlerWithVersions(definitionRepo, chartConfigRepo, instanceRepo, templateRepo, templateChartRepo, templateVersionRepo)
+	definitionHandler.SetTxRunner(repos.TxRunner)
 	templateVersionHandler := handlers.NewTemplateVersionHandler(templateVersionRepo, templateRepo)
 	instanceHandler := handlers.NewInstanceHandlerWithDeployer(
 		instanceRepo, overrideRepo, branchOverrideRepo, definitionRepo, chartConfigRepo,
@@ -223,6 +226,7 @@ func main() {
 		deployManager, k8sWatcher, clusterRegistry, deployLogRepo, clusterRepo,
 		cfg.App.DefaultInstanceTTLMinutes,
 	)
+	instanceHandler.SetTxRunner(repos.TxRunner)
 	gitHandler := handlers.NewGitHandler(gitRegistry)
 	auditLogHandler := handlers.NewAuditLogHandler(auditRepo)
 	userHandler := handlers.NewUserHandler(userRepo)
@@ -245,6 +249,7 @@ func main() {
 		hub, clusterRegistry, k8sWatcher,
 		cfg.App.DefaultInstanceTTLMinutes,
 	)
+	quickDeployHandler.SetTxRunner(repos.TxRunner)
 
 	analyticsHandler := handlers.NewAnalyticsHandler(templateRepo, definitionRepo, instanceRepo, deployLogRepo, userRepo)
 

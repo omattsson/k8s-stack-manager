@@ -12,6 +12,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"backend/internal/database"
 	"backend/internal/k8s"
 	"backend/internal/models"
 	"backend/internal/websocket"
@@ -43,17 +44,18 @@ type ClusterResolver interface {
 
 // Manager orchestrates asynchronous deployments with concurrency control.
 type Manager struct {
-	registry       ClusterResolver
-	instanceRepo   models.StackInstanceRepository
-	logRepo        models.DeploymentLogRepository
-	hub            websocket.BroadcastSender
+	registry          ClusterResolver
+	instanceRepo      models.StackInstanceRepository
+	logRepo           models.DeploymentLogRepository
+	hub               websocket.BroadcastSender
+	txRunner          database.TxRunner
 	quotaRepo         models.ResourceQuotaRepository
 	quotaOverrideRepo models.InstanceQuotaOverrideRepository
 	semaphore         chan struct{}
-	shutdownCtx    context.Context
-	shutdownCancel context.CancelFunc
-	wg             sync.WaitGroup
-	shuttingDown   atomic.Bool
+	shutdownCtx       context.Context
+	shutdownCancel    context.CancelFunc
+	wg                sync.WaitGroup
+	shuttingDown      atomic.Bool
 }
 
 // ManagerConfig holds the dependencies for creating a Manager.
@@ -62,6 +64,7 @@ type ManagerConfig struct {
 	InstanceRepo  models.StackInstanceRepository
 	DeployLogRepo models.DeploymentLogRepository
 	Hub           websocket.BroadcastSender
+	TxRunner      database.TxRunner // optional: wraps instance+log updates in a transaction
 	MaxConcurrent int
 	QuotaRepo         models.ResourceQuotaRepository         // optional: apply quotas on deploy
 	QuotaOverrideRepo models.InstanceQuotaOverrideRepository // optional: per-instance quota overrides
@@ -91,13 +94,14 @@ func NewManager(cfg ManagerConfig) *Manager {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	return &Manager{
-		registry:       cfg.Registry,
-		instanceRepo:   cfg.InstanceRepo,
-		logRepo:        cfg.DeployLogRepo,
-		hub:            cfg.Hub,
+		registry:          cfg.Registry,
+		instanceRepo:      cfg.InstanceRepo,
+		logRepo:           cfg.DeployLogRepo,
+		hub:               cfg.Hub,
+		txRunner:          cfg.TxRunner,
 		quotaRepo:         cfg.QuotaRepo,
 		quotaOverrideRepo: cfg.QuotaOverrideRepo,
-		semaphore:      make(chan struct{}, maxConcurrent),
+		semaphore:         make(chan struct{}, maxConcurrent),
 		shutdownCtx:    ctx,
 		shutdownCancel: cancel,
 	}
@@ -149,7 +153,7 @@ func (m *Manager) Deploy(ctx context.Context, req DeployRequest) (string, error)
 	logID := uuid.New().String()
 	now := time.Now().UTC()
 
-	// Create deployment log entry.
+	// Create deployment log entry and update instance status atomically.
 	deployLog := &models.DeploymentLog{
 		ID:              logID,
 		StackInstanceID: req.Instance.ID,
@@ -157,15 +161,28 @@ func (m *Manager) Deploy(ctx context.Context, req DeployRequest) (string, error)
 		Status:          models.DeployLogRunning,
 		StartedAt:       now,
 	}
-	if err := m.logRepo.Create(ctx, deployLog); err != nil {
-		return "", fmt.Errorf("creating deployment log: %w", err)
-	}
-
-	// Update instance status to deploying.
 	req.Instance.Status = models.StackStatusDeploying
 	req.Instance.ErrorMessage = ""
-	if err := m.instanceRepo.Update(req.Instance); err != nil {
-		return "", fmt.Errorf("updating instance status: %w", err)
+
+	if m.txRunner != nil {
+		if err := m.txRunner.RunInTx(func(repos database.TxRepos) error {
+			if err := repos.DeploymentLog.Create(ctx, deployLog); err != nil {
+				return fmt.Errorf("creating deployment log: %w", err)
+			}
+			if err := repos.StackInstance.Update(req.Instance); err != nil {
+				return fmt.Errorf("updating instance status: %w", err)
+			}
+			return nil
+		}); err != nil {
+			return "", err
+		}
+	} else {
+		if err := m.logRepo.Create(ctx, deployLog); err != nil {
+			return "", fmt.Errorf("creating deployment log: %w", err)
+		}
+		if err := m.instanceRepo.Update(req.Instance); err != nil {
+			return "", fmt.Errorf("updating instance status: %w", err)
+		}
 	}
 
 	// Broadcast initial status.
@@ -395,14 +412,28 @@ func (m *Manager) finalizeDeploy(instanceID string, deployLog *models.Deployment
 		)
 	}
 
-	if err := m.instanceRepo.Update(instance); err != nil {
-		slog.Error("failed to update instance status after deploy",
-			"instance_id", instanceID, "error", err)
-	}
-
-	if err := m.logRepo.Update(m.shutdownCtx, deployLog); err != nil {
-		slog.Error("failed to update deployment log after deploy",
-			"log_id", deployLog.ID, "error", err)
+	if m.txRunner != nil {
+		if err := m.txRunner.RunInTx(func(repos database.TxRepos) error {
+			if err := repos.StackInstance.Update(instance); err != nil {
+				return fmt.Errorf("updating instance: %w", err)
+			}
+			if err := repos.DeploymentLog.Update(context.Background(), deployLog); err != nil {
+				return fmt.Errorf("updating deploy log: %w", err)
+			}
+			return nil
+		}); err != nil {
+			slog.Error("failed to finalize deploy atomically",
+				"instance_id", instanceID, "error", err)
+		}
+	} else {
+		if err := m.instanceRepo.Update(instance); err != nil {
+			slog.Error("failed to update instance status after deploy",
+				"instance_id", instanceID, "error", err)
+		}
+		if err := m.logRepo.Update(m.shutdownCtx, deployLog); err != nil {
+			slog.Error("failed to update deployment log after deploy",
+				"log_id", deployLog.ID, "error", err)
+		}
 	}
 
 	// Broadcast final status.
@@ -458,14 +489,28 @@ func (m *Manager) StopWithCharts(ctx context.Context, instance *models.StackInst
 		Status:          models.DeployLogRunning,
 		StartedAt:       now,
 	}
-	if err := m.logRepo.Create(ctx, deployLog); err != nil {
-		return "", fmt.Errorf("creating deployment log: %w", err)
-	}
-
 	instance.Status = models.StackStatusStopping
 	instance.ErrorMessage = ""
-	if err := m.instanceRepo.Update(instance); err != nil {
-		return "", fmt.Errorf("updating instance status: %w", err)
+
+	if m.txRunner != nil {
+		if err := m.txRunner.RunInTx(func(repos database.TxRepos) error {
+			if err := repos.DeploymentLog.Create(ctx, deployLog); err != nil {
+				return fmt.Errorf("creating deployment log: %w", err)
+			}
+			if err := repos.StackInstance.Update(instance); err != nil {
+				return fmt.Errorf("updating instance status: %w", err)
+			}
+			return nil
+		}); err != nil {
+			return "", err
+		}
+	} else {
+		if err := m.logRepo.Create(ctx, deployLog); err != nil {
+			return "", fmt.Errorf("creating deployment log: %w", err)
+		}
+		if err := m.instanceRepo.Update(instance); err != nil {
+			return "", fmt.Errorf("updating instance status: %w", err)
+		}
 	}
 
 	m.broadcastStatus(instance.ID, models.StackStatusStopping, logID)
@@ -583,14 +628,28 @@ func (m *Manager) finalizeStop(instanceID string, deployLog *models.DeploymentLo
 		)
 	}
 
-	if err := m.instanceRepo.Update(instance); err != nil {
-		slog.Error("failed to update instance status after stop",
-			"instance_id", instanceID, "error", err)
-	}
-
-	if err := m.logRepo.Update(m.shutdownCtx, deployLog); err != nil {
-		slog.Error("failed to update deployment log after stop",
-			"log_id", deployLog.ID, "error", err)
+	if m.txRunner != nil {
+		if err := m.txRunner.RunInTx(func(repos database.TxRepos) error {
+			if err := repos.StackInstance.Update(instance); err != nil {
+				return fmt.Errorf("updating instance: %w", err)
+			}
+			if err := repos.DeploymentLog.Update(context.Background(), deployLog); err != nil {
+				return fmt.Errorf("updating deploy log: %w", err)
+			}
+			return nil
+		}); err != nil {
+			slog.Error("failed to finalize stop atomically",
+				"instance_id", instanceID, "error", err)
+		}
+	} else {
+		if err := m.instanceRepo.Update(instance); err != nil {
+			slog.Error("failed to update instance status after stop",
+				"instance_id", instanceID, "error", err)
+		}
+		if err := m.logRepo.Update(m.shutdownCtx, deployLog); err != nil {
+			slog.Error("failed to update deployment log after stop",
+				"log_id", deployLog.ID, "error", err)
+		}
 	}
 
 	if stopErr != nil {
@@ -683,14 +742,28 @@ func (m *Manager) Clean(ctx context.Context, instance *models.StackInstance, cha
 		Status:          models.DeployLogRunning,
 		StartedAt:       now,
 	}
-	if err := m.logRepo.Create(ctx, deployLog); err != nil {
-		return "", fmt.Errorf("creating deployment log: %w", err)
-	}
-
 	instance.Status = models.StackStatusCleaning
 	instance.ErrorMessage = ""
-	if err := m.instanceRepo.Update(instance); err != nil {
-		return "", fmt.Errorf("updating instance status: %w", err)
+
+	if m.txRunner != nil {
+		if err := m.txRunner.RunInTx(func(repos database.TxRepos) error {
+			if err := repos.DeploymentLog.Create(ctx, deployLog); err != nil {
+				return fmt.Errorf("creating deployment log: %w", err)
+			}
+			if err := repos.StackInstance.Update(instance); err != nil {
+				return fmt.Errorf("updating instance status: %w", err)
+			}
+			return nil
+		}); err != nil {
+			return "", err
+		}
+	} else {
+		if err := m.logRepo.Create(ctx, deployLog); err != nil {
+			return "", fmt.Errorf("creating deployment log: %w", err)
+		}
+		if err := m.instanceRepo.Update(instance); err != nil {
+			return "", fmt.Errorf("updating instance status: %w", err)
+		}
 	}
 
 	m.broadcastStatus(instance.ID, models.StackStatusCleaning, logID)
@@ -844,14 +917,28 @@ func (m *Manager) finalizeClean(instanceID string, deployLog *models.DeploymentL
 		)
 	}
 
-	if err := m.instanceRepo.Update(instance); err != nil {
-		slog.Error("failed to update instance status after clean",
-			"instance_id", instanceID, "error", err)
-	}
-
-	if err := m.logRepo.Update(m.shutdownCtx, deployLog); err != nil {
-		slog.Error("failed to update deployment log after clean",
-			"log_id", deployLog.ID, "error", err)
+	if m.txRunner != nil {
+		if err := m.txRunner.RunInTx(func(repos database.TxRepos) error {
+			if err := repos.StackInstance.Update(instance); err != nil {
+				return fmt.Errorf("updating instance: %w", err)
+			}
+			if err := repos.DeploymentLog.Update(context.Background(), deployLog); err != nil {
+				return fmt.Errorf("updating deploy log: %w", err)
+			}
+			return nil
+		}); err != nil {
+			slog.Error("failed to finalize clean atomically",
+				"instance_id", instanceID, "error", err)
+		}
+	} else {
+		if err := m.instanceRepo.Update(instance); err != nil {
+			slog.Error("failed to update instance status after clean",
+				"instance_id", instanceID, "error", err)
+		}
+		if err := m.logRepo.Update(m.shutdownCtx, deployLog); err != nil {
+			slog.Error("failed to update deployment log after clean",
+				"log_id", deployLog.ID, "error", err)
+		}
 	}
 
 	if cleanErr != nil {

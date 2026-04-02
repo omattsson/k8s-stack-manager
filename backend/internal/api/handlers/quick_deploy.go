@@ -9,6 +9,7 @@ import (
 
 	"backend/internal/api/middleware"
 	"backend/internal/cluster"
+	"backend/internal/database"
 	"backend/internal/deployer"
 	"backend/internal/helm"
 	"backend/internal/k8s"
@@ -39,6 +40,7 @@ type QuickDeployHandler struct {
 	registry           *cluster.Registry
 	k8sWatcher         *k8s.Watcher
 	defaultTTLMinutes  int
+	txRunner           database.TxRunner
 }
 
 // NewQuickDeployHandler creates a new QuickDeployHandler with all required dependencies.
@@ -78,6 +80,11 @@ func NewQuickDeployHandler(
 		k8sWatcher:         k8sWatcher,
 		defaultTTLMinutes:  defaultTTLMinutes,
 	}
+}
+
+// SetTxRunner sets an optional TxRunner for transactional multi-entity operations.
+func (h *QuickDeployHandler) SetTxRunner(tx database.TxRunner) {
+	h.txRunner = tx
 }
 
 // quickDeployRequest is the request body for Quick Deploy.
@@ -155,7 +162,7 @@ func (h *QuickDeployHandler) QuickDeploy(c *gin.Context) {
 	username := middleware.GetUsernameFromContext(c)
 	now := time.Now().UTC()
 
-	// 2. Create definition from template.
+	// 2. Build definition and instance models up front for validation before persistence.
 	def := &models.StackDefinition{
 		ID:                    uuid.New().String(),
 		Name:                  req.InstanceName,
@@ -168,32 +175,18 @@ func (h *QuickDeployHandler) QuickDeploy(c *gin.Context) {
 		UpdatedAt:             now,
 	}
 
-	if err := h.definitionRepo.Create(def); err != nil {
-		status, message := mapError(err, entityStackDefinition)
-		c.JSON(status, gin.H{"error": message})
-		return
-	}
-
-	// cleanupDefinition removes the definition created above (best-effort).
-	cleanupDefinition := func() {
-		if delErr := h.definitionRepo.Delete(def.ID); delErr != nil {
-			slog.Error("Quick deploy rollback: failed to delete definition",
-				"definition_id", def.ID, "error", delErr)
-		}
-	}
-
-	// Copy template charts → chart configs.
+	// Fetch template charts (needed for chart config creation).
 	templateCharts, err := h.templateChartRepo.ListByTemplate(tmpl.ID)
 	if err != nil {
-		cleanupDefinition()
 		status, message := mapError(err, "Template charts")
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
 
-	var chartConfigs []models.ChartConfig
+	// Pre-build chart config models.
+	chartConfigs := make([]models.ChartConfig, 0, len(templateCharts))
 	for _, tc := range templateCharts {
-		cc := models.ChartConfig{
+		chartConfigs = append(chartConfigs, models.ChartConfig{
 			ID:                uuid.New().String(),
 			StackDefinitionID: def.ID,
 			ChartName:         tc.ChartName,
@@ -204,35 +197,10 @@ func (h *QuickDeployHandler) QuickDeploy(c *gin.Context) {
 			DefaultValues:     tc.DefaultValues,
 			DeployOrder:       tc.DeployOrder,
 			CreatedAt:         now,
-		}
-		if err := h.chartConfigRepo.Create(&cc); err != nil {
-			// Clean up already-created chart configs + the definition.
-			for _, created := range chartConfigs {
-				if delErr := h.chartConfigRepo.Delete(created.ID); delErr != nil {
-					slog.Error("Quick deploy rollback: failed to delete chart config",
-						"chart_config_id", created.ID, "error", delErr)
-				}
-			}
-			cleanupDefinition()
-			status, message := mapError(err, entityChartConfig)
-			c.JSON(status, gin.H{"error": message})
-			return
-		}
-		chartConfigs = append(chartConfigs, cc)
+		})
 	}
 
-	// cleanupAll removes all resources created so far (best-effort).
-	cleanupAll := func() {
-		for _, cc := range chartConfigs {
-			if delErr := h.chartConfigRepo.Delete(cc.ID); delErr != nil {
-				slog.Error("Quick deploy rollback: failed to delete chart config",
-					"chart_config_id", cc.ID, "error", delErr)
-			}
-		}
-		cleanupDefinition()
-	}
-
-	// 3. Create stack instance.
+	// 3. Build and validate stack instance (no DB writes yet).
 	inst := &models.StackInstance{
 		ID:                uuid.New().String(),
 		StackDefinitionID: def.ID,
@@ -253,12 +221,10 @@ func (h *QuickDeployHandler) QuickDeploy(c *gin.Context) {
 		ttl = *req.TTLMinutes
 	}
 	if ttl < 0 {
-		cleanupAll()
 		c.JSON(http.StatusBadRequest, gin.H{"error": "TTL must not be negative"})
 		return
 	}
 	if ttl > MaxTTLMinutes {
-		cleanupAll()
 		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("TTL must not exceed %d minutes (30 days)", MaxTTLMinutes)})
 		return
 	}
@@ -273,13 +239,11 @@ func (h *QuickDeployHandler) QuickDeploy(c *gin.Context) {
 		if inst.ClusterID == "" {
 			resolved, resolveErr := h.registry.ResolveClusterID("")
 			if resolveErr != nil {
-				cleanupAll()
 				c.JSON(http.StatusBadRequest, gin.H{"error": "No default cluster configured; specify cluster_id"})
 				return
 			}
 			inst.ClusterID = resolved
 		} else if !h.registry.ClusterExists(inst.ClusterID) {
-			cleanupAll()
 			c.JSON(http.StatusBadRequest, gin.H{"error": "Unknown cluster_id"})
 			return
 		}
@@ -289,7 +253,6 @@ func (h *QuickDeployHandler) QuickDeploy(c *gin.Context) {
 	inst.Namespace = buildNamespace(inst.Name, username)
 
 	if err := inst.Validate(); err != nil {
-		cleanupAll()
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
@@ -297,7 +260,6 @@ func (h *QuickDeployHandler) QuickDeploy(c *gin.Context) {
 	// Check namespace uniqueness.
 	existingInst, nsErr := h.instanceRepo.FindByNamespace(inst.Namespace)
 	if nsErr != nil && !errors.Is(nsErr, dberrors.ErrNotFound) {
-		cleanupAll()
 		slog.Error("Failed to check namespace uniqueness",
 			"namespace", inst.Namespace,
 			"error", nsErr,
@@ -306,7 +268,6 @@ func (h *QuickDeployHandler) QuickDeploy(c *gin.Context) {
 		return
 	}
 	if existingInst != nil {
-		cleanupAll()
 		suggestions := generateNameSuggestions(inst.Name)
 		c.JSON(http.StatusConflict, NamespaceConflictResponse{
 			Error:       "namespace already exists",
@@ -316,11 +277,72 @@ func (h *QuickDeployHandler) QuickDeploy(c *gin.Context) {
 		return
 	}
 
-	if err := h.instanceRepo.Create(inst); err != nil {
-		cleanupAll()
-		status, message := mapError(err, entityStackInstance)
-		c.JSON(status, gin.H{"error": message})
-		return
+	// Persist definition + chart configs + instance.
+	if h.txRunner != nil {
+		// Transactional path — all creates are atomic; rollback handles cleanup.
+		txErr := h.txRunner.RunInTx(func(repos database.TxRepos) error {
+			if err := repos.StackDefinition.Create(def); err != nil {
+				return err
+			}
+			for i := range chartConfigs {
+				if err := repos.ChartConfig.Create(&chartConfigs[i]); err != nil {
+					return err
+				}
+			}
+			return repos.StackInstance.Create(inst)
+		})
+		if txErr != nil {
+			slog.Error("Quick deploy transaction failed", "error", txErr)
+			status, message := mapError(txErr, entityStackInstance)
+			c.JSON(status, gin.H{"error": message})
+			return
+		}
+	} else {
+		// Non-transactional fallback (Azure Table Storage) with best-effort cleanup.
+		if err := h.definitionRepo.Create(def); err != nil {
+			status, message := mapError(err, entityStackDefinition)
+			c.JSON(status, gin.H{"error": message})
+			return
+		}
+
+		cleanupDefinition := func() {
+			if delErr := h.definitionRepo.Delete(def.ID); delErr != nil {
+				slog.Error("Quick deploy rollback: failed to delete definition",
+					"definition_id", def.ID, "error", delErr)
+			}
+		}
+
+		for i := range chartConfigs {
+			if err := h.chartConfigRepo.Create(&chartConfigs[i]); err != nil {
+				for j := 0; j < i; j++ {
+					if delErr := h.chartConfigRepo.Delete(chartConfigs[j].ID); delErr != nil {
+						slog.Error("Quick deploy rollback: failed to delete chart config",
+							"chart_config_id", chartConfigs[j].ID, "error", delErr)
+					}
+				}
+				cleanupDefinition()
+				status, message := mapError(err, entityChartConfig)
+				c.JSON(status, gin.H{"error": message})
+				return
+			}
+		}
+
+		cleanupAll := func() {
+			for _, cc := range chartConfigs {
+				if delErr := h.chartConfigRepo.Delete(cc.ID); delErr != nil {
+					slog.Error("Quick deploy rollback: failed to delete chart config",
+						"chart_config_id", cc.ID, "error", delErr)
+				}
+			}
+			cleanupDefinition()
+		}
+
+		if err := h.instanceRepo.Create(inst); err != nil {
+			cleanupAll()
+			status, message := mapError(err, entityStackInstance)
+			c.JSON(status, gin.H{"error": message})
+			return
+		}
 	}
 
 	// 4. Set branch overrides.

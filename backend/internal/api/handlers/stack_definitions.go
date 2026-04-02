@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"backend/internal/api/middleware"
+	"backend/internal/database"
 	"backend/internal/models"
 
 	"github.com/gin-gonic/gin"
@@ -59,6 +60,7 @@ type DefinitionHandler struct {
 	templateRepo      models.StackTemplateRepository
 	templateChartRepo models.TemplateChartConfigRepository
 	versionRepo       models.TemplateVersionRepository
+	txRunner          database.TxRunner
 }
 
 // NewDefinitionHandler creates a new DefinitionHandler.
@@ -95,6 +97,11 @@ func NewDefinitionHandlerWithVersions(
 		templateChartRepo: templateChartRepo,
 		versionRepo:       versionRepo,
 	}
+}
+
+// SetTxRunner sets an optional TxRunner for transactional multi-entity operations.
+func (h *DefinitionHandler) SetTxRunner(tx database.TxRunner) {
+	h.txRunner = tx
 }
 
 // ListDefinitions godoc
@@ -406,17 +413,10 @@ func (h *DefinitionHandler) ImportDefinition(c *gin.Context) {
 		return
 	}
 
-	if err := h.definitionRepo.Create(&def); err != nil {
-		slog.Error("failed to create imported definition", "error", err)
-		status, message := mapError(err, entityStackDefinition)
-		c.JSON(status, gin.H{"error": message})
-		return
-	}
-
-	// Create chart configs linked to the new definition.
-	createdCharts := make([]models.ChartConfig, 0, len(bundle.Charts))
+	// Build chart models up front so both paths share the same data.
+	chartModels := make([]models.ChartConfig, 0, len(bundle.Charts))
 	for _, ch := range bundle.Charts {
-		chart := models.ChartConfig{
+		chartModels = append(chartModels, models.ChartConfig{
 			ID:                uuid.New().String(),
 			StackDefinitionID: def.ID,
 			ChartName:         ch.ChartName,
@@ -427,19 +427,53 @@ func (h *DefinitionHandler) ImportDefinition(c *gin.Context) {
 			DefaultValues:     ch.DefaultValues,
 			DeployOrder:       ch.DeployOrder,
 			CreatedAt:         now,
-		}
+		})
+	}
 
-		if err := h.chartRepo.Create(&chart); err != nil {
-			slog.Error("failed to create imported chart config",
-				"chart_name", ch.ChartName,
-				"definition_id", def.ID,
-				"error", err,
-			)
-			status, message := mapError(err, entityChartConfig)
+	var createdCharts []models.ChartConfig
+
+	if h.txRunner != nil {
+		// Transactional path — definition + all charts are created atomically.
+		txErr := h.txRunner.RunInTx(func(repos database.TxRepos) error {
+			if err := repos.StackDefinition.Create(&def); err != nil {
+				return err
+			}
+			for i := range chartModels {
+				if err := repos.ChartConfig.Create(&chartModels[i]); err != nil {
+					return err
+				}
+			}
+			createdCharts = chartModels
+			return nil
+		})
+		if txErr != nil {
+			slog.Error("failed to import definition", "error", txErr)
+			status, message := mapError(txErr, entityStackDefinition)
 			c.JSON(status, gin.H{"error": message})
 			return
 		}
-		createdCharts = append(createdCharts, chart)
+	} else {
+		// Non-transactional fallback (Azure Table Storage).
+		if err := h.definitionRepo.Create(&def); err != nil {
+			slog.Error("failed to create imported definition", "error", err)
+			status, message := mapError(err, entityStackDefinition)
+			c.JSON(status, gin.H{"error": message})
+			return
+		}
+
+		for i := range chartModels {
+			if err := h.chartRepo.Create(&chartModels[i]); err != nil {
+				slog.Error("failed to create imported chart config",
+					"chart_name", chartModels[i].ChartName,
+					"definition_id", def.ID,
+					"error", err,
+				)
+				status, message := mapError(err, entityChartConfig)
+				c.JSON(status, gin.H{"error": message})
+				return
+			}
+		}
+		createdCharts = chartModels
 	}
 
 	c.JSON(http.StatusCreated, gin.H{

@@ -33,6 +33,7 @@ type RepositorySet struct {
 	UserFavorite          models.UserFavoriteRepository
 	CleanupPolicy         models.CleanupPolicyRepository
 	Cluster               models.ClusterRepository
+	TxRunner              TxRunner
 }
 
 // NewRepositorySet creates all domain-specific repositories based on config.
@@ -127,6 +128,17 @@ func newAzureRepositorySet(cfg *config.Config) (*RepositorySet, error) {
 		return nil, fmt.Errorf("cluster repository: %w", err)
 	}
 
+	noOpTx := NewNoOpTxRunner(TxRepos{
+		StackDefinition: definitionRepo,
+		ChartConfig:     chartConfigRepo,
+		StackInstance:   instanceRepo,
+		StackTemplate:   templateRepo,
+		TemplateChart:   templateChartRepo,
+		ValueOverride:   overrideRepo,
+		BranchOverride:  branchOverrideRepo,
+		DeploymentLog:   deployLogRepo,
+	})
+
 	return &RepositorySet{
 		User:                  userRepo,
 		StackTemplate:         templateRepo,
@@ -147,6 +159,7 @@ func newAzureRepositorySet(cfg *config.Config) (*RepositorySet, error) {
 		UserFavorite:          favoriteRepo,
 		CleanupPolicy:         cleanupPolicyRepo,
 		Cluster:               clusterRepo,
+		TxRunner:              noOpTx,
 	}, nil
 }
 
@@ -198,5 +211,6 @@ func newGORMRepositorySet(cfg *config.Config, db *gorm.DB) (*RepositorySet, erro
 		SharedValues:          sharedValuesRepo,
 		UserFavorite:          userFavoriteRepo,
 		CleanupPolicy:         cleanupPolicyRepo,
+		TxRunner:              NewGORMTxRunner(db),
 	}, nil
 }
