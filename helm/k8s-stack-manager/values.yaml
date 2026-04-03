@@ -61,6 +61,7 @@ backend:
     OIDC_AUTO_PROVISION: "true"
     OIDC_LOCAL_AUTH: "true"
     OIDC_STATE_TTL: "5m"
+    ENABLE_SWAGGER: "false"
 
   # Secret environment variables (stored in Secret).
   secrets:

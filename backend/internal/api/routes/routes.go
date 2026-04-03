@@ -1,6 +1,7 @@
 package routes
 
 import (
+	_ "backend/docs"
 	"backend/internal/api/handlers"
 	"backend/internal/api/middleware"
 	"backend/internal/cluster"
@@ -13,6 +14,8 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	swaggerFiles "github.com/swaggo/files"
+	ginSwagger "github.com/swaggo/gin-swagger"
 	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
 )
 
@@ -99,6 +102,11 @@ func SetupRoutes(router *gin.Engine, deps Deps) *handlers.RateLimiter {
 	// WebSocket endpoint (top-level, outside rate limiter — connections are long-lived)
 	wsHandler := handlers.NewWebSocketHandler(deps.Hub, cfg.CORS.AllowedOrigins, cfg.Auth.JWTSecret)
 	router.GET("/ws", wsHandler.HandleWebSocket)
+
+	// Swagger UI (only when explicitly enabled via ENABLE_SWAGGER=true)
+	if cfg.App.EnableSwagger {
+		router.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
+	}
 
 	// Health check endpoints
 	healthGroup := router.Group("/health")

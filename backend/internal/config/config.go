@@ -132,6 +132,7 @@ type AppConfig struct {
 	Environment               string
 	DefaultInstanceTTLMinutes int
 	Debug                     bool
+	EnableSwagger             bool
 }
 
 // DatabaseConfig holds database-specific configuration
@@ -419,6 +420,7 @@ func loadAppConfig() AppConfig {
 		Environment:               getEnv("GO_ENV", "development"),
 		DefaultInstanceTTLMinutes: int(getEnvInt32("DEFAULT_INSTANCE_TTL_MINUTES", 0)),
 		Debug:                     getEnvBool("APP_DEBUG", true),
+		EnableSwagger:             getEnvBool("ENABLE_SWAGGER", false),
 	}
 }
 
