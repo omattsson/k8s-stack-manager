@@ -129,26 +129,70 @@ func (r *GORMStackDefinitionRepository) ListByTemplate(templateID string) ([]mod
 }
 
 // CountByTemplateIDs returns a map of template ID to definition count for the
-// given template IDs in a single query, eliminating N+1 lookups.
+// given template IDs in a single query, eliminating N+1 lookups. IDs are
+// processed in chunks of 500 to stay within MySQL's IN clause limits.
 func (r *GORMStackDefinitionRepository) CountByTemplateIDs(templateIDs []string) (map[string]int, error) {
 	if len(templateIDs) == 0 {
 		return make(map[string]int), nil
 	}
-	type countRow struct {
-		SourceTemplateID string
-		Count            int
+	result := make(map[string]int, len(templateIDs))
+	const chunkSize = 500
+	for start := 0; start < len(templateIDs); start += chunkSize {
+		end := start + chunkSize
+		if end > len(templateIDs) {
+			end = len(templateIDs)
+		}
+		chunk := templateIDs[start:end]
+
+		type countRow struct {
+			SourceTemplateID string
+			Count            int
+		}
+		var rows []countRow
+		if err := r.db.Model(&models.StackDefinition{}).
+			Select("source_template_id, COUNT(*) as count").
+			Where("source_template_id IN ?", chunk).
+			Group("source_template_id").
+			Find(&rows).Error; err != nil {
+			return nil, dberrors.NewDatabaseError("count_by_template_ids", err)
+		}
+		for _, row := range rows {
+			result[row.SourceTemplateID] = row.Count
+		}
 	}
-	var rows []countRow
-	if err := r.db.Model(&models.StackDefinition{}).
-		Select("source_template_id, COUNT(*) as count").
-		Where("source_template_id IN ?", templateIDs).
-		Group("source_template_id").
-		Find(&rows).Error; err != nil {
-		return nil, dberrors.NewDatabaseError("count_by_template_ids", err)
+	return result, nil
+}
+
+// ListIDsByTemplateIDs returns a map of template ID to definition IDs, selecting
+// only the id and source_template_id columns for efficiency. IDs are processed
+// in chunks of 500 to stay within MySQL's IN clause limits.
+func (r *GORMStackDefinitionRepository) ListIDsByTemplateIDs(templateIDs []string) (map[string][]string, error) {
+	if len(templateIDs) == 0 {
+		return make(map[string][]string), nil
 	}
-	result := make(map[string]int, len(rows))
-	for _, row := range rows {
-		result[row.SourceTemplateID] = row.Count
+	result := make(map[string][]string, len(templateIDs))
+	const chunkSize = 500
+	for start := 0; start < len(templateIDs); start += chunkSize {
+		end := start + chunkSize
+		if end > len(templateIDs) {
+			end = len(templateIDs)
+		}
+		chunk := templateIDs[start:end]
+
+		type idRow struct {
+			ID               string
+			SourceTemplateID string
+		}
+		var rows []idRow
+		if err := r.db.Model(&models.StackDefinition{}).
+			Select("id, source_template_id").
+			Where("source_template_id IN ?", chunk).
+			Find(&rows).Error; err != nil {
+			return nil, dberrors.NewDatabaseError("list_ids_by_template_ids", err)
+		}
+		for _, row := range rows {
+			result[row.SourceTemplateID] = append(result[row.SourceTemplateID], row.ID)
+		}
 	}
 	return result, nil
 }

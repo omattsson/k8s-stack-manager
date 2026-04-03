@@ -133,10 +133,20 @@ func (m *mockInstanceRepo) CountByClusterAndOwner(clusterID, ownerID string) (in
 	return count, nil
 }
 
-func (m *mockInstanceRepo) ListPaged(_, _ int) ([]models.StackInstance, int, error) { return nil, 0, nil }
-func (m *mockInstanceRepo) CountAll() (int, error)                              { return 0, nil }
-func (m *mockInstanceRepo) CountByStatus(_ string) (int, error)                 { return 0, nil }
-func (m *mockInstanceRepo) ExistsByDefinitionAndStatus(_, _ string) (bool, error) { return false, nil }
+func (m *mockInstanceRepo) ListPaged(_, _ int) ([]models.StackInstance, int, error) {
+	return nil, 0, nil
+}
+func (m *mockInstanceRepo) CountAll() (int, error)                                  { return 0, nil }
+func (m *mockInstanceRepo) CountByStatus(_ string) (int, error)                     { return 0, nil }
+func (m *mockInstanceRepo) ExistsByDefinitionAndStatus(_, _ string) (bool, error)   { return false, nil }
+func (m *mockInstanceRepo) CountByDefinitionIDs(_ []string) (map[string]int, error) { return nil, nil }
+func (m *mockInstanceRepo) CountByOwnerIDs(_ []string) (map[string]int, error)      { return nil, nil }
+func (m *mockInstanceRepo) ListIDsByDefinitionIDs(_ []string) (map[string][]string, error) {
+	return nil, nil
+}
+func (m *mockInstanceRepo) ListIDsByOwnerIDs(_ []string) (map[string][]string, error) {
+	return nil, nil
+}
 
 func (m *mockInstanceRepo) ListExpired() ([]*models.StackInstance, error) {
 	return nil, nil
@@ -270,6 +280,10 @@ func (m *mockDeployLogRepo) SummarizeBatch(ctx context.Context, instanceIDs []st
 		result[id] = summary
 	}
 	return result, nil
+}
+
+func (m *mockDeployLogRepo) CountByAction(_ context.Context, _ string) (int, error) {
+	return 0, nil
 }
 
 // ---- broadcaster mock ----

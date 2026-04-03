@@ -14,7 +14,6 @@ import (
 const tableStackInstances = "StackInstances"
 const filterPKGlobal = odataPartitionKeyEq + pkGlobal + "'"
 
-
 // StackInstanceRepository implements models.StackInstanceRepository for Azure Table Storage.
 // Partition key: "global", Row key: instance ID.
 type StackInstanceRepository struct {
@@ -417,6 +416,26 @@ func (r *StackInstanceRepository) ListExpired() ([]*models.StackInstance, error)
 		results = append(results, e.toModel())
 	}
 	return results, nil
+}
+
+// CountByDefinitionIDs is not implemented for Azure Table Storage.
+func (r *StackInstanceRepository) CountByDefinitionIDs(_ []string) (map[string]int, error) {
+	return nil, dberrors.NewDatabaseError("count_by_definition_ids", dberrors.ErrNotImplemented)
+}
+
+// CountByOwnerIDs is not implemented for Azure Table Storage.
+func (r *StackInstanceRepository) CountByOwnerIDs(_ []string) (map[string]int, error) {
+	return nil, dberrors.NewDatabaseError("count_by_owner_ids", dberrors.ErrNotImplemented)
+}
+
+// ListIDsByDefinitionIDs is not implemented for Azure Table Storage.
+func (r *StackInstanceRepository) ListIDsByDefinitionIDs(_ []string) (map[string][]string, error) {
+	return nil, dberrors.NewDatabaseError("list_ids_by_definition_ids", dberrors.ErrNotImplemented)
+}
+
+// ListIDsByOwnerIDs is not implemented for Azure Table Storage.
+func (r *StackInstanceRepository) ListIDsByOwnerIDs(_ []string) (map[string][]string, error) {
+	return nil, dberrors.NewDatabaseError("list_ids_by_owner_ids", dberrors.ErrNotImplemented)
 }
 
 func stackInstanceToEntity(i *models.StackInstance) map[string]interface{} {

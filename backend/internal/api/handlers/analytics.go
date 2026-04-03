@@ -2,22 +2,17 @@ package handlers
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"net/http"
 	"time"
 
 	"backend/internal/cache"
 	"backend/internal/models"
+	"backend/pkg/dberrors"
 
 	"github.com/gin-gonic/gin"
 )
-
-// Analytics handler message constants.
-const (
-	msgAnalyticsListInstances = "analytics: failed to list instances"
-)
-
-
 
 // ---- Response types ----
 
@@ -59,6 +54,12 @@ type UserStats struct {
 // analyticsCacheTTL is the default TTL for analytics response caching.
 const analyticsCacheTTL = 30 * time.Second
 
+// userLogInfo aggregates deploy log stats per user for analytics computation.
+type userLogInfo struct {
+	deployCount int
+	lastActive  *time.Time
+}
+
 // AnalyticsHandler provides read-only aggregation endpoints over existing data.
 type AnalyticsHandler struct {
 	templateRepo   models.StackTemplateRepository
@@ -89,6 +90,11 @@ func NewAnalyticsHandler(
 	}
 }
 
+// isNotImplemented returns true if the error wraps dberrors.ErrNotImplemented.
+func isNotImplemented(err error) bool {
+	return errors.Is(err, dberrors.ErrNotImplemented)
+}
+
 // GetOverview godoc
 // @Summary     Get platform overview statistics
 // @Description Returns high-level aggregate counts (templates, definitions, instances, deploys, users)
@@ -117,9 +123,23 @@ func (h *AnalyticsHandler) GetOverview(c *gin.Context) {
 		return
 	}
 
-	instances, err := h.instanceRepo.List()
+	totalInstances, err := h.instanceRepo.CountAll()
 	if err != nil {
-		slog.Error(msgAnalyticsListInstances, "error", err)
+		slog.Error("analytics: failed to count instances", "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
+		return
+	}
+
+	runningInstances, err := h.instanceRepo.CountByStatus(models.StackStatusRunning)
+	if err != nil {
+		slog.Error("analytics: failed to count running instances", "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
+		return
+	}
+
+	totalDeploys, err := h.computeOverviewDeploys(c.Request.Context())
+	if err != nil {
+		slog.Error("analytics: failed to count deploys", "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
 		return
 	}
@@ -131,26 +151,11 @@ func (h *AnalyticsHandler) GetOverview(c *gin.Context) {
 		return
 	}
 
-	ctx := c.Request.Context()
-	summaries := h.collectDeploySummaries(ctx, instances)
-
-	totalDeploys := 0
-	for _, s := range summaries {
-		totalDeploys += s.DeployCount
-	}
-
-	running := 0
-	for _, inst := range instances {
-		if inst.Status == models.StackStatusRunning {
-			running++
-		}
-	}
-
 	stats := &OverviewStats{
 		TotalTemplates:   int(templateCount),
 		TotalDefinitions: int(definitionCount),
-		TotalInstances:   len(instances),
-		RunningInstances: running,
+		TotalInstances:   totalInstances,
+		RunningInstances: runningInstances,
 		TotalDeploys:     totalDeploys,
 		TotalUsers:       int(userCount),
 	}
@@ -179,41 +184,358 @@ func (h *AnalyticsHandler) GetTemplateStats(c *gin.Context) {
 		return
 	}
 
-	// Fetch all definitions and group by SourceTemplateID.
-	allDefinitions, err := h.definitionRepo.List()
+	templateIDs := make([]string, len(templates))
+	for i, t := range templates {
+		templateIDs[i] = t.ID
+	}
+
+	result, err := h.computeTemplateStats(c.Request.Context(), templates, templateIDs)
 	if err != nil {
-		slog.Error("analytics: failed to list definitions", "error", err)
+		slog.Error("analytics: failed to compute template stats", "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
 		return
 	}
-	defsByTemplate := make(map[string][]models.StackDefinition)
-	for _, d := range allDefinitions {
-		if d.SourceTemplateID != "" {
-			defsByTemplate[d.SourceTemplateID] = append(defsByTemplate[d.SourceTemplateID], d)
+
+	h.templateCache.Set("templates", result)
+	c.JSON(http.StatusOK, result)
+}
+
+// GetUserStats godoc
+// @Summary     Get per-user usage statistics
+// @Description Returns usage analytics per user including instance count, deploy count, and last active time (admin only)
+// @Tags        analytics
+// @Produce     json
+// @Success     200 {array}  UserStats
+// @Failure     500 {object} map[string]string
+// @Router      /api/v1/analytics/users [get]
+func (h *AnalyticsHandler) GetUserStats(c *gin.Context) {
+	users, err := h.userRepo.List()
+	if err != nil {
+		slog.Error("analytics: failed to list users", "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
+		return
+	}
+
+	ownerIDs := make([]string, len(users))
+	for i, u := range users {
+		ownerIDs[i] = u.ID
+	}
+
+	result, err := h.computeUserStats(c.Request.Context(), users, ownerIDs)
+	if err != nil {
+		slog.Error("analytics: failed to compute user stats", "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
+		return
+	}
+
+	c.JSON(http.StatusOK, result)
+}
+
+// computeOverviewDeploys returns the total deploy count, falling back to
+// per-instance summarization if the optimized CountByAction is not implemented.
+func (h *AnalyticsHandler) computeOverviewDeploys(ctx context.Context) (int, error) {
+	count, err := h.deployLogRepo.CountByAction(ctx, models.DeployActionDeploy)
+	if err != nil && isNotImplemented(err) {
+		return h.computeOverviewDeploysFallback(ctx)
+	}
+	return count, err
+}
+
+// computeOverviewDeploysFallback lists all instances and sums deploy counts
+// from batch summaries.
+func (h *AnalyticsHandler) computeOverviewDeploysFallback(ctx context.Context) (int, error) {
+	instances, err := h.instanceRepo.List()
+	if err != nil {
+		return 0, err
+	}
+	instanceIDs := make([]string, len(instances))
+	for i, inst := range instances {
+		instanceIDs[i] = inst.ID
+	}
+	summaries := h.collectDeploySummariesByIDs(ctx, instanceIDs)
+	total := 0
+	for _, s := range summaries {
+		total += s.DeployCount
+	}
+	return total, nil
+}
+
+// computeTemplateStats tries the optimized aggregation path first. If any
+// repository method returns ErrNotImplemented it falls back to List-based
+// computation.
+func (h *AnalyticsHandler) computeTemplateStats(ctx context.Context, templates []models.StackTemplate, templateIDs []string) ([]TemplateStats, error) {
+	result, err := h.computeTemplateStatsOptimized(ctx, templates, templateIDs)
+	if err != nil && isNotImplemented(err) {
+		return h.getTemplateStatsFallback(ctx, templates)
+	}
+	return result, err
+}
+
+// computeTemplateStatsOptimized uses batch aggregation queries. Returns an
+// error (potentially wrapping ErrNotImplemented) if any repository call is
+// unsupported, so the caller can fall back.
+func (h *AnalyticsHandler) computeTemplateStatsOptimized(ctx context.Context, templates []models.StackTemplate, templateIDs []string) ([]TemplateStats, error) {
+	defCountsByTemplate, err := h.definitionRepo.CountByTemplateIDs(templateIDs)
+	if err != nil {
+		return nil, err
+	}
+
+	defIDsByTemplate, err := h.definitionRepo.ListIDsByTemplateIDs(templateIDs)
+	if err != nil {
+		return nil, err
+	}
+
+	var allDefIDs []string
+	for _, ids := range defIDsByTemplate {
+		allDefIDs = append(allDefIDs, ids...)
+	}
+
+	instanceCountsByDef, err := h.instanceRepo.CountByDefinitionIDs(allDefIDs)
+	if err != nil {
+		return nil, err
+	}
+
+	instanceIDsByDef, err := h.instanceRepo.ListIDsByDefinitionIDs(allDefIDs)
+	if err != nil {
+		return nil, err
+	}
+
+	var allInstanceIDs []string
+	for _, ids := range instanceIDsByDef {
+		allInstanceIDs = append(allInstanceIDs, ids...)
+	}
+
+	summaries, err := h.collectDeploySummariesOrError(ctx, allInstanceIDs)
+	if err != nil {
+		return nil, err
+	}
+
+	result := make([]TemplateStats, 0, len(templates))
+	for _, tmpl := range templates {
+		defIDs := defIDsByTemplate[tmpl.ID]
+
+		instanceCount := 0
+		deployCount := 0
+		successCount := 0
+		errorCount := 0
+
+		for _, defID := range defIDs {
+			instanceCount += instanceCountsByDef[defID]
+			for _, instID := range instanceIDsByDef[defID] {
+				if s, ok := summaries[instID]; ok {
+					deployCount += s.DeployCount
+					successCount += s.SuccessCount
+					errorCount += s.ErrorCount
+				}
+			}
+		}
+
+		successRate := 0.0
+		if deployCount > 0 {
+			successRate = float64(successCount) / float64(deployCount) * 100
+		}
+
+		result = append(result, TemplateStats{
+			TemplateID:      tmpl.ID,
+			TemplateName:    tmpl.Name,
+			Category:        tmpl.Category,
+			IsPublished:     tmpl.IsPublished,
+			DefinitionCount: defCountsByTemplate[tmpl.ID],
+			InstanceCount:   instanceCount,
+			DeployCount:     deployCount,
+			SuccessCount:    successCount,
+			ErrorCount:      errorCount,
+			SuccessRate:     successRate,
+		})
+	}
+	return result, nil
+}
+
+// computeUserStats tries the optimized path first, falling back if any
+// repository call returns ErrNotImplemented.
+func (h *AnalyticsHandler) computeUserStats(ctx context.Context, users []models.User, ownerIDs []string) ([]UserStats, error) {
+	result, err := h.computeUserStatsOptimized(ctx, users, ownerIDs)
+	if err != nil && isNotImplemented(err) {
+		return h.computeUserStatsFallback(ctx, users)
+	}
+	return result, err
+}
+
+// computeUserStatsOptimized uses batch aggregation queries.
+func (h *AnalyticsHandler) computeUserStatsOptimized(ctx context.Context, users []models.User, ownerIDs []string) ([]UserStats, error) {
+	instanceCountsByOwner, err := h.instanceRepo.CountByOwnerIDs(ownerIDs)
+	if err != nil {
+		return nil, err
+	}
+
+	instanceIDsByOwner, err := h.instanceRepo.ListIDsByOwnerIDs(ownerIDs)
+	if err != nil {
+		return nil, err
+	}
+
+	var allInstanceIDs []string
+	for _, ids := range instanceIDsByOwner {
+		allInstanceIDs = append(allInstanceIDs, ids...)
+	}
+
+	summaries, err := h.collectDeploySummariesOrError(ctx, allInstanceIDs)
+	if err != nil {
+		return nil, err
+	}
+
+	userLogs := make(map[string]*userLogInfo)
+
+	for ownerID, instIDs := range instanceIDsByOwner {
+		for _, instID := range instIDs {
+			s, ok := summaries[instID]
+			if !ok {
+				continue
+			}
+			info := userLogs[ownerID]
+			if info == nil {
+				info = &userLogInfo{}
+				userLogs[ownerID] = info
+			}
+			info.deployCount += s.DeployCount
+			if s.LastDeployAt != nil && (info.lastActive == nil || s.LastDeployAt.After(*info.lastActive)) {
+				cp := *s.LastDeployAt
+				info.lastActive = &cp
+			}
 		}
 	}
 
-	// Fetch all instances and group by StackDefinitionID.
-	allInstances, err := h.instanceRepo.List()
+	return h.buildUserStatsResult(users, instanceCountsByOwner, userLogs), nil
+}
+
+// computeUserStatsFallback loads all instances, groups by owner in memory,
+// and builds per-user stats.
+func (h *AnalyticsHandler) computeUserStatsFallback(ctx context.Context, users []models.User) ([]UserStats, error) {
+	instances, err := h.instanceRepo.List()
 	if err != nil {
-		slog.Error(msgAnalyticsListInstances, "error", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
-		return
+		return nil, err
 	}
+
+	instanceCountsByOwner := make(map[string]int)
+	instanceIDsByOwner := make(map[string][]string)
+	for _, inst := range instances {
+		instanceCountsByOwner[inst.OwnerID]++
+		instanceIDsByOwner[inst.OwnerID] = append(instanceIDsByOwner[inst.OwnerID], inst.ID)
+	}
+
+	var allInstanceIDs []string
+	for _, ids := range instanceIDsByOwner {
+		allInstanceIDs = append(allInstanceIDs, ids...)
+	}
+
+	summaries := h.collectDeploySummariesByIDs(ctx, allInstanceIDs)
+
+	userLogs := make(map[string]*userLogInfo)
+
+	for ownerID, instIDs := range instanceIDsByOwner {
+		for _, instID := range instIDs {
+			s, ok := summaries[instID]
+			if !ok {
+				continue
+			}
+			info := userLogs[ownerID]
+			if info == nil {
+				info = &userLogInfo{}
+				userLogs[ownerID] = info
+			}
+			info.deployCount += s.DeployCount
+			if s.LastDeployAt != nil && (info.lastActive == nil || s.LastDeployAt.After(*info.lastActive)) {
+				cp := *s.LastDeployAt
+				info.lastActive = &cp
+			}
+		}
+	}
+
+	return h.buildUserStatsResult(users, instanceCountsByOwner, userLogs), nil
+}
+
+// buildUserStatsResult assembles the final []UserStats from the pre-computed maps.
+func (h *AnalyticsHandler) buildUserStatsResult(users []models.User, instanceCounts map[string]int, userLogs map[string]*userLogInfo) []UserStats {
+	result := make([]UserStats, 0, len(users))
+	for _, u := range users {
+		info := userLogs[u.ID]
+		var deployCount int
+		var lastActive *time.Time
+		if info != nil {
+			deployCount = info.deployCount
+			lastActive = info.lastActive
+		}
+		result = append(result, UserStats{
+			UserID:        u.ID,
+			Username:      u.Username,
+			InstanceCount: instanceCounts[u.ID],
+			DeployCount:   deployCount,
+			LastActive:    lastActive,
+		})
+	}
+	return result
+}
+
+// collectDeploySummariesByIDs fetches lightweight deploy log summaries for the
+// given instance IDs in a single batched query and returns them indexed by instance ID.
+// Errors are logged and swallowed (returns empty map) — use collectDeploySummariesOrError
+// in optimized paths where ErrNotImplemented must propagate.
+func (h *AnalyticsHandler) collectDeploySummariesByIDs(ctx context.Context, instanceIDs []string) map[string]*models.DeployLogSummary {
+	if len(instanceIDs) == 0 {
+		return make(map[string]*models.DeployLogSummary)
+	}
+
+	summaries, err := h.deployLogRepo.SummarizeBatch(ctx, instanceIDs)
+	if err != nil {
+		slog.Error("analytics: failed to batch-summarize deploy logs", "count", len(instanceIDs), "error", err)
+		return make(map[string]*models.DeployLogSummary)
+	}
+	return summaries
+}
+
+// collectDeploySummariesOrError is like collectDeploySummariesByIDs but
+// propagates all errors (including ErrNotImplemented) to the caller.
+func (h *AnalyticsHandler) collectDeploySummariesOrError(ctx context.Context, instanceIDs []string) (map[string]*models.DeployLogSummary, error) {
+	if len(instanceIDs) == 0 {
+		return make(map[string]*models.DeployLogSummary), nil
+	}
+	return h.deployLogRepo.SummarizeBatch(ctx, instanceIDs)
+}
+
+// getTemplateStatsFallback computes per-template stats using List()-based
+// approach when aggregation methods return ErrNotImplemented (Azure Table Storage).
+func (h *AnalyticsHandler) getTemplateStatsFallback(ctx context.Context, templates []models.StackTemplate) ([]TemplateStats, error) {
+	definitions, err := h.definitionRepo.List()
+	if err != nil {
+		return nil, err
+	}
+	instances, err := h.instanceRepo.List()
+	if err != nil {
+		return nil, err
+	}
+
+	// Group definitions by template.
+	defsByTemplate := make(map[string][]models.StackDefinition)
+	for _, d := range definitions {
+		defsByTemplate[d.SourceTemplateID] = append(defsByTemplate[d.SourceTemplateID], d)
+	}
+
+	// Group instances by definition.
 	instancesByDef := make(map[string][]models.StackInstance)
-	for _, inst := range allInstances {
+	for _, inst := range instances {
 		instancesByDef[inst.StackDefinitionID] = append(instancesByDef[inst.StackDefinitionID], inst)
 	}
 
-	// Collect lightweight deploy summaries for all instances (avoid N+1 per template).
-	ctx := c.Request.Context()
-	summaries := h.collectDeploySummaries(ctx, allInstances)
+	// Collect all instance IDs for batch deploy log summary.
+	instanceIDs := make([]string, len(instances))
+	for i, inst := range instances {
+		instanceIDs[i] = inst.ID
+	}
+	summaries := h.collectDeploySummariesByIDs(ctx, instanceIDs)
 
 	result := make([]TemplateStats, 0, len(templates))
 	for _, tmpl := range templates {
 		defs := defsByTemplate[tmpl.ID]
 
-		// Count instances and collect deploy log stats across all definitions for this template.
 		instanceCount := 0
 		deployCount := 0
 		successCount := 0
@@ -249,105 +571,5 @@ func (h *AnalyticsHandler) GetTemplateStats(c *gin.Context) {
 			SuccessRate:     successRate,
 		})
 	}
-
-	h.templateCache.Set("templates", result)
-	c.JSON(http.StatusOK, result)
-}
-
-// GetUserStats godoc
-// @Summary     Get per-user usage statistics
-// @Description Returns usage analytics per user including instance count, deploy count, and last active time (admin only)
-// @Tags        analytics
-// @Produce     json
-// @Success     200 {array}  UserStats
-// @Failure     500 {object} map[string]string
-// @Router      /api/v1/analytics/users [get]
-func (h *AnalyticsHandler) GetUserStats(c *gin.Context) {
-	users, err := h.userRepo.List()
-	if err != nil {
-		slog.Error("analytics: failed to list users", "error", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
-		return
-	}
-
-	allInstances, err := h.instanceRepo.List()
-	if err != nil {
-		slog.Error(msgAnalyticsListInstances, "error", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
-		return
-	}
-
-	// Group instances by owner.
-	instancesByOwner := make(map[string][]models.StackInstance)
-	for _, inst := range allInstances {
-		instancesByOwner[inst.OwnerID] = append(instancesByOwner[inst.OwnerID], inst)
-	}
-
-	// Collect lightweight deploy summaries for all instances.
-	ctx := c.Request.Context()
-	summaries := h.collectDeploySummaries(ctx, allInstances)
-
-	// Build per-user summary index.
-	type userLogInfo struct {
-		deployCount int
-		lastActive  *time.Time
-	}
-	userLogs := make(map[string]*userLogInfo)
-	for _, inst := range allInstances {
-		s, ok := summaries[inst.ID]
-		if !ok {
-			continue
-		}
-		info := userLogs[inst.OwnerID]
-		if info == nil {
-			info = &userLogInfo{}
-			userLogs[inst.OwnerID] = info
-		}
-		info.deployCount += s.DeployCount
-		if s.LastDeployAt != nil && (info.lastActive == nil || s.LastDeployAt.After(*info.lastActive)) {
-			cp := *s.LastDeployAt
-			info.lastActive = &cp
-		}
-	}
-
-	result := make([]UserStats, 0, len(users))
-	for _, u := range users {
-		info := userLogs[u.ID]
-		var deployCount int
-		var lastActive *time.Time
-		if info != nil {
-			deployCount = info.deployCount
-			lastActive = info.lastActive
-		}
-
-		result = append(result, UserStats{
-			UserID:        u.ID,
-			Username:      u.Username,
-			InstanceCount: len(instancesByOwner[u.ID]),
-			DeployCount:   deployCount,
-			LastActive:    lastActive,
-		})
-	}
-
-	c.JSON(http.StatusOK, result)
-}
-
-// collectDeploySummaries fetches lightweight deploy log summaries for all
-// instances in a single batched query and returns them indexed by instance ID.
-func (h *AnalyticsHandler) collectDeploySummaries(ctx context.Context, instances []models.StackInstance) map[string]*models.DeployLogSummary {
-	if len(instances) == 0 {
-		return make(map[string]*models.DeployLogSummary)
-	}
-
-	ids := make([]string, len(instances))
-	for i, inst := range instances {
-		ids[i] = inst.ID
-	}
-
-	summaries, err := h.deployLogRepo.SummarizeBatch(ctx, ids)
-	if err != nil {
-		slog.Error("analytics: failed to batch-summarize deploy logs", "count", len(ids), "error", err)
-		return make(map[string]*models.DeployLogSummary)
-	}
-	return summaries
+	return result, nil
 }

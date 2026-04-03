@@ -307,3 +307,16 @@ func (r *GORMDeploymentLogRepository) summarizeBatchChunk(
 
 	return nil
 }
+
+// CountByAction returns the total number of deployment log entries with the
+// given action within the last 90 days (matching the SummarizeByInstance cutoff).
+func (r *GORMDeploymentLogRepository) CountByAction(ctx context.Context, action string) (int, error) {
+	cutoff := time.Now().UTC().Add(-90 * 24 * time.Hour)
+	var count int64
+	if err := r.db.WithContext(ctx).Model(&models.DeploymentLog{}).
+		Where("action = ? AND started_at >= ?", action, cutoff).
+		Count(&count).Error; err != nil {
+		return 0, dberrors.NewDatabaseError("count_by_action", err)
+	}
+	return int(count), nil
+}

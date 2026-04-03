@@ -175,6 +175,10 @@ func (m *MockDeploymentLogRepository) SummarizeBatch(ctx context.Context, instan
 	return result, nil
 }
 
+func (m *MockDeploymentLogRepository) CountByAction(_ context.Context, _ string) (int, error) {
+	return 0, nil
+}
+
 func (m *MockDeploymentLogRepository) SetError(err error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

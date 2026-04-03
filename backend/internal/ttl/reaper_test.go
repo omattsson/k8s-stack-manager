@@ -69,10 +69,20 @@ func (m *mockInstanceRepo) CountByClusterAndOwner(string, string) (int, error) {
 	return 0, nil
 }
 
-func (m *mockInstanceRepo) ListPaged(_, _ int) ([]models.StackInstance, int, error) { return nil, 0, nil }
-func (m *mockInstanceRepo) CountAll() (int, error)                              { return 0, nil }
-func (m *mockInstanceRepo) CountByStatus(_ string) (int, error)                 { return 0, nil }
-func (m *mockInstanceRepo) ExistsByDefinitionAndStatus(_, _ string) (bool, error) { return false, nil }
+func (m *mockInstanceRepo) ListPaged(_, _ int) ([]models.StackInstance, int, error) {
+	return nil, 0, nil
+}
+func (m *mockInstanceRepo) CountAll() (int, error)                                  { return 0, nil }
+func (m *mockInstanceRepo) CountByStatus(_ string) (int, error)                     { return 0, nil }
+func (m *mockInstanceRepo) ExistsByDefinitionAndStatus(_, _ string) (bool, error)   { return false, nil }
+func (m *mockInstanceRepo) CountByDefinitionIDs(_ []string) (map[string]int, error) { return nil, nil }
+func (m *mockInstanceRepo) CountByOwnerIDs(_ []string) (map[string]int, error)      { return nil, nil }
+func (m *mockInstanceRepo) ListIDsByDefinitionIDs(_ []string) (map[string][]string, error) {
+	return nil, nil
+}
+func (m *mockInstanceRepo) ListIDsByOwnerIDs(_ []string) (map[string][]string, error) {
+	return nil, nil
+}
 
 func (m *mockInstanceRepo) ListExpired() ([]*models.StackInstance, error) {
 	m.mu.RLock()

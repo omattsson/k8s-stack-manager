@@ -465,10 +465,20 @@ func (m *mockInstanceRepo) CountByClusterAndOwner(_, _ string) (int, error) {
 	return 0, nil
 }
 
-func (m *mockInstanceRepo) ListPaged(_, _ int) ([]models.StackInstance, int, error) { return nil, 0, nil }
-func (m *mockInstanceRepo) CountAll() (int, error)                              { return 0, nil }
-func (m *mockInstanceRepo) CountByStatus(_ string) (int, error)                 { return 0, nil }
-func (m *mockInstanceRepo) ExistsByDefinitionAndStatus(_, _ string) (bool, error) { return false, nil }
+func (m *mockInstanceRepo) ListPaged(_, _ int) ([]models.StackInstance, int, error) {
+	return nil, 0, nil
+}
+func (m *mockInstanceRepo) CountAll() (int, error)                                  { return 0, nil }
+func (m *mockInstanceRepo) CountByStatus(_ string) (int, error)                     { return 0, nil }
+func (m *mockInstanceRepo) ExistsByDefinitionAndStatus(_, _ string) (bool, error)   { return false, nil }
+func (m *mockInstanceRepo) CountByDefinitionIDs(_ []string) (map[string]int, error) { return nil, nil }
+func (m *mockInstanceRepo) CountByOwnerIDs(_ []string) (map[string]int, error)      { return nil, nil }
+func (m *mockInstanceRepo) ListIDsByDefinitionIDs(_ []string) (map[string][]string, error) {
+	return nil, nil
+}
+func (m *mockInstanceRepo) ListIDsByOwnerIDs(_ []string) (map[string][]string, error) {
+	return nil, nil
+}
 
 func (m *mockInstanceRepo) ListExpired() ([]*models.StackInstance, error) {
 	return nil, nil
@@ -744,11 +754,11 @@ func TestBackfillInstanceClusterIDs(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name            string
-		instances       []*models.StackInstance
-		clusterID       string
-		wantBackfilled  int
-		wantUntouched   int
+		name           string
+		instances      []*models.StackInstance
+		clusterID      string
+		wantBackfilled int
+		wantUntouched  int
 	}{
 		{
 			name: "backfills instances with empty cluster ID",
@@ -762,11 +772,11 @@ func TestBackfillInstanceClusterIDs(t *testing.T) {
 			wantUntouched:  1,
 		},
 		{
-			name:            "no instances to backfill",
-			instances:       []*models.StackInstance{},
-			clusterID:       "new-default",
-			wantBackfilled:  0,
-			wantUntouched:   0,
+			name:           "no instances to backfill",
+			instances:      []*models.StackInstance{},
+			clusterID:      "new-default",
+			wantBackfilled: 0,
+			wantUntouched:  0,
 		},
 		{
 			name: "all instances already have cluster ID",
@@ -844,13 +854,13 @@ func TestBackfillInstanceClusterIDs_UpdateError(t *testing.T) {
 
 type stubPolicyRepo struct{}
 
-func (s *stubPolicyRepo) Create(_ *models.CleanupPolicy) error        { return nil }
+func (s *stubPolicyRepo) Create(_ *models.CleanupPolicy) error { return nil }
 func (s *stubPolicyRepo) FindByID(_ string) (*models.CleanupPolicy, error) {
 	return nil, fmt.Errorf("not found")
 }
-func (s *stubPolicyRepo) Update(_ *models.CleanupPolicy) error        { return nil }
-func (s *stubPolicyRepo) Delete(_ string) error                       { return nil }
-func (s *stubPolicyRepo) List() ([]models.CleanupPolicy, error)       { return nil, nil }
+func (s *stubPolicyRepo) Update(_ *models.CleanupPolicy) error         { return nil }
+func (s *stubPolicyRepo) Delete(_ string) error                        { return nil }
+func (s *stubPolicyRepo) List() ([]models.CleanupPolicy, error)        { return nil, nil }
 func (s *stubPolicyRepo) ListEnabled() ([]models.CleanupPolicy, error) { return nil, nil }
 
 // ---- gracefulShutdown tests ----

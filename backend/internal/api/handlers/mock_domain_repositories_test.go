@@ -577,6 +577,25 @@ func (m *MockStackDefinitionRepository) Count() (int64, error) {
 	return int64(len(m.items)), nil
 }
 
+func (m *MockStackDefinitionRepository) ListIDsByTemplateIDs(templateIDs []string) (map[string][]string, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.err != nil {
+		return nil, m.err
+	}
+	wanted := make(map[string]struct{}, len(templateIDs))
+	for _, id := range templateIDs {
+		wanted[id] = struct{}{}
+	}
+	result := make(map[string][]string, len(templateIDs))
+	for _, d := range m.items {
+		if _, ok := wanted[d.SourceTemplateID]; ok {
+			result[d.SourceTemplateID] = append(result[d.SourceTemplateID], d.ID)
+		}
+	}
+	return result, nil
+}
+
 func (m *MockStackDefinitionRepository) SetError(err error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -881,6 +900,82 @@ func (m *MockStackInstanceRepository) ListExpired() ([]*models.StackInstance, er
 		}
 	}
 	return out, nil
+}
+
+func (m *MockStackInstanceRepository) CountByDefinitionIDs(definitionIDs []string) (map[string]int, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.err != nil {
+		return nil, m.err
+	}
+	wanted := make(map[string]struct{}, len(definitionIDs))
+	for _, id := range definitionIDs {
+		wanted[id] = struct{}{}
+	}
+	result := make(map[string]int, len(definitionIDs))
+	for _, i := range m.items {
+		if _, ok := wanted[i.StackDefinitionID]; ok {
+			result[i.StackDefinitionID]++
+		}
+	}
+	return result, nil
+}
+
+func (m *MockStackInstanceRepository) CountByOwnerIDs(ownerIDs []string) (map[string]int, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.err != nil {
+		return nil, m.err
+	}
+	wanted := make(map[string]struct{}, len(ownerIDs))
+	for _, id := range ownerIDs {
+		wanted[id] = struct{}{}
+	}
+	result := make(map[string]int, len(ownerIDs))
+	for _, i := range m.items {
+		if _, ok := wanted[i.OwnerID]; ok {
+			result[i.OwnerID]++
+		}
+	}
+	return result, nil
+}
+
+func (m *MockStackInstanceRepository) ListIDsByDefinitionIDs(definitionIDs []string) (map[string][]string, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.err != nil {
+		return nil, m.err
+	}
+	wanted := make(map[string]struct{}, len(definitionIDs))
+	for _, id := range definitionIDs {
+		wanted[id] = struct{}{}
+	}
+	result := make(map[string][]string, len(definitionIDs))
+	for _, i := range m.items {
+		if _, ok := wanted[i.StackDefinitionID]; ok {
+			result[i.StackDefinitionID] = append(result[i.StackDefinitionID], i.ID)
+		}
+	}
+	return result, nil
+}
+
+func (m *MockStackInstanceRepository) ListIDsByOwnerIDs(ownerIDs []string) (map[string][]string, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.err != nil {
+		return nil, m.err
+	}
+	wanted := make(map[string]struct{}, len(ownerIDs))
+	for _, id := range ownerIDs {
+		wanted[id] = struct{}{}
+	}
+	result := make(map[string][]string, len(ownerIDs))
+	for _, i := range m.items {
+		if _, ok := wanted[i.OwnerID]; ok {
+			result[i.OwnerID] = append(result[i.OwnerID], i.ID)
+		}
+	}
+	return result, nil
 }
 
 func (m *MockStackInstanceRepository) SetError(err error) {
