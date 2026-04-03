@@ -17,7 +17,12 @@ let sharedWs: ReconnectingWebSocket | null = null;
 
 function getSharedWs(): ReconnectingWebSocket {
   if (!sharedWs) {
-    const ws = new ReconnectingWebSocket(`${WS_BASE_URL}/ws`);
+    let url = `${WS_BASE_URL}/ws`;
+    const token = localStorage.getItem('token');
+    if (token) {
+      url += `?token=${encodeURIComponent(token)}`;
+    }
+    const ws = new ReconnectingWebSocket(url);
     ws.onmessage = (event: MessageEvent) => {
       try {
         const msg = JSON.parse(event.data) as WsMessage;
@@ -41,6 +46,21 @@ function subscribe(handler: MessageHandler): () => void {
       sharedWs = null;
     }
   };
+}
+
+/**
+ * Reconnect the shared WebSocket with a fresh token.
+ * Call this after login or token refresh so the connection uses
+ * the latest JWT from localStorage.
+ */
+export function reconnectWebSocket(): void {
+  if (sharedWs) {
+    sharedWs.close();
+    sharedWs = null;
+  }
+  if (listeners.size > 0) {
+    getSharedWs();
+  }
 }
 
 /**

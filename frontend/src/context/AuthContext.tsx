@@ -1,6 +1,7 @@
 import { createContext, useContext, useState, useEffect, useCallback, useMemo } from 'react';
 import type { ReactNode } from 'react';
 import { authService, oidcService } from '../api/client';
+import { reconnectWebSocket } from '../hooks/useWebSocket';
 import type { User, JwtPayload } from '../types';
 
 interface OidcConfig {
@@ -93,11 +94,13 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     const response = await authService.login({ username, password });
     localStorage.setItem('token', response.token);
     setUser(response.user);
+    reconnectWebSocket();
   }, []);
 
   const logout = useCallback(() => {
     localStorage.removeItem('token');
     setUser(null);
+    reconnectWebSocket();
   }, []);
 
   const loginWithOIDC = useCallback(async (redirect?: string) => {
@@ -113,6 +116,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       setAuthProvider(payload.auth_provider ?? null);
       setAuthEmail(payload.email ?? null);
     }
+    reconnectWebSocket();
   }, []);
 
   const isAuthenticated = user !== null;
