@@ -39,6 +39,9 @@ spec:
         {{- include "k8s-stack-manager.frontend.selectorLabels" . | nindent 8 }}
       annotations:
         checksum/nginx-config: {{ include (print $.Template.BasePath "/frontend/configmap.yaml") . | sha256sum }}
+        {{- if semverCompare "<1.30-0" .Capabilities.KubeVersion.Version }}
+        container.apparmor.security.beta.kubernetes.io/nginx: runtime/default
+        {{- end }}
     spec:
       {{- if .Values.frontend.serviceAccount.create }}
       serviceAccountName: {{ include "k8s-stack-manager.fullname" . }}-frontend
@@ -91,8 +94,10 @@ spec:
             runAsNonRoot: true
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
+            {{- if semverCompare ">=1.30-0" .Capabilities.KubeVersion.Version }}
             appArmorProfile:
               type: RuntimeDefault
+            {{- end }}
             capabilities:
               drop:
                 - ALL

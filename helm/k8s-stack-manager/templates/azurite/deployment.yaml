@@ -6,7 +6,7 @@ metadata:
   labels:
     {{- include "k8s-stack-manager.azurite.labels" . | nindent 4 }}
 spec:
-  replicas: {{ .Values.azurite.replicas | default 1 }}
+  replicas: {{ .Values.azurite.replicas }}
   selector:
     matchLabels:
       {{- include "k8s-stack-manager.azurite.selectorLabels" . | nindent 6 }}
@@ -14,6 +14,10 @@ spec:
     metadata:
       labels:
         {{- include "k8s-stack-manager.azurite.selectorLabels" . | nindent 8 }}
+      {{- if semverCompare "<1.30-0" .Capabilities.KubeVersion.Version }}
+      annotations:
+        container.apparmor.security.beta.kubernetes.io/azurite: runtime/default
+      {{- end }}
     spec:
       securityContext:
         runAsNonRoot: true
@@ -29,8 +33,10 @@ spec:
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
+            {{- if semverCompare ">=1.30-0" .Capabilities.KubeVersion.Version }}
             appArmorProfile:
               type: RuntimeDefault
+            {{- end }}
             capabilities:
               drop:
                 - ALL

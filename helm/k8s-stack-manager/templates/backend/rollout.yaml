@@ -40,6 +40,9 @@ spec:
       annotations:
         checksum/config: {{ include (print $.Template.BasePath "/backend/configmap.yaml") . | sha256sum }}
         checksum/secret: {{ include (print $.Template.BasePath "/backend/secret.yaml") . | sha256sum }}
+        {{- if semverCompare "<1.30-0" .Capabilities.KubeVersion.Version }}
+        container.apparmor.security.beta.kubernetes.io/backend: runtime/default
+        {{- end }}
     spec:
       {{- if .Values.backend.serviceAccount.create }}
       serviceAccountName: {{ include "k8s-stack-manager.fullname" . }}-backend
@@ -94,8 +97,10 @@ spec:
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
+            {{- if semverCompare ">=1.30-0" .Capabilities.KubeVersion.Version }}
             appArmorProfile:
               type: RuntimeDefault
+            {{- end }}
             capabilities:
               drop:
                 - ALL
