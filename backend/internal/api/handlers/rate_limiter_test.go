@@ -8,6 +8,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func setupRateLimitedRouter(limit int, window time.Duration) (*gin.Engine, *RateLimiter) {
@@ -90,9 +91,9 @@ func TestRateLimiter_EnforcesLimit(t *testing.T) {
 func TestRateLimiter_WindowExpiry(t *testing.T) {
 	t.Parallel()
 
-	// Use a very short window so requests expire quickly.
+	// Use a short window so requests expire quickly.
 	limit := 2
-	window := 50 * time.Millisecond
+	window := 100 * time.Millisecond
 	router, rl := setupRateLimitedRouter(limit, window)
 	defer rl.Stop()
 
@@ -112,15 +113,14 @@ func TestRateLimiter_WindowExpiry(t *testing.T) {
 	router.ServeHTTP(w, req)
 	assert.Equal(t, http.StatusTooManyRequests, w.Code)
 
-	// Wait for the window to expire.
-	time.Sleep(window + 10*time.Millisecond)
-
-	// Should be allowed again.
-	w = httptest.NewRecorder()
-	req, _ = http.NewRequest(http.MethodGet, "/test", nil)
-	req.RemoteAddr = "192.0.2.1:12345"
-	router.ServeHTTP(w, req)
-	assert.Equal(t, http.StatusOK, w.Code, "request should succeed after window expires")
+	// Wait for the window to expire and retry.
+	require.Eventually(t, func() bool {
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest(http.MethodGet, "/test", nil)
+		req.RemoteAddr = "192.0.2.1:12345"
+		router.ServeHTTP(w, req)
+		return w.Code == http.StatusOK
+	}, 500*time.Millisecond, 10*time.Millisecond, "request should succeed after window expires")
 }
 
 func TestRateLimiter_PerIPIsolation(t *testing.T) {

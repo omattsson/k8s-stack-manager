@@ -88,6 +88,9 @@ type RateLimiters struct {
 
 // Stop terminates the background cleanup goroutines for all rate limiters.
 func (r *RateLimiters) Stop() {
+	if r == nil {
+		return
+	}
 	if r.API != nil {
 		r.API.Stop()
 	}
