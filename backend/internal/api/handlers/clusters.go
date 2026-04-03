@@ -108,10 +108,11 @@ func NewClusterHandlerWithQuotas(
 
 // ListClusters godoc
 // @Summary      List all clusters
-// @Description  Returns all registered clusters. Kubeconfig data is never included in responses.
+// @Description  Returns all registered clusters. Kubeconfig data is never included in responses. Admin/DevOps users receive full cluster details; other roles receive a summary (id, name, is_default only).
 // @Tags         clusters
 // @Produce      json
-// @Success      200  {array}   models.Cluster
+// @Success      200  {array}   models.Cluster         "Full details (admin/devops)"
+// @Success      200  {array}   handlers.ClusterSummary "Summary (other roles)"
 // @Failure      500  {object}  map[string]string
 // @Router       /api/v1/clusters [get]
 // @Security     BearerAuth
@@ -220,11 +221,12 @@ func (h *ClusterHandler) CreateCluster(c *gin.Context) {
 
 // GetCluster godoc
 // @Summary      Get cluster details
-// @Description  Returns a single cluster by ID. Kubeconfig data is never included.
+// @Description  Returns a single cluster by ID. Kubeconfig data is never included. Admin/DevOps users receive full cluster details; other roles receive a summary (id, name, is_default only).
 // @Tags         clusters
 // @Produce      json
 // @Param        id  path  string  true  "Cluster ID"
-// @Success      200  {object}  models.Cluster
+// @Success      200  {object}  models.Cluster         "Full details (admin/devops)"
+// @Success      200  {object}  handlers.ClusterSummary "Summary (other roles)"
 // @Failure      404  {object}  map[string]string
 // @Failure      500  {object}  map[string]string
 // @Router       /api/v1/clusters/{id} [get]
