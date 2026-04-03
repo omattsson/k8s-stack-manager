@@ -127,7 +127,7 @@ func TestListClusters(t *testing.T) {
 		}
 		_ = clusterRepo.Create(cl)
 
-		router := setupClusterRouter(clusterRepo, instanceRepo, nil, "user")
+		router := setupClusterRouter(clusterRepo, instanceRepo, nil, "admin")
 		w := httptest.NewRecorder()
 		req, _ := http.NewRequest(http.MethodGet, "/api/v1/clusters", nil)
 		router.ServeHTTP(w, req)
@@ -247,7 +247,7 @@ func TestGetCluster(t *testing.T) {
 		instanceRepo := NewMockStackInstanceRepository()
 		seedCluster(clusterRepo, "cl-1", "production")
 
-		router := setupClusterRouter(clusterRepo, instanceRepo, nil, "user")
+		router := setupClusterRouter(clusterRepo, instanceRepo, nil, "admin")
 		w := httptest.NewRecorder()
 		req, _ := http.NewRequest(http.MethodGet, "/api/v1/clusters/cl-1", nil)
 		router.ServeHTTP(w, req)
@@ -747,7 +747,7 @@ func TestGetCluster_Security(t *testing.T) {
 		}
 		_ = clusterRepo.Create(cl)
 
-		router := setupClusterRouter(clusterRepo, instanceRepo, nil, "user")
+		router := setupClusterRouter(clusterRepo, instanceRepo, nil, "admin")
 		w := httptest.NewRecorder()
 		req, _ := http.NewRequest(http.MethodGet, "/api/v1/clusters/cl-sec", nil)
 		router.ServeHTTP(w, req)
@@ -762,6 +762,134 @@ func TestGetCluster_Security(t *testing.T) {
 		assert.Contains(t, body, "secret-cluster")
 		assert.Contains(t, body, "eastus")
 	})
+}
+
+func TestListClusters_FieldRestriction(t *testing.T) {
+	t.Parallel()
+
+	seedRepo := func() *MockClusterRepository {
+		repo := NewMockClusterRepository()
+		_ = repo.Create(&models.Cluster{
+			ID:           "cl-1",
+			Name:         "production",
+			APIServerURL: "https://k8s.prod.example.com",
+			Region:       "eastus",
+			HealthStatus: models.ClusterHealthy,
+			IsDefault:    true,
+		})
+		return repo
+	}
+
+	tests := []struct {
+		name            string
+		role            string
+		expectFullField bool
+	}{
+		{"admin gets full details", "admin", true},
+		{"devops gets full details", "devops", true},
+		{"developer gets summary only", "user", false},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			clusterRepo := seedRepo()
+			instanceRepo := NewMockStackInstanceRepository()
+			router := setupClusterRouter(clusterRepo, instanceRepo, nil, tt.role)
+
+			w := httptest.NewRecorder()
+			req, _ := http.NewRequest(http.MethodGet, "/api/v1/clusters", nil)
+			router.ServeHTTP(w, req)
+
+			assert.Equal(t, http.StatusOK, w.Code)
+			body := w.Body.String()
+
+			// All roles see id, name, is_default.
+			assert.Contains(t, body, "cl-1")
+			assert.Contains(t, body, "production")
+
+			if tt.expectFullField {
+				assert.Contains(t, body, "api_server_url")
+				assert.Contains(t, body, "health_status")
+				assert.Contains(t, body, "eastus")
+			} else {
+				assert.NotContains(t, body, "api_server_url")
+				assert.NotContains(t, body, "health_status")
+				assert.NotContains(t, body, "eastus")
+				assert.NotContains(t, body, "region")
+
+				// Verify the response is an array of ClusterSummary.
+				var summaries []ClusterSummary
+				err := json.Unmarshal(w.Body.Bytes(), &summaries)
+				require.NoError(t, err)
+				require.Len(t, summaries, 1)
+				assert.Equal(t, "cl-1", summaries[0].ID)
+				assert.Equal(t, "production", summaries[0].Name)
+				assert.True(t, summaries[0].IsDefault)
+			}
+		})
+	}
+}
+
+func TestGetCluster_FieldRestriction(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name            string
+		role            string
+		expectFullField bool
+	}{
+		{"admin gets full details", "admin", true},
+		{"devops gets full details", "devops", true},
+		{"developer gets summary only", "user", false},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			clusterRepo := NewMockClusterRepository()
+			instanceRepo := NewMockStackInstanceRepository()
+			_ = clusterRepo.Create(&models.Cluster{
+				ID:           "cl-1",
+				Name:         "production",
+				APIServerURL: "https://k8s.prod.example.com",
+				Region:       "eastus",
+				HealthStatus: models.ClusterHealthy,
+				IsDefault:    true,
+			})
+			router := setupClusterRouter(clusterRepo, instanceRepo, nil, tt.role)
+
+			w := httptest.NewRecorder()
+			req, _ := http.NewRequest(http.MethodGet, "/api/v1/clusters/cl-1", nil)
+			router.ServeHTTP(w, req)
+
+			assert.Equal(t, http.StatusOK, w.Code)
+			body := w.Body.String()
+
+			assert.Contains(t, body, "cl-1")
+			assert.Contains(t, body, "production")
+
+			if tt.expectFullField {
+				assert.Contains(t, body, "api_server_url")
+				assert.Contains(t, body, "health_status")
+				assert.Contains(t, body, "eastus")
+			} else {
+				assert.NotContains(t, body, "api_server_url")
+				assert.NotContains(t, body, "health_status")
+				assert.NotContains(t, body, "eastus")
+				assert.NotContains(t, body, "region")
+
+				var summary ClusterSummary
+				err := json.Unmarshal(w.Body.Bytes(), &summary)
+				require.NoError(t, err)
+				assert.Equal(t, "cl-1", summary.ID)
+				assert.Equal(t, "production", summary.Name)
+				assert.True(t, summary.IsDefault)
+			}
+		})
+	}
 }
 
 func TestTestClusterConnection_ErrorPaths(t *testing.T) {

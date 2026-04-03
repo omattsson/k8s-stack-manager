@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"backend/internal/api/middleware"
 	"backend/internal/cluster"
 	"backend/internal/models"
 	"backend/pkg/dberrors"
@@ -16,6 +17,12 @@ import (
 	"github.com/gin-gonic/gin"
 	apimachineryversion "k8s.io/apimachinery/pkg/version"
 )
+
+// isPrivilegedRole returns true if the caller has admin or devops role.
+func isPrivilegedRole(c *gin.Context) bool {
+	role := middleware.GetRoleFromContext(c)
+	return role == "admin" || role == "devops"
+}
 
 // Cluster handler message constants.
 const (
@@ -29,6 +36,13 @@ const (
 
 // Slog structured logging key constants.
 const logKeyClusterID = "cluster_id"
+
+// ClusterSummary is the reduced response for non-admin/non-devops users.
+type ClusterSummary struct {
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	IsDefault bool   `json:"is_default"`
+}
 
 // CreateClusterRequest is the input payload for creating a cluster.
 type CreateClusterRequest struct {
@@ -106,6 +120,15 @@ func (h *ClusterHandler) ListClusters(c *gin.Context) {
 	if err != nil {
 		status, message := mapError(err, entityCluster)
 		c.JSON(status, gin.H{"error": message})
+		return
+	}
+
+	if !isPrivilegedRole(c) {
+		summaries := make([]ClusterSummary, len(clusters))
+		for i, cl := range clusters {
+			summaries[i] = ClusterSummary{ID: cl.ID, Name: cl.Name, IsDefault: cl.IsDefault}
+		}
+		c.JSON(http.StatusOK, summaries)
 		return
 	}
 
@@ -213,6 +236,11 @@ func (h *ClusterHandler) GetCluster(c *gin.Context) {
 	if err != nil {
 		status, message := mapError(err, entityCluster)
 		c.JSON(status, gin.H{"error": message})
+		return
+	}
+
+	if !isPrivilegedRole(c) {
+		c.JSON(http.StatusOK, ClusterSummary{ID: cl.ID, Name: cl.Name, IsDefault: cl.IsDefault})
 		return
 	}
 
