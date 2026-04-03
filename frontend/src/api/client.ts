@@ -448,13 +448,44 @@ export const templateService = {
 /** Stack definition service for managing Helm-based stack configurations. Maps to `/api/v1/stack-definitions`. */
 export const definitionService = {
   /**
-   * List all stack definitions.
+   * List stack definitions with optional server-side pagination.
+   * Unwraps the pagination envelope and returns only the data array.
+   * For full pagination metadata, use `listPaged()`.
+   * @param params - Optional pagination parameters (page, pageSize)
    * @returns Array of stack definitions
    * @see GET /api/v1/stack-definitions
    */
-  list: async (): Promise<StackDefinition[]> => {
+  list: async (params?: { page?: number; pageSize?: number }): Promise<StackDefinition[]> => {
     try {
-      const response = await api.get('/api/v1/stack-definitions');
+      const response = await api.get('/api/v1/stack-definitions', { params });
+      // The API returns { data: [...], total, page, pageSize }.
+      // Return the data array for backward compatibility with callers.
+      const body = response.data;
+      if (body && Array.isArray(body.data)) {
+        return body.data;
+      }
+      // Fallback for unexpected shapes.
+      return Array.isArray(body) ? body : [];
+    } catch (error) {
+      console.error('Failed to fetch definitions:', error);
+      throw error;
+    }
+  },
+
+  /**
+   * List stack definitions with full pagination metadata.
+   * @param params - Optional pagination parameters (page, pageSize)
+   * @returns Paginated response envelope with data, total, page, pageSize
+   * @see GET /api/v1/stack-definitions
+   */
+  listPaged: async (params?: { page?: number; pageSize?: number }): Promise<{
+    data: StackDefinition[];
+    total: number;
+    page: number;
+    pageSize: number;
+  }> => {
+    try {
+      const response = await api.get('/api/v1/stack-definitions', { params });
       return response.data;
     } catch (error) {
       console.error('Failed to fetch definitions:', error);
@@ -635,8 +666,10 @@ export const definitionService = {
 export const instanceService = {
   /**
    * List stack instances with server-side pagination.
+   * Unwraps the pagination envelope and returns only the data array.
+   * For full pagination metadata, use `listPaged()`.
    * @param params - Optional pagination parameters (page, pageSize)
-   * @returns Paginated response with data array, total count, page, and pageSize
+   * @returns Array of stack instances
    * @see GET /api/v1/stack-instances
    */
   list: async (params?: { page?: number; pageSize?: number }): Promise<StackInstance[]> => {

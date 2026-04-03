@@ -119,7 +119,7 @@ services:
   mysql:
     image: mysql:8.4
     container_name: app-mysql-${GO_ENV:-dev}
-    profiles: [mysql]
+    profiles: [mysql, mysql-otel]
     ports:
       - "${DB_PORT:-3306}:3306"
     environment:

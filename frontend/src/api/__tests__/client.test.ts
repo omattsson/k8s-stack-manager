@@ -294,15 +294,47 @@ describe('templateService', () => {
 // definitionService
 // ---------------------------------------------------------------------------
 describe('definitionService', () => {
-  it('list sends GET to /api/v1/stack-definitions', async () => {
+  it('list sends GET to /api/v1/stack-definitions and unwraps envelope', async () => {
+    const api = mockApi;
+    const defs = [{ id: '1', name: 'def-1' }];
+    api.get.mockResolvedValueOnce(mockResponse({ data: defs, total: 1, page: 1, pageSize: 25 }));
+
+    const result = await definitionService.list();
+
+    expect(api.get).toHaveBeenCalledWith('/api/v1/stack-definitions', { params: undefined });
+    expect(result).toEqual(defs);
+  });
+
+  it('list falls back to plain array response', async () => {
     const api = mockApi;
     const defs = [{ id: '1', name: 'def-1' }];
     api.get.mockResolvedValueOnce(mockResponse(defs));
 
     const result = await definitionService.list();
 
-    expect(api.get).toHaveBeenCalledWith('/api/v1/stack-definitions');
     expect(result).toEqual(defs);
+  });
+
+  it('list passes pagination params', async () => {
+    const api = mockApi;
+    const defs = [{ id: '1', name: 'def-1' }];
+    api.get.mockResolvedValueOnce(mockResponse({ data: defs, total: 1, page: 2, pageSize: 10 }));
+
+    const result = await definitionService.list({ page: 2, pageSize: 10 });
+
+    expect(api.get).toHaveBeenCalledWith('/api/v1/stack-definitions', { params: { page: 2, pageSize: 10 } });
+    expect(result).toEqual(defs);
+  });
+
+  it('listPaged returns full envelope', async () => {
+    const api = mockApi;
+    const envelope = { data: [{ id: '1', name: 'def-1' }], total: 1, page: 1, pageSize: 25 };
+    api.get.mockResolvedValueOnce(mockResponse(envelope));
+
+    const result = await definitionService.listPaged();
+
+    expect(api.get).toHaveBeenCalledWith('/api/v1/stack-definitions', { params: undefined });
+    expect(result).toEqual(envelope);
   });
 
   it('list throws on error', async () => {
