@@ -1,7 +1,6 @@
 package database
 
 import (
-	"errors"
 	"fmt"
 	"time"
 
@@ -74,9 +73,6 @@ func (r *GORMUserFavoriteRepository) IsFavorite(userID, entityType, entityID str
 	if err := r.db.Model(&models.UserFavorite{}).
 		Where("user_id = ? AND entity_type = ? AND entity_id = ?", userID, entityType, entityID).
 		Count(&count).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return false, nil
-		}
 		return false, dberrors.NewDatabaseError("is_favorite", err)
 	}
 	return count > 0, nil
