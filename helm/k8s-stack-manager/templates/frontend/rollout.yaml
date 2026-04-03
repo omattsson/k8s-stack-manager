@@ -46,7 +46,10 @@ spec:
       securityContext:
         runAsNonRoot: true
         runAsUser: 101
+        runAsGroup: 101
         fsGroup: 101
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: nginx
           image: {{ include "k8s-stack-manager.frontend.image" . }}
@@ -88,6 +91,8 @@ spec:
             runAsNonRoot: true
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
+            appArmorProfile:
+              type: RuntimeDefault
             capabilities:
               drop:
                 - ALL

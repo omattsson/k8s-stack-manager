@@ -4,6 +4,8 @@ metadata:
   name: {{ include "k8s-stack-manager.fullname" . }}-backend
   labels:
     {{- include "k8s-stack-manager.backend.labels" . | nindent 4 }}
+  annotations:
+    config.kubernetes.io/description: "Non-sensitive configuration only. Secrets are in the corresponding Secret resource."
 data:
   {{- range $key, $value := .Values.backend.env }}
   {{ $key }}: {{ $value | quote }}

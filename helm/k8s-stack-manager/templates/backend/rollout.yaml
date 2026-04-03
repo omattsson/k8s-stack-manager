@@ -47,7 +47,10 @@ spec:
       securityContext:
         runAsNonRoot: true
         runAsUser: 65532
+        runAsGroup: 65532
         fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: backend
           image: {{ include "k8s-stack-manager.backend.image" . }}
@@ -91,6 +94,8 @@ spec:
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
+            appArmorProfile:
+              type: RuntimeDefault
             capabilities:
               drop:
                 - ALL
