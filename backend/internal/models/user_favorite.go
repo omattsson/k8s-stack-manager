@@ -9,9 +9,9 @@ import (
 type UserFavorite struct {
 	CreatedAt  time.Time `json:"created_at"`
 	ID         string    `json:"id" gorm:"primaryKey;size:36"`
-	UserID     string    `json:"user_id" gorm:"size:36"`
-	EntityType string    `json:"entity_type" gorm:"size:50"`
-	EntityID   string    `json:"entity_id" gorm:"size:36"`
+	UserID     string    `json:"user_id" gorm:"size:36;uniqueIndex:idx_user_favorites_unique"`
+	EntityType string    `json:"entity_type" gorm:"size:50;uniqueIndex:idx_user_favorites_unique"`
+	EntityID   string    `json:"entity_id" gorm:"size:36;uniqueIndex:idx_user_favorites_unique"`
 }
 
 // Valid entity types for favorites.

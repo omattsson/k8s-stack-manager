@@ -627,6 +627,27 @@ func (d *Database) AutoMigrate() error {
 		},
 	})
 
+	// Migration 25: Add unique constraint on user_favorites (user + entity type + entity)
+	migrator.AddMigration(schema.Migration{
+		Version:     "20231201000025",
+		Name:        "add_user_favorites_unique_index",
+		Description: "Add unique constraint on user_id, entity_type, entity_id for user_favorites",
+		Up: func(tx *gorm.DB) error {
+			var count int64
+			tx.Raw(`SELECT COUNT(*) FROM information_schema.statistics 
+					WHERE table_schema = DATABASE() 
+					AND table_name = 'user_favorites' 
+					AND index_name = 'idx_user_favorites_unique'`).Scan(&count)
+			if count > 0 {
+				return nil
+			}
+			return tx.Exec(`CREATE UNIQUE INDEX idx_user_favorites_unique ON user_favorites (user_id, entity_type, entity_id)`).Error
+		},
+		Down: func(tx *gorm.DB) error {
+			return tx.Exec(`DROP INDEX idx_user_favorites_unique ON user_favorites`).Error
+		},
+	})
+
 	// Run migrations
 	if err := migrator.MigrateUp(); err != nil {
 		return err

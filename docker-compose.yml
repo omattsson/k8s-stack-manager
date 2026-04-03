@@ -75,7 +75,7 @@ services:
       - OTEL_SERVICE_NAME=${OTEL_SERVICE_NAME:-k8s-stack-manager}
       - OTEL_TRACE_SAMPLE_RATE=${OTEL_TRACE_SAMPLE_RATE:-1.0}
       # Rate limiting (req/min per IP; override with RATE_LIMIT env var)
-      - RATE_LIMIT=${RATE_LIMIT:-10000}
+      - RATE_LIMIT=${RATE_LIMIT:-100}
       # Stack defaults
       - DEFAULT_BRANCH=${DEFAULT_BRANCH:-master}
     depends_on:

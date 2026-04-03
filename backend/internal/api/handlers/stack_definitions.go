@@ -21,7 +21,6 @@ const (
 	msgDefinitionIDRequired = "Definition ID is required"
 )
 
-
 // supportedSchemaVersions lists the schema versions that the import endpoint can accept.
 var supportedSchemaVersions = map[string]bool{
 	"1.0": true,
@@ -29,10 +28,10 @@ var supportedSchemaVersions = map[string]bool{
 
 // DefinitionExportBundle is the portable JSON format for exporting/importing stack definitions.
 type DefinitionExportBundle struct {
-	SchemaVersion string                     `json:"schema_version"`
-	ExportedAt    time.Time                  `json:"exported_at"`
-	Definition    DefinitionExportData       `json:"definition"`
-	Charts        []ChartConfigExportData    `json:"charts"`
+	SchemaVersion string                  `json:"schema_version"`
+	ExportedAt    time.Time               `json:"exported_at"`
+	Definition    DefinitionExportData    `json:"definition"`
+	Charts        []ChartConfigExportData `json:"charts"`
 }
 
 // DefinitionExportData holds the exportable fields of a stack definition.
@@ -112,26 +111,43 @@ func (h *DefinitionHandler) SetTxRunner(tx database.TxRunner) {
 // @Produce     json
 // @Param       page     query    int false "Page number (default 1)"     minimum(1)
 // @Param       pageSize query    int false "Items per page (default 25, max 100)" minimum(1) maximum(100)
+// @Param       limit    query    int false "Max items to return (default 25, max 100)" minimum(1) maximum(100)
+// @Param       offset   query    int false "Number of items to skip (default 0)" minimum(0)
 // @Success     200 {object} map[string]interface{} "Paginated list with data, total, page, pageSize"
 // @Failure     500 {object} map[string]string
 // @Router      /api/v1/stack-definitions [get]
 func (h *DefinitionHandler) ListDefinitions(c *gin.Context) {
-	pageSize := 25
+	pageSize := listPageSizeDefault
+	offset := 0
+	page := 1
+
 	if ps := c.Query("pageSize"); ps != "" {
 		if v, err := strconv.Atoi(ps); err == nil && v > 0 {
 			pageSize = v
 		}
-		if pageSize > 100 {
-			pageSize = 100
+		if pageSize > listPageSizeMax {
+			pageSize = listPageSizeMax
 		}
 	}
-	page := 1
+
 	if p := c.Query("page"); p != "" {
 		if v, err := strconv.Atoi(p); err == nil && v > 0 {
 			page = v
 		}
+		offset = (page - 1) * pageSize
+	} else if l := c.Query("limit"); l != "" {
+		if v, err := strconv.Atoi(l); err == nil && v > 0 {
+			pageSize = v
+			if pageSize > listPageSizeMax {
+				pageSize = listPageSizeMax
+			}
+		}
+		if o := c.Query("offset"); o != "" {
+			if v, err := strconv.Atoi(o); err == nil && v >= 0 {
+				offset = v
+			}
+		}
 	}
-	offset := (page - 1) * pageSize
 
 	defs, total, err := h.definitionRepo.ListPaged(pageSize, offset)
 	if err != nil {
