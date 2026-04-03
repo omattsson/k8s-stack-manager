@@ -54,7 +54,8 @@ func testConfig() *config.Config {
 			AllowedOrigins: "*",
 		},
 		Server: config.ServerConfig{
-			RateLimit: 100,
+			RateLimit:      100,
+			LoginRateLimit: 10,
 		},
 		Auth: config.AuthConfig{
 			JWTSecret: "test-secret-key-for-routing-tests",
@@ -62,7 +63,7 @@ func testConfig() *config.Config {
 	}
 }
 
-func setupMinimalRouter(t *testing.T) (*gin.Engine, *handlers.RateLimiter) {
+func setupMinimalRouter(t *testing.T) (*gin.Engine, *RateLimiters) {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
@@ -102,7 +103,8 @@ func TestSetupRoutes(t *testing.T) {
 			AllowedOrigins: "*",
 		},
 		Server: config.ServerConfig{
-			RateLimit: 100,
+			RateLimit:      100,
+			LoginRateLimit: 10,
 		},
 	}
 
