@@ -15,9 +15,15 @@ type MessageHandler = (msg: WsMessage) => void;
 const listeners = new Set<MessageHandler>();
 let sharedWs: ReconnectingWebSocket | null = null;
 
-function getSharedWs(): ReconnectingWebSocket {
+function getSharedWs(): ReconnectingWebSocket | null {
   if (!sharedWs) {
-    const ws = new ReconnectingWebSocket(`${WS_BASE_URL}/ws`);
+    const token = localStorage.getItem('token');
+    if (!token) {
+      return null;
+    }
+    let url = `${WS_BASE_URL}/ws`;
+    url += `?token=${encodeURIComponent(token)}`;
+    const ws = new ReconnectingWebSocket(url);
     ws.onmessage = (event: MessageEvent) => {
       try {
         const msg = JSON.parse(event.data) as WsMessage;
@@ -41,6 +47,23 @@ function subscribe(handler: MessageHandler): () => void {
       sharedWs = null;
     }
   };
+}
+
+/**
+ * Reconnect the shared WebSocket with a fresh token.
+ * Call this after login or token refresh so the connection uses
+ * the latest JWT from localStorage.
+ * If no token exists (e.g. after logout), the existing connection
+ * is closed without creating a new one.
+ */
+export function reconnectWebSocket(): void {
+  if (sharedWs) {
+    sharedWs.close();
+    sharedWs = null;
+  }
+  if (listeners.size > 0) {
+    getSharedWs();
+  }
 }
 
 /**

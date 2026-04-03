@@ -48,10 +48,14 @@ describe('useWebSocket', () => {
     }));
 
     useWebSocketModule = await import('../useWebSocket');
+
+    // Most tests need a token to create a WebSocket connection
+    localStorage.setItem('token', 'fake-jwt-token');
   });
 
   afterEach(() => {
     vi.clearAllMocks();
+    localStorage.removeItem('token');
   });
 
   it('subscribes to messages and calls handler on incoming message', () => {
@@ -164,6 +168,15 @@ describe('useWebSocket', () => {
     // Unmounting first subscriber should NOT close the connection
     unmount1();
     expect(mockWsInstance.close).not.toHaveBeenCalled();
+  });
+
+  it('does not create WebSocket when no token exists', () => {
+    localStorage.removeItem('token');
+    const handler = vi.fn();
+
+    renderHook(() => useWebSocketModule.useWebSocket(handler));
+
+    expect(MockRWS).not.toHaveBeenCalled();
   });
 
   it('uses the latest handler reference', () => {

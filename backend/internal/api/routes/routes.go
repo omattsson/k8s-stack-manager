@@ -96,7 +96,7 @@ func SetupRoutes(router *gin.Engine, deps Deps) *handlers.RateLimiter {
 	router.Use(middleware.MaxBodySize(1 << 20)) // 1 MB default
 
 	// WebSocket endpoint (top-level, outside rate limiter — connections are long-lived)
-	wsHandler := handlers.NewWebSocketHandler(deps.Hub, cfg.CORS.AllowedOrigins)
+	wsHandler := handlers.NewWebSocketHandler(deps.Hub, cfg.CORS.AllowedOrigins, cfg.Auth.JWTSecret)
 	router.GET("/ws", wsHandler.HandleWebSocket)
 
 	// Health check endpoints
