@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"backend/internal/api/middleware"
 	"backend/internal/cluster"
 	"backend/internal/models"
 	"backend/pkg/dberrors"
@@ -16,6 +17,12 @@ import (
 	"github.com/gin-gonic/gin"
 	apimachineryversion "k8s.io/apimachinery/pkg/version"
 )
+
+// isPrivilegedRole returns true if the caller has admin or devops role.
+func isPrivilegedRole(c *gin.Context) bool {
+	role := middleware.GetRoleFromContext(c)
+	return role == "admin" || role == "devops"
+}
 
 // Cluster handler message constants.
 const (
@@ -29,6 +36,13 @@ const (
 
 // Slog structured logging key constants.
 const logKeyClusterID = "cluster_id"
+
+// ClusterSummary is the reduced response for non-admin/non-devops users.
+type ClusterSummary struct {
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	IsDefault bool   `json:"is_default"`
+}
 
 // CreateClusterRequest is the input payload for creating a cluster.
 type CreateClusterRequest struct {
@@ -94,10 +108,11 @@ func NewClusterHandlerWithQuotas(
 
 // ListClusters godoc
 // @Summary      List all clusters
-// @Description  Returns all registered clusters. Kubeconfig data is never included in responses.
+// @Description  Returns all registered clusters. Kubeconfig data is never included in responses. Admin/DevOps users receive full cluster details; other roles receive a summary (id, name, is_default only).
 // @Tags         clusters
 // @Produce      json
-// @Success      200  {array}   models.Cluster
+// @Success      200  {array}   models.Cluster         "Full details (admin/devops)"
+// @Success      200  {array}   handlers.ClusterSummary "Summary (other roles)"
 // @Failure      500  {object}  map[string]string
 // @Router       /api/v1/clusters [get]
 // @Security     BearerAuth
@@ -106,6 +121,15 @@ func (h *ClusterHandler) ListClusters(c *gin.Context) {
 	if err != nil {
 		status, message := mapError(err, entityCluster)
 		c.JSON(status, gin.H{"error": message})
+		return
+	}
+
+	if !isPrivilegedRole(c) {
+		summaries := make([]ClusterSummary, len(clusters))
+		for i, cl := range clusters {
+			summaries[i] = ClusterSummary{ID: cl.ID, Name: cl.Name, IsDefault: cl.IsDefault}
+		}
+		c.JSON(http.StatusOK, summaries)
 		return
 	}
 
@@ -197,11 +221,12 @@ func (h *ClusterHandler) CreateCluster(c *gin.Context) {
 
 // GetCluster godoc
 // @Summary      Get cluster details
-// @Description  Returns a single cluster by ID. Kubeconfig data is never included.
+// @Description  Returns a single cluster by ID. Kubeconfig data is never included. Admin/DevOps users receive full cluster details; other roles receive a summary (id, name, is_default only).
 // @Tags         clusters
 // @Produce      json
 // @Param        id  path  string  true  "Cluster ID"
-// @Success      200  {object}  models.Cluster
+// @Success      200  {object}  models.Cluster         "Full details (admin/devops)"
+// @Success      200  {object}  handlers.ClusterSummary "Summary (other roles)"
 // @Failure      404  {object}  map[string]string
 // @Failure      500  {object}  map[string]string
 // @Router       /api/v1/clusters/{id} [get]
@@ -213,6 +238,11 @@ func (h *ClusterHandler) GetCluster(c *gin.Context) {
 	if err != nil {
 		status, message := mapError(err, entityCluster)
 		c.JSON(status, gin.H{"error": message})
+		return
+	}
+
+	if !isPrivilegedRole(c) {
+		c.JSON(http.StatusOK, ClusterSummary{ID: cl.ID, Name: cl.Name, IsDefault: cl.IsDefault})
 		return
 	}
 
