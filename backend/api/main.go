@@ -3,7 +3,6 @@
 package main
 
 import (
-	_ "backend/docs"
 	"backend/internal/api/handlers"
 	"backend/internal/api/routes"
 	"backend/internal/auth"
@@ -32,8 +31,6 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
-	swaggerFiles "github.com/swaggo/files"
-	ginSwagger "github.com/swaggo/gin-swagger"
 	"k8s.io/client-go/tools/clientcmd"
 )
 
@@ -296,7 +293,6 @@ func main() {
 		OIDCHandler:                  oidcHandler,
 	})
 	defer rateLimiter.Stop()
-	router.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
 
 	// Start TTL reaper for auto-expiring stack instances.
 	expiryStopper := deployer.NewExpiryStopper(deployManager, definitionRepo, chartConfigRepo)

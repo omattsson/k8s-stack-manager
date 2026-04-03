@@ -23,24 +23,24 @@ import (
 
 type stubUserRepo struct{}
 
-func (s *stubUserRepo) Create(_ *models.User) error                               { return nil }
-func (s *stubUserRepo) FindByID(_ string) (*models.User, error)                   { return nil, nil }
-func (s *stubUserRepo) FindByIDs(_ []string) (map[string]*models.User, error)     { return nil, nil }
-func (s *stubUserRepo) FindByUsername(_ string) (*models.User, error)              { return nil, nil }
-func (s *stubUserRepo) FindByExternalID(_, _ string) (*models.User, error)        { return nil, nil }
-func (s *stubUserRepo) Update(_ *models.User) error                               { return nil }
-func (s *stubUserRepo) Delete(_ string) error                                     { return nil }
-func (s *stubUserRepo) List() ([]models.User, error)                              { return nil, nil }
-func (s *stubUserRepo) Count() (int64, error)                                    { return 0, nil }
+func (s *stubUserRepo) Create(_ *models.User) error                           { return nil }
+func (s *stubUserRepo) FindByID(_ string) (*models.User, error)               { return nil, nil }
+func (s *stubUserRepo) FindByIDs(_ []string) (map[string]*models.User, error) { return nil, nil }
+func (s *stubUserRepo) FindByUsername(_ string) (*models.User, error)         { return nil, nil }
+func (s *stubUserRepo) FindByExternalID(_, _ string) (*models.User, error)    { return nil, nil }
+func (s *stubUserRepo) Update(_ *models.User) error                           { return nil }
+func (s *stubUserRepo) Delete(_ string) error                                 { return nil }
+func (s *stubUserRepo) List() ([]models.User, error)                          { return nil, nil }
+func (s *stubUserRepo) Count() (int64, error)                                 { return 0, nil }
 
 type stubAPIKeyRepo struct{}
 
-func (s *stubAPIKeyRepo) Create(_ *models.APIKey) error                        { return nil }
-func (s *stubAPIKeyRepo) FindByID(_, _ string) (*models.APIKey, error)         { return nil, nil }
-func (s *stubAPIKeyRepo) FindByPrefix(_ string) ([]*models.APIKey, error)      { return nil, nil }
-func (s *stubAPIKeyRepo) ListByUser(_ string) ([]*models.APIKey, error)        { return nil, nil }
-func (s *stubAPIKeyRepo) UpdateLastUsed(_, _ string, _ time.Time) error        { return nil }
-func (s *stubAPIKeyRepo) Delete(_, _ string) error                             { return nil }
+func (s *stubAPIKeyRepo) Create(_ *models.APIKey) error                   { return nil }
+func (s *stubAPIKeyRepo) FindByID(_, _ string) (*models.APIKey, error)    { return nil, nil }
+func (s *stubAPIKeyRepo) FindByPrefix(_ string) ([]*models.APIKey, error) { return nil, nil }
+func (s *stubAPIKeyRepo) ListByUser(_ string) ([]*models.APIKey, error)   { return nil, nil }
+func (s *stubAPIKeyRepo) UpdateLastUsed(_, _ string, _ time.Time) error   { return nil }
+func (s *stubAPIKeyRepo) Delete(_, _ string) error                        { return nil }
 
 type stubAuditLogger struct{}
 
@@ -651,4 +651,65 @@ func TestSetupRoutes_CORSPreflight(t *testing.T) {
 	// CORS middleware should respond to OPTIONS preflight.
 	assert.Contains(t, []int{http.StatusOK, http.StatusNoContent}, w.Code)
 	assert.NotEmpty(t, w.Header().Get("Access-Control-Allow-Origin"))
+}
+
+func TestSetupRoutes_SwaggerGatedByConfig(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name           string
+		enable         bool
+		expectRouteHit bool
+	}{
+		{
+			name:           "swagger disabled returns 404",
+			enable:         false,
+			expectRouteHit: false,
+		},
+		{
+			name:           "swagger enabled registers route",
+			enable:         true,
+			expectRouteHit: true,
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			gin.SetMode(gin.TestMode)
+			router := gin.New()
+			mockRepo := handlers.NewMockRepository()
+
+			healthChecker := health.New()
+			healthChecker.SetReady(true)
+
+			hub := websocket.NewHub()
+			go hub.Run()
+			t.Cleanup(func() { hub.Shutdown() })
+
+			cfg := testConfig()
+			cfg.App.EnableSwagger = tt.enable
+
+			rl := SetupRoutes(router, Deps{
+				Repository:    mockRepo,
+				HealthChecker: healthChecker,
+				Config:        cfg,
+				Hub:           hub,
+			})
+			t.Cleanup(func() { rl.Stop() })
+
+			// Check whether the swagger route is registered.
+			hasSwaggerRoute := false
+			for _, r := range router.Routes() {
+				if r.Method == http.MethodGet && strings.HasPrefix(r.Path, "/swagger/") {
+					hasSwaggerRoute = true
+					break
+				}
+			}
+
+			assert.Equal(t, tt.expectRouteHit, hasSwaggerRoute)
+		})
+	}
 }
