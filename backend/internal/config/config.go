@@ -185,7 +185,8 @@ type ServerConfig struct {
 	Port      string
 	PprofAddr string
 	// 4-byte fields
-	RateLimit int32
+	RateLimit      int32
+	LoginRateLimit int32
 	// 1-byte fields
 	PprofEnabled bool
 }
@@ -455,6 +456,7 @@ func loadServerConfig() ServerConfig {
 		IdleTimeout:     getEnvDuration("SERVER_IDLE_TIMEOUT", defaultIdleTimeout),
 		ShutdownTimeout: getEnvDuration("SERVER_SHUTDOWN_TIMEOUT", defaultShutdownTimeout),
 		RateLimit:       getEnvInt32("RATE_LIMIT", 100),
+		LoginRateLimit:  getEnvInt32("LOGIN_RATE_LIMIT", 10),
 		PprofEnabled:    getEnvBool("PPROF_ENABLED", false),
 		PprofAddr:       getEnv("PPROF_ADDR", "127.0.0.1:6060"),
 	}

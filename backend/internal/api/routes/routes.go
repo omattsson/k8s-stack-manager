@@ -79,10 +79,27 @@ type Deps struct {
 	OIDCHandler *handlers.OIDCHandler
 }
 
+// RateLimiters groups the rate limiters created by SetupRoutes so the
+// caller can stop all of them during graceful shutdown.
+type RateLimiters struct {
+	API   *handlers.RateLimiter
+	Login *handlers.RateLimiter
+}
+
+// Stop terminates the background cleanup goroutines for all rate limiters.
+func (r *RateLimiters) Stop() {
+	if r.API != nil {
+		r.API.Stop()
+	}
+	if r.Login != nil {
+		r.Login.Stop()
+	}
+}
+
 // SetupRoutes configures all the routes for our application.
 // healthChecker is injected from main so the readiness endpoint reflects real dependency health.
-// Returns the rate limiter so the caller can stop it during shutdown.
-func SetupRoutes(router *gin.Engine, deps Deps) *handlers.RateLimiter {
+// Returns the rate limiters so the caller can stop them during shutdown.
+func SetupRoutes(router *gin.Engine, deps Deps) *RateLimiters {
 	cfg := deps.Config
 
 	// Add middleware
@@ -109,6 +126,13 @@ func SetupRoutes(router *gin.Engine, deps Deps) *handlers.RateLimiter {
 
 	// Rate limiter for API routes
 	rateLimiter := handlers.NewRateLimiter(int(cfg.Server.RateLimit), time.Minute)
+
+	// Stricter rate limiter for login endpoint to prevent brute-force attacks.
+	// Only created when LoginRateLimit > 0; otherwise login uses the general API limiter.
+	var loginRateLimiter *handlers.RateLimiter
+	if cfg.Server.LoginRateLimit > 0 {
+		loginRateLimiter = handlers.NewRateLimiter(int(cfg.Server.LoginRateLimit), time.Minute)
+	}
 
 	// API v1 routes
 	v1 := router.Group("/api/v1")
@@ -141,7 +165,12 @@ func SetupRoutes(router *gin.Engine, deps Deps) *handlers.RateLimiter {
 		// Auth — login is public; register requires auth (admin or self-reg checked inside handler).
 		auth := v1.Group("/auth")
 		{
-			auth.POST("/login", deps.AuthHandler.Login)
+			loginHandlers := []gin.HandlerFunc{}
+			if loginRateLimiter != nil {
+				loginHandlers = append(loginHandlers, loginRateLimiter.RateLimit())
+			}
+			loginHandlers = append(loginHandlers, deps.AuthHandler.Login)
+			auth.POST("/login", loginHandlers...)
 			registerHandlers := []gin.HandlerFunc{authMW}
 			if deps.AuditLogger != nil {
 				registerHandlers = append(registerHandlers, middleware.NewAuditMiddleware(deps.AuditLogger))
@@ -442,5 +471,5 @@ func SetupRoutes(router *gin.Engine, deps Deps) *handlers.RateLimiter {
 		}
 	}
 
-	return rateLimiter
+	return &RateLimiters{API: rateLimiter, Login: loginRateLimiter}
 }

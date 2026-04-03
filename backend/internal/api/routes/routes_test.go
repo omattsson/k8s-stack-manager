@@ -23,24 +23,24 @@ import (
 
 type stubUserRepo struct{}
 
-func (s *stubUserRepo) Create(_ *models.User) error                               { return nil }
-func (s *stubUserRepo) FindByID(_ string) (*models.User, error)                   { return nil, nil }
-func (s *stubUserRepo) FindByIDs(_ []string) (map[string]*models.User, error)     { return nil, nil }
-func (s *stubUserRepo) FindByUsername(_ string) (*models.User, error)              { return nil, nil }
-func (s *stubUserRepo) FindByExternalID(_, _ string) (*models.User, error)        { return nil, nil }
-func (s *stubUserRepo) Update(_ *models.User) error                               { return nil }
-func (s *stubUserRepo) Delete(_ string) error                                     { return nil }
-func (s *stubUserRepo) List() ([]models.User, error)                              { return nil, nil }
-func (s *stubUserRepo) Count() (int64, error)                                    { return 0, nil }
+func (s *stubUserRepo) Create(_ *models.User) error                           { return nil }
+func (s *stubUserRepo) FindByID(_ string) (*models.User, error)               { return nil, nil }
+func (s *stubUserRepo) FindByIDs(_ []string) (map[string]*models.User, error) { return nil, nil }
+func (s *stubUserRepo) FindByUsername(_ string) (*models.User, error)         { return nil, nil }
+func (s *stubUserRepo) FindByExternalID(_, _ string) (*models.User, error)    { return nil, nil }
+func (s *stubUserRepo) Update(_ *models.User) error                           { return nil }
+func (s *stubUserRepo) Delete(_ string) error                                 { return nil }
+func (s *stubUserRepo) List() ([]models.User, error)                          { return nil, nil }
+func (s *stubUserRepo) Count() (int64, error)                                 { return 0, nil }
 
 type stubAPIKeyRepo struct{}
 
-func (s *stubAPIKeyRepo) Create(_ *models.APIKey) error                        { return nil }
-func (s *stubAPIKeyRepo) FindByID(_, _ string) (*models.APIKey, error)         { return nil, nil }
-func (s *stubAPIKeyRepo) FindByPrefix(_ string) ([]*models.APIKey, error)      { return nil, nil }
-func (s *stubAPIKeyRepo) ListByUser(_ string) ([]*models.APIKey, error)        { return nil, nil }
-func (s *stubAPIKeyRepo) UpdateLastUsed(_, _ string, _ time.Time) error        { return nil }
-func (s *stubAPIKeyRepo) Delete(_, _ string) error                             { return nil }
+func (s *stubAPIKeyRepo) Create(_ *models.APIKey) error                   { return nil }
+func (s *stubAPIKeyRepo) FindByID(_, _ string) (*models.APIKey, error)    { return nil, nil }
+func (s *stubAPIKeyRepo) FindByPrefix(_ string) ([]*models.APIKey, error) { return nil, nil }
+func (s *stubAPIKeyRepo) ListByUser(_ string) ([]*models.APIKey, error)   { return nil, nil }
+func (s *stubAPIKeyRepo) UpdateLastUsed(_, _ string, _ time.Time) error   { return nil }
+func (s *stubAPIKeyRepo) Delete(_, _ string) error                        { return nil }
 
 type stubAuditLogger struct{}
 
@@ -54,7 +54,8 @@ func testConfig() *config.Config {
 			AllowedOrigins: "*",
 		},
 		Server: config.ServerConfig{
-			RateLimit: 100,
+			RateLimit:      100,
+			LoginRateLimit: 10,
 		},
 		Auth: config.AuthConfig{
 			JWTSecret: "test-secret-key-for-routing-tests",
@@ -62,7 +63,7 @@ func testConfig() *config.Config {
 	}
 }
 
-func setupMinimalRouter(t *testing.T) (*gin.Engine, *handlers.RateLimiter) {
+func setupMinimalRouter(t *testing.T) (*gin.Engine, *RateLimiters) {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
@@ -102,7 +103,8 @@ func TestSetupRoutes(t *testing.T) {
 			AllowedOrigins: "*",
 		},
 		Server: config.ServerConfig{
-			RateLimit: 100,
+			RateLimit:      100,
+			LoginRateLimit: 10,
 		},
 	}
 
