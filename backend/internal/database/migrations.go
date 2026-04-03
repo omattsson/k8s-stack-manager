@@ -643,6 +643,22 @@ func (d *Database) AutoMigrate() error {
 		},
 	})
 
+	// Migration 26: Add (action, started_at) index for CountByAction analytics query
+	migrator.AddMigration(schema.Migration{
+		Version:     "20231201000026",
+		Name:        "add_deployment_logs_action_started_index",
+		Description: "Add index on (action, started_at) for CountByAction analytics query",
+		Up: func(tx *gorm.DB) error {
+			if tx.Migrator().HasIndex(&models.DeploymentLog{}, "idx_deployment_logs_action_started") {
+				return nil
+			}
+			return tx.Exec("CREATE INDEX idx_deployment_logs_action_started ON deployment_logs (action, started_at)").Error
+		},
+		Down: func(tx *gorm.DB) error {
+			return tx.Exec("DROP INDEX idx_deployment_logs_action_started ON deployment_logs").Error
+		},
+	})
+
 	// Run migrations
 	if err := migrator.MigrateUp(); err != nil {
 		return err
