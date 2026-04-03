@@ -13,16 +13,16 @@ import (
 )
 
 // setupInstanceQuotaOverrideRepo creates a fresh SQLite DB with all tables
-// created via GORM's AutoMigrate, then returns a GormInstanceQuotaOverrideRepository.
-func setupInstanceQuotaOverrideRepo(t *testing.T) *GormInstanceQuotaOverrideRepository {
+// created via GORM's AutoMigrate, then returns a GORMInstanceQuotaOverrideRepository.
+func setupInstanceQuotaOverrideRepo(t *testing.T) *GORMInstanceQuotaOverrideRepository {
 	t.Helper()
 	db := setupTestDBWithAllTables(t)
-	return NewGormInstanceQuotaOverrideRepository(db)
+	return NewGORMInstanceQuotaOverrideRepository(db)
 }
 
 func intPtr(v int) *int { return &v }
 
-func TestGormInstanceQuotaOverrideRepository_GetByInstanceID(t *testing.T) {
+func TestGORMInstanceQuotaOverrideRepository_GetByInstanceID(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
@@ -75,7 +75,7 @@ func TestGormInstanceQuotaOverrideRepository_GetByInstanceID(t *testing.T) {
 	}
 }
 
-func TestGormInstanceQuotaOverrideRepository_Upsert(t *testing.T) {
+func TestGORMInstanceQuotaOverrideRepository_Upsert(t *testing.T) {
 	t.Parallel()
 
 	t.Run("creates new override", func(t *testing.T) {
@@ -180,7 +180,7 @@ func TestGormInstanceQuotaOverrideRepository_Upsert(t *testing.T) {
 	})
 }
 
-func TestGormInstanceQuotaOverrideRepository_Delete(t *testing.T) {
+func TestGORMInstanceQuotaOverrideRepository_Delete(t *testing.T) {
 	t.Parallel()
 
 	t.Run("deletes existing override", func(t *testing.T) {

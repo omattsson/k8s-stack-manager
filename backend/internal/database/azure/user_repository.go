@@ -162,6 +162,29 @@ func (r *UserRepository) FindByID(id string) (*models.User, error) {
 	return entities[0].toModel(), nil
 }
 
+// FindByIDs returns a map of user ID to User for the given IDs. Azure Table
+// has no IN clause so this fetches all users and filters in memory.
+func (r *UserRepository) FindByIDs(ids []string) (map[string]*models.User, error) {
+	if len(ids) == 0 {
+		return make(map[string]*models.User), nil
+	}
+	all, err := r.List()
+	if err != nil {
+		return nil, err
+	}
+	wanted := make(map[string]struct{}, len(ids))
+	for _, id := range ids {
+		wanted[id] = struct{}{}
+	}
+	result := make(map[string]*models.User, len(ids))
+	for i := range all {
+		if _, ok := wanted[all[i].ID]; ok {
+			result[all[i].ID] = &all[i]
+		}
+	}
+	return result, nil
+}
+
 func (r *UserRepository) FindByUsername(username string) (*models.User, error) {
 	ctx := context.Background()
 
@@ -246,6 +269,14 @@ func (r *UserRepository) Delete(id string) error {
 		return mapAzureError(opDelete, err)
 	}
 	return nil
+}
+
+func (r *UserRepository) Count() (int64, error) {
+	items, err := r.List()
+	if err != nil {
+		return 0, err
+	}
+	return int64(len(items)), nil
 }
 
 func (r *UserRepository) List() ([]models.User, error) {

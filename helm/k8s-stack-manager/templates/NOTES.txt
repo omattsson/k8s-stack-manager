@@ -27,9 +27,15 @@ Watch rollout status:
   kubectl argo rollouts get rollout {{ include "k8s-stack-manager.fullname" . }}-backend --watch
   kubectl argo rollouts get rollout {{ include "k8s-stack-manager.fullname" . }}-frontend --watch
 
-{{- if eq .Values.backend.secrets.ADMIN_PASSWORD "admin" }}
+{{- if eq .Values.backend.secrets.JWT_SECRET "CHANGE-ME-generate-a-random-secret" }}
 
-WARNING: backend.secrets.ADMIN_PASSWORD is set to the default "admin"!
+WARNING: backend.secrets.JWT_SECRET is still the placeholder value!
+  Generate a random secret and set it: --set backend.secrets.JWT_SECRET="$(openssl rand -base64 32)"
+{{- end }}
+
+{{- if has .Values.backend.secrets.ADMIN_PASSWORD (list "admin" "CHANGE-ME-set-a-secure-password") }}
+
+WARNING: backend.secrets.ADMIN_PASSWORD is set to a default/placeholder value!
   Change it with: --set backend.secrets.ADMIN_PASSWORD="your-secure-password"
 {{- end }}
 

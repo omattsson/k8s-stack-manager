@@ -32,5 +32,5 @@ COPY --from=build-prod /app/main .
 COPY --from=builder /usr/local/bin/helm /usr/local/bin/helm
 EXPOSE 8081
 RUN adduser -D -u 65532 nonroot
-USER nonroot
+USER 65532:65532
 CMD ["./main"]

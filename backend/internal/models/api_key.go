@@ -11,11 +11,11 @@ import (
 // APIKey represents a user-generated API key for programmatic access.
 // KeyHash is never serialised to JSON (json:"-").
 type APIKey struct {
-	ID         string     `json:"id"`
-	UserID     string     `json:"user_id"`
-	Name       string     `json:"name"`
-	KeyHash    string     `json:"-"`      // stored; never returned
-	Prefix     string     `json:"prefix"` // first 16 chars of raw key for display
+	ID         string     `json:"id" gorm:"primaryKey;size:36"`
+	UserID     string     `json:"user_id" gorm:"size:36"`
+	Name       string     `json:"name" gorm:"size:255"`
+	KeyHash    string     `json:"-" gorm:"size:255"`     // stored; never returned
+	Prefix     string     `json:"prefix" gorm:"size:20"` // first 16 chars of raw key for display
 	CreatedAt  time.Time  `json:"created_at"`
 	LastUsedAt *time.Time `json:"last_used_at,omitempty"`
 	ExpiresAt  *time.Time `json:"expires_at,omitempty"`

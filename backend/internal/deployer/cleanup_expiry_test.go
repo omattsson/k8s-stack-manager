@@ -69,12 +69,50 @@ func (m *mockDefinitionRepo) List() ([]models.StackDefinition, error) {
 	return out, nil
 }
 
+func (m *mockDefinitionRepo) ListPaged(limit, offset int) ([]models.StackDefinition, int64, error) {
+	all, err := m.List()
+	if err != nil {
+		return nil, 0, err
+	}
+	total := int64(len(all))
+	if offset >= len(all) {
+		return []models.StackDefinition{}, total, nil
+	}
+	all = all[offset:]
+	if limit < len(all) {
+		all = all[:limit]
+	}
+	return all, total, nil
+}
+
 func (m *mockDefinitionRepo) ListByOwner(_ string) ([]models.StackDefinition, error) {
 	return m.List()
 }
 
 func (m *mockDefinitionRepo) ListByTemplate(_ string) ([]models.StackDefinition, error) {
 	return m.List()
+}
+
+func (m *mockDefinitionRepo) CountByTemplateIDs(templateIDs []string) (map[string]int, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	wanted := make(map[string]struct{}, len(templateIDs))
+	for _, id := range templateIDs {
+		wanted[id] = struct{}{}
+	}
+	result := make(map[string]int, len(templateIDs))
+	for _, d := range m.items {
+		if _, ok := wanted[d.SourceTemplateID]; ok {
+			result[d.SourceTemplateID]++
+		}
+	}
+	return result, nil
+}
+
+func (m *mockDefinitionRepo) Count() (int64, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return int64(len(m.items)), nil
 }
 
 // ---- mock chart config repo ----

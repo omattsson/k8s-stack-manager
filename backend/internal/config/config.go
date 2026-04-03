@@ -181,10 +181,13 @@ type ServerConfig struct {
 	IdleTimeout     time.Duration
 	ShutdownTimeout time.Duration
 	// String fields (8-byte on 64-bit systems)
-	Host string
-	Port string
+	Host      string
+	Port      string
+	PprofAddr string
 	// 4-byte fields
 	RateLimit int32
+	// 1-byte fields
+	PprofEnabled bool
 }
 
 // LogConfig holds logging configuration
@@ -452,6 +455,8 @@ func loadServerConfig() ServerConfig {
 		IdleTimeout:     getEnvDuration("SERVER_IDLE_TIMEOUT", defaultIdleTimeout),
 		ShutdownTimeout: getEnvDuration("SERVER_SHUTDOWN_TIMEOUT", defaultShutdownTimeout),
 		RateLimit:       getEnvInt32("RATE_LIMIT", 100),
+		PprofEnabled:    getEnvBool("PPROF_ENABLED", false),
+		PprofAddr:       getEnv("PPROF_ADDR", "127.0.0.1:6060"),
 	}
 }
 

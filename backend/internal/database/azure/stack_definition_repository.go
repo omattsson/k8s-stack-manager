@@ -3,6 +3,7 @@ package azure
 import (
 	"context"
 	"encoding/json"
+	"sort"
 	"time"
 
 	"backend/internal/models"
@@ -157,6 +158,35 @@ func (r *StackDefinitionRepository) List() ([]models.StackDefinition, error) {
 	return results, nil
 }
 
+// ListPaged returns a page of stack definitions ordered by created_at DESC,
+// along with the total count. Azure Table has no LIMIT/OFFSET so this fetches
+// all rows and slices in memory.
+func (r *StackDefinitionRepository) ListPaged(limit, offset int) ([]models.StackDefinition, int64, error) {
+	all, err := r.List()
+	if err != nil {
+		return nil, 0, err
+	}
+	total := int64(len(all))
+	// Sort by CreatedAt DESC.
+	sort.Slice(all, func(i, j int) bool { return all[i].CreatedAt.After(all[j].CreatedAt) })
+	if offset >= len(all) {
+		return []models.StackDefinition{}, total, nil
+	}
+	all = all[offset:]
+	if limit < len(all) {
+		all = all[:limit]
+	}
+	return all, total, nil
+}
+
+func (r *StackDefinitionRepository) Count() (int64, error) {
+	items, err := r.List()
+	if err != nil {
+		return 0, err
+	}
+	return int64(len(items)), nil
+}
+
 func (r *StackDefinitionRepository) ListByOwner(ownerID string) ([]models.StackDefinition, error) {
 	ctx := context.Background()
 
@@ -195,6 +225,30 @@ func (r *StackDefinitionRepository) ListByTemplate(templateID string) ([]models.
 		results = append(results, *e.toModel())
 	}
 	return results, nil
+}
+
+// CountByTemplateIDs returns a map of template ID to definition count for the
+// given template IDs. Azure Table has no GROUP BY so this fetches all rows and
+// counts in memory.
+func (r *StackDefinitionRepository) CountByTemplateIDs(templateIDs []string) (map[string]int, error) {
+	if len(templateIDs) == 0 {
+		return make(map[string]int), nil
+	}
+	all, err := r.List()
+	if err != nil {
+		return nil, err
+	}
+	wanted := make(map[string]struct{}, len(templateIDs))
+	for _, id := range templateIDs {
+		wanted[id] = struct{}{}
+	}
+	result := make(map[string]int, len(templateIDs))
+	for _, d := range all {
+		if _, ok := wanted[d.SourceTemplateID]; ok {
+			result[d.SourceTemplateID]++
+		}
+	}
+	return result, nil
 }
 
 func stackDefinitionToEntity(d *models.StackDefinition) map[string]interface{} {

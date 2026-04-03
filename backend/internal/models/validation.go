@@ -55,6 +55,12 @@ func (c *TemplateChartConfig) Validate() error {
 	if c.ChartName == "" {
 		return errors.New("chart_name is required")
 	}
+	if len(c.ChartName) > 53 {
+		return errors.New("chart_name must be at most 53 characters")
+	}
+	if !helmReleaseNameRegex.MatchString(c.ChartName) {
+		return errors.New("chart_name must contain only lowercase alphanumeric characters, dashes, dots, or underscores, and must start and end with an alphanumeric character")
+	}
 	return nil
 }
 
@@ -69,6 +75,12 @@ func (d *StackDefinition) Validate() error {
 	return nil
 }
 
+// helmReleaseNameRegex matches valid Helm release names: lowercase alphanumeric,
+// dashes, dots, and underscores; must start and end with alphanumeric; max 53 chars
+// (Helm's limit). This is enforced because ChartName is used as a Helm release name
+// and passed as a positional argument to the helm CLI.
+var helmReleaseNameRegex = regexp.MustCompile(`^[a-z0-9]([a-z0-9._-]*[a-z0-9])?$`)
+
 // Validate implements model validation for ChartConfig.
 func (c *ChartConfig) Validate() error {
 	if c.StackDefinitionID == "" {
@@ -76,6 +88,12 @@ func (c *ChartConfig) Validate() error {
 	}
 	if c.ChartName == "" {
 		return errors.New("chart_name is required")
+	}
+	if len(c.ChartName) > 53 {
+		return errors.New("chart_name must be at most 53 characters")
+	}
+	if !helmReleaseNameRegex.MatchString(c.ChartName) {
+		return errors.New("chart_name must contain only lowercase alphanumeric characters, dashes, dots, or underscores, and must start and end with an alphanumeric character")
 	}
 	return nil
 }

@@ -12,8 +12,8 @@ import (
 	"time"
 
 	"backend/internal/api/middleware"
-	"backend/internal/cache"
 	"backend/internal/cluster"
+	"backend/internal/database"
 	"backend/internal/deployer"
 	"backend/internal/helm"
 	"backend/internal/k8s"
@@ -109,7 +109,7 @@ type InstanceHandler struct {
 	deployLogRepo      models.DeploymentLogRepository
 	clusterRepo        models.ClusterRepository
 	defaultTTLMinutes  int
-	listCache          *cache.TTLCache[[]models.StackInstance]
+	txRunner           database.TxRunner
 }
 
 // NewInstanceHandler creates a new InstanceHandler.
@@ -136,7 +136,6 @@ func NewInstanceHandler(
 		valuesGen:          valuesGen,
 		userRepo:           userRepo,
 		defaultTTLMinutes:  defaultTTLMinutes,
-		listCache:          cache.New[[]models.StackInstance](5*time.Second, 5*time.Second),
 	}
 }
 
@@ -174,67 +173,103 @@ func NewInstanceHandlerWithDeployer(
 		deployLogRepo:      deployLogRepo,
 		clusterRepo:        clusterRepo,
 		defaultTTLMinutes:  defaultTTLMinutes,
-		listCache:          cache.New[[]models.StackInstance](5*time.Second, 5*time.Second),
 	}
 }
 
+// SetTxRunner sets an optional TxRunner for transactional multi-entity operations.
+func (h *InstanceHandler) SetTxRunner(tx database.TxRunner) {
+	h.txRunner = tx
+}
+
+// listPageSizeDefault is the default page size for paginated list queries.
+const listPageSizeDefault = 25
+
+// listPageSizeMax caps the maximum page size a client can request.
+const listPageSizeMax = 100
+
 // ListInstances godoc
 // @Summary     List stack instances
-// @Description List all stack instances, optionally filtered by owner. Supports pagination via limit/offset.
+// @Description List stack instances with server-side pagination. Supports page/pageSize or legacy limit/offset params. Use owner=me to filter by the authenticated user.
 // @Tags        stack-instances
 // @Produce     json
-// @Param       owner  query    string false "Filter by owner (use 'me' for current user)"
-// @Param       limit  query    int    false "Maximum number of results (default: all)"
-// @Param       offset query    int    false "Number of results to skip (default: 0)"
-// @Success     200   {array}  models.StackInstance
+// @Param       owner    query    string false "Filter by owner (use 'me' for current user)"
+// @Param       page     query    int    false "Page number (1-based, default: 1)"
+// @Param       pageSize query    int    false "Results per page (default: 25, max: 100)"
+// @Param       limit    query    int    false "Legacy: maximum number of results"
+// @Param       offset   query    int    false "Legacy: number of results to skip"
+// @Success     200   {object} map[string]interface{} "data: []StackInstance, total: int, page: int, pageSize: int"
 // @Failure     500   {object} map[string]string
 // @Router      /api/v1/stack-instances [get]
 func (h *InstanceHandler) ListInstances(c *gin.Context) {
 	owner := c.Query("owner")
 
-	var instances []models.StackInstance
-	var err error
+	// Owner-filtered list — small result set, no server-side pagination needed.
 	if owner == "me" {
 		userID := middleware.GetUserIDFromContext(c)
-		instances, err = h.instanceRepo.ListByOwner(userID)
-	} else {
-		// Use a short-lived cache for the full list to absorb concurrent dashboard loads.
-		cacheKey := "all"
-		if cached, ok := h.listCache.Get(cacheKey); ok {
-			instances = cached
-		} else {
-			instances, err = h.instanceRepo.List()
-			if err != nil {
-				status, message := mapError(err, entityStackInstance)
-				c.JSON(status, gin.H{"error": message})
-				return
-			}
-			h.listCache.Set(cacheKey, instances)
+		instances, err := h.instanceRepo.ListByOwner(userID)
+		if err != nil {
+			status, message := mapError(err, entityStackInstance)
+			c.JSON(status, gin.H{"error": message})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{
+			"data":     instances,
+			"total":    len(instances),
+			"page":     1,
+			"pageSize": len(instances),
+		})
+		return
+	}
+
+	// Determine limit and offset from query params.
+	// page/pageSize take precedence; fall back to legacy limit/offset.
+	pageSize := listPageSizeDefault
+	offset := 0
+	page := 1
+
+	if ps := c.Query("pageSize"); ps != "" {
+		if v, err := strconv.Atoi(ps); err == nil && v > 0 {
+			pageSize = v
+		}
+		if pageSize > listPageSizeMax {
+			pageSize = listPageSizeMax
 		}
 	}
+
+	if p := c.Query("page"); p != "" {
+		// Page-based pagination
+		if v, err := strconv.Atoi(p); err == nil && v > 0 {
+			page = v
+		}
+		offset = (page - 1) * pageSize
+	} else if l := c.Query("limit"); l != "" {
+		// Legacy limit/offset pagination (no page param)
+		if v, err := strconv.Atoi(l); err == nil && v > 0 {
+			pageSize = v
+			if pageSize > listPageSizeMax {
+				pageSize = listPageSizeMax
+			}
+		}
+		if o := c.Query("offset"); o != "" {
+			if v, err := strconv.Atoi(o); err == nil && v >= 0 {
+				offset = v
+			}
+		}
+	}
+
+	instances, total, err := h.instanceRepo.ListPaged(pageSize, offset)
 	if err != nil {
 		status, message := mapError(err, entityStackInstance)
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
 
-	// Apply pagination if requested.
-	if offsetStr := c.Query("offset"); offsetStr != "" {
-		if offset, parseErr := strconv.Atoi(offsetStr); parseErr == nil && offset > 0 {
-			if offset >= len(instances) {
-				instances = []models.StackInstance{}
-			} else {
-				instances = instances[offset:]
-			}
-		}
-	}
-	if limitStr := c.Query("limit"); limitStr != "" {
-		if limit, parseErr := strconv.Atoi(limitStr); parseErr == nil && limit > 0 && limit < len(instances) {
-			instances = instances[:limit]
-		}
-	}
-
-	c.JSON(http.StatusOK, instances)
+	c.JSON(http.StatusOK, gin.H{
+		"data":     instances,
+		"total":    total,
+		"page":     page,
+		"pageSize": pageSize,
+	})
 }
 
 // GetRecentInstances godoc
@@ -351,22 +386,12 @@ func (h *InstanceHandler) CreateInstance(c *gin.Context) {
 		}
 	}
 
-	// Enforce per-user instance limit if configured on the cluster.
-	// Note: this is a best-effort check; concurrent creates may exceed the limit
-	// slightly since Azure Table Storage lacks atomic count-and-insert.
+	// Look up per-user instance limit from the cluster config (if any).
+	var maxInstancesPerUser int
 	if h.clusterRepo != nil && inst.ClusterID != "" {
 		cl, clErr := h.clusterRepo.FindByID(inst.ClusterID)
 		if clErr == nil && cl.MaxInstancesPerUser > 0 {
-			count, listErr := h.instanceRepo.CountByClusterAndOwner(inst.ClusterID, inst.OwnerID)
-			if listErr != nil {
-				slog.Error("Failed to count instances for per-user limit check", "error", listErr, "cluster_id", inst.ClusterID)
-				c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
-				return
-			}
-			if count >= cl.MaxInstancesPerUser {
-				c.JSON(http.StatusConflict, gin.H{"error": fmt.Sprintf("Maximum instances per user reached for this cluster (limit: %d)", cl.MaxInstancesPerUser)})
-				return
-			}
+			maxInstancesPerUser = cl.MaxInstancesPerUser
 		}
 	}
 
@@ -396,10 +421,49 @@ func (h *InstanceHandler) CreateInstance(c *gin.Context) {
 		return
 	}
 
-	if err := h.instanceRepo.Create(&inst); err != nil {
-		status, message := mapError(err, entityStackInstance)
-		c.JSON(status, gin.H{"error": message})
-		return
+	if h.txRunner != nil && h.txRunner.IsTransactional() && maxInstancesPerUser > 0 {
+		// Transactional path — count check + create are serialized within
+		// a transaction, closing the TOCTOU window for concurrent creates.
+		limitMsg := fmt.Sprintf("Maximum instances per user reached for this cluster (limit: %d)", maxInstancesPerUser)
+		txErr := h.txRunner.RunInTx(func(repos database.TxRepos) error {
+			count, countErr := repos.StackInstance.CountByClusterAndOwner(inst.ClusterID, inst.OwnerID)
+			if countErr != nil {
+				return countErr
+			}
+			if count >= maxInstancesPerUser {
+				return fmt.Errorf("%w: %s", ErrInstanceLimitExceeded, limitMsg)
+			}
+			return repos.StackInstance.Create(&inst)
+		})
+		if txErr != nil {
+			if errors.Is(txErr, ErrInstanceLimitExceeded) {
+				c.JSON(http.StatusConflict, gin.H{"error": limitMsg})
+				return
+			}
+			status, message := mapError(txErr, entityStackInstance)
+			c.JSON(status, gin.H{"error": message})
+			return
+		}
+	} else {
+		// Non-transactional path (Azure or no limit configured).
+		if maxInstancesPerUser > 0 {
+			count, listErr := h.instanceRepo.CountByClusterAndOwner(inst.ClusterID, inst.OwnerID)
+			if listErr != nil {
+				slog.Error("Failed to count instances for per-user limit check", "error", listErr, "cluster_id", inst.ClusterID)
+				c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
+				return
+			}
+			if count >= maxInstancesPerUser {
+				c.JSON(http.StatusConflict, gin.H{"error": fmt.Sprintf("Maximum instances per user reached for this cluster (limit: %d)", maxInstancesPerUser)})
+				return
+			}
+		}
+
+		if err := h.instanceRepo.Create(&inst); err != nil {
+			status, message := mapError(err, entityStackInstance)
+			c.JSON(status, gin.H{"error": message})
+			return
+		}
 	}
 
 	c.JSON(http.StatusCreated, inst)
@@ -533,19 +597,34 @@ func (h *InstanceHandler) DeleteInstance(c *gin.Context) {
 		return
 	}
 
-	// Clean up per-chart branch overrides before deleting.
-	if h.branchOverrideRepo != nil {
-		if err := h.branchOverrideRepo.DeleteByInstance(id); err != nil {
-			slog.Error("failed to delete branch overrides for stack instance", logKeyInstanceID, id, "error", err)
-			c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
+	if h.txRunner != nil && h.txRunner.IsTransactional() {
+		// Transactional path — branch override cleanup + instance delete are atomic.
+		txErr := h.txRunner.RunInTx(func(repos database.TxRepos) error {
+			if err := repos.BranchOverride.DeleteByInstance(id); err != nil {
+				return err
+			}
+			return repos.StackInstance.Delete(id)
+		})
+		if txErr != nil {
+			status, message := mapError(txErr, entityStackInstance)
+			c.JSON(status, gin.H{"error": message})
 			return
 		}
-	}
+	} else {
+		// Non-transactional fallback (Azure Table Storage).
+		if h.branchOverrideRepo != nil {
+			if err := h.branchOverrideRepo.DeleteByInstance(id); err != nil {
+				slog.Error("failed to delete branch overrides for stack instance", logKeyInstanceID, id, "error", err)
+				c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
+				return
+			}
+		}
 
-	if err := h.instanceRepo.Delete(id); err != nil {
-		status, message := mapError(err, entityStackInstance)
-		c.JSON(status, gin.H{"error": message})
-		return
+		if err := h.instanceRepo.Delete(id); err != nil {
+			status, message := mapError(err, entityStackInstance)
+			c.JSON(status, gin.H{"error": message})
+			return
+		}
 	}
 
 	c.Status(http.StatusNoContent)
@@ -610,25 +689,57 @@ func (h *InstanceHandler) CloneInstance(c *gin.Context) {
 		return
 	}
 
-	if err := h.instanceRepo.Create(clone); err != nil {
-		status, message := mapError(err, entityStackInstance)
-		c.JSON(status, gin.H{"error": message})
-		return
-	}
+	if h.txRunner != nil && h.txRunner.IsTransactional() {
+		// Transactional path — instance create + override copies are atomic.
+		overrides, listErr := h.overrideRepo.ListByInstance(source.ID)
+		if listErr != nil {
+			overrides = nil // proceed without overrides
+		}
 
-	// Copy value overrides.
-	overrides, err := h.overrideRepo.ListByInstance(source.ID)
-	if err == nil {
-		for _, ov := range overrides {
-			clonedOV := &models.ValueOverride{
-				ID:              uuid.New().String(),
-				StackInstanceID: clone.ID,
-				ChartConfigID:   ov.ChartConfigID,
-				Values:          ov.Values,
-				UpdatedAt:       now,
+		txErr := h.txRunner.RunInTx(func(repos database.TxRepos) error {
+			if err := repos.StackInstance.Create(clone); err != nil {
+				return err
 			}
-			// Best-effort — don't fail the clone if override copy fails.
-			_ = h.overrideRepo.Create(clonedOV)
+			for _, ov := range overrides {
+				clonedOV := &models.ValueOverride{
+					ID:              uuid.New().String(),
+					StackInstanceID: clone.ID,
+					ChartConfigID:   ov.ChartConfigID,
+					Values:          ov.Values,
+					UpdatedAt:       now,
+				}
+				if err := repos.ValueOverride.Create(clonedOV); err != nil {
+					return err
+				}
+			}
+			return nil
+		})
+		if txErr != nil {
+			status, message := mapError(txErr, entityStackInstance)
+			c.JSON(status, gin.H{"error": message})
+			return
+		}
+	} else {
+		// Non-transactional fallback (Azure Table Storage).
+		if err := h.instanceRepo.Create(clone); err != nil {
+			status, message := mapError(err, entityStackInstance)
+			c.JSON(status, gin.H{"error": message})
+			return
+		}
+
+		// Copy value overrides (best-effort).
+		overrides, listErr := h.overrideRepo.ListByInstance(source.ID)
+		if listErr == nil {
+			for _, ov := range overrides {
+				clonedOV := &models.ValueOverride{
+					ID:              uuid.New().String(),
+					StackInstanceID: clone.ID,
+					ChartConfigID:   ov.ChartConfigID,
+					Values:          ov.Values,
+					UpdatedAt:       now,
+				}
+				_ = h.overrideRepo.Create(clonedOV)
+			}
 		}
 	}
 
@@ -1148,11 +1259,15 @@ func (h *InstanceHandler) CleanInstance(c *gin.Context) {
 
 // GetDeployLog godoc
 // @Summary     Get deployment logs
-// @Description Get deployment log history for a stack instance
+// @Description Get deployment log history for a stack instance. Supports cursor-based pagination for efficient large dataset traversal.
 // @Tags        stack-instances
 // @Produce     json
-// @Param       id path string true "Instance ID"
-// @Success     200 {array} models.DeploymentLog
+// @Param       id     path  string true  "Instance ID"
+// @Param       limit  query int    false "Page size (default 50)"
+// @Param       offset query int    false "Offset for traditional pagination (default 0)"
+// @Param       cursor query string false "Cursor from previous page for cursor-based pagination (overrides offset)"
+// @Success     200 {object} models.DeploymentLogResult
+// @Failure     400 {object} map[string]string
 // @Failure     404 {object} map[string]string
 // @Router      /api/v1/stack-instances/{id}/deploy-log [get]
 func (h *InstanceHandler) GetDeployLog(c *gin.Context) {
@@ -1174,14 +1289,37 @@ func (h *InstanceHandler) GetDeployLog(c *gin.Context) {
 		return
 	}
 
-	logs, err := h.deployLogRepo.ListByInstance(c.Request.Context(), id)
+	filters := models.DeploymentLogFilters{
+		InstanceID: id,
+		Cursor:     c.Query("cursor"),
+	}
+
+	if limitStr := c.Query("limit"); limitStr != "" {
+		l, err := strconv.Atoi(limitStr)
+		if err != nil || l < 0 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid limit parameter"})
+			return
+		}
+		filters.Limit = l
+	}
+
+	if offsetStr := c.Query("offset"); offsetStr != "" {
+		o, err := strconv.Atoi(offsetStr)
+		if err != nil || o < 0 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid offset parameter"})
+			return
+		}
+		filters.Offset = o
+	}
+
+	result, err := h.deployLogRepo.ListByInstancePaginated(c.Request.Context(), filters)
 	if err != nil {
 		status, message := mapError(err, "Deployment log")
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
 
-	c.JSON(http.StatusOK, logs)
+	c.JSON(http.StatusOK, result)
 }
 
 // GetInstanceStatus godoc

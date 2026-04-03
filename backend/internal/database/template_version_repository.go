@@ -10,6 +10,9 @@ import (
 	"gorm.io/gorm"
 )
 
+// Compile-time interface check.
+var _ models.TemplateVersionRepository = (*GORMTemplateVersionRepository)(nil)
+
 // GORMTemplateVersionRepository implements TemplateVersionRepository using GORM.
 type GORMTemplateVersionRepository struct {
 	db *gorm.DB

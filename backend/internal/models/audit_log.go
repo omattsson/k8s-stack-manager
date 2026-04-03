@@ -4,13 +4,13 @@ import "time"
 
 // AuditLog records a user action for auditing purposes.
 type AuditLog struct {
-	ID         string    `json:"id"`
-	UserID     string    `json:"user_id"`
-	Username   string    `json:"username"`
-	Action     string    `json:"action"`
-	EntityType string    `json:"entity_type"`
-	EntityID   string    `json:"entity_id"`
-	Details    string    `json:"details"`
+	ID         string    `json:"id" gorm:"primaryKey;size:36"`
+	UserID     string    `json:"user_id" gorm:"size:36"`
+	Username   string    `json:"username" gorm:"size:100"`
+	Action     string    `json:"action" gorm:"size:100"`
+	EntityType string    `json:"entity_type" gorm:"size:100"`
+	EntityID   string    `json:"entity_id" gorm:"size:36"`
+	Details    string    `json:"details" gorm:"type:longtext"`
 	Timestamp  time.Time `json:"timestamp"`
 }
 

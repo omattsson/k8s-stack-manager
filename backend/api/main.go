@@ -10,7 +10,6 @@ import (
 	"backend/internal/cluster"
 	"backend/internal/config"
 	"backend/internal/database"
-	"backend/internal/database/azure"
 	"backend/internal/deployer"
 	"backend/internal/gitprovider"
 	"backend/internal/health"
@@ -25,7 +24,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	_ "net/http/pprof"
+	"net/http/pprof"
 	"os"
 	"os/signal"
 	"syscall"
@@ -91,6 +90,16 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Register database/sql pool metrics when using MySQL with OTel.
+	if cfg.Otel.Enabled && mysqlGormDB != nil {
+		sqlDB, err := mysqlGormDB.DB()
+		if err == nil {
+			if err := telemetry.StartDBMetrics(sqlDB); err != nil {
+				slog.Warn("Failed to register DB pool metrics", "error", err)
+			}
+		}
+	}
+
 	// Initialize health checker with actual database dependency
 	healthChecker := health.New()
 	healthChecker.AddCheck("database", func(ctx context.Context) error {
@@ -103,38 +112,33 @@ func main() {
 	go hub.Run()
 
 	// ------------------------------------------------------------------
-	// Phase 1: Create domain-specific Azure Table repositories
+	// Create all domain-specific repositories via factory
 	// ------------------------------------------------------------------
-	azCfg := cfg.AzureTable
+	repos, err := database.NewRepositorySet(cfg, mysqlGormDB)
+	if err != nil {
+		slog.Error("Failed to create domain repositories", "error", err)
+		os.Exit(1)
+	}
 
-	userRepo, err := azure.NewUserRepository(azCfg.AccountName, azCfg.AccountKey, azCfg.Endpoint, azCfg.UseAzurite)
-	must("user repository", err)
-	templateRepo, err := azure.NewStackTemplateRepository(azCfg.AccountName, azCfg.AccountKey, azCfg.Endpoint, azCfg.UseAzurite)
-	must("stack template repository", err)
-	templateChartRepo, err := azure.NewTemplateChartConfigRepository(azCfg.AccountName, azCfg.AccountKey, azCfg.Endpoint, azCfg.UseAzurite)
-	must("template chart config repository", err)
-	definitionRepo, err := azure.NewStackDefinitionRepository(azCfg.AccountName, azCfg.AccountKey, azCfg.Endpoint, azCfg.UseAzurite)
-	must("stack definition repository", err)
-	chartConfigRepo, err := azure.NewChartConfigRepository(azCfg.AccountName, azCfg.AccountKey, azCfg.Endpoint, azCfg.UseAzurite)
-	must("chart config repository", err)
-	instanceRepo, err := azure.NewStackInstanceRepository(azCfg.AccountName, azCfg.AccountKey, azCfg.Endpoint, azCfg.UseAzurite)
-	must("stack instance repository", err)
-	overrideRepo, err := azure.NewValueOverrideRepository(azCfg.AccountName, azCfg.AccountKey, azCfg.Endpoint, azCfg.UseAzurite)
-	must("value override repository", err)
-	branchOverrideRepo, err := azure.NewChartBranchOverrideRepository(azCfg.AccountName, azCfg.AccountKey, azCfg.Endpoint, azCfg.UseAzurite)
-	must("chart branch override repository", err)
-	auditRepo, err := azure.NewAuditLogRepository(azCfg.AccountName, azCfg.AccountKey, azCfg.Endpoint, azCfg.UseAzurite)
-	must("audit log repository", err)
-	apiKeyRepo, err := azure.NewAPIKeyRepository(azCfg.AccountName, azCfg.AccountKey, azCfg.Endpoint, azCfg.UseAzurite)
-	must("API key repository", err)
-	deployLogRepo, err := azure.NewDeploymentLogRepository(azCfg.AccountName, azCfg.AccountKey, azCfg.Endpoint, azCfg.UseAzurite)
-	must("deployment log repository", err)
-	sharedValuesRepo, err := azure.NewSharedValuesRepository(azCfg.AccountName, azCfg.AccountKey, azCfg.Endpoint, azCfg.UseAzurite)
-	must("shared values repository", err)
-	quotaRepo, err := azure.NewResourceQuotaRepository(azCfg.AccountName, azCfg.AccountKey, azCfg.Endpoint, azCfg.UseAzurite)
-	must("resource quota repository", err)
-	quotaOverrideRepo, err := azure.NewInstanceQuotaOverrideRepository(azCfg.AccountName, azCfg.AccountKey, azCfg.Endpoint, azCfg.UseAzurite)
-	must("instance quota override repository", err)
+	userRepo := repos.User
+	templateRepo := repos.StackTemplate
+	templateChartRepo := repos.TemplateChartConfig
+	definitionRepo := repos.StackDefinition
+	chartConfigRepo := repos.ChartConfig
+	instanceRepo := repos.StackInstance
+	overrideRepo := repos.ValueOverride
+	branchOverrideRepo := repos.ChartBranchOverride
+	auditRepo := repos.AuditLog
+	apiKeyRepo := repos.APIKey
+	deployLogRepo := repos.DeploymentLog
+	sharedValuesRepo := repos.SharedValues
+	quotaRepo := repos.ResourceQuota
+	quotaOverrideRepo := repos.InstanceQuotaOverride
+	templateVersionRepo := repos.TemplateVersion
+	notificationRepo := repos.Notification
+	favoriteRepo := repos.UserFavorite
+	cleanupPolicyRepo := repos.CleanupPolicy
+	clusterRepo := repos.Cluster
 
 	// ------------------------------------------------------------------
 	// Phase 1: Create domain services
@@ -155,10 +159,6 @@ func main() {
 	// ------------------------------------------------------------------
 	// Phase 3: Create deployment services
 	// ------------------------------------------------------------------
-
-	// Create cluster repository
-	clusterRepo, err := azure.NewClusterRepository(azCfg.AccountName, azCfg.AccountKey, azCfg.Endpoint, azCfg.UseAzurite, cfg.Deployment.KubeconfigEncryptionKey)
-	must("cluster repository", err)
 
 	// Auto-create default cluster from KUBECONFIG_PATH for single-cluster migration
 	ensureDefaultCluster(clusterRepo, instanceRepo, cfg)
@@ -190,6 +190,7 @@ func main() {
 		InstanceRepo:      instanceRepo,
 		DeployLogRepo:     deployLogRepo,
 		Hub:               hub,
+		TxRunner:          repos.TxRunner,
 		MaxConcurrent:     int(cfg.Deployment.MaxConcurrentDeploys),
 		QuotaRepo:         quotaRepo,
 		QuotaOverrideRepo: quotaOverrideRepo,
@@ -214,21 +215,10 @@ func main() {
 		slog.Info("OIDC authentication enabled", "provider_url", cfg.OIDC.ProviderURL)
 	}
 
-	// Template version repository — datastore selection via config.
-	var templateVersionRepo models.TemplateVersionRepository
-	if cfg.AzureTable.UseAzureTable {
-		tvr, tvrErr := azure.NewTemplateVersionRepository(azCfg.AccountName, azCfg.AccountKey, azCfg.Endpoint, azCfg.UseAzurite)
-		if tvrErr != nil {
-			slog.Error("Failed to create template version repository", "error", tvrErr)
-			os.Exit(1)
-		}
-		templateVersionRepo = tvr
-	} else {
-		templateVersionRepo = database.NewGORMTemplateVersionRepository(mysqlGormDB)
-	}
-
 	templateHandler := handlers.NewTemplateHandlerWithVersions(templateRepo, templateChartRepo, definitionRepo, chartConfigRepo, templateVersionRepo)
+	templateHandler.SetTxRunner(repos.TxRunner)
 	definitionHandler := handlers.NewDefinitionHandlerWithVersions(definitionRepo, chartConfigRepo, instanceRepo, templateRepo, templateChartRepo, templateVersionRepo)
+	definitionHandler.SetTxRunner(repos.TxRunner)
 	templateVersionHandler := handlers.NewTemplateVersionHandler(templateVersionRepo, templateRepo)
 	instanceHandler := handlers.NewInstanceHandlerWithDeployer(
 		instanceRepo, overrideRepo, branchOverrideRepo, definitionRepo, chartConfigRepo,
@@ -236,6 +226,7 @@ func main() {
 		deployManager, k8sWatcher, clusterRegistry, deployLogRepo, clusterRepo,
 		cfg.App.DefaultInstanceTTLMinutes,
 	)
+	instanceHandler.SetTxRunner(repos.TxRunner)
 	gitHandler := handlers.NewGitHandler(gitRegistry)
 	auditLogHandler := handlers.NewAuditLogHandler(auditRepo)
 	userHandler := handlers.NewUserHandler(userRepo)
@@ -247,22 +238,8 @@ func main() {
 	instanceQuotaOverrideHandler := handlers.NewInstanceQuotaOverrideHandler(quotaOverrideRepo, instanceRepo)
 	sharedValuesHandler := handlers.NewSharedValuesHandler(sharedValuesRepo, clusterRepo)
 
-	// Notification repository — datastore selection via config.
-	var notificationRepo models.NotificationRepository
-	if cfg.AzureTable.UseAzureTable {
-		nr, nrErr := azure.NewNotificationRepository(azCfg.AccountName, azCfg.AccountKey, azCfg.Endpoint, azCfg.UseAzurite)
-		if nrErr != nil {
-			slog.Error("Failed to create notification repository", "error", nrErr)
-			os.Exit(1)
-		}
-		notificationRepo = nr
-	} else {
-		notificationRepo = database.NewGORMNotificationRepository(mysqlGormDB)
-	}
 	notificationHandler := handlers.NewNotificationHandler(notificationRepo)
 
-	favoriteRepo, err := azure.NewUserFavoriteRepository(azCfg.AccountName, azCfg.AccountKey, azCfg.Endpoint, azCfg.UseAzurite)
-	must("user favorite repository", err)
 	favoriteHandler := handlers.NewFavoriteHandler(favoriteRepo)
 
 	quickDeployHandler := handlers.NewQuickDeployHandler(
@@ -272,15 +249,13 @@ func main() {
 		hub, clusterRegistry, k8sWatcher,
 		cfg.App.DefaultInstanceTTLMinutes,
 	)
+	quickDeployHandler.SetTxRunner(repos.TxRunner)
 
 	analyticsHandler := handlers.NewAnalyticsHandler(templateRepo, definitionRepo, instanceRepo, deployLogRepo, userRepo)
 
 	// ------------------------------------------------------------------
 	// Phase 6.2: Cleanup policies
 	// ------------------------------------------------------------------
-	cleanupPolicyRepo, err := azure.NewCleanupPolicyRepository(azCfg.AccountName, azCfg.AccountKey, azCfg.Endpoint, azCfg.UseAzurite)
-	must("cleanup policy repository", err)
-
 	cleanupExecutor := deployer.NewCleanupExecutor(deployManager, definitionRepo, chartConfigRepo, instanceRepo)
 	cleanupScheduler := scheduler.NewScheduler(cleanupPolicyRepo, instanceRepo, auditRepo, cleanupExecutor)
 	cleanupPolicyHandler := handlers.NewCleanupPolicyHandler(cleanupPolicyRepo, cleanupScheduler)
@@ -336,14 +311,23 @@ func main() {
 
 	// Start pprof server on a separate port when PPROF_ENABLED=true.
 	// Access at http://localhost:6060/debug/pprof/
-	if os.Getenv("PPROF_ENABLED") == "true" {
-		pprofAddr := os.Getenv("PPROF_ADDR")
-		if pprofAddr == "" {
-			pprofAddr = ":6060"
+	if cfg.Server.PprofEnabled {
+		pprofMux := http.NewServeMux()
+		pprofMux.HandleFunc("/debug/pprof/", pprof.Index)
+		pprofMux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
+		pprofMux.HandleFunc("/debug/pprof/profile", pprof.Profile)
+		pprofMux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
+		pprofMux.HandleFunc("/debug/pprof/trace", pprof.Trace)
+		pprofSrv := &http.Server{
+			Addr:         cfg.Server.PprofAddr,
+			Handler:      pprofMux,
+			ReadTimeout:  30 * time.Second,
+			WriteTimeout: 30 * time.Second,
+			IdleTimeout:  60 * time.Second,
 		}
 		go func() {
-			slog.Info("pprof server starting", "addr", pprofAddr)
-			if err := http.ListenAndServe(pprofAddr, nil); err != nil {
+			slog.Info("pprof server starting", "addr", cfg.Server.PprofAddr)
+			if err := pprofSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 				slog.Error("pprof server failed", "error", err)
 			}
 		}()

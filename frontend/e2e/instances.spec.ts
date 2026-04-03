@@ -59,12 +59,14 @@ test.describe('Stack Instance Management', () => {
     await page.waitForURL(/\/stack-instances\/[^/]+$/, { timeout: 10_000 });
     await page.waitForLoadState('domcontentloaded');
 
-    // Go to dashboard
-    await page.goto('/');
-    await expect(page.getByRole('heading', { level: 1, name: 'Stack Instances' })).toBeVisible({
-      timeout: 10_000,
-    });
-    await expect(page.getByRole('heading', { name: instName, level: 2 })).toBeVisible({ timeout: 10_000 });
+    // Go to dashboard — use polling with reload to handle race where list was fetched before creation
+    await expect(async () => {
+      await page.goto('/');
+      await expect(page.getByRole('heading', { level: 1, name: 'Stack Instances' })).toBeVisible({
+        timeout: 10_000,
+      });
+      await expect(page.getByRole('heading', { name: instName, level: 2 })).toBeVisible({ timeout: 5_000 });
+    }).toPass({ timeout: 30_000 });
   });
 
   test('view instance detail page', async ({ page }) => {
@@ -178,11 +180,13 @@ test.describe('Stack Instance Management', () => {
     await page.waitForLoadState('domcontentloaded');
 
     // Go to dashboard and search
-    await page.goto('/');
-    await expect(page.getByRole('heading', { name: instName, level: 2 })).toBeVisible({ timeout: 10_000 });
-
-    await page.getByPlaceholder('Search instances...').fill(instName);
-    await expect(page.getByRole('heading', { name: instName, level: 2 })).toBeVisible();
+    // Use polling with page reload to handle race where instances list was fetched before creation
+    await expect(async () => {
+      await page.goto('/');
+      await expect(page.getByRole('heading', { name: 'Stack Instances', level: 1 })).toBeVisible({ timeout: 10_000 });
+      await page.getByPlaceholder('Search instances...').fill(instName);
+      await expect(page.getByRole('heading', { name: instName, level: 2 })).toBeVisible({ timeout: 2_000 });
+    }).toPass({ timeout: 30_000 });
 
     await page.getByPlaceholder('Search instances...').fill('nonexistent-instance-xyz');
     await expect(page.getByText('No stack instances found')).toBeVisible({ timeout: 5_000 });
@@ -204,9 +208,11 @@ test.describe('Stack Instance Management', () => {
     await page.waitForURL(/\/stack-instances\/[^/]+$/, { timeout: 10_000 });
     await page.waitForLoadState('domcontentloaded');
 
-    // Go to dashboard
-    await page.goto('/');
-    await expect(page.getByRole('heading', { name: instName, level: 2 })).toBeVisible({ timeout: 10_000 });
+    // Go to dashboard — use polling with reload to handle race where list was fetched before creation
+    await expect(async () => {
+      await page.goto('/');
+      await expect(page.getByRole('heading', { name: instName, level: 2 })).toBeVisible({ timeout: 5_000 });
+    }).toPass({ timeout: 30_000 });
 
     // Click Details button on the card
     const card = page.locator('.MuiCard-root', { hasText: instName });

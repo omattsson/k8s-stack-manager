@@ -190,6 +190,18 @@ function apiKeyHeaders(apiKey) {
   return { 'Content-Type': 'application/json', 'X-API-Key': apiKey, traceparent: traceparent() };
 }
 
+// checkOk verifies a 200 response but tolerates 429 (rate-limited) without
+// counting it as an error — only non-200, non-429 responses are true errors.
+function checkOk(res, name) {
+  if (res.status === 429) {
+    rateLimitHits.add(1);
+    return true; // not an error, just throttled
+  }
+  const ok = check(res, { [name]: (r) => r.status === 200 });
+  errorRate.add(!ok);
+  return ok;
+}
+
 // ── Helpers ─────────────────────────────────────────────────────────
 function login(username, password) {
   const start = Date.now();
@@ -201,6 +213,10 @@ function login(username, password) {
   authDuration.add(Date.now() - start);
   apiCalls.add(1);
 
+  if (res.status === 429) {
+    rateLimitHits.add(1);
+    return null;
+  }
   if (res.status !== 200) {
     errorRate.add(true);
     return null;
@@ -217,6 +233,7 @@ function registerUser(suffix) {
     { headers: jsonHeaders, tags: { name: 'POST /auth/register' } },
   );
   apiCalls.add(1);
+  if (res.status === 429) { rateLimitHits.add(1); return null; }
   if (res.status !== 201 && res.status !== 200) return null;
   return { username, password: 'stress123' };
 }
@@ -232,6 +249,7 @@ function createDefinition(headers, suffix) {
     { headers, tags: { name: 'POST /stack-definitions' } },
   );
   apiCalls.add(1);
+  if (res.status === 429) { rateLimitHits.add(1); return null; }
   if (res.status !== 201) return null;
   return JSON.parse(res.body);
 }
@@ -248,6 +266,7 @@ function createInstance(headers, defId, suffix) {
     { headers, tags: { name: 'POST /stack-instances' } },
   );
   apiCalls.add(1);
+  if (res.status === 429) { rateLimitHits.add(1); return null; }
   if (res.status !== 201) return null;
   return JSON.parse(res.body);
 }
@@ -385,10 +404,7 @@ export function bulkOpsStress(data) {
     );
     bulkDuration.add(res.timings.duration);
     apiCalls.add(1);
-    const ok = check(res, {
-      'bulk stop 200': (r) => r.status === 200,
-    });
-    errorRate.add(!ok);
+    checkOk(res, 'bulk stop 200');
 
     if (res.status === 200) {
       try {
@@ -411,10 +427,7 @@ export function bulkOpsStress(data) {
     );
     bulkDuration.add(res.timings.duration);
     apiCalls.add(1);
-    const ok = check(res, {
-      'bulk delete 200': (r) => r.status === 200,
-    });
-    errorRate.add(!ok);
+    checkOk(res, 'bulk delete 200');
   });
 
   // Cleanup definition
@@ -451,8 +464,7 @@ export function authContentionTest(data) {
         tags: { name: `GET ${endpoint} (api-key)` },
       });
       apiCalls.add(1);
-      const ok = check(res, { 'api-key 200': (r) => r.status === 200 });
-      errorRate.add(!ok);
+      checkOk(res, 'api-key 200');
       sleep(0.1);
     }
   } else {
@@ -467,8 +479,7 @@ export function authContentionTest(data) {
         tags: { name: 'GET /stack-instances (fresh-token)' },
       });
       apiCalls.add(1);
-      const ok = check(res, { 'fresh-token 200': (r) => r.status === 200 });
-      errorRate.add(!ok);
+      checkOk(res, 'fresh-token 200');
       sleep(0.2);
     }
   }
@@ -502,7 +513,7 @@ export function paginationStress(data) {
       );
       paginationDuration.add(page1.timings.duration);
       apiCalls.add(1);
-      check(page1, { 'page1 200': (r) => r.status === 200 });
+      checkOk(page1, 'page1 200');
 
       // Page with large limit
       const large = http.get(
@@ -511,7 +522,7 @@ export function paginationStress(data) {
       );
       paginationDuration.add(large.timings.duration);
       apiCalls.add(1);
-      check(large, { 'large-limit 200': (r) => r.status === 200 });
+      checkOk(large, 'large-limit 200');
 
       // Deep pagination (large offset)
       if (ep.supportsOffset) {
@@ -521,7 +532,7 @@ export function paginationStress(data) {
         );
         paginationDuration.add(deep.timings.duration);
         apiCalls.add(1);
-        check(deep, { 'deep-offset 200': (r) => r.status === 200 });
+        checkOk(deep, 'deep-offset 200');
       }
 
       // Filtered query (common dashboard pattern)
@@ -532,7 +543,7 @@ export function paginationStress(data) {
         );
         paginationDuration.add(filtered.timings.duration);
         apiCalls.add(1);
-        check(filtered, { 'filtered 200': (r) => r.status === 200 });
+        checkOk(filtered, 'filtered 200');
       }
     });
   }
@@ -610,10 +621,7 @@ export function writeContentionTest(data) {
         'conflict response fast': (r) => r.timings.duration < 200,
       });
     } else {
-      const ok = check(updateRes, {
-        'update 200': (r) => r.status === 200,
-      });
-      errorRate.add(!ok);
+      checkOk(updateRes, 'update 200');
     }
   });
 
@@ -681,8 +689,7 @@ export function spikeTest(data) {
 
   for (const res of responses) {
     apiCalls.add(1);
-    const ok = check(res, { 'spike-batch 200': (r) => r.status === 200 });
-    errorRate.add(!ok);
+    checkOk(res, 'spike-batch 200');
   }
 
   concurrentUsers.add(-1);
@@ -722,8 +729,7 @@ export function soakTest(data) {
             tags: { name: `GET ${ep.split('?')[0]} (soak)` },
           });
           apiCalls.add(1);
-          const ok = check(res, { 'soak-read 200': (r) => r.status === 200 });
-          errorRate.add(!ok);
+          checkOk(res, 'soak-read 200');
         }
       });
       break;
@@ -796,8 +802,7 @@ export function soakTest(data) {
         ]);
         for (const res of responses) {
           apiCalls.add(1);
-          const ok = check(res, { 'soak-batch 200': (r) => r.status === 200 });
-          errorRate.add(!ok);
+          checkOk(res, 'soak-batch 200');
         }
       });
       break;
@@ -841,8 +846,7 @@ export function otelOverheadTest(data) {
     });
     otelOverheadDuration.add(res.timings.duration);
     apiCalls.add(1);
-    const ok = check(res, { 'otel-overhead 200': (r) => r.status === 200 });
-    errorRate.add(!ok);
+    checkOk(res, 'otel-overhead 200');
   }
 
   // Also fire a parallel batch (simulates dashboard initial load)
@@ -856,8 +860,7 @@ export function otelOverheadTest(data) {
   for (const res of responses) {
     otelOverheadDuration.add(res.timings.duration);
     apiCalls.add(1);
-    const ok = check(res, { 'otel-overhead-batch 200': (r) => r.status === 200 });
-    errorRate.add(!ok);
+    checkOk(res, 'otel-overhead-batch 200');
   }
 
   sleep(0.1); // minimal think time to maximize throughput

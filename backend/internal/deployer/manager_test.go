@@ -208,6 +208,18 @@ func (m *mockDeployLogRepo) ListByInstance(_ context.Context, instanceID string)
 	return out, nil
 }
 
+func (m *mockDeployLogRepo) ListByInstancePaginated(_ context.Context, filters models.DeploymentLogFilters) (*models.DeploymentLogResult, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	var out []models.DeploymentLog
+	for _, log := range m.items {
+		if log.StackInstanceID == filters.InstanceID {
+			out = append(out, *log)
+		}
+	}
+	return &models.DeploymentLogResult{Data: out, Total: int64(len(out))}, nil
+}
+
 func (m *mockDeployLogRepo) GetLatestByInstance(_ context.Context, instanceID string) (*models.DeploymentLog, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -246,6 +258,18 @@ func (m *mockDeployLogRepo) SummarizeByInstance(_ context.Context, instanceID st
 		}
 	}
 	return summary, nil
+}
+
+func (m *mockDeployLogRepo) SummarizeBatch(ctx context.Context, instanceIDs []string) (map[string]*models.DeployLogSummary, error) {
+	result := make(map[string]*models.DeployLogSummary, len(instanceIDs))
+	for _, id := range instanceIDs {
+		summary, err := m.SummarizeByInstance(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		result[id] = summary
+	}
+	return result, nil
 }
 
 // ---- broadcaster mock ----

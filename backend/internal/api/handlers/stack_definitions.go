@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"time"
 
 	"backend/internal/api/middleware"
+	"backend/internal/database"
 	"backend/internal/models"
 
 	"github.com/gin-gonic/gin"
@@ -19,7 +21,6 @@ const (
 	msgDefinitionIDRequired = "Definition ID is required"
 )
 
-
 // supportedSchemaVersions lists the schema versions that the import endpoint can accept.
 var supportedSchemaVersions = map[string]bool{
 	"1.0": true,
@@ -27,10 +28,10 @@ var supportedSchemaVersions = map[string]bool{
 
 // DefinitionExportBundle is the portable JSON format for exporting/importing stack definitions.
 type DefinitionExportBundle struct {
-	SchemaVersion string                     `json:"schema_version"`
-	ExportedAt    time.Time                  `json:"exported_at"`
-	Definition    DefinitionExportData       `json:"definition"`
-	Charts        []ChartConfigExportData    `json:"charts"`
+	SchemaVersion string                  `json:"schema_version"`
+	ExportedAt    time.Time               `json:"exported_at"`
+	Definition    DefinitionExportData    `json:"definition"`
+	Charts        []ChartConfigExportData `json:"charts"`
 }
 
 // DefinitionExportData holds the exportable fields of a stack definition.
@@ -59,6 +60,7 @@ type DefinitionHandler struct {
 	templateRepo      models.StackTemplateRepository
 	templateChartRepo models.TemplateChartConfigRepository
 	versionRepo       models.TemplateVersionRepository
+	txRunner          database.TxRunner
 }
 
 // NewDefinitionHandler creates a new DefinitionHandler.
@@ -97,23 +99,69 @@ func NewDefinitionHandlerWithVersions(
 	}
 }
 
+// SetTxRunner sets an optional TxRunner for transactional multi-entity operations.
+func (h *DefinitionHandler) SetTxRunner(tx database.TxRunner) {
+	h.txRunner = tx
+}
+
 // ListDefinitions godoc
 // @Summary     List stack definitions
-// @Description List all stack definitions
+// @Description List stack definitions with server-side pagination
 // @Tags        stack-definitions
 // @Produce     json
-// @Success     200 {array}  models.StackDefinition
+// @Param       page     query    int false "Page number (default 1)"     minimum(1)
+// @Param       pageSize query    int false "Items per page (default 25, max 100)" minimum(1) maximum(100)
+// @Param       limit    query    int false "Max items to return (default 25, max 100)" minimum(1) maximum(100)
+// @Param       offset   query    int false "Number of items to skip (default 0)" minimum(0)
+// @Success     200 {object} map[string]interface{} "Paginated list with data, total, page, pageSize"
 // @Failure     500 {object} map[string]string
 // @Router      /api/v1/stack-definitions [get]
 func (h *DefinitionHandler) ListDefinitions(c *gin.Context) {
-	defs, err := h.definitionRepo.List()
+	pageSize := listPageSizeDefault
+	offset := 0
+	page := 1
+
+	if ps := c.Query("pageSize"); ps != "" {
+		if v, err := strconv.Atoi(ps); err == nil && v > 0 {
+			pageSize = v
+		}
+		if pageSize > listPageSizeMax {
+			pageSize = listPageSizeMax
+		}
+	}
+
+	if p := c.Query("page"); p != "" {
+		if v, err := strconv.Atoi(p); err == nil && v > 0 {
+			page = v
+		}
+		offset = (page - 1) * pageSize
+	} else if l := c.Query("limit"); l != "" {
+		if v, err := strconv.Atoi(l); err == nil && v > 0 {
+			pageSize = v
+			if pageSize > listPageSizeMax {
+				pageSize = listPageSizeMax
+			}
+		}
+		if o := c.Query("offset"); o != "" {
+			if v, err := strconv.Atoi(o); err == nil && v >= 0 {
+				offset = v
+			}
+		}
+	}
+
+	defs, total, err := h.definitionRepo.ListPaged(pageSize, offset)
 	if err != nil {
 		status, message := mapError(err, entityStackDefinition)
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
 
-	c.JSON(http.StatusOK, defs)
+	c.JSON(http.StatusOK, gin.H{
+		"data":     defs,
+		"total":    total,
+		"page":     page,
+		"pageSize": pageSize,
+	})
 }
 
 // CreateDefinition godoc
@@ -406,17 +454,10 @@ func (h *DefinitionHandler) ImportDefinition(c *gin.Context) {
 		return
 	}
 
-	if err := h.definitionRepo.Create(&def); err != nil {
-		slog.Error("failed to create imported definition", "error", err)
-		status, message := mapError(err, entityStackDefinition)
-		c.JSON(status, gin.H{"error": message})
-		return
-	}
-
-	// Create chart configs linked to the new definition.
-	createdCharts := make([]models.ChartConfig, 0, len(bundle.Charts))
+	// Build chart models up front so both paths share the same data.
+	chartModels := make([]models.ChartConfig, 0, len(bundle.Charts))
 	for _, ch := range bundle.Charts {
-		chart := models.ChartConfig{
+		chartModels = append(chartModels, models.ChartConfig{
 			ID:                uuid.New().String(),
 			StackDefinitionID: def.ID,
 			ChartName:         ch.ChartName,
@@ -427,19 +468,53 @@ func (h *DefinitionHandler) ImportDefinition(c *gin.Context) {
 			DefaultValues:     ch.DefaultValues,
 			DeployOrder:       ch.DeployOrder,
 			CreatedAt:         now,
-		}
+		})
+	}
 
-		if err := h.chartRepo.Create(&chart); err != nil {
-			slog.Error("failed to create imported chart config",
-				"chart_name", ch.ChartName,
-				"definition_id", def.ID,
-				"error", err,
-			)
-			status, message := mapError(err, entityChartConfig)
+	var createdCharts []models.ChartConfig
+
+	if h.txRunner != nil && h.txRunner.IsTransactional() {
+		// Transactional path — definition + all charts are created atomically.
+		txErr := h.txRunner.RunInTx(func(repos database.TxRepos) error {
+			if err := repos.StackDefinition.Create(&def); err != nil {
+				return err
+			}
+			for i := range chartModels {
+				if err := repos.ChartConfig.Create(&chartModels[i]); err != nil {
+					return err
+				}
+			}
+			createdCharts = chartModels
+			return nil
+		})
+		if txErr != nil {
+			slog.Error("failed to import definition", "error", txErr)
+			status, message := mapError(txErr, entityStackDefinition)
 			c.JSON(status, gin.H{"error": message})
 			return
 		}
-		createdCharts = append(createdCharts, chart)
+	} else {
+		// Non-transactional fallback (Azure Table Storage).
+		if err := h.definitionRepo.Create(&def); err != nil {
+			slog.Error("failed to create imported definition", "error", err)
+			status, message := mapError(err, entityStackDefinition)
+			c.JSON(status, gin.H{"error": message})
+			return
+		}
+
+		for i := range chartModels {
+			if err := h.chartRepo.Create(&chartModels[i]); err != nil {
+				slog.Error("failed to create imported chart config",
+					"chart_name", chartModels[i].ChartName,
+					"definition_id", def.ID,
+					"error", err,
+				)
+				status, message := mapError(err, entityChartConfig)
+				c.JSON(status, gin.H{"error": message})
+				return
+			}
+		}
+		createdCharts = chartModels
 	}
 
 	c.JSON(http.StatusCreated, gin.H{

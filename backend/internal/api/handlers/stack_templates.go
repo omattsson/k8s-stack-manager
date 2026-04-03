@@ -4,9 +4,11 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"time"
 
 	"backend/internal/api/middleware"
+	"backend/internal/database"
 	"backend/internal/models"
 
 	"github.com/gin-gonic/gin"
@@ -28,6 +30,7 @@ type TemplateHandler struct {
 	chartConfigRepo models.ChartConfigRepository
 	versionRepo     models.TemplateVersionRepository
 	userRepo        models.UserRepository
+	txRunner        database.TxRunner
 }
 
 // SetUserRepo sets the optional UserRepository for enriched list responses.
@@ -67,6 +70,11 @@ func NewTemplateHandlerWithVersions(
 	}
 }
 
+// SetTxRunner sets an optional TxRunner for transactional multi-entity operations.
+func (h *TemplateHandler) SetTxRunner(tx database.TxRunner) {
+	h.txRunner = tx
+}
+
 // TemplateListItem extends StackTemplate with computed fields for the gallery.
 type TemplateListItem struct {
 	models.StackTemplate
@@ -76,22 +84,42 @@ type TemplateListItem struct {
 
 // ListTemplates godoc
 // @Summary     List stack templates
-// @Description List published templates for regular users, all templates for devops/admin. Includes definition_count and owner_username.
+// @Description List published templates for regular users, all templates for devops/admin. Includes definition_count and owner_username. Supports server-side pagination.
 // @Tags        templates
 // @Accept      json
 // @Produce     json
-// @Success     200 {array}  TemplateListItem
+// @Param       page     query    int false "Page number (default 1)"     minimum(1)
+// @Param       pageSize query    int false "Items per page (default 25, max 100)" minimum(1) maximum(100)
+// @Success     200 {object} map[string]interface{} "Paginated list with data, total, page, pageSize"
 // @Failure     500 {object} map[string]string
 // @Router      /api/v1/templates [get]
 func (h *TemplateHandler) ListTemplates(c *gin.Context) {
+	pageSize := 25
+	if ps := c.Query("pageSize"); ps != "" {
+		if v, err := strconv.Atoi(ps); err == nil && v > 0 {
+			pageSize = v
+		}
+		if pageSize > 100 {
+			pageSize = 100
+		}
+	}
+	page := 1
+	if p := c.Query("page"); p != "" {
+		if v, err := strconv.Atoi(p); err == nil && v > 0 {
+			page = v
+		}
+	}
+	offset := (page - 1) * pageSize
+
 	role := middleware.GetRoleFromContext(c)
 
 	var templates []models.StackTemplate
+	var total int64
 	var err error
 	if role == "admin" || role == "devops" {
-		templates, err = h.templateRepo.List()
+		templates, total, err = h.templateRepo.ListPaged(pageSize, offset)
 	} else {
-		templates, err = h.templateRepo.ListPublished()
+		templates, total, err = h.templateRepo.ListPublishedPaged(pageSize, offset)
 	}
 	if err != nil {
 		status, message := mapError(err, entityTemplate)
@@ -99,43 +127,42 @@ func (h *TemplateHandler) ListTemplates(c *gin.Context) {
 		return
 	}
 
-	// NOTE: This does N+1 queries (per-template definition count + per-owner username lookup).
-	// Acceptable for typical gallery sizes. Ideal optimization: batch CountByTemplateIDs(ids)
-	// and FindUsersByIDs(ids) methods to reduce to 2 queries.
+	// Batch-fetch definition counts and owner usernames (2 queries instead of N+1).
+	templateIDs := make([]string, len(templates))
+	ownerIDSet := make(map[string]struct{})
+	for i, t := range templates {
+		templateIDs[i] = t.ID
+		if t.OwnerID != "" {
+			ownerIDSet[t.OwnerID] = struct{}{}
+		}
+	}
 
-	// Build definition count map by querying only for returned template IDs.
 	defCountMap := make(map[string]int)
-	if h.definitionRepo != nil {
-		for _, t := range templates {
-			defs, err := h.definitionRepo.ListByTemplate(t.ID)
-			if err != nil {
-				slog.Warn("failed to fetch definitions for template", "template_id", t.ID, "error", err)
-				continue
-			}
-			defCountMap[t.ID] = len(defs)
+	if h.definitionRepo != nil && len(templateIDs) > 0 {
+		counts, countErr := h.definitionRepo.CountByTemplateIDs(templateIDs)
+		if countErr != nil {
+			slog.Warn("failed to batch-fetch definition counts", "error", countErr)
+		} else {
+			defCountMap = counts
 		}
 	}
 
-	// Build username map from distinct owner IDs (instead of loading all users).
 	usernameMap := make(map[string]string)
-	if h.userRepo != nil {
-		ownerIDs := make(map[string]struct{})
-		for _, t := range templates {
-			if t.OwnerID != "" {
-				ownerIDs[t.OwnerID] = struct{}{}
-			}
+	if h.userRepo != nil && len(ownerIDSet) > 0 {
+		ownerIDs := make([]string, 0, len(ownerIDSet))
+		for id := range ownerIDSet {
+			ownerIDs = append(ownerIDs, id)
 		}
-		for ownerID := range ownerIDs {
-			user, err := h.userRepo.FindByID(ownerID)
-			if err != nil {
-				slog.Warn("failed to fetch user for template listing", "owner_id", ownerID, "error", err)
-				continue
+		users, userErr := h.userRepo.FindByIDs(ownerIDs)
+		if userErr != nil {
+			slog.Warn("failed to batch-fetch users", "error", userErr)
+		} else {
+			for id, u := range users {
+				usernameMap[id] = u.Username
 			}
-			usernameMap[ownerID] = user.Username
 		}
 	}
 
-	// Assemble enriched response.
 	items := make([]TemplateListItem, len(templates))
 	for i, t := range templates {
 		items[i] = TemplateListItem{
@@ -145,7 +172,12 @@ func (h *TemplateHandler) ListTemplates(c *gin.Context) {
 		}
 	}
 
-	c.JSON(http.StatusOK, items)
+	c.JSON(http.StatusOK, gin.H{
+		"data":     items,
+		"total":    total,
+		"page":     page,
+		"pageSize": pageSize,
+	})
 }
 
 // CreateTemplate godoc
@@ -475,6 +507,34 @@ func (h *TemplateHandler) InstantiateTemplate(c *gin.Context) {
 		UpdatedAt:             now,
 	}
 
+	if h.txRunner != nil && h.txRunner.IsTransactional() {
+		// Transactional path — definition + chart configs are created atomically.
+		var chartConfigs []models.ChartConfig
+		txErr := h.txRunner.RunInTx(func(repos database.TxRepos) error {
+			if err := repos.StackDefinition.Create(def); err != nil {
+				return err
+			}
+			ccs, copyErr := h.copyTemplateChartsToDefinitionTx(tmpl.ID, def.ID, now, repos)
+			if copyErr != nil {
+				return copyErr
+			}
+			chartConfigs = ccs
+			return nil
+		})
+		if txErr != nil {
+			status, message := mapError(txErr, entityStackDefinition)
+			c.JSON(status, gin.H{"error": message})
+			return
+		}
+
+		c.JSON(http.StatusCreated, gin.H{
+			"definition": def,
+			"charts":     chartConfigs,
+		})
+		return
+	}
+
+	// Non-transactional fallback (Azure Table Storage).
 	if err := h.definitionRepo.Create(def); err != nil {
 		status, message := mapError(err, entityStackDefinition)
 		c.JSON(status, gin.H{"error": message})
@@ -525,6 +585,38 @@ func (h *TemplateHandler) copyTemplateChartsToDefinition(templateID, defID strin
 	return chartConfigs, nil
 }
 
+// copyTemplateChartsToDefinitionTx is the transactional variant of
+// copyTemplateChartsToDefinition. It reads template charts via the handler's
+// chartRepo (read-only) and creates chart configs via the transactional repos.
+func (h *TemplateHandler) copyTemplateChartsToDefinitionTx(templateID, defID string, now time.Time, repos database.TxRepos) ([]models.ChartConfig, error) {
+	templateCharts, err := h.chartRepo.ListByTemplate(templateID)
+	if err != nil {
+		return nil, err
+	}
+
+	chartConfigs := make([]models.ChartConfig, 0, len(templateCharts))
+	for _, tc := range templateCharts {
+		cc := models.ChartConfig{
+			ID:                uuid.New().String(),
+			StackDefinitionID: defID,
+			ChartName:         tc.ChartName,
+			RepositoryURL:     tc.RepositoryURL,
+			SourceRepoURL:     tc.SourceRepoURL,
+			ChartPath:         tc.ChartPath,
+			ChartVersion:      tc.ChartVersion,
+			DefaultValues:     tc.DefaultValues,
+			DeployOrder:       tc.DeployOrder,
+			CreatedAt:         now,
+		}
+		if err := repos.ChartConfig.Create(&cc); err != nil {
+			return nil, err
+		}
+		chartConfigs = append(chartConfigs, cc)
+	}
+
+	return chartConfigs, nil
+}
+
 // CloneTemplate godoc
 // @Summary     Clone a stack template
 // @Description Create a new draft template that is a copy of the source (devops/admin only)
@@ -557,13 +649,7 @@ func (h *TemplateHandler) CloneTemplate(c *gin.Context) {
 		UpdatedAt:     now,
 	}
 
-	if err := h.templateRepo.Create(clone); err != nil {
-		status, message := mapError(err, entityTemplate)
-		c.JSON(status, gin.H{"error": message})
-		return
-	}
-
-	// Copy charts.
+	// Fetch source charts before any writes so we fail early on read errors.
 	charts, err := h.chartRepo.ListByTemplate(source.ID)
 	if err != nil {
 		status, message := mapError(err, entityTemplateCharts)
@@ -571,8 +657,10 @@ func (h *TemplateHandler) CloneTemplate(c *gin.Context) {
 		return
 	}
 
+	// Build chart clone models.
+	chartClones := make([]*models.TemplateChartConfig, 0, len(charts))
 	for _, ch := range charts {
-		chartClone := &models.TemplateChartConfig{
+		chartClones = append(chartClones, &models.TemplateChartConfig{
 			ID:              uuid.New().String(),
 			StackTemplateID: clone.ID,
 			ChartName:       ch.ChartName,
@@ -585,11 +673,41 @@ func (h *TemplateHandler) CloneTemplate(c *gin.Context) {
 			DeployOrder:     ch.DeployOrder,
 			Required:        ch.Required,
 			CreatedAt:       now,
-		}
-		if err := h.chartRepo.Create(chartClone); err != nil {
-			status, message := mapError(err, "Template chart")
+		})
+	}
+
+	if h.txRunner != nil && h.txRunner.IsTransactional() {
+		// Transactional path — template + chart copies are atomic.
+		txErr := h.txRunner.RunInTx(func(repos database.TxRepos) error {
+			if err := repos.StackTemplate.Create(clone); err != nil {
+				return err
+			}
+			for _, cc := range chartClones {
+				if err := repos.TemplateChart.Create(cc); err != nil {
+					return err
+				}
+			}
+			return nil
+		})
+		if txErr != nil {
+			status, message := mapError(txErr, entityTemplate)
 			c.JSON(status, gin.H{"error": message})
 			return
+		}
+	} else {
+		// Non-transactional fallback (Azure Table Storage).
+		if err := h.templateRepo.Create(clone); err != nil {
+			status, message := mapError(err, entityTemplate)
+			c.JSON(status, gin.H{"error": message})
+			return
+		}
+
+		for _, cc := range chartClones {
+			if err := h.chartRepo.Create(cc); err != nil {
+				status, message := mapError(err, "Template chart")
+				c.JSON(status, gin.H{"error": message})
+				return
+			}
 		}
 	}
 

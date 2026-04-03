@@ -13,14 +13,14 @@ import (
 )
 
 // setupResourceQuotaRepo creates a fresh SQLite DB with all tables created via
-// GORM's AutoMigrate, then returns a GormResourceQuotaRepository ready for testing.
-func setupResourceQuotaRepo(t *testing.T) *GormResourceQuotaRepository {
+// GORM's AutoMigrate, then returns a GORMResourceQuotaRepository ready for testing.
+func setupResourceQuotaRepo(t *testing.T) *GORMResourceQuotaRepository {
 	t.Helper()
 	db := setupTestDBWithAllTables(t)
-	return NewGormResourceQuotaRepository(db)
+	return NewGORMResourceQuotaRepository(db)
 }
 
-func TestGormResourceQuotaRepository_GetByClusterID(t *testing.T) {
+func TestGORMResourceQuotaRepository_GetByClusterID(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
@@ -74,7 +74,7 @@ func TestGormResourceQuotaRepository_GetByClusterID(t *testing.T) {
 	}
 }
 
-func TestGormResourceQuotaRepository_Upsert(t *testing.T) {
+func TestGORMResourceQuotaRepository_Upsert(t *testing.T) {
 	t.Parallel()
 
 	t.Run("creates new config", func(t *testing.T) {
@@ -160,7 +160,7 @@ func TestGormResourceQuotaRepository_Upsert(t *testing.T) {
 	})
 }
 
-func TestGormResourceQuotaRepository_Delete(t *testing.T) {
+func TestGORMResourceQuotaRepository_Delete(t *testing.T) {
 	t.Parallel()
 
 	t.Run("deletes existing config", func(t *testing.T) {

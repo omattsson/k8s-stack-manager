@@ -34,7 +34,8 @@ func NewFromAppConfig(cfg *config.Config) (*Database, error) {
 
 	for retryCount < maxRetries {
 		db, err = gorm.Open(mysql.Open(cfg.Database.DSN()), &gorm.Config{
-			Logger: logger.Default.LogMode(logLevel),
+			Logger:                 logger.Default.LogMode(logLevel),
+			SkipDefaultTransaction: true,
 		})
 
 		if err == nil {
@@ -90,7 +91,8 @@ func NewFromDBConfig(cfg *Config) (*Database, error) {
 	// For testing, use SQLite in-memory database when cfg is nil
 	if cfg == nil {
 		db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{
-			Logger: logger.Default.LogMode(logger.Info),
+			Logger:                 logger.Default.LogMode(logger.Info),
+			SkipDefaultTransaction: true,
 		})
 		if err != nil {
 			return nil, NewDatabaseError("connect", err)
@@ -116,7 +118,8 @@ func NewFromDBConfig(cfg *Config) (*Database, error) {
 
 	for retryCount < maxRetries {
 		db, err = gorm.Open(mysql.Open(cfg.DSN()), &gorm.Config{
-			Logger: logger.Default.LogMode(logger.Info),
+			Logger:                 logger.Default.LogMode(logger.Info),
+			SkipDefaultTransaction: true,
 		})
 
 		if err == nil {

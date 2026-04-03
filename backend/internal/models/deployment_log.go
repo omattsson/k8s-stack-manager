@@ -9,12 +9,12 @@ import (
 type DeploymentLog struct {
 	StartedAt       time.Time  `json:"started_at"`
 	CompletedAt     *time.Time `json:"completed_at,omitempty"`
-	ID              string     `json:"id"`
-	StackInstanceID string     `json:"stack_instance_id"`
-	Action          string     `json:"action"` // "deploy", "stop", or "clean"
-	Status          string     `json:"status"` // "running", "success", "error"
-	Output          string     `json:"output"`
-	ErrorMessage    string     `json:"error_message,omitempty"`
+	ID              string     `json:"id" gorm:"primaryKey;size:36"`
+	StackInstanceID string     `json:"stack_instance_id" gorm:"size:36"`
+	Action          string     `json:"action" gorm:"size:50"` // "deploy", "stop", or "clean"
+	Status          string     `json:"status" gorm:"size:50"` // "running", "success", "error"
+	Output          string     `json:"output" gorm:"type:longtext"`
+	ErrorMessage    string     `json:"error_message,omitempty" gorm:"type:text"`
 }
 
 // Deployment log action constants.
@@ -30,6 +30,21 @@ const (
 	DeployLogSuccess = "success"
 	DeployLogError   = "error"
 )
+
+// DeploymentLogFilters holds optional filters and pagination for querying deployment logs.
+type DeploymentLogFilters struct {
+	InstanceID string
+	Cursor     string
+	Limit      int
+	Offset     int
+}
+
+// DeploymentLogResult holds the result of a paginated deployment log query.
+type DeploymentLogResult struct {
+	Data       []DeploymentLog `json:"data"`
+	Total      int64           `json:"total"`
+	NextCursor string          `json:"next_cursor,omitempty"`
+}
 
 // DeployLogSummary provides lightweight aggregate counts for an instance's
 // deployment logs, avoiding the need to fetch full log entities with their
@@ -48,6 +63,8 @@ type DeploymentLogRepository interface {
 	FindByID(ctx context.Context, id string) (*DeploymentLog, error)
 	Update(ctx context.Context, log *DeploymentLog) error
 	ListByInstance(ctx context.Context, instanceID string) ([]DeploymentLog, error)
+	ListByInstancePaginated(ctx context.Context, filters DeploymentLogFilters) (*DeploymentLogResult, error)
 	GetLatestByInstance(ctx context.Context, instanceID string) (*DeploymentLog, error)
 	SummarizeByInstance(ctx context.Context, instanceID string) (*DeployLogSummary, error)
+	SummarizeBatch(ctx context.Context, instanceIDs []string) (map[string]*DeployLogSummary, error)
 }

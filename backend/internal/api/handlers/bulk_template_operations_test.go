@@ -511,11 +511,11 @@ func TestListTemplates_Enriched(t *testing.T) {
 			},
 			wantStatus: http.StatusOK,
 			checkFn: func(t *testing.T, w *httptest.ResponseRecorder) {
-				var items []TemplateListItem
-				require.NoError(t, json.Unmarshal(w.Body.Bytes(), &items))
-				require.Len(t, items, 1)
-				assert.Equal(t, 2, items[0].DefinitionCount)
-				assert.Equal(t, "alice", items[0].OwnerUsername)
+				var resp templateListResponse
+				require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+				require.Len(t, resp.Data, 1)
+				assert.Equal(t, 2, resp.Data[0].DefinitionCount)
+				assert.Equal(t, "alice", resp.Data[0].OwnerUsername)
 			},
 		},
 		{
@@ -528,10 +528,10 @@ func TestListTemplates_Enriched(t *testing.T) {
 			},
 			wantStatus: http.StatusOK,
 			checkFn: func(t *testing.T, w *httptest.ResponseRecorder) {
-				var items []TemplateListItem
-				require.NoError(t, json.Unmarshal(w.Body.Bytes(), &items))
-				require.Len(t, items, 1)
-				assert.Equal(t, "Published", items[0].Name)
+				var resp templateListResponse
+				require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+				require.Len(t, resp.Data, 1)
+				assert.Equal(t, "Published", resp.Data[0].Name)
 			},
 		},
 		{
@@ -544,9 +544,9 @@ func TestListTemplates_Enriched(t *testing.T) {
 			},
 			wantStatus: http.StatusOK,
 			checkFn: func(t *testing.T, w *httptest.ResponseRecorder) {
-				var items []TemplateListItem
-				require.NoError(t, json.Unmarshal(w.Body.Bytes(), &items))
-				assert.Len(t, items, 2)
+				var resp templateListResponse
+				require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+				assert.Len(t, resp.Data, 2)
 			},
 		},
 		{
@@ -559,9 +559,9 @@ func TestListTemplates_Enriched(t *testing.T) {
 			},
 			wantStatus: http.StatusOK,
 			checkFn: func(t *testing.T, w *httptest.ResponseRecorder) {
-				var items []TemplateListItem
-				require.NoError(t, json.Unmarshal(w.Body.Bytes(), &items))
-				assert.Len(t, items, 2)
+				var resp templateListResponse
+				require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+				assert.Len(t, resp.Data, 2)
 			},
 		},
 		{
@@ -573,10 +573,10 @@ func TestListTemplates_Enriched(t *testing.T) {
 			},
 			wantStatus: http.StatusOK,
 			checkFn: func(t *testing.T, w *httptest.ResponseRecorder) {
-				var items []TemplateListItem
-				require.NoError(t, json.Unmarshal(w.Body.Bytes(), &items))
-				require.Len(t, items, 1)
-				assert.Equal(t, 0, items[0].DefinitionCount)
+				var resp templateListResponse
+				require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+				require.Len(t, resp.Data, 1)
+				assert.Equal(t, 0, resp.Data[0].DefinitionCount)
 			},
 		},
 		{
@@ -588,10 +588,10 @@ func TestListTemplates_Enriched(t *testing.T) {
 			},
 			wantStatus: http.StatusOK,
 			checkFn: func(t *testing.T, w *httptest.ResponseRecorder) {
-				var items []TemplateListItem
-				require.NoError(t, json.Unmarshal(w.Body.Bytes(), &items))
-				require.Len(t, items, 1)
-				assert.Empty(t, items[0].OwnerUsername)
+				var resp templateListResponse
+				require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+				require.Len(t, resp.Data, 1)
+				assert.Empty(t, resp.Data[0].OwnerUsername)
 			},
 		},
 	}

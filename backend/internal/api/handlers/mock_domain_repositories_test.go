@@ -68,6 +68,22 @@ func (m *MockUserRepository) FindByID(id string) (*models.User, error) {
 	return &cp, nil
 }
 
+func (m *MockUserRepository) FindByIDs(ids []string) (map[string]*models.User, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.findErr != nil {
+		return nil, m.findErr
+	}
+	result := make(map[string]*models.User, len(ids))
+	for _, id := range ids {
+		if u, ok := m.users[id]; ok {
+			cp := *u
+			result[id] = &cp
+		}
+	}
+	return result, nil
+}
+
 func (m *MockUserRepository) FindByUsername(username string) (*models.User, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -138,6 +154,12 @@ func (m *MockUserRepository) List() ([]models.User, error) {
 		out = append(out, *u)
 	}
 	return out, nil
+}
+
+func (m *MockUserRepository) Count() (int64, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return int64(len(m.users)), nil
 }
 
 func (m *MockUserRepository) SetCreateError(err error) {
@@ -234,6 +256,50 @@ func (m *MockStackTemplateRepository) List() ([]models.StackTemplate, error) {
 	return out, nil
 }
 
+func (m *MockStackTemplateRepository) ListPaged(limit, offset int) ([]models.StackTemplate, int64, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.err != nil {
+		return nil, 0, m.err
+	}
+	all := make([]models.StackTemplate, 0, len(m.items))
+	for _, t := range m.items {
+		all = append(all, *t)
+	}
+	total := int64(len(all))
+	if offset >= len(all) {
+		return []models.StackTemplate{}, total, nil
+	}
+	all = all[offset:]
+	if limit < len(all) {
+		all = all[:limit]
+	}
+	return all, total, nil
+}
+
+func (m *MockStackTemplateRepository) ListPublishedPaged(limit, offset int) ([]models.StackTemplate, int64, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.err != nil {
+		return nil, 0, m.err
+	}
+	var all []models.StackTemplate
+	for _, t := range m.items {
+		if t.IsPublished {
+			all = append(all, *t)
+		}
+	}
+	total := int64(len(all))
+	if offset >= len(all) {
+		return []models.StackTemplate{}, total, nil
+	}
+	all = all[offset:]
+	if limit < len(all) {
+		all = all[:limit]
+	}
+	return all, total, nil
+}
+
 func (m *MockStackTemplateRepository) ListPublished() ([]models.StackTemplate, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -259,6 +325,15 @@ func (m *MockStackTemplateRepository) ListByOwner(ownerID string) ([]models.Stac
 		}
 	}
 	return out, nil
+}
+
+func (m *MockStackTemplateRepository) Count() (int64, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.err != nil {
+		return 0, m.err
+	}
+	return int64(len(m.items)), nil
 }
 
 func (m *MockStackTemplateRepository) SetError(err error) {
@@ -426,6 +501,27 @@ func (m *MockStackDefinitionRepository) List() ([]models.StackDefinition, error)
 	return out, nil
 }
 
+func (m *MockStackDefinitionRepository) ListPaged(limit, offset int) ([]models.StackDefinition, int64, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.err != nil {
+		return nil, 0, m.err
+	}
+	all := make([]models.StackDefinition, 0, len(m.items))
+	for _, d := range m.items {
+		all = append(all, *d)
+	}
+	total := int64(len(all))
+	if offset >= len(all) {
+		return []models.StackDefinition{}, total, nil
+	}
+	all = all[offset:]
+	if limit < len(all) {
+		all = all[:limit]
+	}
+	return all, total, nil
+}
+
 func (m *MockStackDefinitionRepository) ListByOwner(ownerID string) ([]models.StackDefinition, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -451,6 +547,34 @@ func (m *MockStackDefinitionRepository) ListByTemplate(templateID string) ([]mod
 		}
 	}
 	return out, nil
+}
+
+func (m *MockStackDefinitionRepository) CountByTemplateIDs(templateIDs []string) (map[string]int, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.err != nil {
+		return nil, m.err
+	}
+	wanted := make(map[string]struct{}, len(templateIDs))
+	for _, id := range templateIDs {
+		wanted[id] = struct{}{}
+	}
+	result := make(map[string]int, len(templateIDs))
+	for _, d := range m.items {
+		if _, ok := wanted[d.SourceTemplateID]; ok {
+			result[d.SourceTemplateID]++
+		}
+	}
+	return result, nil
+}
+
+func (m *MockStackDefinitionRepository) Count() (int64, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.err != nil {
+		return 0, m.err
+	}
+	return int64(len(m.items)), nil
 }
 
 func (m *MockStackDefinitionRepository) SetError(err error) {

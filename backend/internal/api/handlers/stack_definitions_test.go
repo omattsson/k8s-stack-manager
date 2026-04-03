@@ -3,6 +3,7 @@ package handlers
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -76,7 +77,7 @@ func seedDefinition(t *testing.T, repo *MockStackDefinitionRepository, id, name,
 func TestListDefinitions(t *testing.T) {
 	t.Parallel()
 
-	t.Run("returns all definitions", func(t *testing.T) {
+	t.Run("returns paginated definitions with defaults", func(t *testing.T) {
 		t.Parallel()
 		defRepo := NewMockStackDefinitionRepository()
 		seedDefinition(t, defRepo, "d1", "Def One", "owner-1")
@@ -88,9 +89,98 @@ func TestListDefinitions(t *testing.T) {
 		router.ServeHTTP(w, req)
 
 		assert.Equal(t, http.StatusOK, w.Code)
-		var list []models.StackDefinition
-		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &list))
-		assert.Len(t, list, 2)
+		var resp map[string]json.RawMessage
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+
+		var data []models.StackDefinition
+		require.NoError(t, json.Unmarshal(resp["data"], &data))
+		assert.Len(t, data, 2)
+
+		var total float64
+		require.NoError(t, json.Unmarshal(resp["total"], &total))
+		assert.Equal(t, float64(2), total)
+
+		var page float64
+		require.NoError(t, json.Unmarshal(resp["page"], &page))
+		assert.Equal(t, float64(1), page)
+
+		var pageSize float64
+		require.NoError(t, json.Unmarshal(resp["pageSize"], &pageSize))
+		assert.Equal(t, float64(25), pageSize)
+	})
+
+	t.Run("respects page and pageSize params", func(t *testing.T) {
+		t.Parallel()
+		defRepo := NewMockStackDefinitionRepository()
+		for i := 0; i < 5; i++ {
+			seedDefinition(t, defRepo, fmt.Sprintf("d%d", i), fmt.Sprintf("Def %d", i), "owner-1")
+		}
+
+		router := setupDefinitionRouter(defRepo, NewMockChartConfigRepository(), NewMockStackInstanceRepository(), "uid-1", "user")
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest(http.MethodGet, "/api/v1/stack-definitions?page=2&pageSize=2", nil)
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		var resp map[string]json.RawMessage
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+
+		var data []models.StackDefinition
+		require.NoError(t, json.Unmarshal(resp["data"], &data))
+		assert.Len(t, data, 2)
+
+		var total float64
+		require.NoError(t, json.Unmarshal(resp["total"], &total))
+		assert.Equal(t, float64(5), total)
+
+		var page float64
+		require.NoError(t, json.Unmarshal(resp["page"], &page))
+		assert.Equal(t, float64(2), page)
+
+		var pageSize float64
+		require.NoError(t, json.Unmarshal(resp["pageSize"], &pageSize))
+		assert.Equal(t, float64(2), pageSize)
+	})
+
+	t.Run("clamps pageSize to 100", func(t *testing.T) {
+		t.Parallel()
+		defRepo := NewMockStackDefinitionRepository()
+
+		router := setupDefinitionRouter(defRepo, NewMockChartConfigRepository(), NewMockStackInstanceRepository(), "uid-1", "user")
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest(http.MethodGet, "/api/v1/stack-definitions?pageSize=999", nil)
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		var resp map[string]json.RawMessage
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+
+		var pageSize float64
+		require.NoError(t, json.Unmarshal(resp["pageSize"], &pageSize))
+		assert.Equal(t, float64(100), pageSize)
+	})
+
+	t.Run("returns empty data array for out-of-range page", func(t *testing.T) {
+		t.Parallel()
+		defRepo := NewMockStackDefinitionRepository()
+		seedDefinition(t, defRepo, "d1", "Def One", "owner-1")
+
+		router := setupDefinitionRouter(defRepo, NewMockChartConfigRepository(), NewMockStackInstanceRepository(), "uid-1", "user")
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest(http.MethodGet, "/api/v1/stack-definitions?page=100", nil)
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		var resp map[string]json.RawMessage
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+
+		var data []models.StackDefinition
+		require.NoError(t, json.Unmarshal(resp["data"], &data))
+		assert.Empty(t, data)
+
+		var total float64
+		require.NoError(t, json.Unmarshal(resp["total"], &total))
+		assert.Equal(t, float64(1), total)
 	})
 
 	t.Run("repository error returns 500", func(t *testing.T) {

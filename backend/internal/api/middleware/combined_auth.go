@@ -2,14 +2,21 @@ package middleware
 
 import (
 	"crypto/subtle"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
 
+	"backend/internal/cache"
 	"backend/internal/models"
 
 	"github.com/gin-gonic/gin"
 )
+
+// lastUsedCache prevents UpdateLastUsed from firing more than once per
+// API key per minute, reducing connection pool pressure under high load.
+// Entries auto-expire after 2 minutes so the cache stays bounded.
+var lastUsedCache = cache.New[time.Time](2*time.Minute, 1*time.Minute)
 
 // APIKeyAuthDeps holds the dependencies for combined JWT + API-key auth.
 type APIKeyAuthDeps struct {
@@ -56,7 +63,12 @@ func CombinedAuth(deps APIKeyAuthDeps) gin.HandlerFunc {
 		hash := models.HashAPIKey(raw)
 
 		records, err := deps.APIKeyRepo.FindByPrefix(prefix)
-		if err != nil || len(records) == 0 {
+		if err != nil {
+			slog.Error("API key lookup failed", "error", err)
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Invalid API key"})
+			return
+		}
+		if len(records) == 0 {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Invalid API key"})
 			return
 		}
@@ -92,7 +104,16 @@ func CombinedAuth(deps APIKeyAuthDeps) gin.HandlerFunc {
 		c.Set(contextKeyUsername, user.Username)
 		c.Set(contextKeyRole, user.Role)
 
-		// Synchronous best-effort update of last-used timestamp.
-		_ = deps.APIKeyRepo.UpdateLastUsed(record.UserID, record.ID, time.Now().UTC())
+		// Throttled async update of last-used timestamp — at most once per key
+		// per minute to avoid unnecessary DB writes and connection pool pressure.
+		now := time.Now().UTC()
+		prev, exists := lastUsedCache.Get(record.ID)
+		shouldUpdate := !exists || now.Sub(prev) > time.Minute
+		if shouldUpdate {
+			lastUsedCache.Set(record.ID, now)
+			go func(userID, keyID string, ts time.Time) {
+				_ = deps.APIKeyRepo.UpdateLastUsed(userID, keyID, ts)
+			}(record.UserID, record.ID, now)
+		}
 	}
 }

@@ -1,0 +1,6 @@
+# Agent/instruction markdown files — dense formatting for coding agents
+CLAUDE.md
+.github/copilot-instructions.md
+.github/instructions/
+.github/prompts/
+node_modules/

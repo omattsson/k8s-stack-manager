@@ -13,18 +13,21 @@ import (
 	"gorm.io/gorm"
 )
 
-// GormResourceQuotaRepository implements models.ResourceQuotaRepository using GORM.
-type GormResourceQuotaRepository struct {
+// Compile-time interface check.
+var _ models.ResourceQuotaRepository = (*GORMResourceQuotaRepository)(nil)
+
+// GORMResourceQuotaRepository implements models.ResourceQuotaRepository using GORM.
+type GORMResourceQuotaRepository struct {
 	db *gorm.DB
 }
 
-// NewGormResourceQuotaRepository creates a new GORM-based resource quota repository.
-func NewGormResourceQuotaRepository(db *gorm.DB) *GormResourceQuotaRepository {
-	return &GormResourceQuotaRepository{db: db}
+// NewGORMResourceQuotaRepository creates a new GORM-based resource quota repository.
+func NewGORMResourceQuotaRepository(db *gorm.DB) *GORMResourceQuotaRepository {
+	return &GORMResourceQuotaRepository{db: db}
 }
 
 // GetByClusterID retrieves the resource quota config for a cluster.
-func (r *GormResourceQuotaRepository) GetByClusterID(ctx context.Context, clusterID string) (*models.ResourceQuotaConfig, error) {
+func (r *GORMResourceQuotaRepository) GetByClusterID(ctx context.Context, clusterID string) (*models.ResourceQuotaConfig, error) {
 	var config models.ResourceQuotaConfig
 	if err := r.db.WithContext(ctx).Where("cluster_id = ?", clusterID).First(&config).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -36,7 +39,7 @@ func (r *GormResourceQuotaRepository) GetByClusterID(ctx context.Context, cluste
 }
 
 // Upsert creates or updates the resource quota config for a cluster.
-func (r *GormResourceQuotaRepository) Upsert(ctx context.Context, config *models.ResourceQuotaConfig) error {
+func (r *GORMResourceQuotaRepository) Upsert(ctx context.Context, config *models.ResourceQuotaConfig) error {
 	if err := config.Validate(); err != nil {
 		return dberrors.NewDatabaseError("Upsert", fmt.Errorf("%w: %s", dberrors.ErrValidation, err.Error()))
 	}
@@ -70,7 +73,7 @@ func (r *GormResourceQuotaRepository) Upsert(ctx context.Context, config *models
 }
 
 // Delete removes the resource quota config for a cluster.
-func (r *GormResourceQuotaRepository) Delete(ctx context.Context, clusterID string) error {
+func (r *GORMResourceQuotaRepository) Delete(ctx context.Context, clusterID string) error {
 	result := r.db.WithContext(ctx).Where("cluster_id = ?", clusterID).Delete(&models.ResourceQuotaConfig{})
 	if result.Error != nil {
 		return dberrors.NewDatabaseError("Delete", fmt.Errorf("delete resource quota config: %w", result.Error))

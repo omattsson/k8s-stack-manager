@@ -11,19 +11,19 @@ const (
 
 // Cluster represents a Kubernetes cluster that stack instances can be deployed to.
 type Cluster struct {
-	CreatedAt      time.Time `json:"created_at"`
-	UpdatedAt      time.Time `json:"updated_at"`
-	ID             string    `json:"id"`
-	Name           string    `json:"name"`
-	Description    string    `json:"description"`
-	APIServerURL   string    `json:"api_server_url"`
-	KubeconfigData string    `json:"-"`
-	KubeconfigPath string    `json:"-"`
-	Region         string    `json:"region"`
-	HealthStatus   string    `json:"health_status"`
-	MaxNamespaces       int  `json:"max_namespaces"`
-	MaxInstancesPerUser int  `json:"max_instances_per_user" gorm:"default:0"` // 0 = unlimited
-	IsDefault           bool `json:"is_default"`
+	CreatedAt           time.Time `json:"created_at"`
+	UpdatedAt           time.Time `json:"updated_at"`
+	ID                  string    `json:"id" gorm:"primaryKey;size:36"`
+	Name                string    `json:"name" gorm:"size:255;uniqueIndex"`
+	Description         string    `json:"description" gorm:"type:text"`
+	APIServerURL        string    `json:"api_server_url" gorm:"size:500"`
+	KubeconfigData      string    `json:"-" gorm:"type:longtext"`
+	KubeconfigPath      string    `json:"-" gorm:"size:500"`
+	Region              string    `json:"region" gorm:"size:100"`
+	HealthStatus        string    `json:"health_status" gorm:"size:50"`
+	MaxNamespaces       int       `json:"max_namespaces"`
+	MaxInstancesPerUser int       `json:"max_instances_per_user" gorm:"default:0"` // 0 = unlimited
+	IsDefault           bool      `json:"is_default"`
 }
 
 // ClusterRepository defines data access operations for clusters.

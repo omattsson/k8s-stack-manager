@@ -2975,7 +2975,7 @@ const docTemplate = `{
         },
         "/api/v1/stack-definitions": {
             "get": {
-                "description": "List all stack definitions",
+                "description": "List stack definitions with server-side pagination",
                 "produces": [
                     "application/json"
                 ],
@@ -2983,14 +2983,29 @@ const docTemplate = `{
                     "stack-definitions"
                 ],
                 "summary": "List stack definitions",
+                "parameters": [
+                    {
+                        "minimum": 1,
+                        "type": "integer",
+                        "description": "Page number (default 1)",
+                        "name": "page",
+                        "in": "query"
+                    },
+                    {
+                        "maximum": 100,
+                        "minimum": 1,
+                        "type": "integer",
+                        "description": "Items per page (default 25, max 100)",
+                        "name": "pageSize",
+                        "in": "query"
+                    }
+                ],
                 "responses": {
                     "200": {
-                        "description": "OK",
+                        "description": "Paginated list with data, total, page, pageSize",
                         "schema": {
-                            "type": "array",
-                            "items": {
-                                "$ref": "#/definitions/models.StackDefinition"
-                            }
+                            "type": "object",
+                            "additionalProperties": true
                         }
                     },
                     "500": {
@@ -3585,7 +3600,7 @@ const docTemplate = `{
         },
         "/api/v1/stack-instances": {
             "get": {
-                "description": "List all stack instances, optionally filtered by owner",
+                "description": "List stack instances with server-side pagination. Supports page/pageSize or legacy limit/offset params. Use owner=me to filter by the authenticated user.",
                 "produces": [
                     "application/json"
                 ],
@@ -3599,16 +3614,38 @@ const docTemplate = `{
                         "description": "Filter by owner (use 'me' for current user)",
                         "name": "owner",
                         "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Page number (1-based, default: 1)",
+                        "name": "page",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Results per page (default: 25, max: 100)",
+                        "name": "pageSize",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Legacy: maximum number of results",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Legacy: number of results to skip",
+                        "name": "offset",
+                        "in": "query"
                     }
                 ],
                 "responses": {
                     "200": {
-                        "description": "OK",
+                        "description": "data: []StackInstance, total: int, page: int, pageSize: int",
                         "schema": {
-                            "type": "array",
-                            "items": {
-                                "$ref": "#/definitions/models.StackInstance"
-                            }
+                            "type": "object",
+                            "additionalProperties": true
                         }
                     },
                     "500": {
@@ -4484,7 +4521,7 @@ const docTemplate = `{
         },
         "/api/v1/stack-instances/{id}/deploy-log": {
             "get": {
-                "description": "Get deployment log history for a stack instance",
+                "description": "Get deployment log history for a stack instance. Supports cursor-based pagination for efficient large dataset traversal.",
                 "produces": [
                     "application/json"
                 ],
@@ -4499,15 +4536,39 @@ const docTemplate = `{
                         "name": "id",
                         "in": "path",
                         "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Page size (default 50)",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Offset for traditional pagination (default 0)",
+                        "name": "offset",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Cursor from previous page for cursor-based pagination (overrides offset)",
+                        "name": "cursor",
+                        "in": "query"
                     }
                 ],
                 "responses": {
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "type": "array",
-                            "items": {
-                                "$ref": "#/definitions/models.DeploymentLog"
+                            "$ref": "#/definitions/models.DeploymentLogResult"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
                             }
                         }
                     },
@@ -5094,7 +5155,7 @@ const docTemplate = `{
         },
         "/api/v1/templates": {
             "get": {
-                "description": "List published templates for regular users, all templates for devops/admin. Includes definition_count and owner_username.",
+                "description": "List published templates for regular users, all templates for devops/admin. Includes definition_count and owner_username. Supports server-side pagination.",
                 "consumes": [
                     "application/json"
                 ],
@@ -5105,14 +5166,29 @@ const docTemplate = `{
                     "templates"
                 ],
                 "summary": "List stack templates",
+                "parameters": [
+                    {
+                        "minimum": 1,
+                        "type": "integer",
+                        "description": "Page number (default 1)",
+                        "name": "page",
+                        "in": "query"
+                    },
+                    {
+                        "maximum": 100,
+                        "minimum": 1,
+                        "type": "integer",
+                        "description": "Items per page (default 25, max 100)",
+                        "name": "pageSize",
+                        "in": "query"
+                    }
+                ],
                 "responses": {
                     "200": {
-                        "description": "OK",
+                        "description": "Paginated list with data, total, page, pageSize",
                         "schema": {
-                            "type": "array",
-                            "items": {
-                                "$ref": "#/definitions/handlers.TemplateListItem"
-                            }
+                            "type": "object",
+                            "additionalProperties": true
                         }
                     },
                     "500": {
@@ -6683,7 +6759,7 @@ const docTemplate = `{
         "handlers.ClusterUtilization": {
             "type": "object",
             "properties": {
-                "cluster_id": {
+                "clusterID": {
                     "type": "string"
                 },
                 "namespaces": {
@@ -6988,47 +7064,6 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "username": {
-                    "type": "string"
-                }
-            }
-        },
-        "handlers.TemplateListItem": {
-            "type": "object",
-            "properties": {
-                "category": {
-                    "type": "string"
-                },
-                "created_at": {
-                    "type": "string"
-                },
-                "default_branch": {
-                    "type": "string"
-                },
-                "definition_count": {
-                    "type": "integer"
-                },
-                "description": {
-                    "type": "string"
-                },
-                "id": {
-                    "type": "string"
-                },
-                "is_published": {
-                    "type": "boolean"
-                },
-                "name": {
-                    "type": "string"
-                },
-                "owner_id": {
-                    "type": "string"
-                },
-                "owner_username": {
-                    "type": "string"
-                },
-                "updated_at": {
-                    "type": "string"
-                },
-                "version": {
                     "type": "string"
                 }
             }
@@ -7789,6 +7824,23 @@ const docTemplate = `{
                 "status": {
                     "description": "\"running\", \"success\", \"error\"",
                     "type": "string"
+                }
+            }
+        },
+        "models.DeploymentLogResult": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/models.DeploymentLog"
+                    }
+                },
+                "next_cursor": {
+                    "type": "string"
+                },
+                "total": {
+                    "type": "integer"
                 }
             }
         },

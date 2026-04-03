@@ -43,6 +43,15 @@ services:
       - OIDC_AUTO_PROVISION=${OIDC_AUTO_PROVISION:-true}
       - OIDC_LOCAL_AUTH=${OIDC_LOCAL_AUTH:-true}
       - OIDC_STATE_TTL=${OIDC_STATE_TTL:-5m}
+      # MySQL (requires --profile mysql)
+      - DB_HOST=${DB_HOST:-mysql}
+      - DB_PORT=3306
+      - DB_USER=${DB_USER:-root}
+      - DB_PASSWORD=${DB_PASSWORD:-rootpassword}
+      - DB_NAME=${DB_NAME:-app}
+      - DB_MAX_OPEN_CONNS=${DB_MAX_OPEN_CONNS:-25}
+      - DB_MAX_IDLE_CONNS=${DB_MAX_IDLE_CONNS:-5}
+      - DB_CONN_MAX_LIFETIME=${DB_CONN_MAX_LIFETIME:-5m}
       # Azure Table Storage (Azurite for local dev)
       - USE_AZURE_TABLE=${USE_AZURE_TABLE:-true}
       - USE_AZURITE=${USE_AZURITE:-true}
@@ -65,7 +74,7 @@ services:
       - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-otel-collector:4317}
       - OTEL_SERVICE_NAME=${OTEL_SERVICE_NAME:-k8s-stack-manager}
       - OTEL_TRACE_SAMPLE_RATE=${OTEL_TRACE_SAMPLE_RATE:-1.0}
-      # Rate limiting
+      # Rate limiting (req/min per IP; override with RATE_LIMIT env var)
       - RATE_LIMIT=${RATE_LIMIT:-100}
       # Stack defaults
       - DEFAULT_BRANCH=${DEFAULT_BRANCH:-master}
@@ -107,6 +116,27 @@ services:
       - frontend_node_modules:/app/node_modules
     command: npm run dev -- --host 0.0.0.0
 
+  mysql:
+    image: mysql:8.4
+    container_name: app-mysql-${GO_ENV:-dev}
+    profiles: [mysql, mysql-otel]
+    ports:
+      - "${DB_PORT:-3306}:3306"
+    environment:
+      - MYSQL_ROOT_PASSWORD=${DB_PASSWORD:-rootpassword}
+      - MYSQL_DATABASE=${DB_NAME:-app}
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./backend/config/mysql/my.cnf:/etc/mysql/conf.d/my.cnf:ro
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h localhost -uroot -p$$MYSQL_ROOT_PASSWORD --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - backend-net
+
   azurite:
     image: mcr.microsoft.com/azure-storage/azurite:3.34.0
     container_name: app-azurite-${GO_ENV:-dev}
@@ -122,6 +152,29 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+      start_period: 10s
+    networks:
+      - backend-net
+
+  mysqld-exporter:
+    image: prom/mysqld-exporter:v0.16.0
+    container_name: app-mysqld-exporter
+    profiles: [mysql-otel]
+    environment:
+      - MYSQLD_EXPORTER_PASSWORD=${DB_PASSWORD:-rootpassword}
+    command:
+      - "--mysqld.address=mysql:3306"
+      - "--mysqld.username=root"
+    ports:
+      - "127.0.0.1:9104:9104"
+    depends_on:
+      mysql:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget --spider -q http://localhost:9104/metrics || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
       start_period: 10s
     networks:
       - backend-net
@@ -219,6 +272,7 @@ services:
 volumes:
   backend_go_mod:
   frontend_node_modules:
+  mysql_data: {}
   azurite_data: {}
   grafana_data: {}
   tempo_data: {}

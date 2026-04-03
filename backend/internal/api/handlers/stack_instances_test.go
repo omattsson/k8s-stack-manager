@@ -80,10 +80,18 @@ func seedInstance(t *testing.T, repo *MockStackInstanceRepository, id, name, def
 
 // ---- ListInstances ----
 
+// pagedResponse is the envelope returned by ListInstances.
+type pagedResponse struct {
+	Data     []models.StackInstance `json:"data"`
+	Total    int                    `json:"total"`
+	Page     int                    `json:"page"`
+	PageSize int                    `json:"pageSize"`
+}
+
 func TestListInstances(t *testing.T) {
 	t.Parallel()
 
-	t.Run("returns all instances", func(t *testing.T) {
+	t.Run("returns paginated response with defaults", func(t *testing.T) {
 		t.Parallel()
 		instRepo := NewMockStackInstanceRepository()
 		seedInstance(t, instRepo, "i1", "stack-a", "d1", "uid-1", models.StackStatusRunning)
@@ -95,9 +103,69 @@ func TestListInstances(t *testing.T) {
 		router.ServeHTTP(w, req)
 
 		assert.Equal(t, http.StatusOK, w.Code)
-		var list []models.StackInstance
-		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &list))
-		assert.Len(t, list, 2)
+		var resp pagedResponse
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+		assert.Len(t, resp.Data, 2)
+		assert.Equal(t, 2, resp.Total)
+		assert.Equal(t, 1, resp.Page)
+		assert.Equal(t, 25, resp.PageSize)
+	})
+
+	t.Run("page and pageSize params", func(t *testing.T) {
+		t.Parallel()
+		instRepo := NewMockStackInstanceRepository()
+		seedInstance(t, instRepo, "i1", "stack-a", "d1", "uid-1", models.StackStatusRunning)
+		seedInstance(t, instRepo, "i2", "stack-b", "d1", "uid-2", models.StackStatusDraft)
+		seedInstance(t, instRepo, "i3", "stack-c", "d1", "uid-1", models.StackStatusStopped)
+
+		router := setupInstanceRouter(instRepo, NewMockValueOverrideRepository(), NewMockStackDefinitionRepository(), NewMockChartConfigRepository(), NewMockStackTemplateRepository(), NewMockTemplateChartConfigRepository(), "uid-1", "alice", "user")
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest(http.MethodGet, "/api/v1/stack-instances?page=2&pageSize=1", nil)
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		var resp pagedResponse
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+		assert.Len(t, resp.Data, 1)
+		assert.Equal(t, 3, resp.Total)
+		assert.Equal(t, 2, resp.Page)
+		assert.Equal(t, 1, resp.PageSize)
+	})
+
+	t.Run("legacy limit and offset params", func(t *testing.T) {
+		t.Parallel()
+		instRepo := NewMockStackInstanceRepository()
+		seedInstance(t, instRepo, "i1", "stack-a", "d1", "uid-1", models.StackStatusRunning)
+		seedInstance(t, instRepo, "i2", "stack-b", "d1", "uid-2", models.StackStatusDraft)
+		seedInstance(t, instRepo, "i3", "stack-c", "d1", "uid-1", models.StackStatusStopped)
+
+		router := setupInstanceRouter(instRepo, NewMockValueOverrideRepository(), NewMockStackDefinitionRepository(), NewMockChartConfigRepository(), NewMockStackTemplateRepository(), NewMockTemplateChartConfigRepository(), "uid-1", "alice", "user")
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest(http.MethodGet, "/api/v1/stack-instances?limit=2&offset=1", nil)
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		var resp pagedResponse
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+		assert.Len(t, resp.Data, 2)
+		assert.Equal(t, 3, resp.Total)
+		assert.Equal(t, 2, resp.PageSize)
+	})
+
+	t.Run("pageSize capped at 100", func(t *testing.T) {
+		t.Parallel()
+		instRepo := NewMockStackInstanceRepository()
+		seedInstance(t, instRepo, "i1", "stack-a", "d1", "uid-1", models.StackStatusRunning)
+
+		router := setupInstanceRouter(instRepo, NewMockValueOverrideRepository(), NewMockStackDefinitionRepository(), NewMockChartConfigRepository(), NewMockStackTemplateRepository(), NewMockTemplateChartConfigRepository(), "uid-1", "alice", "user")
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest(http.MethodGet, "/api/v1/stack-instances?pageSize=500", nil)
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		var resp pagedResponse
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+		assert.Equal(t, 100, resp.PageSize)
 	})
 
 	t.Run("filters by owner=me", func(t *testing.T) {
@@ -112,10 +180,11 @@ func TestListInstances(t *testing.T) {
 		router.ServeHTTP(w, req)
 
 		assert.Equal(t, http.StatusOK, w.Code)
-		var list []models.StackInstance
-		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &list))
-		assert.Len(t, list, 1)
-		assert.Equal(t, "uid-1", list[0].OwnerID)
+		var resp pagedResponse
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+		assert.Len(t, resp.Data, 1)
+		assert.Equal(t, "uid-1", resp.Data[0].OwnerID)
+		assert.Equal(t, 1, resp.Total)
 	})
 
 	t.Run("repository error returns 500", func(t *testing.T) {
