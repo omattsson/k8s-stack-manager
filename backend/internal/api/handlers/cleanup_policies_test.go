@@ -599,17 +599,17 @@ func TestUpdateCleanupPolicyErrors(t *testing.T) {
 			wantStatus: http.StatusInternalServerError,
 		},
 		{
-			name: "malformed JSON body after FindByID succeeds",
-			id:   "p1",
-			body: `{not valid json`,
-			repo: &configurableCleanupPolicyRepo{},
+			name:       "malformed JSON body after FindByID succeeds",
+			id:         "p1",
+			body:       `{not valid json`,
+			repo:       &configurableCleanupPolicyRepo{},
 			wantStatus: http.StatusBadRequest,
 		},
 		{
-			name: "invalid condition on update",
-			id:   "p1",
-			body: `{"name":"test","action":"stop","condition":"unknown_key:foo","schedule":"0 2 * * *","cluster_id":"all"}`,
-			repo: &configurableCleanupPolicyRepo{},
+			name:       "invalid condition on update",
+			id:         "p1",
+			body:       `{"name":"test","action":"stop","condition":"unknown_key:foo","schedule":"0 2 * * *","cluster_id":"all"}`,
+			repo:       &configurableCleanupPolicyRepo{},
 			wantStatus: http.StatusBadRequest,
 		},
 		{
@@ -735,11 +735,27 @@ func (r *cleanupMockInstanceRepo) CountByClusterAndOwner(clusterID, ownerID stri
 	}
 	return count, nil
 }
-func (r *cleanupMockInstanceRepo) ListPaged(limit, offset int) ([]models.StackInstance, int, error) { return r.instances, len(r.instances), nil }
-func (r *cleanupMockInstanceRepo) CountAll() (int, error)                              { return len(r.instances), nil }
-func (r *cleanupMockInstanceRepo) CountByStatus(_ string) (int, error)                 { return 0, nil }
-func (r *cleanupMockInstanceRepo) ExistsByDefinitionAndStatus(_, _ string) (bool, error) { return false, nil }
-func (r *cleanupMockInstanceRepo) ListExpired() ([]*models.StackInstance, error)        { return nil, nil }
+func (r *cleanupMockInstanceRepo) ListPaged(limit, offset int) ([]models.StackInstance, int, error) {
+	return r.instances, len(r.instances), nil
+}
+func (r *cleanupMockInstanceRepo) CountAll() (int, error)              { return len(r.instances), nil }
+func (r *cleanupMockInstanceRepo) CountByStatus(_ string) (int, error) { return 0, nil }
+func (r *cleanupMockInstanceRepo) ExistsByDefinitionAndStatus(_, _ string) (bool, error) {
+	return false, nil
+}
+func (r *cleanupMockInstanceRepo) CountByDefinitionIDs(_ []string) (map[string]int, error) {
+	return nil, nil
+}
+func (r *cleanupMockInstanceRepo) CountByOwnerIDs(_ []string) (map[string]int, error) {
+	return nil, nil
+}
+func (r *cleanupMockInstanceRepo) ListIDsByDefinitionIDs(_ []string) (map[string][]string, error) {
+	return nil, nil
+}
+func (r *cleanupMockInstanceRepo) ListIDsByOwnerIDs(_ []string) (map[string][]string, error) {
+	return nil, nil
+}
+func (r *cleanupMockInstanceRepo) ListExpired() ([]*models.StackInstance, error) { return nil, nil }
 
 // cleanupMockAuditRepo implements models.AuditLogRepository for handler tests.
 type cleanupMockAuditRepo struct {

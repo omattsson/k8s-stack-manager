@@ -307,3 +307,13 @@ func (r *GORMDeploymentLogRepository) summarizeBatchChunk(
 
 	return nil
 }
+
+// CountByAction returns the total number of deployment log entries with the given action.
+func (r *GORMDeploymentLogRepository) CountByAction(ctx context.Context, action string) (int, error) {
+	var count int64
+	if err := r.db.WithContext(ctx).Model(&models.DeploymentLog{}).
+		Where("action = ?", action).Count(&count).Error; err != nil {
+		return 0, dberrors.NewDatabaseError("count_by_action", err)
+	}
+	return int(count), nil
+}

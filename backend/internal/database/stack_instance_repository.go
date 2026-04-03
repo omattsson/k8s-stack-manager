@@ -193,3 +193,101 @@ func (r *GORMStackInstanceRepository) ListExpired() ([]*models.StackInstance, er
 	}
 	return instances, nil
 }
+
+// CountByDefinitionIDs returns a map of definition ID to instance count for the
+// given definition IDs in a single GROUP BY query.
+func (r *GORMStackInstanceRepository) CountByDefinitionIDs(definitionIDs []string) (map[string]int, error) {
+	if len(definitionIDs) == 0 {
+		return make(map[string]int), nil
+	}
+	type countRow struct {
+		StackDefinitionID string
+		Count             int
+	}
+	var rows []countRow
+	if err := r.db.Model(&models.StackInstance{}).
+		Select("stack_definition_id, COUNT(*) as count").
+		Where("stack_definition_id IN ?", definitionIDs).
+		Group("stack_definition_id").
+		Find(&rows).Error; err != nil {
+		return nil, dberrors.NewDatabaseError("count_by_definition_ids", err)
+	}
+	result := make(map[string]int, len(rows))
+	for _, row := range rows {
+		result[row.StackDefinitionID] = row.Count
+	}
+	return result, nil
+}
+
+// CountByOwnerIDs returns a map of owner ID to instance count for the given
+// owner IDs in a single GROUP BY query.
+func (r *GORMStackInstanceRepository) CountByOwnerIDs(ownerIDs []string) (map[string]int, error) {
+	if len(ownerIDs) == 0 {
+		return make(map[string]int), nil
+	}
+	type countRow struct {
+		OwnerID string
+		Count   int
+	}
+	var rows []countRow
+	if err := r.db.Model(&models.StackInstance{}).
+		Select("owner_id, COUNT(*) as count").
+		Where("owner_id IN ?", ownerIDs).
+		Group("owner_id").
+		Find(&rows).Error; err != nil {
+		return nil, dberrors.NewDatabaseError("count_by_owner_ids", err)
+	}
+	result := make(map[string]int, len(rows))
+	for _, row := range rows {
+		result[row.OwnerID] = row.Count
+	}
+	return result, nil
+}
+
+// ListIDsByDefinitionIDs returns a map of definition ID to instance IDs,
+// selecting only the id and stack_definition_id columns for efficiency.
+func (r *GORMStackInstanceRepository) ListIDsByDefinitionIDs(definitionIDs []string) (map[string][]string, error) {
+	if len(definitionIDs) == 0 {
+		return make(map[string][]string), nil
+	}
+	type idRow struct {
+		ID                string
+		StackDefinitionID string
+	}
+	var rows []idRow
+	if err := r.db.Model(&models.StackInstance{}).
+		Select("id, stack_definition_id").
+		Where("stack_definition_id IN ?", definitionIDs).
+		Find(&rows).Error; err != nil {
+		return nil, dberrors.NewDatabaseError("list_ids_by_definition_ids", err)
+	}
+	result := make(map[string][]string, len(definitionIDs))
+	for _, row := range rows {
+		result[row.StackDefinitionID] = append(result[row.StackDefinitionID], row.ID)
+	}
+	return result, nil
+}
+
+// ListIDsByOwnerIDs returns a map of owner ID to instance IDs, selecting only
+// the id and owner_id columns for efficiency.
+func (r *GORMStackInstanceRepository) ListIDsByOwnerIDs(ownerIDs []string) (map[string][]string, error) {
+	if len(ownerIDs) == 0 {
+		return make(map[string][]string), nil
+	}
+	type idRow struct {
+		ID      string
+		OwnerID string
+	}
+	var rows []idRow
+	if err := r.db.Model(&models.StackInstance{}).
+		Select("id, owner_id").
+		Where("owner_id IN ?", ownerIDs).
+		Find(&rows).Error; err != nil {
+		return nil, dberrors.NewDatabaseError("list_ids_by_owner_ids", err)
+	}
+	result := make(map[string][]string, len(ownerIDs))
+	for _, row := range rows {
+		result[row.OwnerID] = append(result[row.OwnerID], row.ID)
+	}
+	return result, nil
+}

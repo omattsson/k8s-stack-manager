@@ -23,7 +23,6 @@ const (
 	fieldDLRowKey       = "RowKey"
 )
 
-
 // escapeODataString escapes single quotes in a string value for use in OData
 // filter expressions. OData uses doubled single quotes (”) as the escape
 // sequence for a literal single quote within a string literal.
@@ -350,17 +349,22 @@ func (r *DeploymentLogRepository) SummarizeBatch(ctx context.Context, instanceID
 	return result, nil
 }
 
+// CountByAction is not implemented for Azure Table Storage.
+func (r *DeploymentLogRepository) CountByAction(_ context.Context, _ string) (int, error) {
+	return 0, dberrors.NewDatabaseError("count_by_action", dberrors.ErrNotImplemented)
+}
+
 func deploymentLogToEntity(log *models.DeploymentLog, pk, rk string) map[string]interface{} {
 	entity := map[string]interface{}{
-		fieldDLPartitionKey:    pk,
-		fieldDLRowKey:          rk,
-		"ID":              log.ID,
-		"StackInstanceID": log.StackInstanceID,
-		fieldDLAction:          log.Action,
-		fieldDLStatus:          log.Status,
-		"Output":          log.Output,
-		"ErrorMessage":    log.ErrorMessage,
-		fieldDLStartedAt:       log.StartedAt.Format(time.RFC3339),
+		fieldDLPartitionKey: pk,
+		fieldDLRowKey:       rk,
+		"ID":                log.ID,
+		"StackInstanceID":   log.StackInstanceID,
+		fieldDLAction:       log.Action,
+		fieldDLStatus:       log.Status,
+		"Output":            log.Output,
+		"ErrorMessage":      log.ErrorMessage,
+		fieldDLStartedAt:    log.StartedAt.Format(time.RFC3339),
 	}
 	if log.CompletedAt != nil {
 		entity["CompletedAt"] = log.CompletedAt.Format(time.RFC3339)

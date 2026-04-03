@@ -152,3 +152,27 @@ func (r *GORMStackDefinitionRepository) CountByTemplateIDs(templateIDs []string)
 	}
 	return result, nil
 }
+
+// ListIDsByTemplateIDs returns a map of template ID to definition IDs, selecting
+// only the id and source_template_id columns for efficiency.
+func (r *GORMStackDefinitionRepository) ListIDsByTemplateIDs(templateIDs []string) (map[string][]string, error) {
+	if len(templateIDs) == 0 {
+		return make(map[string][]string), nil
+	}
+	type idRow struct {
+		ID               string
+		SourceTemplateID string
+	}
+	var rows []idRow
+	if err := r.db.Model(&models.StackDefinition{}).
+		Select("id, source_template_id").
+		Where("source_template_id IN ?", templateIDs).
+		Find(&rows).Error; err != nil {
+		return nil, dberrors.NewDatabaseError("list_ids_by_template_ids", err)
+	}
+	result := make(map[string][]string, len(templateIDs))
+	for _, row := range rows {
+		result[row.SourceTemplateID] = append(result[row.SourceTemplateID], row.ID)
+	}
+	return result, nil
+}

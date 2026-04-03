@@ -115,6 +115,10 @@ func (m *mockDefinitionRepo) Count() (int64, error) {
 	return int64(len(m.items)), nil
 }
 
+func (m *mockDefinitionRepo) ListIDsByTemplateIDs(_ []string) (map[string][]string, error) {
+	return nil, nil
+}
+
 // ---- mock chart config repo ----
 
 type mockChartConfigRepo struct {
@@ -593,4 +597,3 @@ func TestExpiryStopper_StopInstance_ChartListError(t *testing.T) {
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "listing charts")
 }
-

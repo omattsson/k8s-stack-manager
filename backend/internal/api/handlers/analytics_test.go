@@ -142,6 +142,23 @@ func (m *mockDeployLogRepo) SummarizeBatch(ctx context.Context, instanceIDs []st
 	return result, nil
 }
 
+func (m *mockDeployLogRepo) CountByAction(_ context.Context, action string) (int, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.err != nil {
+		return 0, m.err
+	}
+	count := 0
+	for _, logs := range m.items {
+		for _, l := range logs {
+			if l.Action == action {
+				count++
+			}
+		}
+	}
+	return count, nil
+}
+
 func (m *mockDeployLogRepo) setError(err error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

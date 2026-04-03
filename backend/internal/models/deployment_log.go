@@ -67,4 +67,5 @@ type DeploymentLogRepository interface {
 	GetLatestByInstance(ctx context.Context, instanceID string) (*DeploymentLog, error)
 	SummarizeByInstance(ctx context.Context, instanceID string) (*DeployLogSummary, error)
 	SummarizeBatch(ctx context.Context, instanceIDs []string) (map[string]*DeployLogSummary, error)
+	CountByAction(ctx context.Context, action string) (int, error)
 }

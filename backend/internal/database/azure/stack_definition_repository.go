@@ -15,7 +15,6 @@ import (
 const tableStackDefinitions = "StackDefinitions"
 const filterDefPKGlobal = odataPartitionKeyEq + pkGlobal + "'"
 
-
 // StackDefinitionRepository implements models.StackDefinitionRepository for Azure Table Storage.
 // Partition key: "global", Row key: definition ID.
 type StackDefinitionRepository struct {
@@ -249,6 +248,11 @@ func (r *StackDefinitionRepository) CountByTemplateIDs(templateIDs []string) (ma
 		}
 	}
 	return result, nil
+}
+
+// ListIDsByTemplateIDs is not implemented for Azure Table Storage.
+func (r *StackDefinitionRepository) ListIDsByTemplateIDs(_ []string) (map[string][]string, error) {
+	return nil, dberrors.NewDatabaseError("list_ids_by_template_ids", dberrors.ErrNotImplemented)
 }
 
 func stackDefinitionToEntity(d *models.StackDefinition) map[string]interface{} {
