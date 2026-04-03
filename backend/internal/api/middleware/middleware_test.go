@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"bytes"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"io"
@@ -200,6 +201,7 @@ func TestSecurityHeaders(t *testing.T) {
 	tests := []struct {
 		name           string
 		forwardedProto string
+		directTLS      bool
 		expectHSTS     bool
 	}{
 		{
@@ -216,6 +218,26 @@ func TestSecurityHeaders(t *testing.T) {
 			name:           "explicit HTTP forwarded proto — no HSTS",
 			forwardedProto: "http",
 			expectHSTS:     false,
+		},
+		{
+			name:           "direct TLS",
+			directTLS:      true,
+			expectHSTS:     true,
+		},
+		{
+			name:           "HTTPS uppercase",
+			forwardedProto: "HTTPS",
+			expectHSTS:     true,
+		},
+		{
+			name:           "multi-value forwarded proto",
+			forwardedProto: "https, http",
+			expectHSTS:     true,
+		},
+		{
+			name:           "multi-value with spaces",
+			forwardedProto: "HTTPS , http",
+			expectHSTS:     true,
 		},
 	}
 
@@ -234,6 +256,9 @@ func TestSecurityHeaders(t *testing.T) {
 			req, _ := http.NewRequest("GET", "/test", nil)
 			if tt.forwardedProto != "" {
 				req.Header.Set("X-Forwarded-Proto", tt.forwardedProto)
+			}
+			if tt.directTLS {
+				req.TLS = &tls.ConnectionState{}
 			}
 			r.ServeHTTP(w, req)
 

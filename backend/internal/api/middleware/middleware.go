@@ -155,7 +155,15 @@ func SecurityHeaders() gin.HandlerFunc {
 		c.Header("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
 
 		// Add HSTS when behind TLS (direct or via reverse proxy)
-		if c.Request.TLS != nil || c.GetHeader("X-Forwarded-Proto") == "https" {
+		forwardedProto := c.GetHeader("X-Forwarded-Proto")
+		isTLS := c.Request.TLS != nil
+		if !isTLS && forwardedProto != "" {
+			// X-Forwarded-Proto can be comma-separated (multiple proxies); check the first value.
+			// Scheme values are case-insensitive per RFC 3986.
+			first := strings.TrimSpace(strings.SplitN(forwardedProto, ",", 2)[0])
+			isTLS = strings.EqualFold(first, "https")
+		}
+		if isTLS {
 			c.Header("Strict-Transport-Security", "max-age=63072000; includeSubDomains")
 		}
 
