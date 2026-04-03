@@ -194,9 +194,9 @@ func (r *GORMDeploymentLogRepository) SummarizeByInstance(ctx context.Context, i
 	}
 
 	// Get the latest activity timestamp across all actions.
-	// Scan into sql.NullTime — MySQL with parseTime=true returns time.Time
-	// natively for computed datetime columns.
-	var lastDeployRaw sql.NullTime
+	// Scan into sql.NullString to handle both MySQL (time.Time via parseTime)
+	// and SQLite (returns string for computed datetime expressions).
+	var lastDeployRaw sql.NullString
 	row2 := r.db.WithContext(ctx).Model(&models.DeploymentLog{}).
 		Select("MAX(COALESCE(completed_at, started_at))").
 		Where("stack_instance_id = ? AND started_at >= ?", instanceID, cutoff).
@@ -207,9 +207,21 @@ func (r *GORMDeploymentLogRepository) SummarizeByInstance(ctx context.Context, i
 	if err := row2.Scan(&lastDeployRaw); err != nil {
 		return nil, dberrors.NewDatabaseError("summarize_by_instance", err)
 	}
-	if lastDeployRaw.Valid {
-		utc := lastDeployRaw.Time.UTC()
-		summary.LastDeployAt = &utc
+	if lastDeployRaw.Valid && lastDeployRaw.String != "" {
+		layouts := []string{
+			"2006-01-02 15:04:05.999999999+00:00", // SQLite with timezone
+			"2006-01-02 15:04:05.999999999",       // SQLite without timezone
+			"2006-01-02 15:04:05",                 // MySQL datetime
+			time.RFC3339Nano,
+			time.RFC3339,
+		}
+		for _, layout := range layouts {
+			if parsed, pErr := time.Parse(layout, lastDeployRaw.String); pErr == nil {
+				utc := parsed.UTC()
+				summary.LastDeployAt = &utc
+				break
+			}
+		}
 	}
 
 	return summary, nil
@@ -295,4 +307,3 @@ func (r *GORMDeploymentLogRepository) summarizeBatchChunk(
 
 	return nil
 }
-
