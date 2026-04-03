@@ -3,3 +3,4 @@ CLAUDE.md
 .github/copilot-instructions.md
 .github/instructions/
 .github/prompts/
+node_modules/

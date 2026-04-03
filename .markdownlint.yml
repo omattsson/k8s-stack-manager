@@ -27,3 +27,15 @@ MD046: false
 
 # MD047 - Files should end with a single newline character
 MD047: false
+
+# MD022 - Headings should be surrounded by blank lines
+MD022: false
+
+# MD031 - Fenced code blocks should be surrounded by blank lines
+MD031: false
+
+# MD032 - Lists should be surrounded by blank lines
+MD032: false
+
+# MD037 - Spaces inside emphasis markers
+MD037: false
