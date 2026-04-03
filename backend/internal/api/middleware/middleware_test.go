@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"bytes"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"io"
@@ -192,4 +193,86 @@ func TestMaxBodySizeMiddleware(t *testing.T) {
 
 		assert.Equal(t, http.StatusRequestEntityTooLarge, w.Code)
 	})
+}
+
+func TestSecurityHeaders(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name           string
+		forwardedProto string
+		directTLS      bool
+		expectHSTS     bool
+	}{
+		{
+			name:           "plain HTTP — no HSTS",
+			forwardedProto: "",
+			expectHSTS:     false,
+		},
+		{
+			name:           "behind TLS proxy — HSTS present",
+			forwardedProto: "https",
+			expectHSTS:     true,
+		},
+		{
+			name:           "explicit HTTP forwarded proto — no HSTS",
+			forwardedProto: "http",
+			expectHSTS:     false,
+		},
+		{
+			name:           "direct TLS",
+			directTLS:      true,
+			expectHSTS:     true,
+		},
+		{
+			name:           "HTTPS uppercase",
+			forwardedProto: "HTTPS",
+			expectHSTS:     true,
+		},
+		{
+			name:           "multi-value forwarded proto",
+			forwardedProto: "https, http",
+			expectHSTS:     true,
+		},
+		{
+			name:           "multi-value with spaces",
+			forwardedProto: "HTTPS , http",
+			expectHSTS:     true,
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			r := gin.New()
+			r.Use(SecurityHeaders())
+			r.GET("/test", func(c *gin.Context) {
+				c.Status(http.StatusOK)
+			})
+
+			w := httptest.NewRecorder()
+			req, _ := http.NewRequest("GET", "/test", nil)
+			if tt.forwardedProto != "" {
+				req.Header.Set("X-Forwarded-Proto", tt.forwardedProto)
+			}
+			if tt.directTLS {
+				req.TLS = &tls.ConnectionState{}
+			}
+			r.ServeHTTP(w, req)
+
+			assert.Equal(t, http.StatusOK, w.Code)
+			assert.Equal(t, "nosniff", w.Header().Get("X-Content-Type-Options"))
+			assert.Equal(t, "DENY", w.Header().Get("X-Frame-Options"))
+			assert.Equal(t, "strict-origin-when-cross-origin", w.Header().Get("Referrer-Policy"))
+			assert.Equal(t, "camera=(), microphone=(), geolocation=()", w.Header().Get("Permissions-Policy"))
+
+			if tt.expectHSTS {
+				assert.Equal(t, "max-age=63072000; includeSubDomains", w.Header().Get("Strict-Transport-Security"))
+			} else {
+				assert.Empty(t, w.Header().Get("Strict-Transport-Security"))
+			}
+		})
+	}
 }

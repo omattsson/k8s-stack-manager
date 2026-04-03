@@ -92,6 +92,7 @@ func SetupRoutes(router *gin.Engine, deps Deps) *handlers.RateLimiter {
 	}
 	router.Use(middleware.Logger())
 	router.Use(middleware.Recovery())
+	router.Use(middleware.SecurityHeaders())
 	router.Use(middleware.CORS(cfg.CORS.AllowedOrigins))
 	router.Use(middleware.MaxBodySize(1 << 20)) // 1 MB default
 
