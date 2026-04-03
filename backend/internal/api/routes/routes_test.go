@@ -657,19 +657,19 @@ func TestSetupRoutes_SwaggerGatedByConfig(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name           string
-		enable         bool
-		expectRouteHit bool
+		name                  string
+		enable                bool
+		expectRouteRegistered bool
 	}{
 		{
-			name:           "swagger disabled returns 404",
-			enable:         false,
-			expectRouteHit: false,
+			name:                  "swagger disabled does not register route and returns 404",
+			enable:                false,
+			expectRouteRegistered: false,
 		},
 		{
-			name:           "swagger enabled registers route",
-			enable:         true,
-			expectRouteHit: true,
+			name:                  "swagger enabled registers route and serves content",
+			enable:                true,
+			expectRouteRegistered: true,
 		},
 	}
 
@@ -709,7 +709,33 @@ func TestSetupRoutes_SwaggerGatedByConfig(t *testing.T) {
 				}
 			}
 
-			assert.Equal(t, tt.expectRouteHit, hasSwaggerRoute)
+			assert.Equal(t, tt.expectRouteRegistered, hasSwaggerRoute)
+
+			// Issue actual HTTP requests to verify routing behaviour.
+			w := httptest.NewRecorder()
+			req, _ := http.NewRequest(http.MethodGet, "/swagger/index.html", nil)
+			router.ServeHTTP(w, req)
+
+			if tt.expectRouteRegistered {
+				// Swagger is enabled — the route is handled by the swagger
+				// middleware. In test builds the swagger docs may not be
+				// embedded, so we cannot assert 200. Instead verify the
+				// request is NOT rejected with 405 (method not allowed),
+				// which would indicate no matching route, and that gin's
+				// default "404 page not found" body is absent (proving
+				// the swagger handler processed the request).
+				assert.NotEqual(t, http.StatusMethodNotAllowed, w.Code,
+					"expected swagger handler to process request when enabled")
+				assert.NotContains(t, w.Body.String(), "404 page not found",
+					"expected swagger handler to process request, not gin's default 404")
+			} else {
+				// Swagger is disabled — gin has no matching route, returning
+				// its default 404 with the "404 page not found" body.
+				assert.Equal(t, http.StatusNotFound, w.Code,
+					"expected 404 when swagger is disabled, got %d", w.Code)
+				assert.Contains(t, w.Body.String(), "404 page not found",
+					"expected gin's default 404 response when swagger is disabled")
+			}
 		})
 	}
 }
