@@ -51,8 +51,10 @@ spec:
         runAsUser: 101
         runAsGroup: 101
         fsGroup: 101
+        {{- if semverCompare ">=1.19-0" .Capabilities.KubeVersion.Version }}
         seccompProfile:
           type: RuntimeDefault
+        {{- end }}
       containers:
         - name: nginx
           image: {{ include "k8s-stack-manager.frontend.image" . }}

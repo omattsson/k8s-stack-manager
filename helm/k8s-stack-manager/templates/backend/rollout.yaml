@@ -52,8 +52,10 @@ spec:
         runAsUser: 65532
         runAsGroup: 65532
         fsGroup: 65532
+        {{- if semverCompare ">=1.19-0" .Capabilities.KubeVersion.Version }}
         seccompProfile:
           type: RuntimeDefault
+        {{- end }}
       containers:
         - name: backend
           image: {{ include "k8s-stack-manager.backend.image" . }}

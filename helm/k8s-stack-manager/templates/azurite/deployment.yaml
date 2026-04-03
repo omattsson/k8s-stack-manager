@@ -24,8 +24,10 @@ spec:
         runAsUser: 1000
         runAsGroup: 1000
         fsGroup: 1000
+        {{- if semverCompare ">=1.19-0" .Capabilities.KubeVersion.Version }}
         seccompProfile:
           type: RuntimeDefault
+        {{- end }}
       containers:
         - name: azurite
           image: "{{ .Values.azurite.image.repository }}:{{ .Values.azurite.image.tag }}"
