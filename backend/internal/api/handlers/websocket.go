@@ -1,15 +1,14 @@
 package handlers
 
 import (
-	"fmt"
 	"log/slog"
 	"net/http"
 	"strings"
 
+	"backend/internal/api/middleware"
 	"backend/internal/websocket"
 
 	"github.com/gin-gonic/gin"
-	"github.com/golang-jwt/jwt/v5"
 	gorilla "github.com/gorilla/websocket"
 )
 
@@ -58,14 +57,8 @@ func (h *WebSocketHandler) HandleWebSocket(c *gin.Context) {
 		return
 	}
 
-	// Validate the JWT token
-	token, err := jwt.Parse(tokenStr, func(token *jwt.Token) (interface{}, error) {
-		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
-			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
-		}
-		return []byte(h.jwtSecret), nil
-	})
-	if err != nil || !token.Valid {
+	// Validate the JWT token using shared middleware logic
+	if _, err := middleware.ValidateJWT(tokenStr, h.jwtSecret); err != nil {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid or expired token"})
 		return
 	}
