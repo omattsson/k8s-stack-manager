@@ -146,6 +146,23 @@ func MaxBodySize(maxBytes int64) gin.HandlerFunc {
 	}
 }
 
+// SecurityHeaders adds standard security headers to all responses.
+func SecurityHeaders() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		c.Header("X-Content-Type-Options", "nosniff")
+		c.Header("X-Frame-Options", "DENY")
+		c.Header("Referrer-Policy", "strict-origin-when-cross-origin")
+		c.Header("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+
+		// Add HSTS when behind TLS (direct or via reverse proxy)
+		if c.Request.TLS != nil || c.GetHeader("X-Forwarded-Proto") == "https" {
+			c.Header("Strict-Transport-Security", "max-age=63072000; includeSubDomains")
+		}
+
+		c.Next()
+	}
+}
+
 func generateRequestID() string {
 	b := make([]byte, 16)
 	if _, err := rand.Read(b); err != nil {
