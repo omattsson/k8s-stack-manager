@@ -30,7 +30,6 @@ const (
 // Slog structured logging key constants.
 const logKeyClusterID = "cluster_id"
 
-
 // CreateClusterRequest is the input payload for creating a cluster.
 type CreateClusterRequest struct {
 	Name                string `json:"name" binding:"required"`
@@ -813,7 +812,7 @@ type NamespaceResourceUsage struct {
 
 // ClusterUtilization represents aggregated resource utilization for a cluster.
 type ClusterUtilization struct {
-	ClusterID  string                   `json:logKeyClusterID`
+	ClusterID  string                   `json:"cluster_id"`
 	Namespaces []NamespaceResourceUsage `json:"namespaces"`
 }
 
