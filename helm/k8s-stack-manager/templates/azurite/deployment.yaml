@@ -6,7 +6,7 @@ metadata:
   labels:
     {{- include "k8s-stack-manager.azurite.labels" . | nindent 4 }}
 spec:
-  replicas: {{ .Values.azurite.replicas }}
+  replicas: 1
   selector:
     matchLabels:
       {{- include "k8s-stack-manager.azurite.selectorLabels" . | nindent 6 }}

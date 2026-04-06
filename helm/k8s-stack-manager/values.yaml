@@ -169,7 +169,6 @@ frontend:
 # ---------------------------------------------------------------------------
 azurite:
   enabled: true
-  replicas: 1  # Single replica is intentional for dev storage emulator
   image:
     repository: mcr.microsoft.com/azure-storage/azurite
     tag: "3.34.0"
