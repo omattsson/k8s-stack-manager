@@ -52,9 +52,10 @@ type stackInstanceEntity struct {
 	Branch            string  `json:"Branch"`
 	ClusterID         string  `json:"ClusterID"`
 	Status            string  `json:"Status"`
-	ErrorMessage      string  `json:"ErrorMessage"`
-	TTLMinutes        float64 `json:"TTLMinutes"`
-	LastDeployedAt    string  `json:"LastDeployedAt,omitempty"`
+	ErrorMessage       string  `json:"ErrorMessage"`
+	LastDeployedValues string  `json:"LastDeployedValues"`
+	TTLMinutes         float64 `json:"TTLMinutes"`
+	LastDeployedAt     string  `json:"LastDeployedAt,omitempty"`
 	ExpiresAt         string  `json:"ExpiresAt,omitempty"`
 	CreatedAt         string  `json:"CreatedAt"`
 	UpdatedAt         string  `json:"UpdatedAt"`
@@ -62,16 +63,17 @@ type stackInstanceEntity struct {
 
 func (e *stackInstanceEntity) toModel() *models.StackInstance {
 	instance := &models.StackInstance{
-		ID:                e.ID,
-		StackDefinitionID: e.StackDefinitionID,
-		Name:              e.Name,
-		Namespace:         e.Namespace,
-		OwnerID:           e.OwnerID,
-		Branch:            e.Branch,
-		ClusterID:         e.ClusterID,
-		Status:            e.Status,
-		ErrorMessage:      e.ErrorMessage,
-		TTLMinutes:        int(e.TTLMinutes),
+		ID:                 e.ID,
+		StackDefinitionID:  e.StackDefinitionID,
+		Name:               e.Name,
+		Namespace:          e.Namespace,
+		OwnerID:            e.OwnerID,
+		Branch:             e.Branch,
+		ClusterID:          e.ClusterID,
+		Status:             e.Status,
+		ErrorMessage:       e.ErrorMessage,
+		LastDeployedValues: e.LastDeployedValues,
+		TTLMinutes:         int(e.TTLMinutes),
 	}
 	instance.CreatedAt, _ = time.Parse(time.RFC3339, e.CreatedAt)
 	instance.UpdatedAt, _ = time.Parse(time.RFC3339, e.UpdatedAt)
@@ -450,8 +452,9 @@ func stackInstanceToEntity(i *models.StackInstance) map[string]interface{} {
 		"Branch":            i.Branch,
 		"ClusterID":         i.ClusterID,
 		"Status":            i.Status,
-		"ErrorMessage":      i.ErrorMessage,
-		"TTLMinutes":        int64(i.TTLMinutes),
+		"ErrorMessage":       i.ErrorMessage,
+		"LastDeployedValues": i.LastDeployedValues,
+		"TTLMinutes":         int64(i.TTLMinutes),
 		"CreatedAt":         i.CreatedAt.Format(time.RFC3339),
 		"UpdatedAt":         i.UpdatedAt.Format(time.RFC3339),
 	}
