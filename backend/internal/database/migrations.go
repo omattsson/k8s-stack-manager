@@ -703,14 +703,14 @@ func (d *Database) AutoMigrate() error {
 			if columnType == "longtext" {
 				return nil // already longtext
 			}
-			return tx.Exec("ALTER TABLE stack_instances MODIFY last_deployed_values LONGTEXT").Error
+			return tx.Exec("ALTER TABLE stack_instances MODIFY last_deployed_values LONGTEXT").Error // #nosec G202
 		},
 		Down: func(tx *gorm.DB) error {
 			if tx.Dialector.Name() != "mysql" {
 				return nil
 			}
 			if tx.Migrator().HasColumn(&models.StackInstance{}, "LastDeployedValues") {
-				return tx.Exec("ALTER TABLE stack_instances MODIFY last_deployed_values TEXT").Error
+				return tx.Exec("ALTER TABLE stack_instances MODIFY last_deployed_values TEXT").Error // #nosec G202
 			}
 			return nil
 		},
