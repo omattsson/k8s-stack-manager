@@ -663,7 +663,7 @@ func (d *Database) AutoMigrate() error {
 	migrator.AddMigration(schema.Migration{
 		Version:     "20231201000027",
 		Name:        "add_last_deployed_values_to_stack_instances",
-		Description: "Add last_deployed_values TEXT column to stack_instances for deployment diff preview",
+		Description: "Add last_deployed_values LONGTEXT column to stack_instances for deployment diff preview",
 		Up: func(tx *gorm.DB) error {
 			if tx.Migrator().HasColumn(&models.StackInstance{}, "LastDeployedValues") {
 				return nil
@@ -675,6 +675,19 @@ func (d *Database) AutoMigrate() error {
 				return tx.Migrator().DropColumn(&models.StackInstance{}, "LastDeployedValues")
 			}
 			return nil
+		},
+	})
+
+	// Migration 28: Alter last_deployed_values from TEXT to LONGTEXT
+	migrator.AddMigration(schema.Migration{
+		Version:     "20231201000028",
+		Name:        "alter_last_deployed_values_to_longtext",
+		Description: "Change last_deployed_values column from TEXT to LONGTEXT for large merged values",
+		Up: func(tx *gorm.DB) error {
+			return tx.Migrator().AlterColumn(&models.StackInstance{}, "LastDeployedValues")
+		},
+		Down: func(tx *gorm.DB) error {
+			return tx.Exec("ALTER TABLE stack_instances MODIFY last_deployed_values TEXT").Error
 		},
 	})
 

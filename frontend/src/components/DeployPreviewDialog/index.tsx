@@ -41,6 +41,8 @@ const DeployPreviewDialog = ({
 
   useEffect(() => {
     if (!open) return;
+
+    let cancelled = false;
     setLoading(true);
     setError(null);
     setPreview(null);
@@ -48,9 +50,17 @@ const DeployPreviewDialog = ({
 
     instanceService
       .deployPreview(instanceId)
-      .then(setPreview)
-      .catch(() => setError('Failed to load deploy preview'))
-      .finally(() => setLoading(false));
+      .then((data) => {
+        if (!cancelled) setPreview(data);
+      })
+      .catch(() => {
+        if (!cancelled) setError('Failed to load deploy preview');
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+
+    return () => { cancelled = true; };
   }, [open, instanceId]);
 
   const chartsWithChanges = useMemo(

@@ -1011,7 +1011,7 @@ func (h *InstanceHandler) DeployInstance(c *gin.Context) {
 		return
 	}
 
-	// Build locked values map from template.
+	// Validate required deployment inputs before building chart values.
 	if inst.Namespace == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Instance namespace is empty"})
 		return
@@ -1091,6 +1091,14 @@ func (h *InstanceHandler) DeployPreview(c *gin.Context) {
 	if err != nil {
 		status, message := mapError(err, entityStackInstance)
 		c.JSON(status, gin.H{"error": message})
+		return
+	}
+
+	// Authorization: only the owner or an admin/devops may preview the instance.
+	userID := middleware.GetUserIDFromContext(c)
+	role := middleware.GetRoleFromContext(c)
+	if inst.OwnerID != userID && role != "admin" && role != "devops" {
+		c.JSON(http.StatusForbidden, gin.H{"error": "You are not allowed to preview this stack instance"})
 		return
 	}
 
