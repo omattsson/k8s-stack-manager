@@ -1,6 +1,9 @@
 package database
 
 import (
+	"database/sql"
+	"errors"
+	"fmt"
 	"log/slog"
 
 	"backend/internal/database/schema"
@@ -687,7 +690,10 @@ func (d *Database) AutoMigrate() error {
 			var columnType string
 			row := tx.Raw("SELECT COLUMN_TYPE FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'stack_instances' AND COLUMN_NAME = 'last_deployed_values'").Row()
 			if err := row.Scan(&columnType); err != nil {
-				return nil // column doesn't exist yet, migration 27 will handle it
+				if errors.Is(err, sql.ErrNoRows) {
+					return nil // column doesn't exist yet, migration 27 will handle it
+				}
+				return fmt.Errorf("failed to check column type: %w", err)
 			}
 			if columnType == "longtext" {
 				return nil // already longtext
@@ -695,7 +701,10 @@ func (d *Database) AutoMigrate() error {
 			return tx.Exec("ALTER TABLE stack_instances MODIFY last_deployed_values LONGTEXT").Error
 		},
 		Down: func(tx *gorm.DB) error {
-			return tx.Exec("ALTER TABLE stack_instances MODIFY last_deployed_values TEXT").Error
+			if tx.Migrator().HasColumn(&models.StackInstance{}, "LastDeployedValues") {
+				return tx.Exec("ALTER TABLE stack_instances MODIFY last_deployed_values TEXT").Error
+			}
+			return nil
 		},
 	})
 

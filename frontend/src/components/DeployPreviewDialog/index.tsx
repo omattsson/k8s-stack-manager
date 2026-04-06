@@ -85,7 +85,11 @@ const DeployPreviewDialog = ({
           </Box>
         )}
 
-        {error && <Alert severity="error">{error}</Alert>}
+        {error && (
+          <Alert severity="warning">
+            Failed to load deploy preview. You can still proceed with deployment.
+          </Alert>
+        )}
 
         {preview && !loading && !error && (
           <Box>
@@ -169,7 +173,7 @@ const DeployPreviewDialog = ({
           variant="contained"
           color="success"
           onClick={onConfirm}
-          disabled={loading || !!error}
+          disabled={loading}
         >
           Deploy
         </Button>
