@@ -14,11 +14,20 @@ spec:
     metadata:
       labels:
         {{- include "k8s-stack-manager.azurite.selectorLabels" . | nindent 8 }}
+      {{- if semverCompare "<1.30-0" .Capabilities.KubeVersion.Version }}
+      annotations:
+        container.apparmor.security.beta.kubernetes.io/azurite: runtime/default
+      {{- end }}
     spec:
       securityContext:
         runAsNonRoot: true
         runAsUser: 1000
+        runAsGroup: 1000
         fsGroup: 1000
+        {{- if semverCompare ">=1.19-0" .Capabilities.KubeVersion.Version }}
+        seccompProfile:
+          type: RuntimeDefault
+        {{- end }}
       containers:
         - name: azurite
           image: "{{ .Values.azurite.image.repository }}:{{ .Values.azurite.image.tag }}"
@@ -26,6 +35,10 @@ spec:
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
+            {{- if semverCompare ">=1.30-0" .Capabilities.KubeVersion.Version }}
+            appArmorProfile:
+              type: RuntimeDefault
+            {{- end }}
             capabilities:
               drop:
                 - ALL
