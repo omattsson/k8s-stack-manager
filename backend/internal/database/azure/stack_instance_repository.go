@@ -42,23 +42,23 @@ func (r *StackInstanceRepository) SetTestClient(client AzureTableClient) {
 
 // stackInstanceEntity is the typed Azure Table entity for stack instances.
 type stackInstanceEntity struct {
-	PartitionKey      string  `json:"PartitionKey"`
-	RowKey            string  `json:"RowKey"`
-	ID                string  `json:"ID"`
-	StackDefinitionID string  `json:"StackDefinitionID"`
-	Name              string  `json:"Name"`
-	Namespace         string  `json:"Namespace"`
-	OwnerID           string  `json:"OwnerID"`
-	Branch            string  `json:"Branch"`
-	ClusterID         string  `json:"ClusterID"`
-	Status            string  `json:"Status"`
+	PartitionKey       string  `json:"PartitionKey"`
+	RowKey             string  `json:"RowKey"`
+	ID                 string  `json:"ID"`
+	StackDefinitionID  string  `json:"StackDefinitionID"`
+	Name               string  `json:"Name"`
+	Namespace          string  `json:"Namespace"`
+	OwnerID            string  `json:"OwnerID"`
+	Branch             string  `json:"Branch"`
+	ClusterID          string  `json:"ClusterID"`
+	Status             string  `json:"Status"`
 	ErrorMessage       string  `json:"ErrorMessage"`
 	LastDeployedValues string  `json:"LastDeployedValues"`
 	TTLMinutes         float64 `json:"TTLMinutes"`
 	LastDeployedAt     string  `json:"LastDeployedAt,omitempty"`
-	ExpiresAt         string  `json:"ExpiresAt,omitempty"`
-	CreatedAt         string  `json:"CreatedAt"`
-	UpdatedAt         string  `json:"UpdatedAt"`
+	ExpiresAt          string  `json:"ExpiresAt,omitempty"`
+	CreatedAt          string  `json:"CreatedAt"`
+	UpdatedAt          string  `json:"UpdatedAt"`
 }
 
 func (e *stackInstanceEntity) toModel() *models.StackInstance {
@@ -442,21 +442,21 @@ func (r *StackInstanceRepository) ListIDsByOwnerIDs(_ []string) (map[string][]st
 
 func stackInstanceToEntity(i *models.StackInstance) map[string]interface{} {
 	entity := map[string]interface{}{
-		"PartitionKey":      pkGlobal,
-		"RowKey":            i.ID,
-		"ID":                i.ID,
-		"StackDefinitionID": i.StackDefinitionID,
-		"Name":              i.Name,
-		"Namespace":         i.Namespace,
-		"OwnerID":           i.OwnerID,
-		"Branch":            i.Branch,
-		"ClusterID":         i.ClusterID,
-		"Status":            i.Status,
+		"PartitionKey":       pkGlobal,
+		"RowKey":             i.ID,
+		"ID":                 i.ID,
+		"StackDefinitionID":  i.StackDefinitionID,
+		"Name":               i.Name,
+		"Namespace":          i.Namespace,
+		"OwnerID":            i.OwnerID,
+		"Branch":             i.Branch,
+		"ClusterID":          i.ClusterID,
+		"Status":             i.Status,
 		"ErrorMessage":       i.ErrorMessage,
 		"LastDeployedValues": i.LastDeployedValues,
 		"TTLMinutes":         int64(i.TTLMinutes),
-		"CreatedAt":         i.CreatedAt.Format(time.RFC3339),
-		"UpdatedAt":         i.UpdatedAt.Format(time.RFC3339),
+		"CreatedAt":          i.CreatedAt.Format(time.RFC3339),
+		"UpdatedAt":          i.UpdatedAt.Format(time.RFC3339),
 	}
 	if i.LastDeployedAt != nil {
 		entity["LastDeployedAt"] = i.LastDeployedAt.Format(time.RFC3339)

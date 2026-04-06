@@ -200,9 +200,9 @@ describe('DeployPreviewDialog', () => {
       expect(screen.getByText(/failed to load deploy preview/i)).toBeInTheDocument();
     });
 
-    // Deploy button should be disabled on error.
+    // Deploy button should still be enabled on error (allow "deploy anyway").
     const deployButton = screen.getByRole('button', { name: /deploy/i });
-    expect(deployButton).toBeDisabled();
+    expect(deployButton).not.toBeDisabled();
   });
 
   it('does not fetch when dialog is closed', () => {
