@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -29,6 +30,22 @@ type NamespaceConflictResponse struct {
 	Error       string   `json:"error"`
 	Message     string   `json:"message"`
 	Suggestions []string `json:"suggestions"`
+}
+
+// ChartDeployPreview holds a per-chart comparison between previously deployed
+// values and the values that would be deployed now.
+type ChartDeployPreview struct {
+	ChartName      string `json:"chart_name"`
+	PreviousValues string `json:"previous_values"`
+	PendingValues  string `json:"pending_values"`
+	HasChanges     bool   `json:"has_changes"`
+}
+
+// DeployPreviewResponse is the response for the deploy-preview endpoint.
+type DeployPreviewResponse struct {
+	InstanceID   string               `json:"instance_id"`
+	InstanceName string               `json:"instance_name"`
+	Charts       []ChartDeployPreview `json:"charts"`
 }
 
 // MaxTTLMinutes is the maximum allowed TTL value (30 days).
@@ -1105,7 +1122,147 @@ func (h *InstanceHandler) DeployInstance(c *gin.Context) {
 		return
 	}
 
+	// Save merged values per chart for deployment diff preview.
+	deployedValues := make(map[string]string, len(chartInfos))
+	for _, ci := range chartInfos {
+		deployedValues[ci.ChartConfig.ChartName] = string(ci.ValuesYAML)
+	}
+	if encoded, err := json.Marshal(deployedValues); err == nil {
+		inst.LastDeployedValues = string(encoded)
+		if updateErr := h.instanceRepo.Update(inst); updateErr != nil {
+			slog.Warn("Failed to save last deployed values",
+				logKeyInstanceID, id,
+				"error", updateErr,
+			)
+		}
+	}
+
 	c.JSON(http.StatusAccepted, gin.H{"log_id": logID, "message": "Deployment started"})
+}
+
+// DeployPreview godoc
+// @Summary     Preview deployment changes
+// @Description Compare pending merged values against last-deployed values per chart
+// @Tags        stack-instances
+// @Produce     json
+// @Param       id path string true "Instance ID"
+// @Success     200 {object} DeployPreviewResponse
+// @Failure     400 {object} map[string]string
+// @Failure     404 {object} map[string]string
+// @Failure     500 {object} map[string]string
+// @Router      /api/v1/stack-instances/{id}/deploy-preview [get]
+func (h *InstanceHandler) DeployPreview(c *gin.Context) {
+	id := c.Param("id")
+	if id == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": msgInstanceIDRequired})
+		return
+	}
+
+	inst, err := h.instanceRepo.FindByID(id)
+	if err != nil {
+		status, message := mapError(err, entityStackInstance)
+		c.JSON(status, gin.H{"error": message})
+		return
+	}
+
+	def, err := h.definitionRepo.FindByID(inst.StackDefinitionID)
+	if err != nil {
+		status, message := mapError(err, entityStackDefinition)
+		c.JSON(status, gin.H{"error": message})
+		return
+	}
+
+	charts, err := h.chartConfigRepo.ListByDefinition(def.ID)
+	if err != nil {
+		status, message := mapError(err, entityChartConfigs)
+		c.JSON(status, gin.H{"error": message})
+		return
+	}
+
+	// Build locked values map from template.
+	lockedMap := h.buildLockedValuesMap(def)
+
+	// Build overrides map.
+	overridesMap := make(map[string]string)
+	overrides, err := h.overrideRepo.ListByInstance(inst.ID)
+	if err != nil {
+		slog.Error("deploy-preview: failed to list value overrides", logKeyInstanceID, id, "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
+		return
+	}
+	for _, ov := range overrides {
+		overridesMap[ov.ChartConfigID] = ov.Values
+	}
+
+	// Build per-chart branch override map.
+	branchMap := make(map[string]string)
+	if h.branchOverrideRepo != nil {
+		branchOverrides, err := h.branchOverrideRepo.List(inst.ID)
+		if err != nil {
+			slog.Error("deploy-preview: failed to list branch overrides", logKeyInstanceID, id, "error", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
+			return
+		}
+		for _, bo := range branchOverrides {
+			branchMap[bo.ChartConfigID] = bo.Branch
+		}
+	}
+
+	ownerName := resolveOwnerName(h.userRepo, inst.OwnerID)
+
+	templateVars := helm.TemplateVars{
+		Branch:       inst.Branch,
+		Namespace:    inst.Namespace,
+		InstanceName: inst.Name,
+		StackName:    def.Name,
+		Owner:        ownerName,
+	}
+
+	// Parse last deployed values.
+	previousMap := make(map[string]string)
+	if inst.LastDeployedValues != "" {
+		_ = json.Unmarshal([]byte(inst.LastDeployedValues), &previousMap)
+	}
+
+	// Generate pending values and build per-chart comparison.
+	var chartPreviews []ChartDeployPreview
+	for _, ch := range charts {
+		params := helm.GenerateParams{
+			ChartName:      ch.ChartName,
+			DefaultValues:  ch.DefaultValues,
+			LockedValues:   lockedMap[ch.ChartName],
+			OverrideValues: overridesMap[ch.ID],
+			ChartBranch:    branchMap[ch.ID],
+			TemplateVars:   templateVars,
+		}
+
+		yamlData, err := h.valuesGen.GenerateValues(c.Request.Context(), params)
+		if err != nil {
+			slog.Error("deploy-preview: failed to generate values",
+				"chart", ch.ChartName,
+				logKeyInstanceID, id,
+				"error", err,
+			)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
+			return
+		}
+
+		pending := string(yamlData)
+		previous := previousMap[ch.ChartName]
+
+		chartPreviews = append(chartPreviews, ChartDeployPreview{
+			ChartName:      ch.ChartName,
+			PreviousValues: previous,
+			PendingValues:  pending,
+			HasChanges:     pending != previous,
+		})
+	}
+
+	c.JSON(http.StatusOK, DeployPreviewResponse{
+		InstanceID:   inst.ID,
+		InstanceName: inst.Name,
+		Charts:       chartPreviews,
+	})
 }
 
 // StopInstance godoc

@@ -659,6 +659,25 @@ func (d *Database) AutoMigrate() error {
 		},
 	})
 
+	// Migration 27: Add last_deployed_values column to stack_instances
+	migrator.AddMigration(schema.Migration{
+		Version:     "20231201000027",
+		Name:        "add_last_deployed_values_to_stack_instances",
+		Description: "Add last_deployed_values TEXT column to stack_instances for deployment diff preview",
+		Up: func(tx *gorm.DB) error {
+			if tx.Migrator().HasColumn(&models.StackInstance{}, "LastDeployedValues") {
+				return nil
+			}
+			return tx.Migrator().AddColumn(&models.StackInstance{}, "LastDeployedValues")
+		},
+		Down: func(tx *gorm.DB) error {
+			if tx.Migrator().HasColumn(&models.StackInstance{}, "LastDeployedValues") {
+				return tx.Migrator().DropColumn(&models.StackInstance{}, "LastDeployedValues")
+			}
+			return nil
+		},
+	})
+
 	// Run migrations
 	if err := migrator.MigrateUp(); err != nil {
 		return err
