@@ -14,6 +14,10 @@ import (
 const tableStackInstances = "StackInstances"
 const filterPKGlobal = odataPartitionKeyEq + pkGlobal + "'"
 
+// stackInstanceListSelect is the $select projection for list operations,
+// excluding large fields like LastDeployedValues to reduce bandwidth.
+var stackInstanceListSelect = "PartitionKey,RowKey,ID,StackDefinitionID,Name,Namespace,OwnerID,Branch,ClusterID,Status,ErrorMessage,TTLMinutes,LastDeployedAt,ExpiresAt,CreatedAt,UpdatedAt"
+
 // StackInstanceRepository implements models.StackInstanceRepository for Azure Table Storage.
 // Partition key: "global", Row key: instance ID.
 type StackInstanceRepository struct {
@@ -210,6 +214,7 @@ func (r *StackInstanceRepository) List() ([]models.StackInstance, error) {
 	filter := filterPKGlobal
 	pager := r.client.NewListEntitiesPager(&aztables.ListEntitiesOptions{
 		Filter: &filter,
+		Select: &stackInstanceListSelect,
 	})
 
 	entities, err := collectEntitiesTyped[stackInstanceEntity](ctx, pager, nil, 0)
@@ -233,6 +238,7 @@ func (r *StackInstanceRepository) ListPaged(limit, offset int) ([]models.StackIn
 	filter := filterPKGlobal
 	pager := r.client.NewListEntitiesPager(&aztables.ListEntitiesOptions{
 		Filter: &filter,
+		Select: &stackInstanceListSelect,
 	})
 
 	// Collect all then paginate in-memory. Azure Table Storage does not support
@@ -271,6 +277,7 @@ func (r *StackInstanceRepository) CountAll() (int, error) {
 	filter := filterPKGlobal
 	pager := r.client.NewListEntitiesPager(&aztables.ListEntitiesOptions{
 		Filter: &filter,
+		Select: &stackInstanceListSelect,
 	})
 	entities, err := collectEntitiesTyped[stackInstanceEntity](ctx, pager, nil, 0)
 	if err != nil {
@@ -284,6 +291,7 @@ func (r *StackInstanceRepository) CountByStatus(status string) (int, error) {
 	filter := filterPKGlobal + " and Status eq '" + escapeODataString(status) + "'"
 	pager := r.client.NewListEntitiesPager(&aztables.ListEntitiesOptions{
 		Filter: &filter,
+		Select: &stackInstanceListSelect,
 	})
 	entities, err := collectEntitiesTyped[stackInstanceEntity](ctx, pager, nil, 0)
 	if err != nil {
@@ -301,6 +309,7 @@ func (r *StackInstanceRepository) ExistsByDefinitionAndStatus(definitionID, stat
 	pager := r.client.NewListEntitiesPager(&aztables.ListEntitiesOptions{
 		Filter: &filter,
 		Top:    &top,
+		Select: &stackInstanceListSelect,
 	})
 	entities, err := collectEntitiesTyped[stackInstanceEntity](ctx, pager, nil, 1)
 	if err != nil {
@@ -315,6 +324,7 @@ func (r *StackInstanceRepository) ListByOwner(ownerID string) ([]models.StackIns
 	filter := filterPKGlobal + " and OwnerID eq '" + escapeODataString(ownerID) + "'"
 	pager := r.client.NewListEntitiesPager(&aztables.ListEntitiesOptions{
 		Filter: &filter,
+		Select: &stackInstanceListSelect,
 	})
 
 	entities, err := collectEntitiesTyped[stackInstanceEntity](ctx, pager, nil, 0)
@@ -339,6 +349,7 @@ func (r *StackInstanceRepository) FindByCluster(clusterID string) ([]models.Stac
 		filter := filterPKGlobal
 		pager := r.client.NewListEntitiesPager(&aztables.ListEntitiesOptions{
 			Filter: &filter,
+			Select: &stackInstanceListSelect,
 		})
 
 		entities, err := collectEntitiesTyped[stackInstanceEntity](ctx, pager, func(e *stackInstanceEntity) bool {
@@ -358,6 +369,7 @@ func (r *StackInstanceRepository) FindByCluster(clusterID string) ([]models.Stac
 	filter := filterPKGlobal + " and ClusterID eq '" + escapeODataString(clusterID) + "'"
 	pager := r.client.NewListEntitiesPager(&aztables.ListEntitiesOptions{
 		Filter: &filter,
+		Select: &stackInstanceListSelect,
 	})
 
 	entities, err := collectEntitiesTyped[stackInstanceEntity](ctx, pager, nil, 0)
@@ -394,6 +406,7 @@ func (r *StackInstanceRepository) ListExpired() ([]*models.StackInstance, error)
 	filter := filterPKGlobal + " and Status eq 'running'"
 	pager := r.client.NewListEntitiesPager(&aztables.ListEntitiesOptions{
 		Filter: &filter,
+		Select: &stackInstanceListSelect,
 	})
 
 	entities, err := collectEntitiesTyped[stackInstanceEntity](ctx, pager, func(e *stackInstanceEntity) bool {
