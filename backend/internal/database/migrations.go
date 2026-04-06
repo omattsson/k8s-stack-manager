@@ -678,13 +678,21 @@ func (d *Database) AutoMigrate() error {
 		},
 	})
 
-	// Migration 28: Alter last_deployed_values from TEXT to LONGTEXT
+	// Migration 28: Alter last_deployed_values from TEXT to LONGTEXT (conditional)
 	migrator.AddMigration(schema.Migration{
 		Version:     "20231201000028",
 		Name:        "alter_last_deployed_values_to_longtext",
 		Description: "Change last_deployed_values column from TEXT to LONGTEXT for large merged values",
 		Up: func(tx *gorm.DB) error {
-			return tx.Migrator().AlterColumn(&models.StackInstance{}, "LastDeployedValues")
+			var columnType string
+			row := tx.Raw("SELECT COLUMN_TYPE FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'stack_instances' AND COLUMN_NAME = 'last_deployed_values'").Row()
+			if err := row.Scan(&columnType); err != nil {
+				return nil // column doesn't exist yet, migration 27 will handle it
+			}
+			if columnType == "longtext" {
+				return nil // already longtext
+			}
+			return tx.Exec("ALTER TABLE stack_instances MODIFY last_deployed_values LONGTEXT").Error
 		},
 		Down: func(tx *gorm.DB) error {
 			return tx.Exec("ALTER TABLE stack_instances MODIFY last_deployed_values TEXT").Error

@@ -1044,17 +1044,8 @@ func (h *InstanceHandler) DeployInstance(c *gin.Context) {
 		Owner:      ownerName,
 	}
 
-	logID, err := h.deployManager.Deploy(c.Request.Context(), req)
-	if err != nil {
-		slog.Error("Failed to start deployment",
-			logKeyInstanceID, id,
-			"error", err,
-		)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
-		return
-	}
-
-	// Save merged values per chart for deployment diff preview.
+	// Save merged values per chart for deployment diff preview BEFORE
+	// starting the async deploy to avoid racing with status updates.
 	if encoded, err := json.Marshal(valuesMap); err == nil {
 		inst.LastDeployedValues = string(encoded)
 		if updateErr := h.instanceRepo.Update(inst); updateErr != nil {
@@ -1063,6 +1054,16 @@ func (h *InstanceHandler) DeployInstance(c *gin.Context) {
 				"error", updateErr,
 			)
 		}
+	}
+
+	logID, err := h.deployManager.Deploy(c.Request.Context(), req)
+	if err != nil {
+		slog.Error("Failed to start deployment",
+			logKeyInstanceID, id,
+			"error", err,
+		)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
+		return
 	}
 
 	c.JSON(http.StatusAccepted, gin.H{"log_id": logID, "message": "Deployment started"})
@@ -1076,6 +1077,7 @@ func (h *InstanceHandler) DeployInstance(c *gin.Context) {
 // @Param       id path string true "Instance ID"
 // @Success     200 {object} DeployPreviewResponse
 // @Failure     400 {object} map[string]string
+// @Failure     403 {object} map[string]string
 // @Failure     404 {object} map[string]string
 // @Failure     500 {object} map[string]string
 // @Security    BearerAuth

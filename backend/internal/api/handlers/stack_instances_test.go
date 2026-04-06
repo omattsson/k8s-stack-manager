@@ -1183,4 +1183,53 @@ func TestDeployPreview(t *testing.T) {
 		assert.Contains(t, resp.Charts[0].PendingValues, "replicas: 5")
 		assert.True(t, resp.Charts[0].HasChanges)
 	})
+
+	t.Run("non-owner user gets 403", func(t *testing.T) {
+		t.Parallel()
+		instRepo := NewMockStackInstanceRepository()
+		defRepo := NewMockStackDefinitionRepository()
+		ccRepo := NewMockChartConfigRepository()
+
+		seedDefinition(t, defRepo, "d1", "My Def", "uid-alice")
+		// Instance owned by uid-alice.
+		seedInstance(t, instRepo, "i1", "stack-a", "d1", "uid-alice", models.StackStatusRunning)
+
+		// Request as bob (uid-bob) with role "user" — should be forbidden.
+		router := setupInstanceRouter(instRepo, NewMockValueOverrideRepository(), defRepo, ccRepo, NewMockStackTemplateRepository(), NewMockTemplateChartConfigRepository(), "uid-bob", "bob", "user")
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest(http.MethodGet, "/api/v1/stack-instances/i1/deploy-preview", nil)
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusForbidden, w.Code)
+		var resp map[string]string
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+		assert.Contains(t, resp["error"], "not allowed")
+	})
+
+	t.Run("devops role can access other users instances", func(t *testing.T) {
+		t.Parallel()
+		instRepo := NewMockStackInstanceRepository()
+		overrideRepo := NewMockValueOverrideRepository()
+		defRepo := NewMockStackDefinitionRepository()
+		ccRepo := NewMockChartConfigRepository()
+
+		seedDefinition(t, defRepo, "d1", "My Def", "uid-alice")
+		seedInstance(t, instRepo, "i1", "stack-a", "d1", "uid-alice", models.StackStatusRunning)
+
+		require.NoError(t, ccRepo.Create(&models.ChartConfig{
+			ID:                "c1",
+			StackDefinitionID: "d1",
+			ChartName:         "backend",
+			DefaultValues:     "replicas: 1\n",
+		}))
+
+		// Request as bob (uid-bob) with role "devops" — should pass auth check.
+		router := setupInstanceRouter(instRepo, overrideRepo, defRepo, ccRepo, NewMockStackTemplateRepository(), NewMockTemplateChartConfigRepository(), "uid-bob", "bob", "devops")
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest(http.MethodGet, "/api/v1/stack-instances/i1/deploy-preview", nil)
+		router.ServeHTTP(w, req)
+
+		assert.NotEqual(t, http.StatusForbidden, w.Code, "devops should not be forbidden")
+		assert.Equal(t, http.StatusOK, w.Code)
+	})
 }
