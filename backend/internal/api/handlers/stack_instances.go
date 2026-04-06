@@ -61,7 +61,6 @@ const (
 // Slog structured logging key constants.
 const logKeyInstanceID = "instance_id"
 
-
 // rfc1123InvalidChars matches any character not allowed in an RFC1123 label.
 var rfc1123InvalidChars = regexp.MustCompile(`[^a-z0-9-]`)
 

@@ -134,6 +134,19 @@ vi.mock('../../../components/ConfirmDialog', () => ({
   ) : null,
 }));
 
+vi.mock('../../../components/DeployPreviewDialog', () => ({
+  default: ({ open, instanceName, onConfirm, onClose }: {
+    open: boolean; instanceId: string | number; instanceName: string;
+    onConfirm: () => void; onClose: () => void;
+  }) => open ? (
+    <div data-testid="deploy-preview-dialog">
+      <div>Review Changes — {instanceName}</div>
+      <button onClick={onConfirm}>Deploy</button>
+      <button onClick={onClose}>Cancel</button>
+    </div>
+  ) : null,
+}));
+
 import { instanceService, definitionService, branchOverrideService } from '../../../api/client';
 import useCountdown from '../../../hooks/useCountdown';
 
@@ -371,7 +384,12 @@ describe('StackInstances Detail', () => {
       expect(screen.getByText('Test Instance')).toBeInTheDocument();
     });
 
+    // Click Deploy to open preview dialog
     await user.click(screen.getByRole('button', { name: /deploy/i }));
+
+    // Confirm deploy in the preview dialog
+    const previewDialog = screen.getByTestId('deploy-preview-dialog');
+    await user.click(within(previewDialog).getByRole('button', { name: /deploy/i }));
 
     await waitFor(() => {
       expect(instanceService.deploy).toHaveBeenCalledWith('123');
@@ -413,7 +431,12 @@ describe('StackInstances Detail', () => {
       expect(screen.getByText('Test Instance')).toBeInTheDocument();
     });
 
+    // Click Deploy to open preview dialog
     await user.click(screen.getByRole('button', { name: /deploy/i }));
+
+    // Confirm deploy in the preview dialog
+    const previewDialog = screen.getByTestId('deploy-preview-dialog');
+    await user.click(within(previewDialog).getByRole('button', { name: /deploy/i }));
 
     await waitFor(() => {
       expect(screen.getByText('Failed to start deployment')).toBeInTheDocument();
@@ -1143,7 +1166,12 @@ describe('StackInstances Detail', () => {
       expect(screen.getByText('Test Instance')).toBeInTheDocument();
     });
 
+    // Click Deploy to open preview dialog
     await user.click(screen.getByRole('button', { name: /deploy/i }));
+
+    // Confirm deploy in the preview dialog
+    const previewDialog = screen.getByTestId('deploy-preview-dialog');
+    await user.click(within(previewDialog).getByRole('button', { name: /deploy/i }));
 
     await waitFor(() => {
       expect(instanceService.deploy).toHaveBeenCalledWith('123');

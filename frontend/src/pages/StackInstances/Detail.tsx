@@ -22,6 +22,7 @@ import CloseIcon from '@mui/icons-material/Close';
 import StatusBadge from '../../components/StatusBadge';
 import BranchSelector from '../../components/BranchSelector';
 import ConfirmDialog from '../../components/ConfirmDialog';
+import DeployPreviewDialog from '../../components/DeployPreviewDialog';
 import DeploymentLogViewer from '../../components/DeploymentLogViewer';
 import PodStatusDisplay from '../../components/PodStatusDisplay';
 import AccessUrls from '../../components/AccessUrls';
@@ -51,6 +52,7 @@ const Detail = () => {
   const [error, setError] = useState<string | null>(null);
   const { showSuccess } = useNotification();
   const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deployPreviewOpen, setDeployPreviewOpen] = useState(false);
   const [deploying, setDeploying] = useState(false);
   const [stopping, setStopping] = useState(false);
   const [cleaning, setCleaning] = useState(false);
@@ -401,7 +403,7 @@ const Detail = () => {
   const renderStatusActions = (status: string) => (
     <>
       {canDeploy && (
-        <Button variant="contained" color="success" onClick={handleDeploy} disabled={deploying}>
+        <Button variant="contained" color="success" onClick={() => setDeployPreviewOpen(true)} disabled={deploying}>
           {deploying ? 'Deploying...' : 'Deploy'}
         </Button>
       )}
@@ -647,6 +649,14 @@ const Detail = () => {
         onConfirm={() => { setCleanDialogOpen(false); handleClean(); }}
         onCancel={() => setCleanDialogOpen(false)}
         confirmText="Clean"
+      />
+
+      <DeployPreviewDialog
+        open={deployPreviewOpen}
+        instanceId={instance.id}
+        instanceName={instance.name}
+        onConfirm={() => { setDeployPreviewOpen(false); handleDeploy(); }}
+        onClose={() => setDeployPreviewOpen(false)}
       />
 
     </Box>
