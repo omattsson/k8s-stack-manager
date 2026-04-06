@@ -173,9 +173,8 @@ const DeployPreviewDialog = ({
           variant="contained"
           color="success"
           onClick={onConfirm}
-          disabled={loading}
         >
-          Deploy
+          {loading ? 'Deploy anyway' : 'Deploy'}
         </Button>
       </DialogActions>
     </Dialog>
