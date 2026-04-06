@@ -454,6 +454,13 @@ func (r *StackInstanceRepository) ListIDsByOwnerIDs(_ []string) (map[string][]st
 }
 
 func stackInstanceToEntity(i *models.StackInstance) map[string]interface{} {
+	// Azure Table Storage has a ~64KB per-property limit.
+	const maxLastDeployedValuesLen = 60 * 1024 // 60KB — leave headroom for other fields
+	ldv := i.LastDeployedValues
+	if len(ldv) > maxLastDeployedValuesLen {
+		ldv = ldv[:maxLastDeployedValuesLen]
+	}
+
 	entity := map[string]interface{}{
 		"PartitionKey":       pkGlobal,
 		"RowKey":             i.ID,
@@ -466,7 +473,7 @@ func stackInstanceToEntity(i *models.StackInstance) map[string]interface{} {
 		"ClusterID":          i.ClusterID,
 		"Status":             i.Status,
 		"ErrorMessage":       i.ErrorMessage,
-		"LastDeployedValues": i.LastDeployedValues,
+		"LastDeployedValues": ldv,
 		"TTLMinutes":         int64(i.TTLMinutes),
 		"CreatedAt":          i.CreatedAt.Format(time.RFC3339),
 		"UpdatedAt":          i.UpdatedAt.Format(time.RFC3339),
