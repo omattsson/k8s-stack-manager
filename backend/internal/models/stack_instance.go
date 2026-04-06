@@ -17,7 +17,7 @@ type StackInstance struct {
 	ClusterID          string     `json:"cluster_id,omitempty" gorm:"size:36"`
 	Status             string     `json:"status" gorm:"size:50"`
 	ErrorMessage       string     `json:"error_message,omitempty" gorm:"type:text"`
-	LastDeployedValues string     `json:"last_deployed_values,omitempty" gorm:"type:text"`
+	LastDeployedValues string     `json:"-" gorm:"type:text"`
 	TTLMinutes         int        `json:"ttl_minutes"`
 }
 

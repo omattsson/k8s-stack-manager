@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -1011,96 +1012,28 @@ func (h *InstanceHandler) DeployInstance(c *gin.Context) {
 	}
 
 	// Build locked values map from template.
-	lockedMap := make(map[string]string)
-	if def.SourceTemplateID != "" && h.templateChartRepo != nil {
-		templateCharts, err := h.templateChartRepo.ListByTemplate(def.SourceTemplateID)
-		if err != nil {
-			slog.Error("Failed to list template chart configs",
-				"template_id", def.SourceTemplateID,
-				logKeyInstanceID, id,
-				"error", err,
-			)
-			c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
-			return
-		}
-		for _, tc := range templateCharts {
-			lockedMap[tc.ChartName] = tc.LockedValues
-		}
+	if inst.Namespace == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Instance namespace is empty"})
+		return
 	}
 
-	// Build overrides map.
-	overridesMap := make(map[string]string)
-	overrides, err := h.overrideRepo.ListByInstance(inst.ID)
+	valuesMap, err := h.buildChartValues(c.Request.Context(), inst, def, charts)
 	if err != nil {
-		slog.Error("Failed to list value overrides",
+		slog.Error("Failed to build chart values",
 			logKeyInstanceID, id,
 			"error", err,
 		)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
 		return
 	}
-	for _, ov := range overrides {
-		overridesMap[ov.ChartConfigID] = ov.Values
-	}
-
-	// Build per-chart branch override map.
-	branchMap := make(map[string]string)
-	if h.branchOverrideRepo != nil {
-		branchOverrides, err := h.branchOverrideRepo.List(inst.ID)
-		if err != nil {
-			slog.Error("Failed to list branch overrides",
-				logKeyInstanceID, id,
-				"error", err,
-			)
-			c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
-			return
-		}
-		for _, bo := range branchOverrides {
-			branchMap[bo.ChartConfigID] = bo.Branch
-		}
-	}
-
-	if inst.Namespace == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Instance namespace is empty"})
-		return
-	}
 
 	ownerName := resolveOwnerName(h.userRepo, inst.OwnerID)
 
-	templateVars := helm.TemplateVars{
-		Branch:       inst.Branch,
-		Namespace:    inst.Namespace,
-		InstanceName: inst.Name,
-		StackName:    def.Name,
-		Owner:        ownerName,
-	}
-
-	// Generate values YAML for each chart.
 	var chartInfos []deployer.ChartDeployInfo
 	for _, ch := range charts {
-		params := helm.GenerateParams{
-			ChartName:      ch.ChartName,
-			DefaultValues:  ch.DefaultValues,
-			LockedValues:   lockedMap[ch.ChartName],
-			OverrideValues: overridesMap[ch.ID],
-			ChartBranch:    branchMap[ch.ID],
-			TemplateVars:   templateVars,
-		}
-
-		yamlData, err := h.valuesGen.GenerateValues(c.Request.Context(), params)
-		if err != nil {
-			slog.Error("Failed to generate values for chart",
-				"chart", ch.ChartName,
-				logKeyInstanceID, id,
-				"error", err,
-			)
-			c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
-			return
-		}
-
 		chartInfos = append(chartInfos, deployer.ChartDeployInfo{
 			ChartConfig: ch,
-			ValuesYAML:  yamlData,
+			ValuesYAML:  []byte(valuesMap[ch.ChartName]),
 		})
 	}
 
@@ -1122,11 +1055,7 @@ func (h *InstanceHandler) DeployInstance(c *gin.Context) {
 	}
 
 	// Save merged values per chart for deployment diff preview.
-	deployedValues := make(map[string]string, len(chartInfos))
-	for _, ci := range chartInfos {
-		deployedValues[ci.ChartConfig.ChartName] = string(ci.ValuesYAML)
-	}
-	if encoded, err := json.Marshal(deployedValues); err == nil {
+	if encoded, err := json.Marshal(valuesMap); err == nil {
 		inst.LastDeployedValues = string(encoded)
 		if updateErr := h.instanceRepo.Update(inst); updateErr != nil {
 			slog.Warn("Failed to save last deployed values",
@@ -1149,6 +1078,7 @@ func (h *InstanceHandler) DeployInstance(c *gin.Context) {
 // @Failure     400 {object} map[string]string
 // @Failure     404 {object} map[string]string
 // @Failure     500 {object} map[string]string
+// @Security    BearerAuth
 // @Router      /api/v1/stack-instances/{id}/deploy-preview [get]
 func (h *InstanceHandler) DeployPreview(c *gin.Context) {
 	id := c.Param("id")
@@ -1178,75 +1108,26 @@ func (h *InstanceHandler) DeployPreview(c *gin.Context) {
 		return
 	}
 
-	// Build locked values map from template.
-	lockedMap := h.buildLockedValuesMap(def)
-
-	// Build overrides map.
-	overridesMap := make(map[string]string)
-	overrides, err := h.overrideRepo.ListByInstance(inst.ID)
+	// Build merged values for each chart.
+	valuesMap, err := h.buildChartValues(c.Request.Context(), inst, def, charts)
 	if err != nil {
-		slog.Error("deploy-preview: failed to list value overrides", logKeyInstanceID, id, "error", err)
+		slog.Error("deploy-preview: failed to build chart values", logKeyInstanceID, id, "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
 		return
-	}
-	for _, ov := range overrides {
-		overridesMap[ov.ChartConfigID] = ov.Values
-	}
-
-	// Build per-chart branch override map.
-	branchMap := make(map[string]string)
-	if h.branchOverrideRepo != nil {
-		branchOverrides, err := h.branchOverrideRepo.List(inst.ID)
-		if err != nil {
-			slog.Error("deploy-preview: failed to list branch overrides", logKeyInstanceID, id, "error", err)
-			c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
-			return
-		}
-		for _, bo := range branchOverrides {
-			branchMap[bo.ChartConfigID] = bo.Branch
-		}
-	}
-
-	ownerName := resolveOwnerName(h.userRepo, inst.OwnerID)
-
-	templateVars := helm.TemplateVars{
-		Branch:       inst.Branch,
-		Namespace:    inst.Namespace,
-		InstanceName: inst.Name,
-		StackName:    def.Name,
-		Owner:        ownerName,
 	}
 
 	// Parse last deployed values.
 	previousMap := make(map[string]string)
 	if inst.LastDeployedValues != "" {
-		_ = json.Unmarshal([]byte(inst.LastDeployedValues), &previousMap)
+		if err := json.Unmarshal([]byte(inst.LastDeployedValues), &previousMap); err != nil {
+			slog.Warn("Failed to parse last deployed values", logKeyInstanceID, id, "error", err)
+		}
 	}
 
-	// Generate pending values and build per-chart comparison.
-	var chartPreviews []ChartDeployPreview
+	// Build per-chart comparison.
+	chartPreviews := make([]ChartDeployPreview, 0, len(charts))
 	for _, ch := range charts {
-		params := helm.GenerateParams{
-			ChartName:      ch.ChartName,
-			DefaultValues:  ch.DefaultValues,
-			LockedValues:   lockedMap[ch.ChartName],
-			OverrideValues: overridesMap[ch.ID],
-			ChartBranch:    branchMap[ch.ID],
-			TemplateVars:   templateVars,
-		}
-
-		yamlData, err := h.valuesGen.GenerateValues(c.Request.Context(), params)
-		if err != nil {
-			slog.Error("deploy-preview: failed to generate values",
-				"chart", ch.ChartName,
-				logKeyInstanceID, id,
-				"error", err,
-			)
-			c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
-			return
-		}
-
-		pending := string(yamlData)
+		pending := valuesMap[ch.ChartName]
 		previous := previousMap[ch.ChartName]
 
 		chartPreviews = append(chartPreviews, ChartDeployPreview{
@@ -1804,8 +1685,18 @@ func (h *InstanceHandler) CompareInstances(c *gin.Context) {
 	}
 
 	// Build locked values maps from templates.
-	leftLockedMap := h.buildLockedValuesMap(leftDef)
-	rightLockedMap := h.buildLockedValuesMap(rightDef)
+	leftLockedMap, err := h.buildLockedValuesMap(leftDef)
+	if err != nil {
+		slog.Error("compare: failed to build left locked values", "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
+		return
+	}
+	rightLockedMap, err := h.buildLockedValuesMap(rightDef)
+	if err != nil {
+		slog.Error("compare: failed to build right locked values", "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
+		return
+	}
 
 	// Resolve owner names.
 	leftOwner := resolveOwnerName(h.userRepo, leftInst.OwnerID)
@@ -1921,16 +1812,74 @@ func (h *InstanceHandler) CompareInstances(c *gin.Context) {
 	c.JSON(http.StatusOK, resp)
 }
 
+// buildChartValues generates merged Helm values YAML for each chart in a stack
+// instance. It returns a map of chartName → YAML string.
+func (h *InstanceHandler) buildChartValues(ctx context.Context, inst *models.StackInstance, def *models.StackDefinition, charts []models.ChartConfig) (map[string]string, error) {
+	lockedMap, err := h.buildLockedValuesMap(def)
+	if err != nil {
+		return nil, fmt.Errorf("build locked values: %w", err)
+	}
+
+	overridesMap := make(map[string]string)
+	overrides, err := h.overrideRepo.ListByInstance(inst.ID)
+	if err != nil {
+		return nil, fmt.Errorf("list value overrides: %w", err)
+	}
+	for _, ov := range overrides {
+		overridesMap[ov.ChartConfigID] = ov.Values
+	}
+
+	branchMap := make(map[string]string)
+	if h.branchOverrideRepo != nil {
+		branchOverrides, err := h.branchOverrideRepo.List(inst.ID)
+		if err != nil {
+			return nil, fmt.Errorf("list branch overrides: %w", err)
+		}
+		for _, bo := range branchOverrides {
+			branchMap[bo.ChartConfigID] = bo.Branch
+		}
+	}
+
+	ownerName := resolveOwnerName(h.userRepo, inst.OwnerID)
+
+	templateVars := helm.TemplateVars{
+		Branch:       inst.Branch,
+		Namespace:    inst.Namespace,
+		InstanceName: inst.Name,
+		StackName:    def.Name,
+		Owner:        ownerName,
+	}
+
+	result := make(map[string]string, len(charts))
+	for _, ch := range charts {
+		yamlData, err := h.valuesGen.GenerateValues(ctx, helm.GenerateParams{
+			ChartName:      ch.ChartName,
+			DefaultValues:  ch.DefaultValues,
+			LockedValues:   lockedMap[ch.ChartName],
+			OverrideValues: overridesMap[ch.ID],
+			ChartBranch:    branchMap[ch.ID],
+			TemplateVars:   templateVars,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("generate values for chart %s: %w", ch.ChartName, err)
+		}
+		result[ch.ChartName] = string(yamlData)
+	}
+
+	return result, nil
+}
+
 // buildLockedValuesMap returns chartName → lockedValues for a definition's source template.
-func (h *InstanceHandler) buildLockedValuesMap(def *models.StackDefinition) map[string]string {
+func (h *InstanceHandler) buildLockedValuesMap(def *models.StackDefinition) (map[string]string, error) {
 	lockedMap := make(map[string]string)
 	if def.SourceTemplateID != "" && h.templateChartRepo != nil {
 		templateCharts, err := h.templateChartRepo.ListByTemplate(def.SourceTemplateID)
-		if err == nil {
-			for _, tc := range templateCharts {
-				lockedMap[tc.ChartName] = tc.LockedValues
-			}
+		if err != nil {
+			return nil, fmt.Errorf("list template chart configs: %w", err)
+		}
+		for _, tc := range templateCharts {
+			lockedMap[tc.ChartName] = tc.LockedValues
 		}
 	}
-	return lockedMap
+	return lockedMap, nil
 }
