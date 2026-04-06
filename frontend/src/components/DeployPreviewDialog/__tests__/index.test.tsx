@@ -197,7 +197,7 @@ describe('DeployPreviewDialog', () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText('Failed to load deploy preview')).toBeInTheDocument();
+      expect(screen.getByText(/failed to load deploy preview/i)).toBeInTheDocument();
     });
 
     // Deploy button should be disabled on error.

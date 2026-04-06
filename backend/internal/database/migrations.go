@@ -416,7 +416,7 @@ func (d *Database) AutoMigrate() error {
 				var count int64
 				tx.Raw("SELECT COUNT(1) FROM information_schema.statistics WHERE table_schema = DATABASE() AND table_name = ? AND index_name = ?", idx.table, idx.name).Scan(&count)
 				if count == 0 {
-					if err := tx.Exec(idx.sql).Error; err != nil {
+					if err := tx.Exec(idx.sql).Error; err != nil { // #nosec G202 -- SQL from hardcoded struct constants
 						return err
 					}
 				}
@@ -486,7 +486,7 @@ func (d *Database) AutoMigrate() error {
 				var count int64
 				tx.Raw("SELECT COUNT(1) FROM information_schema.statistics WHERE table_schema = DATABASE() AND table_name = ? AND index_name = ?", idx.table, idx.name).Scan(&count)
 				if count == 0 {
-					if err := tx.Exec(idx.sql).Error; err != nil {
+					if err := tx.Exec(idx.sql).Error; err != nil { // #nosec G202 -- SQL from hardcoded struct constants
 						return err
 					}
 				}
@@ -554,7 +554,7 @@ func (d *Database) AutoMigrate() error {
 				var count int64
 				tx.Raw("SELECT COUNT(1) FROM information_schema.statistics WHERE table_schema = DATABASE() AND table_name = ? AND index_name = ?", idx.table, idx.name).Scan(&count)
 				if count == 0 {
-					if err := tx.Exec(idx.sql).Error; err != nil {
+					if err := tx.Exec(idx.sql).Error; err != nil { // #nosec G202 -- SQL from hardcoded struct constants
 						return err
 					}
 				}
@@ -593,7 +593,7 @@ func (d *Database) AutoMigrate() error {
 				var count int64
 				tx.Raw("SELECT COUNT(1) FROM information_schema.statistics WHERE table_schema = DATABASE() AND table_name = ? AND index_name = ?", idx.table, idx.name).Scan(&count)
 				if count == 0 {
-					if err := tx.Exec(idx.sql).Error; err != nil {
+					if err := tx.Exec(idx.sql).Error; err != nil { // #nosec G202 -- SQL from hardcoded struct constants
 						return err
 					}
 				}
