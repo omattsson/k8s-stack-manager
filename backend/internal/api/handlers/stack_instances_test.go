@@ -56,6 +56,7 @@ func setupInstanceRouter(
 		insts.POST("/:id/clone", h.CloneInstance)
 		insts.GET("/:id/values/:chartId", h.ExportChartValues)
 		insts.POST("/:id/extend", h.ExtendTTL)
+		insts.GET("/:id/deploy-preview", h.DeployPreview)
 	}
 	return r
 }
@@ -972,4 +973,214 @@ func TestExtendTTL_MaxTTLExceeded(t *testing.T) {
 	var resp map[string]string
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	assert.Contains(t, resp["error"], "TTL must not exceed")
+}
+
+// ---- DeployPreview ----
+
+func TestDeployPreview(t *testing.T) {
+	t.Parallel()
+
+	t.Run("returns per-chart diff with previous deploy", func(t *testing.T) {
+		t.Parallel()
+		instRepo := NewMockStackInstanceRepository()
+		overrideRepo := NewMockValueOverrideRepository()
+		defRepo := NewMockStackDefinitionRepository()
+		ccRepo := NewMockChartConfigRepository()
+
+		seedDefinition(t, defRepo, "d1", "My Def", "uid-1")
+
+		// Instance with previously deployed values.
+		inst := seedInstance(t, instRepo, "i1", "stack-a", "d1", "uid-1", models.StackStatusRunning)
+		previousValues := map[string]string{
+			"backend":  "replicas: 1\nimage: old\n",
+			"frontend": "replicas: 2\n",
+		}
+		encoded, _ := json.Marshal(previousValues)
+		inst.LastDeployedValues = string(encoded)
+		require.NoError(t, instRepo.Update(inst))
+
+		// Charts with default values that differ from previously deployed.
+		require.NoError(t, ccRepo.Create(&models.ChartConfig{
+			ID:                "c1",
+			StackDefinitionID: "d1",
+			ChartName:         "backend",
+			DefaultValues:     "replicas: 3\nimage: new\n",
+		}))
+		require.NoError(t, ccRepo.Create(&models.ChartConfig{
+			ID:                "c2",
+			StackDefinitionID: "d1",
+			ChartName:         "frontend",
+			DefaultValues:     "replicas: 2\n",
+		}))
+
+		router := setupInstanceRouter(instRepo, overrideRepo, defRepo, ccRepo, NewMockStackTemplateRepository(), NewMockTemplateChartConfigRepository(), "uid-1", "alice", "user")
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest(http.MethodGet, "/api/v1/stack-instances/i1/deploy-preview", nil)
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+
+		var resp DeployPreviewResponse
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+		assert.Equal(t, "i1", resp.InstanceID)
+		assert.Equal(t, "stack-a", resp.InstanceName)
+		assert.Len(t, resp.Charts, 2)
+
+		// Find charts by name for order-independent assertions.
+		chartMap := make(map[string]ChartDeployPreview, len(resp.Charts))
+		for _, ch := range resp.Charts {
+			chartMap[ch.ChartName] = ch
+		}
+
+		backend := chartMap["backend"]
+		assert.True(t, backend.HasChanges, "backend should have changes")
+		assert.Equal(t, "replicas: 1\nimage: old\n", backend.PreviousValues)
+		assert.NotEmpty(t, backend.PendingValues)
+
+		frontend := chartMap["frontend"]
+		assert.False(t, frontend.HasChanges, "frontend should be unchanged")
+		assert.Equal(t, frontend.PreviousValues, frontend.PendingValues)
+	})
+
+	t.Run("first deploy returns empty previous values", func(t *testing.T) {
+		t.Parallel()
+		instRepo := NewMockStackInstanceRepository()
+		overrideRepo := NewMockValueOverrideRepository()
+		defRepo := NewMockStackDefinitionRepository()
+		ccRepo := NewMockChartConfigRepository()
+
+		seedDefinition(t, defRepo, "d1", "My Def", "uid-1")
+		seedInstance(t, instRepo, "i1", "stack-a", "d1", "uid-1", models.StackStatusDraft)
+		// No LastDeployedValues set.
+
+		require.NoError(t, ccRepo.Create(&models.ChartConfig{
+			ID:                "c1",
+			StackDefinitionID: "d1",
+			ChartName:         "backend",
+			DefaultValues:     "replicas: 1\n",
+		}))
+
+		router := setupInstanceRouter(instRepo, overrideRepo, defRepo, ccRepo, NewMockStackTemplateRepository(), NewMockTemplateChartConfigRepository(), "uid-1", "alice", "user")
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest(http.MethodGet, "/api/v1/stack-instances/i1/deploy-preview", nil)
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+
+		var resp DeployPreviewResponse
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+		assert.Len(t, resp.Charts, 1)
+		assert.Equal(t, "", resp.Charts[0].PreviousValues)
+		assert.NotEmpty(t, resp.Charts[0].PendingValues)
+		assert.True(t, resp.Charts[0].HasChanges, "first deploy should always show changes")
+	})
+
+	t.Run("instance not found returns 404", func(t *testing.T) {
+		t.Parallel()
+		instRepo := NewMockStackInstanceRepository()
+		router := setupInstanceRouter(instRepo, NewMockValueOverrideRepository(), NewMockStackDefinitionRepository(), NewMockChartConfigRepository(), NewMockStackTemplateRepository(), NewMockTemplateChartConfigRepository(), "uid-1", "alice", "user")
+
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest(http.MethodGet, "/api/v1/stack-instances/missing-id/deploy-preview", nil)
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusNotFound, w.Code)
+		var resp map[string]string
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+		assert.Contains(t, resp["error"], "not found")
+	})
+
+	t.Run("instance with no charts returns empty charts array", func(t *testing.T) {
+		t.Parallel()
+		instRepo := NewMockStackInstanceRepository()
+		defRepo := NewMockStackDefinitionRepository()
+		ccRepo := NewMockChartConfigRepository()
+
+		seedDefinition(t, defRepo, "d1", "Empty Def", "uid-1")
+		seedInstance(t, instRepo, "i1", "stack-empty", "d1", "uid-1", models.StackStatusDraft)
+		// No chart configs created.
+
+		router := setupInstanceRouter(instRepo, NewMockValueOverrideRepository(), defRepo, ccRepo, NewMockStackTemplateRepository(), NewMockTemplateChartConfigRepository(), "uid-1", "alice", "user")
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest(http.MethodGet, "/api/v1/stack-instances/i1/deploy-preview", nil)
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+
+		var resp DeployPreviewResponse
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+		assert.Equal(t, "i1", resp.InstanceID)
+		assert.Empty(t, resp.Charts)
+	})
+
+	t.Run("definition not found returns 404", func(t *testing.T) {
+		t.Parallel()
+		instRepo := NewMockStackInstanceRepository()
+		defRepo := NewMockStackDefinitionRepository()
+		// Instance references a definition that doesn't exist.
+		seedInstance(t, instRepo, "i1", "stack-a", "d-missing", "uid-1", models.StackStatusDraft)
+
+		router := setupInstanceRouter(instRepo, NewMockValueOverrideRepository(), defRepo, NewMockChartConfigRepository(), NewMockStackTemplateRepository(), NewMockTemplateChartConfigRepository(), "uid-1", "alice", "user")
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest(http.MethodGet, "/api/v1/stack-instances/i1/deploy-preview", nil)
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusNotFound, w.Code)
+	})
+
+	t.Run("chart config repo error returns 500", func(t *testing.T) {
+		t.Parallel()
+		instRepo := NewMockStackInstanceRepository()
+		defRepo := NewMockStackDefinitionRepository()
+		ccRepo := NewMockChartConfigRepository()
+
+		seedDefinition(t, defRepo, "d1", "My Def", "uid-1")
+		seedInstance(t, instRepo, "i1", "stack-a", "d1", "uid-1", models.StackStatusDraft)
+		ccRepo.SetError(errInternal)
+
+		router := setupInstanceRouter(instRepo, NewMockValueOverrideRepository(), defRepo, ccRepo, NewMockStackTemplateRepository(), NewMockTemplateChartConfigRepository(), "uid-1", "alice", "user")
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest(http.MethodGet, "/api/v1/stack-instances/i1/deploy-preview", nil)
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusInternalServerError, w.Code)
+	})
+
+	t.Run("includes value overrides in pending values", func(t *testing.T) {
+		t.Parallel()
+		instRepo := NewMockStackInstanceRepository()
+		overrideRepo := NewMockValueOverrideRepository()
+		defRepo := NewMockStackDefinitionRepository()
+		ccRepo := NewMockChartConfigRepository()
+
+		seedDefinition(t, defRepo, "d1", "My Def", "uid-1")
+		seedInstance(t, instRepo, "i1", "stack-a", "d1", "uid-1", models.StackStatusDraft)
+
+		require.NoError(t, ccRepo.Create(&models.ChartConfig{
+			ID:                "c1",
+			StackDefinitionID: "d1",
+			ChartName:         "backend",
+			DefaultValues:     "replicas: 1\n",
+		}))
+		require.NoError(t, overrideRepo.Create(&models.ValueOverride{
+			ID:              "ov1",
+			StackInstanceID: "i1",
+			ChartConfigID:   "c1",
+			Values:          "replicas: 5",
+		}))
+
+		router := setupInstanceRouter(instRepo, overrideRepo, defRepo, ccRepo, NewMockStackTemplateRepository(), NewMockTemplateChartConfigRepository(), "uid-1", "alice", "user")
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest(http.MethodGet, "/api/v1/stack-instances/i1/deploy-preview", nil)
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+
+		var resp DeployPreviewResponse
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+		assert.Len(t, resp.Charts, 1)
+		// The pending values should include the override.
+		assert.Contains(t, resp.Charts[0].PendingValues, "replicas: 5")
+		assert.True(t, resp.Charts[0].HasChanges)
+	})
 }
