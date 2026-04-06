@@ -688,8 +688,7 @@ func (d *Database) AutoMigrate() error {
 		Description: "Change last_deployed_values column from TEXT to LONGTEXT for large merged values",
 		Up: func(tx *gorm.DB) error {
 			dialector := tx.Dialector.Name()
-			if dialector == "sqlite" {
-				// SQLite TEXT is already unlimited — no alteration needed.
+			if dialector != "mysql" {
 				return nil
 			}
 			// MySQL/MariaDB: check current column type and alter if needed.
@@ -707,7 +706,7 @@ func (d *Database) AutoMigrate() error {
 			return tx.Exec("ALTER TABLE stack_instances MODIFY last_deployed_values LONGTEXT").Error
 		},
 		Down: func(tx *gorm.DB) error {
-			if tx.Dialector.Name() == "sqlite" {
+			if tx.Dialector.Name() != "mysql" {
 				return nil
 			}
 			if tx.Migrator().HasColumn(&models.StackInstance{}, "LastDeployedValues") {

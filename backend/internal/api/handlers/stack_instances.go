@@ -1104,6 +1104,11 @@ func (h *InstanceHandler) DeployPreview(c *gin.Context) {
 		return
 	}
 
+	if inst.Namespace == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Instance namespace is empty"})
+		return
+	}
+
 	def, err := h.definitionRepo.FindByID(inst.StackDefinitionID)
 	if err != nil {
 		status, message := mapError(err, entityStackDefinition)
