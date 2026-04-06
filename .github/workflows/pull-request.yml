@@ -111,7 +111,7 @@ jobs:
 
       - name: Setup Helm
         if: steps.files.outputs.helm == 'true'
-        uses: azure/setup-helm@v4
+        uses: azure/setup-helm@v5
         with:
           version: 'v3.17.0'
 

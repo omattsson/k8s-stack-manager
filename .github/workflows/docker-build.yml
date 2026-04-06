@@ -41,7 +41,7 @@ jobs:
 
       - name: Extract metadata (tags, labels) for backend
         id: meta-backend
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@v6
         with:
           images: ghcr.io/${{ github.repository }}/backend
           tags: |
@@ -83,7 +83,7 @@ jobs:
 
       - name: Extract metadata (tags, labels) for frontend
         id: meta-frontend
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@v6
         with:
           images: ghcr.io/${{ github.repository }}/frontend
           tags: |
