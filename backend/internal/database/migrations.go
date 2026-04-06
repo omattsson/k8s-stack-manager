@@ -447,7 +447,7 @@ func (d *Database) AutoMigrate() error {
 				{"stack_definitions", "idx_stack_definitions_owner_id"},
 			}
 			for _, idx := range indexes {
-				_ = tx.Exec("DROP INDEX " + idx.name + " ON " + idx.table).Error
+				_ = tx.Exec(fmt.Sprintf("DROP INDEX %s ON %s", idx.name, idx.table)).Error // #nosec G202 -- table/index names are hardcoded constants
 			}
 			return nil
 		},
@@ -505,7 +505,7 @@ func (d *Database) AutoMigrate() error {
 				{"stack_instances", "idx_stack_instances_created_at"},
 			}
 			for _, idx := range indexes {
-				_ = tx.Exec("DROP INDEX " + idx.name + " ON " + idx.table).Error
+				_ = tx.Exec(fmt.Sprintf("DROP INDEX %s ON %s", idx.name, idx.table)).Error // #nosec G202 -- table/index names are hardcoded constants
 			}
 			return nil
 		},
@@ -573,7 +573,7 @@ func (d *Database) AutoMigrate() error {
 				var count int64
 				tx.Raw("SELECT COUNT(1) FROM information_schema.statistics WHERE table_schema = DATABASE() AND table_name = ? AND index_name = ?", idx.table, idx.name).Scan(&count)
 				if count > 0 {
-					if err := tx.Exec("DROP INDEX " + idx.name + " ON " + idx.table).Error; err != nil {
+					if err := tx.Exec(fmt.Sprintf("DROP INDEX %s ON %s", idx.name, idx.table)).Error; err != nil { // #nosec G202 -- table/index names are hardcoded constants
 						return err
 					}
 				}
@@ -607,7 +607,7 @@ func (d *Database) AutoMigrate() error {
 				{"stack_instances", "idx_stack_instances_status_expires"},
 			}
 			for _, idx := range dropIndexes {
-				_ = tx.Exec("DROP INDEX " + idx.name + " ON " + idx.table).Error
+				_ = tx.Exec(fmt.Sprintf("DROP INDEX %s ON %s", idx.name, idx.table)).Error // #nosec G202 -- table/index names are hardcoded constants
 			}
 			return nil
 		},
@@ -687,6 +687,12 @@ func (d *Database) AutoMigrate() error {
 		Name:        "alter_last_deployed_values_to_longtext",
 		Description: "Change last_deployed_values column from TEXT to LONGTEXT for large merged values",
 		Up: func(tx *gorm.DB) error {
+			dialector := tx.Dialector.Name()
+			if dialector == "sqlite" {
+				// SQLite TEXT is already unlimited — no alteration needed.
+				return nil
+			}
+			// MySQL/MariaDB: check current column type and alter if needed.
 			var columnType string
 			row := tx.Raw("SELECT COLUMN_TYPE FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'stack_instances' AND COLUMN_NAME = 'last_deployed_values'").Row()
 			if err := row.Scan(&columnType); err != nil {
@@ -701,6 +707,9 @@ func (d *Database) AutoMigrate() error {
 			return tx.Exec("ALTER TABLE stack_instances MODIFY last_deployed_values LONGTEXT").Error
 		},
 		Down: func(tx *gorm.DB) error {
+			if tx.Dialector.Name() == "sqlite" {
+				return nil
+			}
 			if tx.Migrator().HasColumn(&models.StackInstance{}, "LastDeployedValues") {
 				return tx.Exec("ALTER TABLE stack_instances MODIFY last_deployed_values TEXT").Error
 			}
