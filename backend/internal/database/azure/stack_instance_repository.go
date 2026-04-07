@@ -16,7 +16,7 @@ const filterPKGlobal = odataPartitionKeyEq + pkGlobal + "'"
 
 // stackInstanceListSelect is the $select projection for list operations,
 // excluding large fields like LastDeployedValues to reduce bandwidth.
-var stackInstanceListSelect = "PartitionKey,RowKey,ID,StackDefinitionID,Name,Namespace,OwnerID,Branch,ClusterID,Status,ErrorMessage,TTLMinutes,LastDeployedAt,ExpiresAt,CreatedAt,UpdatedAt"
+var stackInstanceListSelect = "PartitionKey,RowKey,ID,StackDefinitionID,Name,Namespace,OwnerID,Branch,ClusterID,Status,TTLMinutes,LastDeployedAt,ExpiresAt,CreatedAt,UpdatedAt"
 
 // StackInstanceRepository implements models.StackInstanceRepository for Azure Table Storage.
 // Partition key: "global", Row key: instance ID.
@@ -456,7 +456,8 @@ func (r *StackInstanceRepository) ListIDsByOwnerIDs(_ []string) (map[string][]st
 func stackInstanceToEntity(i *models.StackInstance) map[string]interface{} {
 	// Azure Table Storage has a ~64KB per-property limit.
 	// If LastDeployedValues exceeds the limit, clear it rather than storing
-	// truncated invalid JSON. Deploy preview will show "First deployment".
+	// truncated invalid JSON. This leaves previous deployed values empty, so
+	// any later diff/preview compares against blank instead of prior values.
 	const maxLastDeployedValuesLen = 60 * 1024 // 60KB — leave headroom for other fields
 	ldv := i.LastDeployedValues
 	if len(ldv) > maxLastDeployedValuesLen {

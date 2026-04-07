@@ -1027,8 +1027,6 @@ func (h *InstanceHandler) DeployInstance(c *gin.Context) {
 		return
 	}
 
-	ownerName := resolveOwnerName(h.userRepo, inst.OwnerID)
-
 	var chartInfos []deployer.ChartDeployInfo
 	for _, ch := range charts {
 		chartInfos = append(chartInfos, deployer.ChartDeployInfo{
@@ -1046,7 +1044,7 @@ func (h *InstanceHandler) DeployInstance(c *gin.Context) {
 		Instance:           inst,
 		Definition:         def,
 		Charts:             chartInfos,
-		Owner:              ownerName,
+		Owner:              inst.OwnerID,
 		LastDeployedValues: lastDeployedValuesJSON,
 	}
 
