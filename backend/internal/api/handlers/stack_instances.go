@@ -1044,7 +1044,6 @@ func (h *InstanceHandler) DeployInstance(c *gin.Context) {
 		Instance:           inst,
 		Definition:         def,
 		Charts:             chartInfos,
-		Owner:              inst.OwnerID,
 		LastDeployedValues: lastDeployedValuesJSON,
 	}
 

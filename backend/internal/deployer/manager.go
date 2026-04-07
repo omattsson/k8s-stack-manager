@@ -75,7 +75,6 @@ type DeployRequest struct {
 	Instance           *models.StackInstance
 	Definition         *models.StackDefinition
 	Charts             []ChartDeployInfo
-	Owner              string
 	LastDeployedValues string // JSON-serialized merged values for deploy preview
 }
 

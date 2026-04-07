@@ -140,6 +140,7 @@ describe('DeployPreviewDialog', () => {
   it('deploy button calls onConfirm', async () => {
     mockDeployPreview.mockResolvedValue(previewWithChanges);
     const onConfirm = vi.fn();
+    const user = userEvent.setup();
 
     render(
       <DeployPreviewDialog
@@ -156,13 +157,14 @@ describe('DeployPreviewDialog', () => {
     });
 
     const deployButton = screen.getByRole('button', { name: /deploy/i });
-    await userEvent.click(deployButton);
+    await user.click(deployButton);
     expect(onConfirm).toHaveBeenCalledTimes(1);
   });
 
   it('cancel button calls onClose', async () => {
     mockDeployPreview.mockResolvedValue(previewWithChanges);
     const onClose = vi.fn();
+    const user = userEvent.setup();
 
     render(
       <DeployPreviewDialog
@@ -179,7 +181,7 @@ describe('DeployPreviewDialog', () => {
     });
 
     const cancelButton = screen.getByRole('button', { name: /cancel/i });
-    await userEvent.click(cancelButton);
+    await user.click(cancelButton);
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
