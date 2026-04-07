@@ -1031,7 +1031,7 @@ func TestManager_FinalizeDeploy_InstanceNotFound(t *testing.T) {
 
 	// Should not panic when instance is not found.
 	orphanLog := &models.DeploymentLog{ID: "some-log-id", StackInstanceID: "nonexistent-id"}
-	mgr.finalizeDeploy("nonexistent-id", orphanLog, "output", nil)
+	mgr.finalizeDeploy("nonexistent-id", orphanLog, "output", nil, "")
 }
 
 func TestManager_BroadcastStatusWithError_NilHub(t *testing.T) {
@@ -1380,7 +1380,7 @@ func TestManager_FinalizeDeploy_OutputTruncation(t *testing.T) {
 
 	// Create output larger than maxOutputLen (64KB).
 	largeOutput := strings.Repeat("x", maxOutputLen+1000)
-	mgr.finalizeDeploy(inst.ID, deployLog, largeOutput, nil)
+	mgr.finalizeDeploy(inst.ID, deployLog, largeOutput, nil, "")
 
 	finalLog, err := logRepo.FindByID(context.Background(), deployLog.ID)
 	assert.NoError(t, err)

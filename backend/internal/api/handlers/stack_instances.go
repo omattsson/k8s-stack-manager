@@ -1037,11 +1037,17 @@ func (h *InstanceHandler) DeployInstance(c *gin.Context) {
 		})
 	}
 
+	var lastDeployedValuesJSON string
+	if encoded, err := json.Marshal(valuesMap); err == nil {
+		lastDeployedValuesJSON = string(encoded)
+	}
+
 	req := deployer.DeployRequest{
-		Instance:   inst,
-		Definition: def,
-		Charts:     chartInfos,
-		Owner:      ownerName,
+		Instance:           inst,
+		Definition:         def,
+		Charts:             chartInfos,
+		Owner:              ownerName,
+		LastDeployedValues: lastDeployedValuesJSON,
 	}
 
 	logID, err := h.deployManager.Deploy(c.Request.Context(), req)
@@ -1052,18 +1058,6 @@ func (h *InstanceHandler) DeployInstance(c *gin.Context) {
 		)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
 		return
-	}
-
-	// Save merged values per chart for deployment diff preview.
-	// Saved after Deploy() succeeds to avoid storing values for failed deploys.
-	if encoded, err := json.Marshal(valuesMap); err == nil {
-		inst.LastDeployedValues = string(encoded)
-		if updateErr := h.instanceRepo.Update(inst); updateErr != nil {
-			slog.Warn("Failed to save last deployed values",
-				logKeyInstanceID, id,
-				"error", updateErr,
-			)
-		}
 	}
 
 	c.JSON(http.StatusAccepted, gin.H{"log_id": logID, "message": "Deployment started"})

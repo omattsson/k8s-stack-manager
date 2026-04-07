@@ -455,10 +455,12 @@ func (r *StackInstanceRepository) ListIDsByOwnerIDs(_ []string) (map[string][]st
 
 func stackInstanceToEntity(i *models.StackInstance) map[string]interface{} {
 	// Azure Table Storage has a ~64KB per-property limit.
+	// If LastDeployedValues exceeds the limit, clear it rather than storing
+	// truncated invalid JSON. Deploy preview will show "First deployment".
 	const maxLastDeployedValuesLen = 60 * 1024 // 60KB — leave headroom for other fields
 	ldv := i.LastDeployedValues
 	if len(ldv) > maxLastDeployedValuesLen {
-		ldv = ldv[:maxLastDeployedValuesLen]
+		ldv = ""
 	}
 
 	entity := map[string]interface{}{
