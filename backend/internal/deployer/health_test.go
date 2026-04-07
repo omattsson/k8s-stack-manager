@@ -25,7 +25,13 @@ func TestHelmHealthCheck(t *testing.T) {
 			name:       "invalid binary path fails",
 			binary:     "/nonexistent/helm-binary-xyz",
 			wantErr:    true,
-			errContain: "helm binary",
+			errContain: "helm binary not available",
+		},
+		{
+			name:       "non-zero exit code fails",
+			binary:     "false", // /usr/bin/false — always exits 1
+			wantErr:    true,
+			errContain: "helm binary not available",
 		},
 	}
 
@@ -45,4 +51,15 @@ func TestHelmHealthCheck(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestHelmHealthCheck_CancelledContext(t *testing.T) {
+	t.Parallel()
+
+	check := HelmHealthCheck("true") // valid binary, but context is cancelled
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	err := check(ctx)
+	require.Error(t, err, "cancelled context should cause exec to fail")
 }

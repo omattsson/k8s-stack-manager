@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"sync"
@@ -193,6 +194,7 @@ func (r *Registry) pingAzureDevOps(ctx context.Context, p *azureDevOpsProvider) 
 		return fmt.Errorf("azure devops: request failed: %w", err)
 	}
 	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, resp.Body)
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return fmt.Errorf("azure devops: unexpected status %d", resp.StatusCode)
@@ -213,6 +215,7 @@ func (r *Registry) pingGitLab(ctx context.Context, p *gitlabProvider) error {
 		return fmt.Errorf("gitlab: request failed: %w", err)
 	}
 	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, resp.Body)
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return fmt.Errorf("gitlab: unexpected status %d", resp.StatusCode)

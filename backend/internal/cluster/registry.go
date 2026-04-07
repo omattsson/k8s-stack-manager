@@ -324,7 +324,8 @@ func (r *Registry) HealthCheck(ctx context.Context) error {
 		return nil
 	}
 
-	return fmt.Errorf("all %d registered clusters are unreachable: %w", len(clusters), lastErr)
+	slog.Warn("all registered clusters unreachable", "count", len(clusters), "last_error", lastErr)
+	return fmt.Errorf("all %d registered clusters are unreachable", len(clusters))
 }
 
 // pingCluster performs a lightweight version ping against a k8s cluster.
