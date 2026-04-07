@@ -223,3 +223,97 @@ func TestReadinessHandler(t *testing.T) {
 		})
 	}
 }
+
+func TestReadinessHandler_VerboseCheckContent(t *testing.T) {
+	t.Parallel()
+
+	t.Run("verbose shows check name and error message", func(t *testing.T) {
+		t.Parallel()
+
+		r := gin.New()
+		hc := health.New()
+		hc.SetReady(true)
+		hc.AddCheck("database", func(_ context.Context) error {
+			return errors.New("connection refused")
+		})
+		r.GET("/health/ready", ReadinessHandler(hc))
+
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest("GET", "/health/ready?verbose=true", nil)
+		r.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusServiceUnavailable, w.Code)
+
+		var response map[string]interface{}
+		err := json.Unmarshal(w.Body.Bytes(), &response)
+		assert.NoError(t, err)
+
+		checks, ok := response["checks"].(map[string]interface{})
+		assert.True(t, ok, "checks should be a map")
+
+		dbCheck, ok := checks["database"].(map[string]interface{})
+		assert.True(t, ok, "database check should be present")
+		assert.Equal(t, "DOWN", dbCheck["status"])
+		assert.Equal(t, "connection refused", dbCheck["message"])
+	})
+
+	t.Run("multiple checks mixed pass and fail", func(t *testing.T) {
+		t.Parallel()
+
+		r := gin.New()
+		hc := health.New()
+		hc.SetReady(true)
+		hc.AddCheck("database", func(_ context.Context) error {
+			return nil
+		})
+		hc.AddCheck("cache", func(_ context.Context) error {
+			return errors.New("cache timeout")
+		})
+		r.GET("/health/ready", ReadinessHandler(hc))
+
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest("GET", "/health/ready?verbose=true", nil)
+		r.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusServiceUnavailable, w.Code)
+
+		var response map[string]interface{}
+		err := json.Unmarshal(w.Body.Bytes(), &response)
+		assert.NoError(t, err)
+		assert.Equal(t, "DOWN", response["status"])
+
+		checks, ok := response["checks"].(map[string]interface{})
+		assert.True(t, ok, "checks should be a map")
+
+		dbCheck := checks["database"].(map[string]interface{})
+		assert.Equal(t, "UP", dbCheck["status"])
+
+		cacheCheck := checks["cache"].(map[string]interface{})
+		assert.Equal(t, "DOWN", cacheCheck["status"])
+		assert.Equal(t, "cache timeout", cacheCheck["message"])
+	})
+
+	t.Run("non-verbose hides check details on failure", func(t *testing.T) {
+		t.Parallel()
+
+		r := gin.New()
+		hc := health.New()
+		hc.SetReady(true)
+		hc.AddCheck("database", func(_ context.Context) error {
+			return errors.New("connection refused")
+		})
+		r.GET("/health/ready", ReadinessHandler(hc))
+
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest("GET", "/health/ready", nil)
+		r.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusServiceUnavailable, w.Code)
+
+		var response map[string]interface{}
+		err := json.Unmarshal(w.Body.Bytes(), &response)
+		assert.NoError(t, err)
+		assert.Equal(t, "DOWN", response["status"])
+		assert.NotContains(t, response, "checks", "non-verbose should hide checks even on failure")
+	})
+}

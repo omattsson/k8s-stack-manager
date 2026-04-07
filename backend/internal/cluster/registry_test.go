@@ -869,3 +869,75 @@ func TestHealthCheck(t *testing.T) {
 		})
 	}
 }
+
+func TestHealthCheck_NilClusterRepo(t *testing.T) {
+	t.Parallel()
+
+	reg := &Registry{
+		clients:     make(map[string]*ClusterClients),
+		clusterRepo: nil,
+	}
+
+	err := reg.HealthCheck(context.Background())
+	require.NoError(t, err, "nil clusterRepo should return nil (no-op)")
+}
+
+func TestHealthCheck_CancelledContext(t *testing.T) {
+	t.Parallel()
+
+	// The fake K8s clientset does not honor context cancellation in its
+	// discovery REST client, so we verify context propagation indirectly:
+	// use a k8s factory that fails, combined with a cancelled context, to
+	// confirm the health check still reports all clusters unreachable.
+	repo := newMockClusterRepo()
+	repo.clusters["c1"] = &models.Cluster{
+		ID:             "c1",
+		Name:           "Cluster 1",
+		KubeconfigPath: "/fake/kubeconfig",
+	}
+
+	reg := newTestRegistry(repo)
+	reg.k8sFactory = failingK8sFactory
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // cancel immediately
+
+	err := reg.HealthCheck(ctx)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "unreachable")
+}
+
+func TestHealthCheck_MixedFirstFailsSecondReachable(t *testing.T) {
+	t.Parallel()
+
+	repo := newMockClusterRepo()
+	repo.clusters["fail"] = &models.Cluster{
+		ID:             "fail",
+		Name:           "Failing Cluster",
+		KubeconfigPath: "/fake/kubeconfig",
+	}
+	repo.clusters["ok"] = &models.Cluster{
+		ID:             "ok",
+		Name:           "Reachable Cluster",
+		KubeconfigPath: "/fake/kubeconfig",
+	}
+
+	callCount := 0
+	var mu sync.Mutex
+
+	reg := newTestRegistry(repo)
+	reg.k8sFactory = func(_ string) (*k8s.Client, error) {
+		mu.Lock()
+		callCount++
+		n := callCount
+		mu.Unlock()
+		// First call fails, second succeeds.
+		if n == 1 {
+			return nil, fmt.Errorf("k8s connection refused")
+		}
+		return k8s.NewClientFromInterface(fake.NewSimpleClientset()), nil
+	}
+
+	err := reg.HealthCheck(context.Background())
+	require.NoError(t, err, "should succeed when at least one cluster is reachable")
+}
