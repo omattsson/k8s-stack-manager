@@ -53,6 +53,7 @@ import type {
   VersionDiffResponse,
   UpgradeCheckResponse,
   InstanceQuotaOverride,
+  DeployPreviewResponse,
 } from '../types';
 
 const api = axios.create(axiosConfig);
@@ -1052,6 +1053,21 @@ export const instanceService = {
    */
   deleteQuotaOverride: async (instanceId: string): Promise<void> => {
     await api.delete(`/api/v1/stack-instances/${instanceId}/quota-overrides`);
+  },
+  /**
+   * Preview deployment changes for an instance.
+   * @param id - The instance ID
+   * @returns Per-chart diff of previous vs pending values
+   * @see GET /api/v1/stack-instances/:id/deploy-preview
+   */
+  deployPreview: async (id: number | string): Promise<DeployPreviewResponse> => {
+    try {
+      const response = await api.get(`/api/v1/stack-instances/${id}/deploy-preview`);
+      return response.data;
+    } catch (error) {
+      console.error('Failed to fetch deploy preview:', error);
+      throw error;
+    }
   },
 };
 

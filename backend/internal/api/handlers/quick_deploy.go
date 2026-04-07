@@ -480,7 +480,6 @@ func (h *QuickDeployHandler) triggerDeploy(
 		Instance:   inst,
 		Definition: def,
 		Charts:     chartInfos,
-		Owner:      ownerName,
 	}
 
 	return h.deployManager.Deploy(c.Request.Context(), req)

@@ -72,10 +72,10 @@ type ManagerConfig struct {
 
 // DeployRequest contains everything needed to deploy a stack instance.
 type DeployRequest struct {
-	Instance   *models.StackInstance
-	Definition *models.StackDefinition
-	Charts     []ChartDeployInfo
-	Owner      string
+	Instance           *models.StackInstance
+	Definition         *models.StackDefinition
+	Charts             []ChartDeployInfo
+	LastDeployedValues string // JSON-serialized merged values for deploy preview
 }
 
 // ChartDeployInfo holds chart configuration and pre-generated merged values.
@@ -197,14 +197,14 @@ func (m *Manager) Deploy(ctx context.Context, req DeployRequest) (string, error)
 
 	// Launch async deployment, passing the deployLog to avoid re-fetching.
 	m.wg.Add(1)
-	go m.executeDeploy(helmExec, req.Instance.ID, deployLog, req.Instance.Namespace, charts)
+	go m.executeDeploy(helmExec, req.Instance.ID, deployLog, req.Instance.Namespace, charts, req.LastDeployedValues)
 
 	return logID, nil
 }
 
 // executeDeploy runs the helm install for each chart sequentially within
 // a concurrency-limited goroutine.
-func (m *Manager) executeDeploy(helm HelmExecutor, instanceID string, deployLog *models.DeploymentLog, namespace string, charts []ChartDeployInfo) {
+func (m *Manager) executeDeploy(helm HelmExecutor, instanceID string, deployLog *models.DeploymentLog, namespace string, charts []ChartDeployInfo, lastDeployedValues string) {
 	defer m.wg.Done()
 	// Acquire semaphore.
 	m.semaphore <- struct{}{}
@@ -227,7 +227,7 @@ func (m *Manager) executeDeploy(helm HelmExecutor, instanceID string, deployLog 
 	if err != nil {
 		deployErr = fmt.Errorf("creating temp directory: %w", err)
 		slog.Error("deployment failed", "instance_id", instanceID, "error", deployErr)
-		m.finalizeDeploy(instanceID, deployLog, allOutput, deployErr)
+		m.finalizeDeploy(instanceID, deployLog, allOutput, deployErr, lastDeployedValues)
 		return
 	}
 	defer os.RemoveAll(tmpDir)
@@ -325,7 +325,7 @@ func (m *Manager) executeDeploy(helm HelmExecutor, instanceID string, deployLog 
 		allOutput += rollbackOutput
 	}
 
-	m.finalizeDeploy(instanceID, deployLog, allOutput, deployErr)
+	m.finalizeDeploy(instanceID, deployLog, allOutput, deployErr, lastDeployedValues)
 }
 
 // rollbackCharts uninstalls previously-installed charts in reverse order after
@@ -372,7 +372,7 @@ func (m *Manager) rollbackCharts(helm HelmExecutor, ctx context.Context, instanc
 // finalizeDeploy updates the instance and deployment log with the final status.
 // The deployLog is passed directly from the goroutine closure to avoid a
 // partition-scanning FindByID call on Azure Table Storage.
-func (m *Manager) finalizeDeploy(instanceID string, deployLog *models.DeploymentLog, output string, deployErr error) {
+func (m *Manager) finalizeDeploy(instanceID string, deployLog *models.DeploymentLog, output string, deployErr error, lastDeployedValues string) {
 	now := time.Now().UTC()
 
 	instance, err := m.instanceRepo.FindByID(instanceID)
@@ -404,6 +404,7 @@ func (m *Manager) finalizeDeploy(instanceID string, deployLog *models.Deployment
 		instance.Status = models.StackStatusRunning
 		instance.ErrorMessage = ""
 		instance.LastDeployedAt = &now
+		instance.LastDeployedValues = lastDeployedValues
 		deployLog.Status = models.DeployLogSuccess
 
 		slog.Info("deployment succeeded",

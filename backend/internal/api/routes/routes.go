@@ -304,6 +304,7 @@ func SetupRoutes(router *gin.Engine, deps Deps) *RateLimiters {
 				instances.GET("/:id/overrides", deps.InstanceHandler.GetOverrides)
 				instances.PUT("/:id/overrides/:chartId", deps.InstanceHandler.SetOverride)
 				instances.POST("/:id/deploy", deps.InstanceHandler.DeployInstance)
+				instances.GET("/:id/deploy-preview", deps.InstanceHandler.DeployPreview)
 				instances.POST("/:id/stop", deps.InstanceHandler.StopInstance)
 				instances.POST("/:id/clean", deps.InstanceHandler.CleanInstance)
 				instances.POST("/:id/extend", deps.InstanceHandler.ExtendTTL)

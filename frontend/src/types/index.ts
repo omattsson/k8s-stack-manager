@@ -638,3 +638,16 @@ export interface UpgradeCheckResponse {
     charts_unchanged: string[];
   };
 }
+
+export interface ChartDeployPreview {
+  chart_name: string;
+  previous_values: string;
+  pending_values: string;
+  has_changes: boolean;
+}
+
+export interface DeployPreviewResponse {
+  instance_id: string;
+  instance_name: string;
+  charts: ChartDeployPreview[];
+}

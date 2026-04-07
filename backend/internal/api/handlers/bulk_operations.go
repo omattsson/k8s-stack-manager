@@ -231,7 +231,6 @@ func (h *InstanceHandler) BulkDeploy(c *gin.Context) {
 			Instance:   inst,
 			Definition: def,
 			Charts:     chartInfos,
-			Owner:      ownerName,
 		}
 
 		logID, err := h.deployManager.Deploy(c.Request.Context(), req)

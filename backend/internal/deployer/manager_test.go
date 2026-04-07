@@ -414,7 +414,6 @@ func TestManager_Deploy_CreatesLogAndUpdatesStatus(t *testing.T) {
 		Instance:   inst,
 		Definition: &models.StackDefinition{ID: "def-1", Name: "test-def"},
 		Charts:     []ChartDeployInfo{}, // No charts = quick finish.
-		Owner:      "testuser",
 	}
 
 	logID, err := mgr.Deploy(context.Background(), req)
@@ -491,7 +490,6 @@ func TestManager_Deploy_WithCharts_Fails(t *testing.T) {
 				},
 			},
 		},
-		Owner: "testuser",
 	}
 
 	logID, err := mgr.Deploy(context.Background(), req)
@@ -1031,7 +1029,7 @@ func TestManager_FinalizeDeploy_InstanceNotFound(t *testing.T) {
 
 	// Should not panic when instance is not found.
 	orphanLog := &models.DeploymentLog{ID: "some-log-id", StackInstanceID: "nonexistent-id"}
-	mgr.finalizeDeploy("nonexistent-id", orphanLog, "output", nil)
+	mgr.finalizeDeploy("nonexistent-id", orphanLog, "output", nil, "")
 }
 
 func TestManager_BroadcastStatusWithError_NilHub(t *testing.T) {
@@ -1380,7 +1378,7 @@ func TestManager_FinalizeDeploy_OutputTruncation(t *testing.T) {
 
 	// Create output larger than maxOutputLen (64KB).
 	largeOutput := strings.Repeat("x", maxOutputLen+1000)
-	mgr.finalizeDeploy(inst.ID, deployLog, largeOutput, nil)
+	mgr.finalizeDeploy(inst.ID, deployLog, largeOutput, nil, "")
 
 	finalLog, err := logRepo.FindByID(context.Background(), deployLog.ID)
 	assert.NoError(t, err)
@@ -1487,7 +1485,6 @@ func TestManager_Deploy_PartialRollback(t *testing.T) {
 			{ChartConfig: models.ChartConfig{ChartName: "chart-b", DeployOrder: 2}},
 			{ChartConfig: models.ChartConfig{ChartName: "chart-c", DeployOrder: 3}},
 		},
-		Owner: "testuser",
 	}
 
 	logID, err := mgr.Deploy(context.Background(), req)
@@ -1566,7 +1563,6 @@ func TestManager_Deploy_PartialRollback_RollbackFails(t *testing.T) {
 			{ChartConfig: models.ChartConfig{ChartName: "chart-b", DeployOrder: 2}},
 			{ChartConfig: models.ChartConfig{ChartName: "chart-c", DeployOrder: 3}},
 		},
-		Owner: "testuser",
 	}
 
 	logID, err := mgr.Deploy(context.Background(), req)
@@ -1893,7 +1889,6 @@ func TestManager_Deploy_FirstChartFails_NoRollback(t *testing.T) {
 			{ChartConfig: models.ChartConfig{ChartName: "chart-a", DeployOrder: 1}},
 			{ChartConfig: models.ChartConfig{ChartName: "chart-b", DeployOrder: 2}},
 		},
-		Owner: "testuser",
 	}
 
 	logID, err := mgr.Deploy(context.Background(), req)
@@ -2495,7 +2490,6 @@ func TestManager_ExecuteDeploy_OCIChartRef(t *testing.T) {
 				ValuesYAML: []byte("key: value\n"),
 			},
 		},
-		Owner: "testuser",
 	}
 
 	logID, err := mgr.Deploy(context.Background(), req)
@@ -2561,7 +2555,6 @@ func TestManager_ExecuteDeploy_HTTPRepoRef(t *testing.T) {
 				},
 			},
 		},
-		Owner: "testuser",
 	}
 
 	logID, err := mgr.Deploy(context.Background(), req)
@@ -2628,7 +2621,6 @@ func TestManager_ExecuteDeploy_ValuesFileWritten(t *testing.T) {
 				ValuesYAML: nil,
 			},
 		},
-		Owner: "testuser",
 	}
 
 	logID, err := mgr.Deploy(context.Background(), req)
@@ -2822,4 +2814,84 @@ func TestManager_Clean_NilHelmExecutor(t *testing.T) {
 	_, err := mgr.Clean(context.Background(), &models.StackInstance{ID: "inst-clean-nil-helm"}, nil)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "helm executor is nil")
+}
+
+func TestManager_FinalizeDeploy_LastDeployedValues(t *testing.T) {
+	t.Parallel()
+
+	instanceRepo := newMockInstanceRepo()
+	logRepo := newMockDeployLogRepo()
+
+	inst := &models.StackInstance{
+		ID:        "inst-ldv",
+		Name:      "ldv-test",
+		Namespace: "stack-ldv",
+		Status:    models.StackStatusDeploying,
+	}
+	require.NoError(t, instanceRepo.Create(inst))
+
+	deployLog := &models.DeploymentLog{
+		ID:              "log-ldv",
+		StackInstanceID: inst.ID,
+		Action:          models.DeployActionDeploy,
+		Status:          models.DeployLogRunning,
+		StartedAt:       time.Now().UTC(),
+	}
+	require.NoError(t, logRepo.Create(context.Background(), deployLog))
+
+	mgr := NewManager(ManagerConfig{
+		Registry:      &mockClusterResolver{helm: NewHelmClient("/nonexistent/helm", "", 1*time.Second)},
+		InstanceRepo:  instanceRepo,
+		DeployLogRepo: logRepo,
+		Hub:           nil,
+		MaxConcurrent: 2,
+	})
+
+	lastValues := `{"mychart":"key: value\n"}`
+	mgr.finalizeDeploy(inst.ID, deployLog, "deploy output", nil, lastValues)
+
+	updated, err := instanceRepo.FindByID(inst.ID)
+	require.NoError(t, err)
+	assert.Equal(t, lastValues, updated.LastDeployedValues)
+	assert.Equal(t, models.StackStatusRunning, updated.Status)
+}
+
+func TestManager_FinalizeDeploy_LastDeployedValuesNotSetOnError(t *testing.T) {
+	t.Parallel()
+
+	instanceRepo := newMockInstanceRepo()
+	logRepo := newMockDeployLogRepo()
+
+	inst := &models.StackInstance{
+		ID:        "inst-ldv-err",
+		Name:      "ldv-err-test",
+		Namespace: "stack-ldv-err",
+		Status:    models.StackStatusDeploying,
+	}
+	require.NoError(t, instanceRepo.Create(inst))
+
+	deployLog := &models.DeploymentLog{
+		ID:              "log-ldv-err",
+		StackInstanceID: inst.ID,
+		Action:          models.DeployActionDeploy,
+		Status:          models.DeployLogRunning,
+		StartedAt:       time.Now().UTC(),
+	}
+	require.NoError(t, logRepo.Create(context.Background(), deployLog))
+
+	mgr := NewManager(ManagerConfig{
+		Registry:      &mockClusterResolver{helm: NewHelmClient("/nonexistent/helm", "", 1*time.Second)},
+		InstanceRepo:  instanceRepo,
+		DeployLogRepo: logRepo,
+		Hub:           nil,
+		MaxConcurrent: 2,
+	})
+
+	lastValues := `{"mychart":"key: value\n"}`
+	mgr.finalizeDeploy(inst.ID, deployLog, "deploy output", fmt.Errorf("helm install failed"), lastValues)
+
+	updated, err := instanceRepo.FindByID(inst.ID)
+	require.NoError(t, err)
+	assert.Empty(t, updated.LastDeployedValues)
+	assert.Equal(t, models.StackStatusError, updated.Status)
 }

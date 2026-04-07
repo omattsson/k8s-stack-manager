@@ -98,8 +98,8 @@ func (r *GORMStackInstanceRepository) List() ([]models.StackInstance, error) {
 	return instances, nil
 }
 
-// listColumns are the columns fetched by ListPaged. The heavy TEXT column
-// error_message is omitted because it is only needed in the detail view.
+// listColumns are the columns fetched by ListPaged. The heavy TEXT columns
+// error_message and last_deployed_values are omitted because they are only needed in the detail view.
 var listColumns = []string{
 	"id", "name", "namespace", "owner_id", "stack_definition_id",
 	"branch", "cluster_id", "status", "ttl_minutes",
