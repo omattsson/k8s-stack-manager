@@ -105,26 +105,41 @@ func TestReadinessHandler(t *testing.T) {
 		ready      bool
 		addCheck   bool
 		checkErr   error
+		verbose    bool
 		wantStatus int
 		wantField  string
 		wantValue  string
+		wantChecks bool
 	}{
 		{
-			name:       "healthy - service ready with no checks",
+			name:       "healthy - service ready with no checks (non-verbose)",
 			ready:      true,
 			addCheck:   false,
 			wantStatus: http.StatusOK,
 			wantField:  "status",
 			wantValue:  "UP",
+			wantChecks: false,
 		},
 		{
-			name:       "healthy - service ready with passing check",
+			name:       "healthy - service ready with passing check (non-verbose)",
 			ready:      true,
 			addCheck:   true,
 			checkErr:   nil,
 			wantStatus: http.StatusOK,
 			wantField:  "status",
 			wantValue:  "UP",
+			wantChecks: false,
+		},
+		{
+			name:       "healthy - verbose includes checks",
+			ready:      true,
+			addCheck:   true,
+			checkErr:   nil,
+			verbose:    true,
+			wantStatus: http.StatusOK,
+			wantField:  "status",
+			wantValue:  "UP",
+			wantChecks: true,
 		},
 		{
 			name:       "unhealthy - service not ready",
@@ -133,15 +148,38 @@ func TestReadinessHandler(t *testing.T) {
 			wantStatus: http.StatusServiceUnavailable,
 			wantField:  "status",
 			wantValue:  "DOWN",
+			wantChecks: false,
 		},
 		{
-			name:       "unhealthy - service ready but check fails",
+			name:       "unhealthy - service not ready verbose",
+			ready:      false,
+			addCheck:   false,
+			verbose:    true,
+			wantStatus: http.StatusServiceUnavailable,
+			wantField:  "status",
+			wantValue:  "DOWN",
+			wantChecks: true,
+		},
+		{
+			name:       "unhealthy - service ready but check fails (non-verbose)",
 			ready:      true,
 			addCheck:   true,
 			checkErr:   errors.New("database connection lost"),
 			wantStatus: http.StatusServiceUnavailable,
 			wantField:  "status",
 			wantValue:  "DOWN",
+			wantChecks: false,
+		},
+		{
+			name:       "unhealthy - service ready but check fails (verbose)",
+			ready:      true,
+			addCheck:   true,
+			checkErr:   errors.New("database connection lost"),
+			verbose:    true,
+			wantStatus: http.StatusServiceUnavailable,
+			wantField:  "status",
+			wantValue:  "DOWN",
+			wantChecks: true,
 		},
 	}
 
@@ -161,8 +199,13 @@ func TestReadinessHandler(t *testing.T) {
 			}
 			r.GET("/health/ready", ReadinessHandler(hc))
 
+			url := "/health/ready"
+			if tt.verbose {
+				url += "?verbose=true"
+			}
+
 			w := httptest.NewRecorder()
-			req, _ := http.NewRequest("GET", "/health/ready", nil)
+			req, _ := http.NewRequest("GET", url, nil)
 			r.ServeHTTP(w, req)
 
 			assert.Equal(t, tt.wantStatus, w.Code)
@@ -171,6 +214,12 @@ func TestReadinessHandler(t *testing.T) {
 			err := json.Unmarshal(w.Body.Bytes(), &response)
 			assert.NoError(t, err)
 			assert.Equal(t, tt.wantValue, response[tt.wantField])
+
+			if tt.wantChecks {
+				assert.Contains(t, response, "checks", "verbose response should include checks")
+			} else {
+				assert.NotContains(t, response, "checks", "non-verbose response should not include checks")
+			}
 		})
 	}
 }

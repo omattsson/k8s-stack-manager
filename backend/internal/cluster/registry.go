@@ -3,8 +3,10 @@
 package cluster
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"sync"
 	"time"
@@ -274,6 +276,66 @@ func (r *Registry) Close() error {
 		delete(r.clients, id)
 	}
 	return nil
+}
+
+const healthCheckPerClusterTimeout = 5 * time.Second
+
+// HealthCheck verifies that at least one registered cluster is reachable.
+// Returns nil if no clusters are registered (valid for fresh installs) or if
+// at least one cluster responds to a version ping. Returns an error only when
+// all registered clusters are unreachable.
+func (r *Registry) HealthCheck(ctx context.Context) error {
+	// Read clusterRepo under lock, then release before I/O.
+	r.mu.RLock()
+	repo := r.clusterRepo
+	r.mu.RUnlock()
+
+	if repo == nil {
+		return nil
+	}
+
+	clusters, err := repo.List()
+	if err != nil {
+		return fmt.Errorf("failed to list clusters: %w", err)
+	}
+	if len(clusters) == 0 {
+		return nil
+	}
+
+	var lastErr error
+	for i := range clusters {
+		cl := &clusters[i]
+		client, clientErr := r.GetK8sClient(cl.ID)
+		if clientErr != nil {
+			slog.Debug("health check: failed to get k8s client", "cluster_id", cl.ID, "error", clientErr)
+			lastErr = clientErr
+			continue
+		}
+
+		clusterCtx, cancel := context.WithTimeout(ctx, healthCheckPerClusterTimeout)
+		if pingErr := pingCluster(clusterCtx, client); pingErr != nil {
+			cancel()
+			slog.Debug("health check: cluster ping failed", "cluster_id", cl.ID, "error", pingErr)
+			lastErr = pingErr
+			continue
+		}
+		cancel()
+		// At least one cluster is reachable.
+		return nil
+	}
+
+	return fmt.Errorf("all %d registered clusters are unreachable: %w", len(clusters), lastErr)
+}
+
+// pingCluster performs a lightweight version ping against a k8s cluster.
+// Uses RESTClient discovery with fallback to ServerVersion for test fakes.
+func pingCluster(ctx context.Context, client *k8s.Client) error {
+	if restClient := client.Clientset().Discovery().RESTClient(); restClient != nil {
+		result := restClient.Get().AbsPath("/version").Do(ctx)
+		return result.Error()
+	}
+	_, err := client.Clientset().Discovery().ServerVersion()
+	return err
 }
 
 // ClusterExists checks whether a cluster with the given ID exists in the

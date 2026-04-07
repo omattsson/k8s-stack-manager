@@ -1,6 +1,7 @@
 package cluster
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"k8s.io/client-go/kubernetes/fake"
 )
 
 // --- Mock ClusterRepository ---
@@ -799,5 +801,71 @@ func TestConcurrentResolveClusterID(t *testing.T) {
 	for i := range 20 {
 		require.NoError(t, errs[i], "goroutine %d returned error", i)
 		assert.Equal(t, "def", results[i], "goroutine %d got wrong ID", i)
+	}
+}
+
+func TestHealthCheck(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		clusters   map[string]*models.Cluster
+		k8sFactory K8sClientFactory
+		listErr    error
+		wantErr    string
+	}{
+		{
+			name:     "no clusters registered returns nil",
+			clusters: map[string]*models.Cluster{},
+		},
+		{
+			name:    "list error returns error",
+			listErr: fmt.Errorf("db down"),
+			wantErr: "failed to list clusters",
+		},
+		{
+			name: "at least one reachable cluster returns nil",
+			clusters: map[string]*models.Cluster{
+				"c1": {ID: "c1", Name: "Cluster 1", KubeconfigPath: "/fake/kubeconfig"},
+				"c2": {ID: "c2", Name: "Cluster 2", KubeconfigPath: "/fake/kubeconfig"},
+			},
+			k8sFactory: func(_ string) (*k8s.Client, error) {
+				return k8s.NewClientFromInterface(fake.NewSimpleClientset()), nil
+			},
+		},
+		{
+			name: "all clusters unreachable returns error",
+			clusters: map[string]*models.Cluster{
+				"c1": {ID: "c1", Name: "Cluster 1", KubeconfigPath: "/fake/kubeconfig"},
+			},
+			k8sFactory: failingK8sFactory,
+			wantErr:    "all 1 registered clusters are unreachable",
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			repo := newMockClusterRepo()
+			repo.listErr = tt.listErr
+			for id, cl := range tt.clusters {
+				repo.clusters[id] = cl
+			}
+
+			reg := newTestRegistry(repo)
+			if tt.k8sFactory != nil {
+				reg.k8sFactory = tt.k8sFactory
+			}
+
+			err := reg.HealthCheck(context.Background())
+			if tt.wantErr != "" {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.wantErr)
+			} else {
+				require.NoError(t, err)
+			}
+		})
 	}
 }
