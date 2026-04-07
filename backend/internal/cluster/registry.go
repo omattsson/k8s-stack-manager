@@ -278,7 +278,10 @@ func (r *Registry) Close() error {
 	return nil
 }
 
-const healthCheckPerClusterTimeout = 5 * time.Second
+const (
+	healthCheckPerClusterTimeout = 5 * time.Second
+	healthCheckOverallTimeout    = 15 * time.Second
+)
 
 // HealthCheck verifies that at least one registered cluster is reachable.
 // Returns nil if no clusters are registered (valid for fresh installs) or if
@@ -302,26 +305,51 @@ func (r *Registry) HealthCheck(ctx context.Context) error {
 		return nil
 	}
 
-	var lastErr error
+	// Overall budget so that readiness latency stays bounded regardless of
+	// the number of registered clusters.
+	overallCtx, overallCancel := context.WithTimeout(ctx, healthCheckOverallTimeout)
+	defer overallCancel()
+
+	type result struct {
+		clusterID string
+		err       error
+	}
+
+	ch := make(chan result, len(clusters))
+
 	for i := range clusters {
 		cl := &clusters[i]
-		client, clientErr := r.GetK8sClient(cl.ID)
-		if clientErr != nil {
-			slog.Debug("health check: failed to get k8s client", "cluster_id", cl.ID, "error", clientErr)
-			lastErr = clientErr
-			continue
-		}
+		go func(clusterID string) {
+			client, clientErr := r.GetK8sClient(clusterID)
+			if clientErr != nil {
+				slog.Debug("health check: failed to get k8s client", "cluster_id", clusterID, "error", clientErr)
+				ch <- result{clusterID: clusterID, err: clientErr}
+				return
+			}
+			clusterCtx, cancel := context.WithTimeout(overallCtx, healthCheckPerClusterTimeout)
+			defer cancel()
+			if pingErr := pingCluster(clusterCtx, client); pingErr != nil {
+				slog.Debug("health check: cluster ping failed", "cluster_id", clusterID, "error", pingErr)
+				ch <- result{clusterID: clusterID, err: pingErr}
+				return
+			}
+			ch <- result{clusterID: clusterID, err: nil}
+		}(cl.ID)
+	}
 
-		clusterCtx, cancel := context.WithTimeout(ctx, healthCheckPerClusterTimeout)
-		if pingErr := pingCluster(clusterCtx, client); pingErr != nil {
-			cancel()
-			slog.Debug("health check: cluster ping failed", "cluster_id", cl.ID, "error", pingErr)
-			lastErr = pingErr
-			continue
+	var lastErr error
+	for range clusters {
+		select {
+		case res := <-ch:
+			if res.err == nil {
+				// At least one cluster is reachable.
+				return nil
+			}
+			lastErr = res.err
+		case <-overallCtx.Done():
+			slog.Warn("all registered clusters unreachable", "count", len(clusters), "last_error", lastErr)
+			return fmt.Errorf("all %d registered clusters are unreachable", len(clusters))
 		}
-		cancel()
-		// At least one cluster is reachable.
-		return nil
 	}
 
 	slog.Warn("all registered clusters unreachable", "count", len(clusters), "last_error", lastErr)

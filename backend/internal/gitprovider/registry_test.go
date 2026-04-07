@@ -46,7 +46,8 @@ func TestRegistryHealthCheck(t *testing.T) {
 					w.WriteHeader(http.StatusOK)
 				}))
 				p := &azureDevOpsProvider{
-					pat: "test-pat",
+					pat:        "test-pat",
+					defaultOrg: "testorg",
 					httpClient: &http.Client{
 						Transport: &redirectTransport{targetURL: srv.URL, wrapped: http.DefaultTransport},
 					},
@@ -75,7 +76,8 @@ func TestRegistryHealthCheck(t *testing.T) {
 					w.WriteHeader(http.StatusInternalServerError)
 				}))
 				p := &azureDevOpsProvider{
-					pat: "test-pat",
+					pat:        "test-pat",
+					defaultOrg: "testorg",
 					httpClient: &http.Client{
 						Transport: &redirectTransport{targetURL: srv.URL, wrapped: http.DefaultTransport},
 					},
@@ -101,7 +103,8 @@ func TestRegistryHealthCheck(t *testing.T) {
 					w.WriteHeader(http.StatusServiceUnavailable)
 				}))
 				p := &azureDevOpsProvider{
-					pat: "test-pat",
+					pat:        "test-pat",
+					defaultOrg: "testorg",
 					httpClient: &http.Client{
 						Transport: &redirectTransport{targetURL: srv.URL, wrapped: http.DefaultTransport},
 					},
@@ -128,7 +131,8 @@ func TestRegistryHealthCheck(t *testing.T) {
 					w.WriteHeader(http.StatusOK)
 				}))
 				p := &azureDevOpsProvider{
-					pat: "test-pat",
+					pat:        "test-pat",
+					defaultOrg: "testorg",
 					httpClient: &http.Client{
 						Transport: &redirectTransport{targetURL: srv.URL, wrapped: http.DefaultTransport},
 					},
@@ -154,7 +158,8 @@ func TestRegistryHealthCheck(t *testing.T) {
 					w.WriteHeader(http.StatusUnauthorized)
 				}))
 				p := &azureDevOpsProvider{
-					pat: "bad-pat",
+					pat:        "bad-pat",
+					defaultOrg: "testorg",
 					httpClient: &http.Client{
 						Transport: &redirectTransport{targetURL: srv.URL, wrapped: http.DefaultTransport},
 					},
@@ -223,7 +228,8 @@ func TestRegistryHealthCheck_CancelledContext(t *testing.T) {
 	r := &Registry{
 		cache: make(map[string]cacheEntry),
 		azureDevOps: &azureDevOpsProvider{
-			pat: "test-pat",
+			pat:        "test-pat",
+			defaultOrg: "testorg",
 			httpClient: &http.Client{
 				Transport: &redirectTransport{targetURL: srv.URL, wrapped: http.DefaultTransport},
 			},
@@ -236,4 +242,56 @@ func TestRegistryHealthCheck_CancelledContext(t *testing.T) {
 	err := r.HealthCheck(ctx)
 	require.Error(t, err, "cancelled context should cause health check to fail")
 	assert.Contains(t, err.Error(), "unreachable")
+}
+
+func TestRegistryHealthCheck_AzureDevOpsPingURLIncludesOrg(t *testing.T) {
+	t.Parallel()
+
+	var capturedPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedPath = r.URL.Path
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	r := &Registry{
+		cache: make(map[string]cacheEntry),
+		azureDevOps: &azureDevOpsProvider{
+			pat:        "test-pat",
+			defaultOrg: "myorg",
+			httpClient: &http.Client{
+				Transport: &redirectTransport{targetURL: srv.URL, wrapped: http.DefaultTransport},
+			},
+		},
+	}
+
+	err := r.HealthCheck(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, "/myorg/_apis/connectionData", capturedPath, "ping URL should include org segment")
+}
+
+func TestRegistryHealthCheck_AzureDevOpsPingURLWithoutOrg(t *testing.T) {
+	t.Parallel()
+
+	var capturedPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedPath = r.URL.Path
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	r := &Registry{
+		cache: make(map[string]cacheEntry),
+		azureDevOps: &azureDevOpsProvider{
+			pat:        "test-pat",
+			defaultOrg: "", // no org configured
+			httpClient: &http.Client{
+				Transport: &redirectTransport{targetURL: srv.URL, wrapped: http.DefaultTransport},
+			},
+		},
+	}
+
+	err := r.HealthCheck(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, "/_apis/connectionData", capturedPath, "ping URL should fall back to org-less path")
 }

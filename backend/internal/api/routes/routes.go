@@ -80,6 +80,9 @@ type Deps struct {
 
 	// OIDC handler — nil when OIDC is disabled.
 	OIDCHandler *handlers.OIDCHandler
+
+	// HealthVerbose enables verbose health check output.
+	HealthVerbose bool
 }
 
 // RateLimiters groups the rate limiters created by SetupRoutes so the
@@ -132,7 +135,7 @@ func SetupRoutes(router *gin.Engine, deps Deps) *RateLimiters {
 	healthGroup := router.Group("/health")
 	{
 		healthGroup.GET("/live", handlers.LivenessHandler(deps.HealthChecker))
-		healthGroup.GET("/ready", handlers.ReadinessHandler(deps.HealthChecker))
+		healthGroup.GET("/ready", handlers.ReadinessHandler(deps.HealthChecker, deps.HealthVerbose))
 		healthGroup.GET("", handlers.HealthCheck) // Keep the original health check for backward compatibility
 	}
 

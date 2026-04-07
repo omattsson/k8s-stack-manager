@@ -300,6 +300,7 @@ func main() {
 		UserRepo:                     userRepo,
 		APIKeyRepo:                   apiKeyRepo,
 		OIDCHandler:                  oidcHandler,
+		HealthVerbose:                cfg.Server.HealthVerbose,
 	})
 	defer rateLimiter.Stop()
 

@@ -57,11 +57,11 @@ func LivenessHandler(hc *health.HealthChecker) gin.HandlerFunc {
 // @Success     200 {object} health.HealthStatus
 // @Failure     503 {object} health.HealthStatus
 // @Router      /health/ready [get]
-func ReadinessHandler(hc *health.HealthChecker) gin.HandlerFunc {
+func ReadinessHandler(hc *health.HealthChecker, verboseEnabled bool) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		status := hc.CheckReadiness(c.Request.Context())
 
-		if c.Query("verbose") != "true" {
+		if !verboseEnabled || c.Query("verbose") != "true" {
 			status.Checks = nil
 		}
 

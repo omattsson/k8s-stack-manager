@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os/exec"
+	"time"
 
 	"backend/internal/health"
 )
@@ -13,7 +14,9 @@ import (
 // is available and executable by running "helm version --short".
 func HelmHealthCheck(helmBinary string) health.HealthCheck {
 	return func(ctx context.Context) error {
-		cmd := exec.CommandContext(ctx, helmBinary, "version", "--short")
+		execCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		defer cancel()
+		cmd := exec.CommandContext(execCtx, helmBinary, "version", "--short")
 		if output, err := cmd.CombinedOutput(); err != nil {
 			slog.Error("helm health check failed", "binary", helmBinary, "output", string(output), "error", err)
 			return fmt.Errorf("helm binary not available")

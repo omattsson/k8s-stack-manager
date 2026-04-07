@@ -197,7 +197,7 @@ func TestReadinessHandler(t *testing.T) {
 					return checkErr
 				})
 			}
-			r.GET("/health/ready", ReadinessHandler(hc))
+			r.GET("/health/ready", ReadinessHandler(hc, true))
 
 			url := "/health/ready"
 			if tt.verbose {
@@ -236,7 +236,7 @@ func TestReadinessHandler_VerboseCheckContent(t *testing.T) {
 		hc.AddCheck("database", func(_ context.Context) error {
 			return errors.New("connection refused")
 		})
-		r.GET("/health/ready", ReadinessHandler(hc))
+		r.GET("/health/ready", ReadinessHandler(hc, true))
 
 		w := httptest.NewRecorder()
 		req, _ := http.NewRequest("GET", "/health/ready?verbose=true", nil)
@@ -269,7 +269,7 @@ func TestReadinessHandler_VerboseCheckContent(t *testing.T) {
 		hc.AddCheck("cache", func(_ context.Context) error {
 			return errors.New("cache timeout")
 		})
-		r.GET("/health/ready", ReadinessHandler(hc))
+		r.GET("/health/ready", ReadinessHandler(hc, true))
 
 		w := httptest.NewRecorder()
 		req, _ := http.NewRequest("GET", "/health/ready?verbose=true", nil)
@@ -302,7 +302,7 @@ func TestReadinessHandler_VerboseCheckContent(t *testing.T) {
 		hc.AddCheck("database", func(_ context.Context) error {
 			return errors.New("connection refused")
 		})
-		r.GET("/health/ready", ReadinessHandler(hc))
+		r.GET("/health/ready", ReadinessHandler(hc, true))
 
 		w := httptest.NewRecorder()
 		req, _ := http.NewRequest("GET", "/health/ready", nil)
@@ -315,5 +315,29 @@ func TestReadinessHandler_VerboseCheckContent(t *testing.T) {
 		assert.NoError(t, err)
 		assert.Equal(t, "DOWN", response["status"])
 		assert.NotContains(t, response, "checks", "non-verbose should hide checks even on failure")
+	})
+
+	t.Run("verboseEnabled=false hides checks even with verbose query param", func(t *testing.T) {
+		t.Parallel()
+
+		r := gin.New()
+		hc := health.New()
+		hc.SetReady(true)
+		hc.AddCheck("database", func(_ context.Context) error {
+			return errors.New("connection refused")
+		})
+		r.GET("/health/ready", ReadinessHandler(hc, false))
+
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest("GET", "/health/ready?verbose=true", nil)
+		r.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusServiceUnavailable, w.Code)
+
+		var response map[string]interface{}
+		err := json.Unmarshal(w.Body.Bytes(), &response)
+		assert.NoError(t, err)
+		assert.Equal(t, "DOWN", response["status"])
+		assert.NotContains(t, response, "checks", "verboseEnabled=false should hide checks")
 	})
 }

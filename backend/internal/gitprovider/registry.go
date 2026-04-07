@@ -182,7 +182,11 @@ func (r *Registry) HealthCheck(ctx context.Context) error {
 }
 
 func (r *Registry) pingAzureDevOps(ctx context.Context, p *azureDevOpsProvider) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://dev.azure.com/_apis/connectionData", nil)
+	pingURL := "https://dev.azure.com/_apis/connectionData"
+	if p.defaultOrg != "" {
+		pingURL = fmt.Sprintf("https://dev.azure.com/%s/_apis/connectionData", p.defaultOrg)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, pingURL, nil)
 	if err != nil {
 		return fmt.Errorf("azure devops: create request: %w", err)
 	}
