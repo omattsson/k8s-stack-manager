@@ -3,6 +3,7 @@ package handlers
 import (
 	"backend/internal/health"
 	"context"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -68,7 +69,16 @@ func ReadinessHandler(hc *health.HealthChecker, verboseEnabled bool) gin.Handler
 
 		status := hc.CheckReadiness(ctx)
 
-		if !verboseEnabled || c.Query("verbose") != "true" {
+		if verboseEnabled && c.Query("verbose") == "true" {
+			// Log full details server-side, strip messages from response.
+			for name, check := range status.Checks {
+				if check.Message != "" {
+					slog.Info("readiness check detail", "check", name, "status", check.Status, "message", check.Message)
+					check.Message = ""
+					status.Checks[name] = check
+				}
+			}
+		} else {
 			status.Checks = nil
 		}
 

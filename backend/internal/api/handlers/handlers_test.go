@@ -254,7 +254,9 @@ func TestReadinessHandler_VerboseCheckContent(t *testing.T) {
 		dbCheck, ok := checks["database"].(map[string]interface{})
 		assert.True(t, ok, "database check should be present")
 		assert.Equal(t, "DOWN", dbCheck["status"])
-		assert.Equal(t, "connection refused", dbCheck["message"])
+		// Message should be stripped from response (logged server-side)
+		msg, hasMsg := dbCheck["message"]
+		assert.True(t, !hasMsg || msg == "", "message should be stripped from verbose response")
 	})
 
 	t.Run("multiple checks mixed pass and fail", func(t *testing.T) {
@@ -290,7 +292,9 @@ func TestReadinessHandler_VerboseCheckContent(t *testing.T) {
 
 		cacheCheck := checks["cache"].(map[string]interface{})
 		assert.Equal(t, "DOWN", cacheCheck["status"])
-		assert.Equal(t, "cache timeout", cacheCheck["message"])
+		// Message should be stripped from response (logged server-side)
+		cacheMsg, hasCacheMsg := cacheCheck["message"]
+		assert.True(t, !hasCacheMsg || cacheMsg == "", "message should be stripped from verbose response")
 	})
 
 	t.Run("non-verbose hides check details on failure", func(t *testing.T) {

@@ -18,7 +18,7 @@ func HelmHealthCheck(helmBinary string) health.HealthCheck {
 		defer cancel()
 		cmd := exec.CommandContext(execCtx, helmBinary, "version", "--short")
 		if output, err := cmd.CombinedOutput(); err != nil {
-			slog.Error("helm health check failed", "binary", helmBinary, "output", string(output), "error", err)
+			slog.Debug("helm health check failed", "binary", helmBinary, "output", string(output), "error", err)
 			return fmt.Errorf("helm binary not available")
 		}
 		return nil
