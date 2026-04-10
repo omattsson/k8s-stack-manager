@@ -1,6 +1,6 @@
 apiVersion: v2
 name: k8s-stack-manager
-description: Helm-based stack manager with Go backend, React frontend, and Azurite for Azure Table Storage
+description: Helm-based stack manager with Go backend, React frontend, and MySQL or Azure Table Storage
 type: application
 version: 0.1.0
 appVersion: "latest"

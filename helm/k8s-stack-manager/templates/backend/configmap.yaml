@@ -13,6 +13,15 @@ data:
   {{- if .Values.azurite.enabled }}
   AZURE_TABLE_ENDPOINT: "{{ include "k8s-stack-manager.azurite.serviceName" . }}:10002"
   {{- end }}
+  {{- if .Values.mysql.enabled }}
+  DB_HOST: {{ include "k8s-stack-manager.mysql.serviceName" . | quote }}
+  DB_PORT: "3306"
+  DB_USER: {{ if .Values.mysql.auth.user }}{{ .Values.mysql.auth.user | quote }}{{ else }}"root"{{ end }}
+  DB_NAME: {{ .Values.mysql.auth.database | quote }}
+  DB_MAX_OPEN_CONNS: "25"
+  DB_MAX_IDLE_CONNS: "5"
+  DB_CONN_MAX_LIFETIME: "5m"
+  {{- end }}
   {{- if .Values.otel.enabled }}
   OTEL_ENABLED: "true"
   OTEL_EXPORTER_OTLP_ENDPOINT: "{{ include "k8s-stack-manager.otel.serviceName" . }}:4317"

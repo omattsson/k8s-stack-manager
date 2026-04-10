@@ -108,6 +108,29 @@ Azurite service name.
 {{- end }}
 
 {{/*
+MySQL labels.
+*/}}
+{{- define "k8s-stack-manager.mysql.labels" -}}
+{{ include "k8s-stack-manager.labels" . }}
+app.kubernetes.io/name: {{ include "k8s-stack-manager.fullname" . }}-mysql
+app.kubernetes.io/component: mysql
+{{- end }}
+
+{{/*
+MySQL selector labels.
+*/}}
+{{- define "k8s-stack-manager.mysql.selectorLabels" -}}
+app.kubernetes.io/name: {{ include "k8s-stack-manager.fullname" . }}-mysql
+{{- end }}
+
+{{/*
+MySQL service name.
+*/}}
+{{- define "k8s-stack-manager.mysql.serviceName" -}}
+{{ include "k8s-stack-manager.fullname" . }}-mysql
+{{- end }}
+
+{{/*
 OTel Collector labels.
 */}}
 {{- define "k8s-stack-manager.otel.labels" -}}

@@ -185,6 +185,36 @@ azurite:
       cpu: 200m
 
 # ---------------------------------------------------------------------------
+# MySQL Database
+# ---------------------------------------------------------------------------
+mysql:
+  enabled: false  # Set to true to deploy MySQL; set backend.env.USE_AZURE_TABLE to "false"
+  image:
+    repository: mysql
+    tag: "8.4"
+    pullPolicy: IfNotPresent
+  auth:
+    rootPassword: ""       # Set via --set or values override. REQUIRED when mysql.enabled=true
+    database: app          # Database name to create
+    user: ""               # Optional: create a non-root user
+    password: ""           # Optional: password for non-root user
+  persistence:
+    size: 5Gi
+    storageClass: ""
+  resources:
+    requests:
+      memory: 256Mi
+      cpu: 100m
+    limits:
+      memory: 1Gi
+      cpu: 500m
+  config: |
+    [mysqld]
+    max_connections=100
+    character-set-server=utf8mb4
+    collation-server=utf8mb4_unicode_ci
+
+# ---------------------------------------------------------------------------
 # OpenTelemetry Collector
 # ---------------------------------------------------------------------------
 otel:

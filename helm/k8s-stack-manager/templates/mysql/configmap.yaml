@@ -1,0 +1,11 @@
+{{- if and .Values.mysql.enabled .Values.mysql.config }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "k8s-stack-manager.mysql.serviceName" . }}-config
+  labels:
+    {{- include "k8s-stack-manager.mysql.labels" . | nindent 4 }}
+data:
+  custom.cnf: |
+    {{- .Values.mysql.config | nindent 4 }}
+{{- end }}
