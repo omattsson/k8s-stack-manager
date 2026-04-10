@@ -2,7 +2,11 @@ package gitprovider
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
+	"io"
+	"log/slog"
+	"net/http"
 	"strings"
 	"sync"
 	"time"
@@ -142,6 +146,87 @@ func (r *Registry) GetProviderStatus() []ProviderStatus {
 		{Type: "azure_devops", Available: r.azureDevOps != nil},
 		{Type: "gitlab", Available: r.gitlab != nil},
 	}
+}
+
+// HealthCheck verifies that at least one configured Git provider is reachable.
+// Returns nil if no providers are configured (valid for fresh installs) or if
+// at least one provider responds with HTTP 2xx. Returns an error only when all
+// configured providers are unreachable.
+func (r *Registry) HealthCheck(ctx context.Context) error {
+	// Copy provider references — no need to hold a lock during I/O.
+	azDo := r.azureDevOps
+	gl := r.gitlab
+
+	if azDo == nil && gl == nil {
+		return nil
+	}
+
+	var lastErr error
+
+	if azDo != nil {
+		if err := r.pingAzureDevOps(ctx, azDo); err != nil {
+			lastErr = err
+		} else {
+			return nil
+		}
+	}
+
+	if gl != nil {
+		if err := r.pingGitLab(ctx, gl); err != nil {
+			lastErr = err
+		} else {
+			return nil
+		}
+	}
+
+	slog.Warn("all configured git providers unreachable", "last_error", lastErr)
+	return fmt.Errorf("all configured git providers are unreachable")
+}
+
+func (r *Registry) pingAzureDevOps(ctx context.Context, p *azureDevOpsProvider) error {
+	pingURL := "https://dev.azure.com/_apis/connectionData"
+	if p.defaultOrg != "" {
+		pingURL = fmt.Sprintf("https://dev.azure.com/%s/_apis/connectionData", p.defaultOrg)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, pingURL, nil)
+	if err != nil {
+		return fmt.Errorf("azure devops: create request: %w", err)
+	}
+	auth := base64.StdEncoding.EncodeToString([]byte(":" + p.pat))
+	req.Header.Set("Authorization", "Basic "+auth)
+
+	resp, err := p.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("azure devops: request failed: %w", err)
+	}
+	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, resp.Body)
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("azure devops: unexpected status %d", resp.StatusCode)
+	}
+	return nil
+}
+
+func (r *Registry) pingGitLab(ctx context.Context, p *gitlabProvider) error {
+	apiURL := p.baseURL + "/api/v4/version"
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, apiURL, nil)
+	if err != nil {
+		return fmt.Errorf("gitlab: create request: %w", err)
+	}
+	req.Header.Set("PRIVATE-TOKEN", p.token)
+
+	resp, err := p.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("gitlab: request failed: %w", err)
+	}
+	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, resp.Body)
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("gitlab: unexpected status %d", resp.StatusCode)
+	}
+	return nil
 }
 
 // InvalidateCache removes the cached branch list for the given repository URL.

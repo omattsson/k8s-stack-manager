@@ -167,6 +167,15 @@ func main() {
 		HelmTimeout: cfg.Deployment.DeploymentTimeout,
 	})
 
+	// Register extended health checks for cluster, git, and helm.
+	healthChecker.AddCheck("cluster_registry", func(ctx context.Context) error {
+		return clusterRegistry.HealthCheck(ctx)
+	})
+	healthChecker.AddCheck("git_provider", func(ctx context.Context) error {
+		return gitRegistry.HealthCheck(ctx)
+	})
+	healthChecker.AddCheck("helm", deployer.HelmHealthCheck(cfg.Deployment.HelmBinary))
+
 	// Start cluster health poller
 	healthPoller := cluster.NewHealthPoller(cluster.HealthPollerConfig{
 		ClusterRepo: clusterRepo,
@@ -291,6 +300,7 @@ func main() {
 		UserRepo:                     userRepo,
 		APIKeyRepo:                   apiKeyRepo,
 		OIDCHandler:                  oidcHandler,
+		HealthVerbose:                cfg.Server.HealthVerbose,
 	})
 	defer rateLimiter.Stop()
 

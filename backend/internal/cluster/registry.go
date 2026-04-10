@@ -3,8 +3,10 @@
 package cluster
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"sync"
 	"time"
@@ -274,6 +276,84 @@ func (r *Registry) Close() error {
 		delete(r.clients, id)
 	}
 	return nil
+}
+
+const (
+	healthCheckPerClusterTimeout = 3 * time.Second
+	healthCheckOverallTimeout    = 4 * time.Second
+)
+
+// HealthCheck verifies that at least one registered cluster is reachable.
+// Returns nil if no clusters are registered (valid for fresh installs) or if
+// at least one cluster responds to a version ping. Returns an error only when
+// all registered clusters are unreachable.
+func (r *Registry) HealthCheck(ctx context.Context) error {
+	// Read clusterRepo under lock, then release before I/O.
+	r.mu.RLock()
+	repo := r.clusterRepo
+	r.mu.RUnlock()
+
+	if repo == nil {
+		return nil
+	}
+
+	clusters, err := repo.List()
+	if err != nil {
+		slog.Error("health check: failed to list clusters", "error", err)
+		return fmt.Errorf("cluster registry unavailable")
+	}
+	if len(clusters) == 0 {
+		return nil
+	}
+
+	// Overall budget so that readiness latency stays bounded regardless of
+	// the number of registered clusters.
+	overallCtx, overallCancel := context.WithTimeout(ctx, healthCheckOverallTimeout)
+	defer overallCancel()
+
+	var lastErr error
+	for i := range clusters {
+		select {
+		case <-overallCtx.Done():
+			slog.Warn("all registered clusters unreachable", "count", len(clusters), "last_error", lastErr)
+			return fmt.Errorf("all %d registered clusters are unreachable", len(clusters))
+		default:
+		}
+
+		cl := &clusters[i]
+		client, clientErr := r.GetK8sClient(cl.ID)
+		if clientErr != nil {
+			slog.Debug("health check: failed to get k8s client", "cluster_id", cl.ID, "error", clientErr)
+			lastErr = clientErr
+			continue
+		}
+
+		clusterCtx, cancel := context.WithTimeout(overallCtx, healthCheckPerClusterTimeout)
+		pingErr := pingCluster(clusterCtx, client)
+		cancel()
+		if pingErr != nil {
+			slog.Debug("health check: cluster ping failed", "cluster_id", cl.ID, "error", pingErr)
+			lastErr = pingErr
+			continue
+		}
+
+		// At least one cluster is reachable.
+		return nil
+	}
+
+	slog.Warn("all registered clusters unreachable", "count", len(clusters), "last_error", lastErr)
+	return fmt.Errorf("all %d registered clusters are unreachable", len(clusters))
+}
+
+// pingCluster performs a lightweight version ping against a k8s cluster.
+// Uses RESTClient discovery with fallback to ServerVersion for test fakes.
+func pingCluster(ctx context.Context, client *k8s.Client) error {
+	if restClient := client.Clientset().Discovery().RESTClient(); restClient != nil {
+		result := restClient.Get().AbsPath("/version").Do(ctx)
+		return result.Error()
+	}
+	_, err := client.Clientset().Discovery().ServerVersion()
+	return err
 }
 
 // ClusterExists checks whether a cluster with the given ID exists in the
