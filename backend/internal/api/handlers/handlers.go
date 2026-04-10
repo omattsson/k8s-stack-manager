@@ -2,7 +2,9 @@ package handlers
 
 import (
 	"backend/internal/health"
+	"context"
 	"net/http"
+	"time"
 
 	"github.com/gin-gonic/gin"
 )
@@ -53,13 +55,18 @@ func LivenessHandler(hc *health.HealthChecker) gin.HandlerFunc {
 // @Description Get API readiness status
 // @Tags        health
 // @Produce     json
-// @Param       verbose query    string false "Include per-check details" Enums(true,false)
+// @Param       verbose query    bool false "Include per-check details"
 // @Success     200 {object} health.HealthStatus
 // @Failure     503 {object} health.HealthStatus
 // @Router      /health/ready [get]
 func ReadinessHandler(hc *health.HealthChecker, verboseEnabled bool) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		status := hc.CheckReadiness(c.Request.Context())
+		// Bound total readiness latency so it completes within typical
+		// Kubernetes probe timeouts (default 1-5s).
+		ctx, cancel := context.WithTimeout(c.Request.Context(), 4*time.Second)
+		defer cancel()
+
+		status := hc.CheckReadiness(ctx)
 
 		if !verboseEnabled || c.Query("verbose") != "true" {
 			status.Checks = nil

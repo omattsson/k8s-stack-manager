@@ -821,7 +821,7 @@ func TestHealthCheck(t *testing.T) {
 		{
 			name:    "list error returns error",
 			listErr: fmt.Errorf("db down"),
-			wantErr: "failed to list clusters",
+			wantErr: "cluster registry unavailable",
 		},
 		{
 			name: "at least one reachable cluster returns nil",

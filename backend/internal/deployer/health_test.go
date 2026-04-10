@@ -4,6 +4,8 @@ package deployer
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -13,6 +15,22 @@ import (
 func TestHelmHealthCheck(t *testing.T) {
 	t.Parallel()
 
+	// Create a helper script that validates it receives "version --short" args.
+	helperScript := filepath.Join(t.TempDir(), "helm-test")
+	err := os.WriteFile(helperScript, []byte("#!/bin/sh\n"+
+		"if [ \"$1\" = \"version\" ] && [ \"$2\" = \"--short\" ]; then\n"+
+		"  echo \"v3.14.0\"\n"+
+		"  exit 0\n"+
+		"fi\n"+
+		"echo \"unexpected args: $@\" >&2\n"+
+		"exit 1\n"), 0o755)
+	require.NoError(t, err)
+
+	// Also create a script that always fails.
+	failScript := filepath.Join(t.TempDir(), "helm-fail")
+	err = os.WriteFile(failScript, []byte("#!/bin/sh\nexit 1\n"), 0o755)
+	require.NoError(t, err)
+
 	tests := []struct {
 		name       string
 		binary     string
@@ -20,8 +38,8 @@ func TestHelmHealthCheck(t *testing.T) {
 		errContain string
 	}{
 		{
-			name:   "valid binary succeeds",
-			binary: "true", // /usr/bin/true — always exits 0
+			name:   "valid binary with correct args succeeds",
+			binary: helperScript,
 		},
 		{
 			name:       "invalid binary path fails",
@@ -31,7 +49,7 @@ func TestHelmHealthCheck(t *testing.T) {
 		},
 		{
 			name:       "non-zero exit code fails",
-			binary:     "false", // /usr/bin/false — always exits 1
+			binary:     failScript,
 			wantErr:    true,
 			errContain: "helm binary not available",
 		},
@@ -58,10 +76,21 @@ func TestHelmHealthCheck(t *testing.T) {
 func TestHelmHealthCheck_CancelledContext(t *testing.T) {
 	t.Parallel()
 
-	check := HelmHealthCheck("true") // valid binary, but context is cancelled
+	// Use the helper script for consistency.
+	helperScript := filepath.Join(t.TempDir(), "helm-test")
+	err := os.WriteFile(helperScript, []byte("#!/bin/sh\n"+
+		"if [ \"$1\" = \"version\" ] && [ \"$2\" = \"--short\" ]; then\n"+
+		"  echo \"v3.14.0\"\n"+
+		"  exit 0\n"+
+		"fi\n"+
+		"echo \"unexpected args: $@\" >&2\n"+
+		"exit 1\n"), 0o755)
+	require.NoError(t, err)
+
+	check := HelmHealthCheck(helperScript)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	err := check(ctx)
+	err = check(ctx)
 	require.Error(t, err, "cancelled context should cause exec to fail")
 }

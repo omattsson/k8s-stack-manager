@@ -279,8 +279,8 @@ func (r *Registry) Close() error {
 }
 
 const (
-	healthCheckPerClusterTimeout = 5 * time.Second
-	healthCheckOverallTimeout    = 15 * time.Second
+	healthCheckPerClusterTimeout = 3 * time.Second
+	healthCheckOverallTimeout    = 4 * time.Second
 )
 
 // HealthCheck verifies that at least one registered cluster is reachable.
@@ -299,7 +299,8 @@ func (r *Registry) HealthCheck(ctx context.Context) error {
 
 	clusters, err := repo.List()
 	if err != nil {
-		return fmt.Errorf("failed to list clusters: %w", err)
+		slog.Error("health check: failed to list clusters", "error", err)
+		return fmt.Errorf("cluster registry unavailable")
 	}
 	if len(clusters) == 0 {
 		return nil

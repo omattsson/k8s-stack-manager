@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 	"sync"
@@ -178,7 +179,8 @@ func (r *Registry) HealthCheck(ctx context.Context) error {
 		}
 	}
 
-	return fmt.Errorf("all configured git providers are unreachable: %w", lastErr)
+	slog.Warn("all configured git providers unreachable", "last_error", lastErr)
+	return fmt.Errorf("all configured git providers are unreachable")
 }
 
 func (r *Registry) pingAzureDevOps(ctx context.Context, p *azureDevOpsProvider) error {
