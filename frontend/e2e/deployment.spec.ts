@@ -1,14 +1,12 @@
 import { test, expect } from '@playwright/test';
-import { loginAsDevops, uniqueName, createAndPublishTemplate, instantiateTemplate } from './helpers';
-
-const API_BASE = 'http://localhost:8081';
+import { loginAsDevops, uniqueName, createAndPublishTemplate, instantiateTemplate, API_BASE, ADMIN_PASSWORD, ensureDefaultCluster, deleteCluster } from './helpers';
 
 /**
  * Helper: login via API and return the JWT token.
  */
 async function apiLogin(request: import('@playwright/test').APIRequestContext): Promise<string> {
   const res = await request.post(`${API_BASE}/api/v1/auth/login`, {
-    data: { username: 'admin', password: 'admin' },
+    data: { username: 'admin', password: ADMIN_PASSWORD },
   });
   expect(res.ok()).toBe(true);
   const body = await res.json();
@@ -110,9 +108,15 @@ async function apiGetInstance(
 // ---------------------------------------------------------------------------
 test.describe('Deployment API', () => {
   let token: string;
+  let clusterId: string | null;
 
   test.beforeAll(async ({ request }) => {
     token = await apiLogin(request);
+    clusterId = await ensureDefaultCluster(request, token);
+  });
+
+  test.afterAll(async ({ request }) => {
+    await deleteCluster(request, token, clusterId);
   });
 
   test('deploy instance returns 202 and transitions to deploying then error', async ({ request }) => {
@@ -125,8 +129,8 @@ test.describe('Deployment API', () => {
       headers: { Authorization: `Bearer ${token}` },
     });
 
-    // Deploy might return 202 (accepted) or 503 (deployer not configured in test env).
-    if (deployRes.status() === 503) {
+    // Deploy might return 202 (accepted), 500 (cluster unreachable), or 503 (deployer not configured).
+    if ([500, 503].includes(deployRes.status())) {
       // Deployment service not available in test env — skip remaining assertions.
       test.skip();
       return;
@@ -159,7 +163,7 @@ test.describe('Deployment API', () => {
       headers: { Authorization: `Bearer ${token}` },
     });
 
-    if (firstRes.status() === 503) {
+    if ([500, 503].includes(firstRes.status())) {
       test.skip();
       return;
     }
@@ -190,7 +194,7 @@ test.describe('Deployment API', () => {
       headers: { Authorization: `Bearer ${token}` },
     });
 
-    if (stopRes.status() === 503) {
+    if ([500, 503].includes(stopRes.status())) {
       test.skip();
       return;
     }
@@ -211,13 +215,13 @@ test.describe('Deployment API', () => {
       headers: { Authorization: `Bearer ${token}` },
     });
 
-    if (deployRes.status() === 503) {
+    if ([500, 503].includes(deployRes.status())) {
       // If deploy service not available, logs endpoint may also be 503.
       const logRes = await request.get(`${API_BASE}/api/v1/stack-instances/${instId}/deploy-log`, {
         headers: { Authorization: `Bearer ${token}` },
       });
-      // Accept 200 (empty array) or 503.
-      expect([200, 503]).toContain(logRes.status());
+      // Accept 200 (empty array), 500, or 503.
+      expect([200, 500, 503]).toContain(logRes.status());
       test.skip();
       return;
     }
@@ -252,8 +256,8 @@ test.describe('Deployment API', () => {
       headers: { Authorization: `Bearer ${token}` },
     });
 
-    // May return 200 (cached status), 404 (no status yet), or 503 (no K8s).
-    expect([200, 404, 503]).toContain(statusRes.status());
+    // May return 200 (cached status), 404 (no status yet), 500 (cluster unreachable), or 502/503 (no K8s).
+    expect([200, 404, 500, 502, 503]).toContain(statusRes.status());
 
     if (statusRes.status() === 200) {
       const body = await statusRes.json();
@@ -273,7 +277,7 @@ test.describe('Deployment API', () => {
       headers: { Authorization: `Bearer ${token}` },
     });
 
-    if (firstRes.status() === 503) {
+    if ([500, 503].includes(firstRes.status())) {
       test.skip();
       return;
     }
@@ -332,7 +336,7 @@ test.describe('Deployment API', () => {
       headers: { Authorization: `Bearer ${token}` },
     });
 
-    if (deployRes.status() === 503) {
+    if ([500, 503].includes(deployRes.status())) {
       test.skip();
       return;
     }
@@ -374,7 +378,7 @@ test.describe('Deployment API', () => {
       headers: { Authorization: `Bearer ${token}` },
     });
 
-    if (deployRes.status() === 503) {
+    if ([500, 503].includes(deployRes.status())) {
       test.skip();
       return;
     }
@@ -428,6 +432,18 @@ test.describe('Deployment API', () => {
 // UI-level tests (using browser)
 // ---------------------------------------------------------------------------
 test.describe('Deployment UI', () => {
+  let clusterId: string | null;
+
+  test.beforeAll(async ({ request }) => {
+    const token = await apiLogin(request);
+    clusterId = await ensureDefaultCluster(request, token);
+  });
+
+  test.afterAll(async ({ request }) => {
+    const token = await apiLogin(request);
+    await deleteCluster(request, token, clusterId);
+  });
+
   test.beforeEach(async ({ page }) => {
     await loginAsDevops(page);
   });
@@ -471,11 +487,15 @@ test.describe('Deployment UI', () => {
     await page.waitForURL(/\/stack-instances\/[^/]+$/, { timeout: 10_000 });
     await page.waitForLoadState('domcontentloaded');
 
-    // Click Deploy.
+    // Click Deploy — this opens the DeployPreviewDialog.
     await page.getByRole('button', { name: 'Deploy' }).click();
 
-    // Expect either a success snackbar or an error (if deployer not configured).
-    // The snackbar text depends on the backend configuration.
+    // Confirm in the preview dialog.
+    const dialog = page.getByRole('dialog');
+    await expect(dialog).toBeVisible({ timeout: 5_000 });
+    await dialog.getByRole('button', { name: 'Deploy' }).click();
+
+    // Expect either a success snackbar or an error alert (if deployer not configured).
     const snackbar = page.locator('.MuiSnackbar-root, .MuiAlert-root');
     await expect(snackbar.first()).toBeVisible({ timeout: 10_000 });
   });
@@ -501,8 +521,13 @@ test.describe('Deployment UI', () => {
     // Extract the instance ID from the URL for API checks.
     const instanceId = page.url().split('/stack-instances/')[1];
 
-    // Trigger a deploy — this creates a deployment log entry.
+    // Trigger a deploy — this opens the DeployPreviewDialog.
     await page.getByRole('button', { name: 'Deploy' }).click();
+
+    // Confirm in the preview dialog.
+    const deployDialog = page.getByRole('dialog');
+    await expect(deployDialog).toBeVisible({ timeout: 5_000 });
+    await deployDialog.getByRole('button', { name: 'Deploy' }).click();
 
     // Wait for a snackbar (success or error) to confirm the deploy was triggered.
     const snackbar = page.locator('.MuiSnackbar-root, .MuiAlert-root');
@@ -514,7 +539,7 @@ test.describe('Deployment UI', () => {
     for (let i = 0; i < 10; i++) {
       await new Promise((r) => setTimeout(r, 1000));
       const res = await page.request.get(
-        `http://localhost:8081/api/v1/stack-instances/${instanceId}/deploy-log`,
+        `${API_BASE}/api/v1/stack-instances/${instanceId}/deploy-log`,
         { headers: { Authorization: `Bearer ${token}` } },
       );
       if (res.ok()) {
@@ -547,7 +572,12 @@ test.describe('Deployment UI', () => {
     // Deploy to trigger error state (helm not available in test env).
     await page.getByRole('button', { name: 'Deploy' }).click();
 
-    // Wait for snackbar to confirm deploy was triggered.
+    // Confirm in the preview dialog.
+    const deployDialog = page.getByRole('dialog');
+    await expect(deployDialog).toBeVisible({ timeout: 5_000 });
+    await deployDialog.getByRole('button', { name: 'Deploy' }).click();
+
+    // Wait for snackbar or error alert to confirm deploy was triggered.
     const snackbar = page.locator('.MuiSnackbar-root, .MuiAlert-root');
     await expect(snackbar.first()).toBeVisible({ timeout: 10_000 });
 
@@ -559,7 +589,7 @@ test.describe('Deployment UI', () => {
     for (let i = 0; i < 10; i++) {
       await new Promise((r) => setTimeout(r, 1000));
       const res = await page.request.get(
-        `http://localhost:8081/api/v1/stack-instances/${instanceId}`,
+        `${API_BASE}/api/v1/stack-instances/${instanceId}`,
         { headers: { Authorization: `Bearer ${token}` } },
       );
       if (res.ok()) {

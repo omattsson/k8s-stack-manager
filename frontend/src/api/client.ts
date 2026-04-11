@@ -172,7 +172,8 @@ export const templateService = {
   list: async (): Promise<StackTemplate[]> => {
     try {
       const response = await api.get('/api/v1/templates');
-      return response.data;
+      const body = response.data;
+      return Array.isArray(body) ? body : body.data ?? [];
     } catch (error) {
       console.error('Failed to fetch templates:', error);
       throw error;
@@ -885,7 +886,8 @@ export const instanceService = {
   getDeployLog: async (id: string): Promise<DeploymentLog[]> => {
     try {
       const response = await api.get(`/api/v1/stack-instances/${id}/deploy-log`);
-      return response.data;
+      const payload = response.data;
+      return Array.isArray(payload) ? payload : payload.data ?? [];
     } catch (error) {
       console.error('Failed to fetch deployment logs:', error);
       throw error;

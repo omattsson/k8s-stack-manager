@@ -48,13 +48,14 @@ type ClusterSummary struct {
 type CreateClusterRequest struct {
 	Name                string `json:"name" binding:"required"`
 	Description         string `json:"description"`
-	APIServerURL        string `json:"api_server_url" binding:"required"`
+	APIServerURL        string `json:"api_server_url"`
 	KubeconfigData      string `json:"kubeconfig_data"`
 	KubeconfigPath      string `json:"kubeconfig_path"`
 	Region              string `json:"region"`
 	MaxNamespaces       int    `json:"max_namespaces"`
 	MaxInstancesPerUser int    `json:"max_instances_per_user"`
 	IsDefault           bool   `json:"is_default"`
+	UseInCluster        bool   `json:"use_in_cluster"`
 }
 
 // UpdateClusterRequest is the input payload for updating a cluster.
@@ -68,6 +69,7 @@ type UpdateClusterRequest struct {
 	MaxNamespaces       *int    `json:"max_namespaces,omitempty"`
 	MaxInstancesPerUser *int    `json:"max_instances_per_user,omitempty"`
 	IsDefault           *bool   `json:"is_default,omitempty"`
+	UseInCluster        *bool   `json:"use_in_cluster,omitempty"`
 }
 
 // ClusterHandler provides CRUD endpoints for cluster management.
@@ -167,6 +169,7 @@ func (h *ClusterHandler) CreateCluster(c *gin.Context) {
 		MaxInstancesPerUser: req.MaxInstancesPerUser,
 		IsDefault:           false,
 		HealthStatus:        models.ClusterUnreachable,
+		UseInCluster:        req.UseInCluster,
 	}
 
 	if err := cl.Validate(); err != nil {
@@ -307,6 +310,14 @@ func (h *ClusterHandler) UpdateCluster(c *gin.Context) {
 	}
 	if req.MaxInstancesPerUser != nil {
 		existing.MaxInstancesPerUser = *req.MaxInstancesPerUser
+	}
+	if req.UseInCluster != nil {
+		existing.UseInCluster = *req.UseInCluster
+		if *req.UseInCluster {
+			existing.KubeconfigData = ""
+			existing.KubeconfigPath = ""
+			kubeconfigChanged = true
+		}
 	}
 	if req.IsDefault != nil {
 		if *req.IsDefault && !existing.IsDefault {

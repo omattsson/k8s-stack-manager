@@ -16,15 +16,14 @@ spec:
     metadata:
       labels:
         {{- include "k8s-stack-manager.mysql.selectorLabels" . | nindent 8 }}
-      {{- if semverCompare "<1.30-0" .Capabilities.KubeVersion.Version }}
+      {{- if and .Values.global.appArmor.enabled (semverCompare "<1.30-0" .Capabilities.KubeVersion.Version) }}
       annotations:
         container.apparmor.security.beta.kubernetes.io/mysql: runtime/default
       {{- end }}
     spec:
       securityContext:
-        runAsNonRoot: true
-        runAsUser: 999
-        runAsGroup: 999
+        # MySQL entrypoint starts as root, then drops to uid 999 via gosu.
+        # Do NOT set runAsNonRoot/runAsUser here — it breaks the entrypoint.
         fsGroup: 999
         {{- if semverCompare ">=1.19-0" .Capabilities.KubeVersion.Version }}
         seccompProfile:
@@ -35,14 +34,10 @@ spec:
           image: "{{ .Values.mysql.image.repository }}:{{ .Values.mysql.image.tag }}"
           imagePullPolicy: {{ .Values.mysql.image.pullPolicy }}
           securityContext:
-            allowPrivilegeEscalation: false
-            {{- if semverCompare ">=1.30-0" .Capabilities.KubeVersion.Version }}
+            {{- if and .Values.global.appArmor.enabled (semverCompare ">=1.30-0" .Capabilities.KubeVersion.Version) }}
             appArmorProfile:
               type: RuntimeDefault
             {{- end }}
-            capabilities:
-              drop:
-                - ALL
           env:
             - name: MYSQL_ROOT_PASSWORD
               valueFrom:
@@ -96,8 +91,12 @@ spec:
             {{- end }}
       volumes:
         - name: data
+          {{- if .Values.mysql.persistence.enabled }}
           persistentVolumeClaim:
             claimName: {{ include "k8s-stack-manager.mysql.serviceName" . }}-data
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
         {{- if .Values.mysql.config }}
         - name: config
           configMap:

@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { loginAsDevops, uniqueName, createAndPublishTemplate } from './helpers';
+import { loginAsDevops, uniqueName, createAndPublishTemplate, API_BASE } from './helpers';
 
 test.describe('Template Version History', () => {
   test.beforeEach(async ({ page }) => {
@@ -50,14 +50,14 @@ test.describe('Template Version History', () => {
 
     // Unpublish
     const unpubRes = await page.request.post(
-      `http://localhost:8081/api/v1/templates/${templateId}/unpublish`,
+      `${API_BASE}/api/v1/templates/${templateId}/unpublish`,
       { headers: { Authorization: `Bearer ${token}` } },
     );
     expect(unpubRes.ok()).toBe(true);
 
     // Re-publish to create a second version
     const pubRes = await page.request.post(
-      `http://localhost:8081/api/v1/templates/${templateId}/publish`,
+      `${API_BASE}/api/v1/templates/${templateId}/publish`,
       { headers: { Authorization: `Bearer ${token}` } },
     );
     expect(pubRes.ok()).toBe(true);

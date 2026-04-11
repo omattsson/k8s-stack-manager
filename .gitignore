@@ -66,3 +66,7 @@ Thumbs.db
 
 # SonarQube
 sonar-project.properties
+
+# MemPalace
+mempalace.yaml
+entities.json

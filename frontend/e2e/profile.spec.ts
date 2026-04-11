@@ -1,7 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { loginAsUser, uniqueName } from './helpers';
-
-const API_BASE = 'http://localhost:8081';
+import { loginAsUser, uniqueName, API_BASE } from './helpers';
 
 test.describe('Profile Page', () => {
   let username: string;

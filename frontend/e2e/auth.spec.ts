@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { loginAsAdmin } from './helpers';
+import { loginAsAdmin, ADMIN_PASSWORD } from './helpers';
 
 test.describe('Authentication', () => {
   test('unauthenticated users are redirected to login', async ({ page }) => {
@@ -18,7 +18,7 @@ test.describe('Authentication', () => {
   test('successful login redirects to dashboard', async ({ page }) => {
     await page.goto('/login');
     await page.getByLabel('Username').fill('admin');
-    await page.getByLabel('Password').fill('admin');
+    await page.getByLabel('Password').fill(ADMIN_PASSWORD);
     await page.getByRole('button', { name: 'Sign In' }).click();
     await expect(page).toHaveURL('/', { timeout: 10_000 });
     // Dashboard heading

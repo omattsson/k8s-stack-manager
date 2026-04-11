@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { loginAsAdmin, uniqueName } from './helpers';
+import { loginAsAdmin, uniqueName, API_BASE } from './helpers';
 
 test.describe('Cluster Management', () => {
   test.beforeEach(async ({ page }) => {
@@ -51,13 +51,13 @@ test.describe('Cluster Management', () => {
 
     // Cleanup via API
     const token = await page.evaluate(() => localStorage.getItem('token'));
-    const response = await page.request.get('http://localhost:8081/api/v1/clusters', {
+    const response = await page.request.get(`${API_BASE}/api/v1/clusters`, {
       headers: { Authorization: `Bearer ${token}` },
     });
     const clusters = await response.json();
     const created = clusters.find((c: { name: string }) => c.name === name);
     if (created) {
-      await page.request.delete(`http://localhost:8081/api/v1/clusters/${created.id}`, {
+      await page.request.delete(`${API_BASE}/api/v1/clusters/${created.id}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
     }
@@ -67,7 +67,7 @@ test.describe('Cluster Management', () => {
     // Create a cluster via API first
     const name = uniqueName('cluster-edit');
     const token = await page.evaluate(() => localStorage.getItem('token'));
-    const createResp = await page.request.post('http://localhost:8081/api/v1/clusters', {
+    const createResp = await page.request.post(`${API_BASE}/api/v1/clusters`, {
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
       data: {
         name,
@@ -102,7 +102,7 @@ test.describe('Cluster Management', () => {
     await expect(page.getByText(name)).not.toBeVisible();
 
     // Cleanup
-    await page.request.delete(`http://localhost:8081/api/v1/clusters/${created.id}`, {
+    await page.request.delete(`${API_BASE}/api/v1/clusters/${created.id}`, {
       headers: { Authorization: `Bearer ${token}` },
     });
   });
@@ -111,7 +111,7 @@ test.describe('Cluster Management', () => {
     // Create a cluster via API first
     const name = uniqueName('cluster-del');
     const token = await page.evaluate(() => localStorage.getItem('token'));
-    await page.request.post('http://localhost:8081/api/v1/clusters', {
+    await page.request.post(`${API_BASE}/api/v1/clusters`, {
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
       data: {
         name,
@@ -171,7 +171,7 @@ test.describe('Cluster Management', () => {
     // Create a cluster via API
     const name = uniqueName('cluster-conn');
     const token = await page.evaluate(() => localStorage.getItem('token'));
-    const createResp = await page.request.post('http://localhost:8081/api/v1/clusters', {
+    const createResp = await page.request.post(`${API_BASE}/api/v1/clusters`, {
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
       data: {
         name,
@@ -198,7 +198,7 @@ test.describe('Cluster Management', () => {
       await expect(alert).toContainText(name);
     } finally {
       // Cleanup
-      await page.request.delete(`http://localhost:8081/api/v1/clusters/${created.id}`, {
+      await page.request.delete(`${API_BASE}/api/v1/clusters/${created.id}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
     }
@@ -210,7 +210,7 @@ test.describe('Cluster Management', () => {
     const nameB = uniqueName('cluster-std-b');
     const token = await page.evaluate(() => localStorage.getItem('token'));
 
-    const respA = await page.request.post('http://localhost:8081/api/v1/clusters', {
+    const respA = await page.request.post(`${API_BASE}/api/v1/clusters`, {
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
       data: {
         name: nameA,
@@ -221,7 +221,7 @@ test.describe('Cluster Management', () => {
     });
     const createdA = await respA.json();
 
-    const respB = await page.request.post('http://localhost:8081/api/v1/clusters', {
+    const respB = await page.request.post(`${API_BASE}/api/v1/clusters`, {
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
       data: {
         name: nameB,
@@ -255,21 +255,21 @@ test.describe('Cluster Management', () => {
       await expect(rowBAfter.getByRole('button', { name: `Set ${nameB} as default` })).not.toBeVisible();
     } finally {
       // Restore the original default cluster before cleanup
-      const clustersRes = await page.request.get('http://localhost:8081/api/v1/clusters', {
+      const clustersRes = await page.request.get(`${API_BASE}/api/v1/clusters`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       const clusters = await clustersRes.json();
       const original = clusters.find((c: { name: string }) => c.name === 'default');
       if (original) {
-        await page.request.post(`http://localhost:8081/api/v1/clusters/${original.id}/default`, {
+        await page.request.post(`${API_BASE}/api/v1/clusters/${original.id}/default`, {
           headers: { Authorization: `Bearer ${token}` },
         });
       }
       // Cleanup both test clusters
-      await page.request.delete(`http://localhost:8081/api/v1/clusters/${createdA.id}`, {
+      await page.request.delete(`${API_BASE}/api/v1/clusters/${createdA.id}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
-      await page.request.delete(`http://localhost:8081/api/v1/clusters/${createdB.id}`, {
+      await page.request.delete(`${API_BASE}/api/v1/clusters/${createdB.id}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
     }

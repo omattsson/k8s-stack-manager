@@ -24,6 +24,7 @@ type Cluster struct {
 	MaxNamespaces       int       `json:"max_namespaces"`
 	MaxInstancesPerUser int       `json:"max_instances_per_user" gorm:"default:0"` // 0 = unlimited
 	IsDefault           bool      `json:"is_default"`
+	UseInCluster        bool      `json:"use_in_cluster"`
 }
 
 // ClusterRepository defines data access operations for clusters.

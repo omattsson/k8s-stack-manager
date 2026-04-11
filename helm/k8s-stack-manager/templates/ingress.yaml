@@ -1,0 +1,61 @@
+{{- if eq .Values.ingress.type "ingress" }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "k8s-stack-manager.fullname" . }}
+  labels:
+    {{- include "k8s-stack-manager.labels" . | nindent 4 }}
+  {{- with .Values.ingress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- if .Values.ingress.className }}
+  ingressClassName: {{ .Values.ingress.className | quote }}
+  {{- end }}
+  {{- if .Values.ingress.tls }}
+  tls:
+    {{- toYaml .Values.ingress.tls | nindent 4 }}
+  {{- end }}
+  rules:
+    - {{- if .Values.ingress.host }}
+      host: {{ .Values.ingress.host | quote }}
+      {{- end }}
+      http:
+        paths:
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "k8s-stack-manager.backend.serviceName" . }}
+                port:
+                  number: {{ .Values.backend.port }}
+          - path: /ws
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "k8s-stack-manager.backend.serviceName" . }}
+                port:
+                  number: {{ .Values.backend.port }}
+          - path: /health
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "k8s-stack-manager.backend.serviceName" . }}
+                port:
+                  number: {{ .Values.backend.port }}
+          - path: /swagger
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "k8s-stack-manager.backend.serviceName" . }}
+                port:
+                  number: {{ .Values.backend.port }}
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "k8s-stack-manager.frontend.serviceName" . }}
+                port:
+                  number: {{ .Values.frontend.port }}
+{{- end }}

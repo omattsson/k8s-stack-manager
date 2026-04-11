@@ -1,31 +1,53 @@
+{{ include "k8s-stack-manager.validateIngressType" . }}
 K8s Stack Manager has been deployed!
 
-{{- if .Values.ingress.enabled }}
+{{- if eq .Values.ingress.type "traefik" }}
 
-Access the application:
+Ingress: Traefik IngressRoute
 {{- if .Values.ingress.host }}
   URL: http{{ if .Values.ingress.traefik.tls.secretName }}s{{ end }}://{{ .Values.ingress.host }}
 {{- else }}
-  The IngressRoute has no host restriction — access via your Traefik load balancer IP.
-  Get the IP:  kubectl get svc -n traefik traefik -o jsonpath='{.status.loadBalancer.ingress[0].ip}'
+  No host restriction — access via your Traefik load balancer IP:
+    kubectl get svc -n traefik traefik -o jsonpath='{.status.loadBalancer.ingress[0].ip}'
 {{- end }}
+
+{{- else if eq .Values.ingress.type "ingress" }}
+
+Ingress: Standard Kubernetes Ingress
+{{- if .Values.ingress.host }}
+  URL: http{{ if .Values.ingress.tls }}s{{ end }}://{{ .Values.ingress.host }}
+{{- else }}
+  No host restriction — access via your ingress controller's external IP.
+{{- end }}
+
 {{- else }}
 
-Ingress is disabled.
+Ingress: Disabled (type: none)
 
-NOTE: The frontend is built to call /api and /ws on the same origin.
-      This chart's frontend service requires an ingress or reverse proxy
-      that routes / to the frontend and /api, /ws to the backend.
+  Access via port-forward:
+    # Frontend + API (full app):
+    kubectl port-forward svc/{{ include "k8s-stack-manager.frontend.serviceName" . }} 3000:{{ .Values.frontend.port }}
+    kubectl port-forward svc/{{ include "k8s-stack-manager.backend.serviceName" . }} 8081:{{ .Values.backend.port }}
 
-To test the backend API locally without ingress, port-forward the backend service:
-  kubectl port-forward svc/{{ include "k8s-stack-manager.backend.stableService" . }} 8081:{{ .Values.backend.port }}
+    Frontend: http://localhost:3000
+    Backend API: http://localhost:8081
 
-  Backend API: http://localhost:8081
+  NOTE: Port-forwarding runs two separate origins. For full-app testing,
+        use an ingress type or configure CORS_ALLOWED_ORIGINS accordingly.
+
 {{- end }}
+
+{{- if .Values.argoRollouts.enabled }}
 
 Watch rollout status:
   kubectl argo rollouts get rollout {{ include "k8s-stack-manager.fullname" . }}-backend --watch
   kubectl argo rollouts get rollout {{ include "k8s-stack-manager.fullname" . }}-frontend --watch
+{{- else }}
+
+Watch deployment status:
+  kubectl rollout status deployment/{{ include "k8s-stack-manager.fullname" . }}-backend
+  kubectl rollout status deployment/{{ include "k8s-stack-manager.fullname" . }}-frontend
+{{- end }}
 
 {{- if eq .Values.backend.secrets.JWT_SECRET "CHANGE-ME-generate-a-random-secret" }}
 
@@ -37,6 +59,12 @@ WARNING: backend.secrets.JWT_SECRET is still the placeholder value!
 
 WARNING: backend.secrets.ADMIN_PASSWORD is set to a default/placeholder value!
   Change it with: --set backend.secrets.ADMIN_PASSWORD="your-secure-password"
+{{- end }}
+
+{{- if and .Values.mysql.enabled (eq .Values.mysql.auth.rootPassword "CHANGE-ME-set-a-secure-password") }}
+
+WARNING: mysql.auth.rootPassword is still the placeholder value!
+  Change it with: --set mysql.auth.rootPassword="$(openssl rand -base64 24)"
 {{- end }}
 
 {{- if eq (index .Values.backend.env "CORS_ALLOWED_ORIGINS") "*" }}

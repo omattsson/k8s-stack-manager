@@ -381,6 +381,11 @@ func (r *Registry) buildClients(cluster *models.Cluster) (*ClusterClients, error
 	var tempPath string
 
 	switch {
+	case cluster.UseInCluster:
+		// Use the pod's own service account — empty kubeconfig path
+		// triggers in-cluster config in both k8s.NewClient and helm CLI.
+		kubeconfigPath = ""
+
 	case cluster.KubeconfigPath != "":
 		kubeconfigPath = cluster.KubeconfigPath
 

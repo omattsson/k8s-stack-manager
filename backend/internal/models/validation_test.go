@@ -426,7 +426,7 @@ func TestClusterValidate(t *testing.T) {
 				KubeconfigData: "data",
 			},
 			wantErr: true,
-			errMsg:  "api_server_url is required",
+			errMsg:  "api_server_url is required (unless use_in_cluster is true)",
 		},
 		{
 			name: "both kubeconfig_data and kubeconfig_path set",
@@ -446,7 +446,7 @@ func TestClusterValidate(t *testing.T) {
 				APIServerURL: "https://k8s.example.com",
 			},
 			wantErr: true,
-			errMsg:  "one of kubeconfig_data or kubeconfig_path is required",
+			errMsg:  "one of kubeconfig_data, kubeconfig_path, or use_in_cluster is required",
 		},
 		{
 			name: "invalid health status",

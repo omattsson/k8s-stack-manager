@@ -716,6 +716,25 @@ func (d *Database) AutoMigrate() error {
 		},
 	})
 
+	// Migration 29: Add use_in_cluster column to clusters table
+	migrator.AddMigration(schema.Migration{
+		Version:     "20231201000029",
+		Name:        "add_use_in_cluster_to_clusters",
+		Description: "Add use_in_cluster boolean column to clusters table for in-cluster (service account) auth",
+		Up: func(tx *gorm.DB) error {
+			if tx.Migrator().HasColumn(&models.Cluster{}, "UseInCluster") {
+				return nil
+			}
+			return tx.Migrator().AddColumn(&models.Cluster{}, "UseInCluster")
+		},
+		Down: func(tx *gorm.DB) error {
+			if tx.Migrator().HasColumn(&models.Cluster{}, "UseInCluster") {
+				return tx.Migrator().DropColumn(&models.Cluster{}, "UseInCluster")
+			}
+			return nil
+		},
+	})
+
 	// Run migrations
 	if err := migrator.MigrateUp(); err != nil {
 		return err

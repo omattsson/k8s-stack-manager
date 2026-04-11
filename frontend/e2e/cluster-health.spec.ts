@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { loginAsAdmin } from './helpers';
+import { loginAsAdmin, API_BASE, ADMIN_PASSWORD } from './helpers';
 
 const MOCK_CLUSTER_ID = 'cluster-001';
 const MOCK_CLUSTER_NAME = 'test-cluster';
@@ -189,7 +189,6 @@ test.describe('Cluster Health - Access Control', () => {
   });
 
   test('regular user without devops role sees permission error', async ({ page }) => {
-    const API_BASE = 'http://localhost:8081';
     const username = `viewer-${Date.now()}`;
 
     // Log in as admin via API to get the token directly from the response
@@ -197,7 +196,7 @@ test.describe('Cluster Health - Access Control', () => {
     let adminRes;
     for (let attempt = 0; attempt < 5; attempt++) {
       adminRes = await page.request.post(`${API_BASE}/api/v1/auth/login`, {
-        data: { username: 'admin', password: 'admin' },
+        data: { username: 'admin', password: ADMIN_PASSWORD },
       });
       if (adminRes.status() !== 429) break;
       await page.waitForTimeout(2000 * (attempt + 1));

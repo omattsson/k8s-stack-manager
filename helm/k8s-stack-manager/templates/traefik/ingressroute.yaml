@@ -1,4 +1,4 @@
-{{- if .Values.ingress.enabled }}
+{{- if eq .Values.ingress.type "traefik" }}
 apiVersion: traefik.io/v1alpha1
 kind: IngressRoute
 metadata:
@@ -9,12 +9,17 @@ spec:
   entryPoints:
     {{- toYaml .Values.ingress.traefik.entryPoints | nindent 4 }}
   routes:
-    # API requests → backend (via TraefikService for canary traffic splitting)
+    # API requests → backend
     - match: {{ if .Values.ingress.host }}Host(`{{ .Values.ingress.host }}`) && {{ end }}PathPrefix(`/api`)
       kind: Rule
       services:
         - name: {{ include "k8s-stack-manager.fullname" . }}-backend
+          {{- if .Values.argoRollouts.enabled }}
           kind: TraefikService
+          {{- else }}
+          kind: Service
+          port: {{ .Values.backend.port }}
+          {{- end }}
       middlewares:
         {{- if .Values.ingress.traefik.middlewares.stripApiPrefix }}
         - name: {{ include "k8s-stack-manager.fullname" . }}-strip-api-prefix
@@ -22,30 +27,50 @@ spec:
         {{- if .Values.ingress.traefik.middlewares.secureHeaders }}
         - name: {{ include "k8s-stack-manager.fullname" . }}-secure-headers
         {{- end }}
-    # WebSocket → backend (via TraefikService for canary traffic splitting)
+    # WebSocket → backend
     - match: {{ if .Values.ingress.host }}Host(`{{ .Values.ingress.host }}`) && {{ end }}PathPrefix(`/ws`)
       kind: Rule
       services:
         - name: {{ include "k8s-stack-manager.fullname" . }}-backend
+          {{- if .Values.argoRollouts.enabled }}
           kind: TraefikService
-    # Health checks → backend (via TraefikService for canary traffic splitting)
+          {{- else }}
+          kind: Service
+          port: {{ .Values.backend.port }}
+          {{- end }}
+    # Health checks → backend
     - match: {{ if .Values.ingress.host }}Host(`{{ .Values.ingress.host }}`) && {{ end }}PathPrefix(`/health`)
       kind: Rule
       services:
         - name: {{ include "k8s-stack-manager.fullname" . }}-backend
+          {{- if .Values.argoRollouts.enabled }}
           kind: TraefikService
-    # Swagger docs → backend (via TraefikService for canary traffic splitting)
+          {{- else }}
+          kind: Service
+          port: {{ .Values.backend.port }}
+          {{- end }}
+    # Swagger docs → backend
     - match: {{ if .Values.ingress.host }}Host(`{{ .Values.ingress.host }}`) && {{ end }}PathPrefix(`/swagger`)
       kind: Rule
       services:
         - name: {{ include "k8s-stack-manager.fullname" . }}-backend
+          {{- if .Values.argoRollouts.enabled }}
           kind: TraefikService
-    # Everything else → frontend (via TraefikService for canary traffic splitting)
+          {{- else }}
+          kind: Service
+          port: {{ .Values.backend.port }}
+          {{- end }}
+    # Everything else → frontend
     - match: {{ if .Values.ingress.host }}Host(`{{ .Values.ingress.host }}`) && {{ end }}PathPrefix(`/`)
       kind: Rule
       services:
         - name: {{ include "k8s-stack-manager.fullname" . }}-frontend
+          {{- if .Values.argoRollouts.enabled }}
           kind: TraefikService
+          {{- else }}
+          kind: Service
+          port: {{ .Values.frontend.port }}
+          {{- end }}
       {{- if .Values.ingress.traefik.middlewares.secureHeaders }}
       middlewares:
         - name: {{ include "k8s-stack-manager.fullname" . }}-secure-headers

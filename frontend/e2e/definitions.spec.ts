@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { loginAsDevops, uniqueName, createAndPublishTemplate, instantiateTemplate } from './helpers';
+import { loginAsDevops, uniqueName, createAndPublishTemplate, instantiateTemplate, API_BASE } from './helpers';
 
 test.describe('Stack Definition Management', () => {
   test.beforeEach(async ({ page }) => {
@@ -122,7 +122,7 @@ test.describe('Stack Definition Management', () => {
     const token = await page.evaluate(() => localStorage.getItem('token'));
 
     // Delete via API
-    const response = await request.delete(`http://localhost:8081/api/v1/stack-definitions/${defId}`, {
+    const response = await request.delete(`${API_BASE}/api/v1/stack-definitions/${defId}`, {
       headers: { Authorization: `Bearer ${token}` },
     });
     expect(response.ok()).toBeTruthy();

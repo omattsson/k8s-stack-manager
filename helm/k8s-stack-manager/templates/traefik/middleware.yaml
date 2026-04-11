@@ -1,4 +1,4 @@
-{{- if .Values.ingress.enabled }}
+{{- if eq .Values.ingress.type "traefik" }}
 {{- if .Values.ingress.traefik.middlewares.stripApiPrefix }}
 apiVersion: traefik.io/v1alpha1
 kind: Middleware

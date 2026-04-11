@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { ADMIN_PASSWORD } from './helpers';
 
 /**
  * Creates a fake JWT token suitable for testing the frontend auth flow.
@@ -207,7 +208,7 @@ test.describe('OIDC Authentication', () => {
     await expect(page.getByLabel('Username')).toBeVisible({ timeout: 10_000 });
 
     await page.getByLabel('Username').fill('admin');
-    await page.getByLabel('Password').fill('admin');
+    await page.getByLabel('Password').fill(ADMIN_PASSWORD);
     await page.getByRole('button', { name: 'Sign In', exact: true }).click();
 
     await expect(page).toHaveURL('/', { timeout: 10_000 });

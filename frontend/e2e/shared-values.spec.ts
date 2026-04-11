@@ -1,14 +1,12 @@
 import { test, expect } from '@playwright/test';
-import { loginAsAdmin, uniqueName } from './helpers';
-
-const API_BASE = 'http://localhost:8081';
+import { loginAsAdmin, uniqueName, API_BASE, ADMIN_PASSWORD } from './helpers';
 
 /**
  * Helper: login via API and return the JWT token.
  */
 async function apiLogin(request: import('@playwright/test').APIRequestContext): Promise<string> {
   const res = await request.post(`${API_BASE}/api/v1/auth/login`, {
-    data: { username: 'admin', password: 'admin' },
+    data: { username: 'admin', password: ADMIN_PASSWORD },
   });
   expect(res.ok()).toBe(true);
   const body = await res.json();

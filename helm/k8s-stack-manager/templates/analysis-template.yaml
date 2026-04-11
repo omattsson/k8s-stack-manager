@@ -1,3 +1,4 @@
+{{- if .Values.argoRollouts.enabled }}
 {{- if .Values.backend.rollout.analysis.enabled }}
 apiVersion: argoproj.io/v1alpha1
 kind: AnalysisTemplate
@@ -45,4 +46,5 @@ spec:
       provider:
         web:
           url: "http://{{ "{{" }}args.service-name{{ "}}" }}:{{ "{{" }}args.port{{ "}}" }}/"
+{{- end }}
 {{- end }}

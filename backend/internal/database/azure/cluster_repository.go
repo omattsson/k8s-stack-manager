@@ -19,7 +19,6 @@ import (
 const tableClusters = "Clusters"
 const filterPKClusters = odataPartitionKeyEq + "clusters'"
 
-
 // ClusterRepository implements models.ClusterRepository for Azure Table Storage.
 // Partition key: "clusters", Row key: cluster ID.
 type ClusterRepository struct {
@@ -72,6 +71,7 @@ type clusterEntity struct {
 	HealthStatus   string  `json:"HealthStatus"`
 	MaxNamespaces  float64 `json:"MaxNamespaces"`
 	IsDefault      bool    `json:"IsDefault"`
+	UseInCluster   bool    `json:"UseInCluster"`
 	CreatedAt      string  `json:"CreatedAt"`
 	UpdatedAt      string  `json:"UpdatedAt"`
 }
@@ -105,6 +105,7 @@ func (r *ClusterRepository) clusterEntityToModel(e *clusterEntity) (*models.Clus
 		HealthStatus:   healthStatus,
 		MaxNamespaces:  int(e.MaxNamespaces),
 		IsDefault:      e.IsDefault,
+		UseInCluster:   e.UseInCluster,
 	}
 	c.CreatedAt, _ = time.Parse(time.RFC3339, e.CreatedAt)
 	c.UpdatedAt, _ = time.Parse(time.RFC3339, e.UpdatedAt)
@@ -298,6 +299,7 @@ func (r *ClusterRepository) clusterToEntity(c *models.Cluster) (map[string]inter
 		"HealthStatus":   c.HealthStatus,
 		"MaxNamespaces":  c.MaxNamespaces,
 		"IsDefault":      c.IsDefault,
+		"UseInCluster":   c.UseInCluster,
 		"CreatedAt":      c.CreatedAt.Format(time.RFC3339),
 		"UpdatedAt":      c.UpdatedAt.Format(time.RFC3339),
 	}, nil

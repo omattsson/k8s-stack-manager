@@ -14,7 +14,7 @@ spec:
     metadata:
       labels:
         {{- include "k8s-stack-manager.azurite.selectorLabels" . | nindent 8 }}
-      {{- if semverCompare "<1.30-0" .Capabilities.KubeVersion.Version }}
+      {{- if and .Values.global.appArmor.enabled (semverCompare "<1.30-0" .Capabilities.KubeVersion.Version) }}
       annotations:
         container.apparmor.security.beta.kubernetes.io/azurite: runtime/default
       {{- end }}
@@ -35,7 +35,7 @@ spec:
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
-            {{- if semverCompare ">=1.30-0" .Capabilities.KubeVersion.Version }}
+            {{- if and .Values.global.appArmor.enabled (semverCompare ">=1.30-0" .Capabilities.KubeVersion.Version) }}
             appArmorProfile:
               type: RuntimeDefault
             {{- end }}

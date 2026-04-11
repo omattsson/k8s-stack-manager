@@ -1,6 +1,6 @@
-{{- if .Values.argoRollouts.enabled }}
-apiVersion: argoproj.io/v1alpha1
-kind: Rollout
+{{- if not .Values.argoRollouts.enabled }}
+apiVersion: apps/v1
+kind: Deployment
 metadata:
   name: {{ include "k8s-stack-manager.fullname" . }}-frontend
   labels:
@@ -13,27 +13,6 @@ spec:
   selector:
     matchLabels:
       {{- include "k8s-stack-manager.frontend.selectorLabels" . | nindent 6 }}
-  strategy:
-    canary:
-      canaryService: {{ include "k8s-stack-manager.frontend.canaryService" . }}
-      stableService: {{ include "k8s-stack-manager.frontend.stableService" . }}
-      {{- if eq .Values.ingress.type "traefik" }}
-      trafficRouting:
-        traefik:
-          weightedTraefikServiceName: {{ include "k8s-stack-manager.fullname" . }}-frontend
-      {{- end }}
-      {{- if .Values.frontend.rollout.analysis.enabled }}
-      analysis:
-        templates:
-          - templateName: {{ include "k8s-stack-manager.fullname" . }}-frontend
-        args:
-          - name: service-name
-            value: {{ include "k8s-stack-manager.frontend.canaryService" . }}
-      {{- end }}
-      {{- with .Values.frontend.rollout.strategy.canary.steps }}
-      steps:
-        {{- toYaml . | nindent 8 }}
-      {{- end }}
   template:
     metadata:
       labels:

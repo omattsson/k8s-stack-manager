@@ -152,16 +152,19 @@ func (c *Cluster) Validate() error {
 	if c.Name == "" {
 		return errors.New("name is required")
 	}
-	if c.APIServerURL == "" {
-		return errors.New("api_server_url is required")
+	if !c.UseInCluster && c.APIServerURL == "" {
+		return errors.New("api_server_url is required (unless use_in_cluster is true)")
 	}
 	hasData := c.KubeconfigData != ""
 	hasPath := c.KubeconfigPath != ""
 	if hasData && hasPath {
 		return errors.New("only one of kubeconfig_data or kubeconfig_path must be set, not both")
 	}
-	if !hasData && !hasPath {
-		return errors.New("one of kubeconfig_data or kubeconfig_path is required")
+	if !c.UseInCluster && !hasData && !hasPath {
+		return errors.New("one of kubeconfig_data, kubeconfig_path, or use_in_cluster is required")
+	}
+	if c.UseInCluster && (hasData || hasPath) {
+		return errors.New("kubeconfig_data and kubeconfig_path must not be set when use_in_cluster is true")
 	}
 	if c.MaxNamespaces < 0 {
 		return errors.New("max_namespaces must be non-negative")

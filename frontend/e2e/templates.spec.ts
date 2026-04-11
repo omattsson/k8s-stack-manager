@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { loginAsDevops, uniqueName, createAndPublishTemplate } from './helpers';
+import { loginAsDevops, uniqueName, createAndPublishTemplate, API_BASE } from './helpers';
 
 test.describe('Template Management', () => {
   test.beforeEach(async ({ page }) => {
@@ -179,7 +179,7 @@ test.describe('Template Management', () => {
     const token = await page.evaluate(() => localStorage.getItem('token'));
 
     // Delete via API (no UI delete button on preview page for templates in gallery)
-    const response = await request.delete(`http://localhost:8081/api/v1/templates/${templateId}`, {
+    const response = await request.delete(`${API_BASE}/api/v1/templates/${templateId}`, {
       headers: { Authorization: `Bearer ${token}` },
     });
     expect(response.ok()).toBeTruthy();

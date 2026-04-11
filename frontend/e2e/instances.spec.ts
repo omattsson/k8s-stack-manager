@@ -1,7 +1,25 @@
 import { test, expect } from '@playwright/test';
-import { loginAsDevops, uniqueName, createAndPublishTemplate, instantiateTemplate } from './helpers';
+import { loginAsDevops, uniqueName, createAndPublishTemplate, instantiateTemplate, API_BASE, ADMIN_PASSWORD, ensureDefaultCluster, deleteCluster } from './helpers';
 
 test.describe('Stack Instance Management', () => {
+  let clusterId: string | null;
+
+  test.beforeAll(async ({ request }) => {
+    const res = await request.post(`${API_BASE}/api/v1/auth/login`, {
+      data: { username: 'admin', password: ADMIN_PASSWORD },
+    });
+    const { token } = await res.json();
+    clusterId = await ensureDefaultCluster(request, token);
+  });
+
+  test.afterAll(async ({ request }) => {
+    const res = await request.post(`${API_BASE}/api/v1/auth/login`, {
+      data: { username: 'admin', password: ADMIN_PASSWORD },
+    });
+    const { token } = await res.json();
+    await deleteCluster(request, token, clusterId);
+  });
+
   test.beforeEach(async ({ page }) => {
     await loginAsDevops(page);
     await page.goto('/');
@@ -226,13 +244,13 @@ test.describe('Stack Instance Management', () => {
 
   test('instance creation form shows cluster selector when clusters exist', async ({ page }) => {
     // Cluster CRUD requires admin — get an admin token for API calls
-    const adminLoginRes = await page.request.post('http://localhost:8081/api/v1/auth/login', {
-      data: { username: 'admin', password: 'admin' },
+    const adminLoginRes = await page.request.post(`${API_BASE}/api/v1/auth/login`, {
+      data: { username: 'admin', password: ADMIN_PASSWORD },
     });
     const { token: adminToken } = await adminLoginRes.json();
 
     const clusterName = uniqueName('e2e-cluster');
-    const createRes = await page.request.post('http://localhost:8081/api/v1/clusters', {
+    const createRes = await page.request.post(`${API_BASE}/api/v1/clusters`, {
       headers: { Authorization: `Bearer ${adminToken}` },
       data: {
         name: clusterName,
@@ -263,7 +281,7 @@ test.describe('Stack Instance Management', () => {
       await page.getByRole('option', { name: new RegExp(clusterName) }).click();
     } finally {
       // Clean up with admin token
-      await page.request.delete(`http://localhost:8081/api/v1/clusters/${cluster.id}`, {
+      await page.request.delete(`${API_BASE}/api/v1/clusters/${cluster.id}`, {
         headers: { Authorization: `Bearer ${adminToken}` },
       });
     }

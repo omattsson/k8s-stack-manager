@@ -1,15 +1,26 @@
 global:
-  imageRegistry: ""
+  imageRegistry: "ghcr.io/omattsson"
+  appArmor:
+    enabled: false  # Set to true for environments with AppArmor support (e.g. most Linux distributions)
 
 nameOverride: ""
 fullnameOverride: ""
+
+# ---------------------------------------------------------------------------
+# Argo Rollouts (progressive delivery)
+# ---------------------------------------------------------------------------
+argoRollouts:
+  enabled: false  # Set to false to use standard Kubernetes Deployments
+  # NOTE: Canary weight-based traffic splitting requires ingress.type=traefik.
+  # With other ingress types, rollouts still pause between steps but traffic
+  # is pod-level (round-robin), not percentage-weighted.
 
 # ---------------------------------------------------------------------------
 # Backend
 # ---------------------------------------------------------------------------
 backend:
   image:
-    repository: k8s-stack-manager-backend
+    repository: k8s-stack-manager/backend
     tag: ""  # Empty = uses Chart.AppVersion
     pullPolicy: IfNotPresent
   replicas: 2
@@ -17,11 +28,11 @@ backend:
 
   resources:
     requests:
-      memory: 128Mi
+      memory: 256Mi
       cpu: 100m
     limits:
-      memory: 512Mi
-      cpu: 500m
+      memory: 1Gi
+      cpu: "1"
 
   # Non-secret environment variables (stored in ConfigMap).
   env:
@@ -37,13 +48,14 @@ backend:
     LOG_LEVEL: info
     API_VERSION: v1
     API_PREFIX: /api
-    RATE_LIMIT: "100"
+    RATE_LIMIT: "2000"
+    LOGIN_RATE_LIMIT: "500"
     CORS_ALLOWED_ORIGINS: "*"
     CORS_ALLOWED_METHODS: "GET,POST,PUT,DELETE,OPTIONS"
     CORS_ALLOWED_HEADERS: "Origin,Content-Type,Accept,Authorization"
     CORS_MAX_AGE: "300"
-    USE_AZURE_TABLE: "true"
-    USE_AZURITE: "true"
+    USE_AZURE_TABLE: "false"
+    USE_AZURITE: "false"
     # AZURE_TABLE_ENDPOINT is auto-set to the azurite service when azurite.enabled=true
     AZURE_TABLE_ACCOUNT_NAME: devstoreaccount1
     AZURE_TABLE_NAME: items
@@ -115,7 +127,7 @@ backend:
 # ---------------------------------------------------------------------------
 frontend:
   image:
-    repository: k8s-stack-manager-frontend
+    repository: k8s-stack-manager/frontend
     tag: ""  # Empty = uses Chart.AppVersion
     pullPolicy: IfNotPresent
   replicas: 2
@@ -168,7 +180,7 @@ frontend:
 # Azurite (Azure Table Storage emulator)
 # ---------------------------------------------------------------------------
 azurite:
-  enabled: true
+  enabled: false  # Enable for Azure Table Storage emulator; set backend.env.USE_AZURE_TABLE to "true"
   image:
     repository: mcr.microsoft.com/azure-storage/azurite
     tag: "3.34.0"
@@ -188,17 +200,18 @@ azurite:
 # MySQL Database
 # ---------------------------------------------------------------------------
 mysql:
-  enabled: false  # Set to true to deploy MySQL; set backend.env.USE_AZURE_TABLE to "false"
+  enabled: true  # Disable to use Azure Table Storage instead; set backend.env.USE_AZURE_TABLE to "true"
   image:
     repository: mysql
-    tag: "8.4"
+    tag: "8.0"
     pullPolicy: IfNotPresent
   auth:
-    rootPassword: ""       # Set via --set or values override. REQUIRED when mysql.enabled=true
+    rootPassword: "CHANGE-ME-set-a-secure-password"
     database: app          # Database name to create
     user: ""               # Optional: create a non-root user
     password: ""           # Optional: password for non-root user
   persistence:
+    enabled: true     # Set false for local dev (uses emptyDir, data lost on pod restart)
     size: 5Gi
     storageClass: ""
   resources:
@@ -233,11 +246,18 @@ otel:
         memory: 512Mi
 
 # ---------------------------------------------------------------------------
-# Traefik IngressRoute
+# Ingress
 # ---------------------------------------------------------------------------
 ingress:
-  enabled: true
+  # type: traefik | ingress | none
+  #   traefik  — Traefik IngressRoute CRD (requires Traefik with CRDs installed)
+  #   ingress  — Standard Kubernetes Ingress (works with any ingress controller)
+  #   none     — No ingress; use kubectl port-forward to access services
+  type: traefik
+
   host: ""  # Empty = match all hosts (good for local dev)
+
+  # Traefik-specific settings (only used when type: traefik)
   traefik:
     entryPoints:
       - web
@@ -246,3 +266,13 @@ ingress:
     middlewares:
       stripApiPrefix: false  # Backend routes include /api prefix (/api/v1/...)
       secureHeaders: true
+
+  # Standard Ingress settings (only used when type: ingress)
+  className: ""  # e.g. "nginx", "traefik", or leave empty for cluster default
+  tls: []
+  #  - secretName: k8s-stack-manager-tls
+  #    hosts:
+  #      - k8s-stack-manager.local
+  annotations: {}
+  #  nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+  #  nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"

@@ -1,6 +1,60 @@
-import { Page, expect } from '@playwright/test';
+import { Page, expect, APIRequestContext } from '@playwright/test';
 
-const API_BASE = 'http://localhost:8081';
+export const API_BASE = process.env.API_BASE_URL || 'http://localhost:8081';
+export const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin';
+
+/**
+ * Ensure a default cluster exists. Creates one if none is found.
+ * Returns the cluster ID so it can be cleaned up in afterAll.
+ * Accepts either a Playwright APIRequestContext (for API-level tests)
+ * or a Page (for UI tests).
+ */
+export async function ensureDefaultCluster(
+  requestOrPage: APIRequestContext | Page,
+  token: string,
+): Promise<string | null> {
+  const req = 'request' in requestOrPage ? requestOrPage.request : requestOrPage;
+  const headers = { Authorization: `Bearer ${token}` };
+
+  // Check if a default cluster already exists
+  const listRes = await req.get(`${API_BASE}/api/v1/clusters`, { headers });
+  if (listRes.ok()) {
+    const clusters = await listRes.json();
+    const existing = clusters.find((c: { is_default: boolean }) => c.is_default);
+    if (existing) return null; // already have a default — nothing to clean up
+  }
+
+  // Create a default cluster using in-cluster config (the backend pod's own
+  // service account). This avoids needing a real kubeconfig file and keeps the
+  // backend's health check happy since the cluster is actually reachable.
+  const createRes = await req.post(`${API_BASE}/api/v1/clusters`, {
+    headers: { ...headers, 'Content-Type': 'application/json' },
+    data: {
+      name: 'e2e-default-cluster',
+      api_server_url: 'https://kubernetes.default.svc',
+      use_in_cluster: true,
+      is_default: true,
+    },
+  });
+  expect(createRes.ok(), `Failed to create default cluster: ${createRes.status()}`).toBe(true);
+  const cluster = await createRes.json();
+  return cluster.id;
+}
+
+/**
+ * Delete a cluster by ID. No-op if clusterID is null.
+ */
+export async function deleteCluster(
+  requestOrPage: APIRequestContext | Page,
+  token: string,
+  clusterId: string | null,
+): Promise<void> {
+  if (!clusterId) return;
+  const req = 'request' in requestOrPage ? requestOrPage.request : requestOrPage;
+  await req.delete(`${API_BASE}/api/v1/clusters/${clusterId}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
 
 /**
  * Log in as admin by obtaining a JWT token via API and injecting it into localStorage.
@@ -12,7 +66,7 @@ export async function loginAsAdmin(page: Page) {
   let res;
   for (let attempt = 0; attempt < 5; attempt++) {
     res = await page.request.post(`${API_BASE}/api/v1/auth/login`, {
-      data: { username: 'admin', password: 'admin' },
+      data: { username: 'admin', password: ADMIN_PASSWORD },
     });
     if (res.status() !== 429) break;
     await page.waitForTimeout(2000 * (attempt + 1));
@@ -80,7 +134,7 @@ const E2E_TEST_PASSWORD = 'e2e-test-password';
  * Returns the username.
  */
 export async function loginAsUser(page: Page): Promise<string> {
-  const adminToken = await loginViaAPI(page, 'admin', 'admin');
+  const adminToken = await loginViaAPI(page, 'admin', ADMIN_PASSWORD);
   await ensureUserRegistered(page, adminToken, E2E_USER_USERNAME, E2E_TEST_PASSWORD, 'user');
   const token = await loginViaAPI(page, E2E_USER_USERNAME, E2E_TEST_PASSWORD);
   await page.addInitScript((t) => {
@@ -96,7 +150,7 @@ export async function loginAsUser(page: Page): Promise<string> {
  * Returns the username.
  */
 export async function loginAsDevops(page: Page): Promise<string> {
-  const adminToken = await loginViaAPI(page, 'admin', 'admin');
+  const adminToken = await loginViaAPI(page, 'admin', ADMIN_PASSWORD);
   await ensureUserRegistered(page, adminToken, E2E_DEVOPS_USERNAME, E2E_TEST_PASSWORD, 'devops');
   const token = await loginViaAPI(page, E2E_DEVOPS_USERNAME, E2E_TEST_PASSWORD);
   await page.addInitScript((t) => {
@@ -136,7 +190,7 @@ export async function createTemplate(page: Page, name: string): Promise<string> 
  */
 export async function publishTemplate(page: Page, templateId: string) {
   const token = await page.evaluate(() => localStorage.getItem('token'));
-  await page.request.post(`http://localhost:8081/api/v1/templates/${templateId}/publish`, {
+  await page.request.post(`${API_BASE}/api/v1/templates/${templateId}/publish`, {
     headers: { Authorization: `Bearer ${token}` },
   });
 }
@@ -170,7 +224,7 @@ export async function createAndPublishTemplate(page: Page, name: string): Promis
 
   // Publish via API (more reliable than UI toggle for test setup)
   const token = await page.evaluate(() => localStorage.getItem('token'));
-  const response = await page.request.post(`http://localhost:8081/api/v1/templates/${templateId}/publish`, {
+  const response = await page.request.post(`${API_BASE}/api/v1/templates/${templateId}/publish`, {
     headers: { Authorization: `Bearer ${token}` },
   });
   if (!response.ok()) {

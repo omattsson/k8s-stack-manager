@@ -174,3 +174,35 @@ Frontend image.
 {{- printf "%s:%s" .Values.frontend.image.repository (.Values.frontend.image.tag | default .Chart.AppVersion) }}
 {{- end }}
 {{- end }}
+
+{{/*
+Backend service name — stable service when rollouts enabled, simple service otherwise.
+*/}}
+{{- define "k8s-stack-manager.backend.serviceName" -}}
+{{- if .Values.argoRollouts.enabled }}
+{{- include "k8s-stack-manager.backend.stableService" . }}
+{{- else }}
+{{- printf "%s-backend" (include "k8s-stack-manager.fullname" .) }}
+{{- end }}
+{{- end }}
+
+{{/*
+Frontend service name — stable service when rollouts enabled, simple service otherwise.
+*/}}
+{{- define "k8s-stack-manager.frontend.serviceName" -}}
+{{- if .Values.argoRollouts.enabled }}
+{{- include "k8s-stack-manager.frontend.stableService" . }}
+{{- else }}
+{{- printf "%s-frontend" (include "k8s-stack-manager.fullname" .) }}
+{{- end }}
+{{- end }}
+
+{{/*
+Validate ingress type.
+*/}}
+{{- define "k8s-stack-manager.validateIngressType" -}}
+{{- $valid := list "traefik" "ingress" "none" -}}
+{{- if not (has .Values.ingress.type $valid) -}}
+{{- fail (printf "ingress.type must be one of: traefik, ingress, none (got: %s)" .Values.ingress.type) -}}
+{{- end -}}
+{{- end -}}
