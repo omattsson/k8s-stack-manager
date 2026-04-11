@@ -23,8 +23,25 @@ func TestCORSMiddleware(t *testing.T) {
 		r.ServeHTTP(w, req)
 
 		assert.Equal(t, "*", w.Header().Get("Access-Control-Allow-Origin"))
+		assert.Empty(t, w.Header().Get("Access-Control-Allow-Credentials"))
 		assert.Equal(t, "GET, POST, PUT, DELETE, OPTIONS", w.Header().Get("Access-Control-Allow-Methods"))
 		assert.Equal(t, "Content-Type, Content-Length, Accept-Encoding, Authorization, X-Request-ID, X-API-Key", w.Header().Get("Access-Control-Allow-Headers"))
+		assert.Equal(t, http.StatusOK, w.Code)
+	})
+
+	t.Run("Wildcard with Origin header still returns star and no credentials", func(t *testing.T) {
+		t.Parallel()
+		r := gin.New()
+		r.Use(CORS("*"))
+		r.Any("/test", func(c *gin.Context) { c.Status(http.StatusOK) })
+
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest("GET", "/test", nil)
+		req.Header.Set("Origin", "https://example.com")
+		r.ServeHTTP(w, req)
+
+		assert.Equal(t, "*", w.Header().Get("Access-Control-Allow-Origin"))
+		assert.Empty(t, w.Header().Get("Access-Control-Allow-Credentials"))
 		assert.Equal(t, http.StatusOK, w.Code)
 	})
 
@@ -53,6 +70,7 @@ func TestCORSMiddleware(t *testing.T) {
 		r.ServeHTTP(w, req)
 
 		assert.Equal(t, "https://example.com", w.Header().Get("Access-Control-Allow-Origin"))
+		assert.Equal(t, "true", w.Header().Get("Access-Control-Allow-Credentials"))
 		assert.Equal(t, "Origin", w.Header().Get("Vary"))
 		assert.Equal(t, http.StatusOK, w.Code)
 	})

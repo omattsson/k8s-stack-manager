@@ -485,10 +485,7 @@ func loadServerConfig() ServerConfig {
 
 func loadAuthConfig() AuthConfig {
 	jwtExp := getEnvDuration("JWT_EXPIRATION", 24*time.Hour)
-	accessExp := getEnvDuration("ACCESS_TOKEN_EXPIRATION", 0)
-	if accessExp == 0 {
-		accessExp = jwtExp // fallback to JWTExpiration if not set
-	}
+	accessExp := getEnvDuration("ACCESS_TOKEN_EXPIRATION", 15*time.Minute)
 
 	return AuthConfig{
 		JWTSecret:               getEnv("JWT_SECRET", ""),

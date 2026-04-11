@@ -3,6 +3,7 @@ package handlers
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -57,7 +58,7 @@ func (m *MockRefreshTokenRepository) FindByTokenHash(hash string) (*models.Refre
 	}
 	t, ok := m.byHash[hash]
 	if !ok {
-		return nil, &internalError{}
+		return nil, errors.New("record not found")
 	}
 	cp := *t
 	return &cp, nil
@@ -265,6 +266,14 @@ func TestRefresh(t *testing.T) {
 				return "unknown-token-value"
 			},
 			wantStatus: http.StatusUnauthorized,
+		},
+		{
+			name: "database error on lookup returns 500",
+			setup: func(_ *MockUserRepository, rr *MockRefreshTokenRepository) string {
+				rr.findErr = errors.New("unexpected db failure")
+				return "some-token-value"
+			},
+			wantStatus: http.StatusInternalServerError,
 		},
 		{
 			name: "revoked token returns 401 and revokes all for user",

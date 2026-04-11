@@ -20,15 +20,8 @@ import (
 func CORS(allowedOrigins string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if allowedOrigins == "" || allowedOrigins == "*" {
-			// When credentials are needed, browsers reject Access-Control-Allow-Origin: *.
-			// Reflect the specific request Origin back and set Vary: Origin.
-			if origin := c.Request.Header.Get("Origin"); origin != "" {
-				c.Writer.Header().Set("Access-Control-Allow-Origin", origin)
-				c.Writer.Header().Set("Access-Control-Allow-Credentials", "true")
-				c.Writer.Header().Set("Vary", "Origin")
-			} else {
-				c.Writer.Header().Set("Access-Control-Allow-Origin", "*")
-			}
+			c.Writer.Header().Set("Access-Control-Allow-Origin", "*")
+			// No Allow-Credentials for wildcard — require explicit origin list
 		} else {
 			requestOrigin := c.Request.Header.Get("Origin")
 			if requestOrigin != "" {

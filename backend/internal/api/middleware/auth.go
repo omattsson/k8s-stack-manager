@@ -16,6 +16,7 @@ const (
 	contextKeyUsername = "username"
 	contextKeyRole     = "role"
 	contextKeyJTI      = "jti"
+	contextKeyExpiry   = "tokenExpiry"
 )
 
 // Claims represents the JWT claims payload.
@@ -84,6 +85,9 @@ func AuthRequiredWithBlocklist(jwtSecret string, blocklist *TokenBlocklist) gin.
 		c.Set(contextKeyRole, claims.Role)
 		if claims.ID != "" {
 			c.Set(contextKeyJTI, claims.ID)
+		}
+		if claims.ExpiresAt != nil {
+			c.Set(contextKeyExpiry, claims.ExpiresAt.Time)
 		}
 		c.Next()
 	}
@@ -161,6 +165,16 @@ func GetRoleFromContext(c *gin.Context) string {
 		}
 	}
 	return ""
+}
+
+// GetTokenExpiryFromContext extracts the token expiry time set by AuthRequired middleware.
+func GetTokenExpiryFromContext(c *gin.Context) (time.Time, bool) {
+	if v, exists := c.Get(contextKeyExpiry); exists {
+		if t, ok := v.(time.Time); ok {
+			return t, true
+		}
+	}
+	return time.Time{}, false
 }
 
 // GetJTIFromContext extracts the JWT ID (jti) set by AuthRequired middleware.

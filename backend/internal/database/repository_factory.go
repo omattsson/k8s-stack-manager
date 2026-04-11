@@ -140,6 +140,12 @@ func newAzureRepositorySet(cfg *config.Config) (*RepositorySet, error) {
 		DeploymentLog:   deployLogRepo,
 	})
 
+	// NOTE: RefreshToken is intentionally nil for Azure Table Storage.
+	// Refresh token rotation requires GORM. When using Azure Table, the auth
+	// system falls back to long-lived access tokens (JWT_EXPIRATION) and the
+	// /auth/refresh endpoint returns 501 Not Implemented.
+	slog.Info("Azure Table Storage: refresh token repository not available, using long-lived access tokens")
+
 	return &RepositorySet{
 		User:                  userRepo,
 		StackTemplate:         templateRepo,
@@ -160,7 +166,8 @@ func newAzureRepositorySet(cfg *config.Config) (*RepositorySet, error) {
 		UserFavorite:          favoriteRepo,
 		CleanupPolicy:         cleanupPolicyRepo,
 		Cluster:               clusterRepo,
-		TxRunner:              noOpTx,
+		// RefreshToken: nil — not implemented for Azure Table Storage
+		TxRunner: noOpTx,
 	}, nil
 }
 

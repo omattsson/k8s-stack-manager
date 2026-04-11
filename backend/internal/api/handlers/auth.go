@@ -296,8 +296,9 @@ type RefreshResponse struct {
 // @Tags        auth
 // @Produce     json
 // @Success     200 {object} RefreshResponse
-// @Failure     401 {object} map[string]string
+// @Failure     401 {object} map[string]string "Invalid, expired, or revoked refresh token"
 // @Failure     500 {object} map[string]string
+// @Failure     501 {object} map[string]string "Refresh tokens not enabled"
 // @Router      /api/v1/auth/refresh [post]
 func (h *AuthHandler) Refresh(c *gin.Context) {
 	if h.refreshTokenRepo == nil {
@@ -314,7 +315,12 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 	tokenHash := hashRefreshToken(rawToken)
 	stored, err := h.refreshTokenRepo.FindByTokenHash(tokenHash)
 	if err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid refresh token"})
+		if isNotFoundError(err) {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid refresh token"})
+		} else {
+			slog.Error("Failed to look up refresh token", "error", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
+		}
 		return
 	}
 
@@ -327,8 +333,9 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 		return
 	}
 
-	now := time.Now()
+	now := time.Now().UTC()
 	if now.After(stored.ExpiresAt) {
+		h.clearRefreshCookie(c)
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Refresh token expired"})
 		return
 	}
@@ -355,6 +362,7 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 		// Another concurrent request already consumed this token — treat as replay
 		slog.Warn("Concurrent refresh token consumption detected", "user_id", stored.UserID, "token_id", stored.ID)
 		_ = h.refreshTokenRepo.RevokeAllForUser(stored.UserID)
+		h.clearRefreshCookie(c)
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid refresh token"})
 		return
 	}
@@ -385,6 +393,7 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 // @Summary     Logout
 // @Description Revokes the current refresh token and blocklists the access token
 // @Tags        auth
+// @Accept      json
 // @Produce     json
 // @Success     200 {object} map[string]string
 // @Failure     401 {object} map[string]string
@@ -394,7 +403,11 @@ func (h *AuthHandler) Logout(c *gin.Context) {
 	if h.blocklist != nil {
 		jti := middleware.GetJTIFromContext(c)
 		if jti != "" {
-			h.blocklist.Add(jti, time.Now().Add(h.cfg.AccessTokenExpiration))
+			expiry, ok := middleware.GetTokenExpiryFromContext(c)
+			if !ok {
+				expiry = time.Now().Add(h.cfg.AccessTokenExpiration)
+			}
+			h.blocklist.Add(jti, expiry)
 		}
 	}
 
@@ -416,9 +429,11 @@ func (h *AuthHandler) Logout(c *gin.Context) {
 // @Summary     Logout from all sessions
 // @Description Revokes all refresh tokens for the current user
 // @Tags        auth
+// @Accept      json
 // @Produce     json
 // @Success     200 {object} map[string]string
 // @Failure     401 {object} map[string]string
+// @Failure     500 {object} map[string]string
 // @Router      /api/v1/auth/logout-all [post]
 func (h *AuthHandler) LogoutAll(c *gin.Context) {
 	userID := middleware.GetUserIDFromContext(c)
@@ -431,7 +446,11 @@ func (h *AuthHandler) LogoutAll(c *gin.Context) {
 	if h.blocklist != nil {
 		jti := middleware.GetJTIFromContext(c)
 		if jti != "" {
-			h.blocklist.Add(jti, time.Now().Add(h.cfg.AccessTokenExpiration))
+			expiry, ok := middleware.GetTokenExpiryFromContext(c)
+			if !ok {
+				expiry = time.Now().Add(h.cfg.AccessTokenExpiration)
+			}
+			h.blocklist.Add(jti, expiry)
 		}
 	}
 
@@ -482,7 +501,7 @@ func (h *AuthHandler) issueRefreshToken(c *gin.Context, userID string) error {
 		return err
 	}
 
-	now := time.Now()
+	now := time.Now().UTC()
 	rt := &models.RefreshToken{
 		ID:           uuid.New().String(),
 		UserID:       userID,

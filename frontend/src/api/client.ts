@@ -56,6 +56,13 @@ import type {
   DeployPreviewResponse,
 } from '../types';
 
+// Extend Axios config to include our retry flag (avoids `any` cast).
+declare module 'axios' {
+  interface InternalAxiosRequestConfig {
+    _retry?: boolean;
+  }
+}
+
 const api = axios.create(axiosConfig);
 
 // Separate instance for token refresh — sends the httpOnly cookie and has no
@@ -97,11 +104,14 @@ api.interceptors.response.use(
   (response) => response,
   async (error) => {
     const originalRequest = error.config;
+    const authPaths = ['/auth/login', '/auth/register', '/auth/refresh'];
+    const isAuthEndpoint = authPaths.some(p => originalRequest?.url?.includes(p));
 
     if (
       error.response?.status === 401 &&
       originalRequest &&
-      !originalRequest._retry
+      !originalRequest._retry &&
+      !isAuthEndpoint
     ) {
       if (isRefreshing) {
         // Park this request until the in-flight refresh settles.

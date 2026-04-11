@@ -209,6 +209,9 @@ func main() {
 	authHandler := handlers.NewAuthHandler(userRepo, &cfg.Auth)
 
 	// Create token blocklist for immediate JWT revocation on logout.
+	// NOTE: In-memory only — revocation won't propagate across replicas.
+	// Acceptable since access tokens expire in ≤15 minutes. For multi-replica
+	// deployments, consider switching to a shared store (Redis/DB).
 	tokenBlocklist := middleware.NewTokenBlocklist(time.Minute)
 	authHandler.SetTokenBlocklist(tokenBlocklist)
 
@@ -326,13 +329,20 @@ func main() {
 	go reaper.Start()
 
 	// Periodically clean up expired refresh tokens (every hour).
-	go func() {
+	refreshTokenCleanupCtx, refreshTokenCleanupCancel := context.WithCancel(context.Background())
+	defer refreshTokenCleanupCancel()
+	go func(ctx context.Context) {
 		ticker := time.NewTicker(time.Hour)
 		defer ticker.Stop()
-		for range ticker.C {
-			authHandler.CleanupExpiredTokens()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				authHandler.CleanupExpiredTokens()
+			}
 		}
-	}()
+	}(refreshTokenCleanupCtx)
 
 	// Start cleanup scheduler.
 	if err := cleanupScheduler.Start(); err != nil {

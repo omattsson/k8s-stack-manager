@@ -5,19 +5,25 @@ import (
 	"time"
 )
 
+const defaultCleanupInterval = time.Minute
+
 // TokenBlocklist maintains an in-memory set of revoked JWT token IDs (jti).
 // Entries auto-expire after the access token TTL to bound memory usage.
 // This is used to immediately invalidate access tokens on logout without
 // waiting for natural expiry.
 type TokenBlocklist struct {
-	mu      sync.RWMutex
-	entries map[string]time.Time // jti → expiry time
-	stopCh  chan struct{}
+	mu       sync.RWMutex
+	entries  map[string]time.Time // jti → expiry time
+	stopCh   chan struct{}
+	stopOnce sync.Once
 }
 
 // NewTokenBlocklist creates a blocklist that cleans up expired entries
 // at the given interval. Call Stop() when no longer needed.
 func NewTokenBlocklist(cleanupInterval time.Duration) *TokenBlocklist {
+	if cleanupInterval <= 0 {
+		cleanupInterval = defaultCleanupInterval
+	}
 	bl := &TokenBlocklist{
 		entries: make(map[string]time.Time),
 		stopCh:  make(chan struct{}),
@@ -42,9 +48,11 @@ func (bl *TokenBlocklist) IsBlocked(tokenID string) bool {
 	return ok
 }
 
-// Stop halts the background cleanup goroutine.
+// Stop halts the background cleanup goroutine. Safe to call multiple times.
 func (bl *TokenBlocklist) Stop() {
-	close(bl.stopCh)
+	bl.stopOnce.Do(func() {
+		close(bl.stopCh)
+	})
 }
 
 func (bl *TokenBlocklist) cleanupLoop(interval time.Duration) {
