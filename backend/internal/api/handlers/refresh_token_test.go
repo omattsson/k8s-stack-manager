@@ -139,7 +139,7 @@ func testAuthConfigWithRefresh() *config.AuthConfig {
 		JWTExpiration:           time.Hour,
 		AccessTokenExpiration:   15 * time.Minute,
 		RefreshTokenExpiration:  7 * 24 * time.Hour,
-		SessionIdleTimeout:     30 * time.Minute,
+		SessionIdleTimeout:      30 * time.Minute,
 		MaxRefreshTokensPerUser: 10,
 		SecureCookies:           false,
 	}

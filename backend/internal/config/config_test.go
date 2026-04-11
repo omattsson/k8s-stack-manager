@@ -347,7 +347,7 @@ func TestAuthConfigValidate(t *testing.T) {
 			JWTExpiration:          24 * time.Hour,
 			AccessTokenExpiration:  15 * time.Minute,
 			RefreshTokenExpiration: 168 * time.Hour,
-			SessionIdleTimeout:    30 * time.Minute,
+			SessionIdleTimeout:     30 * time.Minute,
 		}
 		assert.NoError(t, cfg.Validate())
 	})
@@ -359,7 +359,7 @@ func TestAuthConfigValidate(t *testing.T) {
 			JWTExpiration:          24 * time.Hour,
 			AccessTokenExpiration:  15 * time.Minute,
 			RefreshTokenExpiration: 168 * time.Hour,
-			SessionIdleTimeout:    30 * time.Minute,
+			SessionIdleTimeout:     30 * time.Minute,
 		}
 		err := cfg.Validate()
 		require.Error(t, err)
@@ -373,7 +373,7 @@ func TestAuthConfigValidate(t *testing.T) {
 			JWTExpiration:          24 * time.Hour,
 			AccessTokenExpiration:  15 * time.Minute,
 			RefreshTokenExpiration: 168 * time.Hour,
-			SessionIdleTimeout:    30 * time.Minute,
+			SessionIdleTimeout:     30 * time.Minute,
 		}
 		err := cfg.Validate()
 		require.Error(t, err)
@@ -387,7 +387,7 @@ func TestAuthConfigValidate(t *testing.T) {
 			JWTExpiration:          -1 * time.Hour,
 			AccessTokenExpiration:  15 * time.Minute,
 			RefreshTokenExpiration: 168 * time.Hour,
-			SessionIdleTimeout:    30 * time.Minute,
+			SessionIdleTimeout:     30 * time.Minute,
 		}
 		err := cfg.Validate()
 		require.Error(t, err)
@@ -422,8 +422,8 @@ func TestAuthConfigValidate(t *testing.T) {
 				JWTExpiration:          24 * time.Hour,
 				AccessTokenExpiration:  15 * time.Minute,
 				RefreshTokenExpiration: 168 * time.Hour,
-				SessionIdleTimeout:    30 * time.Minute,
-				AdminPassword:         "admin123",
+				SessionIdleTimeout:     30 * time.Minute,
+				AdminPassword:          "admin123",
 			},
 		}
 		err := cfg.Validate()

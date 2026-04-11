@@ -6,6 +6,8 @@ import type { ReactNode } from 'react';
 vi.mock('../../api/client', () => ({
   authService: {
     login: vi.fn(),
+    logout: vi.fn(),
+    refresh: vi.fn(),
   },
 }));
 
@@ -125,7 +127,7 @@ describe('AuthContext', () => {
       });
     });
 
-    it('clears expired token from localStorage on mount', async () => {
+    it('clears expired token from localStorage on mount when refresh fails', async () => {
       const pastExp = Math.floor(Date.now() / 1000) - 3600;
       const token = fakeJwt({
         user_id: '42',
@@ -134,6 +136,9 @@ describe('AuthContext', () => {
         exp: pastExp,
       });
       mockStorage.setItem('token', token);
+      (authService.refresh as ReturnType<typeof vi.fn>).mockRejectedValue(
+        new Error('refresh failed'),
+      );
 
       const { result } = renderHook(() => useAuth(), { wrapper });
 
@@ -146,8 +151,43 @@ describe('AuthContext', () => {
       expect(mockStorage.removeItem).toHaveBeenCalledWith('token');
     });
 
+    it('refreshes expired token on mount when refresh succeeds', async () => {
+      const pastExp = Math.floor(Date.now() / 1000) - 3600;
+      const expiredToken = fakeJwt({
+        user_id: '42',
+        username: 'alice',
+        role: 'user',
+        exp: pastExp,
+      });
+      mockStorage.setItem('token', expiredToken);
+
+      const futureExp = Math.floor(Date.now() / 1000) + 3600;
+      const freshToken = fakeJwt({
+        user_id: '42',
+        username: 'alice',
+        role: 'user',
+        exp: futureExp,
+      });
+      (authService.refresh as ReturnType<typeof vi.fn>).mockResolvedValue({
+        token: freshToken,
+      });
+
+      const { result } = renderHook(() => useAuth(), { wrapper });
+
+      await waitFor(() => {
+        expect(result.current.isLoading).toBe(false);
+      });
+
+      expect(result.current.isAuthenticated).toBe(true);
+      expect(result.current.user?.username).toBe('alice');
+      expect(mockStorage.setItem).toHaveBeenCalledWith('token', freshToken);
+    });
+
     it('handles malformed token gracefully', async () => {
       mockStorage.setItem('token', 'not-a-jwt');
+      (authService.refresh as ReturnType<typeof vi.fn>).mockRejectedValue(
+        new Error('refresh failed'),
+      );
 
       const { result } = renderHook(() => useAuth(), { wrapper });
 
@@ -217,7 +257,8 @@ describe('AuthContext', () => {
   });
 
   describe('logout', () => {
-    it('clears token and sets user to null', async () => {
+    it('calls backend logout, clears token, and sets user to null', async () => {
+      (authService.logout as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
       const futureExp = Math.floor(Date.now() / 1000) + 3600;
       const token = fakeJwt({
         user_id: '42',
@@ -233,8 +274,37 @@ describe('AuthContext', () => {
         expect(result.current.isAuthenticated).toBe(true);
       });
 
-      act(() => {
-        result.current.logout();
+      await act(async () => {
+        await result.current.logout();
+      });
+
+      expect(authService.logout).toHaveBeenCalled();
+      expect(result.current.user).toBeNull();
+      expect(result.current.isAuthenticated).toBe(false);
+      expect(mockStorage.removeItem).toHaveBeenCalledWith('token');
+    });
+
+    it('clears local state even when backend logout fails', async () => {
+      (authService.logout as ReturnType<typeof vi.fn>).mockRejectedValue(
+        new Error('network error'),
+      );
+      const futureExp = Math.floor(Date.now() / 1000) + 3600;
+      const token = fakeJwt({
+        user_id: '42',
+        username: 'alice',
+        role: 'admin',
+        exp: futureExp,
+      });
+      mockStorage.setItem('token', token);
+
+      const { result } = renderHook(() => useAuth(), { wrapper });
+
+      await waitFor(() => {
+        expect(result.current.isAuthenticated).toBe(true);
+      });
+
+      await act(async () => {
+        await result.current.logout();
       });
 
       expect(result.current.user).toBeNull();

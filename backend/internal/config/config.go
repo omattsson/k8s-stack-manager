@@ -35,18 +35,18 @@ type CORSConfig struct {
 
 // AuthConfig holds authentication and authorization configuration.
 type AuthConfig struct {
-	JWTSecret              string
-	JWTExpiration          time.Duration
-	AccessTokenExpiration  time.Duration
-	RefreshTokenExpiration time.Duration
-	SessionIdleTimeout     time.Duration
-	LoginCacheTTL          time.Duration
-	AdminUsername          string
-	AdminPassword          string
-	DefaultBranch          string
+	JWTSecret               string
+	JWTExpiration           time.Duration
+	AccessTokenExpiration   time.Duration
+	RefreshTokenExpiration  time.Duration
+	SessionIdleTimeout      time.Duration
+	LoginCacheTTL           time.Duration
+	AdminUsername           string
+	AdminPassword           string
+	DefaultBranch           string
 	MaxRefreshTokensPerUser int
-	SelfRegistration       bool
-	SecureCookies          bool
+	SelfRegistration        bool
+	SecureCookies           bool
 }
 
 // GitProviderConfig holds Git provider configuration.
@@ -495,7 +495,7 @@ func loadAuthConfig() AuthConfig {
 		JWTExpiration:           jwtExp,
 		AccessTokenExpiration:   accessExp,
 		RefreshTokenExpiration:  getEnvDuration("REFRESH_TOKEN_EXPIRATION", 168*time.Hour),
-		SessionIdleTimeout:     getEnvDuration("SESSION_IDLE_TIMEOUT", 30*time.Minute),
+		SessionIdleTimeout:      getEnvDuration("SESSION_IDLE_TIMEOUT", 30*time.Minute),
 		LoginCacheTTL:           getEnvDuration("LOGIN_CACHE_TTL", 30*time.Second),
 		AdminUsername:           getEnv("ADMIN_USERNAME", "admin"),
 		AdminPassword:           getEnv("ADMIN_PASSWORD", ""),

@@ -24,7 +24,6 @@ const (
 	errMsgAuthFailed = "auth_failed"
 )
 
-
 // OIDCHandler handles OpenID Connect authentication endpoints.
 type OIDCHandler struct {
 	provider         *auth.Provider
