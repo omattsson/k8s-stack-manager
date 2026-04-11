@@ -27,11 +27,12 @@ const (
 
 // OIDCHandler handles OpenID Connect authentication endpoints.
 type OIDCHandler struct {
-	provider   *auth.Provider
-	stateStore *auth.StateStore
-	userRepo   models.UserRepository
-	cfg        *config.OIDCConfig
-	authCfg    *config.AuthConfig
+	provider         *auth.Provider
+	stateStore       *auth.StateStore
+	userRepo         models.UserRepository
+	refreshTokenRepo models.RefreshTokenRepository
+	cfg              *config.OIDCConfig
+	authCfg          *config.AuthConfig
 }
 
 // NewOIDCHandler creates a new OIDCHandler.
@@ -43,6 +44,11 @@ func NewOIDCHandler(provider *auth.Provider, stateStore *auth.StateStore, userRe
 		cfg:        cfg,
 		authCfg:    authCfg,
 	}
+}
+
+// SetRefreshTokenRepo sets the refresh token repository for the OIDC handler.
+func (h *OIDCHandler) SetRefreshTokenRepo(repo models.RefreshTokenRepository) {
+	h.refreshTokenRepo = repo
 }
 
 // GetConfig godoc
@@ -151,7 +157,7 @@ func (h *OIDCHandler) Callback(c *gin.Context) {
 		Username:     user.Username,
 		Role:         user.Role,
 		Secret:       h.authCfg.JWTSecret,
-		Expiration:   h.authCfg.JWTExpiration,
+		Expiration:   h.authCfg.AccessTokenExpiration,
 		AuthProvider: "oidc",
 		Email:        user.Email,
 	})
@@ -159,6 +165,14 @@ func (h *OIDCHandler) Callback(c *gin.Context) {
 		slog.Error("Failed to generate JWT for OIDC user", "error", err)
 		c.Redirect(http.StatusFound, "/login?error=auth_failed")
 		return
+	}
+
+	// Issue refresh token cookie for OIDC users too.
+	if h.refreshTokenRepo != nil {
+		if issueErr := issueOIDCRefreshToken(c, h.refreshTokenRepo, h.authCfg, user.ID); issueErr != nil {
+			slog.Error("Failed to issue refresh token for OIDC user", "user_id", user.ID, "error", issueErr)
+			// Continue — access token is still valid.
+		}
 	}
 
 	// Redirect to frontend with token.
@@ -322,4 +336,42 @@ func isDuplicateError(err error) bool {
 	}
 	msg := err.Error()
 	return strings.Contains(msg, "duplicate key") || strings.Contains(msg, "Duplicate entry")
+}
+
+// issueOIDCRefreshToken creates and stores a refresh token for an OIDC-authenticated user
+// and sets the httpOnly cookie. Uses the shared helpers from auth.go.
+func issueOIDCRefreshToken(c *gin.Context, repo models.RefreshTokenRepository, cfg *config.AuthConfig, userID string) error {
+	rawToken, err := generateRefreshToken()
+	if err != nil {
+		return err
+	}
+
+	now := time.Now()
+	rt := &models.RefreshToken{
+		ID:           uuid.New().String(),
+		UserID:       userID,
+		TokenHash:    hashRefreshToken(rawToken),
+		ExpiresAt:    now.Add(cfg.RefreshTokenExpiration),
+		LastActivity: now,
+		CreatedAt:    now,
+		UserAgent:    truncate(c.GetHeader("User-Agent"), 500),
+		IPAddress:    c.ClientIP(),
+	}
+
+	if err := repo.Create(rt); err != nil {
+		return err
+	}
+
+	maxAge := int(cfg.RefreshTokenExpiration.Seconds())
+	c.SetSameSite(http.SameSiteStrictMode)
+	c.SetCookie(
+		refreshTokenCookieName,
+		rawToken,
+		maxAge,
+		"/api/v1/auth",
+		"",
+		cfg.SecureCookies,
+		true,
+	)
+	return nil
 }

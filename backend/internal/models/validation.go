@@ -280,3 +280,20 @@ func (iqo *InstanceQuotaOverride) Validate() error {
 	}
 	return nil
 }
+
+// Validate implements model validation for RefreshToken.
+func (rt *RefreshToken) Validate() error {
+	if rt.ID == "" {
+		return errors.New("id is required")
+	}
+	if rt.UserID == "" {
+		return errors.New("user_id is required")
+	}
+	if rt.TokenHash == "" {
+		return errors.New("token_hash is required")
+	}
+	if rt.ExpiresAt.IsZero() {
+		return errors.New("expires_at is required")
+	}
+	return nil
+}

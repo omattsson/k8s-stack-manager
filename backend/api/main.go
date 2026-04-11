@@ -4,6 +4,7 @@ package main
 
 import (
 	"backend/internal/api/handlers"
+	"backend/internal/api/middleware"
 	"backend/internal/api/routes"
 	"backend/internal/auth"
 	"backend/internal/cluster"
@@ -207,6 +208,16 @@ func main() {
 	// ------------------------------------------------------------------
 	authHandler := handlers.NewAuthHandler(userRepo, &cfg.Auth)
 
+	// Create token blocklist for immediate JWT revocation on logout.
+	tokenBlocklist := middleware.NewTokenBlocklist(time.Minute)
+	authHandler.SetTokenBlocklist(tokenBlocklist)
+
+	// Set up refresh token support if repository is available.
+	refreshTokenRepo := repos.RefreshToken
+	if refreshTokenRepo != nil {
+		authHandler.SetRefreshTokenRepo(refreshTokenRepo)
+	}
+
 	// OIDC authentication — conditionally initialize when enabled.
 	var oidcHandler *handlers.OIDCHandler
 	var oidcStateStore *auth.StateStore
@@ -218,6 +229,9 @@ func main() {
 		}
 		oidcStateStore = auth.NewStateStore(cfg.OIDC.StateTTL)
 		oidcHandler = handlers.NewOIDCHandler(oidcProvider, oidcStateStore, userRepo, &cfg.OIDC, &cfg.Auth)
+		if refreshTokenRepo != nil {
+			oidcHandler.SetRefreshTokenRepo(refreshTokenRepo)
+		}
 		slog.Info("OIDC authentication enabled", "provider_url", cfg.OIDC.ProviderURL)
 	}
 
@@ -300,14 +314,25 @@ func main() {
 		UserRepo:                     userRepo,
 		APIKeyRepo:                   apiKeyRepo,
 		OIDCHandler:                  oidcHandler,
+		TokenBlocklist:               tokenBlocklist,
 		HealthVerbose:                cfg.Server.HealthVerbose,
 	})
 	defer rateLimiter.Stop()
+	defer tokenBlocklist.Stop()
 
 	// Start TTL reaper for auto-expiring stack instances.
 	expiryStopper := deployer.NewExpiryStopper(deployManager, definitionRepo, chartConfigRepo)
 	reaper := ttl.NewReaper(instanceRepo, auditRepo, hub, expiryStopper, 60*time.Second)
 	go reaper.Start()
+
+	// Periodically clean up expired refresh tokens (every hour).
+	go func() {
+		ticker := time.NewTicker(time.Hour)
+		defer ticker.Stop()
+		for range ticker.C {
+			authHandler.CleanupExpiredTokens()
+		}
+	}()
 
 	// Start cleanup scheduler.
 	if err := cleanupScheduler.Start(); err != nil {

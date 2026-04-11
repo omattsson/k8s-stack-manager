@@ -33,6 +33,7 @@ type RepositorySet struct {
 	UserFavorite          models.UserFavoriteRepository
 	CleanupPolicy         models.CleanupPolicyRepository
 	Cluster               models.ClusterRepository
+	RefreshToken          models.RefreshTokenRepository
 	TxRunner              TxRunner
 }
 
@@ -188,6 +189,7 @@ func newGORMRepositorySet(cfg *config.Config, db *gorm.DB) (*RepositorySet, erro
 	sharedValuesRepo := NewGORMSharedValuesRepository(db)
 	userFavoriteRepo := NewGORMUserFavoriteRepository(db)
 	cleanupPolicyRepo := NewGORMCleanupPolicyRepository(db)
+	refreshTokenRepo := NewGormRefreshTokenRepository(db)
 
 	slog.Info("Using GORM repositories for all domain entities")
 
@@ -211,6 +213,7 @@ func newGORMRepositorySet(cfg *config.Config, db *gorm.DB) (*RepositorySet, erro
 		SharedValues:          sharedValuesRepo,
 		UserFavorite:          userFavoriteRepo,
 		CleanupPolicy:         cleanupPolicyRepo,
+		RefreshToken:          refreshTokenRepo,
 		TxRunner:              NewGORMTxRunner(db),
 	}, nil
 }
