@@ -350,7 +350,14 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 	}
 
 	// Rotate: revoke old, issue new.
-	_ = h.refreshTokenRepo.RevokeByID(stored.ID)
+	affected, err := h.refreshTokenRepo.RevokeByIDIfActive(stored.ID)
+	if err != nil || affected == 0 {
+		// Another concurrent request already consumed this token — treat as replay
+		slog.Warn("Concurrent refresh token consumption detected", "user_id", stored.UserID, "token_id", stored.ID)
+		_ = h.refreshTokenRepo.RevokeAllForUser(stored.UserID)
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid refresh token"})
+		return
+	}
 
 	if err := h.issueRefreshToken(c, user.ID); err != nil {
 		slog.Error("Failed to rotate refresh token", "user_id", user.ID, "error", err)

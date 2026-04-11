@@ -75,6 +75,19 @@ func (m *MockRefreshTokenRepository) RevokeByID(id string) error {
 	return nil
 }
 
+func (m *MockRefreshTokenRepository) RevokeByIDIfActive(id string) (int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.revokeErr != nil {
+		return 0, m.revokeErr
+	}
+	if t, ok := m.tokens[id]; ok && !t.Revoked {
+		t.Revoked = true
+		return 1, nil
+	}
+	return 0, nil
+}
+
 func (m *MockRefreshTokenRepository) RevokeAllForUser(userID string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -98,7 +111,7 @@ func (m *MockRefreshTokenRepository) DeleteExpired() (int64, error) {
 	var count int64
 	now := time.Now()
 	for id, t := range m.tokens {
-		if now.After(t.ExpiresAt) {
+		if now.After(t.ExpiresAt) || t.Revoked {
 			delete(m.byHash, t.TokenHash)
 			delete(m.tokens, id)
 			count++

@@ -26,6 +26,7 @@ type RefreshTokenRepository interface {
 	Create(token *RefreshToken) error
 	FindByTokenHash(hash string) (*RefreshToken, error)
 	RevokeByID(id string) error
+	RevokeByIDIfActive(id string) (int64, error)
 	RevokeAllForUser(userID string) error
 	DeleteExpired() (int64, error)
 	CountActiveForUser(userID string) (int64, error)

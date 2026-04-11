@@ -34,12 +34,17 @@ func (r *GormRefreshTokenRepository) RevokeByID(id string) error {
 	return r.db.Model(&models.RefreshToken{}).Where("id = ?", id).Update("revoked", true).Error
 }
 
+func (r *GormRefreshTokenRepository) RevokeByIDIfActive(id string) (int64, error) {
+	tx := r.db.Model(&models.RefreshToken{}).Where("id = ? AND revoked = ?", id, false).Update("revoked", true)
+	return tx.RowsAffected, tx.Error
+}
+
 func (r *GormRefreshTokenRepository) RevokeAllForUser(userID string) error {
 	return r.db.Model(&models.RefreshToken{}).Where("user_id = ? AND revoked = ?", userID, false).Update("revoked", true).Error
 }
 
 func (r *GormRefreshTokenRepository) DeleteExpired() (int64, error) {
-	tx := r.db.Where("expires_at < ?", time.Now()).Delete(&models.RefreshToken{})
+	tx := r.db.Where("expires_at < ? OR revoked = ?", time.Now(), true).Delete(&models.RefreshToken{})
 	return tx.RowsAffected, tx.Error
 }
 

@@ -20,7 +20,15 @@ import (
 func CORS(allowedOrigins string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if allowedOrigins == "" || allowedOrigins == "*" {
-			c.Writer.Header().Set("Access-Control-Allow-Origin", "*")
+			// When credentials are needed, browsers reject Access-Control-Allow-Origin: *.
+			// Reflect the specific request Origin back and set Vary: Origin.
+			if origin := c.Request.Header.Get("Origin"); origin != "" {
+				c.Writer.Header().Set("Access-Control-Allow-Origin", origin)
+				c.Writer.Header().Set("Access-Control-Allow-Credentials", "true")
+				c.Writer.Header().Set("Vary", "Origin")
+			} else {
+				c.Writer.Header().Set("Access-Control-Allow-Origin", "*")
+			}
 		} else {
 			requestOrigin := c.Request.Header.Get("Origin")
 			if requestOrigin != "" {
@@ -28,6 +36,7 @@ func CORS(allowedOrigins string) gin.HandlerFunc {
 				for _, origin := range strings.Split(allowedOrigins, ",") {
 					if strings.TrimSpace(origin) == requestOrigin {
 						c.Writer.Header().Set("Access-Control-Allow-Origin", requestOrigin)
+						c.Writer.Header().Set("Access-Control-Allow-Credentials", "true")
 						c.Writer.Header().Set("Vary", "Origin")
 						allowed = true
 						break
@@ -44,7 +53,7 @@ func CORS(allowedOrigins string) gin.HandlerFunc {
 			// allow it through without setting Access-Control-Allow-Origin.
 		}
 		c.Writer.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-		c.Writer.Header().Set("Access-Control-Allow-Headers", "Content-Type, Content-Length, Accept-Encoding, Authorization, X-Request-ID")
+		c.Writer.Header().Set("Access-Control-Allow-Headers", "Content-Type, Content-Length, Accept-Encoding, Authorization, X-Request-ID, X-API-Key")
 
 		if c.Request.Method == "OPTIONS" {
 			c.AbortWithStatus(http.StatusNoContent)
