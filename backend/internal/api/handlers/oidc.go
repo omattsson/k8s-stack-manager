@@ -151,12 +151,17 @@ func (h *OIDCHandler) Callback(c *gin.Context) {
 	}
 
 	// Generate local JWT with OIDC-specific claims.
+	expiration := h.authCfg.AccessTokenExpiration
+	if h.refreshTokenRepo == nil {
+		expiration = h.authCfg.JWTExpiration
+	}
+
 	token, err := middleware.GenerateTokenWithOpts(middleware.GenerateTokenOptions{
 		UserID:       user.ID,
 		Username:     user.Username,
 		Role:         user.Role,
 		Secret:       h.authCfg.JWTSecret,
-		Expiration:   h.authCfg.AccessTokenExpiration,
+		Expiration:   expiration,
 		AuthProvider: "oidc",
 		Email:        user.Email,
 	})

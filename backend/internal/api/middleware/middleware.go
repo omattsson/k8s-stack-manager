@@ -17,6 +17,11 @@ import (
 // CORS middleware with configurable allowed origins.
 // Pass "*" or "" to allow all origins (development only).
 // For production, pass a comma-separated list of allowed origins.
+//
+// Note: wildcard ("*") disables Access-Control-Allow-Credentials, which
+// prevents cookie-based refresh token rotation for cross-origin requests.
+// For local development with a separate frontend origin, set
+// CORS_ALLOWED_ORIGINS to the frontend URL (e.g. "http://localhost:5173").
 func CORS(allowedOrigins string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if allowedOrigins == "" || allowedOrigins == "*" {

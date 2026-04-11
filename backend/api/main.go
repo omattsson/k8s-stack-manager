@@ -74,6 +74,10 @@ func main() {
 		os.Exit(1)
 	}
 
+	if cfg.CORS.AllowedOrigins == "" || cfg.CORS.AllowedOrigins == "*" {
+		slog.Warn("CORS wildcard mode: cookie-based refresh tokens require an explicit CORS_ALLOWED_ORIGINS when frontend runs on a different origin")
+	}
+
 	// Initialize OpenTelemetry (no-op when OTEL_ENABLED=false).
 	tel, err := telemetry.Init(cfg.Otel)
 	if err != nil {

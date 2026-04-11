@@ -134,12 +134,17 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		}
 	}
 
+	expiration := h.cfg.AccessTokenExpiration
+	if h.refreshTokenRepo == nil {
+		expiration = h.cfg.JWTExpiration
+	}
+
 	token, err := middleware.GenerateTokenWithOpts(middleware.GenerateTokenOptions{
 		UserID:     user.ID,
 		Username:   user.Username,
 		Role:       user.Role,
 		Secret:     h.cfg.JWTSecret,
-		Expiration: h.cfg.AccessTokenExpiration,
+		Expiration: expiration,
 	})
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
@@ -356,20 +361,22 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 		return
 	}
 
-	// Rotate: revoke old, issue new.
+	// Issue replacement token BEFORE revoking the old one.
+	// If this fails, the old token is still active and the client can retry.
+	if err := h.issueRefreshToken(c, user.ID); err != nil {
+		slog.Error("Failed to rotate refresh token", "user_id", user.ID, "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
+		return
+	}
+
+	// Revoke the consumed token. If another request already consumed it (replay),
+	// revoke everything — including the token we just issued — for safety.
 	affected, err := h.refreshTokenRepo.RevokeByIDIfActive(stored.ID)
 	if err != nil || affected == 0 {
-		// Another concurrent request already consumed this token — treat as replay
 		slog.Warn("Concurrent refresh token consumption detected", "user_id", stored.UserID, "token_id", stored.ID)
 		_ = h.refreshTokenRepo.RevokeAllForUser(stored.UserID)
 		h.clearRefreshCookie(c)
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid refresh token"})
-		return
-	}
-
-	if err := h.issueRefreshToken(c, user.ID); err != nil {
-		slog.Error("Failed to rotate refresh token", "user_id", user.ID, "error", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
 		return
 	}
 

@@ -332,6 +332,10 @@ func (c *AuthConfig) Validate() error {
 		return errors.New("session_idle_timeout must be positive")
 	}
 
+	if c.AccessTokenExpiration > c.SessionIdleTimeout {
+		return errors.New("access_token_expiration must not exceed session_idle_timeout")
+	}
+
 	return nil
 }
 
