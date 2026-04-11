@@ -363,7 +363,8 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 
 	// Issue replacement token BEFORE revoking the old one.
 	// If this fails, the old token is still active and the client can retry.
-	if err := h.issueRefreshToken(c, user.ID); err != nil {
+	// Pass stored.ID so the max-limit cleanup doesn't revoke the token we're consuming.
+	if err := h.issueRefreshToken(c, user.ID, stored.ID); err != nil {
 		slog.Error("Failed to rotate refresh token", "user_id", user.ID, "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
 		return
@@ -490,16 +491,26 @@ func (h *AuthHandler) CleanupExpiredTokens() {
 }
 
 // issueRefreshToken generates a new refresh token, stores it, and sets the cookie.
-func (h *AuthHandler) issueRefreshToken(c *gin.Context, userID string) error {
+// excludeTokenID is an optional token ID to skip when enforcing the max token limit
+// (used during rotation to avoid revoking the token currently being consumed).
+func (h *AuthHandler) issueRefreshToken(c *gin.Context, userID string, excludeTokenID ...string) error {
 	// Clean up excess tokens if over limit.
 	activeCount, err := h.refreshTokenRepo.CountActiveForUser(userID)
 	if err != nil {
 		return err
 	}
 	if h.cfg.MaxRefreshTokensPerUser > 0 && int(activeCount) >= h.cfg.MaxRefreshTokensPerUser {
-		// Revoke all and start fresh to stay within bounds.
-		if err := h.refreshTokenRepo.RevokeAllForUser(userID); err != nil {
-			return err
+		// Revoke all and start fresh to stay within bounds,
+		// but skip the token currently being consumed (if any)
+		// so RevokeByIDIfActive can still detect replays.
+		if len(excludeTokenID) > 0 && excludeTokenID[0] != "" {
+			if err := h.refreshTokenRepo.RevokeAllForUserExcept(userID, excludeTokenID[0]); err != nil {
+				return err
+			}
+		} else {
+			if err := h.refreshTokenRepo.RevokeAllForUser(userID); err != nil {
+				return err
+			}
 		}
 	}
 

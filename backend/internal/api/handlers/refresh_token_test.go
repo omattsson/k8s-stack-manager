@@ -103,6 +103,20 @@ func (m *MockRefreshTokenRepository) RevokeAllForUser(userID string) error {
 	return nil
 }
 
+func (m *MockRefreshTokenRepository) RevokeAllForUserExcept(userID string, excludeID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.revokeAllErr != nil {
+		return m.revokeAllErr
+	}
+	for _, t := range m.tokens {
+		if t.UserID == userID && t.ID != excludeID {
+			t.Revoked = true
+		}
+	}
+	return nil
+}
+
 func (m *MockRefreshTokenRepository) DeleteExpired() (int64, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -112,7 +126,7 @@ func (m *MockRefreshTokenRepository) DeleteExpired() (int64, error) {
 	var count int64
 	now := time.Now()
 	for id, t := range m.tokens {
-		if now.After(t.ExpiresAt) || t.Revoked {
+		if now.After(t.ExpiresAt) {
 			delete(m.byHash, t.TokenHash)
 			delete(m.tokens, id)
 			count++
@@ -496,8 +510,9 @@ func TestTokenBlocklist(t *testing.T) {
 	// After expiry, the entry should be cleaned up.
 	bl.Add("jti-2", time.Now().Add(50*time.Millisecond))
 	assert.True(t, bl.IsBlocked("jti-2"))
-	time.Sleep(200 * time.Millisecond) // wait for cleanup + expiry
-	assert.False(t, bl.IsBlocked("jti-2"))
+	assert.Eventually(t, func() bool {
+		return !bl.IsBlocked("jti-2")
+	}, 500*time.Millisecond, 25*time.Millisecond)
 }
 
 // ---- Refresh without repository configured returns 501 ----

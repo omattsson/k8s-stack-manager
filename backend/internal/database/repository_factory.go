@@ -197,7 +197,7 @@ func newGORMRepositorySet(cfg *config.Config, db *gorm.DB) (*RepositorySet, erro
 	sharedValuesRepo := NewGORMSharedValuesRepository(db)
 	userFavoriteRepo := NewGORMUserFavoriteRepository(db)
 	cleanupPolicyRepo := NewGORMCleanupPolicyRepository(db)
-	refreshTokenRepo := NewGormRefreshTokenRepository(db)
+	refreshTokenRepo := NewGORMRefreshTokenRepository(db)
 
 	slog.Info("Using GORM repositories for all domain entities")
 

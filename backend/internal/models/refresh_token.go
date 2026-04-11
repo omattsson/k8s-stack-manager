@@ -28,6 +28,7 @@ type RefreshTokenRepository interface {
 	RevokeByID(id string) error
 	RevokeByIDIfActive(id string) (int64, error)
 	RevokeAllForUser(userID string) error
+	RevokeAllForUserExcept(userID string, excludeID string) error
 	DeleteExpired() (int64, error)
 	CountActiveForUser(userID string) (int64, error)
 }

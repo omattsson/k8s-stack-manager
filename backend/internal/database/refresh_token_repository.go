@@ -8,21 +8,21 @@ import (
 	"gorm.io/gorm"
 )
 
-// GormRefreshTokenRepository implements models.RefreshTokenRepository using GORM.
-type GormRefreshTokenRepository struct {
+// GORMRefreshTokenRepository implements models.RefreshTokenRepository using GORM.
+type GORMRefreshTokenRepository struct {
 	db *gorm.DB
 }
 
-// NewGormRefreshTokenRepository creates a new GORM-backed refresh token repository.
-func NewGormRefreshTokenRepository(db *gorm.DB) *GormRefreshTokenRepository {
-	return &GormRefreshTokenRepository{db: db}
+// NewGORMRefreshTokenRepository creates a new GORM-backed refresh token repository.
+func NewGORMRefreshTokenRepository(db *gorm.DB) *GORMRefreshTokenRepository {
+	return &GORMRefreshTokenRepository{db: db}
 }
 
-func (r *GormRefreshTokenRepository) Create(token *models.RefreshToken) error {
+func (r *GORMRefreshTokenRepository) Create(token *models.RefreshToken) error {
 	return r.db.Create(token).Error
 }
 
-func (r *GormRefreshTokenRepository) FindByTokenHash(hash string) (*models.RefreshToken, error) {
+func (r *GORMRefreshTokenRepository) FindByTokenHash(hash string) (*models.RefreshToken, error) {
 	var token models.RefreshToken
 	if err := r.db.Where("token_hash = ?", hash).First(&token).Error; err != nil {
 		return nil, err
@@ -30,25 +30,31 @@ func (r *GormRefreshTokenRepository) FindByTokenHash(hash string) (*models.Refre
 	return &token, nil
 }
 
-func (r *GormRefreshTokenRepository) RevokeByID(id string) error {
+func (r *GORMRefreshTokenRepository) RevokeByID(id string) error {
 	return r.db.Model(&models.RefreshToken{}).Where("id = ?", id).Update("revoked", true).Error
 }
 
-func (r *GormRefreshTokenRepository) RevokeByIDIfActive(id string) (int64, error) {
+func (r *GORMRefreshTokenRepository) RevokeByIDIfActive(id string) (int64, error) {
 	tx := r.db.Model(&models.RefreshToken{}).Where("id = ? AND revoked = ?", id, false).Update("revoked", true)
 	return tx.RowsAffected, tx.Error
 }
 
-func (r *GormRefreshTokenRepository) RevokeAllForUser(userID string) error {
+func (r *GORMRefreshTokenRepository) RevokeAllForUser(userID string) error {
 	return r.db.Model(&models.RefreshToken{}).Where("user_id = ? AND revoked = ?", userID, false).Update("revoked", true).Error
 }
 
-func (r *GormRefreshTokenRepository) DeleteExpired() (int64, error) {
-	tx := r.db.Where("expires_at < ? OR revoked = ?", time.Now(), true).Delete(&models.RefreshToken{})
+func (r *GORMRefreshTokenRepository) RevokeAllForUserExcept(userID string, excludeID string) error {
+	return r.db.Model(&models.RefreshToken{}).
+		Where("user_id = ? AND revoked = ? AND id != ?", userID, false, excludeID).
+		Update("revoked", true).Error
+}
+
+func (r *GORMRefreshTokenRepository) DeleteExpired() (int64, error) {
+	tx := r.db.Where("expires_at < ?", time.Now()).Delete(&models.RefreshToken{})
 	return tx.RowsAffected, tx.Error
 }
 
-func (r *GormRefreshTokenRepository) CountActiveForUser(userID string) (int64, error) {
+func (r *GORMRefreshTokenRepository) CountActiveForUser(userID string) (int64, error) {
 	var count int64
 	err := r.db.Model(&models.RefreshToken{}).
 		Where("user_id = ? AND revoked = ? AND expires_at > ?", userID, false, time.Now()).

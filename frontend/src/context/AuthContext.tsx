@@ -113,14 +113,19 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   }, []);
 
   const logout = useCallback(async () => {
-    try {
-      await authService.logout();
-    } catch {
-      // Best-effort server-side revocation; clear local state regardless
-    }
+    // Clear local state immediately so UI reflects logged-out state,
+    // then perform best-effort server-side token revocation.
+    const token = localStorage.getItem('token');
     localStorage.removeItem('token');
     setUser(null);
     reconnectWebSocket();
+    if (token) {
+      try {
+        await authService.logout();
+      } catch {
+        // Best-effort server-side revocation; local state already cleared
+      }
+    }
   }, []);
 
   const loginWithOIDC = useCallback(async (redirect?: string) => {
