@@ -343,14 +343,27 @@ func isDuplicateError(err error) bool {
 }
 
 // issueOIDCRefreshToken creates and stores a refresh token for an OIDC-authenticated user
-// and sets the httpOnly cookie. Uses the shared helpers from auth.go.
+// and sets the httpOnly cookie. Enforces MaxRefreshTokensPerUser like the main auth flow.
 func issueOIDCRefreshToken(c *gin.Context, repo models.RefreshTokenRepository, cfg *config.AuthConfig, userID string) error {
+	// Enforce max tokens per user.
+	if cfg.MaxRefreshTokensPerUser > 0 {
+		activeCount, err := repo.CountActiveForUser(userID)
+		if err != nil {
+			return err
+		}
+		if int(activeCount) >= cfg.MaxRefreshTokensPerUser {
+			if err := repo.RevokeAllForUser(userID); err != nil {
+				return err
+			}
+		}
+	}
+
 	rawToken, err := generateRefreshToken()
 	if err != nil {
 		return err
 	}
 
-	now := time.Now()
+	now := time.Now().UTC()
 	rt := &models.RefreshToken{
 		ID:           uuid.New().String(),
 		UserID:       userID,

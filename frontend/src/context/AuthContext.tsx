@@ -113,15 +113,14 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   }, []);
 
   const logout = useCallback(async () => {
-    // Clear local state immediately so UI reflects logged-out state,
-    // then perform best-effort server-side token revocation.
+    // Capture token before clearing so the logout request can attach it.
     const token = localStorage.getItem('token');
     localStorage.removeItem('token');
     setUser(null);
     reconnectWebSocket();
     if (token) {
       try {
-        await authService.logout();
+        await authService.logout(token);
       } catch {
         // Best-effort server-side revocation; local state already cleared
       }

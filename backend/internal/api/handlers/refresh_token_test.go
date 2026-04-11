@@ -243,13 +243,13 @@ func TestRefresh(t *testing.T) {
 
 	tests := []struct {
 		name       string
-		setup      func(*MockUserRepository, *MockRefreshTokenRepository) string // returns raw cookie value
+		setup      func(*testing.T, *MockUserRepository, *MockRefreshTokenRepository) string // returns raw cookie value
 		wantStatus int
 		wantToken  bool
 	}{
 		{
 			name: "valid refresh token returns new access token",
-			setup: func(ur *MockUserRepository, rr *MockRefreshTokenRepository) string {
+			setup: func(t *testing.T, ur *MockUserRepository, rr *MockRefreshTokenRepository) string {
 				seedUser(t, ur, "uid-1", "alice", "secret", "user")
 				raw := "abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890"
 				hash := hashRefreshToken(raw)
@@ -269,21 +269,21 @@ func TestRefresh(t *testing.T) {
 		},
 		{
 			name: "no cookie returns 401",
-			setup: func(_ *MockUserRepository, _ *MockRefreshTokenRepository) string {
+			setup: func(_ *testing.T, _ *MockUserRepository, _ *MockRefreshTokenRepository) string {
 				return "" // no cookie
 			},
 			wantStatus: http.StatusUnauthorized,
 		},
 		{
 			name: "unknown token returns 401",
-			setup: func(_ *MockUserRepository, _ *MockRefreshTokenRepository) string {
+			setup: func(_ *testing.T, _ *MockUserRepository, _ *MockRefreshTokenRepository) string {
 				return "unknown-token-value"
 			},
 			wantStatus: http.StatusUnauthorized,
 		},
 		{
 			name: "database error on lookup returns 500",
-			setup: func(_ *MockUserRepository, rr *MockRefreshTokenRepository) string {
+			setup: func(_ *testing.T, _ *MockUserRepository, rr *MockRefreshTokenRepository) string {
 				rr.findErr = errors.New("unexpected db failure")
 				return "some-token-value"
 			},
@@ -291,7 +291,7 @@ func TestRefresh(t *testing.T) {
 		},
 		{
 			name: "revoked token returns 401 and revokes all for user",
-			setup: func(ur *MockUserRepository, rr *MockRefreshTokenRepository) string {
+			setup: func(t *testing.T, ur *MockUserRepository, rr *MockRefreshTokenRepository) string {
 				seedUser(t, ur, "uid-1", "alice", "secret", "user")
 				raw := "revoked0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
 				hash := hashRefreshToken(raw)
@@ -311,7 +311,7 @@ func TestRefresh(t *testing.T) {
 		},
 		{
 			name: "expired token returns 401",
-			setup: func(ur *MockUserRepository, rr *MockRefreshTokenRepository) string {
+			setup: func(t *testing.T, ur *MockUserRepository, rr *MockRefreshTokenRepository) string {
 				seedUser(t, ur, "uid-1", "alice", "secret", "user")
 				raw := "expired00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
 				hash := hashRefreshToken(raw)
@@ -330,7 +330,7 @@ func TestRefresh(t *testing.T) {
 		},
 		{
 			name: "idle timeout exceeded returns 401",
-			setup: func(ur *MockUserRepository, rr *MockRefreshTokenRepository) string {
+			setup: func(t *testing.T, ur *MockUserRepository, rr *MockRefreshTokenRepository) string {
 				seedUser(t, ur, "uid-1", "alice", "secret", "user")
 				raw := "idletimeout0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
 				hash := hashRefreshToken(raw)
@@ -355,7 +355,7 @@ func TestRefresh(t *testing.T) {
 			t.Parallel()
 			userRepo := NewMockUserRepository()
 			refreshRepo := NewMockRefreshTokenRepository()
-			rawCookie := tt.setup(userRepo, refreshRepo)
+			rawCookie := tt.setup(t, userRepo, refreshRepo)
 
 			router := setupRefreshAuthRouter(userRepo, refreshRepo, nil)
 			w := httptest.NewRecorder()

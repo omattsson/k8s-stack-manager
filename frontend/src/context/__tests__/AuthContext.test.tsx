@@ -278,7 +278,7 @@ describe('AuthContext', () => {
         await result.current.logout();
       });
 
-      expect(authService.logout).toHaveBeenCalled();
+      expect(authService.logout).toHaveBeenCalledWith(token);
       expect(result.current.user).toBeNull();
       expect(result.current.isAuthenticated).toBe(false);
       expect(mockStorage.removeItem).toHaveBeenCalledWith('token');

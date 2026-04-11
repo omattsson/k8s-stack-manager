@@ -221,9 +221,12 @@ export const authService = {
    * Logout the current session (revokes the refresh token server-side and clears the cookie).
    * @see POST /api/v1/auth/logout
    */
-  logout: async (): Promise<void> => {
+  logout: async (token?: string): Promise<void> => {
     try {
-      await api.post('/api/v1/auth/logout', null, { withCredentials: true });
+      await api.post('/api/v1/auth/logout', null, {
+        withCredentials: true,
+        ...(token ? { headers: { Authorization: `Bearer ${token}` } } : {}),
+      });
     } catch (error) {
       console.error('Failed to logout:', error);
       throw error;

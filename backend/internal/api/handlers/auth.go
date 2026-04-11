@@ -321,6 +321,7 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 	stored, err := h.refreshTokenRepo.FindByTokenHash(tokenHash)
 	if err != nil {
 		if isNotFoundError(err) {
+			h.clearRefreshCookie(c)
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid refresh token"})
 		} else {
 			slog.Error("Failed to look up refresh token", "error", err)
