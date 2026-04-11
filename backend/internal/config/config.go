@@ -35,13 +35,18 @@ type CORSConfig struct {
 
 // AuthConfig holds authentication and authorization configuration.
 type AuthConfig struct {
-	JWTSecret        string
-	JWTExpiration    time.Duration
-	LoginCacheTTL    time.Duration
-	AdminUsername    string
-	AdminPassword    string
-	DefaultBranch    string
-	SelfRegistration bool
+	JWTSecret               string
+	JWTExpiration           time.Duration
+	AccessTokenExpiration   time.Duration
+	RefreshTokenExpiration  time.Duration
+	SessionIdleTimeout      time.Duration
+	LoginCacheTTL           time.Duration
+	AdminUsername           string
+	AdminPassword           string
+	DefaultBranch           string
+	MaxRefreshTokensPerUser int
+	SelfRegistration        bool
+	SecureCookies           bool
 }
 
 // GitProviderConfig holds Git provider configuration.
@@ -315,6 +320,22 @@ func (c *AuthConfig) Validate() error {
 		return errors.New("jwt_expiration must be positive")
 	}
 
+	if c.AccessTokenExpiration <= 0 {
+		return errors.New("access_token_expiration must be positive")
+	}
+
+	if c.RefreshTokenExpiration <= 0 {
+		return errors.New("refresh_token_expiration must be positive")
+	}
+
+	if c.SessionIdleTimeout <= 0 {
+		return errors.New("session_idle_timeout must be positive")
+	}
+
+	if c.AccessTokenExpiration > c.SessionIdleTimeout {
+		return errors.New("access_token_expiration must not exceed session_idle_timeout")
+	}
+
 	return nil
 }
 
@@ -467,14 +488,22 @@ func loadServerConfig() ServerConfig {
 }
 
 func loadAuthConfig() AuthConfig {
+	jwtExp := getEnvDuration("JWT_EXPIRATION", 24*time.Hour)
+	accessExp := getEnvDuration("ACCESS_TOKEN_EXPIRATION", 15*time.Minute)
+
 	return AuthConfig{
-		JWTSecret:        getEnv("JWT_SECRET", ""),
-		JWTExpiration:    getEnvDuration("JWT_EXPIRATION", 24*time.Hour),
-		LoginCacheTTL:    getEnvDuration("LOGIN_CACHE_TTL", 30*time.Second),
-		AdminUsername:    getEnv("ADMIN_USERNAME", "admin"),
-		AdminPassword:    getEnv("ADMIN_PASSWORD", ""),
-		SelfRegistration: getEnvBool("SELF_REGISTRATION", false),
-		DefaultBranch:    getEnv("DEFAULT_BRANCH", "master"),
+		JWTSecret:               getEnv("JWT_SECRET", ""),
+		JWTExpiration:           jwtExp,
+		AccessTokenExpiration:   accessExp,
+		RefreshTokenExpiration:  getEnvDuration("REFRESH_TOKEN_EXPIRATION", 168*time.Hour),
+		SessionIdleTimeout:      getEnvDuration("SESSION_IDLE_TIMEOUT", 30*time.Minute),
+		LoginCacheTTL:           getEnvDuration("LOGIN_CACHE_TTL", 30*time.Second),
+		AdminUsername:           getEnv("ADMIN_USERNAME", "admin"),
+		AdminPassword:           getEnv("ADMIN_PASSWORD", ""),
+		SelfRegistration:        getEnvBool("SELF_REGISTRATION", false),
+		DefaultBranch:           getEnv("DEFAULT_BRANCH", "master"),
+		MaxRefreshTokensPerUser: int(getEnvInt32("MAX_REFRESH_TOKENS_PER_USER", 10)),
+		SecureCookies:           getEnvBool("SECURE_COOKIES", false),
 	}
 }
 

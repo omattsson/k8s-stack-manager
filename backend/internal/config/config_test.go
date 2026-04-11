@@ -343,8 +343,11 @@ func TestAuthConfigValidate(t *testing.T) {
 	t.Run("valid auth config passes", func(t *testing.T) {
 		t.Parallel()
 		cfg := config.AuthConfig{
-			JWTSecret:     "this-is-a-long-enough-secret",
-			JWTExpiration: 24 * time.Hour,
+			JWTSecret:              "this-is-a-long-enough-secret",
+			JWTExpiration:          24 * time.Hour,
+			AccessTokenExpiration:  15 * time.Minute,
+			RefreshTokenExpiration: 168 * time.Hour,
+			SessionIdleTimeout:     30 * time.Minute,
 		}
 		assert.NoError(t, cfg.Validate())
 	})
@@ -352,8 +355,11 @@ func TestAuthConfigValidate(t *testing.T) {
 	t.Run("empty JWT secret fails", func(t *testing.T) {
 		t.Parallel()
 		cfg := config.AuthConfig{
-			JWTSecret:     "",
-			JWTExpiration: 24 * time.Hour,
+			JWTSecret:              "",
+			JWTExpiration:          24 * time.Hour,
+			AccessTokenExpiration:  15 * time.Minute,
+			RefreshTokenExpiration: 168 * time.Hour,
+			SessionIdleTimeout:     30 * time.Minute,
 		}
 		err := cfg.Validate()
 		require.Error(t, err)
@@ -363,8 +369,11 @@ func TestAuthConfigValidate(t *testing.T) {
 	t.Run("short JWT secret fails", func(t *testing.T) {
 		t.Parallel()
 		cfg := config.AuthConfig{
-			JWTSecret:     "tooshort",
-			JWTExpiration: 24 * time.Hour,
+			JWTSecret:              "tooshort",
+			JWTExpiration:          24 * time.Hour,
+			AccessTokenExpiration:  15 * time.Minute,
+			RefreshTokenExpiration: 168 * time.Hour,
+			SessionIdleTimeout:     30 * time.Minute,
 		}
 		err := cfg.Validate()
 		require.Error(t, err)
@@ -374,8 +383,11 @@ func TestAuthConfigValidate(t *testing.T) {
 	t.Run("negative expiration fails", func(t *testing.T) {
 		t.Parallel()
 		cfg := config.AuthConfig{
-			JWTSecret:     "this-is-a-long-enough-secret",
-			JWTExpiration: -1 * time.Hour,
+			JWTSecret:              "this-is-a-long-enough-secret",
+			JWTExpiration:          -1 * time.Hour,
+			AccessTokenExpiration:  15 * time.Minute,
+			RefreshTokenExpiration: 168 * time.Hour,
+			SessionIdleTimeout:     30 * time.Minute,
 		}
 		err := cfg.Validate()
 		require.Error(t, err)
@@ -406,9 +418,12 @@ func TestAuthConfigValidate(t *testing.T) {
 				ShutdownTimeout: 10 * time.Second,
 			},
 			Auth: config.AuthConfig{
-				JWTSecret:     "short",
-				JWTExpiration: 24 * time.Hour,
-				AdminPassword: "admin123",
+				JWTSecret:              "short",
+				JWTExpiration:          24 * time.Hour,
+				AccessTokenExpiration:  15 * time.Minute,
+				RefreshTokenExpiration: 168 * time.Hour,
+				SessionIdleTimeout:     30 * time.Minute,
+				AdminPassword:          "admin123",
 			},
 		}
 		err := cfg.Validate()

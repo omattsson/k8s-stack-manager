@@ -23,6 +23,7 @@ type APIKeyAuthDeps struct {
 	JWTSecret  string
 	APIKeyRepo models.APIKeyRepository
 	UserRepo   models.UserRepository
+	Blocklist  *TokenBlocklist
 }
 
 // CombinedAuth returns middleware that accepts either:
@@ -32,10 +33,10 @@ type APIKeyAuthDeps struct {
 // When APIKeyRepo or UserRepo is nil the middleware falls back to JWT-only auth.
 func CombinedAuth(deps APIKeyAuthDeps) gin.HandlerFunc {
 	if deps.APIKeyRepo == nil || deps.UserRepo == nil {
-		return AuthRequired(deps.JWTSecret)
+		return AuthRequiredWithBlocklist(deps.JWTSecret, deps.Blocklist)
 	}
 
-	jwtMW := AuthRequired(deps.JWTSecret)
+	jwtMW := AuthRequiredWithBlocklist(deps.JWTSecret, deps.Blocklist)
 
 	return func(c *gin.Context) {
 		// Prefer JWT Bearer when present.

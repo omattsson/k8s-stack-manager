@@ -4,6 +4,7 @@ package main
 
 import (
 	"backend/internal/api/handlers"
+	"backend/internal/api/middleware"
 	"backend/internal/api/routes"
 	"backend/internal/auth"
 	"backend/internal/cluster"
@@ -71,6 +72,10 @@ func main() {
 	if err != nil {
 		slog.Error("Failed to load configuration", "error", err)
 		os.Exit(1)
+	}
+
+	if cfg.CORS.AllowedOrigins == "" || cfg.CORS.AllowedOrigins == "*" {
+		slog.Warn("CORS wildcard mode: cookie-based refresh tokens require an explicit CORS_ALLOWED_ORIGINS when frontend runs on a different origin")
 	}
 
 	// Initialize OpenTelemetry (no-op when OTEL_ENABLED=false).
@@ -207,6 +212,19 @@ func main() {
 	// ------------------------------------------------------------------
 	authHandler := handlers.NewAuthHandler(userRepo, &cfg.Auth)
 
+	// Create token blocklist for immediate JWT revocation on logout.
+	// NOTE: In-memory only — revocation won't propagate across replicas.
+	// Acceptable since access tokens expire in ≤15 minutes. For multi-replica
+	// deployments, consider switching to a shared store (Redis/DB).
+	tokenBlocklist := middleware.NewTokenBlocklist(time.Minute)
+	authHandler.SetTokenBlocklist(tokenBlocklist)
+
+	// Set up refresh token support if repository is available.
+	refreshTokenRepo := repos.RefreshToken
+	if refreshTokenRepo != nil {
+		authHandler.SetRefreshTokenRepo(refreshTokenRepo)
+	}
+
 	// OIDC authentication — conditionally initialize when enabled.
 	var oidcHandler *handlers.OIDCHandler
 	var oidcStateStore *auth.StateStore
@@ -218,6 +236,9 @@ func main() {
 		}
 		oidcStateStore = auth.NewStateStore(cfg.OIDC.StateTTL)
 		oidcHandler = handlers.NewOIDCHandler(oidcProvider, oidcStateStore, userRepo, &cfg.OIDC, &cfg.Auth)
+		if refreshTokenRepo != nil {
+			oidcHandler.SetRefreshTokenRepo(refreshTokenRepo)
+		}
 		slog.Info("OIDC authentication enabled", "provider_url", cfg.OIDC.ProviderURL)
 	}
 
@@ -300,14 +321,32 @@ func main() {
 		UserRepo:                     userRepo,
 		APIKeyRepo:                   apiKeyRepo,
 		OIDCHandler:                  oidcHandler,
+		TokenBlocklist:               tokenBlocklist,
 		HealthVerbose:                cfg.Server.HealthVerbose,
 	})
 	defer rateLimiter.Stop()
+	defer tokenBlocklist.Stop()
 
 	// Start TTL reaper for auto-expiring stack instances.
 	expiryStopper := deployer.NewExpiryStopper(deployManager, definitionRepo, chartConfigRepo)
 	reaper := ttl.NewReaper(instanceRepo, auditRepo, hub, expiryStopper, 60*time.Second)
 	go reaper.Start()
+
+	// Periodically clean up expired refresh tokens (every hour).
+	refreshTokenCleanupCtx, refreshTokenCleanupCancel := context.WithCancel(context.Background())
+	defer refreshTokenCleanupCancel()
+	go func(ctx context.Context) {
+		ticker := time.NewTicker(time.Hour)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				authHandler.CleanupExpiredTokens()
+			}
+		}
+	}(refreshTokenCleanupCtx)
 
 	// Start cleanup scheduler.
 	if err := cleanupScheduler.Start(); err != nil {

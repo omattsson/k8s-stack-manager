@@ -56,7 +56,18 @@ import type {
   DeployPreviewResponse,
 } from '../types';
 
+// Extend Axios config to include our retry flag (avoids `any` cast).
+declare module 'axios' {
+  interface InternalAxiosRequestConfig {
+    _retry?: boolean;
+  }
+}
+
 const api = axios.create(axiosConfig);
+
+// Separate instance for token refresh — sends the httpOnly cookie and has no
+// response interceptors, preventing refresh-retry loops.
+const refreshApi = axios.create({ ...axiosConfig, withCredentials: true });
 
 // Auth interceptor — attach JWT from localStorage
 api.interceptors.request.use((config) => {
@@ -67,18 +78,88 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
-// Response interceptor for error handling
+// --- Silent token refresh on 401 ---
+interface QueueItem {
+  resolve: (token: string) => void;
+  reject: (error: unknown) => void;
+}
+
+let isRefreshing = false;
+let failedQueue: QueueItem[] = [];
+
+function processQueue(error: unknown, token: string | null): void {
+  for (const item of failedQueue) {
+    if (token) {
+      item.resolve(token);
+    } else {
+      item.reject(error);
+    }
+  }
+  failedQueue = [];
+}
+
+// Response interceptor — attempt a silent refresh on 401, then retry the
+// original request. Concurrent 401s are queued so only one refresh fires.
 api.interceptors.response.use(
   (response) => response,
-  (error) => {
-    if (error.response?.status === 401) {
+  async (error) => {
+    const originalRequest = error.config;
+    const authPaths = ['/auth/login', '/auth/register', '/auth/refresh'];
+    const isAuthEndpoint = authPaths.some(p => originalRequest?.url?.includes(p));
+
+    if (
+      error.response?.status === 401 &&
+      originalRequest &&
+      !originalRequest._retry &&
+      !isAuthEndpoint
+    ) {
+      if (isRefreshing) {
+        // Park this request until the in-flight refresh settles.
+        return new Promise<unknown>((resolve, reject) => {
+          failedQueue.push({
+            resolve: (token: string) => {
+              originalRequest.headers.Authorization = `Bearer ${token}`;
+              resolve(api(originalRequest));
+            },
+            reject,
+          });
+        });
+      }
+
+      originalRequest._retry = true;
+      isRefreshing = true;
+
+      try {
+        const { data } = await refreshApi.post<{ token: string }>(
+          '/api/v1/auth/refresh',
+        );
+        const newToken = data.token;
+        localStorage.setItem('token', newToken);
+        originalRequest.headers.Authorization = `Bearer ${newToken}`;
+        processQueue(null, newToken);
+        return api(originalRequest);
+      } catch (refreshError) {
+        processQueue(refreshError, null);
+        localStorage.removeItem('token');
+        if (globalThis.location.pathname !== '/login') {
+          globalThis.location.href = '/login';
+        }
+        return Promise.reject(refreshError);
+      } finally {
+        isRefreshing = false;
+      }
+    }
+
+    // Retried request still got 401 — session is invalid
+    if (error.response?.status === 401 && originalRequest?._retry) {
       localStorage.removeItem('token');
       if (globalThis.location.pathname !== '/login') {
         globalThis.location.href = '/login';
       }
     }
+
     return Promise.reject(error);
-  }
+  },
 );
 
 /** Authentication service for login, registration, and session management. Maps to `/api/v1/auth`. */
@@ -91,7 +172,7 @@ export const authService = {
    */
   login: async (data: LoginRequest): Promise<LoginResponse> => {
     try {
-      const response = await api.post('/api/v1/auth/login', data);
+      const response = await api.post('/api/v1/auth/login', data, { withCredentials: true });
       return response.data;
     } catch (error) {
       console.error('Failed to login:', error);
@@ -124,6 +205,42 @@ export const authService = {
       return response.data;
     } catch (error) {
       console.error('Failed to fetch current user:', error);
+      throw error;
+    }
+  },
+  /**
+   * Refresh the access token using the httpOnly refresh cookie.
+   * @returns Object containing the new short-lived access token
+   * @see POST /api/v1/auth/refresh
+   */
+  refresh: async (): Promise<{ token: string }> => {
+    const response = await refreshApi.post<{ token: string }>('/api/v1/auth/refresh');
+    return response.data;
+  },
+  /**
+   * Logout the current session (revokes the refresh token server-side and clears the cookie).
+   * @see POST /api/v1/auth/logout
+   */
+  logout: async (token?: string): Promise<void> => {
+    try {
+      await api.post('/api/v1/auth/logout', null, {
+        withCredentials: true,
+        ...(token ? { headers: { Authorization: `Bearer ${token}` } } : {}),
+      });
+    } catch (error) {
+      console.error('Failed to logout:', error);
+      throw error;
+    }
+  },
+  /**
+   * Logout all sessions for the current user (revokes every refresh token).
+   * @see POST /api/v1/auth/logout-all
+   */
+  logoutAll: async (): Promise<void> => {
+    try {
+      await api.post('/api/v1/auth/logout-all', null, { withCredentials: true });
+    } catch (error) {
+      console.error('Failed to logout all sessions:', error);
       throw error;
     }
   },

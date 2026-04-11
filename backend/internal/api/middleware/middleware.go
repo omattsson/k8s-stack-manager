@@ -17,10 +17,16 @@ import (
 // CORS middleware with configurable allowed origins.
 // Pass "*" or "" to allow all origins (development only).
 // For production, pass a comma-separated list of allowed origins.
+//
+// Note: wildcard ("*") disables Access-Control-Allow-Credentials, which
+// prevents cookie-based refresh token rotation for cross-origin requests.
+// For local development with a separate frontend origin, set
+// CORS_ALLOWED_ORIGINS to the frontend URL (e.g. "http://localhost:5173").
 func CORS(allowedOrigins string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if allowedOrigins == "" || allowedOrigins == "*" {
 			c.Writer.Header().Set("Access-Control-Allow-Origin", "*")
+			// No Allow-Credentials for wildcard — require explicit origin list
 		} else {
 			requestOrigin := c.Request.Header.Get("Origin")
 			if requestOrigin != "" {
@@ -28,6 +34,7 @@ func CORS(allowedOrigins string) gin.HandlerFunc {
 				for _, origin := range strings.Split(allowedOrigins, ",") {
 					if strings.TrimSpace(origin) == requestOrigin {
 						c.Writer.Header().Set("Access-Control-Allow-Origin", requestOrigin)
+						c.Writer.Header().Set("Access-Control-Allow-Credentials", "true")
 						c.Writer.Header().Set("Vary", "Origin")
 						allowed = true
 						break
@@ -44,7 +51,7 @@ func CORS(allowedOrigins string) gin.HandlerFunc {
 			// allow it through without setting Access-Control-Allow-Origin.
 		}
 		c.Writer.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-		c.Writer.Header().Set("Access-Control-Allow-Headers", "Content-Type, Content-Length, Accept-Encoding, Authorization, X-Request-ID")
+		c.Writer.Header().Set("Access-Control-Allow-Headers", "Content-Type, Content-Length, Accept-Encoding, Authorization, X-Request-ID, X-API-Key")
 
 		if c.Request.Method == "OPTIONS" {
 			c.AbortWithStatus(http.StatusNoContent)

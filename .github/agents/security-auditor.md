@@ -184,3 +184,16 @@ nmap -sV localhost -p 8081,3000,3306
 - **Secrets**: Environment variables via `config.LoadConfig()`, `.env` fallback
 - **Auth**: JWT + API key combined middleware, OIDC support
 - **Encryption**: AES-GCM for kubeconfig data at rest (`pkg/crypto`)
+
+
+## MemPalace Knowledge Management
+
+Before starting work, search MemPalace for relevant prior knowledge:
+```
+mempalace_search(query="<your task topic>", wing="k8s-stack-manager")
+```
+
+After completing work, store important discoveries:
+- **Codebase patterns/gotchas**: `mempalace_add_drawer` with wing=`k8s-stack-manager`, room=`backend` or `frontend`
+- **Verbatim facts** — include the *why*, not just the *what*
+- **Diary entry**: `mempalace_diary_write(agent_name="<your-agent-name>", content="<summary>")` after significant work sessions

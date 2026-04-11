@@ -72,7 +72,7 @@ describe('authService', () => {
 
     const result = await authService.login(payload);
 
-    expect(api.post).toHaveBeenCalledWith('/api/v1/auth/login', payload);
+    expect(api.post).toHaveBeenCalledWith('/api/v1/auth/login', payload, { withCredentials: true });
     expect(result).toEqual(responseData);
   });
 
