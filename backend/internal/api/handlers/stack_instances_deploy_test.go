@@ -223,7 +223,7 @@ func setupDeployRouter(
 		instanceRepo, overrideRepo, nil, defRepo, ccRepo,
 		tmplRepo, tmplChartRepo, valuesGen, userRepo,
 		deployManager, k8sWatcher, registry, deployLogRepo, nil,
-		0,
+		0, &mockHandlerTxRunner{},
 	)
 
 	insts := r.Group("/api/v1/stack-instances")

@@ -371,6 +371,12 @@ func (h *InstanceHandler) BulkDelete(c *gin.Context) {
 			return "", nil
 		}
 
+		// Best-effort cleanup of branch overrides before deleting the instance.
+		if h.branchOverrideRepo != nil {
+			if err := h.branchOverrideRepo.DeleteByInstance(inst.ID); err != nil {
+				slog.Error("failed to delete branch overrides", "instance_id", inst.ID, "error", err)
+			}
+		}
 		if err := h.instanceRepo.Delete(inst.ID); err != nil {
 			return "", fmt.Errorf("failed to delete instance: %w", err)
 		}

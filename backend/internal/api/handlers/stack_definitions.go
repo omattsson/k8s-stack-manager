@@ -88,7 +88,11 @@ func NewDefinitionHandlerWithVersions(
 	templateRepo models.StackTemplateRepository,
 	templateChartRepo models.TemplateChartConfigRepository,
 	versionRepo models.TemplateVersionRepository,
+	txRunner database.TxRunner,
 ) *DefinitionHandler {
+	if txRunner == nil {
+		panic("txRunner must not be nil")
+	}
 	return &DefinitionHandler{
 		definitionRepo:    definitionRepo,
 		chartRepo:         chartRepo,
@@ -96,12 +100,8 @@ func NewDefinitionHandlerWithVersions(
 		templateRepo:      templateRepo,
 		templateChartRepo: templateChartRepo,
 		versionRepo:       versionRepo,
+		txRunner:          txRunner,
 	}
-}
-
-// SetTxRunner sets an optional TxRunner for transactional multi-entity operations.
-func (h *DefinitionHandler) SetTxRunner(tx database.TxRunner) {
-	h.txRunner = tx
 }
 
 // ListDefinitions godoc
@@ -469,12 +469,6 @@ func (h *DefinitionHandler) ImportDefinition(c *gin.Context) {
 			DeployOrder:       ch.DeployOrder,
 			CreatedAt:         now,
 		})
-	}
-
-	if h.txRunner == nil {
-		slog.Error("txRunner not configured for ImportDefinition")
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
-		return
 	}
 
 	var createdCharts []models.ChartConfig

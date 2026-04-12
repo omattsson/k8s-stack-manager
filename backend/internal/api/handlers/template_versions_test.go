@@ -29,7 +29,7 @@ func setupTemplateVersionRouter(
 	r := gin.New()
 	r.Use(injectAuthContext(callerID, callerRole))
 
-	th := NewTemplateHandlerWithVersions(templateRepo, chartRepo, definitionRepo, chartConfigRepo, versionRepo)
+	th := NewTemplateHandlerWithVersions(templateRepo, chartRepo, definitionRepo, chartConfigRepo, versionRepo, &mockHandlerTxRunner{})
 	vh := NewTemplateVersionHandler(versionRepo, templateRepo)
 
 	tpl := r.Group("/api/v1/templates")
@@ -56,7 +56,7 @@ func setupDefinitionUpgradeRouter(
 	r := gin.New()
 	r.Use(injectAuthContext(callerID, callerRole))
 
-	h := NewDefinitionHandlerWithVersions(definitionRepo, chartConfigRepo, instanceRepo, templateRepo, templateChartRepo, versionRepo)
+	h := NewDefinitionHandlerWithVersions(definitionRepo, chartConfigRepo, instanceRepo, templateRepo, templateChartRepo, versionRepo, &mockHandlerTxRunner{})
 
 	defs := r.Group("/api/v1/stack-definitions")
 	{
@@ -591,9 +591,10 @@ func TestApplyUpgrade(t *testing.T) {
 			wantStatus: http.StatusConflict,
 		},
 		{
-			name:       "definition not found returns 404",
-			defID:      "missing",
-			setup:      func(_ *MockStackDefinitionRepository, _ *MockChartConfigRepository, _ *MockTemplateVersionRepository) {},
+			name:  "definition not found returns 404",
+			defID: "missing",
+			setup: func(_ *MockStackDefinitionRepository, _ *MockChartConfigRepository, _ *MockTemplateVersionRepository) {
+			},
 			wantStatus: http.StatusNotFound,
 		},
 	}

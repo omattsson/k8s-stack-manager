@@ -492,17 +492,14 @@ func TestPerUserInstanceLimit(t *testing.T) {
 			c.Next()
 		})
 
-		valuesGen := &mockValuesGen{}
 		h := &InstanceHandler{
 			instanceRepo:   instanceRepo,
 			definitionRepo: defRepo,
 			clusterRepo:    clusterRepo,
-			valuesGen:      nil,
+			txRunner: &mockHandlerTxRunner{repos: database.TxRepos{
+				StackInstance: instanceRepo,
+			}},
 		}
-		h.SetTxRunner(&mockHandlerTxRunner{repos: database.TxRepos{
-			StackInstance: instanceRepo,
-		}})
-		_ = valuesGen // not needed for this test path
 		r.POST("/api/v1/stack-instances", h.CreateInstance)
 
 		body, _ := json.Marshal(map[string]interface{}{
@@ -568,10 +565,10 @@ func TestPerUserInstanceLimit(t *testing.T) {
 			instanceRepo:   instanceRepo,
 			definitionRepo: defRepo,
 			clusterRepo:    clusterRepo,
+			txRunner: &mockHandlerTxRunner{repos: database.TxRepos{
+				StackInstance: instanceRepo,
+			}},
 		}
-		h.SetTxRunner(&mockHandlerTxRunner{repos: database.TxRepos{
-			StackInstance: instanceRepo,
-		}})
 		r.POST("/api/v1/stack-instances", h.CreateInstance)
 
 		body, _ := json.Marshal(map[string]interface{}{

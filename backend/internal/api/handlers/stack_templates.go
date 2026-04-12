@@ -59,19 +59,19 @@ func NewTemplateHandlerWithVersions(
 	definitionRepo models.StackDefinitionRepository,
 	chartConfigRepo models.ChartConfigRepository,
 	versionRepo models.TemplateVersionRepository,
+	txRunner database.TxRunner,
 ) *TemplateHandler {
+	if txRunner == nil {
+		panic("txRunner must not be nil")
+	}
 	return &TemplateHandler{
 		templateRepo:    templateRepo,
 		chartRepo:       chartRepo,
 		definitionRepo:  definitionRepo,
 		chartConfigRepo: chartConfigRepo,
 		versionRepo:     versionRepo,
+		txRunner:        txRunner,
 	}
-}
-
-// SetTxRunner sets an optional TxRunner for transactional multi-entity operations.
-func (h *TemplateHandler) SetTxRunner(tx database.TxRunner) {
-	h.txRunner = tx
 }
 
 // TemplateListItem extends StackTemplate with computed fields for the gallery.
@@ -506,12 +506,6 @@ func (h *TemplateHandler) InstantiateTemplate(c *gin.Context) {
 		UpdatedAt:             now,
 	}
 
-	if h.txRunner == nil {
-		slog.Error("txRunner not configured for InstantiateTemplate")
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
-		return
-	}
-
 	var chartConfigs []models.ChartConfig
 	txErr := h.txRunner.RunInTx(func(repos database.TxRepos) error {
 		if err := repos.StackDefinition.Create(def); err != nil {
@@ -537,6 +531,8 @@ func (h *TemplateHandler) InstantiateTemplate(c *gin.Context) {
 }
 
 // copyTemplateChartsToDefinitionTx is the transactional variant that reads
+// template chart configs and creates corresponding definition chart configs
+// within a transaction.
 func (h *TemplateHandler) copyTemplateChartsToDefinitionTx(templateID, defID string, now time.Time, repos database.TxRepos) ([]models.ChartConfig, error) {
 	templateCharts, err := h.chartRepo.ListByTemplate(templateID)
 	if err != nil {
@@ -623,12 +619,6 @@ func (h *TemplateHandler) CloneTemplate(c *gin.Context) {
 			Required:        ch.Required,
 			CreatedAt:       now,
 		})
-	}
-
-	if h.txRunner == nil {
-		slog.Error("txRunner not configured for CloneTemplate")
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
-		return
 	}
 
 	txErr := h.txRunner.RunInTx(func(repos database.TxRepos) error {

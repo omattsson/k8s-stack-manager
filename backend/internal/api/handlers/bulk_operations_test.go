@@ -56,11 +56,11 @@ func setupBulkRouter(
 		tmplRepo, tmplChartRepo, valuesGen, userRepo,
 		deployManager, nil, nil, deployLogRepo, nil,
 		0,
+		&mockHandlerTxRunner{repos: database.TxRepos{
+			StackInstance:  instanceRepo,
+			BranchOverride: boRepo,
+		}},
 	)
-	h.SetTxRunner(&mockHandlerTxRunner{repos: database.TxRepos{
-		StackInstance:  instanceRepo,
-		BranchOverride: boRepo,
-	}})
 
 	bulk := r.Group("/api/v1/stack-instances/bulk")
 	{
@@ -707,11 +707,11 @@ func setupBulkRouterWithBranches(
 		valuesGen, userRepo,
 		nil, nil, nil, nil, nil,
 		0,
+		&mockHandlerTxRunner{repos: database.TxRepos{
+			StackInstance:  instanceRepo,
+			BranchOverride: branchOverrideRepo,
+		}},
 	)
-	h.SetTxRunner(&mockHandlerTxRunner{repos: database.TxRepos{
-		StackInstance:  instanceRepo,
-		BranchOverride: branchOverrideRepo,
-	}})
 
 	bulk := r.Group("/api/v1/stack-instances/bulk")
 	{

@@ -173,7 +173,11 @@ func NewInstanceHandlerWithDeployer(
 	deployLogRepo models.DeploymentLogRepository,
 	clusterRepo models.ClusterRepository,
 	defaultTTLMinutes int,
+	txRunner database.TxRunner,
 ) *InstanceHandler {
+	if txRunner == nil {
+		panic("txRunner must not be nil")
+	}
 	return &InstanceHandler{
 		instanceRepo:       instanceRepo,
 		overrideRepo:       overrideRepo,
@@ -190,12 +194,8 @@ func NewInstanceHandlerWithDeployer(
 		deployLogRepo:      deployLogRepo,
 		clusterRepo:        clusterRepo,
 		defaultTTLMinutes:  defaultTTLMinutes,
+		txRunner:           txRunner,
 	}
-}
-
-// SetTxRunner sets an optional TxRunner for transactional multi-entity operations.
-func (h *InstanceHandler) SetTxRunner(tx database.TxRunner) {
-	h.txRunner = tx
 }
 
 // listPageSizeDefault is the default page size for paginated list queries.
@@ -461,6 +461,25 @@ func (h *InstanceHandler) CreateInstance(c *gin.Context) {
 			c.JSON(status, gin.H{"error": message})
 			return
 		}
+	} else if maxInstancesPerUser > 0 {
+		// Non-transactional path — still enforce the limit (TOCTOU possible
+		// but acceptable when txRunner is not configured).
+		limitMsg := fmt.Sprintf("Maximum instances per user reached for this cluster (limit: %d)", maxInstancesPerUser)
+		count, countErr := h.instanceRepo.CountByClusterAndOwner(inst.ClusterID, inst.OwnerID)
+		if countErr != nil {
+			status, message := mapError(countErr, entityStackInstance)
+			c.JSON(status, gin.H{"error": message})
+			return
+		}
+		if count >= maxInstancesPerUser {
+			c.JSON(http.StatusConflict, gin.H{"error": limitMsg})
+			return
+		}
+		if err := h.instanceRepo.Create(&inst); err != nil {
+			status, message := mapError(err, entityStackInstance)
+			c.JSON(status, gin.H{"error": message})
+			return
+		}
 	} else {
 		if err := h.instanceRepo.Create(&inst); err != nil {
 			status, message := mapError(err, entityStackInstance)
@@ -614,6 +633,12 @@ func (h *InstanceHandler) DeleteInstance(c *gin.Context) {
 			return
 		}
 	} else {
+		// Best-effort cleanup of branch overrides before deleting the instance.
+		if h.branchOverrideRepo != nil {
+			if err := h.branchOverrideRepo.DeleteByInstance(id); err != nil {
+				slog.Error("failed to delete branch overrides", "instance_id", id, "error", err)
+			}
+		}
 		if err := h.instanceRepo.Delete(id); err != nil {
 			status, message := mapError(err, entityStackInstance)
 			c.JSON(status, gin.H{"error": message})
@@ -680,12 +705,6 @@ func (h *InstanceHandler) CloneInstance(c *gin.Context) {
 
 	// Check namespace uniqueness.
 	if h.checkNamespaceUniqueness(c, clone.Namespace, cloneName) {
-		return
-	}
-
-	if h.txRunner == nil {
-		slog.Error("txRunner not configured for CloneInstance")
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
 		return
 	}
 

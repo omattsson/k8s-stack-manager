@@ -42,10 +42,10 @@ func setupDefinitionRouterWithTemplates(
 	r.Use(injectAuthContext(callerID, callerRole))
 
 	h := NewDefinitionHandler(defRepo, chartRepo, instanceRepo, templateRepo, templateChartRepo)
-	h.SetTxRunner(&mockHandlerTxRunner{repos: database.TxRepos{
+	h.txRunner = &mockHandlerTxRunner{repos: database.TxRepos{
 		StackDefinition: defRepo,
 		ChartConfig:     chartRepo,
-	}})
+	}}
 
 	defs := r.Group("/api/v1/stack-definitions")
 	{

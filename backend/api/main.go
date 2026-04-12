@@ -242,18 +242,16 @@ func main() {
 		slog.Info("OIDC authentication enabled", "provider_url", cfg.OIDC.ProviderURL)
 	}
 
-	templateHandler := handlers.NewTemplateHandlerWithVersions(templateRepo, templateChartRepo, definitionRepo, chartConfigRepo, templateVersionRepo)
-	templateHandler.SetTxRunner(repos.TxRunner)
-	definitionHandler := handlers.NewDefinitionHandlerWithVersions(definitionRepo, chartConfigRepo, instanceRepo, templateRepo, templateChartRepo, templateVersionRepo)
-	definitionHandler.SetTxRunner(repos.TxRunner)
+	templateHandler := handlers.NewTemplateHandlerWithVersions(templateRepo, templateChartRepo, definitionRepo, chartConfigRepo, templateVersionRepo, repos.TxRunner)
+	definitionHandler := handlers.NewDefinitionHandlerWithVersions(definitionRepo, chartConfigRepo, instanceRepo, templateRepo, templateChartRepo, templateVersionRepo, repos.TxRunner)
 	templateVersionHandler := handlers.NewTemplateVersionHandler(templateVersionRepo, templateRepo)
 	instanceHandler := handlers.NewInstanceHandlerWithDeployer(
 		instanceRepo, overrideRepo, branchOverrideRepo, definitionRepo, chartConfigRepo,
 		templateRepo, templateChartRepo, valuesGen, userRepo,
 		deployManager, k8sWatcher, clusterRegistry, deployLogRepo, clusterRepo,
 		cfg.App.DefaultInstanceTTLMinutes,
+		repos.TxRunner,
 	)
-	instanceHandler.SetTxRunner(repos.TxRunner)
 	gitHandler := handlers.NewGitHandler(gitRegistry)
 	auditLogHandler := handlers.NewAuditLogHandler(auditRepo)
 	userHandler := handlers.NewUserHandler(userRepo)
@@ -275,8 +273,8 @@ func main() {
 		deployManager, userRepo, deployLogRepo, auditRepo,
 		hub, clusterRegistry, k8sWatcher,
 		cfg.App.DefaultInstanceTTLMinutes,
+		repos.TxRunner,
 	)
-	quickDeployHandler.SetTxRunner(repos.TxRunner)
 
 	analyticsHandler := handlers.NewAnalyticsHandler(templateRepo, definitionRepo, instanceRepo, deployLogRepo, userRepo)
 

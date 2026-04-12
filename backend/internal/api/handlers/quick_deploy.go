@@ -61,7 +61,11 @@ func NewQuickDeployHandler(
 	registry *cluster.Registry,
 	k8sWatcher *k8s.Watcher,
 	defaultTTLMinutes int,
+	txRunner database.TxRunner,
 ) *QuickDeployHandler {
+	if txRunner == nil {
+		panic("txRunner must not be nil")
+	}
 	return &QuickDeployHandler{
 		templateRepo:       templateRepo,
 		templateChartRepo:  templateChartRepo,
@@ -79,12 +83,8 @@ func NewQuickDeployHandler(
 		registry:           registry,
 		k8sWatcher:         k8sWatcher,
 		defaultTTLMinutes:  defaultTTLMinutes,
+		txRunner:           txRunner,
 	}
-}
-
-// SetTxRunner sets an optional TxRunner for transactional multi-entity operations.
-func (h *QuickDeployHandler) SetTxRunner(tx database.TxRunner) {
-	h.txRunner = tx
 }
 
 // quickDeployRequest is the request body for Quick Deploy.
@@ -278,12 +278,6 @@ func (h *QuickDeployHandler) QuickDeploy(c *gin.Context) {
 	}
 
 	// Persist definition + chart configs + instance.
-	if h.txRunner == nil {
-		slog.Error("txRunner not configured for QuickDeploy")
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
-		return
-	}
-
 	txErr := h.txRunner.RunInTx(func(repos database.TxRepos) error {
 		if err := repos.StackDefinition.Create(def); err != nil {
 			return err

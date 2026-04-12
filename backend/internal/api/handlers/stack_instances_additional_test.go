@@ -66,16 +66,16 @@ func setupInstanceRouterFull(
 		tmplRepo, tmplChartRepo, valuesGen, userRepo,
 		deployManager, k8sWatcher, registry, deployLogRepo, nil,
 		0,
+		&mockHandlerTxRunner{repos: database.TxRepos{
+			StackDefinition: defRepo,
+			ChartConfig:     ccRepo,
+			StackInstance:   instanceRepo,
+			StackTemplate:   tmplRepo,
+			TemplateChart:   tmplChartRepo,
+			ValueOverride:   overrideRepo,
+			BranchOverride:  branchOverrideRepo,
+		}},
 	)
-	h.SetTxRunner(&mockHandlerTxRunner{repos: database.TxRepos{
-		StackDefinition: defRepo,
-		ChartConfig:     ccRepo,
-		StackInstance:   instanceRepo,
-		StackTemplate:   tmplRepo,
-		TemplateChart:   tmplChartRepo,
-		ValueOverride:   overrideRepo,
-		BranchOverride:  branchOverrideRepo,
-	}})
 
 	insts := r.Group("/api/v1/stack-instances")
 	{
@@ -1579,7 +1579,7 @@ func TestCreateInstance_Additional(t *testing.T) {
 			NewMockStackTemplateRepository(), NewMockTemplateChartConfigRepository(),
 			valuesGen, userRepo,
 			nil, nil, registry, nil, nil,
-			0,
+			0, &mockHandlerTxRunner{},
 		)
 		r.POST("/api/v1/stack-instances", h.CreateInstance)
 
@@ -1625,7 +1625,7 @@ func TestCreateInstance_Additional(t *testing.T) {
 			NewMockStackTemplateRepository(), NewMockTemplateChartConfigRepository(),
 			valuesGen, userRepo,
 			nil, nil, registry, nil, nil,
-			0,
+			0, &mockHandlerTxRunner{},
 		)
 		r.POST("/api/v1/stack-instances", h.CreateInstance)
 

@@ -574,10 +574,10 @@ func TestDeleteInstance_WithBranchOverrides(t *testing.T) {
 			NewMockStackDefinitionRepository(), NewMockChartConfigRepository(),
 			NewMockStackTemplateRepository(), NewMockTemplateChartConfigRepository(),
 			valuesGen, userRepo, 0)
-		h.SetTxRunner(&mockHandlerTxRunner{repos: database.TxRepos{
+		h.txRunner = &mockHandlerTxRunner{repos: database.TxRepos{
 			StackInstance:  instRepo,
 			BranchOverride: branchRepo,
-		}})
+		}}
 		r.DELETE("/api/v1/stack-instances/:id", h.DeleteInstance)
 
 		w := httptest.NewRecorder()
@@ -611,10 +611,10 @@ func TestDeleteInstance_WithBranchOverrides(t *testing.T) {
 			NewMockStackDefinitionRepository(), NewMockChartConfigRepository(),
 			NewMockStackTemplateRepository(), NewMockTemplateChartConfigRepository(),
 			valuesGen, userRepo, 0)
-		h.SetTxRunner(&mockHandlerTxRunner{repos: database.TxRepos{
+		h.txRunner = &mockHandlerTxRunner{repos: database.TxRepos{
 			StackInstance:  instRepo,
 			BranchOverride: branchRepo,
-		}})
+		}}
 		r.DELETE("/api/v1/stack-instances/:id", h.DeleteInstance)
 
 		w := httptest.NewRecorder()
@@ -637,10 +637,10 @@ func TestDeleteInstance_WithBranchOverrides(t *testing.T) {
 			NewMockStackDefinitionRepository(), NewMockChartConfigRepository(),
 			NewMockStackTemplateRepository(), NewMockTemplateChartConfigRepository(),
 			valuesGen, NewMockUserRepository(), 0)
-		h.SetTxRunner(&mockHandlerTxRunner{repos: database.TxRepos{
+		h.txRunner = &mockHandlerTxRunner{repos: database.TxRepos{
 			StackInstance:  instRepo,
 			BranchOverride: branchRepo,
-		}})
+		}}
 		r.DELETE("/api/v1/stack-instances/:id", h.DeleteInstance)
 
 		w := httptest.NewRecorder()

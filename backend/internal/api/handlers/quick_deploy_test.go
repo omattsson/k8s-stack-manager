@@ -61,14 +61,14 @@ func setupQuickDeployRouter(
 		deployMgr, userRepo, nil, auditRepo,
 		&MockBroadcastSender{}, registry, nil,
 		defaultTTL,
+		&mockHandlerTxRunner{repos: database.TxRepos{
+			StackDefinition: definitionRepo,
+			ChartConfig:     chartConfigRepo,
+			StackInstance:   instanceRepo,
+			ValueOverride:   overrideRepo,
+			BranchOverride:  branchOverrideRepo,
+		}},
 	)
-	h.SetTxRunner(&mockHandlerTxRunner{repos: database.TxRepos{
-		StackDefinition: definitionRepo,
-		ChartConfig:     chartConfigRepo,
-		StackInstance:   instanceRepo,
-		ValueOverride:   overrideRepo,
-		BranchOverride:  branchOverrideRepo,
-	}})
 
 	tpl := r.Group("/api/v1/templates")
 	{

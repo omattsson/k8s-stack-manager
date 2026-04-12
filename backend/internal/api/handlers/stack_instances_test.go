@@ -47,11 +47,11 @@ func setupInstanceRouter(
 	userRepo := NewMockUserRepository()
 	boRepo := NewMockChartBranchOverrideRepository()
 	h := NewInstanceHandler(instanceRepo, overrideRepo, boRepo, defRepo, ccRepo, tmplRepo, tmplChartRepo, valuesGen, userRepo, 0)
-	h.SetTxRunner(&mockHandlerTxRunner{repos: database.TxRepos{
+	h.txRunner = &mockHandlerTxRunner{repos: database.TxRepos{
 		StackInstance:  instanceRepo,
 		ValueOverride:  overrideRepo,
 		BranchOverride: boRepo,
-	}})
+	}}
 
 	insts := r.Group("/api/v1/stack-instances")
 	{
