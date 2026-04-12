@@ -136,7 +136,7 @@ func (h *APIKeyHandler) CreateAPIKey(c *gin.Context) {
 	if h.apiKeyMaxLifetimeDays > 0 {
 		// Compute maxExpiry as end-of-day so date-only boundary values aren't rejected.
 		maxDate := now.AddDate(0, 0, h.apiKeyMaxLifetimeDays)
-		maxExpiry := time.Date(maxDate.Year(), maxDate.Month(), maxDate.Day(), 23, 59, 59, 0, time.UTC)
+		maxExpiry := time.Date(maxDate.Year(), maxDate.Month(), maxDate.Day(), 23, 59, 59, 999999999, time.UTC)
 		if expiresAt != nil {
 			if expiresAt.After(maxExpiry) {
 				c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("Expiry exceeds maximum allowed lifetime of %d days", h.apiKeyMaxLifetimeDays)})

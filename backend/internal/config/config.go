@@ -537,6 +537,8 @@ func loadAuthConfig() AuthConfig {
 		SelfRegistration:        getEnvBool("SELF_REGISTRATION", false),
 		DefaultBranch:           getEnv("DEFAULT_BRANCH", "master"),
 		MaxRefreshTokensPerUser: int(getEnvInt32("MAX_REFRESH_TOKENS_PER_USER", 10)),
+		// Default 0 = no limit. Set to a positive value (e.g. 365) to enforce max API key lifetime.
+		// Intentionally not defaulting to 365 to avoid breaking existing deployments.
 		APIKeyMaxLifetimeDays:   int(getEnvInt32("API_KEY_MAX_LIFETIME_DAYS", 0)),
 		SecureCookies:           getEnvBool("SECURE_COOKIES", false),
 		CookieSameSite:          getEnv("COOKIE_SAMESITE", "strict"),
