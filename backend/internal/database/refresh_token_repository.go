@@ -50,14 +50,14 @@ func (r *GORMRefreshTokenRepository) RevokeAllForUserExcept(userID string, exclu
 }
 
 func (r *GORMRefreshTokenRepository) DeleteExpired() (int64, error) {
-	tx := r.db.Where("expires_at < ?", time.Now()).Delete(&models.RefreshToken{})
+	tx := r.db.Where("expires_at < ?", time.Now().UTC()).Delete(&models.RefreshToken{})
 	return tx.RowsAffected, tx.Error
 }
 
 func (r *GORMRefreshTokenRepository) CountActiveForUser(userID string) (int64, error) {
 	var count int64
 	err := r.db.Model(&models.RefreshToken{}).
-		Where("user_id = ? AND revoked = ? AND expires_at > ?", userID, false, time.Now()).
+		Where("user_id = ? AND revoked = ? AND expires_at > ?", userID, false, time.Now().UTC()).
 		Count(&count).Error
 	return count, err
 }

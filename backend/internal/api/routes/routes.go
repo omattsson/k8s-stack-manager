@@ -206,8 +206,8 @@ func SetupRoutes(router *gin.Engine, deps Deps) *RateLimiters {
 			refreshHandlers = append(refreshHandlers, deps.AuthHandler.Refresh)
 			auth.POST("/refresh", refreshHandlers...)
 
-			// Logout — requires auth.
-			auth.POST("/logout", authMW, deps.AuthHandler.Logout)
+			// Logout — public so refresh cookie can be cleared even with expired JWT.
+			auth.POST("/logout", deps.AuthHandler.Logout)
 			auth.POST("/logout-all", authMW, deps.AuthHandler.LogoutAll)
 
 			// OIDC routes — public (no auth required).
