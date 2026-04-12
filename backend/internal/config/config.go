@@ -46,7 +46,7 @@ type AuthConfig struct {
 	AdminPassword           string
 	DefaultBranch           string
 	MaxRefreshTokensPerUser int
-	APIKeyMaxLifetimeDays   int
+	APIKeyMaxLifetimeDays   int // 0 means no limit; must not be negative.
 	SelfRegistration        bool
 	SecureCookies           bool
 	CookieSameSite          string // "strict" (default), "lax", or "none"
@@ -353,6 +353,10 @@ func (c *AuthConfig) Validate() error {
 
 	if c.MaxRefreshTokensPerUser < 0 {
 		return errors.New("max_refresh_tokens_per_user must be non-negative")
+	}
+
+	if c.APIKeyMaxLifetimeDays < 0 {
+		return errors.New("api_key_max_lifetime_days must be non-negative (0 = no limit)")
 	}
 
 	switch strings.ToLower(c.CookieSameSite) {

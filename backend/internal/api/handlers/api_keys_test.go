@@ -483,9 +483,12 @@ func TestCreateAPIKeyExpiration(t *testing.T) {
 					require.True(t, ok, "expires_at should be present")
 					parsed, err := time.Parse(time.RFC3339, expiresStr)
 					require.NoError(t, err)
-					expectedApprox := time.Now().UTC().AddDate(0, 0, tt.wantExpiryDays)
-					diff := parsed.Sub(expectedApprox)
-					assert.InDelta(t, 0, diff.Seconds(), 60, "expires_at should be ~%d days from now", tt.wantExpiryDays)
+					now := time.Now().UTC()
+					expectedDate := now.AddDate(0, 0, tt.wantExpiryDays)
+					// Auto-cap uses end-of-day; expires_in_days uses exact offset.
+					// Allow up to 24h + 60s tolerance to cover both cases.
+					diff := parsed.Sub(expectedDate)
+					assert.InDelta(t, 0, diff.Seconds(), 86460, "expires_at should be ~%d days from now", tt.wantExpiryDays)
 				}
 
 				if tt.name == "no expiry with max 0 (no limit) - no expiry set" {

@@ -97,20 +97,27 @@ func (h *APIKeyHandler) CreateAPIKey(c *gin.Context) {
 		return
 	}
 
+	// Normalize empty expires_at to nil so it doesn't conflict with expires_in_days.
+	if req.ExpiresAt != nil && *req.ExpiresAt == "" {
+		req.ExpiresAt = nil
+	}
+
 	var expiresAt *time.Time
 	if req.ExpiresAt != nil && req.ExpiresInDays != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Cannot specify both expires_at and expires_in_days"})
 		return
 	}
 
+	now := time.Now().UTC()
+
 	if req.ExpiresInDays != nil {
 		if *req.ExpiresInDays <= 0 {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "expires_in_days must be positive"})
 			return
 		}
-		t := time.Now().UTC().AddDate(0, 0, *req.ExpiresInDays)
+		t := now.AddDate(0, 0, *req.ExpiresInDays)
 		expiresAt = &t
-	} else if req.ExpiresAt != nil && *req.ExpiresAt != "" {
+	} else if req.ExpiresAt != nil {
 		parsed, perr := time.Parse(time.RFC3339, *req.ExpiresAt)
 		if perr != nil {
 			// Try date-only format: treat as end-of-day UTC.
@@ -126,14 +133,16 @@ func (h *APIKeyHandler) CreateAPIKey(c *gin.Context) {
 	}
 
 	// Reject expiry dates in the past.
-	if expiresAt != nil && expiresAt.Before(time.Now().UTC()) {
+	if expiresAt != nil && expiresAt.Before(now) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Expiry date must be in the future"})
 		return
 	}
 
 	// Enforce max lifetime policy.
 	if h.apiKeyMaxLifetimeDays > 0 {
-		maxExpiry := time.Now().UTC().AddDate(0, 0, h.apiKeyMaxLifetimeDays)
+		// Compute maxExpiry as end-of-day so date-only boundary values aren't rejected.
+		maxDate := now.AddDate(0, 0, h.apiKeyMaxLifetimeDays)
+		maxExpiry := time.Date(maxDate.Year(), maxDate.Month(), maxDate.Day(), 23, 59, 59, 0, time.UTC)
 		if expiresAt != nil {
 			if expiresAt.After(maxExpiry) {
 				c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("Expiry exceeds maximum allowed lifetime of %d days", h.apiKeyMaxLifetimeDays)})
