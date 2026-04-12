@@ -472,6 +472,12 @@ func (h *DefinitionHandler) ImportDefinition(c *gin.Context) {
 		})
 	}
 
+	if h.txRunner == nil {
+		slog.Error("failed to import definition", "error", "transaction runner is not configured")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
+		return
+	}
+
 	var createdCharts []models.ChartConfig
 	txErr := h.txRunner.RunInTx(func(repos database.TxRepos) error {
 		if err := repos.StackDefinition.Create(&def); err != nil {

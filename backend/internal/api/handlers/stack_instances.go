@@ -633,17 +633,9 @@ func (h *InstanceHandler) DeleteInstance(c *gin.Context) {
 			return
 		}
 	} else {
-		// Best-effort cleanup of branch overrides before deleting the instance.
-		if h.branchOverrideRepo != nil {
-			if err := h.branchOverrideRepo.DeleteByInstance(id); err != nil {
-				slog.Error("failed to delete branch overrides", "instance_id", id, "error", err)
-			}
-		}
-		if err := h.instanceRepo.Delete(id); err != nil {
-			status, message := mapError(err, entityStackInstance)
-			c.JSON(status, gin.H{"error": message})
-			return
-		}
+		slog.Error("txRunner not configured for DeleteInstance")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
+		return
 	}
 
 	c.Status(http.StatusNoContent)
