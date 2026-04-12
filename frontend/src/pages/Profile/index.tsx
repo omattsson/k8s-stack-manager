@@ -21,6 +21,12 @@ import {
   DialogActions,
   TextField,
   Switch,
+  RadioGroup,
+  Radio,
+  FormControlLabel,
+  FormControl,
+  FormLabel,
+  MenuItem,
 } from '@mui/material';
 import KeyIcon from '@mui/icons-material/Key';
 import DeleteIcon from '@mui/icons-material/Delete';
@@ -44,6 +50,32 @@ const EVENT_TYPE_LABELS: Record<string, string> = {
 
 const DEFAULT_EVENT_TYPES = Object.keys(EVENT_TYPE_LABELS);
 
+type ExpiryMode = 'none' | 'preset' | 'custom';
+
+const PRESET_DURATIONS = [
+  { value: 30, label: '30 days' },
+  { value: 60, label: '60 days' },
+  { value: 90, label: '90 days' },
+  { value: 180, label: '180 days' },
+  { value: 365, label: '365 days' },
+];
+
+const getExpiryStatus = (expiresAt: string | undefined): 'expired' | 'expiring-soon' | 'ok' | 'never' => {
+  if (!expiresAt) return 'never';
+  const now = new Date();
+  const expiry = new Date(expiresAt);
+  if (expiry <= now) return 'expired';
+  const daysUntilExpiry = (expiry.getTime() - now.getTime()) / (1000 * 60 * 60 * 24);
+  if (daysUntilExpiry <= 30) return 'expiring-soon';
+  return 'ok';
+};
+
+const computeExpiryDate = (days: number): Date => {
+  const date = new Date();
+  date.setDate(date.getDate() + days);
+  return date;
+};
+
 const getRoleChipColor = (role: string): 'error' | 'warning' | 'default' => {
   if (role === 'admin') return 'error';
   if (role === 'devops') return 'warning';
@@ -62,6 +94,8 @@ const Profile = () => {
   const [generateKeyForm, setGenerateKeyForm] = useState<CreateAPIKeyRequest>({ name: '' });
   const [generateKeyError, setGenerateKeyError] = useState<string | null>(null);
   const [generateKeyLoading, setGenerateKeyLoading] = useState(false);
+  const [expiryMode, setExpiryMode] = useState<ExpiryMode>('none');
+  const [presetDays, setPresetDays] = useState<number>(90);
 
   // Raw key modal
   const [rawKeyData, setRawKeyData] = useState<CreateAPIKeyResponse | null>(null);
@@ -151,9 +185,17 @@ const Profile = () => {
     setGenerateKeyLoading(true);
     setGenerateKeyError(null);
     try {
-      const result = await apiKeyService.create(currentUser.id, generateKeyForm);
+      const request: CreateAPIKeyRequest = { name: generateKeyForm.name.trim() };
+      if (expiryMode === 'preset') {
+        request.expires_in_days = presetDays;
+      } else if (expiryMode === 'custom' && generateKeyForm.expires_at) {
+        request.expires_at = generateKeyForm.expires_at;
+      }
+      const result = await apiKeyService.create(currentUser.id, request);
       setGenerateKeyOpen(false);
       setGenerateKeyForm({ name: '' });
+      setExpiryMode('none');
+      setPresetDays(90);
       setRawKeyData(result);
       await fetchApiKeys();
     } catch {
@@ -244,6 +286,8 @@ const Profile = () => {
           onClick={() => {
             setGenerateKeyOpen(true);
             setGenerateKeyForm({ name: '' });
+            setExpiryMode('none');
+            setPresetDays(90);
             setGenerateKeyError(null);
           }}
         >
@@ -290,7 +334,22 @@ const Profile = () => {
                         {key.last_used_at ? new Date(key.last_used_at).toLocaleDateString() : '—'}
                       </TableCell>
                       <TableCell>
-                        {key.expires_at ? new Date(key.expires_at).toLocaleDateString() : 'Never'}
+                        {(() => {
+                          const status = getExpiryStatus(key.expires_at);
+                          if (status === 'never') return 'Never';
+                          const dateStr = new Date(key.expires_at!).toLocaleDateString();
+                          if (status === 'expired') {
+                            return (
+                              <Chip label={`Expired ${dateStr}`} size="small" color="error" variant="outlined" />
+                            );
+                          }
+                          if (status === 'expiring-soon') {
+                            return (
+                              <Chip label={dateStr} size="small" color="warning" variant="outlined" />
+                            );
+                          }
+                          return dateStr;
+                        })()}
                       </TableCell>
                       <TableCell>
                         <Tooltip title="Revoke key">
@@ -381,17 +440,52 @@ const Profile = () => {
               error={generateKeyForm.name.length > 50}
               slotProps={{ htmlInput: { maxLength: 50 } }}
             />
-            <TextField
-              label="Expires At (optional)"
-              type="date"
-              value={generateKeyForm.expires_at ?? ''}
-              onChange={(e) =>
-                setGenerateKeyForm((prev) => ({ ...prev, expires_at: e.target.value || undefined }))
-              }
-              fullWidth
-              size="small"
-              slotProps={{ inputLabel: { shrink: true } }}
-            />
+            <FormControl>
+              <FormLabel id="expiry-mode-label">Expiration</FormLabel>
+              <RadioGroup
+                aria-labelledby="expiry-mode-label"
+                value={expiryMode}
+                onChange={(e) => setExpiryMode(e.target.value as ExpiryMode)}
+              >
+                <FormControlLabel value="none" control={<Radio />} label="No expiry" />
+                <FormControlLabel value="preset" control={<Radio />} label="Preset duration" />
+                <FormControlLabel value="custom" control={<Radio />} label="Custom date" />
+              </RadioGroup>
+            </FormControl>
+            {expiryMode === 'preset' && (
+              <Box>
+                <TextField
+                  select
+                  label="Duration"
+                  value={presetDays}
+                  onChange={(e) => setPresetDays(Number(e.target.value))}
+                  fullWidth
+                  size="small"
+                >
+                  {PRESET_DURATIONS.map((d) => (
+                    <MenuItem key={d.value} value={d.value}>
+                      {d.label}
+                    </MenuItem>
+                  ))}
+                </TextField>
+                <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+                  Expires: {computeExpiryDate(presetDays).toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' })}
+                </Typography>
+              </Box>
+            )}
+            {expiryMode === 'custom' && (
+              <TextField
+                label="Expires At"
+                type="date"
+                value={generateKeyForm.expires_at ?? ''}
+                onChange={(e) =>
+                  setGenerateKeyForm((prev) => ({ ...prev, expires_at: e.target.value || undefined }))
+                }
+                fullWidth
+                size="small"
+                slotProps={{ inputLabel: { shrink: true } }}
+              />
+            )}
           </Box>
         </DialogContent>
         <DialogActions>

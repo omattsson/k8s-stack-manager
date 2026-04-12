@@ -406,7 +406,7 @@ describe('Profile Page', () => {
     });
   });
 
-  it('includes expires_at when generate form has an expiry date', async () => {
+  it('sends expires_at when custom date mode is selected', async () => {
     (apiKeyService.list as ReturnType<typeof vi.fn>).mockResolvedValue([]);
     (apiKeyService.create as ReturnType<typeof vi.fn>).mockResolvedValue({
       id: 'k-temp',
@@ -430,6 +430,9 @@ describe('Profile Page', () => {
     await user.click(screen.getByRole('button', { name: /generate api key/i }));
     await user.type(screen.getByLabelText(/key name/i), 'Temp Key');
 
+    // Select "Custom date" mode
+    await user.click(screen.getByLabelText(/custom date/i));
+
     fireEvent.change(screen.getByLabelText(/expires at/i), {
       target: { value: '2026-12-31' },
     });
@@ -437,10 +440,139 @@ describe('Profile Page', () => {
     await user.click(screen.getByRole('button', { name: /^generate$/i }));
 
     await waitFor(() => {
-      expect(apiKeyService.create).toHaveBeenCalledWith(
-        'u1',
-        expect.objectContaining({ name: 'Temp Key', expires_at: '2026-12-31' }),
-      );
+      expect(apiKeyService.create).toHaveBeenCalledWith('u1', {
+        name: 'Temp Key',
+        expires_at: '2026-12-31',
+      });
     });
+  });
+
+  it('sends expires_in_days when preset duration is selected', async () => {
+    (apiKeyService.list as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    (apiKeyService.create as ReturnType<typeof vi.fn>).mockResolvedValue({
+      id: 'k-preset',
+      name: 'Preset Key',
+      prefix: 'sk_pre11',
+      raw_key: 'sk_pre11xyz',
+      created_at: '2026-03-18T00:00:00Z',
+    });
+
+    const user = userEvent.setup();
+    render(
+      <MemoryRouter>
+        <Profile />
+      </MemoryRouter>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /generate api key/i })).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole('button', { name: /generate api key/i }));
+    await user.type(screen.getByLabelText(/key name/i), 'Preset Key');
+
+    // Select "Preset duration" mode
+    await user.click(screen.getByLabelText(/preset duration/i));
+
+    // Default preset is 90 days — computed expiry date should be visible
+    expect(screen.getByText(/expires:/i)).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: /^generate$/i }));
+
+    await waitFor(() => {
+      expect(apiKeyService.create).toHaveBeenCalledWith('u1', {
+        name: 'Preset Key',
+        expires_in_days: 90,
+      });
+    });
+  });
+
+  it('sends neither expires_at nor expires_in_days when no expiry is selected', async () => {
+    (apiKeyService.list as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    (apiKeyService.create as ReturnType<typeof vi.fn>).mockResolvedValue({
+      id: 'k-none',
+      name: 'No Expiry Key',
+      prefix: 'sk_none11',
+      raw_key: 'sk_none11xyz',
+      created_at: '2026-03-18T00:00:00Z',
+    });
+
+    const user = userEvent.setup();
+    render(
+      <MemoryRouter>
+        <Profile />
+      </MemoryRouter>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /generate api key/i })).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole('button', { name: /generate api key/i }));
+    await user.type(screen.getByLabelText(/key name/i), 'No Expiry Key');
+
+    // "No expiry" is default — just submit
+    await user.click(screen.getByRole('button', { name: /^generate$/i }));
+
+    await waitFor(() => {
+      expect(apiKeyService.create).toHaveBeenCalledWith('u1', { name: 'No Expiry Key' });
+    });
+  });
+
+  it('displays expired key with red chip indicator', async () => {
+    const expiredKey = {
+      id: 'k-expired',
+      user_id: 'u1',
+      name: 'Expired Key',
+      prefix: 'exp12345',
+      created_at: '2025-01-01T00:00:00Z',
+      expires_at: '2025-06-01T00:00:00Z',
+    };
+    (apiKeyService.list as ReturnType<typeof vi.fn>).mockResolvedValue([expiredKey]);
+
+    render(
+      <MemoryRouter>
+        <Profile />
+      </MemoryRouter>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('Expired Key')).toBeInTheDocument();
+    });
+
+    // Expired chip should be present (label starts with "Expired" followed by a date)
+    const expiredChip = screen.getByText(/^Expired \d/);
+    expect(expiredChip.closest('.MuiChip-root')).toBeInTheDocument();
+    expect(expiredChip.closest('.MuiChip-colorError')).toBeInTheDocument();
+  });
+
+  it('displays expiring-soon key with warning chip', async () => {
+    // Set expiry to 15 days from now
+    const soonDate = new Date();
+    soonDate.setDate(soonDate.getDate() + 15);
+    const soonKey = {
+      id: 'k-soon',
+      user_id: 'u1',
+      name: 'Soon Key',
+      prefix: 'soon1234',
+      created_at: '2026-01-01T00:00:00Z',
+      expires_at: soonDate.toISOString(),
+    };
+    (apiKeyService.list as ReturnType<typeof vi.fn>).mockResolvedValue([soonKey]);
+
+    render(
+      <MemoryRouter>
+        <Profile />
+      </MemoryRouter>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('Soon Key')).toBeInTheDocument();
+    });
+
+    // Warning chip should be present (rendered as MuiChip with color="warning")
+    const dateStr = soonDate.toLocaleDateString();
+    const chip = screen.getByText(dateStr);
+    expect(chip.closest('.MuiChip-root')).toBeInTheDocument();
   });
 });

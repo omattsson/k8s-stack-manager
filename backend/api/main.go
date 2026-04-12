@@ -257,7 +257,7 @@ func main() {
 	gitHandler := handlers.NewGitHandler(gitRegistry)
 	auditLogHandler := handlers.NewAuditLogHandler(auditRepo)
 	userHandler := handlers.NewUserHandler(userRepo)
-	apiKeyHandler := handlers.NewAPIKeyHandler(apiKeyRepo, userRepo)
+	apiKeyHandler := handlers.NewAPIKeyHandler(apiKeyRepo, userRepo, &cfg.Auth)
 
 	adminHandler := handlers.NewAdminHandler(clusterRegistry, instanceRepo)
 	clusterHandler := handlers.NewClusterHandlerWithQuotas(clusterRepo, clusterRegistry, instanceRepo, quotaRepo)

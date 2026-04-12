@@ -1,10 +1,12 @@
 package handlers
 
 import (
+	"fmt"
 	"net/http"
 	"time"
 
 	"backend/internal/api/middleware"
+	"backend/internal/config"
 	"backend/internal/models"
 
 	"github.com/gin-gonic/gin"
@@ -15,22 +17,27 @@ const (
 	msgForbidden = "Forbidden"
 )
 
-
 // APIKeyHandler handles API key management endpoints.
 type APIKeyHandler struct {
-	apiKeyRepo models.APIKeyRepository
-	userRepo   models.UserRepository
+	apiKeyRepo            models.APIKeyRepository
+	userRepo              models.UserRepository
+	apiKeyMaxLifetimeDays int
 }
 
 // NewAPIKeyHandler creates a new APIKeyHandler.
-func NewAPIKeyHandler(apiKeyRepo models.APIKeyRepository, userRepo models.UserRepository) *APIKeyHandler {
-	return &APIKeyHandler{apiKeyRepo: apiKeyRepo, userRepo: userRepo}
+func NewAPIKeyHandler(apiKeyRepo models.APIKeyRepository, userRepo models.UserRepository, authCfg *config.AuthConfig) *APIKeyHandler {
+	maxDays := 0
+	if authCfg != nil {
+		maxDays = authCfg.APIKeyMaxLifetimeDays
+	}
+	return &APIKeyHandler{apiKeyRepo: apiKeyRepo, userRepo: userRepo, apiKeyMaxLifetimeDays: maxDays}
 }
 
 // CreateAPIKeyRequest is the request body for creating an API key.
 type CreateAPIKeyRequest struct {
-	Name      string  `json:"name" binding:"required"`
-	ExpiresAt *string `json:"expires_at,omitempty"`
+	Name          string  `json:"name" binding:"required"`
+	ExpiresAt     *string `json:"expires_at,omitempty"`
+	ExpiresInDays *int    `json:"expires_in_days,omitempty"`
 }
 
 // CreateAPIKeyResponse is returned once at key creation time.
@@ -46,7 +53,7 @@ type CreateAPIKeyResponse struct {
 
 // CreateAPIKey godoc
 // @Summary      Create an API key for a user
-// @Description  Generates a new API key. The raw key is returned once in raw_key and cannot be retrieved again.
+// @Description  Generates a new API key. Optionally set expires_at (YYYY-MM-DD or RFC3339) or expires_in_days (positive int), but not both. If API_KEY_MAX_LIFETIME_DAYS is configured, keys without explicit expiry are auto-capped. The raw key is returned once in raw_key and cannot be retrieved again.
 // @Tags         api-keys
 // @Accept       json
 // @Produce      json
@@ -84,14 +91,27 @@ func (h *APIKeyHandler) CreateAPIKey(c *gin.Context) {
 		return
 	}
 
-	rawKey, prefix, hash, err := models.GenerateAPIKey()
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
-		return
+	// Normalize empty expires_at to nil so it doesn't conflict with expires_in_days.
+	if req.ExpiresAt != nil && *req.ExpiresAt == "" {
+		req.ExpiresAt = nil
 	}
 
 	var expiresAt *time.Time
-	if req.ExpiresAt != nil && *req.ExpiresAt != "" {
+	if req.ExpiresAt != nil && req.ExpiresInDays != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Cannot specify both expires_at and expires_in_days"})
+		return
+	}
+
+	now := time.Now().UTC()
+
+	if req.ExpiresInDays != nil {
+		if *req.ExpiresInDays <= 0 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "expires_in_days must be positive"})
+			return
+		}
+		t := now.AddDate(0, 0, *req.ExpiresInDays)
+		expiresAt = &t
+	} else if req.ExpiresAt != nil {
 		parsed, perr := time.Parse(time.RFC3339, *req.ExpiresAt)
 		if perr != nil {
 			// Try date-only format: treat as end-of-day UTC.
@@ -102,7 +122,37 @@ func (h *APIKeyHandler) CreateAPIKey(c *gin.Context) {
 			}
 			parsed = parsed.Add(23*time.Hour + 59*time.Minute + 59*time.Second)
 		}
+		parsed = parsed.UTC()
 		expiresAt = &parsed
+	}
+
+	// Reject expiry dates that are not strictly in the future.
+	if expiresAt != nil && !expiresAt.After(now) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Expiry date must be in the future"})
+		return
+	}
+
+	// Enforce max lifetime policy.
+	if h.apiKeyMaxLifetimeDays > 0 {
+		// Compute maxExpiry as end-of-day so date-only boundary values aren't rejected.
+		maxDate := now.AddDate(0, 0, h.apiKeyMaxLifetimeDays)
+		maxExpiry := time.Date(maxDate.Year(), maxDate.Month(), maxDate.Day(), 23, 59, 59, 999999999, time.UTC)
+		if expiresAt != nil {
+			if expiresAt.After(maxExpiry) {
+				c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("Expiry exceeds maximum allowed lifetime of %d days", h.apiKeyMaxLifetimeDays)})
+				return
+			}
+		} else {
+			// Auto-cap: no expiry requested but max lifetime is configured.
+			expiresAt = &maxExpiry
+		}
+	}
+
+	// Generate key only after all validation passes to avoid wasted crypto work.
+	rawKey, prefix, hash, err := models.GenerateAPIKey()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
+		return
 	}
 
 	key := &models.APIKey{

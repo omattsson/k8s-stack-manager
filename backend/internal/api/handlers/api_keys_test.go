@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"backend/internal/config"
 	"backend/internal/models"
 
 	"github.com/gin-gonic/gin"
@@ -23,10 +24,22 @@ func setupAPIKeyRouter(
 	apiKeyRepo *MockAPIKeyRepository,
 	callerID, callerRole string,
 ) *gin.Engine {
+	return setupAPIKeyRouterWithMaxDays(userRepo, apiKeyRepo, callerID, callerRole, 0)
+}
+
+// setupAPIKeyRouterWithMaxDays creates a gin engine wired to APIKeyHandler routes
+// with a configurable max lifetime policy (0 = no limit).
+func setupAPIKeyRouterWithMaxDays(
+	userRepo *MockUserRepository,
+	apiKeyRepo *MockAPIKeyRepository,
+	callerID, callerRole string,
+	maxDays int,
+) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
 	r.Use(injectAuthContext(callerID, callerRole))
-	h := NewAPIKeyHandler(apiKeyRepo, userRepo)
+	cfg := &config.AuthConfig{APIKeyMaxLifetimeDays: maxDays}
+	h := NewAPIKeyHandler(apiKeyRepo, userRepo, cfg)
 	keys := r.Group("/api/v1/users/:id/api-keys")
 	{
 		keys.GET("", h.ListAPIKeys)
@@ -325,6 +338,164 @@ func TestDeleteAPIKey(t *testing.T) {
 			router.ServeHTTP(w, req)
 
 			assert.Equal(t, tt.wantStatus, w.Code)
+		})
+	}
+}
+
+// ---- TestCreateAPIKeyExpiration ----
+
+func TestCreateAPIKeyExpiration(t *testing.T) {
+	t.Parallel()
+
+	type tc struct {
+		name       string
+		maxDays    int
+		body       string
+		wantStatus int
+		// If non-zero, verify that ExpiresAt is approximately this many days from now.
+		wantExpiryDays int
+		wantErrSubstr  string
+	}
+
+	tests := []tc{
+		{
+			name:           "expires_in_days 90 - success",
+			maxDays:        365,
+			body:           `{"name":"ci-key","expires_in_days":90}`,
+			wantStatus:     http.StatusCreated,
+			wantExpiryDays: 90,
+		},
+		{
+			name:          "expires_in_days 0 - 400",
+			maxDays:       0,
+			body:          `{"name":"ci-key","expires_in_days":0}`,
+			wantStatus:    http.StatusBadRequest,
+			wantErrSubstr: "expires_in_days must be positive",
+		},
+		{
+			name:          "expires_in_days negative - 400",
+			maxDays:       0,
+			body:          `{"name":"ci-key","expires_in_days":-5}`,
+			wantStatus:    http.StatusBadRequest,
+			wantErrSubstr: "expires_in_days must be positive",
+		},
+		{
+			name:          "both expires_at and expires_in_days - 400",
+			maxDays:       0,
+			body:          `{"name":"ci-key","expires_at":"2099-12-31","expires_in_days":90}`,
+			wantStatus:    http.StatusBadRequest,
+			wantErrSubstr: "Cannot specify both",
+		},
+		{
+			name:          "expires_in_days 500 exceeds max 365 - 400",
+			maxDays:       365,
+			body:          `{"name":"ci-key","expires_in_days":500}`,
+			wantStatus:    http.StatusBadRequest,
+			wantErrSubstr: "maximum allowed lifetime of 365 days",
+		},
+		{
+			name:           "no expiry with max 365 - auto-capped",
+			maxDays:        365,
+			body:           `{"name":"ci-key"}`,
+			wantStatus:     http.StatusCreated,
+			wantExpiryDays: 365,
+		},
+		{
+			name:       "expires_at within max - success",
+			maxDays:    365,
+			body:       `{"name":"ci-key","expires_at":"` + time.Now().UTC().AddDate(0, 0, 30).Format("2006-01-02") + `"}`,
+			wantStatus: http.StatusCreated,
+		},
+		{
+			name:          "expires_at beyond max - 400",
+			maxDays:       365,
+			body:          `{"name":"ci-key","expires_at":"` + time.Now().UTC().AddDate(0, 0, 400).Format("2006-01-02") + `"}`,
+			wantStatus:    http.StatusBadRequest,
+			wantErrSubstr: "maximum allowed lifetime of 365 days",
+		},
+		{
+			name:       "no expiry with max 0 (no limit) - no expiry set",
+			maxDays:    0,
+			body:       `{"name":"ci-key"}`,
+			wantStatus: http.StatusCreated,
+		},
+		{
+			name:           "expires_in_days exactly at max - success",
+			maxDays:        365,
+			body:           `{"name":"ci-key","expires_in_days":365}`,
+			wantStatus:     http.StatusCreated,
+			wantExpiryDays: 365,
+		},
+		{
+			name:          "expires_in_days one day over max - 400",
+			maxDays:       365,
+			body:          `{"name":"ci-key","expires_in_days":366}`,
+			wantStatus:    http.StatusBadRequest,
+			wantErrSubstr: "maximum allowed lifetime of 365 days",
+		},
+		{
+			name:          "expires_at in the past - 400",
+			maxDays:       0,
+			body:          `{"name":"ci-key","expires_at":"2020-01-01"}`,
+			wantStatus:    http.StatusBadRequest,
+			wantErrSubstr: "Expiry date must be in the future",
+		},
+		{
+			name:          "invalid expires_at format - 400",
+			maxDays:       0,
+			body:          `{"name":"ci-key","expires_at":"not-a-date"}`,
+			wantStatus:    http.StatusBadRequest,
+			wantErrSubstr: "Invalid expires_at format",
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			userRepo := NewMockUserRepository()
+			apiKeyRepo := NewMockAPIKeyRepository()
+			seedUser(t, userRepo, "user-1", "alice", "testpass", "user")
+
+			router := setupAPIKeyRouterWithMaxDays(userRepo, apiKeyRepo, "user-1", "user", tt.maxDays)
+			w := httptest.NewRecorder()
+			req, _ := http.NewRequest(http.MethodPost,
+				"/api/v1/users/user-1/api-keys",
+				bytes.NewBufferString(tt.body))
+			req.Header.Set("Content-Type", "application/json")
+			router.ServeHTTP(w, req)
+
+			assert.Equal(t, tt.wantStatus, w.Code)
+
+			if tt.wantErrSubstr != "" {
+				var resp map[string]interface{}
+				require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+				errMsg, _ := resp["error"].(string)
+				assert.Contains(t, errMsg, tt.wantErrSubstr)
+			}
+
+			if tt.wantStatus == http.StatusCreated {
+				var resp map[string]interface{}
+				require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+
+				if tt.wantExpiryDays > 0 {
+					expiresStr, ok := resp["expires_at"].(string)
+					require.True(t, ok, "expires_at should be present")
+					parsed, err := time.Parse(time.RFC3339, expiresStr)
+					require.NoError(t, err)
+					now := time.Now().UTC()
+					expectedDate := now.AddDate(0, 0, tt.wantExpiryDays)
+					// Auto-cap uses end-of-day; expires_in_days uses exact offset.
+					// Allow up to 24h + 60s tolerance to cover both cases.
+					diff := parsed.Sub(expectedDate)
+					assert.InDelta(t, 0, diff.Seconds(), 86460, "expires_at should be ~%d days from now", tt.wantExpiryDays)
+				}
+
+				if tt.name == "no expiry with max 0 (no limit) - no expiry set" {
+					_, hasExpiry := resp["expires_at"]
+					assert.False(t, hasExpiry, "expires_at should not be set when no limit and no expiry requested")
+				}
+			}
 		})
 	}
 }

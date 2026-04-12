@@ -710,3 +710,21 @@ func TestOtelConfigLoad(t *testing.T) {
 		assert.Equal(t, 0.25, cfg.Otel.SampleRate)
 	})
 }
+
+func TestAPIKeyMaxLifetimeDaysConfig(t *testing.T) {
+	// Not parallel: uses t.Setenv which modifies process env
+
+	t.Run("custom value from env", func(t *testing.T) {
+		t.Setenv("API_KEY_MAX_LIFETIME_DAYS", "90")
+		cfg, err := config.LoadConfig()
+		require.NoError(t, err)
+		assert.Equal(t, 90, cfg.Auth.APIKeyMaxLifetimeDays)
+	})
+
+	t.Run("default value is 0 (no limit)", func(t *testing.T) {
+		t.Setenv("API_KEY_MAX_LIFETIME_DAYS", "")
+		cfg, err := config.LoadConfig()
+		require.NoError(t, err)
+		assert.Equal(t, 0, cfg.Auth.APIKeyMaxLifetimeDays)
+	})
+}
