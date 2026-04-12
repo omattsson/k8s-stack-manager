@@ -122,12 +122,15 @@ lint:
 
 # Shared env vars for local backend development
 DEV_LOCAL_ENV = \
+	DB_HOST=$${DB_HOST:-127.0.0.1} DB_PORT=$${DB_PORT:-3306} \
+	DB_USER=$${DB_USER:-root} DB_PASSWORD=$${DB_PASSWORD:-rootpassword} DB_NAME=$${DB_NAME:-app} \
 	JWT_SECRET="dev-secret-change-in-production-minimum-16-chars" \
 	ADMIN_USERNAME=admin ADMIN_PASSWORD=admin \
 	SELF_REGISTRATION=true \
 	HELM_BINARY=$${HELM_BINARY:-helm} \
 	KUBECONFIG_PATH=$${KUBECONFIG_PATH:-$$HOME/.kube/config} \
 	RATE_LIMIT=$${RATE_LIMIT:-1000} \
+	CORS_ALLOWED_ORIGINS=$${CORS_ALLOWED_ORIGINS:-http://localhost:3000,http://localhost:3001} \
 	PORT=8081 GIN_MODE=debug
 
 # Run backend locally with hot reload.
