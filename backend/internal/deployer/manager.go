@@ -429,7 +429,8 @@ func (m *Manager) finalizeDeploy(instanceID string, deployLog *models.Deployment
 		if err := m.instanceRepo.Update(instance); err != nil {
 			slog.Error("failed to update instance after deploy",
 				"instance_id", instanceID, "error", err)
-		} else if err := m.logRepo.Update(context.Background(), deployLog); err != nil {
+		}
+		if err := m.logRepo.Update(m.shutdownCtx, deployLog); err != nil {
 			slog.Error("failed to update deploy log after deploy",
 				"instance_id", instanceID, "error", err)
 		}
@@ -644,7 +645,8 @@ func (m *Manager) finalizeStop(instanceID string, deployLog *models.DeploymentLo
 		if err := m.instanceRepo.Update(instance); err != nil {
 			slog.Error("failed to update instance after stop",
 				"instance_id", instanceID, "error", err)
-		} else if err := m.logRepo.Update(context.Background(), deployLog); err != nil {
+		}
+		if err := m.logRepo.Update(m.shutdownCtx, deployLog); err != nil {
 			slog.Error("failed to update deploy log after stop",
 				"instance_id", instanceID, "error", err)
 		}
@@ -932,7 +934,8 @@ func (m *Manager) finalizeClean(instanceID string, deployLog *models.DeploymentL
 		if err := m.instanceRepo.Update(instance); err != nil {
 			slog.Error("failed to update instance after clean",
 				"instance_id", instanceID, "error", err)
-		} else if err := m.logRepo.Update(context.Background(), deployLog); err != nil {
+		}
+		if err := m.logRepo.Update(m.shutdownCtx, deployLog); err != nil {
 			slog.Error("failed to update deploy log after clean",
 				"instance_id", instanceID, "error", err)
 		}
