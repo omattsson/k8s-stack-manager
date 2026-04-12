@@ -506,36 +506,33 @@ func (h *TemplateHandler) InstantiateTemplate(c *gin.Context) {
 		UpdatedAt:             now,
 	}
 
-	if h.txRunner != nil {
-		// Transactional path — definition + chart configs are created atomically.
-		var chartConfigs []models.ChartConfig
-		txErr := h.txRunner.RunInTx(func(repos database.TxRepos) error {
-			if err := repos.StackDefinition.Create(def); err != nil {
-				return err
-			}
-			ccs, copyErr := h.copyTemplateChartsToDefinitionTx(tmpl.ID, def.ID, now, repos)
-			if copyErr != nil {
-				return copyErr
-			}
-			chartConfigs = ccs
-			return nil
-		})
-		if txErr != nil {
-			status, message := mapError(txErr, entityStackDefinition)
-			c.JSON(status, gin.H{"error": message})
-			return
-		}
+	if h.txRunner == nil {
+		slog.Error("txRunner not configured for InstantiateTemplate")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
+		return
+	}
 
-		c.JSON(http.StatusCreated, gin.H{
-			"definition": def,
-			"charts":     chartConfigs,
-		})
+	var chartConfigs []models.ChartConfig
+	txErr := h.txRunner.RunInTx(func(repos database.TxRepos) error {
+		if err := repos.StackDefinition.Create(def); err != nil {
+			return err
+		}
+		ccs, copyErr := h.copyTemplateChartsToDefinitionTx(tmpl.ID, def.ID, now, repos)
+		if copyErr != nil {
+			return copyErr
+		}
+		chartConfigs = ccs
+		return nil
+	})
+	if txErr != nil {
+		status, message := mapError(txErr, entityStackDefinition)
+		c.JSON(status, gin.H{"error": message})
 		return
 	}
 
 	c.JSON(http.StatusCreated, gin.H{
 		"definition": def,
-		"charts":     []models.ChartConfig{},
+		"charts":     chartConfigs,
 	})
 }
 
@@ -628,24 +625,27 @@ func (h *TemplateHandler) CloneTemplate(c *gin.Context) {
 		})
 	}
 
-	if h.txRunner != nil {
-		// Transactional path — template + chart copies are atomic.
-		txErr := h.txRunner.RunInTx(func(repos database.TxRepos) error {
-			if err := repos.StackTemplate.Create(clone); err != nil {
+	if h.txRunner == nil {
+		slog.Error("txRunner not configured for CloneTemplate")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
+		return
+	}
+
+	txErr := h.txRunner.RunInTx(func(repos database.TxRepos) error {
+		if err := repos.StackTemplate.Create(clone); err != nil {
+			return err
+		}
+		for _, cc := range chartClones {
+			if err := repos.TemplateChart.Create(cc); err != nil {
 				return err
 			}
-			for _, cc := range chartClones {
-				if err := repos.TemplateChart.Create(cc); err != nil {
-					return err
-				}
-			}
-			return nil
-		})
-		if txErr != nil {
-			status, message := mapError(txErr, entityTemplate)
-			c.JSON(status, gin.H{"error": message})
-			return
 		}
+		return nil
+	})
+	if txErr != nil {
+		status, message := mapError(txErr, entityTemplate)
+		c.JSON(status, gin.H{"error": message})
+		return
 	}
 
 	c.JSON(http.StatusCreated, clone)

@@ -503,6 +503,13 @@ func TestInstantiateTemplate(t *testing.T) {
 		assert.Equal(t, "my-def", def.Name)
 		assert.Equal(t, "t1", def.SourceTemplateID)
 		assert.Equal(t, "uid-1", def.OwnerID)
+
+		// Verify that created chart configs are returned (non-empty).
+		var charts []models.ChartConfig
+		require.NoError(t, json.Unmarshal(resp["charts"], &charts))
+		assert.Len(t, charts, 1, "response should contain the copied chart config")
+		assert.Equal(t, "my-service", charts[0].ChartName)
+		assert.Equal(t, def.ID, charts[0].StackDefinitionID)
 	})
 
 	t.Run("template not found returns 404", func(t *testing.T) {

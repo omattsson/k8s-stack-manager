@@ -471,28 +471,30 @@ func (h *DefinitionHandler) ImportDefinition(c *gin.Context) {
 		})
 	}
 
-	var createdCharts []models.ChartConfig
+	if h.txRunner == nil {
+		slog.Error("txRunner not configured for ImportDefinition")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
+		return
+	}
 
-	if h.txRunner != nil {
-		// Transactional path — definition + all charts are created atomically.
-		txErr := h.txRunner.RunInTx(func(repos database.TxRepos) error {
-			if err := repos.StackDefinition.Create(&def); err != nil {
+	var createdCharts []models.ChartConfig
+	txErr := h.txRunner.RunInTx(func(repos database.TxRepos) error {
+		if err := repos.StackDefinition.Create(&def); err != nil {
+			return err
+		}
+		for i := range chartModels {
+			if err := repos.ChartConfig.Create(&chartModels[i]); err != nil {
 				return err
 			}
-			for i := range chartModels {
-				if err := repos.ChartConfig.Create(&chartModels[i]); err != nil {
-					return err
-				}
-			}
-			createdCharts = chartModels
-			return nil
-		})
-		if txErr != nil {
-			slog.Error("failed to import definition", "error", txErr)
-			status, message := mapError(txErr, entityStackDefinition)
-			c.JSON(status, gin.H{"error": message})
-			return
 		}
+		createdCharts = chartModels
+		return nil
+	})
+	if txErr != nil {
+		slog.Error("failed to import definition", "error", txErr)
+		status, message := mapError(txErr, entityStackDefinition)
+		c.JSON(status, gin.H{"error": message})
+		return
 	}
 
 	c.JSON(http.StatusCreated, gin.H{

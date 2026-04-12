@@ -278,25 +278,28 @@ func (h *QuickDeployHandler) QuickDeploy(c *gin.Context) {
 	}
 
 	// Persist definition + chart configs + instance.
-	if h.txRunner != nil {
-		// Transactional path — all creates are atomic; rollback handles cleanup.
-		txErr := h.txRunner.RunInTx(func(repos database.TxRepos) error {
-			if err := repos.StackDefinition.Create(def); err != nil {
+	if h.txRunner == nil {
+		slog.Error("txRunner not configured for QuickDeploy")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
+		return
+	}
+
+	txErr := h.txRunner.RunInTx(func(repos database.TxRepos) error {
+		if err := repos.StackDefinition.Create(def); err != nil {
+			return err
+		}
+		for i := range chartConfigs {
+			if err := repos.ChartConfig.Create(&chartConfigs[i]); err != nil {
 				return err
 			}
-			for i := range chartConfigs {
-				if err := repos.ChartConfig.Create(&chartConfigs[i]); err != nil {
-					return err
-				}
-			}
-			return repos.StackInstance.Create(inst)
-		})
-		if txErr != nil {
-			slog.Error("Quick deploy transaction failed", "error", txErr)
-			status, message := mapError(txErr, entityStackInstance)
-			c.JSON(status, gin.H{"error": message})
-			return
 		}
+		return repos.StackInstance.Create(inst)
+	})
+	if txErr != nil {
+		slog.Error("Quick deploy transaction failed", "error", txErr)
+		status, message := mapError(txErr, entityStackInstance)
+		c.JSON(status, gin.H{"error": message})
+		return
 	}
 
 	// 4. Set branch overrides.

@@ -613,6 +613,12 @@ func (h *InstanceHandler) DeleteInstance(c *gin.Context) {
 			c.JSON(status, gin.H{"error": message})
 			return
 		}
+	} else {
+		if err := h.instanceRepo.Delete(id); err != nil {
+			status, message := mapError(err, entityStackInstance)
+			c.JSON(status, gin.H{"error": message})
+			return
+		}
 	}
 
 	c.Status(http.StatusNoContent)
@@ -677,36 +683,40 @@ func (h *InstanceHandler) CloneInstance(c *gin.Context) {
 		return
 	}
 
-	if h.txRunner != nil {
-		// Transactional path — instance create + override copies are atomic.
-		overrides, listErr := h.overrideRepo.ListByInstance(source.ID)
-		if listErr != nil {
-			overrides = nil // proceed without overrides
-		}
+	if h.txRunner == nil {
+		slog.Error("txRunner not configured for CloneInstance")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
+		return
+	}
 
-		txErr := h.txRunner.RunInTx(func(repos database.TxRepos) error {
-			if err := repos.StackInstance.Create(clone); err != nil {
+	// Transactional path — instance create + override copies are atomic.
+	overrides, listErr := h.overrideRepo.ListByInstance(source.ID)
+	if listErr != nil {
+		overrides = nil // proceed without overrides
+	}
+
+	txErr := h.txRunner.RunInTx(func(repos database.TxRepos) error {
+		if err := repos.StackInstance.Create(clone); err != nil {
+			return err
+		}
+		for _, ov := range overrides {
+			clonedOV := &models.ValueOverride{
+				ID:              uuid.New().String(),
+				StackInstanceID: clone.ID,
+				ChartConfigID:   ov.ChartConfigID,
+				Values:          ov.Values,
+				UpdatedAt:       now,
+			}
+			if err := repos.ValueOverride.Create(clonedOV); err != nil {
 				return err
 			}
-			for _, ov := range overrides {
-				clonedOV := &models.ValueOverride{
-					ID:              uuid.New().String(),
-					StackInstanceID: clone.ID,
-					ChartConfigID:   ov.ChartConfigID,
-					Values:          ov.Values,
-					UpdatedAt:       now,
-				}
-				if err := repos.ValueOverride.Create(clonedOV); err != nil {
-					return err
-				}
-			}
-			return nil
-		})
-		if txErr != nil {
-			status, message := mapError(txErr, entityStackInstance)
-			c.JSON(status, gin.H{"error": message})
-			return
 		}
+		return nil
+	})
+	if txErr != nil {
+		status, message := mapError(txErr, entityStackInstance)
+		c.JSON(status, gin.H{"error": message})
+		return
 	}
 
 	c.JSON(http.StatusCreated, clone)
