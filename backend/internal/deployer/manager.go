@@ -30,8 +30,7 @@ const maxInstanceErrorLen = 256
 const maxLogErrorLen = 1024
 
 // maxOutputLen is the maximum length of the aggregated Helm output stored in
-// DeploymentLog.Output. Azure Table Storage has a 64 KB entity size limit,
-// and large Helm output could exceed it.
+// DeploymentLog.Output. Large Helm output is truncated to keep DB rows manageable.
 const maxOutputLen = 64 * 1024
 
 // ClusterResolver resolves per-cluster Helm and K8s clients.
@@ -164,7 +163,7 @@ func (m *Manager) Deploy(ctx context.Context, req DeployRequest) (string, error)
 	req.Instance.Status = models.StackStatusDeploying
 	req.Instance.ErrorMessage = ""
 
-	if m.txRunner != nil && m.txRunner.IsTransactional() {
+	if m.txRunner != nil {
 		if err := m.txRunner.RunInTx(func(repos database.TxRepos) error {
 			if err := repos.DeploymentLog.Create(ctx, deployLog); err != nil {
 				return fmt.Errorf("creating deployment log: %w", err)
@@ -175,13 +174,6 @@ func (m *Manager) Deploy(ctx context.Context, req DeployRequest) (string, error)
 			return nil
 		}); err != nil {
 			return "", err
-		}
-	} else {
-		if err := m.logRepo.Create(ctx, deployLog); err != nil {
-			return "", fmt.Errorf("creating deployment log: %w", err)
-		}
-		if err := m.instanceRepo.Update(req.Instance); err != nil {
-			return "", fmt.Errorf("updating instance status: %w", err)
 		}
 	}
 
@@ -370,8 +362,8 @@ func (m *Manager) rollbackCharts(helm HelmExecutor, ctx context.Context, instanc
 }
 
 // finalizeDeploy updates the instance and deployment log with the final status.
-// The deployLog is passed directly from the goroutine closure to avoid a
-// partition-scanning FindByID call on Azure Table Storage.
+// The deployLog is passed directly from the goroutine closure to avoid an
+// extra FindByID call.
 func (m *Manager) finalizeDeploy(instanceID string, deployLog *models.DeploymentLog, output string, deployErr error, lastDeployedValues string) {
 	now := time.Now().UTC()
 
@@ -413,7 +405,7 @@ func (m *Manager) finalizeDeploy(instanceID string, deployLog *models.Deployment
 		)
 	}
 
-	if m.txRunner != nil && m.txRunner.IsTransactional() {
+	if m.txRunner != nil {
 		if err := m.txRunner.RunInTx(func(repos database.TxRepos) error {
 			if err := repos.StackInstance.Update(instance); err != nil {
 				return fmt.Errorf("updating instance: %w", err)
@@ -425,15 +417,6 @@ func (m *Manager) finalizeDeploy(instanceID string, deployLog *models.Deployment
 		}); err != nil {
 			slog.Error("failed to finalize deploy atomically",
 				"instance_id", instanceID, "error", err)
-		}
-	} else {
-		if err := m.instanceRepo.Update(instance); err != nil {
-			slog.Error("failed to update instance status after deploy",
-				"instance_id", instanceID, "error", err)
-		}
-		if err := m.logRepo.Update(m.shutdownCtx, deployLog); err != nil {
-			slog.Error("failed to update deployment log after deploy",
-				"log_id", deployLog.ID, "error", err)
 		}
 	}
 
@@ -493,7 +476,7 @@ func (m *Manager) StopWithCharts(ctx context.Context, instance *models.StackInst
 	instance.Status = models.StackStatusStopping
 	instance.ErrorMessage = ""
 
-	if m.txRunner != nil && m.txRunner.IsTransactional() {
+	if m.txRunner != nil {
 		if err := m.txRunner.RunInTx(func(repos database.TxRepos) error {
 			if err := repos.DeploymentLog.Create(ctx, deployLog); err != nil {
 				return fmt.Errorf("creating deployment log: %w", err)
@@ -504,13 +487,6 @@ func (m *Manager) StopWithCharts(ctx context.Context, instance *models.StackInst
 			return nil
 		}); err != nil {
 			return "", err
-		}
-	} else {
-		if err := m.logRepo.Create(ctx, deployLog); err != nil {
-			return "", fmt.Errorf("creating deployment log: %w", err)
-		}
-		if err := m.instanceRepo.Update(instance); err != nil {
-			return "", fmt.Errorf("updating instance status: %w", err)
 		}
 	}
 
@@ -591,8 +567,8 @@ func (m *Manager) executeStopWithCharts(helm HelmExecutor, instanceID string, de
 }
 
 // finalizeStop updates the instance and deployment log with the final stop status.
-// The deployLog is passed directly from the goroutine closure to avoid a
-// partition-scanning FindByID call on Azure Table Storage.
+// The deployLog is passed directly from the goroutine closure to avoid an
+// extra FindByID call.
 func (m *Manager) finalizeStop(instanceID string, deployLog *models.DeploymentLog, output string, stopErr error) {
 	now := time.Now().UTC()
 
@@ -629,7 +605,7 @@ func (m *Manager) finalizeStop(instanceID string, deployLog *models.DeploymentLo
 		)
 	}
 
-	if m.txRunner != nil && m.txRunner.IsTransactional() {
+	if m.txRunner != nil {
 		if err := m.txRunner.RunInTx(func(repos database.TxRepos) error {
 			if err := repos.StackInstance.Update(instance); err != nil {
 				return fmt.Errorf("updating instance: %w", err)
@@ -641,15 +617,6 @@ func (m *Manager) finalizeStop(instanceID string, deployLog *models.DeploymentLo
 		}); err != nil {
 			slog.Error("failed to finalize stop atomically",
 				"instance_id", instanceID, "error", err)
-		}
-	} else {
-		if err := m.instanceRepo.Update(instance); err != nil {
-			slog.Error("failed to update instance status after stop",
-				"instance_id", instanceID, "error", err)
-		}
-		if err := m.logRepo.Update(m.shutdownCtx, deployLog); err != nil {
-			slog.Error("failed to update deployment log after stop",
-				"log_id", deployLog.ID, "error", err)
 		}
 	}
 
@@ -746,7 +713,7 @@ func (m *Manager) Clean(ctx context.Context, instance *models.StackInstance, cha
 	instance.Status = models.StackStatusCleaning
 	instance.ErrorMessage = ""
 
-	if m.txRunner != nil && m.txRunner.IsTransactional() {
+	if m.txRunner != nil {
 		if err := m.txRunner.RunInTx(func(repos database.TxRepos) error {
 			if err := repos.DeploymentLog.Create(ctx, deployLog); err != nil {
 				return fmt.Errorf("creating deployment log: %w", err)
@@ -757,13 +724,6 @@ func (m *Manager) Clean(ctx context.Context, instance *models.StackInstance, cha
 			return nil
 		}); err != nil {
 			return "", err
-		}
-	} else {
-		if err := m.logRepo.Create(ctx, deployLog); err != nil {
-			return "", fmt.Errorf("creating deployment log: %w", err)
-		}
-		if err := m.instanceRepo.Update(instance); err != nil {
-			return "", fmt.Errorf("updating instance status: %w", err)
 		}
 	}
 
@@ -918,7 +878,7 @@ func (m *Manager) finalizeClean(instanceID string, deployLog *models.DeploymentL
 		)
 	}
 
-	if m.txRunner != nil && m.txRunner.IsTransactional() {
+	if m.txRunner != nil {
 		if err := m.txRunner.RunInTx(func(repos database.TxRepos) error {
 			if err := repos.StackInstance.Update(instance); err != nil {
 				return fmt.Errorf("updating instance: %w", err)
@@ -930,15 +890,6 @@ func (m *Manager) finalizeClean(instanceID string, deployLog *models.DeploymentL
 		}); err != nil {
 			slog.Error("failed to finalize clean atomically",
 				"instance_id", instanceID, "error", err)
-		}
-	} else {
-		if err := m.instanceRepo.Update(instance); err != nil {
-			slog.Error("failed to update instance status after clean",
-				"instance_id", instanceID, "error", err)
-		}
-		if err := m.logRepo.Update(m.shutdownCtx, deployLog); err != nil {
-			slog.Error("failed to update deployment log after clean",
-				"log_id", deployLog.ID, "error", err)
 		}
 	}
 

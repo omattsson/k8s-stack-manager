@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"backend/internal/cluster"
+	"backend/internal/database"
 	"backend/internal/deployer"
 	"backend/internal/helm"
 	"backend/internal/models"
@@ -61,6 +62,13 @@ func setupQuickDeployRouter(
 		&MockBroadcastSender{}, registry, nil,
 		defaultTTL,
 	)
+	h.SetTxRunner(&mockHandlerTxRunner{repos: database.TxRepos{
+		StackDefinition: definitionRepo,
+		ChartConfig:     chartConfigRepo,
+		StackInstance:   instanceRepo,
+		ValueOverride:   overrideRepo,
+		BranchOverride:  branchOverrideRepo,
+	}})
 
 	tpl := r.Group("/api/v1/templates")
 	{

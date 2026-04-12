@@ -43,7 +43,7 @@ services:
       - OIDC_AUTO_PROVISION=${OIDC_AUTO_PROVISION:-true}
       - OIDC_LOCAL_AUTH=${OIDC_LOCAL_AUTH:-true}
       - OIDC_STATE_TTL=${OIDC_STATE_TTL:-5m}
-      # MySQL (requires --profile mysql)
+      # MySQL
       - DB_HOST=${DB_HOST:-mysql}
       - DB_PORT=3306
       - DB_USER=${DB_USER:-root}
@@ -52,13 +52,7 @@ services:
       - DB_MAX_OPEN_CONNS=${DB_MAX_OPEN_CONNS:-25}
       - DB_MAX_IDLE_CONNS=${DB_MAX_IDLE_CONNS:-5}
       - DB_CONN_MAX_LIFETIME=${DB_CONN_MAX_LIFETIME:-5m}
-      # Azure Table Storage (Azurite for local dev)
-      - USE_AZURE_TABLE=${USE_AZURE_TABLE:-true}
-      - USE_AZURITE=${USE_AZURITE:-true}
-      - AZURE_TABLE_ACCOUNT_NAME=${AZURE_TABLE_ACCOUNT_NAME:-devstoreaccount1}
-      - AZURE_TABLE_ACCOUNT_KEY=${AZURE_TABLE_ACCOUNT_KEY:-Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==}
-      - AZURE_TABLE_ENDPOINT=${AZURE_TABLE_ENDPOINT:-azurite:10002}
-      - AZURE_TABLE_NAME=${AZURE_TABLE_NAME:-items}
+
       # Git providers (optional - leave empty for local dev)
       - AZURE_DEVOPS_PAT=${AZURE_DEVOPS_PAT:-}
       - AZURE_DEVOPS_DEFAULT_ORG=${AZURE_DEVOPS_DEFAULT_ORG:-}
@@ -80,14 +74,14 @@ services:
       - ENABLE_SWAGGER=${ENABLE_SWAGGER:-true}
       # Stack defaults
       - DEFAULT_BRANCH=${DEFAULT_BRANCH:-master}
-    depends_on:
-      azurite:
-        condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8081/health/live"]
       interval: 30s
       timeout: 10s
       retries: 3
+    depends_on:
+      mysql:
+        condition: service_healthy
     networks:
       - backend-net
       - frontend-net
@@ -121,7 +115,6 @@ services:
   mysql:
     image: mysql:8.4
     container_name: app-mysql-${GO_ENV:-dev}
-    profiles: [mysql, mysql-otel]
     ports:
       - "${DB_PORT:-3306}:3306"
     environment:
@@ -136,25 +129,6 @@ services:
       timeout: 5s
       retries: 5
       start_period: 30s
-    networks:
-      - backend-net
-
-  azurite:
-    image: mcr.microsoft.com/azure-storage/azurite:3.34.0
-    container_name: app-azurite-${GO_ENV:-dev}
-    ports:
-      - "10000:10000"  # Blob
-      - "10001:10001"  # Queue
-      - "10002:10002"  # Table
-    volumes:
-      - azurite_data:/data
-    command: azurite --tableHost 0.0.0.0 --blobHost 0.0.0.0 --queueHost 0.0.0.0 --silent
-    healthcheck:
-      test: ["CMD-SHELL", "node -e \"require('net').createConnection(10002,'127.0.0.1').on('connect',()=>process.exit(0)).on('error',()=>process.exit(1))\""]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 10s
     networks:
       - backend-net
 
@@ -275,7 +249,6 @@ volumes:
   backend_go_mod:
   frontend_node_modules:
   mysql_data: {}
-  azurite_data: {}
   grafana_data: {}
   tempo_data: {}
 

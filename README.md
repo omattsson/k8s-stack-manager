@@ -64,7 +64,7 @@ Frontend (React + MUI + TypeScript)
         ▼
 Backend (Go + Gin)
   ├── REST API with JWT auth
-  ├── MySQL (GORM) or Azure Table Storage (Azurite for local dev)
+  ├── MySQL (GORM)
   ├── Git Provider (Azure DevOps + GitLab)
   ├── Helm Values (deep merge + template substitution)
   ├── Multi-cluster support (kubeconfig encrypted at rest)
@@ -75,7 +75,7 @@ Backend (Go + Gin)
 
 ### Prerequisites
 - Docker and Docker Compose
-- Go 1.24+ (for local backend development)
+- Go 1.25+ (for local backend development)
 - Node.js 20+ (for local frontend development)
 
 ### Start with Docker Compose
@@ -88,16 +88,12 @@ This starts all services:
 - **Frontend**: http://localhost:3000
 - **Backend API**: http://localhost:8081
 - **Swagger docs**: http://localhost:8081/swagger/index.html
-- **Azurite** (Azure Table Storage emulator): localhost:10002
 
 Default admin credentials: `admin` / `admin` (configured in docker-compose.yml).
 
 ### Start Locally (without Docker)
 
 ```bash
-# Start Azurite
-make azurite-start
-
 # Run backend
 make dev-local
 
@@ -110,8 +106,7 @@ cd frontend && npm install && npm run dev
 | Command | Description |
 |---|---|
 | `make dev` | Start full stack via Docker Compose |
-| `make dev-local` | Run backend + frontend locally against Azurite |
-| `make azurite-start` | Start Azurite container |
+| `make dev-local` | Run backend + frontend locally |
 | `make test` | Run all tests (backend + frontend) |
 | `make test-backend` | Backend unit tests |
 | `make test-frontend` | Frontend unit tests |
@@ -135,7 +130,7 @@ cd frontend && npm install && npm run dev
 │   ├── internal/
 │   │   ├── api/               # Handlers, middleware, routes
 │   │   ├── config/            # Environment-based configuration
-│   │   ├── database/azure/    # Azure Table Storage repositories
+│   │   ├── database/          # Database repositories + migrations
 │   │   ├── gitprovider/       # Azure DevOps + GitLab integration
 │   │   ├── helm/              # Values merge + template substitution
 │   │   ├── cluster/           # Multi-cluster registry + health poller
@@ -157,7 +152,6 @@ cd frontend && npm install && npm run dev
 ├── helm/k8s-stack-manager/     # Helm chart (Argo Rollouts + Traefik)
 │   ├── templates/backend/     # Backend Rollout, services, config
 │   ├── templates/frontend/    # Frontend Rollout, services, nginx config
-│   ├── templates/azurite/     # Azurite deployment, service, PVC
 │   └── templates/traefik/     # IngressRoute + middleware
 ├── loadtest/                   # Load testing suites
 │   ├── backend/               # k6 API + WebSocket load tests
@@ -194,8 +188,6 @@ Key environment variables (see `docker-compose.yml` for full list):
 |---|---|---|
 | `JWT_SECRET` | Yes | JWT signing secret (min 16 chars) |
 | `ADMIN_PASSWORD` | Yes | Initial admin password |
-| `USE_AZURE_TABLE` | No | `true` to use Azure Table Storage |
-| `USE_AZURITE` | No | `true` to use Azurite emulator |
 | `AZURE_DEVOPS_PAT` | No | Azure DevOps personal access token |
 | `GITLAB_TOKEN` | No | GitLab access token |
 | `DEFAULT_BRANCH` | No | Default Git branch (default: `master`) |
@@ -239,7 +231,6 @@ make helm-uninstall
 ### What Gets Deployed
 - **Backend** — Argo Rollout (canary 20%→50%→80%) with stable + canary services
 - **Frontend** — Argo Rollout with nginx serving the React SPA
-- **Azurite** — Azure Table Storage emulator (enabled by default, disable for production)
 - **Traefik IngressRoute** — Routes `/api/*`→backend, `/ws`→backend, `/`→frontend
 - **Traefik Middleware** — StripPrefix for `/api`, secure response headers
 

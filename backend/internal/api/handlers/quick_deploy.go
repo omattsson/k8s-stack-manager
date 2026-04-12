@@ -278,7 +278,7 @@ func (h *QuickDeployHandler) QuickDeploy(c *gin.Context) {
 	}
 
 	// Persist definition + chart configs + instance.
-	if h.txRunner != nil && h.txRunner.IsTransactional() {
+	if h.txRunner != nil {
 		// Transactional path — all creates are atomic; rollback handles cleanup.
 		txErr := h.txRunner.RunInTx(func(repos database.TxRepos) error {
 			if err := repos.StackDefinition.Create(def); err != nil {
@@ -294,52 +294,6 @@ func (h *QuickDeployHandler) QuickDeploy(c *gin.Context) {
 		if txErr != nil {
 			slog.Error("Quick deploy transaction failed", "error", txErr)
 			status, message := mapError(txErr, entityStackInstance)
-			c.JSON(status, gin.H{"error": message})
-			return
-		}
-	} else {
-		// Non-transactional fallback (Azure Table Storage) with best-effort cleanup.
-		if err := h.definitionRepo.Create(def); err != nil {
-			status, message := mapError(err, entityStackDefinition)
-			c.JSON(status, gin.H{"error": message})
-			return
-		}
-
-		cleanupDefinition := func() {
-			if delErr := h.definitionRepo.Delete(def.ID); delErr != nil {
-				slog.Error("Quick deploy rollback: failed to delete definition",
-					"definition_id", def.ID, "error", delErr)
-			}
-		}
-
-		for i := range chartConfigs {
-			if err := h.chartConfigRepo.Create(&chartConfigs[i]); err != nil {
-				for j := 0; j < i; j++ {
-					if delErr := h.chartConfigRepo.Delete(chartConfigs[j].ID); delErr != nil {
-						slog.Error("Quick deploy rollback: failed to delete chart config",
-							"chart_config_id", chartConfigs[j].ID, "error", delErr)
-					}
-				}
-				cleanupDefinition()
-				status, message := mapError(err, entityChartConfig)
-				c.JSON(status, gin.H{"error": message})
-				return
-			}
-		}
-
-		cleanupAll := func() {
-			for _, cc := range chartConfigs {
-				if delErr := h.chartConfigRepo.Delete(cc.ID); delErr != nil {
-					slog.Error("Quick deploy rollback: failed to delete chart config",
-						"chart_config_id", cc.ID, "error", delErr)
-				}
-			}
-			cleanupDefinition()
-		}
-
-		if err := h.instanceRepo.Create(inst); err != nil {
-			cleanupAll()
-			status, message := mapError(err, entityStackInstance)
 			c.JSON(status, gin.H{"error": message})
 			return
 		}

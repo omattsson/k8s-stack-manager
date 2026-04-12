@@ -18,24 +18,18 @@ func TestLoadConfig(t *testing.T) {
 	t.Run("With environment variables", func(t *testing.T) {
 		// Set test environment variables
 		envVars := map[string]string{
-			"APP_NAME":                 "testapp",
-			"GO_ENV":                   "testing",
-			"APP_DEBUG":                "true",
-			"DB_HOST":                  "testhost",
-			"DB_PORT":                  "3306",
-			"DB_USER":                  "testuser",
-			"DB_PASSWORD":              "testpass",
-			"DB_NAME":                  "testdb",
-			"SERVER_HOST":              "localhost",
-			"SERVER_PORT":              "3000",
-			"LOG_LEVEL":                "debug",
-			"LOG_FILE":                 "test.log",
-			"USE_AZURE_TABLE":          "true",
-			"USE_AZURITE":              "true",
-			"AZURE_TABLE_ACCOUNT_NAME": "devstoreaccount1",
-			"AZURE_TABLE_ACCOUNT_KEY":  "Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==",
-			"AZURE_TABLE_ENDPOINT":     "127.0.0.1:10002",
-			"AZURE_TABLE_NAME":         "testitems",
+			"APP_NAME":    "testapp",
+			"GO_ENV":      "testing",
+			"APP_DEBUG":   "true",
+			"DB_HOST":     "testhost",
+			"DB_PORT":     "3306",
+			"DB_USER":     "testuser",
+			"DB_PASSWORD": "testpass",
+			"DB_NAME":     "testdb",
+			"SERVER_HOST": "localhost",
+			"SERVER_PORT": "3000",
+			"LOG_LEVEL":   "debug",
+			"LOG_FILE":    "test.log",
 		}
 
 		// Set environment variables
@@ -72,14 +66,6 @@ func TestLoadConfig(t *testing.T) {
 		// Check logging config
 		assert.Equal(t, "debug", config.Logging.Level)
 		assert.Equal(t, "test.log", config.Logging.File)
-
-		// Check Azure Table config
-		assert.True(t, config.AzureTable.UseAzureTable)
-		assert.True(t, config.AzureTable.UseAzurite)
-		assert.Equal(t, "devstoreaccount1", config.AzureTable.AccountName)
-		assert.Equal(t, "Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==", config.AzureTable.AccountKey)
-		assert.Equal(t, "127.0.0.1:10002", config.AzureTable.Endpoint)
-		assert.Equal(t, "testitems", config.AzureTable.TableName)
 	})
 
 	// Test with default values
@@ -91,9 +77,6 @@ func TestLoadConfig(t *testing.T) {
 			"DB_MAX_OPEN_CONNS", "DB_MAX_IDLE_CONNS", "DB_CONN_MAX_LIFETIME",
 			"SERVER_HOST", "SERVER_PORT", "SERVER_READ_TIMEOUT", "SERVER_WRITE_TIMEOUT", "SERVER_SHUTDOWN_TIMEOUT",
 			"LOG_LEVEL", "LOG_FILE",
-			"USE_AZURE_TABLE", "USE_AZURITE",
-			"AZURE_TABLE_ACCOUNT_NAME", "AZURE_TABLE_ACCOUNT_KEY",
-			"AZURE_TABLE_ENDPOINT", "AZURE_TABLE_NAME",
 		}
 		for _, v := range vars {
 			os.Unsetenv(v)
@@ -127,14 +110,6 @@ func TestLoadConfig(t *testing.T) {
 		// Check default logging config
 		assert.Equal(t, "info", config.Logging.Level)
 		assert.Empty(t, config.Logging.File)
-
-		// Check default Azure Table config
-		assert.False(t, config.AzureTable.UseAzureTable)
-		assert.False(t, config.AzureTable.UseAzurite)
-		assert.Empty(t, config.AzureTable.AccountName)
-		assert.Empty(t, config.AzureTable.AccountKey)
-		assert.Empty(t, config.AzureTable.Endpoint)
-		assert.Equal(t, "items", config.AzureTable.TableName)
 	})
 }
 
@@ -429,74 +404,6 @@ func TestAuthConfigValidate(t *testing.T) {
 		err := cfg.Validate()
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "auth config")
-	})
-}
-
-func TestAzureTableConfigValidate(t *testing.T) {
-	t.Parallel()
-
-	t.Run("valid config returns nil", func(t *testing.T) {
-		t.Parallel()
-		validConfig := config.AzureTableConfig{
-			AccountName: "account",
-			AccountKey:  "key",
-			Endpoint:    "endpoint",
-			TableName:   "table",
-		}
-
-		assert.NoError(t, validConfig.Validate())
-	})
-
-	t.Run("missing account name", func(t *testing.T) {
-		t.Parallel()
-		cfg := config.AzureTableConfig{
-			AccountName: "",
-			AccountKey:  "key",
-			Endpoint:    "endpoint",
-			TableName:   "table",
-		}
-		err := cfg.Validate()
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "account name is required")
-	})
-
-	t.Run("missing account key", func(t *testing.T) {
-		t.Parallel()
-		cfg := config.AzureTableConfig{
-			AccountName: "account",
-			AccountKey:  "",
-			Endpoint:    "endpoint",
-			TableName:   "table",
-		}
-		err := cfg.Validate()
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "account key is required")
-	})
-
-	t.Run("missing endpoint", func(t *testing.T) {
-		t.Parallel()
-		cfg := config.AzureTableConfig{
-			AccountName: "account",
-			AccountKey:  "key",
-			Endpoint:    "",
-			TableName:   "table",
-		}
-		err := cfg.Validate()
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "endpoint is required")
-	})
-
-	t.Run("missing table name", func(t *testing.T) {
-		t.Parallel()
-		cfg := config.AzureTableConfig{
-			AccountName: "account",
-			AccountKey:  "key",
-			Endpoint:    "endpoint",
-			TableName:   "",
-		}
-		err := cfg.Validate()
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "table name is required")
 	})
 }
 

@@ -15,9 +15,8 @@ backend/
 │   ├── config/                         # Environment-based configuration
 │   ├── cluster/                        # Multi-cluster registry + health poller
 │   ├── database/
-│   │   ├── azure/                      # Azure Table Storage repositories
 │   │   ├── factory.go                  # MySQL connection with retry
-│   │   ├── repository.go              # Repository factory (MySQL vs Azure)
+│   │   ├── repository.go              # Repository factory
 │   │   ├── migrations.go              # Versioned schema migrations
 │   │   └── errors.go                  # Re-exports from pkg/dberrors
 │   ├── gitprovider/                    # Azure DevOps + GitLab branch listing
@@ -60,8 +59,7 @@ backend/
 
 ## Prerequisites
 
-- Go 1.24+
-- Docker (for Azurite local dev)
+- Go 1.25+
 
 ## Quick Start
 
@@ -69,8 +67,7 @@ backend/
 # From project root — start with Docker Compose (recommended)
 make dev
 
-# Or run locally with Azurite
-make azurite-start
+# Or run locally
 make dev-local
 ```
 
@@ -85,11 +82,6 @@ Key environment variables (see `docker-compose.yml` for full list):
 | `ADMIN_USERNAME` | `admin` | Initial admin username |
 | `ADMIN_PASSWORD` | (required) | Initial admin password |
 | `SELF_REGISTRATION` | `false` | Allow self-registration |
-| `USE_AZURE_TABLE` | `false` | Enable Azure Table Storage |
-| `USE_AZURITE` | `false` | Use Azurite emulator |
-| `AZURE_TABLE_ACCOUNT_NAME` | | Azure Storage account name |
-| `AZURE_TABLE_ACCOUNT_KEY` | | Azure Storage account key |
-| `AZURE_TABLE_ENDPOINT` | | Azure Table endpoint |
 | `AZURE_DEVOPS_PAT` | | Azure DevOps personal access token |
 | `GITLAB_TOKEN` | | GitLab access token |
 | `DEFAULT_BRANCH` | `master` | Default Git branch |
@@ -99,8 +91,7 @@ Key environment variables (see `docker-compose.yml` for full list):
 
 ## Data Storage
 
-- **Azure Table Storage** (via Azurite locally): Users, Templates, Definitions, Instances, Overrides, ChartConfigs, APIKeys, AuditLogs, Clusters, SharedValues, CleanupPolicies, Favorites, BranchOverrides
-- **MySQL** (GORM): Legacy Items table only
+- **MySQL** (GORM): All domain entities — Users, Templates, Definitions, Instances, Overrides, ChartConfigs, APIKeys, AuditLogs, Clusters, SharedValues, CleanupPolicies, Favorites, BranchOverrides
 
 ## Testing
 

@@ -438,7 +438,7 @@ func (h *InstanceHandler) CreateInstance(c *gin.Context) {
 		return
 	}
 
-	if h.txRunner != nil && h.txRunner.IsTransactional() && maxInstancesPerUser > 0 {
+	if h.txRunner != nil && maxInstancesPerUser > 0 {
 		// Transactional path — count check + create are serialized within
 		// a transaction, closing the TOCTOU window for concurrent creates.
 		limitMsg := fmt.Sprintf("Maximum instances per user reached for this cluster (limit: %d)", maxInstancesPerUser)
@@ -462,20 +462,6 @@ func (h *InstanceHandler) CreateInstance(c *gin.Context) {
 			return
 		}
 	} else {
-		// Non-transactional path (Azure or no limit configured).
-		if maxInstancesPerUser > 0 {
-			count, listErr := h.instanceRepo.CountByClusterAndOwner(inst.ClusterID, inst.OwnerID)
-			if listErr != nil {
-				slog.Error("Failed to count instances for per-user limit check", "error", listErr, "cluster_id", inst.ClusterID)
-				c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
-				return
-			}
-			if count >= maxInstancesPerUser {
-				c.JSON(http.StatusConflict, gin.H{"error": fmt.Sprintf("Maximum instances per user reached for this cluster (limit: %d)", maxInstancesPerUser)})
-				return
-			}
-		}
-
 		if err := h.instanceRepo.Create(&inst); err != nil {
 			status, message := mapError(err, entityStackInstance)
 			c.JSON(status, gin.H{"error": message})
@@ -614,7 +600,7 @@ func (h *InstanceHandler) DeleteInstance(c *gin.Context) {
 		return
 	}
 
-	if h.txRunner != nil && h.txRunner.IsTransactional() {
+	if h.txRunner != nil {
 		// Transactional path — branch override cleanup + instance delete are atomic.
 		txErr := h.txRunner.RunInTx(func(repos database.TxRepos) error {
 			if err := repos.BranchOverride.DeleteByInstance(id); err != nil {
@@ -624,21 +610,6 @@ func (h *InstanceHandler) DeleteInstance(c *gin.Context) {
 		})
 		if txErr != nil {
 			status, message := mapError(txErr, entityStackInstance)
-			c.JSON(status, gin.H{"error": message})
-			return
-		}
-	} else {
-		// Non-transactional fallback (Azure Table Storage).
-		if h.branchOverrideRepo != nil {
-			if err := h.branchOverrideRepo.DeleteByInstance(id); err != nil {
-				slog.Error("failed to delete branch overrides for stack instance", logKeyInstanceID, id, "error", err)
-				c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
-				return
-			}
-		}
-
-		if err := h.instanceRepo.Delete(id); err != nil {
-			status, message := mapError(err, entityStackInstance)
 			c.JSON(status, gin.H{"error": message})
 			return
 		}
@@ -706,7 +677,7 @@ func (h *InstanceHandler) CloneInstance(c *gin.Context) {
 		return
 	}
 
-	if h.txRunner != nil && h.txRunner.IsTransactional() {
+	if h.txRunner != nil {
 		// Transactional path — instance create + override copies are atomic.
 		overrides, listErr := h.overrideRepo.ListByInstance(source.ID)
 		if listErr != nil {
@@ -735,28 +706,6 @@ func (h *InstanceHandler) CloneInstance(c *gin.Context) {
 			status, message := mapError(txErr, entityStackInstance)
 			c.JSON(status, gin.H{"error": message})
 			return
-		}
-	} else {
-		// Non-transactional fallback (Azure Table Storage).
-		if err := h.instanceRepo.Create(clone); err != nil {
-			status, message := mapError(err, entityStackInstance)
-			c.JSON(status, gin.H{"error": message})
-			return
-		}
-
-		// Copy value overrides (best-effort).
-		overrides, listErr := h.overrideRepo.ListByInstance(source.ID)
-		if listErr == nil {
-			for _, ov := range overrides {
-				clonedOV := &models.ValueOverride{
-					ID:              uuid.New().String(),
-					StackInstanceID: clone.ID,
-					ChartConfigID:   ov.ChartConfigID,
-					Values:          ov.Values,
-					UpdatedAt:       now,
-				}
-				_ = h.overrideRepo.Create(clonedOV)
-			}
 		}
 	}
 

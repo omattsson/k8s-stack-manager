@@ -85,15 +85,15 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Initialize repository using the factory (selects MySQL or Azure Table based on config)
+	// Initialize repository (MySQL via GORM)
 	repo, mysqlGormDB, err := database.NewRepositoryWithGormDB(cfg)
 	if err != nil {
 		slog.Error("Failed to initialize repository", "error", err)
 		os.Exit(1)
 	}
 
-	// Register database/sql pool metrics when using MySQL with OTel.
-	if cfg.Otel.Enabled && mysqlGormDB != nil {
+	// Register database/sql pool metrics with OTel.
+	if cfg.Otel.Enabled {
 		sqlDB, err := mysqlGormDB.DB()
 		if err == nil {
 			if err := telemetry.StartDBMetrics(sqlDB); err != nil {
@@ -533,9 +533,8 @@ func ensureDefaultCluster(clusterRepo models.ClusterRepository, instanceRepo mod
 }
 
 // backfillInstanceClusterIDs sets the given clusterID on all stack instances
-// that currently have an empty ClusterID. It intentionally lists all instances
-// and filters in-memory so that storage backends where missing properties are
-// not equal to empty strings (e.g., Azure Table Storage) are handled correctly.
+// that currently have an empty ClusterID. It lists all instances and filters
+// in-memory so that migration is straightforward.
 func backfillInstanceClusterIDs(instanceRepo models.StackInstanceRepository, clusterID string) {
 	instances, err := instanceRepo.List()
 	if err != nil {

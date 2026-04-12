@@ -25,7 +25,7 @@ You are a tech lead coordinating a team of specialized agents. You receive featu
 
 | Agent | Specialty | When to use |
 |---|---|---|
-| **go-api-developer** | Go backend: models, repositories (MySQL + Azure Table), handlers, routes, migrations, swagger | New API endpoints, backend features, data layer, backend bugs |
+| **go-api-developer** | Go backend: models, repositories, handlers, routes, migrations, swagger | New API endpoints, backend features, data layer, backend bugs |
 | **frontend-developer** | React/TypeScript: pages, components, API services, routing, data fetching | New UI pages, frontend features, API integration, frontend bugs |
 | **git-provider** | Azure DevOps + GitLab: branch listing, URL detection, provider APIs | Git provider integration features |
 | **helm-values** | Helm values merge, YAML deep-merge, template variable substitution | Helm values generation and deployment prep |
@@ -57,7 +57,7 @@ Mapped to agents:
 
 ```
 Step 1: go-api-developer
-  → Model, validation, migration, repository (MySQL + Azure Table), handler, routes, swagger, backend unit tests
+  → Model, validation, migration, repository, handler, routes, swagger, backend unit tests
 
 Step 2: qa-engineer
   → Audit backend test coverage, add missing test cases

@@ -12,6 +12,7 @@ import (
 
 	"backend/internal/api/middleware"
 	"backend/internal/cluster"
+	"backend/internal/database"
 	"backend/internal/k8s"
 	"backend/internal/models"
 	"backend/pkg/dberrors"
@@ -498,6 +499,9 @@ func TestPerUserInstanceLimit(t *testing.T) {
 			clusterRepo:    clusterRepo,
 			valuesGen:      nil,
 		}
+		h.SetTxRunner(&mockHandlerTxRunner{repos: database.TxRepos{
+			StackInstance: instanceRepo,
+		}})
 		_ = valuesGen // not needed for this test path
 		r.POST("/api/v1/stack-instances", h.CreateInstance)
 
@@ -565,6 +569,9 @@ func TestPerUserInstanceLimit(t *testing.T) {
 			definitionRepo: defRepo,
 			clusterRepo:    clusterRepo,
 		}
+		h.SetTxRunner(&mockHandlerTxRunner{repos: database.TxRepos{
+			StackInstance: instanceRepo,
+		}})
 		r.POST("/api/v1/stack-instances", h.CreateInstance)
 
 		body, _ := json.Marshal(map[string]interface{}{

@@ -178,9 +178,9 @@ nmap -sV localhost -p 8081,3000,3306
 
 - **Backend**: Go (Gin), GORM ORM (parameterized queries), JWT auth, API key auth
 - **Frontend**: React, TypeScript, Vite, axios
-- **Data stores**: MySQL (GORM) or Azure Table Storage (swappable)
+- **Data stores**: MySQL (GORM)
 - **Containers**: Multi-stage Docker builds, docker-compose orchestration
-- **Helm**: Argo Rollouts, Traefik IngressRoute, Azurite for dev
+- **Helm**: Argo Rollouts, Traefik IngressRoute
 - **Secrets**: Environment variables via `config.LoadConfig()`, `.env` fallback
 - **Auth**: JWT + API key combined middleware, OIDC support
 - **Encryption**: AES-GCM for kubeconfig data at rest (`pkg/crypto`)

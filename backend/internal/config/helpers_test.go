@@ -339,9 +339,9 @@ func TestDatabaseConfigValidate_AllFields(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name      string
-		config    DatabaseConfig
-		wantErr   string
+		name    string
+		config  DatabaseConfig
+		wantErr string
 	}{
 		{
 			name: "missing port",
@@ -495,27 +495,4 @@ func TestAppConfigValidate(t *testing.T) {
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "environment is required")
 	})
-}
-
-func TestConfigValidate_AzureTable(t *testing.T) {
-	t.Parallel()
-
-	cfg := &Config{
-		App: AppConfig{Name: "app", Environment: "prod"},
-		AzureTable: AzureTableConfig{
-			UseAzureTable: true,
-			AccountName:   "",
-			AccountKey:    "key",
-			Endpoint:      "endpoint",
-			TableName:     "table",
-		},
-		Server: ServerConfig{
-			Port:        "8080",
-			ReadTimeout: 5 * time.Second,
-			IdleTimeout: 30 * time.Second,
-		},
-	}
-	err := cfg.Validate()
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "azure table config")
 }

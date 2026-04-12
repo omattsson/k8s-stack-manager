@@ -473,7 +473,7 @@ func (h *DefinitionHandler) ImportDefinition(c *gin.Context) {
 
 	var createdCharts []models.ChartConfig
 
-	if h.txRunner != nil && h.txRunner.IsTransactional() {
+	if h.txRunner != nil {
 		// Transactional path — definition + all charts are created atomically.
 		txErr := h.txRunner.RunInTx(func(repos database.TxRepos) error {
 			if err := repos.StackDefinition.Create(&def); err != nil {
@@ -493,28 +493,6 @@ func (h *DefinitionHandler) ImportDefinition(c *gin.Context) {
 			c.JSON(status, gin.H{"error": message})
 			return
 		}
-	} else {
-		// Non-transactional fallback (Azure Table Storage).
-		if err := h.definitionRepo.Create(&def); err != nil {
-			slog.Error("failed to create imported definition", "error", err)
-			status, message := mapError(err, entityStackDefinition)
-			c.JSON(status, gin.H{"error": message})
-			return
-		}
-
-		for i := range chartModels {
-			if err := h.chartRepo.Create(&chartModels[i]); err != nil {
-				slog.Error("failed to create imported chart config",
-					"chart_name", chartModels[i].ChartName,
-					"definition_id", def.ID,
-					"error", err,
-				)
-				status, message := mapError(err, entityChartConfig)
-				c.JSON(status, gin.H{"error": message})
-				return
-			}
-		}
-		createdCharts = chartModels
 	}
 
 	c.JSON(http.StatusCreated, gin.H{

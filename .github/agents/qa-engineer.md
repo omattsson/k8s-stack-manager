@@ -49,8 +49,8 @@ When given a task:
 
 ### Backend Integration Tests
 - **Build tag**: `//go:build integration`
-- **Naming**: `TestDatabase*` (MySQL), `TestAzureTable*`/`TestAzure*Integration` (Azure)
-- **Run**: `make test-backend-all` (starts MySQL + Azurite containers)
+- **Naming**: `TestDatabase*` (MySQL)
+- **Run**: `make test-backend-all` (starts MySQL containers)
 
 ### Frontend Unit Tests
 - **Framework**: Vitest + Testing Library + jest-dom

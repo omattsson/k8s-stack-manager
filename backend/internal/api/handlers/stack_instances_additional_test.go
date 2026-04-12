@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"backend/internal/cluster"
+	"backend/internal/database"
 	"backend/internal/deployer"
 	"backend/internal/helm"
 	"backend/internal/k8s"
@@ -66,6 +67,15 @@ func setupInstanceRouterFull(
 		deployManager, k8sWatcher, registry, deployLogRepo, nil,
 		0,
 	)
+	h.SetTxRunner(&mockHandlerTxRunner{repos: database.TxRepos{
+		StackDefinition: defRepo,
+		ChartConfig:     ccRepo,
+		StackInstance:   instanceRepo,
+		StackTemplate:   tmplRepo,
+		TemplateChart:   tmplChartRepo,
+		ValueOverride:   overrideRepo,
+		BranchOverride:  branchOverrideRepo,
+	}})
 
 	insts := r.Group("/api/v1/stack-instances")
 	{

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"backend/internal/cluster"
+	"backend/internal/database"
 	"backend/internal/deployer"
 	"backend/internal/helm"
 	"backend/internal/models"
@@ -49,12 +50,17 @@ func setupBulkRouter(
 	valuesGen := helm.NewValuesGenerator()
 	userRepo := NewMockUserRepository()
 
+	boRepo := NewMockChartBranchOverrideRepository()
 	h := NewInstanceHandlerWithDeployer(
-		instanceRepo, overrideRepo, nil, defRepo, ccRepo,
+		instanceRepo, overrideRepo, boRepo, defRepo, ccRepo,
 		tmplRepo, tmplChartRepo, valuesGen, userRepo,
 		deployManager, nil, nil, deployLogRepo, nil,
 		0,
 	)
+	h.SetTxRunner(&mockHandlerTxRunner{repos: database.TxRepos{
+		StackInstance:  instanceRepo,
+		BranchOverride: boRepo,
+	}})
 
 	bulk := r.Group("/api/v1/stack-instances/bulk")
 	{
@@ -702,6 +708,10 @@ func setupBulkRouterWithBranches(
 		nil, nil, nil, nil, nil,
 		0,
 	)
+	h.SetTxRunner(&mockHandlerTxRunner{repos: database.TxRepos{
+		StackInstance:  instanceRepo,
+		BranchOverride: branchOverrideRepo,
+	}})
 
 	bulk := r.Group("/api/v1/stack-instances/bulk")
 	{

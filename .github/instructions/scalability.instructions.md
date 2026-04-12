@@ -12,21 +12,12 @@ MySQL connection pool is configured via env vars in `docker-compose.yml` and app
 
 These are set on the `sql.DB` pool via `SetMaxOpenConns`, `SetMaxIdleConns`, `SetConnMaxLifetime`. Tune based on expected load — idle conns reduce latency for burst traffic, but MySQL has a `max_connections` limit (see `config/mysql/my.cnf`).
 
-## Azure Table Storage
-Azure Table Storage is the primary data store (selected via `USE_AZURE_TABLE=true`). Key scalability considerations:
-- Partition key design affects query performance — use the PK/RK schemes documented in the Azure Table repository CLAUDE.md
-- No native server-side offset pagination — list operations use full scan + in-memory slicing for paginated results
-- OData filter values must be escaped via `escapeODataString()` to prevent injection
-
 ## Database Retry Logic
 `NewFromAppConfig()` in `internal/database/factory.go` retries DB connections up to 5 times with 2-second delays. This handles container startup ordering and transient network issues. Extend the retry pattern for any new external service connections.
 
-## Swappable Data Store
-The `models.Repository` interface enables switching between MySQL (GORM) and Azure Table Storage without changing handler code. The factory in `internal/database/repository.go` selects based on `USE_AZURE_TABLE` config. When adding new storage backends, implement the `Repository` interface and add a case in `NewRepository()`.
-
 ## Docker Network Isolation
 `docker-compose.yml` uses two networks:
-- `backend-net` — connects db, backend, and azurite (backend services only)
+- `backend-net` — connects db and backend (backend services only)
 - `frontend-net` — connects backend and frontend
 
 This prevents the frontend container from directly accessing the database. Maintain this separation when adding new services.

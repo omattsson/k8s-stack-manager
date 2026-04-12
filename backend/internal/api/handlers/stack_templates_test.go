@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"backend/internal/database"
 	"backend/internal/models"
 
 	"github.com/gin-gonic/gin"
@@ -29,6 +30,12 @@ func setupTemplateRouter(
 	r.Use(injectAuthContext(callerID, callerRole))
 
 	h := NewTemplateHandler(templateRepo, chartRepo, definitionRepo, chartConfigRepo)
+	h.SetTxRunner(&mockHandlerTxRunner{repos: database.TxRepos{
+		StackTemplate:   templateRepo,
+		TemplateChart:   chartRepo,
+		StackDefinition: definitionRepo,
+		ChartConfig:     chartConfigRepo,
+	}})
 
 	tpl := r.Group("/api/v1/templates")
 	{
