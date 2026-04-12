@@ -366,10 +366,13 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 	// Rotate atomically: create new token + revoke old in one transaction.
 	// If the old token was already consumed (replay), revoke everything.
 	var replayDetected bool
+	var newRawToken string
 	if err := h.refreshTokenRepo.WithTx(func(txRepo models.RefreshTokenRepository) error {
 		// Issue replacement token using the transactional repo.
-		if err := h.issueRefreshTokenWith(c, txRepo, user.ID, stored.ID); err != nil {
-			return err
+		var issueErr error
+		newRawToken, issueErr = h.issueRefreshTokenWith(c, txRepo, user.ID, stored.ID)
+		if issueErr != nil {
+			return issueErr
 		}
 		// Revoke consumed token. If another request already consumed it (replay),
 		// revoke everything — including the token we just issued — for safety.
@@ -394,6 +397,9 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid refresh token"})
 		return
 	}
+
+	// Set cookie only after the transaction committed successfully.
+	h.setRefreshCookie(c, newRawToken)
 
 	accessToken, err := middleware.GenerateTokenWithOpts(middleware.GenerateTokenOptions{
 		UserID:     user.ID,
@@ -508,17 +514,23 @@ func (h *AuthHandler) CleanupExpiredTokens() {
 // excludeTokenID is an optional token ID to skip when enforcing the max token limit
 // (used during rotation to avoid revoking the token currently being consumed).
 func (h *AuthHandler) issueRefreshToken(c *gin.Context, userID string, excludeTokenID ...string) error {
-	return h.issueRefreshTokenWith(c, h.refreshTokenRepo, userID, excludeTokenID...)
+	rawToken, err := h.issueRefreshTokenWith(c, h.refreshTokenRepo, userID, excludeTokenID...)
+	if err != nil {
+		return err
+	}
+	h.setRefreshCookie(c, rawToken)
+	return nil
 }
 
 // issueRefreshTokenWith is like issueRefreshToken but accepts an explicit repository,
 // allowing the caller to pass a transactional repo for atomic rotation.
-func (h *AuthHandler) issueRefreshTokenWith(c *gin.Context, repo models.RefreshTokenRepository, userID string, excludeTokenID ...string) error {
+// Returns the raw token string so the caller can set the cookie after a transaction commits.
+func (h *AuthHandler) issueRefreshTokenWith(c *gin.Context, repo models.RefreshTokenRepository, userID string, excludeTokenID ...string) (string, error) {
 	// Clean up excess tokens if over limit.
 	if h.cfg.MaxRefreshTokensPerUser > 0 {
 		activeCount, err := repo.CountActiveForUser(userID)
 		if err != nil {
-			return err
+			return "", err
 		}
 		if int(activeCount) >= h.cfg.MaxRefreshTokensPerUser {
 			// Revoke all and start fresh to stay within bounds,
@@ -526,11 +538,11 @@ func (h *AuthHandler) issueRefreshTokenWith(c *gin.Context, repo models.RefreshT
 			// so RevokeByIDIfActive can still detect replays.
 			if len(excludeTokenID) > 0 && excludeTokenID[0] != "" {
 				if err := repo.RevokeAllForUserExcept(userID, excludeTokenID[0]); err != nil {
-					return err
+					return "", err
 				}
 			} else {
 				if err := repo.RevokeAllForUser(userID); err != nil {
-					return err
+					return "", err
 				}
 			}
 		}
@@ -538,7 +550,7 @@ func (h *AuthHandler) issueRefreshTokenWith(c *gin.Context, repo models.RefreshT
 
 	rawToken, err := generateRefreshToken()
 	if err != nil {
-		return err
+		return "", err
 	}
 
 	now := time.Now().UTC()
@@ -554,11 +566,10 @@ func (h *AuthHandler) issueRefreshTokenWith(c *gin.Context, repo models.RefreshT
 	}
 
 	if err := repo.Create(rt); err != nil {
-		return err
+		return "", err
 	}
 
-	h.setRefreshCookie(c, rawToken)
-	return nil
+	return rawToken, nil
 }
 
 // generateRefreshToken produces a cryptographically random token string.

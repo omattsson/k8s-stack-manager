@@ -104,7 +104,7 @@ api.interceptors.response.use(
   (response) => response,
   async (error) => {
     const originalRequest = error.config;
-    const authPaths = ['/auth/login', '/auth/refresh'];
+    const authPaths = ['/auth/login', '/auth/refresh', '/auth/logout', '/auth/logout-all'];
     const isAuthEndpoint = authPaths.some(p => originalRequest?.url?.includes(p));
 
     if (
