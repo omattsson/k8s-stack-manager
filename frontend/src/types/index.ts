@@ -254,7 +254,7 @@ export interface CreateAPIKeyRequest {
 
 export interface CreateAPIKeyResponse {
   id: string;
-  user_id: string;
+  user_id?: string;
   name: string;
   prefix: string;
   raw_key: string;

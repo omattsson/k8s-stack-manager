@@ -722,7 +722,7 @@ func TestAPIKeyMaxLifetimeDaysConfig(t *testing.T) {
 	})
 
 	t.Run("default value is 0 (no limit)", func(t *testing.T) {
-		os.Unsetenv("API_KEY_MAX_LIFETIME_DAYS")
+		t.Setenv("API_KEY_MAX_LIFETIME_DAYS", "")
 		cfg, err := config.LoadConfig()
 		require.NoError(t, err)
 		assert.Equal(t, 0, cfg.Auth.APIKeyMaxLifetimeDays)

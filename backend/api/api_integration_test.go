@@ -121,7 +121,7 @@ func newIntegServer(t *testing.T) *integServer {
 	gitHandler := handlers.NewGitHandler(gitRegistry)
 	auditLogHandler := handlers.NewAuditLogHandler(auditRepo)
 	userHandler := handlers.NewUserHandler(userRepo)
-	apiKeyHandler := handlers.NewAPIKeyHandler(apiKeyRepo, userRepo)
+	apiKeyHandler := handlers.NewAPIKeyHandler(apiKeyRepo, userRepo, nil)
 
 	healthChecker := health.New()
 	healthChecker.SetReady(true)
