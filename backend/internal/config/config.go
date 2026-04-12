@@ -46,6 +46,7 @@ type AuthConfig struct {
 	AdminPassword           string
 	DefaultBranch           string
 	MaxRefreshTokensPerUser int
+	APIKeyMaxLifetimeDays   int
 	SelfRegistration        bool
 	SecureCookies           bool
 	CookieSameSite          string // "strict" (default), "lax", or "none"
@@ -532,6 +533,7 @@ func loadAuthConfig() AuthConfig {
 		SelfRegistration:        getEnvBool("SELF_REGISTRATION", false),
 		DefaultBranch:           getEnv("DEFAULT_BRANCH", "master"),
 		MaxRefreshTokensPerUser: int(getEnvInt32("MAX_REFRESH_TOKENS_PER_USER", 10)),
+		APIKeyMaxLifetimeDays:   int(getEnvInt32("API_KEY_MAX_LIFETIME_DAYS", 0)),
 		SecureCookies:           getEnvBool("SECURE_COOKIES", false),
 		CookieSameSite:          getEnv("COOKIE_SAMESITE", "strict"),
 	}

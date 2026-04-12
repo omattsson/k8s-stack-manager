@@ -490,7 +490,7 @@ func TestSetupRoutes_WithAllHandlersRegistersFullAPI(t *testing.T) {
 	cfg := testConfig()
 	authHandler := handlers.NewAuthHandler(&stubUserRepo{}, &cfg.Auth)
 	userHandler := handlers.NewUserHandler(&stubUserRepo{})
-	apiKeyHandler := handlers.NewAPIKeyHandler(&stubAPIKeyRepo{}, &stubUserRepo{})
+	apiKeyHandler := handlers.NewAPIKeyHandler(&stubAPIKeyRepo{}, &stubUserRepo{}, &cfg.Auth)
 	auditLogHandler := handlers.NewAuditLogHandler(nil)
 
 	rl := SetupRoutes(router, Deps{

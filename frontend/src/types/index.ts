@@ -249,6 +249,7 @@ export interface APIKey {
 export interface CreateAPIKeyRequest {
   name: string;
   expires_at?: string;
+  expires_in_days?: number;
 }
 
 export interface CreateAPIKeyResponse {
@@ -258,6 +259,7 @@ export interface CreateAPIKeyResponse {
   prefix: string;
   raw_key: string;
   created_at: string;
+  expires_at?: string;
 }
 
 export interface ResourceCounts {
