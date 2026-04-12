@@ -194,8 +194,9 @@ func setupRefreshAuthRouter(userRepo *MockUserRepository, refreshRepo *MockRefre
 	{
 		auth.POST("/login", h.Login)
 		auth.POST("/refresh", h.Refresh)
-		// logout/logout-all require auth context
-		auth.POST("/logout", injectAuthContext("uid-1", "user"), h.Logout)
+		// logout is public (no auth middleware) — matches production config.
+		auth.POST("/logout", h.Logout)
+		// logout-all requires auth context.
 		auth.POST("/logout-all", injectAuthContext("uid-1", "user"), h.LogoutAll)
 	}
 	return r

@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"runtime"
+	"strings"
 	"time"
 
 	"backend/internal/api/middleware"
@@ -427,15 +428,19 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 // @Failure     401 {object} map[string]string
 // @Router      /api/v1/auth/logout [post]
 func (h *AuthHandler) Logout(c *gin.Context) {
-	// Blocklist the current access token so it can't be reused.
+	// Best-effort blocklist of the access token. The route is public (no auth
+	// middleware) so we parse the Authorization header ourselves.
 	if h.blocklist != nil {
-		jti := middleware.GetJTIFromContext(c)
-		if jti != "" {
-			expiry, ok := middleware.GetTokenExpiryFromContext(c)
-			if !ok {
-				expiry = time.Now().Add(h.cfg.AccessTokenExpiration)
+		if authHeader := c.GetHeader("Authorization"); authHeader != "" {
+			if parts := strings.SplitN(authHeader, " ", 2); len(parts) == 2 && strings.EqualFold(parts[0], "Bearer") {
+				if claims, err := middleware.ValidateJWT(parts[1], h.cfg.JWTSecret); err == nil && claims.ID != "" {
+					expiry := time.Now().Add(h.cfg.AccessTokenExpiration)
+					if claims.ExpiresAt != nil {
+						expiry = claims.ExpiresAt.Time
+					}
+					h.blocklist.Add(claims.ID, expiry)
+				}
 			}
-			h.blocklist.Add(jti, expiry)
 		}
 	}
 

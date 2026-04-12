@@ -120,12 +120,10 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     localStorage.removeItem('token');
     setUser(null);
     reconnectWebSocket();
-    if (token) {
-      try {
-        await authService.logout(token);
-      } catch {
-        // Best-effort server-side revocation; local state already cleared
-      }
+    try {
+      await authService.logout(token ?? undefined);
+    } catch {
+      // Best-effort server-side revocation; local state already cleared
     }
   }, []);
 
