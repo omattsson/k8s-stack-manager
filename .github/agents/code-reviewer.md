@@ -151,3 +151,16 @@ Common handoff targets:
 - **frontend-developer** — when frontend changes are needed
 - **qa-engineer** — when test coverage gaps were identified
 - **devops-engineer** — when infrastructure issues were found
+
+
+## MemPalace Knowledge Management
+
+Before starting work, search MemPalace for relevant prior knowledge:
+```
+mempalace_search(query="<your task topic>", wing="k8s-stack-manager")
+```
+
+After completing work, store important discoveries:
+- **Codebase patterns/gotchas**: `mempalace_add_drawer` with wing=`k8s-stack-manager`, room=`backend` or `frontend`
+- **Verbatim facts** — include the *why*, not just the *what*
+- **Diary entry**: `mempalace_diary_write(agent_name="<your-agent-name>", content="<summary>")` after significant work sessions

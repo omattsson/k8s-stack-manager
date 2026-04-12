@@ -735,6 +735,19 @@ func (d *Database) AutoMigrate() error {
 		},
 	})
 
+	// Migration 30: Create refresh_tokens table for JWT refresh token support
+	migrator.AddMigration(schema.Migration{
+		Version:     "20231201000030",
+		Name:        "create_refresh_tokens_table",
+		Description: "Create refresh_tokens table for server-side refresh token storage",
+		Up: func(tx *gorm.DB) error {
+			return tx.AutoMigrate(&models.RefreshToken{})
+		},
+		Down: func(tx *gorm.DB) error {
+			return tx.Migrator().DropTable(&models.RefreshToken{})
+		},
+	})
+
 	// Run migrations
 	if err := migrator.MigrateUp(); err != nil {
 		return err

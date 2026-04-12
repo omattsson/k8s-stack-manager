@@ -280,3 +280,27 @@ func (iqo *InstanceQuotaOverride) Validate() error {
 	}
 	return nil
 }
+
+// Validate implements model validation for RefreshToken.
+func (rt *RefreshToken) Validate() error {
+	if rt.ID == "" {
+		return errors.New("id is required")
+	}
+	if rt.UserID == "" {
+		return errors.New("user_id is required")
+	}
+	if rt.TokenHash == "" {
+		return errors.New("token_hash is required")
+	}
+	if rt.ExpiresAt.IsZero() {
+		return errors.New("expires_at is required")
+	}
+	if rt.LastActivity.IsZero() {
+		return errors.New("last_activity is required")
+	}
+	// SHA-256 hex digest is always 64 characters.
+	if len(rt.TokenHash) != 64 {
+		return errors.New("token_hash must be a 64-character hex string")
+	}
+	return nil
+}

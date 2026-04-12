@@ -271,3 +271,16 @@ gh issue edit 3 --add-assignee @me       # Assign to self
 - Post a comment summarizing the plan before delegating to agents
 - After all steps complete, post a final summary comment on the issue
 - When creating a PR for an issue, use `Closes #N` in the PR body to auto-link
+
+
+## MemPalace Knowledge Management
+
+Before starting work, search MemPalace for relevant prior knowledge:
+```
+mempalace_search(query="<your task topic>", wing="k8s-stack-manager")
+```
+
+After completing work, store important discoveries:
+- **Codebase patterns/gotchas**: `mempalace_add_drawer` with wing=`k8s-stack-manager`, room=`backend` or `frontend`
+- **Verbatim facts** — include the *why*, not just the *what*
+- **Diary entry**: `mempalace_diary_write(agent_name="<your-agent-name>", content="<summary>")` after significant work sessions

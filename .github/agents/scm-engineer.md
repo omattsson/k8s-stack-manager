@@ -244,3 +244,16 @@ Common handoff targets:
 - **code-reviewer** — when the PR is ready for review
 - **orchestrator** — when returning control after PR creation
 - **qa-engineer** — when tests need to be run against the PR branch
+
+
+## MemPalace Knowledge Management
+
+Before starting work, search MemPalace for relevant prior knowledge:
+```
+mempalace_search(query="<your task topic>", wing="k8s-stack-manager")
+```
+
+After completing work, store important discoveries:
+- **Codebase patterns/gotchas**: `mempalace_add_drawer` with wing=`k8s-stack-manager`, room=`backend` or `frontend`
+- **Verbatim facts** — include the *why*, not just the *what*
+- **Diary entry**: `mempalace_diary_write(agent_name="<your-agent-name>", content="<summary>")` after significant work sessions

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"strconv"
 	"strings"
@@ -35,13 +36,19 @@ type CORSConfig struct {
 
 // AuthConfig holds authentication and authorization configuration.
 type AuthConfig struct {
-	JWTSecret        string
-	JWTExpiration    time.Duration
-	LoginCacheTTL    time.Duration
-	AdminUsername    string
-	AdminPassword    string
-	DefaultBranch    string
-	SelfRegistration bool
+	JWTSecret               string
+	JWTExpiration           time.Duration
+	AccessTokenExpiration   time.Duration
+	RefreshTokenExpiration  time.Duration
+	SessionIdleTimeout      time.Duration
+	LoginCacheTTL           time.Duration
+	AdminUsername           string
+	AdminPassword           string
+	DefaultBranch           string
+	MaxRefreshTokensPerUser int
+	SelfRegistration        bool
+	SecureCookies           bool
+	CookieSameSite          string // "strict" (default), "lax", or "none"
 }
 
 // GitProviderConfig holds Git provider configuration.
@@ -302,6 +309,18 @@ func (c *AzureTableConfig) Validate() error {
 	return nil
 }
 
+// HTTPSameSite returns the net/http SameSite constant for the configured CookieSameSite value.
+func (c *AuthConfig) HTTPSameSite() http.SameSite {
+	switch strings.ToLower(c.CookieSameSite) {
+	case "lax":
+		return http.SameSiteLaxMode
+	case "none":
+		return http.SameSiteNoneMode
+	default:
+		return http.SameSiteStrictMode
+	}
+}
+
 func (c *AuthConfig) Validate() error {
 	if c.JWTSecret == "" {
 		return errors.New("jwt_secret is required")
@@ -313,6 +332,37 @@ func (c *AuthConfig) Validate() error {
 
 	if c.JWTExpiration <= 0 {
 		return errors.New("jwt_expiration must be positive")
+	}
+
+	if c.AccessTokenExpiration <= 0 {
+		return errors.New("access_token_expiration must be positive")
+	}
+
+	if c.RefreshTokenExpiration <= 0 {
+		return errors.New("refresh_token_expiration must be positive")
+	}
+
+	if c.SessionIdleTimeout <= 0 {
+		return errors.New("session_idle_timeout must be positive")
+	}
+
+	if c.AccessTokenExpiration > c.SessionIdleTimeout {
+		return errors.New("access_token_expiration must not exceed session_idle_timeout")
+	}
+
+	if c.MaxRefreshTokensPerUser < 0 {
+		return errors.New("max_refresh_tokens_per_user must be non-negative")
+	}
+
+	switch strings.ToLower(c.CookieSameSite) {
+	case "strict", "lax", "none", "":
+		// valid
+	default:
+		return fmt.Errorf("cookie_samesite must be strict, lax, or none (got %q)", c.CookieSameSite)
+	}
+
+	if strings.EqualFold(c.CookieSameSite, "none") && !c.SecureCookies {
+		return errors.New("cookie_samesite=none requires secure_cookies=true")
 	}
 
 	return nil
@@ -467,14 +517,23 @@ func loadServerConfig() ServerConfig {
 }
 
 func loadAuthConfig() AuthConfig {
+	jwtExp := getEnvDuration("JWT_EXPIRATION", 24*time.Hour)
+	accessExp := getEnvDuration("ACCESS_TOKEN_EXPIRATION", 15*time.Minute)
+
 	return AuthConfig{
-		JWTSecret:        getEnv("JWT_SECRET", ""),
-		JWTExpiration:    getEnvDuration("JWT_EXPIRATION", 24*time.Hour),
-		LoginCacheTTL:    getEnvDuration("LOGIN_CACHE_TTL", 30*time.Second),
-		AdminUsername:    getEnv("ADMIN_USERNAME", "admin"),
-		AdminPassword:    getEnv("ADMIN_PASSWORD", ""),
-		SelfRegistration: getEnvBool("SELF_REGISTRATION", false),
-		DefaultBranch:    getEnv("DEFAULT_BRANCH", "master"),
+		JWTSecret:               getEnv("JWT_SECRET", ""),
+		JWTExpiration:           jwtExp,
+		AccessTokenExpiration:   accessExp,
+		RefreshTokenExpiration:  getEnvDuration("REFRESH_TOKEN_EXPIRATION", 168*time.Hour),
+		SessionIdleTimeout:      getEnvDuration("SESSION_IDLE_TIMEOUT", 30*time.Minute),
+		LoginCacheTTL:           getEnvDuration("LOGIN_CACHE_TTL", 30*time.Second),
+		AdminUsername:           getEnv("ADMIN_USERNAME", "admin"),
+		AdminPassword:           getEnv("ADMIN_PASSWORD", ""),
+		SelfRegistration:        getEnvBool("SELF_REGISTRATION", false),
+		DefaultBranch:           getEnv("DEFAULT_BRANCH", "master"),
+		MaxRefreshTokensPerUser: int(getEnvInt32("MAX_REFRESH_TOKENS_PER_USER", 10)),
+		SecureCookies:           getEnvBool("SECURE_COOKIES", false),
+		CookieSameSite:          getEnv("COOKIE_SAMESITE", "strict"),
 	}
 }
 

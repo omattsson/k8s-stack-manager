@@ -81,6 +81,9 @@ type Deps struct {
 	// OIDC handler — nil when OIDC is disabled.
 	OIDCHandler *handlers.OIDCHandler
 
+	// Token blocklist for immediate JWT revocation on logout.
+	TokenBlocklist *middleware.TokenBlocklist
+
 	// HealthVerbose enables verbose health check output.
 	HealthVerbose bool
 }
@@ -175,9 +178,10 @@ func SetupRoutes(router *gin.Engine, deps Deps) *RateLimiters {
 			JWTSecret:  jwtSecret,
 			APIKeyRepo: deps.APIKeyRepo,
 			UserRepo:   deps.UserRepo,
+			Blocklist:  deps.TokenBlocklist,
 		})
 
-		// Auth — login is public; register requires auth (admin or self-reg checked inside handler).
+		// Auth — login and refresh are public; register requires auth.
 		auth := v1.Group("/auth")
 		{
 			loginHandlers := []gin.HandlerFunc{}
@@ -193,6 +197,18 @@ func SetupRoutes(router *gin.Engine, deps Deps) *RateLimiters {
 			registerHandlers = append(registerHandlers, deps.AuthHandler.Register)
 			auth.POST("/register", registerHandlers...)
 			auth.GET("/me", authMW, deps.AuthHandler.GetCurrentUser)
+
+			// Refresh — public (no auth middleware), uses login rate limiter.
+			refreshHandlers := []gin.HandlerFunc{}
+			if loginRateLimiter != nil {
+				refreshHandlers = append(refreshHandlers, loginRateLimiter.RateLimit())
+			}
+			refreshHandlers = append(refreshHandlers, deps.AuthHandler.Refresh)
+			auth.POST("/refresh", refreshHandlers...)
+
+			// Logout — public so refresh cookie can be cleared even with expired JWT.
+			auth.POST("/logout", deps.AuthHandler.Logout)
+			auth.POST("/logout-all", authMW, deps.AuthHandler.LogoutAll)
 
 			// OIDC routes — public (no auth required).
 			if deps.OIDCHandler != nil {

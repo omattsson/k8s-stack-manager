@@ -403,3 +403,16 @@ When connecting frontend to backend APIs, follow these patterns:
 - Build custom hooks (e.g., `useStackDefinitions`, `useAuditLog`) for data fetching
 - Always provide loading, data, and error states
 - Clean up subscriptions in effect cleanup functions
+
+
+## MemPalace Knowledge Management
+
+Before starting work, search MemPalace for relevant prior knowledge:
+```
+mempalace_search(query="<your task topic>", wing="k8s-stack-manager")
+```
+
+After completing work, store important discoveries:
+- **Codebase patterns/gotchas**: `mempalace_add_drawer` with wing=`k8s-stack-manager`, room=`backend` or `frontend`
+- **Verbatim facts** — include the *why*, not just the *what*
+- **Diary entry**: `mempalace_diary_write(agent_name="<your-agent-name>", content="<summary>")` after significant work sessions

@@ -8,12 +8,15 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/google/uuid"
 )
 
 const (
 	contextKeyUserID   = "userID"
 	contextKeyUsername = "username"
 	contextKeyRole     = "role"
+	contextKeyJTI      = "jti"
+	contextKeyExpiry   = "tokenExpiry"
 )
 
 // Claims represents the JWT claims payload.
@@ -46,6 +49,12 @@ func ValidateJWT(tokenStr string, jwtSecret string) (*Claims, error) {
 
 // AuthRequired returns middleware that validates JWT tokens from the Authorization header.
 func AuthRequired(jwtSecret string) gin.HandlerFunc {
+	return AuthRequiredWithBlocklist(jwtSecret, nil)
+}
+
+// AuthRequiredWithBlocklist returns middleware that validates JWT tokens and checks
+// the provided blocklist. If blocklist is nil, no revocation check is performed.
+func AuthRequiredWithBlocklist(jwtSecret string, blocklist *TokenBlocklist) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		authHeader := c.GetHeader("Authorization")
 		if authHeader == "" {
@@ -65,9 +74,21 @@ func AuthRequired(jwtSecret string) gin.HandlerFunc {
 			return
 		}
 
+		// Check blocklist if available.
+		if blocklist != nil && claims.ID != "" && blocklist.IsBlocked(claims.ID) {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Token has been revoked"})
+			return
+		}
+
 		c.Set(contextKeyUserID, claims.UserID)
 		c.Set(contextKeyUsername, claims.Username)
 		c.Set(contextKeyRole, claims.Role)
+		if claims.ID != "" {
+			c.Set(contextKeyJTI, claims.ID)
+		}
+		if claims.ExpiresAt != nil {
+			c.Set(contextKeyExpiry, claims.ExpiresAt.Time)
+		}
 		c.Next()
 	}
 }
@@ -93,6 +114,7 @@ func GenerateTokenWithOpts(opts GenerateTokenOptions) (string, error) {
 		AuthProvider: opts.AuthProvider,
 		Email:        opts.Email,
 		RegisteredClaims: jwt.RegisteredClaims{
+			ID:        uuid.New().String(),
 			ExpiresAt: jwt.NewNumericDate(now.Add(opts.Expiration)),
 			IssuedAt:  jwt.NewNumericDate(now),
 			Subject:   opts.UserID,
@@ -138,6 +160,26 @@ func GetUsernameFromContext(c *gin.Context) string {
 // GetRoleFromContext extracts the role set by AuthRequired middleware.
 func GetRoleFromContext(c *gin.Context) string {
 	if v, exists := c.Get(contextKeyRole); exists {
+		if s, ok := v.(string); ok {
+			return s
+		}
+	}
+	return ""
+}
+
+// GetTokenExpiryFromContext extracts the token expiry time set by AuthRequired middleware.
+func GetTokenExpiryFromContext(c *gin.Context) (time.Time, bool) {
+	if v, exists := c.Get(contextKeyExpiry); exists {
+		if t, ok := v.(time.Time); ok {
+			return t, true
+		}
+	}
+	return time.Time{}, false
+}
+
+// GetJTIFromContext extracts the JWT ID (jti) set by AuthRequired middleware.
+func GetJTIFromContext(c *gin.Context) string {
+	if v, exists := c.Get(contextKeyJTI); exists {
 		if s, ok := v.(string); ok {
 			return s
 		}

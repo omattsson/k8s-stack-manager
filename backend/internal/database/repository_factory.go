@@ -33,6 +33,7 @@ type RepositorySet struct {
 	UserFavorite          models.UserFavoriteRepository
 	CleanupPolicy         models.CleanupPolicyRepository
 	Cluster               models.ClusterRepository
+	RefreshToken          models.RefreshTokenRepository
 	TxRunner              TxRunner
 }
 
@@ -139,6 +140,13 @@ func newAzureRepositorySet(cfg *config.Config) (*RepositorySet, error) {
 		DeploymentLog:   deployLogRepo,
 	})
 
+	// NOTE: RefreshToken is intentionally nil for Azure Table Storage.
+	// Refresh token rotation requires GORM. When using Azure Table, refresh
+	// tokens are unavailable and the /auth/refresh endpoint returns
+	// 501 Not Implemented. Access token lifetime is determined by the auth
+	// handlers' configured expiration settings.
+	slog.Info("Azure Table Storage: refresh token repository not available; /auth/refresh returns 501 Not Implemented")
+
 	return &RepositorySet{
 		User:                  userRepo,
 		StackTemplate:         templateRepo,
@@ -159,7 +167,8 @@ func newAzureRepositorySet(cfg *config.Config) (*RepositorySet, error) {
 		UserFavorite:          favoriteRepo,
 		CleanupPolicy:         cleanupPolicyRepo,
 		Cluster:               clusterRepo,
-		TxRunner:              noOpTx,
+		// RefreshToken: nil — /auth/refresh returns 501 Not Implemented
+		TxRunner: noOpTx,
 	}, nil
 }
 
@@ -188,6 +197,7 @@ func newGORMRepositorySet(cfg *config.Config, db *gorm.DB) (*RepositorySet, erro
 	sharedValuesRepo := NewGORMSharedValuesRepository(db)
 	userFavoriteRepo := NewGORMUserFavoriteRepository(db)
 	cleanupPolicyRepo := NewGORMCleanupPolicyRepository(db)
+	refreshTokenRepo := NewGORMRefreshTokenRepository(db)
 
 	slog.Info("Using GORM repositories for all domain entities")
 
@@ -211,6 +221,7 @@ func newGORMRepositorySet(cfg *config.Config, db *gorm.DB) (*RepositorySet, erro
 		SharedValues:          sharedValuesRepo,
 		UserFavorite:          userFavoriteRepo,
 		CleanupPolicy:         cleanupPolicyRepo,
+		RefreshToken:          refreshTokenRepo,
 		TxRunner:              NewGORMTxRunner(db),
 	}, nil
 }
