@@ -76,10 +76,12 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
             const { token: newToken } = await authService.refresh();
             localStorage.setItem('token', newToken);
             const newPayload = decodeJwtPayload(newToken);
-            if (newPayload) {
+            if (newPayload && !isTokenExpired(newPayload)) {
               setUser(userFromPayload(newPayload));
               setAuthProvider(newPayload.auth_provider ?? null);
               setAuthEmail(newPayload.email ?? null);
+            } else {
+              localStorage.removeItem('token');
             }
           } catch {
             localStorage.removeItem('token');

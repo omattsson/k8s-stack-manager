@@ -148,6 +148,11 @@ func (m *MockRefreshTokenRepository) CountActiveForUser(userID string) (int64, e
 	return count, nil
 }
 
+func (m *MockRefreshTokenRepository) WithTx(fn func(models.RefreshTokenRepository) error) error {
+	// In tests, just run the function with the same mock (no real transaction).
+	return fn(m)
+}
+
 func (m *MockRefreshTokenRepository) SetCreateError(err error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

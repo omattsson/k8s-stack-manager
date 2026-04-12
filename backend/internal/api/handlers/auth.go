@@ -363,21 +363,33 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 		return
 	}
 
-	// Issue replacement token BEFORE revoking the old one.
-	// If this fails, the old token is still active and the client can retry.
-	// Pass stored.ID so the max-limit cleanup doesn't revoke the token we're consuming.
-	if err := h.issueRefreshToken(c, user.ID, stored.ID); err != nil {
+	// Rotate atomically: create new token + revoke old in one transaction.
+	// If the old token was already consumed (replay), revoke everything.
+	var replayDetected bool
+	if err := h.refreshTokenRepo.WithTx(func(txRepo models.RefreshTokenRepository) error {
+		// Issue replacement token using the transactional repo.
+		if err := h.issueRefreshTokenWith(c, txRepo, user.ID, stored.ID); err != nil {
+			return err
+		}
+		// Revoke consumed token. If another request already consumed it (replay),
+		// revoke everything — including the token we just issued — for safety.
+		affected, err := txRepo.RevokeByIDIfActive(stored.ID)
+		if err != nil {
+			return err
+		}
+		if affected == 0 {
+			replayDetected = true
+			return txRepo.RevokeAllForUser(stored.UserID)
+		}
+		return nil
+	}); err != nil {
 		slog.Error("Failed to rotate refresh token", "user_id", user.ID, "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
 		return
 	}
 
-	// Revoke the consumed token. If another request already consumed it (replay),
-	// revoke everything — including the token we just issued — for safety.
-	affected, err := h.refreshTokenRepo.RevokeByIDIfActive(stored.ID)
-	if err != nil || affected == 0 {
+	if replayDetected {
 		slog.Warn("Concurrent refresh token consumption detected", "user_id", stored.UserID, "token_id", stored.ID)
-		_ = h.refreshTokenRepo.RevokeAllForUser(stored.UserID)
 		h.clearRefreshCookie(c)
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid refresh token"})
 		return
@@ -496,9 +508,15 @@ func (h *AuthHandler) CleanupExpiredTokens() {
 // excludeTokenID is an optional token ID to skip when enforcing the max token limit
 // (used during rotation to avoid revoking the token currently being consumed).
 func (h *AuthHandler) issueRefreshToken(c *gin.Context, userID string, excludeTokenID ...string) error {
+	return h.issueRefreshTokenWith(c, h.refreshTokenRepo, userID, excludeTokenID...)
+}
+
+// issueRefreshTokenWith is like issueRefreshToken but accepts an explicit repository,
+// allowing the caller to pass a transactional repo for atomic rotation.
+func (h *AuthHandler) issueRefreshTokenWith(c *gin.Context, repo models.RefreshTokenRepository, userID string, excludeTokenID ...string) error {
 	// Clean up excess tokens if over limit.
 	if h.cfg.MaxRefreshTokensPerUser > 0 {
-		activeCount, err := h.refreshTokenRepo.CountActiveForUser(userID)
+		activeCount, err := repo.CountActiveForUser(userID)
 		if err != nil {
 			return err
 		}
@@ -507,11 +525,11 @@ func (h *AuthHandler) issueRefreshToken(c *gin.Context, userID string, excludeTo
 			// but skip the token currently being consumed (if any)
 			// so RevokeByIDIfActive can still detect replays.
 			if len(excludeTokenID) > 0 && excludeTokenID[0] != "" {
-				if err := h.refreshTokenRepo.RevokeAllForUserExcept(userID, excludeTokenID[0]); err != nil {
+				if err := repo.RevokeAllForUserExcept(userID, excludeTokenID[0]); err != nil {
 					return err
 				}
 			} else {
-				if err := h.refreshTokenRepo.RevokeAllForUser(userID); err != nil {
+				if err := repo.RevokeAllForUser(userID); err != nil {
 					return err
 				}
 			}
@@ -535,7 +553,7 @@ func (h *AuthHandler) issueRefreshToken(c *gin.Context, userID string, excludeTo
 		IPAddress:    c.ClientIP(),
 	}
 
-	if err := h.refreshTokenRepo.Create(rt); err != nil {
+	if err := repo.Create(rt); err != nil {
 		return err
 	}
 
@@ -560,7 +578,7 @@ func hashRefreshToken(raw string) string {
 
 func (h *AuthHandler) setRefreshCookie(c *gin.Context, rawToken string) {
 	maxAge := int(h.cfg.RefreshTokenExpiration.Seconds())
-	c.SetSameSite(http.SameSiteStrictMode)
+	c.SetSameSite(h.cfg.HTTPSameSite())
 	c.SetCookie(
 		refreshTokenCookieName,
 		rawToken,
@@ -573,7 +591,7 @@ func (h *AuthHandler) setRefreshCookie(c *gin.Context, rawToken string) {
 }
 
 func (h *AuthHandler) clearRefreshCookie(c *gin.Context) {
-	c.SetSameSite(http.SameSiteStrictMode)
+	c.SetSameSite(h.cfg.HTTPSameSite())
 	c.SetCookie(
 		refreshTokenCookieName,
 		"",

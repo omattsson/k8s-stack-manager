@@ -118,6 +118,7 @@ api.interceptors.response.use(
         return new Promise<unknown>((resolve, reject) => {
           failedQueue.push({
             resolve: (token: string) => {
+              originalRequest._retry = true;
               originalRequest.headers.Authorization = `Bearer ${token}`;
               resolve(api(originalRequest));
             },

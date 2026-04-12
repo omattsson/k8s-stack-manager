@@ -380,7 +380,7 @@ func issueOIDCRefreshToken(c *gin.Context, repo models.RefreshTokenRepository, c
 	}
 
 	maxAge := int(cfg.RefreshTokenExpiration.Seconds())
-	c.SetSameSite(http.SameSiteStrictMode)
+	c.SetSameSite(cfg.HTTPSameSite())
 	c.SetCookie(
 		refreshTokenCookieName,
 		rawToken,

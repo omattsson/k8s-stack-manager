@@ -61,3 +61,9 @@ func (r *GORMRefreshTokenRepository) CountActiveForUser(userID string) (int64, e
 		Count(&count).Error
 	return count, err
 }
+
+func (r *GORMRefreshTokenRepository) WithTx(fn func(txRepo models.RefreshTokenRepository) error) error {
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		return fn(NewGORMRefreshTokenRepository(tx))
+	})
+}

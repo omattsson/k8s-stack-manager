@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"strconv"
 	"strings"
@@ -47,6 +48,7 @@ type AuthConfig struct {
 	MaxRefreshTokensPerUser int
 	SelfRegistration        bool
 	SecureCookies           bool
+	CookieSameSite          string // "strict" (default), "lax", or "none"
 }
 
 // GitProviderConfig holds Git provider configuration.
@@ -307,6 +309,18 @@ func (c *AzureTableConfig) Validate() error {
 	return nil
 }
 
+// HTTPSameSite returns the net/http SameSite constant for the configured CookieSameSite value.
+func (c *AuthConfig) HTTPSameSite() http.SameSite {
+	switch strings.ToLower(c.CookieSameSite) {
+	case "lax":
+		return http.SameSiteLaxMode
+	case "none":
+		return http.SameSiteNoneMode
+	default:
+		return http.SameSiteStrictMode
+	}
+}
+
 func (c *AuthConfig) Validate() error {
 	if c.JWTSecret == "" {
 		return errors.New("jwt_secret is required")
@@ -334,6 +348,21 @@ func (c *AuthConfig) Validate() error {
 
 	if c.AccessTokenExpiration > c.SessionIdleTimeout {
 		return errors.New("access_token_expiration must not exceed session_idle_timeout")
+	}
+
+	if c.MaxRefreshTokensPerUser < 0 {
+		return errors.New("max_refresh_tokens_per_user must be non-negative")
+	}
+
+	switch strings.ToLower(c.CookieSameSite) {
+	case "strict", "lax", "none", "":
+		// valid
+	default:
+		return fmt.Errorf("cookie_samesite must be strict, lax, or none (got %q)", c.CookieSameSite)
+	}
+
+	if strings.EqualFold(c.CookieSameSite, "none") && !c.SecureCookies {
+		return errors.New("cookie_samesite=none requires secure_cookies=true")
 	}
 
 	return nil
@@ -504,6 +533,7 @@ func loadAuthConfig() AuthConfig {
 		DefaultBranch:           getEnv("DEFAULT_BRANCH", "master"),
 		MaxRefreshTokensPerUser: int(getEnvInt32("MAX_REFRESH_TOKENS_PER_USER", 10)),
 		SecureCookies:           getEnvBool("SECURE_COOKIES", false),
+		CookieSameSite:          getEnv("COOKIE_SAMESITE", "strict"),
 	}
 }
 
