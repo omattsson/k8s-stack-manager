@@ -18,6 +18,7 @@ import (
 // setupTemplateVersionRouter creates a test gin engine with TemplateVersionHandler
 // and TemplateHandler (for publish auto-snapshot) routes.
 func setupTemplateVersionRouter(
+	t *testing.T,
 	templateRepo *MockStackTemplateRepository,
 	chartRepo *MockTemplateChartConfigRepository,
 	definitionRepo *MockStackDefinitionRepository,
@@ -25,11 +26,13 @@ func setupTemplateVersionRouter(
 	versionRepo *MockTemplateVersionRepository,
 	callerID, callerRole string,
 ) *gin.Engine {
+	t.Helper()
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
 	r.Use(injectAuthContext(callerID, callerRole))
 
-	th, _ := NewTemplateHandlerWithVersions(templateRepo, chartRepo, definitionRepo, chartConfigRepo, versionRepo, &mockHandlerTxRunner{})
+	th, err := NewTemplateHandlerWithVersions(templateRepo, chartRepo, definitionRepo, chartConfigRepo, versionRepo, &mockHandlerTxRunner{})
+	require.NoError(t, err)
 	vh := NewTemplateVersionHandler(versionRepo, templateRepo)
 
 	tpl := r.Group("/api/v1/templates")
@@ -44,6 +47,7 @@ func setupTemplateVersionRouter(
 
 // setupDefinitionUpgradeRouter creates a test gin engine with DefinitionHandler upgrade routes.
 func setupDefinitionUpgradeRouter(
+	t *testing.T,
 	definitionRepo *MockStackDefinitionRepository,
 	chartConfigRepo *MockChartConfigRepository,
 	instanceRepo *MockStackInstanceRepository,
@@ -52,11 +56,13 @@ func setupDefinitionUpgradeRouter(
 	versionRepo *MockTemplateVersionRepository,
 	callerID, callerRole string,
 ) *gin.Engine {
+	t.Helper()
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
 	r.Use(injectAuthContext(callerID, callerRole))
 
-	h, _ := NewDefinitionHandlerWithVersions(definitionRepo, chartConfigRepo, instanceRepo, templateRepo, templateChartRepo, versionRepo, &mockHandlerTxRunner{})
+	h, err := NewDefinitionHandlerWithVersions(definitionRepo, chartConfigRepo, instanceRepo, templateRepo, templateChartRepo, versionRepo, &mockHandlerTxRunner{})
+	require.NoError(t, err)
 
 	defs := r.Group("/api/v1/stack-definitions")
 	{
@@ -138,7 +144,7 @@ func TestListVersions(t *testing.T) {
 			verRepo := NewMockTemplateVersionRepository()
 			tt.setup(tmplRepo, verRepo)
 
-			router := setupTemplateVersionRouter(tmplRepo, NewMockTemplateChartConfigRepository(), NewMockStackDefinitionRepository(), NewMockChartConfigRepository(), verRepo, "uid-1", "devops")
+			router := setupTemplateVersionRouter(t, tmplRepo, NewMockTemplateChartConfigRepository(), NewMockStackDefinitionRepository(), NewMockChartConfigRepository(), verRepo, "uid-1", "devops")
 			w := httptest.NewRecorder()
 			req, _ := http.NewRequest(http.MethodGet, "/api/v1/templates/"+tt.templateID+"/versions", nil)
 			router.ServeHTTP(w, req)
@@ -210,7 +216,7 @@ func TestGetVersion(t *testing.T) {
 			verRepo := NewMockTemplateVersionRepository()
 			tt.setup(tmplRepo, verRepo)
 
-			router := setupTemplateVersionRouter(tmplRepo, NewMockTemplateChartConfigRepository(), NewMockStackDefinitionRepository(), NewMockChartConfigRepository(), verRepo, "uid-1", "devops")
+			router := setupTemplateVersionRouter(t, tmplRepo, NewMockTemplateChartConfigRepository(), NewMockStackDefinitionRepository(), NewMockChartConfigRepository(), verRepo, "uid-1", "devops")
 			w := httptest.NewRecorder()
 			req, _ := http.NewRequest(http.MethodGet, "/api/v1/templates/"+tt.templateID+"/versions/"+tt.versionID, nil)
 			router.ServeHTTP(w, req)
@@ -339,7 +345,7 @@ func TestDiffVersions(t *testing.T) {
 			verRepo := NewMockTemplateVersionRepository()
 			tt.setup(tmplRepo, verRepo)
 
-			router := setupTemplateVersionRouter(tmplRepo, NewMockTemplateChartConfigRepository(), NewMockStackDefinitionRepository(), NewMockChartConfigRepository(), verRepo, "uid-1", "devops")
+			router := setupTemplateVersionRouter(t, tmplRepo, NewMockTemplateChartConfigRepository(), NewMockStackDefinitionRepository(), NewMockChartConfigRepository(), verRepo, "uid-1", "devops")
 			w := httptest.NewRecorder()
 			url := "/api/v1/templates/" + tt.templateID + "/versions/diff"
 			if tt.leftID != "" || tt.rightID != "" {
@@ -379,7 +385,7 @@ func TestPublishTemplateCreatesVersion(t *testing.T) {
 			Required:        true,
 		}))
 
-		router := setupTemplateVersionRouter(tmplRepo, chartRepo, NewMockStackDefinitionRepository(), NewMockChartConfigRepository(), verRepo, "owner-1", "devops")
+		router := setupTemplateVersionRouter(t, tmplRepo, chartRepo, NewMockStackDefinitionRepository(), NewMockChartConfigRepository(), verRepo, "owner-1", "devops")
 		w := httptest.NewRecorder()
 		req, _ := http.NewRequest(http.MethodPost, "/api/v1/templates/t1/publish", nil)
 		router.ServeHTTP(w, req)
@@ -492,7 +498,7 @@ func TestCheckUpgrade(t *testing.T) {
 			verRepo := NewMockTemplateVersionRepository()
 			tt.setup(defRepo, ccRepo, verRepo)
 
-			router := setupDefinitionUpgradeRouter(defRepo, ccRepo, NewMockStackInstanceRepository(), NewMockStackTemplateRepository(), NewMockTemplateChartConfigRepository(), verRepo, "uid-1", "devops")
+			router := setupDefinitionUpgradeRouter(t, defRepo, ccRepo, NewMockStackInstanceRepository(), NewMockStackTemplateRepository(), NewMockTemplateChartConfigRepository(), verRepo, "uid-1", "devops")
 			w := httptest.NewRecorder()
 			req, _ := http.NewRequest(http.MethodGet, "/api/v1/stack-definitions/"+tt.defID+"/check-upgrade", nil)
 			router.ServeHTTP(w, req)
@@ -608,7 +614,7 @@ func TestApplyUpgrade(t *testing.T) {
 			verRepo := NewMockTemplateVersionRepository()
 			tt.setup(defRepo, ccRepo, verRepo)
 
-			router := setupDefinitionUpgradeRouter(defRepo, ccRepo, NewMockStackInstanceRepository(), NewMockStackTemplateRepository(), NewMockTemplateChartConfigRepository(), verRepo, "uid-1", "devops")
+			router := setupDefinitionUpgradeRouter(t, defRepo, ccRepo, NewMockStackInstanceRepository(), NewMockStackTemplateRepository(), NewMockTemplateChartConfigRepository(), verRepo, "uid-1", "devops")
 			w := httptest.NewRecorder()
 			req, _ := http.NewRequest(http.MethodPost, "/api/v1/stack-definitions/"+tt.defID+"/upgrade", bytes.NewBufferString("{}"))
 			req.Header.Set("Content-Type", "application/json")

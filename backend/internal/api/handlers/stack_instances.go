@@ -633,7 +633,7 @@ func (h *InstanceHandler) DeleteInstance(c *gin.Context) {
 			return
 		}
 	} else {
-		slog.Error("txRunner not configured for DeleteInstance")
+		slog.Error("txRunner not configured for DeleteInstance", "instance_id", id)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
 		return
 	}

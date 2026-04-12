@@ -189,6 +189,7 @@ func (m *MockDeploymentLogRepository) SetError(err error) {
 
 // setupDeployRouter creates a test gin engine with deploy/stop/deploy-log/status routes.
 func setupDeployRouter(
+	t *testing.T,
 	instanceRepo *MockStackInstanceRepository,
 	overrideRepo *MockValueOverrideRepository,
 	defRepo *MockStackDefinitionRepository,
@@ -201,6 +202,7 @@ func setupDeployRouter(
 	deployLogRepo models.DeploymentLogRepository,
 	callerID, callerUsername, callerRole string,
 ) *gin.Engine {
+	t.Helper()
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
 	r.Use(func(c *gin.Context) {
@@ -219,12 +221,13 @@ func setupDeployRouter(
 	valuesGen := helm.NewValuesGenerator()
 	userRepo := NewMockUserRepository()
 
-	h, _ := NewInstanceHandlerWithDeployer(
+	h, err := NewInstanceHandlerWithDeployer(
 		instanceRepo, overrideRepo, nil, defRepo, ccRepo,
 		tmplRepo, tmplChartRepo, valuesGen, userRepo,
 		deployManager, k8sWatcher, registry, deployLogRepo, nil,
 		0, &mockHandlerTxRunner{},
 	)
+	require.NoError(t, err)
 
 	insts := r.Group("/api/v1/stack-instances")
 	{
@@ -405,7 +408,7 @@ func TestDeployInstance(t *testing.T) {
 				mgr = newTestManager(instRepo, logRepo)
 			}
 
-			router := setupDeployRouter(
+			router := setupDeployRouter(t,
 				instRepo, NewMockValueOverrideRepository(), defRepo, ccRepo,
 				NewMockStackTemplateRepository(), NewMockTemplateChartConfigRepository(),
 				mgr, nil, nil, logRepo,
@@ -512,7 +515,7 @@ func TestStopInstance(t *testing.T) {
 				mgr = newTestManager(instRepo, logRepo)
 			}
 
-			router := setupDeployRouter(
+			router := setupDeployRouter(t,
 				instRepo, NewMockValueOverrideRepository(),
 				defRepo, ccRepo,
 				NewMockStackTemplateRepository(), NewMockTemplateChartConfigRepository(),
@@ -560,7 +563,7 @@ func TestGetDeployLog(t *testing.T) {
 			StartedAt:       now.Add(1 * time.Minute),
 		}))
 
-		router := setupDeployRouter(
+		router := setupDeployRouter(t,
 			instRepo, NewMockValueOverrideRepository(),
 			NewMockStackDefinitionRepository(), NewMockChartConfigRepository(),
 			NewMockStackTemplateRepository(), NewMockTemplateChartConfigRepository(),
@@ -585,7 +588,7 @@ func TestGetDeployLog(t *testing.T) {
 		logRepo := NewMockDeploymentLogRepository()
 		seedInstance(t, instRepo, "i1", "stack-a", "d1", "uid-1", models.StackStatusDraft)
 
-		router := setupDeployRouter(
+		router := setupDeployRouter(t,
 			instRepo, NewMockValueOverrideRepository(),
 			NewMockStackDefinitionRepository(), NewMockChartConfigRepository(),
 			NewMockStackTemplateRepository(), NewMockTemplateChartConfigRepository(),
@@ -604,7 +607,7 @@ func TestGetDeployLog(t *testing.T) {
 		t.Parallel()
 
 		logRepo := NewMockDeploymentLogRepository()
-		router := setupDeployRouter(
+		router := setupDeployRouter(t,
 			NewMockStackInstanceRepository(), NewMockValueOverrideRepository(),
 			NewMockStackDefinitionRepository(), NewMockChartConfigRepository(),
 			NewMockStackTemplateRepository(), NewMockTemplateChartConfigRepository(),
@@ -627,7 +630,7 @@ func TestGetDeployLog(t *testing.T) {
 
 		// Pass nil interface (not a nil *MockDeploymentLogRepository which would be non-nil interface).
 		var nilLogRepo models.DeploymentLogRepository
-		router := setupDeployRouter(
+		router := setupDeployRouter(t,
 			instRepo, NewMockValueOverrideRepository(),
 			NewMockStackDefinitionRepository(), NewMockChartConfigRepository(),
 			NewMockStackTemplateRepository(), NewMockTemplateChartConfigRepository(),
@@ -654,7 +657,7 @@ func TestGetInstanceStatus(t *testing.T) {
 		instRepo := NewMockStackInstanceRepository()
 		seedInstance(t, instRepo, "i1", "stack-a", "d1", "uid-1", models.StackStatusRunning)
 
-		router := setupDeployRouter(
+		router := setupDeployRouter(t,
 			instRepo, NewMockValueOverrideRepository(),
 			NewMockStackDefinitionRepository(), NewMockChartConfigRepository(),
 			NewMockStackTemplateRepository(), NewMockTemplateChartConfigRepository(),
@@ -675,7 +678,7 @@ func TestGetInstanceStatus(t *testing.T) {
 	t.Run("instance not found returns 404", func(t *testing.T) {
 		t.Parallel()
 
-		router := setupDeployRouter(
+		router := setupDeployRouter(t,
 			NewMockStackInstanceRepository(), NewMockValueOverrideRepository(),
 			NewMockStackDefinitionRepository(), NewMockChartConfigRepository(),
 			NewMockStackTemplateRepository(), NewMockTemplateChartConfigRepository(),
@@ -703,7 +706,7 @@ func TestGetInstanceStatus(t *testing.T) {
 		k8sClient := k8s.NewClientFromInterface(cs)
 		registry := cluster.NewRegistryForTest("default", k8sClient, nil)
 
-		router := setupDeployRouter(
+		router := setupDeployRouter(t,
 			instRepo, NewMockValueOverrideRepository(),
 			NewMockStackDefinitionRepository(), NewMockChartConfigRepository(),
 			NewMockStackTemplateRepository(), NewMockTemplateChartConfigRepository(),
@@ -829,7 +832,7 @@ func TestCleanInstance(t *testing.T) {
 				mgr = newTestManager(instRepo, logRepo)
 			}
 
-			router := setupDeployRouter(
+			router := setupDeployRouter(t,
 				instRepo, NewMockValueOverrideRepository(),
 				defRepo, ccRepo,
 				NewMockStackTemplateRepository(), NewMockTemplateChartConfigRepository(),

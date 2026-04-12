@@ -410,7 +410,7 @@ func TestDeployInstance_ErrorPaths(t *testing.T) {
 
 			mgr := newTestManager(instRepo, logRepo)
 
-			router := setupDeployRouter(
+			router := setupDeployRouter(t,
 				instRepo, overrideRepo, defRepo, ccRepo,
 				NewMockStackTemplateRepository(), NewMockTemplateChartConfigRepository(),
 				mgr, nil, nil, logRepo,
@@ -448,7 +448,7 @@ func TestGetInstanceStatus_ErrorPaths(t *testing.T) {
 		k8sClient := k8s.NewClientFromInterface(cs)
 		registry := cluster.NewRegistryForTest("test-cluster", k8sClient, nil)
 
-		router := setupDeployRouter(
+		router := setupDeployRouter(t,
 			instRepo, NewMockValueOverrideRepository(),
 			NewMockStackDefinitionRepository(), NewMockChartConfigRepository(),
 			NewMockStackTemplateRepository(), NewMockTemplateChartConfigRepository(),
@@ -478,7 +478,7 @@ func TestGetInstanceStatus_ErrorPaths(t *testing.T) {
 		k8sClient := k8s.NewClientFromInterface(cs)
 		registry := cluster.NewRegistryForTest("test-cluster", k8sClient, nil)
 
-		router := setupDeployRouter(
+		router := setupDeployRouter(t,
 			instRepo, NewMockValueOverrideRepository(),
 			NewMockStackDefinitionRepository(), NewMockChartConfigRepository(),
 			NewMockStackTemplateRepository(), NewMockTemplateChartConfigRepository(),
@@ -499,7 +499,7 @@ func TestGetInstanceStatus_ErrorPaths(t *testing.T) {
 		instRepo := NewMockStackInstanceRepository()
 		instRepo.SetFetchError(errInternal)
 
-		router := setupDeployRouter(
+		router := setupDeployRouter(t,
 			instRepo, NewMockValueOverrideRepository(),
 			NewMockStackDefinitionRepository(), NewMockChartConfigRepository(),
 			NewMockStackTemplateRepository(), NewMockTemplateChartConfigRepository(),
@@ -527,7 +527,7 @@ func TestGetInstanceStatus_ErrorPaths(t *testing.T) {
 		k8sClient := k8s.NewClientFromInterface(cs)
 		registry := cluster.NewRegistryForTest("test-cluster", k8sClient, nil)
 
-		router := setupDeployRouter(
+		router := setupDeployRouter(t,
 			instRepo, NewMockValueOverrideRepository(),
 			NewMockStackDefinitionRepository(), NewMockChartConfigRepository(),
 			NewMockStackTemplateRepository(), NewMockTemplateChartConfigRepository(),

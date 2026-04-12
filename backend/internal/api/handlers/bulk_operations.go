@@ -372,7 +372,7 @@ func (h *InstanceHandler) BulkDelete(c *gin.Context) {
 			return "", nil
 		}
 
-		slog.Error("txRunner not configured for BulkDelete")
+		slog.Error("txRunner not configured for BulkDelete", "instance_id", inst.ID)
 		return "", fmt.Errorf("failed to delete instance")
 	})
 }

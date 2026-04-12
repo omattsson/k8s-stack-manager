@@ -22,6 +22,7 @@ import (
 
 // setupBulkRouter creates a test gin engine with bulk operation routes.
 func setupBulkRouter(
+	t *testing.T,
 	instanceRepo *MockStackInstanceRepository,
 	overrideRepo *MockValueOverrideRepository,
 	defRepo *MockStackDefinitionRepository,
@@ -32,6 +33,7 @@ func setupBulkRouter(
 	deployLogRepo models.DeploymentLogRepository,
 	callerID, callerUsername, callerRole string,
 ) *gin.Engine {
+	t.Helper()
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
 	r.Use(func(c *gin.Context) {
@@ -51,7 +53,7 @@ func setupBulkRouter(
 	userRepo := NewMockUserRepository()
 
 	boRepo := NewMockChartBranchOverrideRepository()
-	h, _ := NewInstanceHandlerWithDeployer(
+	h, err := NewInstanceHandlerWithDeployer(
 		instanceRepo, overrideRepo, boRepo, defRepo, ccRepo,
 		tmplRepo, tmplChartRepo, valuesGen, userRepo,
 		deployManager, nil, nil, deployLogRepo, nil,
@@ -61,6 +63,7 @@ func setupBulkRouter(
 			BranchOverride: boRepo,
 		}},
 	)
+	require.NoError(t, err)
 
 	bulk := r.Group("/api/v1/stack-instances/bulk")
 	{
@@ -258,7 +261,7 @@ func TestBulkDeploy(t *testing.T) {
 				manager = newBulkTestManager(instRepo, logRepo)
 			}
 
-			router := setupBulkRouter(
+			router := setupBulkRouter(t,
 				instRepo,
 				NewMockValueOverrideRepository(),
 				defRepo, ccRepo,
@@ -349,7 +352,7 @@ func TestBulkStop(t *testing.T) {
 
 			manager := newBulkTestManager(instRepo, logRepo)
 
-			router := setupBulkRouter(
+			router := setupBulkRouter(t,
 				instRepo,
 				NewMockValueOverrideRepository(),
 				defRepo, ccRepo,
@@ -440,7 +443,7 @@ func TestBulkClean(t *testing.T) {
 
 			manager := newBulkTestManager(instRepo, logRepo)
 
-			router := setupBulkRouter(
+			router := setupBulkRouter(t,
 				instRepo,
 				NewMockValueOverrideRepository(),
 				defRepo, ccRepo,
@@ -568,7 +571,7 @@ func TestBulkDelete(t *testing.T) {
 			instRepo := NewMockStackInstanceRepository()
 			tt.setup(instRepo)
 
-			router := setupBulkRouter(
+			router := setupBulkRouter(t,
 				instRepo,
 				NewMockValueOverrideRepository(),
 				NewMockStackDefinitionRepository(),
@@ -604,7 +607,7 @@ func TestBulkOperationMaxInstances(t *testing.T) {
 	body, _ := json.Marshal(BulkOperationRequest{InstanceIDs: ids})
 
 	instRepo := NewMockStackInstanceRepository()
-	router := setupBulkRouter(
+	router := setupBulkRouter(t,
 		instRepo,
 		NewMockValueOverrideRepository(),
 		NewMockStackDefinitionRepository(),
@@ -627,7 +630,7 @@ func TestBulkOperationMaxInstances(t *testing.T) {
 func TestBulkOperationInvalidJSON(t *testing.T) {
 	t.Parallel()
 
-	router := setupBulkRouter(
+	router := setupBulkRouter(t,
 		NewMockStackInstanceRepository(),
 		NewMockValueOverrideRepository(),
 		NewMockStackDefinitionRepository(),
@@ -653,7 +656,7 @@ func TestBulkOperationReturnsInstanceName(t *testing.T) {
 	instRepo := NewMockStackInstanceRepository()
 	seedInstance(t, instRepo, "i1", "my-stack", "d1", "uid-1", models.StackStatusDraft)
 
-	router := setupBulkRouter(
+	router := setupBulkRouter(t,
 		instRepo,
 		NewMockValueOverrideRepository(),
 		NewMockStackDefinitionRepository(),
@@ -678,10 +681,12 @@ func TestBulkOperationReturnsInstanceName(t *testing.T) {
 
 // setupBulkRouterWithBranches creates a test gin engine with a branchOverrideRepo wired in.
 func setupBulkRouterWithBranches(
+	t *testing.T,
 	instanceRepo *MockStackInstanceRepository,
 	branchOverrideRepo *MockChartBranchOverrideRepository,
 	callerID, callerUsername, callerRole string,
 ) *gin.Engine {
+	t.Helper()
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
 	r.Use(func(c *gin.Context) {
@@ -700,7 +705,7 @@ func setupBulkRouterWithBranches(
 	valuesGen := helm.NewValuesGenerator()
 	userRepo := NewMockUserRepository()
 
-	h, _ := NewInstanceHandlerWithDeployer(
+	h, err := NewInstanceHandlerWithDeployer(
 		instanceRepo, NewMockValueOverrideRepository(), branchOverrideRepo,
 		NewMockStackDefinitionRepository(), NewMockChartConfigRepository(),
 		NewMockStackTemplateRepository(), NewMockTemplateChartConfigRepository(),
@@ -712,6 +717,7 @@ func setupBulkRouterWithBranches(
 			BranchOverride: branchOverrideRepo,
 		}},
 	)
+	require.NoError(t, err)
 
 	bulk := r.Group("/api/v1/stack-instances/bulk")
 	{
@@ -738,7 +744,7 @@ func TestBulkDelete_WithBranchOverrides(t *testing.T) {
 			Branch:          "feature/test",
 		})
 
-		router := setupBulkRouterWithBranches(instRepo, branchRepo, "uid-1", "testuser", "admin")
+		router := setupBulkRouterWithBranches(t, instRepo, branchRepo, "uid-1", "testuser", "admin")
 
 		body, _ := json.Marshal(BulkOperationRequest{InstanceIDs: []string{"i1"}})
 		w := httptest.NewRecorder()
@@ -770,7 +776,7 @@ func TestBulkDelete_WithBranchOverrides(t *testing.T) {
 		seedInstance(t, instRepo, "i1", "stack-a", "d1", "uid-1", models.StackStatusDraft)
 		branchRepo.SetError(assert.AnError)
 
-		router := setupBulkRouterWithBranches(instRepo, branchRepo, "uid-1", "testuser", "admin")
+		router := setupBulkRouterWithBranches(t, instRepo, branchRepo, "uid-1", "testuser", "admin")
 
 		body, _ := json.Marshal(BulkOperationRequest{InstanceIDs: []string{"i1"}})
 		w := httptest.NewRecorder()

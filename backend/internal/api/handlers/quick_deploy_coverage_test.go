@@ -32,7 +32,7 @@ func TestQuickDeploy_DefinitionCreateError(t *testing.T) {
 	seedTemplate(t, tmplRepo, "t1", "My Template", "owner-1", true)
 	defRepo.SetError(errors.New("db write failed"))
 
-	r := setupQuickDeployRouter(
+	r := setupQuickDeployRouter(t,
 		tmplRepo, tmplChartRepo, defRepo, ccRepo, instRepo,
 		boRepo, ovRepo, auditRepo,
 		nil, nil,
@@ -64,7 +64,7 @@ func TestQuickDeploy_TemplateChartsError(t *testing.T) {
 	seedTemplate(t, tmplRepo, "t1", "My Template", "owner-1", true)
 	tmplChartRepo.SetError(errors.New("table storage unavailable"))
 
-	r := setupQuickDeployRouter(
+	r := setupQuickDeployRouter(t,
 		tmplRepo, tmplChartRepo, defRepo, ccRepo, instRepo,
 		boRepo, ovRepo, auditRepo,
 		nil, nil,
@@ -105,7 +105,7 @@ func TestQuickDeploy_ChartConfigCreateError(t *testing.T) {
 	// Make chart config creation fail.
 	ccRepo.SetError(errors.New("db write failed"))
 
-	r := setupQuickDeployRouter(
+	r := setupQuickDeployRouter(t,
 		tmplRepo, tmplChartRepo, defRepo, ccRepo, instRepo,
 		boRepo, ovRepo, auditRepo,
 		nil, nil,
@@ -139,7 +139,7 @@ func TestQuickDeploy_FindByNamespaceError(t *testing.T) {
 	// Make FindByNamespace return a non-ErrNotFound error.
 	instRepo.SetFetchError(errors.New("connection refused"))
 
-	r := setupQuickDeployRouter(
+	r := setupQuickDeployRouter(t,
 		tmplRepo, tmplChartRepo, defRepo, ccRepo, instRepo,
 		boRepo, ovRepo, auditRepo,
 		nil, nil,
@@ -179,7 +179,7 @@ func TestQuickDeploy_BranchOverrideSetError(t *testing.T) {
 	mgr := newTestManager(instRepo, logRepo)
 	registry := cluster.NewRegistryForTest("test-cluster", nil, &noopHelmExecutor{})
 
-	r := setupQuickDeployRouter(
+	r := setupQuickDeployRouter(t,
 		tmplRepo, tmplChartRepo, defRepo, ccRepo, instRepo,
 		boRepo, ovRepo, auditRepo,
 		mgr, registry,
@@ -219,7 +219,7 @@ func TestQuickDeploy_AuditLogError(t *testing.T) {
 	mgr := newTestManager(instRepo, logRepo)
 	registry := cluster.NewRegistryForTest("test-cluster", nil, &noopHelmExecutor{})
 
-	r := setupQuickDeployRouter(
+	r := setupQuickDeployRouter(t,
 		tmplRepo, tmplChartRepo, defRepo, ccRepo, instRepo,
 		boRepo, ovRepo, auditRepo,
 		mgr, registry,
@@ -256,7 +256,7 @@ func TestQuickDeploy_NoChartsConfigured(t *testing.T) {
 	mgr := newTestManager(instRepo, logRepo)
 	registry := cluster.NewRegistryForTest("test-cluster", nil, &noopHelmExecutor{})
 
-	r := setupQuickDeployRouter(
+	r := setupQuickDeployRouter(t,
 		tmplRepo, tmplChartRepo, defRepo, ccRepo, instRepo,
 		boRepo, ovRepo, auditRepo,
 		mgr, registry,
@@ -292,7 +292,7 @@ func TestQuickDeploy_InstanceCreateError(t *testing.T) {
 	seedTemplate(t, tmplRepo, "t1", "My Template", "owner-1", true)
 	instRepo.SetCreateError(dberrors.NewDatabaseError("Create", errors.New("db write failed")))
 
-	r := setupQuickDeployRouter(
+	r := setupQuickDeployRouter(t,
 		tmplRepo, tmplChartRepo, defRepo, ccRepo, instRepo,
 		boRepo, ovRepo, auditRepo,
 		nil, nil,
@@ -369,7 +369,7 @@ func TestQuickDeploy_NegativeTTL(t *testing.T) {
 
 	seedTemplate(t, tmplRepo, "t1", "My Template", "owner-1", true)
 
-	r := setupQuickDeployRouter(
+	r := setupQuickDeployRouter(t,
 		tmplRepo, tmplChartRepo, defRepo, ccRepo, instRepo,
 		boRepo, ovRepo, auditRepo,
 		nil, nil,
@@ -406,7 +406,7 @@ func TestQuickDeploy_ExcessiveTTL(t *testing.T) {
 
 	seedTemplate(t, tmplRepo, "t1", "My Template", "owner-1", true)
 
-	r := setupQuickDeployRouter(
+	r := setupQuickDeployRouter(t,
 		tmplRepo, tmplChartRepo, defRepo, ccRepo, instRepo,
 		boRepo, ovRepo, auditRepo,
 		nil, nil,
@@ -447,7 +447,7 @@ func TestQuickDeploy_UnknownCluster(t *testing.T) {
 	seedCluster(clusterRepo, "cl-1", "test-cluster")
 	registry := cluster.NewRegistry(cluster.RegistryConfig{ClusterRepo: clusterRepo})
 
-	r := setupQuickDeployRouter(
+	r := setupQuickDeployRouter(t,
 		tmplRepo, tmplChartRepo, defRepo, ccRepo, instRepo,
 		boRepo, ovRepo, auditRepo,
 		nil, registry,
@@ -487,7 +487,7 @@ func TestQuickDeploy_NoDefaultCluster(t *testing.T) {
 	clusterRepo := NewMockClusterRepository()
 	registry := cluster.NewRegistry(cluster.RegistryConfig{ClusterRepo: clusterRepo})
 
-	r := setupQuickDeployRouter(
+	r := setupQuickDeployRouter(t,
 		tmplRepo, tmplChartRepo, defRepo, ccRepo, instRepo,
 		boRepo, ovRepo, auditRepo,
 		nil, registry,

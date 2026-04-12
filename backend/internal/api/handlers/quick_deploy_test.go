@@ -24,6 +24,7 @@ func intPtr(i int) *int { return &i }
 
 // setupQuickDeployRouter creates a test gin engine for the QuickDeploy endpoint.
 func setupQuickDeployRouter(
+	t *testing.T,
 	templateRepo *MockStackTemplateRepository,
 	templateChartRepo *MockTemplateChartConfigRepository,
 	definitionRepo *MockStackDefinitionRepository,
@@ -37,6 +38,7 @@ func setupQuickDeployRouter(
 	callerID, callerUsername, callerRole string,
 	defaultTTL int,
 ) *gin.Engine {
+	t.Helper()
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
 	r.Use(func(c *gin.Context) {
@@ -55,7 +57,7 @@ func setupQuickDeployRouter(
 	valuesGen := helm.NewValuesGenerator()
 	userRepo := NewMockUserRepository()
 
-	h, _ := NewQuickDeployHandler(
+	h, err := NewQuickDeployHandler(
 		templateRepo, templateChartRepo, definitionRepo, chartConfigRepo,
 		instanceRepo, branchOverrideRepo, overrideRepo, valuesGen,
 		deployMgr, userRepo, nil, auditRepo,
@@ -69,6 +71,7 @@ func setupQuickDeployRouter(
 			BranchOverride:  branchOverrideRepo,
 		}},
 	)
+	require.NoError(t, err)
 
 	tpl := r.Group("/api/v1/templates")
 	{
@@ -358,7 +361,7 @@ func TestQuickDeploy(t *testing.T) {
 				registry = cluster.NewRegistryForTest("test-cluster", nil, &noopHelmExecutor{})
 			}
 
-			router := setupQuickDeployRouter(
+			router := setupQuickDeployRouter(t,
 				tmplRepo, tmplChartRepo, defRepo, ccRepo, instRepo, boRepo, ovRepo, auditRepo,
 				mgr, registry,
 				"uid-1", "alice", "user",
@@ -415,7 +418,7 @@ func TestQuickDeploy_UsesTemplateDefaultBranch(t *testing.T) {
 	mgr := newTestManager(instRepo, logRepo)
 	registry := cluster.NewRegistryForTest("test-cluster", nil, &noopHelmExecutor{})
 
-	router := setupQuickDeployRouter(
+	router := setupQuickDeployRouter(t,
 		tmplRepo, tmplChartRepo, defRepo, ccRepo, instRepo, boRepo, ovRepo, auditRepo,
 		mgr, registry,
 		"uid-1", "alice", "user",
@@ -446,7 +449,7 @@ func TestQuickDeploy_InvalidJSON(t *testing.T) {
 	ovRepo := NewMockValueOverrideRepository()
 	auditRepo := NewMockAuditLogRepository()
 
-	router := setupQuickDeployRouter(
+	router := setupQuickDeployRouter(t,
 		tmplRepo, tmplChartRepo, defRepo, ccRepo, instRepo, boRepo, ovRepo, auditRepo,
 		nil, nil,
 		"uid-1", "alice", "user",
@@ -493,7 +496,7 @@ func TestQuickDeploy_DuplicateInstanceName(t *testing.T) {
 	mgr := newTestManager(instRepo, logRepo)
 	registry := cluster.NewRegistryForTest("test-cluster", nil, &noopHelmExecutor{})
 
-	router := setupQuickDeployRouter(
+	router := setupQuickDeployRouter(t,
 		tmplRepo, tmplChartRepo, defRepo, ccRepo, instRepo, boRepo, ovRepo, auditRepo,
 		mgr, registry,
 		"uid-1", "alice", "user",
