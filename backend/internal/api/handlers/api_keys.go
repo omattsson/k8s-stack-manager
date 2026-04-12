@@ -91,12 +91,6 @@ func (h *APIKeyHandler) CreateAPIKey(c *gin.Context) {
 		return
 	}
 
-	rawKey, prefix, hash, err := models.GenerateAPIKey()
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
-		return
-	}
-
 	// Normalize empty expires_at to nil so it doesn't conflict with expires_in_days.
 	if req.ExpiresAt != nil && *req.ExpiresAt == "" {
 		req.ExpiresAt = nil
@@ -132,8 +126,8 @@ func (h *APIKeyHandler) CreateAPIKey(c *gin.Context) {
 		expiresAt = &parsed
 	}
 
-	// Reject expiry dates in the past.
-	if expiresAt != nil && expiresAt.Before(now) {
+	// Reject expiry dates that are not strictly in the future.
+	if expiresAt != nil && !expiresAt.After(now) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Expiry date must be in the future"})
 		return
 	}
@@ -152,6 +146,13 @@ func (h *APIKeyHandler) CreateAPIKey(c *gin.Context) {
 			// Auto-cap: no expiry requested but max lifetime is configured.
 			expiresAt = &maxExpiry
 		}
+	}
+
+	// Generate key only after all validation passes to avoid wasted crypto work.
+	rawKey, prefix, hash, err := models.GenerateAPIKey()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
+		return
 	}
 
 	key := &models.APIKey{
