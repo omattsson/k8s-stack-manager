@@ -428,11 +428,11 @@ func (m *Manager) finalizeDeploy(instanceID string, deployLog *models.Deployment
 	} else {
 		if err := m.instanceRepo.Update(instance); err != nil {
 			slog.Error("failed to update instance after deploy",
-				"instance_id", instanceID, "error", err)
+				"instance_id", instanceID, "deploy_log_id", deployLog.ID, "error", err)
 		}
 		if err := m.logRepo.Update(m.shutdownCtx, deployLog); err != nil {
 			slog.Error("failed to update deploy log after deploy",
-				"instance_id", instanceID, "error", err)
+				"instance_id", instanceID, "deploy_log_id", deployLog.ID, "error", err)
 		}
 	}
 
@@ -644,11 +644,11 @@ func (m *Manager) finalizeStop(instanceID string, deployLog *models.DeploymentLo
 	} else {
 		if err := m.instanceRepo.Update(instance); err != nil {
 			slog.Error("failed to update instance after stop",
-				"instance_id", instanceID, "error", err)
+				"instance_id", instanceID, "deploy_log_id", deployLog.ID, "error", err)
 		}
 		if err := m.logRepo.Update(m.shutdownCtx, deployLog); err != nil {
 			slog.Error("failed to update deploy log after stop",
-				"instance_id", instanceID, "error", err)
+				"instance_id", instanceID, "deploy_log_id", deployLog.ID, "error", err)
 		}
 	}
 
@@ -933,11 +933,11 @@ func (m *Manager) finalizeClean(instanceID string, deployLog *models.DeploymentL
 	} else {
 		if err := m.instanceRepo.Update(instance); err != nil {
 			slog.Error("failed to update instance after clean",
-				"instance_id", instanceID, "error", err)
+				"instance_id", instanceID, "deploy_log_id", deployLog.ID, "error", err)
 		}
 		if err := m.logRepo.Update(m.shutdownCtx, deployLog); err != nil {
 			slog.Error("failed to update deploy log after clean",
-				"instance_id", instanceID, "error", err)
+				"instance_id", instanceID, "deploy_log_id", deployLog.ID, "error", err)
 		}
 	}
 

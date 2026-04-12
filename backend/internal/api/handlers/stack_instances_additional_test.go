@@ -61,7 +61,7 @@ func setupInstanceRouterFull(
 	if branchOverrideRepo == nil {
 		branchOverrideRepo = NewMockChartBranchOverrideRepository()
 	}
-	h := NewInstanceHandlerWithDeployer(
+	h, _ := NewInstanceHandlerWithDeployer(
 		instanceRepo, overrideRepo, branchOverrideRepo, defRepo, ccRepo,
 		tmplRepo, tmplChartRepo, valuesGen, userRepo,
 		deployManager, k8sWatcher, registry, deployLogRepo, nil,
@@ -1573,7 +1573,7 @@ func TestCreateInstance_Additional(t *testing.T) {
 
 		valuesGen := helm.NewValuesGenerator()
 		userRepo := NewMockUserRepository()
-		h := NewInstanceHandlerWithDeployer(
+		h, _ := NewInstanceHandlerWithDeployer(
 			instRepo, NewMockValueOverrideRepository(), nil, defRepo,
 			NewMockChartConfigRepository(),
 			NewMockStackTemplateRepository(), NewMockTemplateChartConfigRepository(),
@@ -1619,7 +1619,7 @@ func TestCreateInstance_Additional(t *testing.T) {
 
 		valuesGen := helm.NewValuesGenerator()
 		userRepo := NewMockUserRepository()
-		h := NewInstanceHandlerWithDeployer(
+		h, _ := NewInstanceHandlerWithDeployer(
 			instRepo, NewMockValueOverrideRepository(), nil, defRepo,
 			NewMockChartConfigRepository(),
 			NewMockStackTemplateRepository(), NewMockTemplateChartConfigRepository(),

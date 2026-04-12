@@ -51,7 +51,7 @@ func setupBulkRouter(
 	userRepo := NewMockUserRepository()
 
 	boRepo := NewMockChartBranchOverrideRepository()
-	h := NewInstanceHandlerWithDeployer(
+	h, _ := NewInstanceHandlerWithDeployer(
 		instanceRepo, overrideRepo, boRepo, defRepo, ccRepo,
 		tmplRepo, tmplChartRepo, valuesGen, userRepo,
 		deployManager, nil, nil, deployLogRepo, nil,
@@ -700,7 +700,7 @@ func setupBulkRouterWithBranches(
 	valuesGen := helm.NewValuesGenerator()
 	userRepo := NewMockUserRepository()
 
-	h := NewInstanceHandlerWithDeployer(
+	h, _ := NewInstanceHandlerWithDeployer(
 		instanceRepo, NewMockValueOverrideRepository(), branchOverrideRepo,
 		NewMockStackDefinitionRepository(), NewMockChartConfigRepository(),
 		NewMockStackTemplateRepository(), NewMockTemplateChartConfigRepository(),

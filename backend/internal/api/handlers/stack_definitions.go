@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -89,9 +90,9 @@ func NewDefinitionHandlerWithVersions(
 	templateChartRepo models.TemplateChartConfigRepository,
 	versionRepo models.TemplateVersionRepository,
 	txRunner database.TxRunner,
-) *DefinitionHandler {
+) (*DefinitionHandler, error) {
 	if txRunner == nil {
-		panic("txRunner must not be nil")
+		return nil, fmt.Errorf("txRunner must not be nil")
 	}
 	return &DefinitionHandler{
 		definitionRepo:    definitionRepo,
@@ -101,7 +102,7 @@ func NewDefinitionHandlerWithVersions(
 		templateChartRepo: templateChartRepo,
 		versionRepo:       versionRepo,
 		txRunner:          txRunner,
-	}
+	}, nil
 }
 
 // ListDefinitions godoc

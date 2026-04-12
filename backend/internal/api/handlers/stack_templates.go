@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -60,9 +61,9 @@ func NewTemplateHandlerWithVersions(
 	chartConfigRepo models.ChartConfigRepository,
 	versionRepo models.TemplateVersionRepository,
 	txRunner database.TxRunner,
-) *TemplateHandler {
+) (*TemplateHandler, error) {
 	if txRunner == nil {
-		panic("txRunner must not be nil")
+		return nil, fmt.Errorf("txRunner must not be nil")
 	}
 	return &TemplateHandler{
 		templateRepo:    templateRepo,
@@ -71,7 +72,7 @@ func NewTemplateHandlerWithVersions(
 		chartConfigRepo: chartConfigRepo,
 		versionRepo:     versionRepo,
 		txRunner:        txRunner,
-	}
+	}, nil
 }
 
 // TemplateListItem extends StackTemplate with computed fields for the gallery.

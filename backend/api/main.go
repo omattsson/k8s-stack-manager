@@ -242,16 +242,28 @@ func main() {
 		slog.Info("OIDC authentication enabled", "provider_url", cfg.OIDC.ProviderURL)
 	}
 
-	templateHandler := handlers.NewTemplateHandlerWithVersions(templateRepo, templateChartRepo, definitionRepo, chartConfigRepo, templateVersionRepo, repos.TxRunner)
-	definitionHandler := handlers.NewDefinitionHandlerWithVersions(definitionRepo, chartConfigRepo, instanceRepo, templateRepo, templateChartRepo, templateVersionRepo, repos.TxRunner)
+	templateHandler, err := handlers.NewTemplateHandlerWithVersions(templateRepo, templateChartRepo, definitionRepo, chartConfigRepo, templateVersionRepo, repos.TxRunner)
+	if err != nil {
+		slog.Error("failed to create template handler", "error", err)
+		os.Exit(1)
+	}
+	definitionHandler, err := handlers.NewDefinitionHandlerWithVersions(definitionRepo, chartConfigRepo, instanceRepo, templateRepo, templateChartRepo, templateVersionRepo, repos.TxRunner)
+	if err != nil {
+		slog.Error("failed to create definition handler", "error", err)
+		os.Exit(1)
+	}
 	templateVersionHandler := handlers.NewTemplateVersionHandler(templateVersionRepo, templateRepo)
-	instanceHandler := handlers.NewInstanceHandlerWithDeployer(
+	instanceHandler, err := handlers.NewInstanceHandlerWithDeployer(
 		instanceRepo, overrideRepo, branchOverrideRepo, definitionRepo, chartConfigRepo,
 		templateRepo, templateChartRepo, valuesGen, userRepo,
 		deployManager, k8sWatcher, clusterRegistry, deployLogRepo, clusterRepo,
 		cfg.App.DefaultInstanceTTLMinutes,
 		repos.TxRunner,
 	)
+	if err != nil {
+		slog.Error("failed to create instance handler", "error", err)
+		os.Exit(1)
+	}
 	gitHandler := handlers.NewGitHandler(gitRegistry)
 	auditLogHandler := handlers.NewAuditLogHandler(auditRepo)
 	userHandler := handlers.NewUserHandler(userRepo)
@@ -267,7 +279,7 @@ func main() {
 
 	favoriteHandler := handlers.NewFavoriteHandler(favoriteRepo)
 
-	quickDeployHandler := handlers.NewQuickDeployHandler(
+	quickDeployHandler, err := handlers.NewQuickDeployHandler(
 		templateRepo, templateChartRepo, definitionRepo, chartConfigRepo,
 		instanceRepo, branchOverrideRepo, overrideRepo, valuesGen,
 		deployManager, userRepo, deployLogRepo, auditRepo,
@@ -275,6 +287,10 @@ func main() {
 		cfg.App.DefaultInstanceTTLMinutes,
 		repos.TxRunner,
 	)
+	if err != nil {
+		slog.Error("failed to create quick deploy handler", "error", err)
+		os.Exit(1)
+	}
 
 	analyticsHandler := handlers.NewAnalyticsHandler(templateRepo, definitionRepo, instanceRepo, deployLogRepo, userRepo)
 

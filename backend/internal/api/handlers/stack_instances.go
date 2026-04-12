@@ -174,9 +174,9 @@ func NewInstanceHandlerWithDeployer(
 	clusterRepo models.ClusterRepository,
 	defaultTTLMinutes int,
 	txRunner database.TxRunner,
-) *InstanceHandler {
+) (*InstanceHandler, error) {
 	if txRunner == nil {
-		panic("txRunner must not be nil")
+		return nil, fmt.Errorf("txRunner must not be nil")
 	}
 	return &InstanceHandler{
 		instanceRepo:       instanceRepo,
@@ -195,7 +195,7 @@ func NewInstanceHandlerWithDeployer(
 		clusterRepo:        clusterRepo,
 		defaultTTLMinutes:  defaultTTLMinutes,
 		txRunner:           txRunner,
-	}
+	}, nil
 }
 
 // listPageSizeDefault is the default page size for paginated list queries.

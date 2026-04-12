@@ -62,9 +62,9 @@ func NewQuickDeployHandler(
 	k8sWatcher *k8s.Watcher,
 	defaultTTLMinutes int,
 	txRunner database.TxRunner,
-) *QuickDeployHandler {
+) (*QuickDeployHandler, error) {
 	if txRunner == nil {
-		panic("txRunner must not be nil")
+		return nil, fmt.Errorf("txRunner must not be nil")
 	}
 	return &QuickDeployHandler{
 		templateRepo:       templateRepo,
@@ -84,7 +84,7 @@ func NewQuickDeployHandler(
 		k8sWatcher:         k8sWatcher,
 		defaultTTLMinutes:  defaultTTLMinutes,
 		txRunner:           txRunner,
-	}
+	}, nil
 }
 
 // quickDeployRequest is the request body for Quick Deploy.

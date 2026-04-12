@@ -39,6 +39,7 @@ func setupTestDBWithAllTables(t *testing.T) *gorm.DB {
 	// parallel subtests may get a fresh, empty database from the pool.
 	sqlDB, err := db.DB()
 	require.NoError(t, err)
+	t.Cleanup(func() { _ = sqlDB.Close() })
 	sqlDB.SetMaxOpenConns(1)
 
 	require.NoError(t, db.AutoMigrate(

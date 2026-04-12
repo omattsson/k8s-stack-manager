@@ -55,7 +55,7 @@ func setupQuickDeployRouter(
 	valuesGen := helm.NewValuesGenerator()
 	userRepo := NewMockUserRepository()
 
-	h := NewQuickDeployHandler(
+	h, _ := NewQuickDeployHandler(
 		templateRepo, templateChartRepo, definitionRepo, chartConfigRepo,
 		instanceRepo, branchOverrideRepo, overrideRepo, valuesGen,
 		deployMgr, userRepo, nil, auditRepo,

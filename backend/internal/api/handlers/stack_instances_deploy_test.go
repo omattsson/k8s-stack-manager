@@ -219,7 +219,7 @@ func setupDeployRouter(
 	valuesGen := helm.NewValuesGenerator()
 	userRepo := NewMockUserRepository()
 
-	h := NewInstanceHandlerWithDeployer(
+	h, _ := NewInstanceHandlerWithDeployer(
 		instanceRepo, overrideRepo, nil, defRepo, ccRepo,
 		tmplRepo, tmplChartRepo, valuesGen, userRepo,
 		deployManager, k8sWatcher, registry, deployLogRepo, nil,

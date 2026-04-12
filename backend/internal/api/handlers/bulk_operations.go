@@ -378,7 +378,8 @@ func (h *InstanceHandler) BulkDelete(c *gin.Context) {
 			}
 		}
 		if err := h.instanceRepo.Delete(inst.ID); err != nil {
-			return "", fmt.Errorf("failed to delete instance: %w", err)
+			slog.Error("failed to delete instance in bulk operation", "instance_id", inst.ID, "error", err)
+			return "", fmt.Errorf("failed to delete instance")
 		}
 		return "", nil
 	})
