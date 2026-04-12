@@ -126,7 +126,6 @@ type Config struct {
 	OIDC OIDCConfig
 	// Then string and simple field structs
 	App         AppConfig
-	AzureTable  AzureTableConfig
 	CORS        CORSConfig
 	Logging     LogConfig
 	GitProvider GitProviderConfig
@@ -160,16 +159,6 @@ type DatabaseConfig struct {
 	MaxIdleConns int32
 	// Add padding field to maintain 8-byte alignment
 	_ [4]byte
-}
-
-// AzureTableConfig holds Azure Table Storage configuration
-type AzureTableConfig struct {
-	AccountName   string
-	AccountKey    string
-	Endpoint      string
-	TableName     string
-	UseAzureTable bool // true to use Azure Table as backend
-	UseAzurite    bool // true to use local Azurite emulator
 }
 
 // ServerConfig holds HTTP server configuration
@@ -213,14 +202,8 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("app config: %w", err)
 	}
 
-	if c.AzureTable.UseAzureTable {
-		if err := c.AzureTable.Validate(); err != nil {
-			return fmt.Errorf("azure table config: %w", err)
-		}
-	} else {
-		if err := c.Database.Validate(); err != nil {
-			return fmt.Errorf("database config: %w", err)
-		}
+	if err := c.Database.Validate(); err != nil {
+		return fmt.Errorf("database config: %w", err)
 	}
 
 	if err := c.Server.Validate(); err != nil {
@@ -285,26 +268,6 @@ func (c *DatabaseConfig) Validate() error {
 
 	if c.ConnMaxLifetime <= 0 {
 		return errors.New("connection max lifetime must be positive")
-	}
-
-	return nil
-}
-
-func (c *AzureTableConfig) Validate() error {
-	if c.AccountName == "" {
-		return errors.New("account name is required")
-	}
-
-	if c.AccountKey == "" {
-		return errors.New("account key is required")
-	}
-
-	if c.Endpoint == "" {
-		return errors.New("endpoint is required")
-	}
-
-	if c.TableName == "" {
-		return errors.New("table name is required")
 	}
 
 	return nil
@@ -430,10 +393,9 @@ func LoadConfig() (*Config, error) {
 	}
 
 	cfg := &Config{
-		App:        loadAppConfig(),
-		Database:   loadDatabaseConfig(),
-		AzureTable: loadAzureTableConfig(),
-		Server:     loadServerConfig(),
+		App:      loadAppConfig(),
+		Database: loadDatabaseConfig(),
+		Server:   loadServerConfig(),
 		CORS: CORSConfig{
 			AllowedOrigins: getEnv("CORS_ALLOWED_ORIGINS", "*"),
 		},
@@ -494,17 +456,6 @@ func loadDatabaseConfig() DatabaseConfig {
 	}
 }
 
-func loadAzureTableConfig() AzureTableConfig {
-	return AzureTableConfig{
-		AccountName:   getEnv("AZURE_TABLE_ACCOUNT_NAME", ""),
-		AccountKey:    getEnv("AZURE_TABLE_ACCOUNT_KEY", ""),
-		Endpoint:      getEnv("AZURE_TABLE_ENDPOINT", ""),
-		TableName:     getEnv("AZURE_TABLE_NAME", "items"),
-		UseAzureTable: getEnvBool("USE_AZURE_TABLE", false),
-		UseAzurite:    getEnvBool("USE_AZURITE", false),
-	}
-}
-
 func loadServerConfig() ServerConfig {
 	return ServerConfig{
 		Host:            getEnv("SERVER_HOST", ""),
@@ -539,9 +490,9 @@ func loadAuthConfig() AuthConfig {
 		MaxRefreshTokensPerUser: int(getEnvInt32("MAX_REFRESH_TOKENS_PER_USER", 10)),
 		// Default 0 = no limit. Set to a positive value (e.g. 365) to enforce max API key lifetime.
 		// Intentionally not defaulting to 365 to avoid breaking existing deployments.
-		APIKeyMaxLifetimeDays:   int(getEnvInt32("API_KEY_MAX_LIFETIME_DAYS", 0)),
-		SecureCookies:           getEnvBool("SECURE_COOKIES", false),
-		CookieSameSite:          getEnv("COOKIE_SAMESITE", "strict"),
+		APIKeyMaxLifetimeDays: int(getEnvInt32("API_KEY_MAX_LIFETIME_DAYS", 0)),
+		SecureCookies:         getEnvBool("SECURE_COOKIES", false),
+		CookieSameSite:        getEnv("COOKIE_SAMESITE", "strict"),
 	}
 }
 

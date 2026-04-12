@@ -54,11 +54,6 @@ backend:
     CORS_ALLOWED_METHODS: "GET,POST,PUT,DELETE,OPTIONS"
     CORS_ALLOWED_HEADERS: "Origin,Content-Type,Accept,Authorization"
     CORS_MAX_AGE: "300"
-    USE_AZURE_TABLE: "false"
-    USE_AZURITE: "false"
-    # AZURE_TABLE_ENDPOINT is auto-set to the azurite service when azurite.enabled=true
-    AZURE_TABLE_ACCOUNT_NAME: devstoreaccount1
-    AZURE_TABLE_NAME: items
     SELF_REGISTRATION: "true"
     DEFAULT_BRANCH: master
     HELM_BINARY: helm
@@ -79,7 +74,6 @@ backend:
   secrets:
     JWT_SECRET: "CHANGE-ME-generate-a-random-secret"               # MUST be provided — minimum 16 chars
     ADMIN_PASSWORD: "CHANGE-ME-set-a-secure-password"
-    AZURE_TABLE_ACCOUNT_KEY: "Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw=="
     KUBECONFIG_ENCRYPTION_KEY: ""
     # Git providers (optional)
     AZURE_DEVOPS_PAT: ""
@@ -177,30 +171,10 @@ frontend:
     annotations: {}
 
 # ---------------------------------------------------------------------------
-# Azurite (Azure Table Storage emulator)
-# ---------------------------------------------------------------------------
-azurite:
-  enabled: false  # Enable for Azure Table Storage emulator; set backend.env.USE_AZURE_TABLE to "true"
-  image:
-    repository: mcr.microsoft.com/azure-storage/azurite
-    tag: "3.34.0"
-    pullPolicy: IfNotPresent
-  persistence:
-    size: 1Gi
-    storageClass: ""
-  resources:
-    requests:
-      memory: 128Mi
-      cpu: 50m
-    limits:
-      memory: 256Mi
-      cpu: 200m
-
-# ---------------------------------------------------------------------------
 # MySQL Database
 # ---------------------------------------------------------------------------
 mysql:
-  enabled: true  # Disable to use Azure Table Storage instead; set backend.env.USE_AZURE_TABLE to "true"
+  enabled: true
   image:
     repository: mysql
     tag: "8.0"

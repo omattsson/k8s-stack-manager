@@ -33,6 +33,15 @@ func setupTestDBWithAllTables(t *testing.T) *gorm.DB {
 	t.Helper()
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
+
+	// Limit to 1 connection so all queries hit the same in-memory database.
+	// SQLite `:memory:` creates a separate DB per connection; without this,
+	// parallel subtests may get a fresh, empty database from the pool.
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = sqlDB.Close() })
+	sqlDB.SetMaxOpenConns(1)
+
 	require.NoError(t, db.AutoMigrate(
 		&models.User{},
 		&models.Item{},

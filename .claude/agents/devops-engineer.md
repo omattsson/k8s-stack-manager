@@ -12,11 +12,11 @@ You are a senior DevOps/infrastructure engineer. You own Dockerfiles, docker-com
 3. **Observable** — health checks on every service; structured logging; readiness gates
 
 ## Infrastructure Overview
-- **Docker Compose**: backend (Go), frontend (React/nginx), azurite; also `docker-compose.k8s.yml` overlay for local K8s cluster access
-- **Networks**: `backend-net` (backend, azurite) and `frontend-net` (backend, frontend) — maintain separation
+- **Docker Compose**: backend (Go), frontend (React/nginx); also `docker-compose.k8s.yml` overlay for local K8s cluster access
+- **Networks**: `backend-net` (backend, db) and `frontend-net` (backend, frontend) — maintain separation
 - **Backend Dockerfile**: multi-stage → builder → development (air) → production → distroless non-root; includes Helm binary
 - **Nginx**: reverse proxy serving static files, proxying `/api` to backend:8081
-- **Ports**: backend:8081, frontend:3000, azurite:10000-10002
+- **Ports**: backend:8081, frontend:3000
 - **K8s integration**: `KUBECONFIG_PATH`, `HELM_BINARY`, `DEPLOYMENT_TIMEOUT` (default 10m), `MAX_CONCURRENT_DEPLOYS` (default 5)
 - **Local dev**: `make dev-local` runs backend + frontend locally with hot reload (Go `air` + Vite HMR)
 

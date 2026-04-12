@@ -10,7 +10,7 @@ You are a MySQL query performance specialist for the k8s-stack-manager project. 
 - **Backend**: Go with GORM ORM (`backend/internal/database/`)
 - **Database**: MySQL 8.4 running in Docker (`app-mysql-dev` container)
 - **Connection**: `mysql -uroot -prootpassword app` via `docker exec app-mysql-dev`
-- **Repository pattern**: `models.Repository` interface with GORM and Azure Table implementations
+- **Repository pattern**: `models.Repository` interface with GORM implementation
 - **Migrations**: Versioned in `backend/internal/database/migrations.go`
 - **Indexes**: Added via migrations using idempotent `information_schema.statistics` checks
 
@@ -217,7 +217,6 @@ When reviewing or optimizing queries, always provide:
 - NEVER remove existing indexes without confirming they are unused
 - NEVER expose database error details to API clients — use `handleDBError()` / `mapError()`
 - ALWAYS run EXPLAIN before and after changes to prove improvement
-- ALWAYS consider the Azure Table Storage implementation — it has different query characteristics
 - DO NOT optimize queries on tables with fewer than 100 rows unless they are in hot paths
 
 

@@ -5,25 +5,13 @@ import (
 	"log/slog"
 
 	"backend/internal/config"
-	"backend/internal/database/azure"
 	"backend/internal/models"
 
 	"gorm.io/gorm"
 )
 
-// NewRepository creates a new repository based on the configuration
+// NewRepository creates a new MySQL-backed repository.
 func NewRepository(cfg *config.Config) (models.Repository, error) {
-	if cfg.AzureTable.UseAzureTable {
-		slog.Info("Using Azure Table Storage as repository")
-		return azure.NewTableRepository(
-			cfg.AzureTable.AccountName,
-			cfg.AzureTable.AccountKey,
-			cfg.AzureTable.Endpoint,
-			cfg.AzureTable.TableName,
-			cfg.AzureTable.UseAzurite,
-		)
-	}
-
 	slog.Info("Using MySQL as repository")
 	db, err := NewFromAppConfig(cfg)
 	if err != nil {
@@ -42,22 +30,10 @@ func NewRepository(cfg *config.Config) (models.Repository, error) {
 	return models.NewRepository(db.DB), nil
 }
 
-// NewRepositoryWithGormDB creates a repository and, for MySQL, also returns the
+// NewRepositoryWithGormDB creates a MySQL-backed repository and returns the
 // underlying *gorm.DB so callers can construct domain-specific repositories
-// without opening a second connection pool. Returns nil *gorm.DB for Azure Table.
+// without opening a second connection pool.
 func NewRepositoryWithGormDB(cfg *config.Config) (models.Repository, *gorm.DB, error) {
-	if cfg.AzureTable.UseAzureTable {
-		slog.Info("Using Azure Table Storage as repository")
-		repo, err := azure.NewTableRepository(
-			cfg.AzureTable.AccountName,
-			cfg.AzureTable.AccountKey,
-			cfg.AzureTable.Endpoint,
-			cfg.AzureTable.TableName,
-			cfg.AzureTable.UseAzurite,
-		)
-		return repo, nil, err
-	}
-
 	slog.Info("Using MySQL as repository")
 	db, err := NewFromAppConfig(cfg)
 	if err != nil {

@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"backend/internal/database"
 	"backend/internal/helm"
 	"backend/internal/models"
 
@@ -44,7 +45,13 @@ func setupInstanceRouter(
 
 	valuesGen := helm.NewValuesGenerator()
 	userRepo := NewMockUserRepository()
-	h := NewInstanceHandler(instanceRepo, overrideRepo, nil, defRepo, ccRepo, tmplRepo, tmplChartRepo, valuesGen, userRepo, 0)
+	boRepo := NewMockChartBranchOverrideRepository()
+	h := NewInstanceHandler(instanceRepo, overrideRepo, boRepo, defRepo, ccRepo, tmplRepo, tmplChartRepo, valuesGen, userRepo, 0)
+	h.txRunner = &mockHandlerTxRunner{repos: database.TxRepos{
+		StackInstance:  instanceRepo,
+		ValueOverride:  overrideRepo,
+		BranchOverride: boRepo,
+	}}
 
 	insts := r.Group("/api/v1/stack-instances")
 	{

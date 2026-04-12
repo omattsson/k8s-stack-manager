@@ -85,15 +85,15 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Initialize repository using the factory (selects MySQL or Azure Table based on config)
+	// Initialize repository (MySQL via GORM)
 	repo, mysqlGormDB, err := database.NewRepositoryWithGormDB(cfg)
 	if err != nil {
 		slog.Error("Failed to initialize repository", "error", err)
 		os.Exit(1)
 	}
 
-	// Register database/sql pool metrics when using MySQL with OTel.
-	if cfg.Otel.Enabled && mysqlGormDB != nil {
+	// Register database/sql pool metrics with OTel.
+	if cfg.Otel.Enabled {
 		sqlDB, err := mysqlGormDB.DB()
 		if err == nil {
 			if err := telemetry.StartDBMetrics(sqlDB); err != nil {
@@ -242,18 +242,28 @@ func main() {
 		slog.Info("OIDC authentication enabled", "provider_url", cfg.OIDC.ProviderURL)
 	}
 
-	templateHandler := handlers.NewTemplateHandlerWithVersions(templateRepo, templateChartRepo, definitionRepo, chartConfigRepo, templateVersionRepo)
-	templateHandler.SetTxRunner(repos.TxRunner)
-	definitionHandler := handlers.NewDefinitionHandlerWithVersions(definitionRepo, chartConfigRepo, instanceRepo, templateRepo, templateChartRepo, templateVersionRepo)
-	definitionHandler.SetTxRunner(repos.TxRunner)
+	templateHandler, err := handlers.NewTemplateHandlerWithVersions(templateRepo, templateChartRepo, definitionRepo, chartConfigRepo, templateVersionRepo, repos.TxRunner)
+	if err != nil {
+		slog.Error("failed to create template handler", "error", err)
+		os.Exit(1)
+	}
+	definitionHandler, err := handlers.NewDefinitionHandlerWithVersions(definitionRepo, chartConfigRepo, instanceRepo, templateRepo, templateChartRepo, templateVersionRepo, repos.TxRunner)
+	if err != nil {
+		slog.Error("failed to create definition handler", "error", err)
+		os.Exit(1)
+	}
 	templateVersionHandler := handlers.NewTemplateVersionHandler(templateVersionRepo, templateRepo)
-	instanceHandler := handlers.NewInstanceHandlerWithDeployer(
+	instanceHandler, err := handlers.NewInstanceHandlerWithDeployer(
 		instanceRepo, overrideRepo, branchOverrideRepo, definitionRepo, chartConfigRepo,
 		templateRepo, templateChartRepo, valuesGen, userRepo,
 		deployManager, k8sWatcher, clusterRegistry, deployLogRepo, clusterRepo,
 		cfg.App.DefaultInstanceTTLMinutes,
+		repos.TxRunner,
 	)
-	instanceHandler.SetTxRunner(repos.TxRunner)
+	if err != nil {
+		slog.Error("failed to create instance handler", "error", err)
+		os.Exit(1)
+	}
 	gitHandler := handlers.NewGitHandler(gitRegistry)
 	auditLogHandler := handlers.NewAuditLogHandler(auditRepo)
 	userHandler := handlers.NewUserHandler(userRepo)
@@ -269,14 +279,18 @@ func main() {
 
 	favoriteHandler := handlers.NewFavoriteHandler(favoriteRepo)
 
-	quickDeployHandler := handlers.NewQuickDeployHandler(
+	quickDeployHandler, err := handlers.NewQuickDeployHandler(
 		templateRepo, templateChartRepo, definitionRepo, chartConfigRepo,
 		instanceRepo, branchOverrideRepo, overrideRepo, valuesGen,
 		deployManager, userRepo, deployLogRepo, auditRepo,
 		hub, clusterRegistry, k8sWatcher,
 		cfg.App.DefaultInstanceTTLMinutes,
+		repos.TxRunner,
 	)
-	quickDeployHandler.SetTxRunner(repos.TxRunner)
+	if err != nil {
+		slog.Error("failed to create quick deploy handler", "error", err)
+		os.Exit(1)
+	}
 
 	analyticsHandler := handlers.NewAnalyticsHandler(templateRepo, definitionRepo, instanceRepo, deployLogRepo, userRepo)
 
@@ -533,9 +547,8 @@ func ensureDefaultCluster(clusterRepo models.ClusterRepository, instanceRepo mod
 }
 
 // backfillInstanceClusterIDs sets the given clusterID on all stack instances
-// that currently have an empty ClusterID. It intentionally lists all instances
-// and filters in-memory so that storage backends where missing properties are
-// not equal to empty strings (e.g., Azure Table Storage) are handled correctly.
+// that currently have an empty ClusterID. It lists all instances and filters
+// in-memory so that migration is straightforward.
 func backfillInstanceClusterIDs(instanceRepo models.StackInstanceRepository, clusterID string) {
 	instances, err := instanceRepo.List()
 	if err != nil {

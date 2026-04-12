@@ -7,7 +7,7 @@ Module is `backend` (see `go.mod`). Use `internal/` for private packages and `pk
 Resource handlers use the `Handler` struct with repository injection. Use `NewHandlerWithHub` when the handler needs to broadcast WebSocket events. Register in `internal/api/routes/routes.go` under `/api/v1`.
 
 ## Repository Interface
-Generic data access through `models.Repository` with `context.Context` as first parameter. Domain-specific repositories (e.g., `StackInstanceRepository`, `UserRepository`) have dedicated interfaces without context parameters. Two storage backends: GORM/MySQL and Azure Table Storage. Factory in `internal/database/repository.go` selects based on config. List endpoints must use `ListPaged(limit, offset)` with column projection (omit TEXT fields) — never unbounded `List()` from handlers. Use batch methods (`CountByTemplateIDs`, `FindByIDs`) instead of N+1 loops for enrichment.
+Generic data access through `models.Repository` with `context.Context` as first parameter. Domain-specific repositories (e.g., `StackInstanceRepository`, `UserRepository`) have dedicated interfaces without context parameters. Implemented by `GenericRepository` (GORM/MySQL). Factory in `internal/database/repository.go` initializes the repository based on config. List endpoints must use `ListPaged(limit, offset)` with column projection (omit TEXT fields) — never unbounded `List()` from handlers. Use batch methods (`CountByTemplateIDs`, `FindByIDs`) instead of N+1 loops for enrichment.
 
 ## Error Handling
 - Sentinel errors: `ErrNotFound`, `ErrDuplicateKey`, `ErrValidation`, `ErrConnectionFailed`

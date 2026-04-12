@@ -33,7 +33,6 @@ CORS middleware is in `internal/api/middleware/middleware.go`. Default developme
 ## Database Credentials
 - All secrets are passed via environment variables, loaded by `config.LoadConfig()` with `.env` fallback (godotenv).
 - Never hardcode credentials in source files. Use `docker-compose.yml` env var substitution with defaults only for local dev.
-- Azure Table Storage keys are in `AZURE_TABLE_ACCOUNT_KEY` — treat identically to DB passwords.
 
 ## SQL Injection Prevention
 GORM parameterizes all queries automatically. When writing raw SQL in migrations (`internal/database/migrations.go`), never interpolate user input — use parameterized queries exclusively.

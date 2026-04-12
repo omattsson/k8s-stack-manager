@@ -10,9 +10,6 @@ data:
   {{- range $key, $value := .Values.backend.env }}
   {{ $key }}: {{ $value | quote }}
   {{- end }}
-  {{- if .Values.azurite.enabled }}
-  AZURE_TABLE_ENDPOINT: "{{ include "k8s-stack-manager.azurite.serviceName" . }}:10002"
-  {{- end }}
   {{- if .Values.mysql.enabled }}
   DB_HOST: {{ include "k8s-stack-manager.mysql.serviceName" . | quote }}
   DB_PORT: "3306"

@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"backend/internal/database"
 	"backend/internal/k8s"
 	"backend/internal/models"
 
@@ -286,6 +287,22 @@ func (m *mockDeployLogRepo) CountByAction(_ context.Context, _ string) (int, err
 	return 0, nil
 }
 
+// ---- txRunner mock ----
+
+// mockTxRunner implements database.TxRunner by calling fn with TxRepos
+// that delegate to the provided mock repositories.
+type mockTxRunner struct {
+	instanceRepo models.StackInstanceRepository
+	logRepo      models.DeploymentLogRepository
+}
+
+func (m *mockTxRunner) RunInTx(fn func(repos database.TxRepos) error) error {
+	return fn(database.TxRepos{
+		StackInstance: m.instanceRepo,
+		DeploymentLog: m.logRepo,
+	})
+}
+
 // ---- broadcaster mock ----
 
 type mockBroadcaster struct {
@@ -406,6 +423,7 @@ func TestManager_Deploy_CreatesLogAndUpdatesStatus(t *testing.T) {
 		Registry:      &mockClusterResolver{helm: NewHelmClient("/nonexistent/helm", "", 1*time.Second)},
 		InstanceRepo:  instanceRepo,
 		DeployLogRepo: logRepo,
+		TxRunner:      &mockTxRunner{instanceRepo: instanceRepo, logRepo: logRepo},
 		Hub:           hub,
 		MaxConcurrent: 2,
 	})
@@ -473,6 +491,7 @@ func TestManager_Deploy_WithCharts_Fails(t *testing.T) {
 		Registry:      &mockClusterResolver{helm: NewHelmClient("/nonexistent/helm", "", 1*time.Second)},
 		InstanceRepo:  instanceRepo,
 		DeployLogRepo: logRepo,
+		TxRunner:      &mockTxRunner{instanceRepo: instanceRepo, logRepo: logRepo},
 		Hub:           hub,
 		MaxConcurrent: 2,
 	})
@@ -531,6 +550,7 @@ func TestManager_Stop_CreatesLogAndUpdatesStatus(t *testing.T) {
 		Registry:      &mockClusterResolver{helm: NewHelmClient("/nonexistent/helm", "", 1*time.Second)},
 		InstanceRepo:  instanceRepo,
 		DeployLogRepo: logRepo,
+		TxRunner:      &mockTxRunner{instanceRepo: instanceRepo, logRepo: logRepo},
 		Hub:           hub,
 		MaxConcurrent: 2,
 	})
@@ -579,6 +599,7 @@ func TestManager_StopWithCharts_NoCharts(t *testing.T) {
 		Registry:      &mockClusterResolver{helm: NewHelmClient("/nonexistent/helm", "", 1*time.Second)},
 		InstanceRepo:  instanceRepo,
 		DeployLogRepo: logRepo,
+		TxRunner:      &mockTxRunner{instanceRepo: instanceRepo, logRepo: logRepo},
 		Hub:           hub,
 		MaxConcurrent: 2,
 	})
@@ -614,6 +635,7 @@ func TestManager_Deploy_LogRepoError(t *testing.T) {
 		Registry:      &mockClusterResolver{helm: NewHelmClient("/nonexistent/helm", "", 1*time.Second)},
 		InstanceRepo:  instanceRepo,
 		DeployLogRepo: logRepo,
+		TxRunner:      &mockTxRunner{instanceRepo: instanceRepo, logRepo: logRepo},
 		Hub:           &mockBroadcaster{},
 		MaxConcurrent: 2,
 	})
@@ -648,6 +670,7 @@ func TestManager_Deploy_InstanceRepoUpdateError(t *testing.T) {
 		Registry:      &mockClusterResolver{helm: NewHelmClient("/nonexistent/helm", "", 1*time.Second)},
 		InstanceRepo:  instanceRepo,
 		DeployLogRepo: logRepo,
+		TxRunner:      &mockTxRunner{instanceRepo: instanceRepo, logRepo: logRepo},
 		Hub:           &mockBroadcaster{},
 		MaxConcurrent: 2,
 	})
@@ -680,6 +703,7 @@ func TestManager_Stop_LogRepoError(t *testing.T) {
 		Registry:      &mockClusterResolver{helm: NewHelmClient("/nonexistent/helm", "", 1*time.Second)},
 		InstanceRepo:  instanceRepo,
 		DeployLogRepo: logRepo,
+		TxRunner:      &mockTxRunner{instanceRepo: instanceRepo, logRepo: logRepo},
 		Hub:           &mockBroadcaster{},
 		MaxConcurrent: 2,
 	})
@@ -707,6 +731,7 @@ func TestManager_Deploy_NilHub(t *testing.T) {
 		Registry:      &mockClusterResolver{helm: NewHelmClient("/nonexistent/helm", "", 1*time.Second)},
 		InstanceRepo:  instanceRepo,
 		DeployLogRepo: logRepo,
+		TxRunner:      &mockTxRunner{instanceRepo: instanceRepo, logRepo: logRepo},
 		Hub:           nil,
 		MaxConcurrent: 2,
 	})
@@ -748,6 +773,7 @@ func TestManager_Deploy_ChartsSortedByDeployOrder(t *testing.T) {
 		Registry:      &mockClusterResolver{helm: NewHelmClient("/nonexistent/helm", "", 1*time.Second)},
 		InstanceRepo:  instanceRepo,
 		DeployLogRepo: logRepo,
+		TxRunner:      &mockTxRunner{instanceRepo: instanceRepo, logRepo: logRepo},
 		Hub:           &mockBroadcaster{},
 		MaxConcurrent: 2,
 	})
@@ -806,6 +832,7 @@ func TestManager_StopWithCharts_ExecutesUninstall(t *testing.T) {
 		Registry:      &mockClusterResolver{helm: NewHelmClient("/nonexistent/helm", "", 1*time.Second)},
 		InstanceRepo:  instanceRepo,
 		DeployLogRepo: logRepo,
+		TxRunner:      &mockTxRunner{instanceRepo: instanceRepo, logRepo: logRepo},
 		Hub:           hub,
 		MaxConcurrent: 2,
 	})
@@ -870,6 +897,7 @@ func TestManager_StopWithCharts_Success_NoCharts(t *testing.T) {
 		Registry:      &mockClusterResolver{helm: NewHelmClient("/nonexistent/helm", "", 1*time.Second)},
 		InstanceRepo:  instanceRepo,
 		DeployLogRepo: logRepo,
+		TxRunner:      &mockTxRunner{instanceRepo: instanceRepo, logRepo: logRepo},
 		Hub:           hub,
 		MaxConcurrent: 2,
 	})
@@ -921,6 +949,7 @@ func TestManager_FinalizeStop_Success(t *testing.T) {
 		Registry:      &mockClusterResolver{helm: NewHelmClient("/nonexistent/helm", "", 1*time.Second)},
 		InstanceRepo:  instanceRepo,
 		DeployLogRepo: logRepo,
+		TxRunner:      &mockTxRunner{instanceRepo: instanceRepo, logRepo: logRepo},
 		Hub:           hub,
 		MaxConcurrent: 2,
 	})
@@ -971,6 +1000,7 @@ func TestManager_FinalizeStop_Error(t *testing.T) {
 		Registry:      &mockClusterResolver{helm: NewHelmClient("/nonexistent/helm", "", 1*time.Second)},
 		InstanceRepo:  instanceRepo,
 		DeployLogRepo: logRepo,
+		TxRunner:      &mockTxRunner{instanceRepo: instanceRepo, logRepo: logRepo},
 		Hub:           hub,
 		MaxConcurrent: 2,
 	})
@@ -1004,6 +1034,7 @@ func TestManager_FinalizeStop_InstanceNotFound(t *testing.T) {
 		Registry:      &mockClusterResolver{helm: NewHelmClient("/nonexistent/helm", "", 1*time.Second)},
 		InstanceRepo:  instanceRepo,
 		DeployLogRepo: logRepo,
+		TxRunner:      &mockTxRunner{instanceRepo: instanceRepo, logRepo: logRepo},
 		Hub:           nil,
 		MaxConcurrent: 2,
 	})
@@ -1023,6 +1054,7 @@ func TestManager_FinalizeDeploy_InstanceNotFound(t *testing.T) {
 		Registry:      &mockClusterResolver{helm: NewHelmClient("/nonexistent/helm", "", 1*time.Second)},
 		InstanceRepo:  instanceRepo,
 		DeployLogRepo: logRepo,
+		TxRunner:      &mockTxRunner{instanceRepo: instanceRepo, logRepo: logRepo},
 		Hub:           nil,
 		MaxConcurrent: 2,
 	})
@@ -1137,6 +1169,7 @@ func TestManager_StopWithCharts_ReversesDeployOrder(t *testing.T) {
 		Registry:      &mockClusterResolver{helm: NewHelmClient("/nonexistent/helm", "", 1*time.Second)},
 		InstanceRepo:  instanceRepo,
 		DeployLogRepo: logRepo,
+		TxRunner:      &mockTxRunner{instanceRepo: instanceRepo, logRepo: logRepo},
 		Hub:           hub,
 		MaxConcurrent: 2,
 	})
@@ -1196,6 +1229,7 @@ func TestManager_Stop_InstanceRepoUpdateError(t *testing.T) {
 		Registry:      &mockClusterResolver{helm: NewHelmClient("/nonexistent/helm", "", 1*time.Second)},
 		InstanceRepo:  instanceRepo,
 		DeployLogRepo: logRepo,
+		TxRunner:      &mockTxRunner{instanceRepo: instanceRepo, logRepo: logRepo},
 		Hub:           &mockBroadcaster{},
 		MaxConcurrent: 2,
 	})
@@ -1223,6 +1257,7 @@ func TestManager_StopWithCharts_LogRepoError(t *testing.T) {
 		Registry:      &mockClusterResolver{helm: NewHelmClient("/nonexistent/helm", "", 1*time.Second)},
 		InstanceRepo:  instanceRepo,
 		DeployLogRepo: logRepo,
+		TxRunner:      &mockTxRunner{instanceRepo: instanceRepo, logRepo: logRepo},
 		Hub:           &mockBroadcaster{},
 		MaxConcurrent: 2,
 	})
@@ -1251,6 +1286,7 @@ func TestManager_StopWithCharts_InstanceUpdateError(t *testing.T) {
 		Registry:      &mockClusterResolver{helm: NewHelmClient("/nonexistent/helm", "", 1*time.Second)},
 		InstanceRepo:  instanceRepo,
 		DeployLogRepo: logRepo,
+		TxRunner:      &mockTxRunner{instanceRepo: instanceRepo, logRepo: logRepo},
 		Hub:           &mockBroadcaster{},
 		MaxConcurrent: 2,
 	})
@@ -1372,6 +1408,7 @@ func TestManager_FinalizeDeploy_OutputTruncation(t *testing.T) {
 		Registry:      &mockClusterResolver{helm: NewHelmClient("/nonexistent/helm", "", 1*time.Second)},
 		InstanceRepo:  instanceRepo,
 		DeployLogRepo: logRepo,
+		TxRunner:      &mockTxRunner{instanceRepo: instanceRepo, logRepo: logRepo},
 		Hub:           nil,
 		MaxConcurrent: 2,
 	})
@@ -1473,6 +1510,7 @@ func TestManager_Deploy_PartialRollback(t *testing.T) {
 		Registry:      &mockClusterResolver{helm: helmMock},
 		InstanceRepo:  instanceRepo,
 		DeployLogRepo: logRepo,
+		TxRunner:      &mockTxRunner{instanceRepo: instanceRepo, logRepo: logRepo},
 		Hub:           hub,
 		MaxConcurrent: 2,
 	})
@@ -1551,6 +1589,7 @@ func TestManager_Deploy_PartialRollback_RollbackFails(t *testing.T) {
 		Registry:      &mockClusterResolver{helm: helmMock},
 		InstanceRepo:  instanceRepo,
 		DeployLogRepo: logRepo,
+		TxRunner:      &mockTxRunner{instanceRepo: instanceRepo, logRepo: logRepo},
 		Hub:           hub,
 		MaxConcurrent: 2,
 	})
@@ -1620,6 +1659,7 @@ func TestManager_Clean_Success(t *testing.T) {
 		Registry:      &mockClusterResolver{helm: helmMock, k8sClient: k8sClient},
 		InstanceRepo:  instanceRepo,
 		DeployLogRepo: logRepo,
+		TxRunner:      &mockTxRunner{instanceRepo: instanceRepo, logRepo: logRepo},
 		Hub:           hub,
 		MaxConcurrent: 2,
 	})
@@ -1694,6 +1734,7 @@ func TestManager_Clean_Success_NoK8sClient(t *testing.T) {
 		Registry:      &mockClusterResolver{helm: helmMock},
 		InstanceRepo:  instanceRepo,
 		DeployLogRepo: logRepo,
+		TxRunner:      &mockTxRunner{instanceRepo: instanceRepo, logRepo: logRepo},
 		Hub:           hub,
 		MaxConcurrent: 2,
 	})
@@ -1752,6 +1793,7 @@ func TestManager_Clean_HelmFails(t *testing.T) {
 		Registry:      &mockClusterResolver{helm: helmMock},
 		InstanceRepo:  instanceRepo,
 		DeployLogRepo: logRepo,
+		TxRunner:      &mockTxRunner{instanceRepo: instanceRepo, logRepo: logRepo},
 		Hub:           hub,
 		MaxConcurrent: 2,
 	})
@@ -1820,6 +1862,7 @@ func TestManager_Clean_ReleasesAlreadyGone(t *testing.T) {
 		Registry:      &mockClusterResolver{helm: helmMock, k8sClient: k8sClient},
 		InstanceRepo:  instanceRepo,
 		DeployLogRepo: logRepo,
+		TxRunner:      &mockTxRunner{instanceRepo: instanceRepo, logRepo: logRepo},
 		Hub:           hub,
 		MaxConcurrent: 2,
 	})
@@ -1878,6 +1921,7 @@ func TestManager_Deploy_FirstChartFails_NoRollback(t *testing.T) {
 		Registry:      &mockClusterResolver{helm: helmMock},
 		InstanceRepo:  instanceRepo,
 		DeployLogRepo: logRepo,
+		TxRunner:      &mockTxRunner{instanceRepo: instanceRepo, logRepo: logRepo},
 		Hub:           hub,
 		MaxConcurrent: 2,
 	})
@@ -2335,6 +2379,7 @@ func TestManager_FinalizeClean_InstanceNotFound(t *testing.T) {
 		Registry:      &mockClusterResolver{helm: &mockHelmExecutor{}},
 		InstanceRepo:  instanceRepo,
 		DeployLogRepo: logRepo,
+		TxRunner:      &mockTxRunner{instanceRepo: instanceRepo, logRepo: logRepo},
 		Hub:           nil,
 		MaxConcurrent: 2,
 	})
@@ -2374,6 +2419,7 @@ func TestManager_FinalizeClean_Success(t *testing.T) {
 		Registry:      &mockClusterResolver{helm: &mockHelmExecutor{}},
 		InstanceRepo:  instanceRepo,
 		DeployLogRepo: logRepo,
+		TxRunner:      &mockTxRunner{instanceRepo: instanceRepo, logRepo: logRepo},
 		Hub:           hub,
 		MaxConcurrent: 2,
 	})
@@ -2423,6 +2469,7 @@ func TestManager_FinalizeClean_Error(t *testing.T) {
 		Registry:      &mockClusterResolver{helm: &mockHelmExecutor{}},
 		InstanceRepo:  instanceRepo,
 		DeployLogRepo: logRepo,
+		TxRunner:      &mockTxRunner{instanceRepo: instanceRepo, logRepo: logRepo},
 		Hub:           hub,
 		MaxConcurrent: 2,
 	})
@@ -2471,6 +2518,7 @@ func TestManager_ExecuteDeploy_OCIChartRef(t *testing.T) {
 		Registry:      &mockClusterResolver{helm: helmMock},
 		InstanceRepo:  instanceRepo,
 		DeployLogRepo: logRepo,
+		TxRunner:      &mockTxRunner{instanceRepo: instanceRepo, logRepo: logRepo},
 		Hub:           hub,
 		MaxConcurrent: 2,
 	})
@@ -2537,6 +2585,7 @@ func TestManager_ExecuteDeploy_HTTPRepoRef(t *testing.T) {
 		Registry:      &mockClusterResolver{helm: helmMock},
 		InstanceRepo:  instanceRepo,
 		DeployLogRepo: logRepo,
+		TxRunner:      &mockTxRunner{instanceRepo: instanceRepo, logRepo: logRepo},
 		Hub:           hub,
 		MaxConcurrent: 2,
 	})
@@ -2598,6 +2647,7 @@ func TestManager_ExecuteDeploy_ValuesFileWritten(t *testing.T) {
 		Registry:      &mockClusterResolver{helm: helmMock},
 		InstanceRepo:  instanceRepo,
 		DeployLogRepo: logRepo,
+		TxRunner:      &mockTxRunner{instanceRepo: instanceRepo, logRepo: logRepo},
 		Hub:           hub,
 		MaxConcurrent: 2,
 	})
@@ -2843,6 +2893,7 @@ func TestManager_FinalizeDeploy_LastDeployedValues(t *testing.T) {
 		Registry:      &mockClusterResolver{helm: NewHelmClient("/nonexistent/helm", "", 1*time.Second)},
 		InstanceRepo:  instanceRepo,
 		DeployLogRepo: logRepo,
+		TxRunner:      &mockTxRunner{instanceRepo: instanceRepo, logRepo: logRepo},
 		Hub:           nil,
 		MaxConcurrent: 2,
 	})
@@ -2883,6 +2934,7 @@ func TestManager_FinalizeDeploy_LastDeployedValuesNotSetOnError(t *testing.T) {
 		Registry:      &mockClusterResolver{helm: NewHelmClient("/nonexistent/helm", "", 1*time.Second)},
 		InstanceRepo:  instanceRepo,
 		DeployLogRepo: logRepo,
+		TxRunner:      &mockTxRunner{instanceRepo: instanceRepo, logRepo: logRepo},
 		Hub:           nil,
 		MaxConcurrent: 2,
 	})

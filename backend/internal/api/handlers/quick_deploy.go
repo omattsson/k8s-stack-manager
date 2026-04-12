@@ -61,7 +61,11 @@ func NewQuickDeployHandler(
 	registry *cluster.Registry,
 	k8sWatcher *k8s.Watcher,
 	defaultTTLMinutes int,
-) *QuickDeployHandler {
+	txRunner database.TxRunner,
+) (*QuickDeployHandler, error) {
+	if txRunner == nil {
+		return nil, fmt.Errorf("txRunner must not be nil")
+	}
 	return &QuickDeployHandler{
 		templateRepo:       templateRepo,
 		templateChartRepo:  templateChartRepo,
@@ -79,12 +83,8 @@ func NewQuickDeployHandler(
 		registry:           registry,
 		k8sWatcher:         k8sWatcher,
 		defaultTTLMinutes:  defaultTTLMinutes,
-	}
-}
-
-// SetTxRunner sets an optional TxRunner for transactional multi-entity operations.
-func (h *QuickDeployHandler) SetTxRunner(tx database.TxRunner) {
-	h.txRunner = tx
+		txRunner:           txRunner,
+	}, nil
 }
 
 // quickDeployRequest is the request body for Quick Deploy.
@@ -278,71 +278,22 @@ func (h *QuickDeployHandler) QuickDeploy(c *gin.Context) {
 	}
 
 	// Persist definition + chart configs + instance.
-	if h.txRunner != nil && h.txRunner.IsTransactional() {
-		// Transactional path — all creates are atomic; rollback handles cleanup.
-		txErr := h.txRunner.RunInTx(func(repos database.TxRepos) error {
-			if err := repos.StackDefinition.Create(def); err != nil {
+	txErr := h.txRunner.RunInTx(func(repos database.TxRepos) error {
+		if err := repos.StackDefinition.Create(def); err != nil {
+			return err
+		}
+		for i := range chartConfigs {
+			if err := repos.ChartConfig.Create(&chartConfigs[i]); err != nil {
 				return err
 			}
-			for i := range chartConfigs {
-				if err := repos.ChartConfig.Create(&chartConfigs[i]); err != nil {
-					return err
-				}
-			}
-			return repos.StackInstance.Create(inst)
-		})
-		if txErr != nil {
-			slog.Error("Quick deploy transaction failed", "error", txErr)
-			status, message := mapError(txErr, entityStackInstance)
-			c.JSON(status, gin.H{"error": message})
-			return
 		}
-	} else {
-		// Non-transactional fallback (Azure Table Storage) with best-effort cleanup.
-		if err := h.definitionRepo.Create(def); err != nil {
-			status, message := mapError(err, entityStackDefinition)
-			c.JSON(status, gin.H{"error": message})
-			return
-		}
-
-		cleanupDefinition := func() {
-			if delErr := h.definitionRepo.Delete(def.ID); delErr != nil {
-				slog.Error("Quick deploy rollback: failed to delete definition",
-					"definition_id", def.ID, "error", delErr)
-			}
-		}
-
-		for i := range chartConfigs {
-			if err := h.chartConfigRepo.Create(&chartConfigs[i]); err != nil {
-				for j := 0; j < i; j++ {
-					if delErr := h.chartConfigRepo.Delete(chartConfigs[j].ID); delErr != nil {
-						slog.Error("Quick deploy rollback: failed to delete chart config",
-							"chart_config_id", chartConfigs[j].ID, "error", delErr)
-					}
-				}
-				cleanupDefinition()
-				status, message := mapError(err, entityChartConfig)
-				c.JSON(status, gin.H{"error": message})
-				return
-			}
-		}
-
-		cleanupAll := func() {
-			for _, cc := range chartConfigs {
-				if delErr := h.chartConfigRepo.Delete(cc.ID); delErr != nil {
-					slog.Error("Quick deploy rollback: failed to delete chart config",
-						"chart_config_id", cc.ID, "error", delErr)
-				}
-			}
-			cleanupDefinition()
-		}
-
-		if err := h.instanceRepo.Create(inst); err != nil {
-			cleanupAll()
-			status, message := mapError(err, entityStackInstance)
-			c.JSON(status, gin.H{"error": message})
-			return
-		}
+		return repos.StackInstance.Create(inst)
+	})
+	if txErr != nil {
+		slog.Error("Quick deploy transaction failed", "error", txErr)
+		status, message := mapError(txErr, entityStackInstance)
+		c.JSON(status, gin.H{"error": message})
+		return
 	}
 
 	// 4. Set branch overrides.

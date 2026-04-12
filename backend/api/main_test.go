@@ -119,9 +119,6 @@ func cleanupTestEnv() {
 		"DB_MAX_OPEN_CONNS", "DB_MAX_IDLE_CONNS", "DB_CONN_MAX_LIFETIME",
 		"SERVER_HOST", "SERVER_PORT", "SERVER_READ_TIMEOUT", "SERVER_WRITE_TIMEOUT", "SERVER_SHUTDOWN_TIMEOUT",
 		"LOG_LEVEL", "LOG_FILE",
-		"USE_AZURE_TABLE", "USE_AZURITE",
-		"AZURE_TABLE_ACCOUNT_NAME", "AZURE_TABLE_ACCOUNT_KEY",
-		"AZURE_TABLE_ENDPOINT", "AZURE_TABLE_NAME",
 	}
 	for _, v := range vars {
 		os.Unsetenv(v)
@@ -156,9 +153,6 @@ func mockLoadConfig() (*config.Config, error) {
 		Logging: config.LogConfig{
 			Level: "debug",
 			File:  "",
-		},
-		AzureTable: config.AzureTableConfig{
-			UseAzureTable: false,
 		},
 	}, nil
 }

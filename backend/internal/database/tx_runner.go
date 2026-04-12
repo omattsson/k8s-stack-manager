@@ -7,18 +7,12 @@ import (
 )
 
 // TxRunner executes a function within a database transaction.
-// For GORM, all repositories in the callback share the same *gorm.DB transaction.
-// For Azure Table Storage, operations run sequentially without a real transaction.
+// All repositories in the callback share the same *gorm.DB transaction.
 type TxRunner interface {
 	// RunInTx executes fn within a transaction. If fn returns an error, the
 	// transaction is rolled back. The TxRepos provides transactional repository
 	// instances that share the same underlying connection.
 	RunInTx(fn func(repos TxRepos) error) error
-
-	// IsTransactional returns true if RunInTx provides real rollback semantics.
-	// Callers should use this to decide whether to rely on automatic rollback
-	// or fall back to manual compensating cleanup (e.g., for Azure Table Storage).
-	IsTransactional() bool
 }
 
 // TxRepos provides access to repository instances that share a transaction.
@@ -46,9 +40,6 @@ func NewGORMTxRunner(db *gorm.DB) *GORMTxRunner {
 	return &GORMTxRunner{db: db}
 }
 
-// IsTransactional returns true — GORM provides real rollback.
-func (r *GORMTxRunner) IsTransactional() bool { return true }
-
 // RunInTx executes fn within a GORM transaction. All repositories in the
 // TxRepos share the same transactional *gorm.DB, so updates are atomic.
 // If fn returns an error, the transaction is rolled back automatically.
@@ -66,26 +57,4 @@ func (r *GORMTxRunner) RunInTx(fn func(repos TxRepos) error) error {
 		}
 		return fn(repos)
 	})
-}
-
-// NoOpTxRunner implements TxRunner without real transaction support.
-// It passes pre-configured repository instances directly to the callback.
-// Used for Azure Table Storage where cross-table transactions are not available.
-type NoOpTxRunner struct {
-	repos TxRepos
-}
-
-// NewNoOpTxRunner creates a NoOpTxRunner that delegates to the given repositories.
-func NewNoOpTxRunner(repos TxRepos) *NoOpTxRunner {
-	return &NoOpTxRunner{repos: repos}
-}
-
-// IsTransactional returns false — no rollback support.
-func (r *NoOpTxRunner) IsTransactional() bool { return false }
-
-// RunInTx executes fn with the pre-configured repositories. No transaction
-// semantics are applied; operations run sequentially and failures are not
-// rolled back.
-func (r *NoOpTxRunner) RunInTx(fn func(repos TxRepos) error) error {
-	return fn(r.repos)
 }

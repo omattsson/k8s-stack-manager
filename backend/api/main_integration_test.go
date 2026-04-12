@@ -41,9 +41,6 @@ func TestDatabaseInitialization(t *testing.T) {
 			Level: "debug",
 			File:  "",
 		},
-		AzureTable: config.AzureTableConfig{
-			UseAzureTable: false,
-		},
 	}
 
 	// Create a mock database instance

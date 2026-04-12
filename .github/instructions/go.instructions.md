@@ -33,7 +33,7 @@ type Repository interface {
     Close() error
 }
 ```
-All methods take `context.Context` as the first parameter. Two implementations exist: `GenericRepository` (GORM/MySQL) and `azure.TableRepository`. The factory in `internal/database/repository.go` selects based on config.
+All methods take `context.Context` as the first parameter. Implemented by `GenericRepository` (GORM/MySQL). The factory in `internal/database/repository.go` initializes the repository based on config.
 
 ## Models
 Define models in `internal/models/models.go`. Embed `Base` for ID, timestamps, and soft-delete:
@@ -70,7 +70,7 @@ Use the custom error types in `internal/database/errors.go` and `pkg/dberrors/er
 - Use `MockRepository` from `handlers/mock_repository.go` for unit tests (no DB needed).
 - Test setup pattern: `gin.SetMode(gin.TestMode)` + `httptest.NewRecorder()` + `setupTestRouter()`.
 - Validate JSON responses with `gojsonschema` against schemas in `handlers/test_schemas.go`.
-- Integration test naming: `TestDatabase*` (MySQL), `TestAzureTable*`/`TestAzure*Integration` (Azure).
+- Integration test naming: `TestDatabase*` (MySQL).
 - Run unit tests: `cd backend && go test ./... -v -short`
 - Run with coverage (80% threshold): `cd backend && make test-coverage`
 
@@ -104,4 +104,4 @@ migrator.AddMigration(schema.Migration{
 Migrations run automatically on startup.
 
 ## Configuration
-All config via env vars, loaded by `config.LoadConfig()` with `.env` fallback (godotenv). Key vars: `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASSWORD`, `PORT`, `APP_ENV`, `USE_AZURE_TABLE`. See `internal/config/config.go` for all fields and defaults.
+All config via env vars, loaded by `config.LoadConfig()` with `.env` fallback (godotenv). Key vars: `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASSWORD`, `PORT`, `APP_ENV`. See `internal/config/config.go` for all fields and defaults.

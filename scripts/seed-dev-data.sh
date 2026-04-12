@@ -31,7 +31,8 @@ LOGIN_RESP=$(curl -s -X POST "${API}/api/v1/auth/login" \
 
 TOKEN=$(echo "$LOGIN_RESP" | python3 -c "import sys,json; print(json.load(sys.stdin).get('token',''))" 2>/dev/null || true)
 [ -z "$TOKEN" ] && fail "Login failed: ${LOGIN_RESP}"
-log "Logged in — token obtained"
+ADMIN_ID=$(echo "$LOGIN_RESP" | python3 -c "import sys,json; print(json.load(sys.stdin)['user']['id'])" 2>/dev/null || true)
+log "Logged in — token obtained (user: ${ADMIN_ID})"
 
 AUTH="Authorization: Bearer ${TOKEN}"
 
@@ -119,13 +120,13 @@ api_post "/api/v1/templates/${WEB_ID}/charts" '{
 }' > /dev/null
 
 api_post "/api/v1/templates/${WEB_ID}/charts" '{
-  "chart_name": "azurite-storage",
-  "repository_url": "https://emberstack.github.io/helm-charts",
-  "chart_path": "azurite",
-  "chart_version": "1.0.19",
+  "chart_name": "postgresql",
+  "repository_url": "https://charts.bitnami.com/bitnami",
+  "chart_path": "postgresql",
+  "chart_version": "16.4.6",
   "deploy_order": 2,
   "required": true,
-  "default_values": "persistence:\n  enabled: false\nservice:\n  type: ClusterIP",
+  "default_values": "auth:\n  postgresPassword: changeme\n  database: app\nprimary:\n  persistence:\n    size: 1Gi\n  resources:\n    requests:\n      cpu: 100m\n      memory: 256Mi",
   "locked_values": ""
 }' > /dev/null
 
@@ -140,7 +141,7 @@ api_post "/api/v1/templates/${WEB_ID}/charts" '{
   "default_values": "replicaCount: 1\nservice:\n  type: ClusterIP\n  port: 8080",
   "locked_values": ""
 }' > /dev/null
-log "  + 3 charts (backend-api, azurite-storage, frontend-app)"
+log "  + 3 charts (backend-api, postgresql, frontend-app)"
 
 # ── API Category ─────────────────────────────────────────────────────
 API_ID=$(api_post "/api/v1/templates" '{
@@ -550,28 +551,140 @@ else
 fi
 
 # ══════════════════════════════════════════════════════════════════════
+# 12. API KEYS (for Profile page demo)
+# ══════════════════════════════════════════════════════════════════════
+section "Creating API keys"
+
+API_KEY_RESP=$(api_post "/api/v1/users/${ADMIN_ID}/api-keys" '{"name": "ci-pipeline", "expires_in_days": 90}')
+RAW_KEY=$(echo "$API_KEY_RESP" | python3 -c "import sys,json; print(json.load(sys.stdin).get('raw_key',''))" 2>/dev/null || true)
+if [ -n "$RAW_KEY" ]; then
+  log "API key 'ci-pipeline' created (expires in 90 days)"
+else
+  warn "API key creation may have failed (might already exist)"
+fi
+
+api_post "/api/v1/users/${ADMIN_ID}/api-keys" '{"name": "local-dev"}' > /dev/null 2>&1 || true
+log "API key 'local-dev' created (no expiry)"
+
+# ══════════════════════════════════════════════════════════════════════
+# 13. INSTANCE QUOTA OVERRIDES
+# ══════════════════════════════════════════════════════════════════════
+section "Setting instance quota overrides"
+
+api_put "/api/v1/stack-instances/${INST1_ID}/quota-overrides" '{
+  "cpu_request": "500m",
+  "cpu_limit": "2000m",
+  "memory_request": "256Mi",
+  "memory_limit": "1Gi",
+  "storage_limit": "10Gi",
+  "pod_limit": 20
+}' > /dev/null 2>&1 || true
+log "Quota override on instance 1: 2 CPU / 1Gi mem / 20 pods"
+
+# ══════════════════════════════════════════════════════════════════════
+# 14. NOTIFICATION PREFERENCES
+# ══════════════════════════════════════════════════════════════════════
+section "Setting notification preferences"
+
+api_put "/api/v1/notifications/preferences" '[
+  {"event_type": "deploy", "enabled": true},
+  {"event_type": "stop", "enabled": true},
+  {"event_type": "clean", "enabled": false}
+]' > /dev/null 2>&1 || true
+log "Admin: deploy=on, stop=on, clean=off"
+
+# ══════════════════════════════════════════════════════════════════════
+# 15. TEMPLATE + INSTANCE CLONE
+# ══════════════════════════════════════════════════════════════════════
+section "Cloning template and instance"
+
+CLONE_TMPL_RESP=$(curl -s -X POST "${API}/api/v1/templates/${API_ID}/clone" -H "$AUTH")
+CLONE_TMPL_ID=$(echo "$CLONE_TMPL_RESP" | python3 -c "import sys,json; print(json.load(sys.stdin).get('id',''))" 2>/dev/null || true)
+if [ -n "$CLONE_TMPL_ID" ]; then
+  log "Cloned API template → ${CLONE_TMPL_ID} (unpublished draft)"
+else
+  warn "Template clone may have failed"
+fi
+
+CLONE_INST_RESP=$(curl -s -X POST "${API}/api/v1/stack-instances/${INST1_ID}/clone" -H "$AUTH")
+CLONE_INST_ID=$(echo "$CLONE_INST_RESP" | python3 -c "import sys,json; print(json.load(sys.stdin).get('id',''))" 2>/dev/null || true)
+if [ -n "$CLONE_INST_ID" ]; then
+  log "Cloned web-dev instance → ${CLONE_INST_ID} (draft status)"
+else
+  warn "Instance clone may have failed"
+fi
+
+# ══════════════════════════════════════════════════════════════════════
+# 16. MULTI-USER DATA (developer creates own instance + favorite)
+# ══════════════════════════════════════════════════════════════════════
+section "Creating developer-owned data"
+
+DEV_LOGIN_RESP=$(curl -s -X POST "${API}/api/v1/auth/login" \
+  -H 'Content-Type: application/json' \
+  -d '{"username":"developer","password":"developer"}')
+DEV_TOKEN=$(echo "$DEV_LOGIN_RESP" | python3 -c "import sys,json; print(json.load(sys.stdin).get('token',''))" 2>/dev/null || true)
+
+if [ -n "$DEV_TOKEN" ]; then
+  DEV_AUTH="Authorization: Bearer ${DEV_TOKEN}"
+
+  # Developer creates own instance
+  DEV_INST_RESP=$(curl -s -X POST "${API}/api/v1/stack-instances" \
+    -H 'Content-Type: application/json' -H "$DEV_AUTH" \
+    -d "{
+      \"name\": \"dev-sandbox-${RUN_ID}\",
+      \"stack_definition_id\": \"${DEF_ID}\",
+      \"branch\": \"feature/my-work\",
+      \"ttl_minutes\": 240
+    }")
+  DEV_INST_ID=$(echo "$DEV_INST_RESP" | python3 -c "import sys,json; print(json.load(sys.stdin).get('id',''))" 2>/dev/null || true)
+
+  if [ -n "$DEV_INST_ID" ]; then
+    log "Developer instance: ${DEV_INST_ID} (branch: feature/my-work, TTL: 4h)"
+
+    # Developer favorites their own instance
+    curl -s -X POST "${API}/api/v1/favorites" \
+      -H 'Content-Type: application/json' -H "$DEV_AUTH" \
+      -d "{\"entity_type\": \"stack_instance\", \"entity_id\": \"${DEV_INST_ID}\"}" > /dev/null 2>&1 || true
+    log "Developer favorited own instance"
+  else
+    warn "Developer instance creation may have failed"
+  fi
+
+  # Developer sets notification preferences
+  curl -s -X PUT "${API}/api/v1/notifications/preferences" \
+    -H 'Content-Type: application/json' -H "$DEV_AUTH" \
+    -d '[{"event_type": "deploy", "enabled": true}, {"event_type": "stop", "enabled": false}, {"event_type": "clean", "enabled": false}]' > /dev/null 2>&1 || true
+  log "Developer notification prefs: deploy=on, stop=off, clean=off"
+else
+  warn "Developer login failed — skipping developer-owned data"
+fi
+
+# ══════════════════════════════════════════════════════════════════════
 # SUMMARY
 # ══════════════════════════════════════════════════════════════════════
 echo ""
 echo "═══════════════════════════════════════════════════════════════"
 echo -e "${GREEN}Seed data created successfully!${NC}"
 echo ""
-echo "Templates (5, all published):"
+echo "Templates (5 published + 1 cloned draft):"
 echo "  Web:            Full-Stack Web App (3 charts, 2 versions)"
 echo "  API:            REST API Service (2 charts)"
 echo "  Data:           Data Pipeline (3 charts)"
 echo "  Infrastructure: Observability Stack (2 charts)"
 echo "  Other:          Development Tools (2 charts)"
+echo "  Cloned:         Copy of API template (unpublished)"
 echo ""
 echo "Stack Definitions (3):"
 echo "  my-web-app-${RUN_ID}    (from Web template)"
 echo "  api-svc-${RUN_ID}       (from API template)"
 echo "  imported-svc-${RUN_ID}  (from import)"
 echo ""
-echo "Stack Instances (3):"
-echo "  web-dev-${RUN_ID}       (main, TTL: 8h, has value overrides)"
-echo "  web-feature-${RUN_ID}   (feature/auth, has branch override)"
+echo "Stack Instances (4-5):"
+echo "  web-dev-${RUN_ID}       (main, TTL: 8h, value overrides, quota overrides)"
+echo "  web-feature-${RUN_ID}   (feature/auth, branch override)"
 echo "  api-staging-${RUN_ID}   (develop, TTL: 24h)"
+echo "  Cloned instance         (copy of web-dev)"
+echo "  dev-sandbox-${RUN_ID}   (developer-owned, feature/my-work, TTL: 4h)"
 echo ""
 echo "Cleanup Policies (3):"
 echo "  Stop idle (7d)     — daily 02:00"
@@ -584,12 +697,14 @@ echo "  Shared values: Global Labels (priority 1), Resource Defaults (priority 1
 echo "  Resource quotas: 8 CPU / 8Gi memory / 50 pods per namespace"
 echo ""
 fi
-echo "Favorites: Web template, Data Pipeline template, web-dev instance"
+echo "API Keys: ci-pipeline (90d expiry), local-dev (no expiry)"
+echo "Favorites: Web template, Data Pipeline, web-dev, dev-sandbox"
+echo "Notification prefs: customized per user"
 echo ""
 echo "Users:"
-echo "  admin/admin         (admin)"
+echo "  admin/admin         (admin)  — 2 API keys, owns 3 instances"
 echo "  devops/devops       (devops)"
-echo "  developer/developer (user)"
+echo "  developer/developer (user)   — owns dev-sandbox instance"
 echo "  viewer/viewer       (user)"
 echo ""
 echo "Try:"
@@ -598,4 +713,7 @@ echo "  - Instance comparison: Stack Instances → Compare"
 echo "  - Bulk operations: Stack Instances → select multiple → Bulk Actions"
 echo "  - Import/Export: Stack Definitions → Import / Edit → Export"
 echo "  - Notifications: deploy an instance to see notifications appear"
+echo "  - Profile: view API keys under Profile page"
+echo "  - Clone: cloned template appears as unpublished draft"
+echo "  - Multi-user: switch to developer/developer to see their data"
 echo "═══════════════════════════════════════════════════════════════"

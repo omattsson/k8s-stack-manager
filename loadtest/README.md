@@ -9,7 +9,7 @@ Scripts for load testing the k8s-stack-manager backend API and frontend UI.
 | k6 | Backend API + WebSocket load tests | `brew install k6` or [k6.io/docs](https://k6.io/docs/get-started/installation/) |
 | Playwright | Frontend browser load tests | Already installed via `cd frontend && npm install` |
 
-The Makefile targets automatically build and start the backend in **release mode** (`GIN_MODE=release`) with a high rate limit (10,000 req/min). Azurite is started automatically.
+The Makefile targets automatically build and start the backend in **release mode** (`GIN_MODE=release`) with a high rate limit (10,000 req/min).
 
 Seed test data (optional, recommended for richer results):
 ```bash

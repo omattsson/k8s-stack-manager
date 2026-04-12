@@ -1,4 +1,4 @@
-.PHONY: dev dev-otel seed dev-backend dev-frontend dev-local dev-local-backend dev-local-frontend prod prod-backend prod-frontend build clean prune test test-backend test-backend-integration test-backend-all test-frontend test-e2e integration-infra-start integration-infra-stop install docs fmt lint azurite-start azurite-stop azurite-clear loadtest loadtest-start loadtest-start-backend loadtest-start-frontend loadtest-stop loadtest-stop-backend loadtest-stop-frontend loadtest-backend loadtest-backend-run loadtest-stress loadtest-stress-run loadtest-frontend loadtest-frontend-run
+.PHONY: dev dev-otel seed dev-backend dev-frontend dev-local dev-local-backend dev-local-frontend prod prod-backend prod-frontend build clean prune test test-backend test-backend-integration test-backend-all test-frontend test-e2e integration-infra-start integration-infra-stop install docs fmt lint loadtest loadtest-start loadtest-start-backend loadtest-start-frontend loadtest-stop loadtest-stop-backend loadtest-stop-frontend loadtest-backend loadtest-backend-run loadtest-stress loadtest-stress-run loadtest-frontend loadtest-frontend-run
 
 # Development mode for both services
 dev:
@@ -12,7 +12,7 @@ dev-k8s:
 dev-otel: ## Start full stack with OpenTelemetry (Jaeger UI: :16686, Prometheus: :9090)
 	NODE_ENV=development GO_ENV=development PORT=3000 BACKEND_PORT=8081 GIN_MODE=debug docker compose --profile otel -f docker-compose.yml -f docker-compose.otel.yml up --build --remove-orphans
 
-seed: azurite-clear ## Seed dev environment with sample data (requires running dev stack)
+seed: ## Seed dev environment with sample data (requires running dev stack)
 	@./scripts/seed-dev-data.sh
 
 # Development mode for backend only
@@ -50,21 +50,22 @@ test: test-backend test-frontend
 test-backend:
 	cd backend && go test ./... -v
 
-# Start infrastructure for integration tests
+# Start infrastructure for integration tests (MySQL via Docker)
 integration-infra-start:
-	@echo "Starting integration test infrastructure..."
-	GO_ENV=test docker compose up -d azurite
-	@echo "Waiting for Azurite to be ready..."
-	@until curl -s -o /dev/null http://localhost:10002/ 2>/dev/null; do \
-		echo "Waiting for Azurite..."; \
-		sleep 2; \
+	@echo "Starting MySQL..."
+	@docker compose up -d mysql
+	@echo "Waiting for MySQL to be ready..."
+	@n=0; while ! docker compose exec -T mysql mysqladmin ping -h localhost -uroot -p"$${DB_PASSWORD:-rootpassword}" --silent 2>/dev/null; do \
+		n=$$((n+1)); \
+		if [ $$n -ge 30 ]; then echo "ERROR: MySQL failed to start after 30s"; exit 1; fi; \
+		sleep 1; \
 	done
-	@echo "Integration infrastructure is ready!"
+	@echo "MySQL is ready on :3306"
 
 # Stop infrastructure for integration tests
 integration-infra-stop:
-	@echo "Stopping integration test infrastructure..."
-	GO_ENV=test docker compose stop azurite
+	@docker compose stop mysql
+	@echo "Integration test infrastructure stopped."
 
 # Run backend integration tests (starts/stops infra automatically)
 test-backend-integration: integration-infra-start
@@ -83,10 +84,9 @@ test-frontend:
 test-e2e: integration-infra-start
 	@echo "Building and starting backend..."
 	@cd backend && go build -o tmp/main ./api/main.go
-	@cd backend && USE_AZURE_TABLE=true USE_AZURITE=true \
-		AZURE_TABLE_ACCOUNT_NAME=devstoreaccount1 \
-		AZURE_TABLE_ACCOUNT_KEY="Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==" \
-		AZURE_TABLE_ENDPOINT=127.0.0.1:10002 \
+	@cd backend && \
+		DB_HOST=$${DB_HOST:-127.0.0.1} DB_PORT=$${DB_PORT:-3306} \
+		DB_USER=$${DB_USER:-root} DB_PASSWORD=$${DB_PASSWORD:-rootpassword} DB_NAME=$${DB_NAME:-app} \
 		JWT_SECRET="dev-secret-change-in-production-minimum-16-chars" \
 		ADMIN_USERNAME=admin ADMIN_PASSWORD=admin SELF_REGISTRATION=true \
 		HELM_BINARY=$${HELM_BINARY:-helm} \
@@ -122,19 +122,18 @@ lint:
 
 # Shared env vars for local backend development
 DEV_LOCAL_ENV = \
-	USE_AZURE_TABLE=true USE_AZURITE=true \
-	AZURE_TABLE_ACCOUNT_NAME=devstoreaccount1 \
-	AZURE_TABLE_ACCOUNT_KEY="Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==" \
-	AZURE_TABLE_ENDPOINT=127.0.0.1:10002 \
+	DB_HOST=$${DB_HOST:-127.0.0.1} DB_PORT=$${DB_PORT:-3306} \
+	DB_USER=$${DB_USER:-root} DB_PASSWORD=$${DB_PASSWORD:-rootpassword} DB_NAME=$${DB_NAME:-app} \
 	JWT_SECRET="dev-secret-change-in-production-minimum-16-chars" \
 	ADMIN_USERNAME=admin ADMIN_PASSWORD=admin \
 	SELF_REGISTRATION=true \
 	HELM_BINARY=$${HELM_BINARY:-helm} \
 	KUBECONFIG_PATH=$${KUBECONFIG_PATH:-$$HOME/.kube/config} \
 	RATE_LIMIT=$${RATE_LIMIT:-1000} \
+	CORS_ALLOWED_ORIGINS=$${CORS_ALLOWED_ORIGINS:-http://localhost:3000,http://localhost:3001} \
 	PORT=8081 GIN_MODE=debug
 
-# Run backend locally against Azurite with hot reload.
+# Run backend locally with hot reload.
 # Uses 'air' (Go live reload) if installed, otherwise falls back to 'go run'.
 # Install air: go install github.com/air-verse/air@latest
 GO_AIR := $(shell go env GOPATH 2>/dev/null)/bin/air
@@ -151,48 +150,22 @@ dev-local-backend:
 dev-local-frontend:
 	cd frontend && npm run dev
 
-# Run both backend and frontend locally with hot reload (no Docker except Azurite)
-# Ctrl+C stops both processes. Backend: port 8081, Frontend: port 3000
-dev-local: azurite-start
+# Run both backend and frontend locally with hot reload (no Docker for app code)
+# Starts MySQL in Docker automatically. Ctrl+C stops backend/frontend processes.
+# Backend: port 8081, Frontend: port 3000
+dev-local: mysql-start
 	@echo "Starting backend (port 8081) and frontend (port 3000)..."
 	@trap 'kill 0' EXIT; \
 	$(MAKE) dev-local-backend & \
 	$(MAKE) dev-local-frontend & \
 	wait
 
-azurite-start:
-	@echo "Starting Azurite..."
-	docker compose up -d azurite
-	@echo "Waiting for Azurite to be ready..."
-	@until curl -s -o /dev/null http://localhost:10002/ 2>/dev/null; do \
-		echo "Waiting for Azurite..."; \
-		sleep 1; \
-	done
-	@echo "Azurite is ready!"
-
-azurite-stop:
-	docker compose stop azurite
-
-azurite-clear: ## Clear all data in Azurite (requires running Azurite container)
-	@echo "Clearing Azurite data..."
-	@docker compose exec -T azurite sh -c 'rm -rf /data/*'
-	@docker compose restart azurite
-	@echo "Waiting for Azurite to be ready..."
-	@until curl -s -o /dev/null http://localhost:10002/ 2>/dev/null; do sleep 1; done
-	@echo "Waiting for backend to reconnect..."
-	@until curl -sf http://localhost:8081/health/ready >/dev/null 2>&1; do sleep 1; done
-	@echo "Azurite data cleared!"
-
 # ── Load Testing ─────────────────────────────────────────────────────
 # Starts backend in release mode with high rate limit, runs tests, then cleans up.
-# Requires: k6 (brew install k6) for backend tests, Azurite running.
+# Requires: k6 (brew install k6) for backend tests.
 
 # Env vars for load test backend (release mode, high rate limit, no debug logging)
 LOADTEST_ENV = \
-	USE_AZURE_TABLE=true USE_AZURITE=true \
-	AZURE_TABLE_ACCOUNT_NAME=$${AZURE_TABLE_ACCOUNT_NAME:-devstoreaccount1} \
-	AZURE_TABLE_ACCOUNT_KEY=$${AZURE_TABLE_ACCOUNT_KEY:-Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==} \
-	AZURE_TABLE_ENDPOINT=$${AZURE_TABLE_ENDPOINT:-127.0.0.1:10002} \
 	JWT_SECRET=$${JWT_SECRET:-dev-secret-change-in-production-minimum-16-chars} \
 	ADMIN_USERNAME=$${ADMIN_USERNAME:-admin} ADMIN_PASSWORD=$${ADMIN_PASSWORD:-admin} \
 	SELF_REGISTRATION=true \
@@ -203,7 +176,7 @@ LOADTEST_ENV = \
 
 # Env vars for MySQL + OTel load testing
 LOADTEST_MYSQL_ENV = \
-	USE_AZURE_TABLE=false APP_DEBUG=false \
+	APP_DEBUG=false \
 	DB_HOST=$${DB_HOST:-127.0.0.1} DB_PORT=$${DB_PORT:-3306} \
 	DB_USER=$${DB_USER:-root} DB_PASSWORD=$${DB_PASSWORD:-rootpassword} DB_NAME=$${DB_NAME:-app} \
 	DB_MAX_OPEN_CONNS=$${DB_MAX_OPEN_CONNS:-200} DB_MAX_IDLE_CONNS=$${DB_MAX_IDLE_CONNS:-20} \
@@ -217,7 +190,7 @@ LOADTEST_MYSQL_ENV = \
 	OTEL_SERVICE_NAME=k8s-stack-manager OTEL_TRACE_SAMPLE_RATE=1.0 \
 	RATE_LIMIT=1000000 PORT=8081 GIN_MODE=release
 
-loadtest-start-backend: azurite-start ## Build and start backend in release mode for load testing
+loadtest-start-backend: ## Build and start backend in release mode for load testing
 	@echo "Stopping Docker backend (load test uses a local binary instead)..."
 	@docker compose stop backend 2>/dev/null || true
 	@echo "Building backend (release mode)..."
@@ -299,10 +272,10 @@ loadtest-frontend-run: ## Run Playwright load tests (assumes backend already run
 	@echo "Running frontend load tests (workers=$${LOAD_WORKERS:-5})..."
 	cd frontend && NODE_PATH=node_modules npx playwright test --config=../loadtest/frontend/playwright.config.ts
 
-mysql-start: ## Start MySQL container for load testing
-	docker compose --profile mysql up -d mysql
+mysql-start: ## Start MySQL container
+	docker compose up -d mysql
 	@echo "Waiting for MySQL to be ready..."
-	@n=0; while ! docker compose --profile mysql exec -T mysql mysqladmin ping -h localhost -uroot -p"$${DB_PASSWORD:-rootpassword}" --silent 2>/dev/null; do \
+	@n=0; while ! docker compose exec -T mysql mysqladmin ping -h localhost -uroot -p"$${DB_PASSWORD:-rootpassword}" --silent 2>/dev/null; do \
 		n=$$((n+1)); \
 		if [ $$n -ge 30 ]; then echo "ERROR: MySQL failed to start after 30s"; exit 1; fi; \
 		sleep 1; \
@@ -310,8 +283,8 @@ mysql-start: ## Start MySQL container for load testing
 	@echo "MySQL is ready on :3306"
 
 mysql-stop: ## Stop MySQL container
-	docker compose --profile mysql stop mysql
-	docker compose --profile mysql rm -f mysql
+	docker compose stop mysql
+	docker compose rm -f mysql
 
 otel-start: ## Start OTel observability stack (Collector, Prometheus, Tempo, Grafana)
 	docker compose --profile otel up -d otel-collector prometheus tempo grafana
@@ -328,11 +301,11 @@ otel-stop: ## Stop OTel stack
 	docker compose rm -f otel-collector prometheus tempo grafana
 
 loadtest-mysql-start: ## Start MySQL + OTel + mysqld-exporter for load testing
-	RATE_LIMIT=1000000 docker compose --profile mysql --profile otel --profile mysql-otel up -d mysql otel-collector prometheus tempo grafana mysqld-exporter
+	RATE_LIMIT=1000000 docker compose --profile otel --profile mysql-otel up -d mysql otel-collector prometheus tempo grafana mysqld-exporter
 	@echo "Stopping Docker backend (load test uses a local binary instead)..."
 	@docker compose stop backend 2>/dev/null || true
 	@echo "Waiting for MySQL to be ready..."
-	@n=0; while ! docker compose --profile mysql exec -T mysql mysqladmin ping -h localhost -uroot -p"$${DB_PASSWORD:-rootpassword}" --silent 2>/dev/null; do \
+	@n=0; while ! docker compose exec -T mysql mysqladmin ping -h localhost -uroot -p"$${DB_PASSWORD:-rootpassword}" --silent 2>/dev/null; do \
 		n=$$((n+1)); \
 		if [ $$n -ge 30 ]; then echo "ERROR: MySQL failed to start after 30s"; exit 1; fi; \
 		sleep 1; \
@@ -361,8 +334,8 @@ loadtest-mysql-stop: ## Stop MySQL load test backend + infrastructure
 		kill $$(cat backend/tmp/loadtest-mysql.pid) 2>/dev/null || true; \
 		rm -f backend/tmp/loadtest-mysql.pid; \
 	fi
-	docker compose --profile mysql --profile otel --profile mysql-otel stop
-	docker compose --profile mysql --profile otel --profile mysql-otel rm -f
+	docker compose --profile otel --profile mysql-otel stop
+	docker compose --profile otel --profile mysql-otel rm -f
 
 loadtest-mysql-backend: loadtest-mysql-start ## Run k6 backend load tests with MySQL + OTel
 	@$(MAKE) loadtest-backend-run || ($(MAKE) loadtest-mysql-stop; exit 1)

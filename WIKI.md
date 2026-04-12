@@ -32,9 +32,8 @@ Template → (instantiate) → Definition + ChartConfigs → (create instance) �
 ```
 
 ### Storage
-- **MySQL** (GORM) or **Azure Table Storage** (Azurite for local dev) — selected via `USE_AZURE_TABLE` env var
-- Both backends implement the same repository interfaces for all domain entities
-- Factory in `internal/database/repository.go` selects the backend at startup
+- **MySQL** (GORM) — the sole data store for all domain entities
+- Factory in `internal/database/repository.go` initializes the repository at startup
 
 ### Authentication
 - JWT-based with `Authorization: Bearer <token>` header
@@ -62,19 +61,19 @@ Template → (instantiate) → Definition + ChartConfigs → (create instance) �
 
 ### Prerequisites
 - Docker and Docker Compose
-- Go 1.24+ (backend)
+- Go 1.25+ (backend)
 - Node.js 20+ (frontend)
 
 ### Running
 ```bash
 make dev              # Full stack via Docker Compose
-make dev-local        # Backend only, local against Azurite
+make dev-local        # Backend only, local
 ```
 
 ### Testing
 ```bash
 make test             # All unit tests
-make test-backend-all # Backend unit + integration (starts MySQL + Azurite)
+make test-backend-all # Backend unit + integration (starts MySQL)
 make test-e2e         # End-to-end with Playwright
 ```
 
@@ -83,8 +82,7 @@ See `.github/instructions/api-extension.instructions.md` for the step-by-step gu
 
 ## Troubleshooting
 
-- **Azurite connection errors**: Ensure Azurite is running (`make azurite-start`). Inside Docker, endpoint is `azurite:10002`; locally it's `127.0.0.1:10002`.
 - **JWT errors**: Ensure `JWT_SECRET` is set and at least 16 characters.
-- **Database connection errors (MySQL)**: Ensure MySQL is running if `USE_AZURE_TABLE=false`. MySQL serves all domain entities when Azure Table Storage is disabled.
+- **Database connection errors (MySQL)**: Ensure MySQL is running. Check `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD` environment variables.
 - **Git provider errors**: Check `AZURE_DEVOPS_PAT` or `GITLAB_TOKEN` are set correctly. Empty tokens are valid (provider just won't be available).
 - **Cluster connection errors**: Verify the kubeconfig path or data is valid. Use the "Test Connection" button on the Clusters admin page. If `KUBECONFIG_ENCRYPTION_KEY` is set, all kubeconfig data is encrypted at rest — changing the key will make existing encrypted data unreadable.

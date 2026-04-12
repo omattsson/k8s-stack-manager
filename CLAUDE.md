@@ -2,9 +2,9 @@
 
 ## Architecture Overview
 
-Full-stack app: **Go (Gin) backend** + **React (TypeScript, Vite, MUI) frontend**, with **MySQL** (GORM) or **Azure Table Storage** as swappable data stores. Docker Compose orchestrates all services.
+Full-stack app: **Go (Gin) backend** + **React (TypeScript, Vite, MUI) frontend**, with **MySQL** (GORM) as the data store. Docker Compose orchestrates all services.
 
-**Bootstrap flow**: `backend/api/main.go` → `config.LoadConfig()` → `database.NewRepositoryWithGormDB(cfg)` (factory selects MySQL or Azure based on `USE_AZURE_TABLE`) → `routes.SetupRoutes(router, routes.Deps{...})` → `http.Server` with graceful shutdown (`SIGINT`/`SIGTERM`).
+**Bootstrap flow**: `backend/api/main.go` → `config.LoadConfig()` → `database.NewRepositoryWithGormDB(cfg)` → `routes.SetupRoutes(router, routes.Deps{...})` → `http.Server` with graceful shutdown (`SIGINT`/`SIGTERM`).
 
 **Ports**: Backend `:8081` on host, frontend `:3000` in dev. Inside Docker, nginx (`proxy_pass` with trailing `/`) and Vite (`rewrite: ^/api → ""`) both strip the `/api` prefix when proxying to `backend:8081`. Local non-Docker dev hits `localhost:8081` directly (`frontend/src/api/config.ts`).
 
@@ -14,7 +14,7 @@ Full-stack app: **Go (Gin) backend** + **React (TypeScript, Vite, MUI) frontend*
 |---|---|
 | Full stack (Docker) | `make dev` |
 | Backend tests (unit, no DB) | `cd backend && go test ./... -v -short` |
-| All backend tests (unit + integration) | `make test-backend-all` (starts MySQL + Azurite) |
+| All backend tests (unit + integration) | `make test-backend-all` (starts MySQL) |
 | Frontend tests | `cd frontend && npm test` |
 | E2E tests | `make test-e2e` (starts infra + backend + Playwright) |
 | Swagger docs | `cd backend && make docs` (runs `swag init -g api/main.go`) |
@@ -45,9 +45,6 @@ helm/k8s-stack-manager/
   values.yaml                             # All configurable values
   templates/_helpers.tpl                   # Reusable named templates
   templates/NOTES.txt                      # Post-install instructions
-  templates/azurite/deployment.yaml        # Azurite for local Azure Table Storage
-  templates/azurite/service.yaml           # Azurite ClusterIP (blob/queue/table ports)
-  templates/azurite/pvc.yaml              # Persistent storage for Azurite data
   templates/backend/configmap.yaml         # Non-secret env vars
   templates/backend/secret.yaml            # Secret env vars (JWT, passwords, keys)
   templates/backend/serviceaccount.yaml    # Optional ServiceAccount
@@ -66,7 +63,6 @@ helm/k8s-stack-manager/
 ### Key Design Decisions
 - **Argo Rollouts** instead of Deployments — canary strategy with stable + canary services for progressive delivery
 - **Traefik IngressRoute** CRD — routes `/api/*` to backend (strips prefix), `/ws` to backend, `/` to frontend
-- **Azurite enabled by default** (`azurite.enabled: true`) — provides Azure Table Storage emulator for local/dev clusters
 - **nginx in frontend pod** serves SPA only (no API proxy); Traefik handles all routing
 - **ConfigMap/Secret checksums** in pod annotations — trigger rollout on config changes
 - **Security contexts** — backend runs as non-root (uid 65532), readOnlyRootFilesystem; frontend drops all capabilities
@@ -76,7 +72,6 @@ Key values in `values.yaml`:
 - `backend.env.*` — Non-secret env vars (ConfigMap)
 - `backend.secrets.*` — Secret env vars like `JWT_SECRET`, `ADMIN_PASSWORD` (Secret)
 - `backend.replicas` / `frontend.replicas` — Independently scalable
-- `azurite.enabled` — Toggle Azurite (disable for production with real Azure Table Storage)
 - `ingress.enabled` / `ingress.host` — Traefik IngressRoute settings
 - `ingress.tls.enabled` / `ingress.tls.secretName` — TLS termination
 
@@ -131,7 +126,7 @@ backend/
     database/config.go           # Database connection Config struct, loaded from env vars
     database/schema.go           # SchemaManager interface for table creation/dropping/inspection
     database/factory.go          # MySQL connection with retry (5x, 2s delay)
-    database/repository.go       # NewRepository() factory: MySQL vs Azure Table
+    database/repository.go       # NewRepository() factory
     database/migrations.go       # Versioned migrations via schema.Migrator, auto-run on startup
     database/errors.go           # Re-exports from pkg/dberrors (single source of truth)
     database/schema/             # Migrator and versioned migration structs
@@ -155,7 +150,7 @@ backend/
 
 ## Key Backend Patterns
 
-**Repository interface**: The generic `models.Repository` interface uses `Create`, `FindByID`, `Update`, `Delete`, `List` — all take `context.Context` first. Two implementations: `GenericRepository` (GORM/MySQL) and `azure.TableRepository`. Domain-specific repositories (e.g., `StackInstanceRepository`, `UserRepository`, `AuditLogRepository`) have dedicated interfaces in their model files with custom method signatures; these currently use `context.Background()` internally in the Azure implementation. The repository auto-calls `Validate()` on create/update if the model implements `Validator`. List endpoints use `ListPaged(limit, offset)` returning `([]T, total, error)` — GORM uses `SELECT`+column projection+`LIMIT/OFFSET`, Azure fetches all then slices in-memory. Batch methods (`CountByTemplateIDs`, `FindByIDs`) eliminate N+1 queries for enrichment lookups.
+**Repository interface**: The generic `models.Repository` interface uses `Create`, `FindByID`, `Update`, `Delete`, `List` — all take `context.Context` first. Implemented by `GenericRepository` (GORM/MySQL). Domain-specific repositories (e.g., `StackInstanceRepository`, `UserRepository`, `AuditLogRepository`) have dedicated interfaces in their model files with custom method signatures. The repository auto-calls `Validate()` on create/update if the model implements `Validator`. List endpoints use `ListPaged(limit, offset)` returning `([]T, total, error)` — GORM uses `SELECT`+column projection+`LIMIT/OFFSET`. Batch methods (`CountByTemplateIDs`, `FindByIDs`) eliminate N+1 queries for enrichment lookups.
 
 **Handler struct**: `handlers.Handler` holds `models.Repository` and optional `websocket.BroadcastSender` via constructor injection (`NewHandler(repo)` or `NewHandlerWithHub(repo, hub)`). Domain handlers (e.g., `InstanceHandler`, `DefinitionHandler`, `AdminHandler`) use separate structs with specialized repository dependencies injected via their own constructors. Health handlers use factory functions returning `gin.HandlerFunc` via closure.
 
@@ -235,7 +230,7 @@ frontend/src/
 
 **Frontend**: Vitest + Testing Library (unit), Playwright (e2e).
 
-**Integration test naming**: `TestDatabase*` (MySQL), `TestAzureTable*`/`TestAzure*Integration` (Azure).
+**Integration test naming**: `TestDatabase*` (MySQL).
 
 ## Adding a New API Resource
 
@@ -334,7 +329,7 @@ backend/internal/
 
 - MySQL connection pool: `DB_MAX_OPEN_CONNS` (25), `DB_MAX_IDLE_CONNS` (5), `DB_CONN_MAX_LIFETIME` (5m)
 - DB retry: 5 attempts, 2s delay on startup
-- Docker networks: `backend-net` (db, backend, azurite) and `frontend-net` (backend, frontend) — maintain separation
+- Docker networks: `backend-net` (db, backend) and `frontend-net` (backend, frontend) — maintain separation
 - Health checks: register for all external dependencies via `healthChecker.AddCheck()`
 - Always implement pagination for list endpoints — use `ListPaged(limit, offset)` with default 25, max 100. Select only columns needed for list views (omit TEXT fields like `description`). Use batch queries (`CountByTemplateIDs`, `FindByIDs`) instead of N+1 loops for enrichment data.
 - Struct field ordering: optimize for memory alignment (8-byte fields first)

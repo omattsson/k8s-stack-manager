@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"backend/internal/cluster"
+	"backend/internal/database"
 	"backend/internal/deployer"
 	"backend/internal/helm"
 	"backend/internal/k8s"
@@ -26,6 +27,7 @@ import (
 // setupInstanceRouterFull creates a test gin engine with all InstanceHandler routes
 // including deploy/stop/clean/status/compare/extend for full coverage testing.
 func setupInstanceRouterFull(
+	t *testing.T,
 	instanceRepo *MockStackInstanceRepository,
 	overrideRepo *MockValueOverrideRepository,
 	branchOverrideRepo *MockChartBranchOverrideRepository,
@@ -39,6 +41,7 @@ func setupInstanceRouterFull(
 	deployLogRepo models.DeploymentLogRepository,
 	callerID, callerUsername, callerRole string,
 ) *gin.Engine {
+	t.Helper()
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
 	r.Use(func(c *gin.Context) {
@@ -60,12 +63,22 @@ func setupInstanceRouterFull(
 	if branchOverrideRepo == nil {
 		branchOverrideRepo = NewMockChartBranchOverrideRepository()
 	}
-	h := NewInstanceHandlerWithDeployer(
+	h, err := NewInstanceHandlerWithDeployer(
 		instanceRepo, overrideRepo, branchOverrideRepo, defRepo, ccRepo,
 		tmplRepo, tmplChartRepo, valuesGen, userRepo,
 		deployManager, k8sWatcher, registry, deployLogRepo, nil,
 		0,
+		&mockHandlerTxRunner{repos: database.TxRepos{
+			StackDefinition: defRepo,
+			ChartConfig:     ccRepo,
+			StackInstance:   instanceRepo,
+			StackTemplate:   tmplRepo,
+			TemplateChart:   tmplChartRepo,
+			ValueOverride:   overrideRepo,
+			BranchOverride:  branchOverrideRepo,
+		}},
 	)
+	require.NoError(t, err)
 
 	insts := r.Group("/api/v1/stack-instances")
 	{
@@ -110,7 +123,7 @@ func TestUpdateInstance_ForbiddenNonOwner(t *testing.T) {
 
 	seedInstance(t, instRepo, "i1", "stack-a", "d1", "owner-1", models.StackStatusDraft)
 
-	router := setupInstanceRouterFull(
+	router := setupInstanceRouterFull(t,
 		instRepo, NewMockValueOverrideRepository(), nil, defRepo, ccRepo,
 		NewMockStackTemplateRepository(), NewMockTemplateChartConfigRepository(),
 		nil, nil, nil, nil,
@@ -133,7 +146,7 @@ func TestUpdateInstance_AdminCanUpdate(t *testing.T) {
 	defRepo := NewMockStackDefinitionRepository()
 	seedInstance(t, instRepo, "i1", "stack-a", "d1", "owner-1", models.StackStatusDraft)
 
-	router := setupInstanceRouterFull(
+	router := setupInstanceRouterFull(t,
 		instRepo, NewMockValueOverrideRepository(), nil, defRepo,
 		NewMockChartConfigRepository(),
 		NewMockStackTemplateRepository(), NewMockTemplateChartConfigRepository(),
@@ -162,7 +175,7 @@ func TestUpdateInstance_TTLUpdate(t *testing.T) {
 		instRepo := NewMockStackInstanceRepository()
 		seedInstance(t, instRepo, "i1", "stack-a", "d1", "uid-1", models.StackStatusDraft)
 
-		router := setupInstanceRouterFull(
+		router := setupInstanceRouterFull(t,
 			instRepo, NewMockValueOverrideRepository(), nil,
 			NewMockStackDefinitionRepository(), NewMockChartConfigRepository(),
 			NewMockStackTemplateRepository(), NewMockTemplateChartConfigRepository(),
@@ -203,7 +216,7 @@ func TestUpdateInstance_TTLUpdate(t *testing.T) {
 		}
 		require.NoError(t, instRepo.Create(inst))
 
-		router := setupInstanceRouterFull(
+		router := setupInstanceRouterFull(t,
 			instRepo, NewMockValueOverrideRepository(), nil,
 			NewMockStackDefinitionRepository(), NewMockChartConfigRepository(),
 			NewMockStackTemplateRepository(), NewMockTemplateChartConfigRepository(),
@@ -230,7 +243,7 @@ func TestUpdateInstance_TTLUpdate(t *testing.T) {
 		instRepo := NewMockStackInstanceRepository()
 		seedInstance(t, instRepo, "i3", "stack-c", "d1", "uid-1", models.StackStatusDraft)
 
-		router := setupInstanceRouterFull(
+		router := setupInstanceRouterFull(t,
 			instRepo, NewMockValueOverrideRepository(), nil,
 			NewMockStackDefinitionRepository(), NewMockChartConfigRepository(),
 			NewMockStackTemplateRepository(), NewMockTemplateChartConfigRepository(),
@@ -253,7 +266,7 @@ func TestUpdateInstance_TTLUpdate(t *testing.T) {
 		seedInstance(t, instRepo, "i4", "stack-d", "d1", "uid-1", models.StackStatusDraft)
 		instRepo.SetError(errors.New("db failure"))
 
-		router := setupInstanceRouterFull(
+		router := setupInstanceRouterFull(t,
 			instRepo, NewMockValueOverrideRepository(), nil,
 			NewMockStackDefinitionRepository(), NewMockChartConfigRepository(),
 			NewMockStackTemplateRepository(), NewMockTemplateChartConfigRepository(),
@@ -279,7 +292,7 @@ func TestCloneInstance_Additional(t *testing.T) {
 	t.Run("source not found returns 404", func(t *testing.T) {
 		t.Parallel()
 
-		router := setupInstanceRouterFull(
+		router := setupInstanceRouterFull(t,
 			NewMockStackInstanceRepository(), NewMockValueOverrideRepository(), nil,
 			NewMockStackDefinitionRepository(), NewMockChartConfigRepository(),
 			NewMockStackTemplateRepository(), NewMockTemplateChartConfigRepository(),
@@ -313,7 +326,7 @@ func TestCloneInstance_Additional(t *testing.T) {
 			Values:          "replicas: 3",
 		}))
 
-		router := setupInstanceRouterFull(
+		router := setupInstanceRouterFull(t,
 			instRepo, overrideRepo, nil, defRepo, ccRepo,
 			NewMockStackTemplateRepository(), NewMockTemplateChartConfigRepository(),
 			nil, nil, nil, nil,
@@ -348,7 +361,7 @@ func TestCloneInstance_Additional(t *testing.T) {
 		// Set create error but only after the source was seeded.
 		instRepo.SetCreateError(errors.New("db create failure"))
 
-		router := setupInstanceRouterFull(
+		router := setupInstanceRouterFull(t,
 			instRepo, overrideRepo, nil,
 			NewMockStackDefinitionRepository(), NewMockChartConfigRepository(),
 			NewMockStackTemplateRepository(), NewMockTemplateChartConfigRepository(),
@@ -376,7 +389,7 @@ func TestExportChartValues_Additional(t *testing.T) {
 		instRepo := NewMockStackInstanceRepository()
 		seedInstance(t, instRepo, "i1", "stack-a", "d1", "uid-1", models.StackStatusDraft)
 
-		router := setupInstanceRouterFull(
+		router := setupInstanceRouterFull(t,
 			instRepo, NewMockValueOverrideRepository(), nil,
 			NewMockStackDefinitionRepository(), NewMockChartConfigRepository(),
 			NewMockStackTemplateRepository(), NewMockTemplateChartConfigRepository(),
@@ -401,7 +414,7 @@ func TestExportChartValues_Additional(t *testing.T) {
 		seedInstance(t, instRepo, "i1", "stack-a", "missing-def", "uid-1", models.StackStatusDraft)
 		seedChartConfigForTest(t, ccRepo, "c1", "missing-def", "backend")
 
-		router := setupInstanceRouterFull(
+		router := setupInstanceRouterFull(t,
 			instRepo, NewMockValueOverrideRepository(), nil,
 			NewMockStackDefinitionRepository(), ccRepo,
 			NewMockStackTemplateRepository(), NewMockTemplateChartConfigRepository(),
@@ -444,7 +457,7 @@ func TestExportChartValues_Additional(t *testing.T) {
 			LockedValues:    "image: locked-image",
 		}))
 
-		router := setupInstanceRouterFull(
+		router := setupInstanceRouterFull(t,
 			instRepo, NewMockValueOverrideRepository(),
 			NewMockChartBranchOverrideRepository(), defRepo, ccRepo,
 			NewMockStackTemplateRepository(), tmplChartRepo,
@@ -484,7 +497,7 @@ func TestExportChartValues_Additional(t *testing.T) {
 			Branch:          "feature/test",
 		}))
 
-		router := setupInstanceRouterFull(
+		router := setupInstanceRouterFull(t,
 			instRepo, NewMockValueOverrideRepository(), branchRepo, defRepo, ccRepo,
 			NewMockStackTemplateRepository(), NewMockTemplateChartConfigRepository(),
 			nil, nil, nil, nil,
@@ -508,7 +521,7 @@ func TestCompareInstances_Additional(t *testing.T) {
 	t.Run("missing query params returns 400", func(t *testing.T) {
 		t.Parallel()
 
-		router := setupInstanceRouterFull(
+		router := setupInstanceRouterFull(t,
 			NewMockStackInstanceRepository(), NewMockValueOverrideRepository(), nil,
 			NewMockStackDefinitionRepository(), NewMockChartConfigRepository(),
 			NewMockStackTemplateRepository(), NewMockTemplateChartConfigRepository(),
@@ -526,7 +539,7 @@ func TestCompareInstances_Additional(t *testing.T) {
 	t.Run("missing right param returns 400", func(t *testing.T) {
 		t.Parallel()
 
-		router := setupInstanceRouterFull(
+		router := setupInstanceRouterFull(t,
 			NewMockStackInstanceRepository(), NewMockValueOverrideRepository(), nil,
 			NewMockStackDefinitionRepository(), NewMockChartConfigRepository(),
 			NewMockStackTemplateRepository(), NewMockTemplateChartConfigRepository(),
@@ -547,7 +560,7 @@ func TestCompareInstances_Additional(t *testing.T) {
 		instRepo := NewMockStackInstanceRepository()
 		seedInstance(t, instRepo, "i2", "stack-b", "d1", "uid-1", models.StackStatusDraft)
 
-		router := setupInstanceRouterFull(
+		router := setupInstanceRouterFull(t,
 			instRepo, NewMockValueOverrideRepository(), nil,
 			NewMockStackDefinitionRepository(), NewMockChartConfigRepository(),
 			NewMockStackTemplateRepository(), NewMockTemplateChartConfigRepository(),
@@ -568,7 +581,7 @@ func TestCompareInstances_Additional(t *testing.T) {
 		instRepo := NewMockStackInstanceRepository()
 		seedInstance(t, instRepo, "i1", "stack-a", "d1", "uid-1", models.StackStatusDraft)
 
-		router := setupInstanceRouterFull(
+		router := setupInstanceRouterFull(t,
 			instRepo, NewMockValueOverrideRepository(), nil,
 			NewMockStackDefinitionRepository(), NewMockChartConfigRepository(),
 			NewMockStackTemplateRepository(), NewMockTemplateChartConfigRepository(),
@@ -594,7 +607,7 @@ func TestCompareInstances_Additional(t *testing.T) {
 		seedInstance(t, instRepo, "i2", "stack-b", "d1", "uid-1", models.StackStatusDraft)
 		seedDefinition(t, defRepo, "d1", "Def B", "uid-1")
 
-		router := setupInstanceRouterFull(
+		router := setupInstanceRouterFull(t,
 			instRepo, NewMockValueOverrideRepository(), nil, defRepo,
 			NewMockChartConfigRepository(),
 			NewMockStackTemplateRepository(), NewMockTemplateChartConfigRepository(),
@@ -619,7 +632,7 @@ func TestCompareInstances_Additional(t *testing.T) {
 		seedInstance(t, instRepo, "i2", "stack-b", "missing-def", "uid-1", models.StackStatusDraft)
 		seedDefinition(t, defRepo, "d1", "Def A", "uid-1")
 
-		router := setupInstanceRouterFull(
+		router := setupInstanceRouterFull(t,
 			instRepo, NewMockValueOverrideRepository(), nil, defRepo,
 			NewMockChartConfigRepository(),
 			NewMockStackTemplateRepository(), NewMockTemplateChartConfigRepository(),
@@ -656,7 +669,7 @@ func TestCompareInstances_Additional(t *testing.T) {
 			Values:          "replicas: 3",
 		}))
 
-		router := setupInstanceRouterFull(
+		router := setupInstanceRouterFull(t,
 			instRepo, overrideRepo, nil, defRepo, ccRepo,
 			NewMockStackTemplateRepository(), NewMockTemplateChartConfigRepository(),
 			nil, nil, nil, nil,
@@ -693,7 +706,7 @@ func TestCompareInstances_Additional(t *testing.T) {
 		seedChartConfigForTest(t, ccRepo, "cc1", "d1", "frontend")
 		seedChartConfigForTest(t, ccRepo, "cc2", "d2", "backend")
 
-		router := setupInstanceRouterFull(
+		router := setupInstanceRouterFull(t,
 			instRepo, NewMockValueOverrideRepository(), nil, defRepo, ccRepo,
 			NewMockStackTemplateRepository(), NewMockTemplateChartConfigRepository(),
 			nil, nil, nil, nil,
@@ -742,7 +755,7 @@ func TestCompareInstances_Additional(t *testing.T) {
 			LockedValues:    "locked: true",
 		}))
 
-		router := setupInstanceRouterFull(
+		router := setupInstanceRouterFull(t,
 			instRepo, NewMockValueOverrideRepository(), nil, defRepo, ccRepo,
 			NewMockStackTemplateRepository(), tmplChartRepo,
 			nil, nil, nil, nil,
@@ -774,7 +787,7 @@ func TestCompareInstances_Additional(t *testing.T) {
 
 		ccRepo.SetError(errors.New("chart config error"))
 
-		router := setupInstanceRouterFull(
+		router := setupInstanceRouterFull(t,
 			instRepo, NewMockValueOverrideRepository(), nil, defRepo, ccRepo,
 			NewMockStackTemplateRepository(), NewMockTemplateChartConfigRepository(),
 			nil, nil, nil, nil,
@@ -807,7 +820,7 @@ func TestExtendTTL_Forbidden(t *testing.T) {
 	}
 	require.NoError(t, instRepo.Create(inst))
 
-	router := setupInstanceRouterFull(
+	router := setupInstanceRouterFull(t,
 		instRepo, NewMockValueOverrideRepository(), nil,
 		NewMockStackDefinitionRepository(), NewMockChartConfigRepository(),
 		NewMockStackTemplateRepository(), NewMockTemplateChartConfigRepository(),
@@ -840,7 +853,7 @@ func TestExtendTTL_InvalidJSON(t *testing.T) {
 	}
 	require.NoError(t, instRepo.Create(inst))
 
-	router := setupInstanceRouterFull(
+	router := setupInstanceRouterFull(t,
 		instRepo, NewMockValueOverrideRepository(), nil,
 		NewMockStackDefinitionRepository(), NewMockChartConfigRepository(),
 		NewMockStackTemplateRepository(), NewMockTemplateChartConfigRepository(),
@@ -891,7 +904,7 @@ func TestDeployInstance_Additional(t *testing.T) {
 
 		mgr := newTestManager(instRepo, logRepo)
 
-		router := setupInstanceRouterFull(
+		router := setupInstanceRouterFull(t,
 			instRepo, NewMockValueOverrideRepository(), nil, defRepo, ccRepo,
 			NewMockStackTemplateRepository(), NewMockTemplateChartConfigRepository(),
 			mgr, nil, nil, logRepo,
@@ -953,7 +966,7 @@ func TestDeployInstance_Additional(t *testing.T) {
 
 		mgr := newTestManager(instRepo, logRepo)
 
-		router := setupInstanceRouterFull(
+		router := setupInstanceRouterFull(t,
 			instRepo, NewMockValueOverrideRepository(), nil, defRepo, ccRepo,
 			NewMockStackTemplateRepository(), tmplChartRepo,
 			mgr, nil, nil, logRepo,
@@ -993,7 +1006,7 @@ func TestDeployInstance_Additional(t *testing.T) {
 
 		mgr := newTestManager(instRepo, logRepo)
 
-		router := setupInstanceRouterFull(
+		router := setupInstanceRouterFull(t,
 			instRepo, NewMockValueOverrideRepository(), nil, defRepo, ccRepo,
 			NewMockStackTemplateRepository(), NewMockTemplateChartConfigRepository(),
 			mgr, nil, nil, logRepo,
@@ -1019,7 +1032,7 @@ func TestDeployInstance_Additional(t *testing.T) {
 
 		mgr := newTestManager(instRepo, logRepo)
 
-		router := setupInstanceRouterFull(
+		router := setupInstanceRouterFull(t,
 			instRepo, NewMockValueOverrideRepository(), nil, defRepo,
 			NewMockChartConfigRepository(), // empty — no charts
 			NewMockStackTemplateRepository(), NewMockTemplateChartConfigRepository(),
@@ -1044,7 +1057,7 @@ func TestDeployInstance_Additional(t *testing.T) {
 
 		mgr := newTestManager(instRepo, logRepo)
 
-		router := setupInstanceRouterFull(
+		router := setupInstanceRouterFull(t,
 			instRepo, NewMockValueOverrideRepository(), nil,
 			NewMockStackDefinitionRepository(), NewMockChartConfigRepository(),
 			NewMockStackTemplateRepository(), NewMockTemplateChartConfigRepository(),
@@ -1080,7 +1093,7 @@ func TestDeployInstance_Additional(t *testing.T) {
 
 		mgr := newTestManager(instRepo, logRepo)
 
-		router := setupInstanceRouterFull(
+		router := setupInstanceRouterFull(t,
 			instRepo, NewMockValueOverrideRepository(), branchRepo, defRepo, ccRepo,
 			NewMockStackTemplateRepository(), NewMockTemplateChartConfigRepository(),
 			mgr, nil, nil, logRepo,
@@ -1108,7 +1121,7 @@ func TestDeployInstance_Additional(t *testing.T) {
 
 		mgr := newTestManager(instRepo, logRepo)
 
-		router := setupInstanceRouterFull(
+		router := setupInstanceRouterFull(t,
 			instRepo, NewMockValueOverrideRepository(), nil, defRepo, ccRepo,
 			NewMockStackTemplateRepository(), NewMockTemplateChartConfigRepository(),
 			mgr, nil, nil, logRepo,
@@ -1133,7 +1146,7 @@ func TestDeployInstance_Additional(t *testing.T) {
 
 		mgr := newTestManager(instRepo, logRepo)
 
-		router := setupInstanceRouterFull(
+		router := setupInstanceRouterFull(t,
 			instRepo, NewMockValueOverrideRepository(), nil,
 			NewMockStackDefinitionRepository(), NewMockChartConfigRepository(),
 			NewMockStackTemplateRepository(), NewMockTemplateChartConfigRepository(),
@@ -1158,7 +1171,7 @@ func TestDeployInstance_Additional(t *testing.T) {
 
 		mgr := newTestManager(instRepo, logRepo)
 
-		router := setupInstanceRouterFull(
+		router := setupInstanceRouterFull(t,
 			instRepo, NewMockValueOverrideRepository(), nil,
 			NewMockStackDefinitionRepository(), NewMockChartConfigRepository(),
 			NewMockStackTemplateRepository(), NewMockTemplateChartConfigRepository(),
@@ -1188,7 +1201,7 @@ func TestDeployInstance_Additional(t *testing.T) {
 
 		mgr := newTestManager(instRepo, logRepo)
 
-		router := setupInstanceRouterFull(
+		router := setupInstanceRouterFull(t,
 			instRepo, NewMockValueOverrideRepository(), nil, defRepo, ccRepo,
 			NewMockStackTemplateRepository(), NewMockTemplateChartConfigRepository(),
 			mgr, nil, nil, logRepo,
@@ -1218,7 +1231,7 @@ func TestStopInstance_Additional(t *testing.T) {
 
 		mgr := newTestManager(instRepo, logRepo)
 
-		router := setupInstanceRouterFull(
+		router := setupInstanceRouterFull(t,
 			instRepo, NewMockValueOverrideRepository(), nil,
 			NewMockStackDefinitionRepository(), NewMockChartConfigRepository(),
 			NewMockStackTemplateRepository(), NewMockTemplateChartConfigRepository(),
@@ -1248,7 +1261,7 @@ func TestStopInstance_Additional(t *testing.T) {
 
 		mgr := newTestManager(instRepo, logRepo)
 
-		router := setupInstanceRouterFull(
+		router := setupInstanceRouterFull(t,
 			instRepo, NewMockValueOverrideRepository(), nil, defRepo, ccRepo,
 			NewMockStackTemplateRepository(), NewMockTemplateChartConfigRepository(),
 			mgr, nil, nil, logRepo,
@@ -1274,7 +1287,7 @@ func TestStopInstance_Additional(t *testing.T) {
 
 		mgr := newTestManager(instRepo, logRepo)
 
-		router := setupInstanceRouterFull(
+		router := setupInstanceRouterFull(t,
 			instRepo, NewMockValueOverrideRepository(), nil, defRepo,
 			NewMockChartConfigRepository(), // empty
 			NewMockStackTemplateRepository(), NewMockTemplateChartConfigRepository(),
@@ -1299,7 +1312,7 @@ func TestStopInstance_Additional(t *testing.T) {
 
 		mgr := newTestManager(instRepo, logRepo)
 
-		router := setupInstanceRouterFull(
+		router := setupInstanceRouterFull(t,
 			instRepo, NewMockValueOverrideRepository(), nil,
 			NewMockStackDefinitionRepository(), NewMockChartConfigRepository(),
 			NewMockStackTemplateRepository(), NewMockTemplateChartConfigRepository(),
@@ -1330,7 +1343,7 @@ func TestCleanInstance_Additional(t *testing.T) {
 
 		mgr := newTestManager(instRepo, logRepo)
 
-		router := setupInstanceRouterFull(
+		router := setupInstanceRouterFull(t,
 			instRepo, NewMockValueOverrideRepository(), nil,
 			NewMockStackDefinitionRepository(), NewMockChartConfigRepository(),
 			NewMockStackTemplateRepository(), NewMockTemplateChartConfigRepository(),
@@ -1360,7 +1373,7 @@ func TestCleanInstance_Additional(t *testing.T) {
 
 		mgr := newTestManager(instRepo, logRepo)
 
-		router := setupInstanceRouterFull(
+		router := setupInstanceRouterFull(t,
 			instRepo, NewMockValueOverrideRepository(), nil, defRepo, ccRepo,
 			NewMockStackTemplateRepository(), NewMockTemplateChartConfigRepository(),
 			mgr, nil, nil, logRepo,
@@ -1384,7 +1397,7 @@ func TestCleanInstance_Additional(t *testing.T) {
 
 		mgr := newTestManager(instRepo, logRepo)
 
-		router := setupInstanceRouterFull(
+		router := setupInstanceRouterFull(t,
 			instRepo, NewMockValueOverrideRepository(), nil,
 			NewMockStackDefinitionRepository(), NewMockChartConfigRepository(),
 			NewMockStackTemplateRepository(), NewMockTemplateChartConfigRepository(),
@@ -1409,7 +1422,7 @@ func TestCleanInstance_Additional(t *testing.T) {
 
 		mgr := newTestManager(instRepo, logRepo)
 
-		router := setupInstanceRouterFull(
+		router := setupInstanceRouterFull(t,
 			instRepo, NewMockValueOverrideRepository(), nil,
 			NewMockStackDefinitionRepository(), NewMockChartConfigRepository(),
 			NewMockStackTemplateRepository(), NewMockTemplateChartConfigRepository(),
@@ -1454,7 +1467,7 @@ func TestGetInstanceStatus_Additional(t *testing.T) {
 		k8sClient := k8s.NewClientFromInterface(cs)
 		registry := cluster.NewRegistryForTest("test-cluster", k8sClient, nil)
 
-		router := setupInstanceRouterFull(
+		router := setupInstanceRouterFull(t,
 			instRepo, NewMockValueOverrideRepository(), nil,
 			NewMockStackDefinitionRepository(), NewMockChartConfigRepository(),
 			NewMockStackTemplateRepository(), NewMockTemplateChartConfigRepository(),
@@ -1483,7 +1496,7 @@ func TestGetDeployLog_RepoError(t *testing.T) {
 	seedInstance(t, instRepo, "i1", "stack-a", "d1", "uid-1", models.StackStatusRunning)
 	logRepo.SetError(errors.New("log repo failure"))
 
-	router := setupInstanceRouterFull(
+	router := setupInstanceRouterFull(t,
 		instRepo, NewMockValueOverrideRepository(), nil,
 		NewMockStackDefinitionRepository(), NewMockChartConfigRepository(),
 		NewMockStackTemplateRepository(), NewMockTemplateChartConfigRepository(),
@@ -1503,7 +1516,7 @@ func TestGetDeployLog_RepoError(t *testing.T) {
 func TestGetInstance_NotFound(t *testing.T) {
 	t.Parallel()
 
-	router := setupInstanceRouterFull(
+	router := setupInstanceRouterFull(t,
 		NewMockStackInstanceRepository(), NewMockValueOverrideRepository(), nil,
 		NewMockStackDefinitionRepository(), NewMockChartConfigRepository(),
 		NewMockStackTemplateRepository(), NewMockTemplateChartConfigRepository(),
@@ -1523,7 +1536,7 @@ func TestGetInstance_NotFound(t *testing.T) {
 func TestDeleteInstance_NotFound(t *testing.T) {
 	t.Parallel()
 
-	router := setupInstanceRouterFull(
+	router := setupInstanceRouterFull(t,
 		NewMockStackInstanceRepository(), NewMockValueOverrideRepository(), nil,
 		NewMockStackDefinitionRepository(), NewMockChartConfigRepository(),
 		NewMockStackTemplateRepository(), NewMockTemplateChartConfigRepository(),
@@ -1563,14 +1576,15 @@ func TestCreateInstance_Additional(t *testing.T) {
 
 		valuesGen := helm.NewValuesGenerator()
 		userRepo := NewMockUserRepository()
-		h := NewInstanceHandlerWithDeployer(
+		h, err := NewInstanceHandlerWithDeployer(
 			instRepo, NewMockValueOverrideRepository(), nil, defRepo,
 			NewMockChartConfigRepository(),
 			NewMockStackTemplateRepository(), NewMockTemplateChartConfigRepository(),
 			valuesGen, userRepo,
 			nil, nil, registry, nil, nil,
-			0,
+			0, &mockHandlerTxRunner{},
 		)
+		require.NoError(t, err)
 		r.POST("/api/v1/stack-instances", h.CreateInstance)
 
 		body := `{"name":"test-stack","stack_definition_id":"d1","branch":"master"}`
@@ -1609,14 +1623,15 @@ func TestCreateInstance_Additional(t *testing.T) {
 
 		valuesGen := helm.NewValuesGenerator()
 		userRepo := NewMockUserRepository()
-		h := NewInstanceHandlerWithDeployer(
+		h, err := NewInstanceHandlerWithDeployer(
 			instRepo, NewMockValueOverrideRepository(), nil, defRepo,
 			NewMockChartConfigRepository(),
 			NewMockStackTemplateRepository(), NewMockTemplateChartConfigRepository(),
 			valuesGen, userRepo,
 			nil, nil, registry, nil, nil,
-			0,
+			0, &mockHandlerTxRunner{},
 		)
+		require.NoError(t, err)
 		r.POST("/api/v1/stack-instances", h.CreateInstance)
 
 		body := `{"name":"test-stack","stack_definition_id":"d1","branch":"master","cluster_id":"bad-cluster"}`
@@ -1640,7 +1655,7 @@ func TestExportAllValues_Additional(t *testing.T) {
 		instRepo := NewMockStackInstanceRepository()
 		seedInstance(t, instRepo, "i1", "stack-a", "missing-def", "uid-1", models.StackStatusDraft)
 
-		router := setupInstanceRouterFull(
+		router := setupInstanceRouterFull(t,
 			instRepo, NewMockValueOverrideRepository(), nil,
 			NewMockStackDefinitionRepository(), NewMockChartConfigRepository(),
 			NewMockStackTemplateRepository(), NewMockTemplateChartConfigRepository(),
@@ -1667,7 +1682,7 @@ func TestExportAllValues_Additional(t *testing.T) {
 
 		ccRepo.SetError(errors.New("chart config error"))
 
-		router := setupInstanceRouterFull(
+		router := setupInstanceRouterFull(t,
 			instRepo, NewMockValueOverrideRepository(), nil, defRepo, ccRepo,
 			NewMockStackTemplateRepository(), NewMockTemplateChartConfigRepository(),
 			nil, nil, nil, nil,

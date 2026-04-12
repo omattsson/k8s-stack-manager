@@ -357,7 +357,7 @@ func (h *InstanceHandler) BulkClean(c *gin.Context) {
 // @Router      /api/v1/stack-instances/bulk/delete [post]
 func (h *InstanceHandler) BulkDelete(c *gin.Context) {
 	h.executeBulkOperation(c, "delete", func(_ *gin.Context, inst *models.StackInstance) (string, error) {
-		if h.txRunner != nil && h.txRunner.IsTransactional() {
+		if h.txRunner != nil {
 			// Transactional path — branch override cleanup + instance delete are atomic.
 			txErr := h.txRunner.RunInTx(func(repos database.TxRepos) error {
 				if err := repos.BranchOverride.DeleteByInstance(inst.ID); err != nil {
@@ -366,23 +366,13 @@ func (h *InstanceHandler) BulkDelete(c *gin.Context) {
 				return repos.StackInstance.Delete(inst.ID)
 			})
 			if txErr != nil {
-				return "", fmt.Errorf("failed to delete instance: %w", txErr)
+				slog.Error("failed to delete instance in bulk operation", "instance_id", inst.ID, "error", txErr)
+				return "", fmt.Errorf("failed to delete instance")
 			}
 			return "", nil
 		}
 
-		// Non-transactional fallback (Azure Table Storage).
-		if h.branchOverrideRepo != nil {
-			if err := h.branchOverrideRepo.DeleteByInstance(inst.ID); err != nil {
-				slog.Error("failed to delete branch overrides for stack instance", "instance_id", inst.ID, "error", err)
-				return "", fmt.Errorf("failed to clean up branch overrides")
-			}
-		}
-
-		if err := h.instanceRepo.Delete(inst.ID); err != nil {
-			return "", fmt.Errorf("failed to delete instance")
-		}
-
-		return "", nil
+		slog.Error("txRunner not configured for BulkDelete", "instance_id", inst.ID)
+		return "", fmt.Errorf("failed to delete instance")
 	})
 }

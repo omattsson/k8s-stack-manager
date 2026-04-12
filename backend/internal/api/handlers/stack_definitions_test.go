@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"backend/internal/database"
 	"backend/internal/models"
 
 	"github.com/gin-gonic/gin"
@@ -41,6 +42,10 @@ func setupDefinitionRouterWithTemplates(
 	r.Use(injectAuthContext(callerID, callerRole))
 
 	h := NewDefinitionHandler(defRepo, chartRepo, instanceRepo, templateRepo, templateChartRepo)
+	h.txRunner = &mockHandlerTxRunner{repos: database.TxRepos{
+		StackDefinition: defRepo,
+		ChartConfig:     chartRepo,
+	}}
 
 	defs := r.Group("/api/v1/stack-definitions")
 	{

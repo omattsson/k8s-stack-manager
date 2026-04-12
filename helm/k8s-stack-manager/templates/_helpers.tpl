@@ -63,22 +63,6 @@ app.kubernetes.io/name: {{ include "k8s-stack-manager.fullname" . }}-frontend
 {{- end }}
 
 {{/*
-Azurite labels.
-*/}}
-{{- define "k8s-stack-manager.azurite.labels" -}}
-{{ include "k8s-stack-manager.labels" . }}
-app.kubernetes.io/name: {{ include "k8s-stack-manager.fullname" . }}-azurite
-app.kubernetes.io/component: azurite
-{{- end }}
-
-{{/*
-Azurite selector labels.
-*/}}
-{{- define "k8s-stack-manager.azurite.selectorLabels" -}}
-app.kubernetes.io/name: {{ include "k8s-stack-manager.fullname" . }}-azurite
-{{- end }}
-
-{{/*
 Backend service names.
 */}}
 {{- define "k8s-stack-manager.backend.stableService" -}}
@@ -98,13 +82,6 @@ Frontend service names.
 
 {{- define "k8s-stack-manager.frontend.canaryService" -}}
 {{ include "k8s-stack-manager.fullname" . }}-frontend-canary
-{{- end }}
-
-{{/*
-Azurite service name.
-*/}}
-{{- define "k8s-stack-manager.azurite.serviceName" -}}
-{{ include "k8s-stack-manager.fullname" . }}-azurite
 {{- end }}
 
 {{/*

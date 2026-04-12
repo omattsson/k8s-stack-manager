@@ -94,7 +94,7 @@
       }
     },
     {
-      "title": "Azure Table — Operation Duration (p95)",
+      "title": "DB — Operation Duration (p95)",
       "type": "timeseries",
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
@@ -112,7 +112,7 @@
       }
     },
     {
-      "title": "Azure Table — Operations/s by Table",
+      "title": "DB — Operations/s by Table",
       "type": "timeseries",
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },

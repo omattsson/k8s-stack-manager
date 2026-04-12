@@ -33,7 +33,6 @@ type RefreshTokenRepository interface {
 	CountActiveForUser(userID string) (int64, error)
 	// WithTx executes fn within a database transaction. The repository passed
 	// to fn shares the same transaction; if fn returns an error the transaction
-	// is rolled back. Implementations without real transaction support (e.g.,
-	// Azure Table Storage) may execute fn without transactional guarantees.
+	// is rolled back.
 	WithTx(fn func(txRepo RefreshTokenRepository) error) error
 }

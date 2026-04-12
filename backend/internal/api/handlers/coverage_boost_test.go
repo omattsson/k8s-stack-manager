@@ -9,6 +9,7 @@ import (
 
 	"backend/internal/cluster"
 	"backend/internal/config"
+	"backend/internal/database"
 	"backend/internal/helm"
 	"backend/internal/k8s"
 	"backend/internal/models"
@@ -228,7 +229,8 @@ func TestExportAllValues(t *testing.T) {
 		{
 			name:       "instance not found returns 404",
 			instanceID: "missing",
-			setup:      func(_ *MockStackInstanceRepository, _ *MockStackDefinitionRepository, _ *MockChartConfigRepository, _ *MockTemplateChartConfigRepository) {},
+			setup: func(_ *MockStackInstanceRepository, _ *MockStackDefinitionRepository, _ *MockChartConfigRepository, _ *MockTemplateChartConfigRepository) {
+			},
 			wantStatus: http.StatusNotFound,
 		},
 		{
@@ -276,10 +278,10 @@ func TestExportAllValues(t *testing.T) {
 					CreatedAt:         time.Now().UTC(),
 				}))
 				require.NoError(t, tmplChartRepo.Create(&models.TemplateChartConfig{
-					ID:               "tc1",
-					StackTemplateID:  "tmpl-1",
-					ChartName:        "nginx",
-					LockedValues:     "image: locked",
+					ID:              "tc1",
+					StackTemplateID: "tmpl-1",
+					ChartName:       "nginx",
+					LockedValues:    "image: locked",
 				}))
 			},
 			wantStatus: http.StatusOK,
@@ -408,7 +410,7 @@ func TestDeployInstance_ErrorPaths(t *testing.T) {
 
 			mgr := newTestManager(instRepo, logRepo)
 
-			router := setupDeployRouter(
+			router := setupDeployRouter(t,
 				instRepo, overrideRepo, defRepo, ccRepo,
 				NewMockStackTemplateRepository(), NewMockTemplateChartConfigRepository(),
 				mgr, nil, nil, logRepo,
@@ -446,7 +448,7 @@ func TestGetInstanceStatus_ErrorPaths(t *testing.T) {
 		k8sClient := k8s.NewClientFromInterface(cs)
 		registry := cluster.NewRegistryForTest("test-cluster", k8sClient, nil)
 
-		router := setupDeployRouter(
+		router := setupDeployRouter(t,
 			instRepo, NewMockValueOverrideRepository(),
 			NewMockStackDefinitionRepository(), NewMockChartConfigRepository(),
 			NewMockStackTemplateRepository(), NewMockTemplateChartConfigRepository(),
@@ -476,7 +478,7 @@ func TestGetInstanceStatus_ErrorPaths(t *testing.T) {
 		k8sClient := k8s.NewClientFromInterface(cs)
 		registry := cluster.NewRegistryForTest("test-cluster", k8sClient, nil)
 
-		router := setupDeployRouter(
+		router := setupDeployRouter(t,
 			instRepo, NewMockValueOverrideRepository(),
 			NewMockStackDefinitionRepository(), NewMockChartConfigRepository(),
 			NewMockStackTemplateRepository(), NewMockTemplateChartConfigRepository(),
@@ -497,7 +499,7 @@ func TestGetInstanceStatus_ErrorPaths(t *testing.T) {
 		instRepo := NewMockStackInstanceRepository()
 		instRepo.SetFetchError(errInternal)
 
-		router := setupDeployRouter(
+		router := setupDeployRouter(t,
 			instRepo, NewMockValueOverrideRepository(),
 			NewMockStackDefinitionRepository(), NewMockChartConfigRepository(),
 			NewMockStackTemplateRepository(), NewMockTemplateChartConfigRepository(),
@@ -525,7 +527,7 @@ func TestGetInstanceStatus_ErrorPaths(t *testing.T) {
 		k8sClient := k8s.NewClientFromInterface(cs)
 		registry := cluster.NewRegistryForTest("test-cluster", k8sClient, nil)
 
-		router := setupDeployRouter(
+		router := setupDeployRouter(t,
 			instRepo, NewMockValueOverrideRepository(),
 			NewMockStackDefinitionRepository(), NewMockChartConfigRepository(),
 			NewMockStackTemplateRepository(), NewMockTemplateChartConfigRepository(),
@@ -572,6 +574,10 @@ func TestDeleteInstance_WithBranchOverrides(t *testing.T) {
 			NewMockStackDefinitionRepository(), NewMockChartConfigRepository(),
 			NewMockStackTemplateRepository(), NewMockTemplateChartConfigRepository(),
 			valuesGen, userRepo, 0)
+		h.txRunner = &mockHandlerTxRunner{repos: database.TxRepos{
+			StackInstance:  instRepo,
+			BranchOverride: branchRepo,
+		}}
 		r.DELETE("/api/v1/stack-instances/:id", h.DeleteInstance)
 
 		w := httptest.NewRecorder()
@@ -605,6 +611,10 @@ func TestDeleteInstance_WithBranchOverrides(t *testing.T) {
 			NewMockStackDefinitionRepository(), NewMockChartConfigRepository(),
 			NewMockStackTemplateRepository(), NewMockTemplateChartConfigRepository(),
 			valuesGen, userRepo, 0)
+		h.txRunner = &mockHandlerTxRunner{repos: database.TxRepos{
+			StackInstance:  instRepo,
+			BranchOverride: branchRepo,
+		}}
 		r.DELETE("/api/v1/stack-instances/:id", h.DeleteInstance)
 
 		w := httptest.NewRecorder()
@@ -619,13 +629,18 @@ func TestDeleteInstance_WithBranchOverrides(t *testing.T) {
 
 		instRepo := NewMockStackInstanceRepository()
 		instRepo.SetError(dberrors.NewDatabaseError("delete", dberrors.ErrNotFound))
+		branchRepo := NewMockChartBranchOverrideRepository()
 
 		r := gin.New()
 		valuesGen := helm.NewValuesGenerator()
-		h := NewInstanceHandler(instRepo, NewMockValueOverrideRepository(), nil,
+		h := NewInstanceHandler(instRepo, NewMockValueOverrideRepository(), branchRepo,
 			NewMockStackDefinitionRepository(), NewMockChartConfigRepository(),
 			NewMockStackTemplateRepository(), NewMockTemplateChartConfigRepository(),
 			valuesGen, NewMockUserRepository(), 0)
+		h.txRunner = &mockHandlerTxRunner{repos: database.TxRepos{
+			StackInstance:  instRepo,
+			BranchOverride: branchRepo,
+		}}
 		r.DELETE("/api/v1/stack-instances/:id", h.DeleteInstance)
 
 		w := httptest.NewRecorder()

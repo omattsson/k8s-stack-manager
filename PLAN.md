@@ -1,6 +1,6 @@
 # K8s Stack Manager — Project Plan
 
-A web application that enables developers to configure, store, and deploy multi-service application stacks to a shared Kubernetes cluster. Built on Go (Gin) + React (TypeScript/Vite/MUI) with MySQL (GORM) or Azure Table Storage for persistence.
+A web application that enables developers to configure, store, and deploy multi-service application stacks to a shared Kubernetes cluster. Built on Go (Gin) + React (TypeScript/Vite/MUI) with MySQL (GORM) for persistence.
 
 ## Problem Statement
 
@@ -42,9 +42,9 @@ DevOps teams can:
 │                   Backend (Go + Gin)                     │
 │  REST API · JWT Auth · Swagger · Audit Middleware        │
 ├──────────┬──────────┬───────────┬──────────┬──────────────┤
-│ Azure    │ Template │ Git       │ Helm     │ K8s          │
-│ Tables   │ Engine   │ Provider  │ Values   │ Deployer     │
-│ (CRUD)   │ (Create, │ (AzDO +   │ (Merge + │ (Phase 3)    │
+│ MySQL    │ Template │ Git       │ Helm     │ K8s          │
+│ (GORM)   │ Engine   │ Provider  │ Values   │ Deployer     │
+│          │ (Create, │ (AzDO +   │ (Merge + │ (Phase 3)    │
 │          │  Publish,│  GitLab)  │  Export) │              │
 │          │  Lock)   │           │         │              │
 └──────────┴──────────┴───────────┴──────────┴──────────────┘
@@ -52,9 +52,9 @@ DevOps teams can:
 
 ## Tech Stack
 
-- **Backend**: Go 1.24, Gin, Azure Table Storage SDK, JWT (golang-jwt)
+- **Backend**: Go 1.25, Gin, JWT (golang-jwt)
 - **Frontend**: React 19, TypeScript, Vite, MUI, Monaco Editor, Axios
-- **Persistence**: MySQL (GORM) or Azure Tables (Azurite for local dev), selected via `USE_AZURE_TABLE` env var
+- **Persistence**: MySQL (GORM)
 - **Auth**: JWT with username/password (Phase 1), upgradeable to OIDC
 - **K8s target**: Single AKS Arc cluster on own hardware, shared by all devs
 - **Git providers**: Azure DevOps + GitLab (shared service-level tokens)
@@ -85,7 +85,7 @@ All agents in `.github/agents/`:
 
 | Agent | File | Purpose |
 |-------|------|---------|
-| Go API Developer | `go-api-developer.md` | Go backend: models, repositories (MySQL + Azure Table), handlers, routes, migrations, swagger |
+| Go API Developer | `go-api-developer.md` | Go backend: models, repositories, handlers, routes, migrations, swagger |
 | Frontend Developer | `frontend-developer.md` | React pages, MUI components, API services, routing, data fetching |
 | Git Provider Specialist | `git-provider.agent.md` | Azure DevOps + GitLab API integration, URL parsing, caching |
 | Helm Values Specialist | `helm-values.agent.md` | YAML deep-merge, template variables, values export |
@@ -95,21 +95,20 @@ All agents in `.github/agents/`:
 | SCM Engineer | `scm-engineer.md` | Git branches, commits, pull requests |
 | Code Reviewer | `code-reviewer.md` | PR review, security audit, pattern compliance |
 
-### Step 0.3 — File-Specific Instructions (3 files)
+### Step 0.3 — File-Specific Instructions (2 files)
 
 All in `.github/instructions/`:
 
 | File | Applies To | Purpose |
 |------|-----------|---------|
 | `go-handlers.instructions.md` | `backend/internal/api/handlers/**/*.go` | Swagger annotations, request binding, audit logging |
-| `azure-table-repos.instructions.md` | `backend/internal/database/azure/**/*.go` | CRUD patterns, partition key design, error mapping |
 | `react-pages.instructions.md` | `frontend/src/pages/**/*.tsx` | Functional components, MUI, loading/error states, tests |
 
 ### Phase 0 Verification
 
 - [x] 10 agent files in `.github/agents/` (9 planned + `ux-designer.md` added in Phase 9)
 - [x] `copilot-instructions.md` in `.github/`
-- [x] 8 instruction files in `.github/instructions/` (3 planned + 5 added: `api-extension`, `go`, `scalability`, `security`, `typescript`)
+- [x] 7 instruction files in `.github/instructions/` (2 planned + 5 added: `api-extension`, `go`, `scalability`, `security`, `typescript`)
 - [x] Each agent selectable from VS Code agent picker
 - [x] Orchestrator can discover and invoke all specialist agents
 
@@ -223,20 +222,9 @@ New files in `backend/internal/models/`:
 | Details | string | JSON with before/after or context |
 | Timestamp | time.Time | |
 
-### Step 1.2 — Azure Table Repositories
+### Step 1.2 — Domain Repositories
 
-Extend `backend/internal/database/azure/` following the existing `table.go` pattern.
-
-**Partition Key Strategy**:
-
-| Table | Partition Key | Row Key | Rationale |
-|-------|--------------|---------|-----------|
-| Users | `"users"` | username | Fast lookup by username for auth || StackTemplates | `"global"` | template_id | All templates visible for browsing |
-| TemplateChartConfigs | stack_template_id | chart_config_id | All charts for a template || StackDefinitions | `"global"` | definition_id | All definitions visible to all users |
-| ChartConfigs | stack_definition_id | chart_config_id | All charts for a definition |
-| StackInstances | `"global"` | instance_id | All instances visible to all users |
-| ValueOverrides | stack_instance_id | chart_config_id | All overrides for an instance |
-| AuditLogs | `YYYY-MM` | reverse_timestamp + uuid | Recent-first within monthly partitions |
+Implement repository interfaces in `backend/internal/database/` using GORM/MySQL.
 
 **Repositories to create**:
 - `UserRepository` — CRUD + `FindByUsername()`
@@ -417,7 +405,7 @@ GitProviders: GitProvidersConfig{
 ### Phase 1 Verification
 
 - [x] All 8 model structs defined with proper types and tags
-- [x] All 8 Azure Table repositories implement CRUD + filters
+- [x] All domain repositories implement CRUD + filters
 - [x] StackTemplate + TemplateChartConfig repos support publish/unpublish + ListPublished
 - [x] Instantiate endpoint copies template charts into a new StackDefinition
 - [x] Locked values enforced: override attempts on locked keys rejected by API
@@ -1121,7 +1109,7 @@ type OIDCConfig struct {
 1. `OIDCConfig` in config.go + env var loading
 2. OIDC provider package (`backend/internal/auth/oidc.go`) — uses `coreos/go-oidc/v3` library
 3. User model changes + migration (add `AuthProvider`, `ExternalID`, `Email`)
-4. Auth state storage (in-memory with TTL or Azure Table with short partition expiry)
+4. Auth state storage (in-memory with TTL)
 5. OIDC handlers (authorize, callback, config)
 6. Update `AuthRequired` middleware to continue accepting local JWTs unchanged
 7. Frontend: login page OIDC button, callback route, auth context
@@ -1386,7 +1374,6 @@ Specifically:
 │   └── ux-designer.md              (added in Phase 9)
 └── instructions/
     ├── go-handlers.instructions.md
-    ├── azure-table-repos.instructions.md
     ├── react-pages.instructions.md
     ├── api-extension.instructions.md (added post-Phase 0)
     ├── go.instructions.md            (added post-Phase 0)
@@ -1519,10 +1506,6 @@ backend/internal/
 
 | Variable | Default | Phase | Description |
 |----------|---------|-------|-------------|
-| `USE_AZURE_TABLE` | `false` | 1 | Enable Azure Table storage |
-| `AZURE_TABLE_ACCOUNT_NAME` | `""` | 1 | Azure Storage account name |
-| `AZURE_TABLE_ACCOUNT_KEY` | `""` | 1 | Azure Storage account key |
-| `USE_AZURITE` | `false` | 1 | Use Azurite emulator for local dev |
 | `JWT_SECRET` | `""` | 1 | **Required.** Secret for JWT signing |
 | `JWT_EXPIRATION` | `24h` | 1 | JWT token expiration duration |
 | `AZURE_DEVOPS_PAT` | `""` | 1 | Azure DevOps personal access token |
@@ -1547,7 +1530,7 @@ backend/internal/
 | 3 | Namespace auto-generated as `stack-{name}-{owner}` | Prevents collisions in shared cluster |
 | 4 | No company-specific hardcoding | All branding via env/config for multi-company use |
 | 5 | Monaco Editor for YAML | Familiar to developers (VS Code's editor) |
-| 6 | Azure Tables for persistence | Already wired in template; matches existing infrastructure |
+| 6 | MySQL (GORM) for persistence | Reliable relational store with migration support |
 | 7 | Shared service-level tokens for Git providers | Simpler than per-user PATs; admin configures once |
 | 8 | Azure DevOps + GitLab first | GitHub support easy to add later via same interface |
 | 9 | JWT auth (Phase 1) | Simple to start; OIDC upgrade path clear for Phase 4+ |
@@ -1569,7 +1552,7 @@ backend/internal/
 4. **GitOps integration**: Export stack configurations as GitOps manifests (Flux/ArgoCD)
 5. **Cost tracking**: Integrate with Azure Cost Management to show per-stack resource costs
 6. **API rate limiting**: Add per-user rate limits for Git provider APIs
-7. **Backup/restore**: Periodic Azure Table backup for disaster recovery
+7. **Backup/restore**: Periodic database backup for disaster recovery
 
 ---
 

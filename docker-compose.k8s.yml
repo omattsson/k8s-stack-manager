@@ -11,7 +11,6 @@ services:
     networks: !reset []
     ports: !reset []
     environment:
-      - AZURE_TABLE_ENDPOINT=${AZURE_TABLE_ENDPOINT:-127.0.0.1:10002}
       - KUBECONFIG_PATH=${KUBECONFIG_PATH:-/root/.kube/config}
     volumes:
       - ${HOME}/.kube:/root/.kube:ro
