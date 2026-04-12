@@ -299,6 +299,7 @@ type RefreshResponse struct {
 // @Summary     Refresh access token
 // @Description Issues a new access token using the refresh token cookie. Rotates the refresh token (old one invalidated, new one issued).
 // @Tags        auth
+// @Accept      json
 // @Produce     json
 // @Success     200 {object} RefreshResponse
 // @Failure     401 {object} map[string]string "Invalid, expired, or revoked refresh token"
@@ -496,21 +497,23 @@ func (h *AuthHandler) CleanupExpiredTokens() {
 // (used during rotation to avoid revoking the token currently being consumed).
 func (h *AuthHandler) issueRefreshToken(c *gin.Context, userID string, excludeTokenID ...string) error {
 	// Clean up excess tokens if over limit.
-	activeCount, err := h.refreshTokenRepo.CountActiveForUser(userID)
-	if err != nil {
-		return err
-	}
-	if h.cfg.MaxRefreshTokensPerUser > 0 && int(activeCount) >= h.cfg.MaxRefreshTokensPerUser {
-		// Revoke all and start fresh to stay within bounds,
-		// but skip the token currently being consumed (if any)
-		// so RevokeByIDIfActive can still detect replays.
-		if len(excludeTokenID) > 0 && excludeTokenID[0] != "" {
-			if err := h.refreshTokenRepo.RevokeAllForUserExcept(userID, excludeTokenID[0]); err != nil {
-				return err
-			}
-		} else {
-			if err := h.refreshTokenRepo.RevokeAllForUser(userID); err != nil {
-				return err
+	if h.cfg.MaxRefreshTokensPerUser > 0 {
+		activeCount, err := h.refreshTokenRepo.CountActiveForUser(userID)
+		if err != nil {
+			return err
+		}
+		if int(activeCount) >= h.cfg.MaxRefreshTokensPerUser {
+			// Revoke all and start fresh to stay within bounds,
+			// but skip the token currently being consumed (if any)
+			// so RevokeByIDIfActive can still detect replays.
+			if len(excludeTokenID) > 0 && excludeTokenID[0] != "" {
+				if err := h.refreshTokenRepo.RevokeAllForUserExcept(userID, excludeTokenID[0]); err != nil {
+					return err
+				}
+			} else {
+				if err := h.refreshTokenRepo.RevokeAllForUser(userID); err != nil {
+					return err
+				}
 			}
 		}
 	}
