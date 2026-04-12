@@ -150,9 +150,10 @@ dev-local-backend:
 dev-local-frontend:
 	cd frontend && npm run dev
 
-# Run both backend and frontend locally with hot reload (no Docker)
-# Ctrl+C stops both processes. Backend: port 8081, Frontend: port 3000
-dev-local:
+# Run both backend and frontend locally with hot reload (no Docker for app code)
+# Starts MySQL in Docker automatically. Ctrl+C stops backend/frontend processes.
+# Backend: port 8081, Frontend: port 3000
+dev-local: mysql-start
 	@echo "Starting backend (port 8081) and frontend (port 3000)..."
 	@trap 'kill 0' EXIT; \
 	$(MAKE) dev-local-backend & \
