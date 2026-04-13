@@ -144,7 +144,7 @@ describe('AccessUrls', () => {
     };
 
     const { container } = render(<NotificationProvider><AccessUrls status={status} /></NotificationProvider>);
-    expect(container.firstChild).toBeNull();
+    expect(container.firstChild).toBeEmptyDOMElement();
   });
 
   it('skips services that have ingress hosts', () => {

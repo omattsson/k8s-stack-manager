@@ -59,6 +59,7 @@ describe('ConfirmDialog', () => {
   it('confirm button has error color (destructive variant)', () => {
     render(<ConfirmDialog {...defaultProps} />);
     const confirmButton = screen.getByRole('button', { name: 'Confirm' });
-    expect(confirmButton).toHaveClass('MuiButton-containedError');
+    expect(confirmButton).toHaveClass('MuiButton-contained');
+    expect(confirmButton).toHaveClass('MuiButton-colorError');
   });
 });

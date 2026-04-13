@@ -125,7 +125,7 @@ const List = () => {
                   <TableCell>
                     <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
                       <FavoriteButton entityType="definition" entityId={def.id} size="small" initialFavorited={favoriteIds.has(def.id)} />
-                      <Typography variant="body2" fontWeight="bold">
+                      <Typography variant="body2" sx={{ fontWeight: 'bold' }}>
                         {def.name}
                       </Typography>
                     </Box>

@@ -274,7 +274,7 @@ const VersionHistory = ({ templateId }: VersionHistoryProps) => {
                     {expandedSnapshot.snapshot.charts.map((chart) => (
                       <Paper key={chart.chart_name} variant="outlined" sx={{ p: 2, mb: 1 }}>
                         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.5 }}>
-                          <Typography variant="body2" fontWeight="bold">
+                          <Typography variant="body2" sx={{ fontWeight: 'bold' }}>
                             {chart.chart_name}
                           </Typography>
                           {chart.is_required && (
@@ -326,7 +326,7 @@ const VersionHistory = ({ templateId }: VersionHistoryProps) => {
                 diffData.chart_diffs.map((chartDiff) => (
                   <Box key={chartDiff.chart_name} sx={{ mb: 3 }}>
                     <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
-                      <Typography variant="subtitle1" fontWeight="bold">
+                      <Typography variant="subtitle1" sx={{ fontWeight: 'bold' }}>
                         {chartDiff.chart_name}
                       </Typography>
                       <Chip

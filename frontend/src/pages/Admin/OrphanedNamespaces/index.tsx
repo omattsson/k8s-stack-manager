@@ -151,7 +151,7 @@ const OrphanedNamespaces = () => {
               {namespaces.map((ns) => (
                 <TableRow key={ns.name} hover>
                   <TableCell>
-                    <Typography variant="body2" fontWeight="medium" sx={{ fontFamily: 'monospace' }}>
+                    <Typography variant="body2" sx={{ fontWeight: 'medium', fontFamily: 'monospace' }}>
                       {ns.name}
                     </Typography>
                   </TableCell>

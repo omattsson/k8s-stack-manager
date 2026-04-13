@@ -138,7 +138,7 @@ const Notifications = () => {
                   }
                   slotProps={{
                     primary: {
-                      fontWeight: notification.is_read ? 400 : 600,
+                      sx: { fontWeight: notification.is_read ? 400 : 600 },
                     },
                   }}
                 />

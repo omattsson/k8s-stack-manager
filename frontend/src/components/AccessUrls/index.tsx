@@ -154,7 +154,7 @@ const AccessUrls = ({ status }: AccessUrlsProps) => {
                 primary={
                   <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                     <Chip label={entry.serviceType} size="small" color={typeColor(entry.serviceType)} variant="outlined" />
-                    <Typography variant="body2" fontWeight={500}>{entry.serviceName}</Typography>
+                    <Typography variant="body2" sx={{ fontWeight: 500 }}>{entry.serviceName}</Typography>
                   </Box>
                 }
                 secondary={
