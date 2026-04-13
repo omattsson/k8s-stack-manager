@@ -198,6 +198,7 @@ func (h *InstanceHandler) BulkDeploy(c *gin.Context) {
 
 		templateVars := helm.TemplateVars{
 			Branch:       inst.Branch,
+			ImageTag:     helm.SanitizeImageTag(inst.Branch),
 			Namespace:    inst.Namespace,
 			InstanceName: inst.Name,
 			StackName:    def.Name,

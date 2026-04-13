@@ -501,6 +501,36 @@ func TestDeepMerge(t *testing.T) {
 	}
 }
 
+func TestSanitizeImageTag(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		branch string
+		want   string
+	}{
+		{"master", "master"},
+		{"main", "main"},
+		{"feature/my-thing", "feature-my-thing"},
+		{"feature/UPPER-Case", "feature-upper-case"},
+		{"bugfix/fix_underscore", "bugfix-fix-underscore"},
+		{"refs/heads/feature/test", "refs-heads-feature-test"},
+		{"branch with spaces", "branch-with-spaces"},
+		{"--leading-dashes", "leading-dashes"},
+		{"..leading-dots", "leading-dots"},
+		{"v1.2.3", "v1.2.3"},
+		{"", "latest"},
+		{"a/b/c/d/e", "a-b-c-d-e"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.branch, func(t *testing.T) {
+			t.Parallel()
+			got := SanitizeImageTag(tt.branch)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
 func TestSubstituteVars(t *testing.T) {
 	t.Parallel()
 
