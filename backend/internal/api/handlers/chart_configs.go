@@ -88,6 +88,7 @@ func (h *DefinitionHandler) UpdateChartConfig(c *gin.Context) {
 	existing.ChartName = update.ChartName
 	existing.RepositoryURL = update.RepositoryURL
 	existing.SourceRepoURL = update.SourceRepoURL
+	existing.BuildPipelineID = update.BuildPipelineID
 	existing.ChartPath = update.ChartPath
 	existing.ChartVersion = update.ChartVersion
 	existing.DefaultValues = update.DefaultValues

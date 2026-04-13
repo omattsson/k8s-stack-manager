@@ -9,6 +9,7 @@ type TemplateChartConfig struct {
 	ChartName       string    `json:"chart_name" gorm:"size:255"`
 	RepositoryURL   string    `json:"repository_url" gorm:"size:500"`
 	SourceRepoURL   string    `json:"source_repo_url" gorm:"size:500"`
+	BuildPipelineID string    `json:"build_pipeline_id" gorm:"size:100"` // CI pipeline ID to trigger for image builds
 	ChartPath       string    `json:"chart_path" gorm:"size:500"`
 	ChartVersion    string    `json:"chart_version" gorm:"size:50"`
 	DefaultValues   string    `json:"default_values" gorm:"type:longtext"`

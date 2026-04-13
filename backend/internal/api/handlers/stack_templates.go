@@ -548,6 +548,7 @@ func (h *TemplateHandler) copyTemplateChartsToDefinitionTx(templateID, defID str
 			ChartName:         tc.ChartName,
 			RepositoryURL:     tc.RepositoryURL,
 			SourceRepoURL:     tc.SourceRepoURL,
+			BuildPipelineID:   tc.BuildPipelineID,
 			ChartPath:         tc.ChartPath,
 			ChartVersion:      tc.ChartVersion,
 			DefaultValues:     tc.DefaultValues,

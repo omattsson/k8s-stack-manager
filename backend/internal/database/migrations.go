@@ -748,6 +748,29 @@ func (d *Database) AutoMigrate() error {
 		},
 	})
 
+	migrator.AddMigration(schema.Migration{
+		Version:     "20231201000031",
+		Name:        "add_build_pipeline_id_to_chart_configs",
+		Description: "Add build_pipeline_id column to chart_configs and template_chart_configs for CI pipeline trigger",
+		Up: func(tx *gorm.DB) error {
+			if err := tx.AutoMigrate(&models.ChartConfig{}); err != nil {
+				return err
+			}
+			return tx.AutoMigrate(&models.TemplateChartConfig{})
+		},
+		Down: func(tx *gorm.DB) error {
+			if tx.Migrator().HasColumn(&models.ChartConfig{}, "build_pipeline_id") {
+				if err := tx.Migrator().DropColumn(&models.ChartConfig{}, "build_pipeline_id"); err != nil {
+					return err
+				}
+			}
+			if tx.Migrator().HasColumn(&models.TemplateChartConfig{}, "build_pipeline_id") {
+				return tx.Migrator().DropColumn(&models.TemplateChartConfig{}, "build_pipeline_id")
+			}
+			return nil
+		},
+	})
+
 	// Run migrations
 	if err := migrator.MigrateUp(); err != nil {
 		return err
