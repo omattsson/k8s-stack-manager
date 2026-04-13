@@ -1404,6 +1404,74 @@ func (h *InstanceHandler) GetInstanceStatus(c *gin.Context) {
 	c.JSON(http.StatusServiceUnavailable, gin.H{"error": "K8s monitoring not configured"})
 }
 
+// GetInstancePods godoc
+// @Summary     Get instance pod status
+// @Description Returns detailed pod health including container states, conditions, and recent events
+// @Tags        stack-instances
+// @Produce     json
+// @Param       id path string true "Instance ID"
+// @Success     200 {object} k8s.NamespaceStatus
+// @Failure     400 {object} map[string]string
+// @Failure     404 {object} map[string]string
+// @Failure     502 {object} map[string]string
+// @Failure     503 {object} map[string]string
+// @Router      /api/v1/stack-instances/{id}/pods [get]
+func (h *InstanceHandler) GetInstancePods(c *gin.Context) {
+	id := c.Param("id")
+	if id == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": msgInstanceIDRequired})
+		return
+	}
+
+	inst, err := h.instanceRepo.FindByID(id)
+	if err != nil {
+		status, message := mapError(err, entityStackInstance)
+		c.JSON(status, gin.H{"error": message})
+		return
+	}
+
+	// Try cached status from watcher first.
+	if h.k8sWatcher != nil {
+		if nsStatus, ok := h.k8sWatcher.GetStatus(id); ok {
+			c.JSON(http.StatusOK, nsStatus)
+			return
+		}
+	}
+
+	// Fall back to direct query if we have a cluster registry.
+	if h.registry != nil {
+		client, clientErr := h.registry.GetK8sClient(inst.ClusterID)
+		if clientErr != nil {
+			slog.Warn("Failed to get k8s client for instance pods",
+				logKeyInstanceID, id,
+				"cluster_id", inst.ClusterID,
+				"error", clientErr,
+			)
+			var dbErr *dberrors.DatabaseError
+			if errors.As(clientErr, &dbErr) && errors.Is(dbErr.Unwrap(), dberrors.ErrNotFound) {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "Unknown cluster_id"})
+			} else {
+				c.JSON(http.StatusBadGateway, gin.H{"error": "Failed to connect to cluster"})
+			}
+			return
+		}
+		nsStatus, err := client.GetNamespaceStatus(c.Request.Context(), inst.Namespace)
+		if err != nil {
+			slog.Error("Failed to get namespace status for pods",
+				logKeyInstanceID, id,
+				"namespace", inst.Namespace,
+				"error", err,
+			)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
+			return
+		}
+		c.JSON(http.StatusOK, nsStatus)
+		return
+	}
+
+	c.JSON(http.StatusServiceUnavailable, gin.H{"error": "K8s monitoring not configured"})
+}
+
 // checkNamespaceUniqueness checks whether the given namespace is already in use.
 // If it is, it returns true and writes a 409 response with suggestions.
 // The caller should return immediately when this returns true.

@@ -949,3 +949,279 @@ func TestSortNodeStatuses(t *testing.T) {
 	assert.Equal(t, "bravo", nodes[1].Name)
 	assert.Equal(t, "charlie", nodes[2].Name)
 }
+
+func TestGetNamespaceStatus_ContainerStates(t *testing.T) {
+	t.Parallel()
+
+	ns := "container-states-ns"
+	exitCode := int32(137)
+
+	cs := fake.NewSimpleClientset(
+		&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: ns}},
+		&corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "multi-container-pod",
+				Namespace: ns,
+				Labels:    map[string]string{"app.kubernetes.io/instance": "multi-release"},
+			},
+			Spec: corev1.PodSpec{
+				NodeName: "node-1",
+				Containers: []corev1.Container{
+					{Name: "app", Image: "myimage:v1"},
+					{Name: "sidecar", Image: "sidecar:v1"},
+					{Name: "init-done", Image: "init:v1"},
+				},
+			},
+			Status: corev1.PodStatus{
+				Phase: corev1.PodRunning,
+				StartTime: &metav1.Time{Time: metav1.Now().Add(-10 * 60 * 1000000000)},
+				Conditions: []corev1.PodCondition{
+					{Type: corev1.PodReady, Status: corev1.ConditionFalse, Reason: "ContainersNotReady", Message: "sidecar not ready"},
+					{Type: corev1.PodInitialized, Status: corev1.ConditionTrue},
+				},
+				ContainerStatuses: []corev1.ContainerStatus{
+					{
+						Name:         "app",
+						Ready:        true,
+						RestartCount: 0,
+						Image:        "myimage:v1",
+						State: corev1.ContainerState{
+							Running: &corev1.ContainerStateRunning{},
+						},
+					},
+					{
+						Name:         "sidecar",
+						Ready:        false,
+						RestartCount: 3,
+						Image:        "sidecar:v1",
+						State: corev1.ContainerState{
+							Waiting: &corev1.ContainerStateWaiting{
+								Reason:  "CrashLoopBackOff",
+								Message: "back-off 5m0s restarting",
+							},
+						},
+					},
+					{
+						Name:         "init-done",
+						Ready:        true,
+						RestartCount: 1,
+						Image:        "init:v1",
+						State: corev1.ContainerState{
+							Terminated: &corev1.ContainerStateTerminated{
+								Reason:   "OOMKilled",
+								Message:  "out of memory",
+								ExitCode: exitCode,
+							},
+						},
+					},
+				},
+			},
+		},
+	)
+
+	client := NewClientFromInterface(cs)
+	status, err := client.GetNamespaceStatus(context.Background(), ns)
+
+	assert.NoError(t, err)
+	require.NotNil(t, status)
+	require.Len(t, status.Charts, 1)
+	require.Len(t, status.Charts[0].Pods, 1)
+
+	pod := status.Charts[0].Pods[0]
+	assert.Equal(t, "multi-container-pod", pod.Name)
+	assert.Equal(t, "Running", pod.Phase)
+	assert.False(t, pod.Ready)
+	assert.Equal(t, int32(4), pod.RestartCount) // 0 + 3 + 1
+	assert.Equal(t, "node-1", pod.NodeName)
+	assert.NotNil(t, pod.StartTime)
+
+	// Container states
+	require.Len(t, pod.ContainerStates, 3)
+
+	// Running container
+	assert.Equal(t, "app", pod.ContainerStates[0].Name)
+	assert.Equal(t, "running", pod.ContainerStates[0].State)
+	assert.True(t, pod.ContainerStates[0].Ready)
+	assert.Equal(t, int32(0), pod.ContainerStates[0].RestartCount)
+	assert.Nil(t, pod.ContainerStates[0].ExitCode)
+
+	// Waiting container
+	assert.Equal(t, "sidecar", pod.ContainerStates[1].Name)
+	assert.Equal(t, "waiting", pod.ContainerStates[1].State)
+	assert.Equal(t, "CrashLoopBackOff", pod.ContainerStates[1].Reason)
+	assert.Equal(t, "back-off 5m0s restarting", pod.ContainerStates[1].Message)
+	assert.False(t, pod.ContainerStates[1].Ready)
+	assert.Equal(t, int32(3), pod.ContainerStates[1].RestartCount)
+	assert.Nil(t, pod.ContainerStates[1].ExitCode)
+
+	// Terminated container
+	assert.Equal(t, "init-done", pod.ContainerStates[2].Name)
+	assert.Equal(t, "terminated", pod.ContainerStates[2].State)
+	assert.Equal(t, "OOMKilled", pod.ContainerStates[2].Reason)
+	assert.Equal(t, "out of memory", pod.ContainerStates[2].Message)
+	require.NotNil(t, pod.ContainerStates[2].ExitCode)
+	assert.Equal(t, int32(137), *pod.ContainerStates[2].ExitCode)
+
+	// Pod conditions
+	require.Len(t, pod.Conditions, 2)
+	assert.Equal(t, "Ready", pod.Conditions[0].Type)
+	assert.Equal(t, "False", pod.Conditions[0].Status)
+	assert.Equal(t, "ContainersNotReady", pod.Conditions[0].Reason)
+	assert.Equal(t, "sidecar not ready", pod.Conditions[0].Message)
+	assert.Equal(t, "Initialized", pod.Conditions[1].Type)
+	assert.Equal(t, "True", pod.Conditions[1].Status)
+}
+
+func TestGetNamespaceStatus_EmptyContainerStates(t *testing.T) {
+	t.Parallel()
+
+	ns := "empty-cs-ns"
+
+	cs := fake.NewSimpleClientset(
+		&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: ns}},
+		&corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "pending-pod",
+				Namespace: ns,
+				Labels:    map[string]string{"app.kubernetes.io/instance": "pending-release"},
+			},
+			Spec: corev1.PodSpec{
+				Containers: []corev1.Container{{Name: "app", Image: "myimage:v1"}},
+			},
+			Status: corev1.PodStatus{
+				Phase:             corev1.PodPending,
+				ContainerStatuses: nil,
+			},
+		},
+	)
+
+	client := NewClientFromInterface(cs)
+	status, err := client.GetNamespaceStatus(context.Background(), ns)
+
+	assert.NoError(t, err)
+	require.NotNil(t, status)
+	require.Len(t, status.Charts, 1)
+	require.Len(t, status.Charts[0].Pods, 1)
+
+	pod := status.Charts[0].Pods[0]
+	assert.Equal(t, "Pending", pod.Phase)
+	// Should be empty slice, not nil (for consistent JSON serialization).
+	assert.NotNil(t, pod.ContainerStates)
+	assert.Empty(t, pod.ContainerStates)
+	assert.Nil(t, pod.Conditions)
+	assert.Nil(t, pod.StartTime)
+}
+
+func TestGetNamespaceStatus_WithEvents(t *testing.T) {
+	t.Parallel()
+
+	ns := "events-ns"
+
+	cs := fake.NewSimpleClientset(
+		&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: ns}},
+		&corev1.Event{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "warning-event",
+				Namespace: ns,
+			},
+			InvolvedObject: corev1.ObjectReference{
+				Kind: "Pod",
+				Name: "my-pod-xyz",
+			},
+			Type:           "Warning",
+			Reason:         "BackOff",
+			Message:        "Back-off restarting failed container",
+			Count:          5,
+			FirstTimestamp: metav1.Now(),
+			LastTimestamp:  metav1.Now(),
+		},
+		&corev1.Event{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "normal-event",
+				Namespace: ns,
+			},
+			InvolvedObject: corev1.ObjectReference{
+				Kind: "Pod",
+				Name: "my-pod-xyz",
+			},
+			Type:           "Normal",
+			Reason:         "Pulled",
+			Message:        "Successfully pulled image",
+			Count:          1,
+			FirstTimestamp: metav1.Now(),
+			LastTimestamp:  metav1.Now(),
+		},
+	)
+
+	client := NewClientFromInterface(cs)
+	status, err := client.GetNamespaceStatus(context.Background(), ns)
+
+	assert.NoError(t, err)
+	require.NotNil(t, status)
+
+	// Both events should be included (Warning always, Normal within the last hour).
+	require.Len(t, status.Events, 2)
+
+	// Find the warning event.
+	var warningEvent *PodEvent
+	for i := range status.Events {
+		if status.Events[i].Type == "Warning" {
+			warningEvent = &status.Events[i]
+			break
+		}
+	}
+	require.NotNil(t, warningEvent)
+	assert.Equal(t, "BackOff", warningEvent.Reason)
+	assert.Equal(t, "Back-off restarting failed container", warningEvent.Message)
+	assert.Equal(t, "Pod/my-pod-xyz", warningEvent.Object)
+	assert.Equal(t, int32(5), warningEvent.Count)
+}
+
+func TestGetNamespaceStatus_PodStartTimeAndNodeName(t *testing.T) {
+	t.Parallel()
+
+	ns := "starttime-ns"
+	startTime := metav1.Now()
+
+	cs := fake.NewSimpleClientset(
+		&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: ns}},
+		&corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "timed-pod",
+				Namespace: ns,
+				Labels:    map[string]string{"app.kubernetes.io/instance": "timed-release"},
+			},
+			Spec: corev1.PodSpec{
+				NodeName:   "worker-node-1",
+				Containers: []corev1.Container{{Name: "app", Image: "myimage:v2"}},
+			},
+			Status: corev1.PodStatus{
+				Phase:     corev1.PodRunning,
+				StartTime: &startTime,
+				ContainerStatuses: []corev1.ContainerStatus{
+					{
+						Name:  "app",
+						Ready: true,
+						Image: "myimage:v2",
+						State: corev1.ContainerState{
+							Running: &corev1.ContainerStateRunning{},
+						},
+					},
+				},
+			},
+		},
+	)
+
+	client := NewClientFromInterface(cs)
+	status, err := client.GetNamespaceStatus(context.Background(), ns)
+
+	assert.NoError(t, err)
+	require.NotNil(t, status)
+	require.Len(t, status.Charts, 1)
+	require.Len(t, status.Charts[0].Pods, 1)
+
+	pod := status.Charts[0].Pods[0]
+	assert.Equal(t, "worker-node-1", pod.NodeName)
+	require.NotNil(t, pod.StartTime)
+	assert.Equal(t, startTime.Time, *pod.StartTime)
+}

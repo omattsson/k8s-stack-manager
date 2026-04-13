@@ -329,6 +329,7 @@ func SetupRoutes(router *gin.Engine, deps Deps) *RateLimiters {
 				instances.POST("/:id/extend", deps.InstanceHandler.ExtendTTL)
 				instances.GET("/:id/deploy-log", deps.InstanceHandler.GetDeployLog)
 				instances.GET("/:id/status", deps.InstanceHandler.GetInstanceStatus)
+				instances.GET("/:id/pods", deps.InstanceHandler.GetInstancePods)
 
 				// Bulk operations (DevOps/Admin only)
 				bulk := instances.Group("/bulk")

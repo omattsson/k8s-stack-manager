@@ -29,6 +29,7 @@ vi.mock('../../../api/client', () => ({
     bulkClean: vi.fn(),
     bulkDelete: vi.fn(),
     getStatus: vi.fn().mockRejectedValue(new Error('no status')),
+    getPods: vi.fn().mockRejectedValue(new Error('no pods')),
   },
   clusterService: {
     list: vi.fn().mockResolvedValue([]),
@@ -837,6 +838,7 @@ describe('Dashboard', () => {
       ]);
       (instanceService.getStatus as ReturnType<typeof vi.fn>).mockResolvedValue({
         namespace: 'stack-app',
+        status: 'healthy',
         ingresses: [{ url: 'https://app.example.com' }],
         charts: [],
         pods: [],
@@ -853,6 +855,31 @@ describe('Dashboard', () => {
       });
       await waitFor(() => {
         expect(screen.getByText('https://app.example.com')).toBeInTheDocument();
+      });
+    });
+
+    it('shows pod health dot when status is fetched for running instance', async () => {
+      (instanceService.list as ReturnType<typeof vi.fn>).mockResolvedValue([
+        mockInstance({ id: 'inst-h', name: 'Healthy App', status: 'running', namespace: 'stack-h' }),
+      ]);
+      (instanceService.getStatus as ReturnType<typeof vi.fn>).mockResolvedValue({
+        namespace: 'stack-h',
+        status: 'healthy',
+        charts: [],
+        last_checked: '2026-01-01T00:00:00Z',
+      });
+      render(
+        <MemoryRouter>
+          <NotificationProvider>
+            <Dashboard />
+          </NotificationProvider>
+        </MemoryRouter>
+      );
+      await waitFor(() => {
+        expect(screen.getByText('Healthy App')).toBeInTheDocument();
+      });
+      await waitFor(() => {
+        expect(screen.getByRole('status', { name: /pod health: healthy/i })).toBeInTheDocument();
       });
     });
 

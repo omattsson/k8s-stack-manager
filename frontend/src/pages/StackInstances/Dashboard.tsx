@@ -73,17 +73,49 @@ const getPrimaryUrl = (status: NamespaceStatus): string | null => {
   return null;
 };
 
+type K8sHealthStatus = 'healthy' | 'degraded' | 'error' | 'not_found';
+
+const PodHealthDot = ({ status }: { status?: K8sHealthStatus }) => {
+  if (!status) return null;
+  const colorMap: Record<string, string> = {
+    healthy: 'success.main',
+    progressing: 'info.main',
+    degraded: 'warning.main',
+    error: 'error.main',
+    not_found: 'grey.400',
+  };
+  return (
+    <Tooltip title={`Cluster: ${status}`} arrow>
+      <Box
+        component="span"
+        role="status"
+        aria-label={`Pod health: ${status}`}
+        sx={{
+          width: 8,
+          height: 8,
+          borderRadius: '50%',
+          bgcolor: colorMap[status] || 'grey.400',
+          display: 'inline-block',
+          ml: 1,
+          flexShrink: 0,
+        }}
+      />
+    </Tooltip>
+  );
+};
+
 interface InstanceCardProps {
   instance: StackInstance;
   isSelected: boolean;
   isFavorite: boolean;
   clusterName?: string;
   url?: string;
+  k8sHealth?: K8sHealthStatus;
   onToggleSelect: (id: string) => void;
   onNavigate: (path: string) => void;
 }
 
-const InstanceCard = ({ instance, isSelected, isFavorite, clusterName, url, onToggleSelect, onNavigate }: InstanceCardProps) => (
+const InstanceCard = ({ instance, isSelected, isFavorite, clusterName, url, k8sHealth, onToggleSelect, onNavigate }: InstanceCardProps) => (
   <Card
     sx={{
       height: '100%',
@@ -109,7 +141,10 @@ const InstanceCard = ({ instance, isSelected, isFavorite, clusterName, url, onTo
             {instance.name}
           </Typography>
         </Box>
-        <StatusBadge status={instance.status} />
+        <Box sx={{ display: 'flex', alignItems: 'center' }}>
+          <StatusBadge status={instance.status} />
+          <PodHealthDot status={k8sHealth} />
+        </Box>
       </Box>
       <Typography variant="body2" color="text.secondary">Branch: {instance.branch}</Typography>
       <Typography variant="body2" color="text.secondary">Namespace: {instance.namespace}</Typography>
@@ -159,6 +194,7 @@ const Dashboard = () => {
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('All');
   const [instanceUrls, setInstanceUrls] = useState<Record<string, string>>({});
+  const [instanceHealth, setInstanceHealth] = useState<Record<string, K8sHealthStatus>>({});
   const navigate = useNavigate();
   const { showSuccess, showError } = useNotification();
 
@@ -231,14 +267,16 @@ const Dashboard = () => {
       newRunning.map(async (inst) => {
         const st: NamespaceStatus = await instanceService.getStatus(inst.id);
         const url = getPrimaryUrl(st);
-        return { id: inst.id, url };
+        return { id: inst.id, url, health: st.status };
       }),
     ).then((settled) => {
       if (cancelled) return;
       const newUrls: Record<string, string> = {};
+      const newHealth: Record<string, K8sHealthStatus> = {};
       settled.forEach((r, idx) => {
         if (r.status === 'fulfilled') {
           inFlightIdsRef.current.delete(r.value.id);
+          newHealth[r.value.id] = r.value.health;
           if (r.value.url) {
             fetchedStatusIdsRef.current.add(r.value.id);
             newUrls[r.value.id] = r.value.url;
@@ -251,6 +289,9 @@ const Dashboard = () => {
       if (Object.keys(newUrls).length > 0) {
         setInstanceUrls((prev) => ({ ...prev, ...newUrls }));
       }
+      if (Object.keys(newHealth).length > 0) {
+        setInstanceHealth((prev) => ({ ...prev, ...newHealth }));
+      }
     });
 
     return () => { cancelled = true; };
@@ -259,13 +300,22 @@ const Dashboard = () => {
   // Live-update instance statuses via WebSocket.
   const handleWsMessage = useCallback((msg: WsMessage) => {
     if (msg.type === 'deployment.status') {
-      const payload = msg.payload as { instance_id?: string; status?: string };
+      const payload = msg.payload as { instance_id?: string; status?: string; k8s_status?: K8sHealthStatus };
       if (!payload.instance_id || !payload.status) return;
       setInstances((prev) =>
         prev.map((inst) =>
           inst.id === payload.instance_id ? { ...inst, status: payload.status as string } : inst
         )
       );
+      if (payload.k8s_status) {
+        setInstanceHealth((prev) => ({ ...prev, [payload.instance_id!]: payload.k8s_status! }));
+      }
+    }
+    if (msg.type === 'instance.status') {
+      const payload = msg.payload as { instance_id?: string; k8s_status?: K8sHealthStatus };
+      if (payload.instance_id && payload.k8s_status) {
+        setInstanceHealth((prev) => ({ ...prev, [payload.instance_id!]: payload.k8s_status! }));
+      }
     }
   }, []);
 
@@ -680,6 +730,7 @@ const Dashboard = () => {
                   isFavorite={favoriteInstanceIds.has(instance.id)}
                   clusterName={instance.cluster_id ? clusterNameMap.get(instance.cluster_id) : undefined}
                   url={instanceUrls[instance.id]}
+                  k8sHealth={instanceHealth[instance.id]}
                   onToggleSelect={toggleSelect}
                   onNavigate={navigate}
                 />
