@@ -1,7 +1,7 @@
-import CheckCircleOutline from '@mui/icons-material/CheckCircleOutline';
-import ErrorOutline from '@mui/icons-material/ErrorOutline';
+import CheckCircleOutlined from '@mui/icons-material/CheckCircleOutlined';
+import ErrorOutlined from '@mui/icons-material/ErrorOutlined';
 import StopCircleOutlined from '@mui/icons-material/StopCircleOutlined';
-import DeleteOutline from '@mui/icons-material/DeleteOutline';
+import DeleteOutlined from '@mui/icons-material/DeleteOutlined';
 import InfoOutlined from '@mui/icons-material/InfoOutlined';
 
 /**
@@ -27,10 +27,10 @@ export function timeAgo(dateStr: string): string {
  * Returns an MUI icon element appropriate for the notification type.
  */
 export function notificationIcon(type: string) {
-  if (type.includes('success')) return <CheckCircleOutline color="success" fontSize="small" />;
-  if (type.includes('error')) return <ErrorOutline color="error" fontSize="small" />;
+  if (type.includes('success')) return <CheckCircleOutlined color="success" fontSize="small" />;
+  if (type.includes('error')) return <ErrorOutlined color="error" fontSize="small" />;
   if (type.includes('stopped')) return <StopCircleOutlined color="warning" fontSize="small" />;
-  if (type.includes('deleted')) return <DeleteOutline color="action" fontSize="small" />;
+  if (type.includes('deleted')) return <DeleteOutlined color="action" fontSize="small" />;
   return <InfoOutlined color="info" fontSize="small" />;
 }
 

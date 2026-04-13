@@ -14,7 +14,7 @@ import {
   Chip,
 } from '@mui/material';
 import CompareArrowsIcon from '@mui/icons-material/CompareArrows';
-import CheckCircleOutlineIcon from '@mui/icons-material/CheckCircleOutline';
+import CheckCircleOutlinedIcon from '@mui/icons-material/CheckCircleOutlined';
 import LoadingState from '../../components/LoadingState';
 import { instanceService } from '../../api/client';
 import { useNotification } from '../../context/NotificationContext';
@@ -240,7 +240,7 @@ const Compare = () => {
                     aria-controls={`chart-tabpanel-${index}`}
                     icon={
                       chart.has_differences ? undefined : (
-                        <CheckCircleOutlineIcon color="success" fontSize="small" />
+                        <CheckCircleOutlinedIcon color="success" fontSize="small" />
                       )
                     }
                     iconPosition="end"
@@ -259,7 +259,7 @@ const Compare = () => {
                   {activeTab === index && (
                     <Box>
                       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
-                        <Typography variant="subtitle1" fontWeight={600}>
+                        <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>
                           {chart.chart_name}
                         </Typography>
                         {!chart.has_differences && (

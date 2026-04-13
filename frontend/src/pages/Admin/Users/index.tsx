@@ -284,7 +284,7 @@ const AdminUsers = () => {
                         </IconButton>
                       </TableCell>
                       <TableCell>
-                        <Typography variant="body2" fontWeight="medium">
+                        <Typography variant="body2" sx={{ fontWeight: 'medium' }}>
                           {u.username}
                         </Typography>
                       </TableCell>
@@ -333,7 +333,7 @@ const AdminUsers = () => {
                             </Box>
 
                             {apiKeysLoadingMap[u.id] && (
-                              <Box display="flex" justifyContent="center" py={2}>
+                              <Box sx={{ display: 'flex', justifyContent: 'center', py: 2 }}>
                                 <CircularProgress size={24} />
                               </Box>
                             )}
