@@ -1,4 +1,4 @@
-FROM golang:1.26.1 AS builder
+FROM golang:1.26.2 AS builder
 
 WORKDIR /app
 
@@ -10,7 +10,7 @@ RUN curl -fsSL https://get.helm.sh/helm-v${HELM_VERSION}-linux-${TARGETARCH}.tar
     | tar xz -C /usr/local/bin --strip-components=1 linux-${TARGETARCH}/helm
 
 # For development mode
-FROM golang:1.26.1 AS development
+FROM golang:1.26.2 AS development
 WORKDIR /app
 COPY --from=builder /usr/local/bin/helm /usr/local/bin/helm
 RUN go install github.com/cosmtrek/air@v1.49.0
