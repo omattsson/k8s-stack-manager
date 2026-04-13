@@ -476,6 +476,13 @@ func (c *Client) GetNamespaceStatus(ctx context.Context, namespace string) (*Nam
 				LastSeen:  lastSeen,
 			})
 		}
+		// Sort by most recent first and cap at 50 to bound payload size.
+		sort.Slice(events, func(i, j int) bool {
+			return events[i].LastSeen.After(events[j].LastSeen)
+		})
+		if len(events) > 50 {
+			events = events[:50]
+		}
 	}
 
 	// Build chart statuses.

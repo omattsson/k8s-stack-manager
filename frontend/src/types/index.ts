@@ -195,7 +195,7 @@ export interface IngressInfo {
 
 export interface NamespaceStatus {
   namespace: string;
-  status: 'healthy' | 'degraded' | 'error' | 'not_found';
+  status: 'healthy' | 'degraded' | 'error' | 'not_found' | 'progressing';
   charts: ChartStatus[];
   ingresses?: IngressInfo[];
   events?: PodEvent[];

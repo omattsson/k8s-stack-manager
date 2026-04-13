@@ -1413,6 +1413,7 @@ func (h *InstanceHandler) GetInstanceStatus(c *gin.Context) {
 // @Success     200 {object} k8s.NamespaceStatus
 // @Failure     400 {object} map[string]string
 // @Failure     404 {object} map[string]string
+// @Failure     500 {object} map[string]string
 // @Failure     502 {object} map[string]string
 // @Failure     503 {object} map[string]string
 // @Router      /api/v1/stack-instances/{id}/pods [get]

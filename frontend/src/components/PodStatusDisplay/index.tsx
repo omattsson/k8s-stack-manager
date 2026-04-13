@@ -161,7 +161,9 @@ const PodStatusDisplay = ({ status, loading }: PodStatusDisplayProps) => {
     }
   };
 
-  const warningEvents = (status.events || []).filter((e) => e.type === 'Warning');
+  const warningEvents = (status.events || [])
+    .filter((e) => e.type === 'Warning')
+    .sort((a, b) => new Date(b.last_seen).getTime() - new Date(a.last_seen).getTime());
 
   return (
     <Box>

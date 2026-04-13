@@ -73,7 +73,7 @@ const getPrimaryUrl = (status: NamespaceStatus): string | null => {
   return null;
 };
 
-type K8sHealthStatus = 'healthy' | 'degraded' | 'error' | 'not_found';
+type K8sHealthStatus = 'healthy' | 'degraded' | 'error' | 'not_found' | 'progressing';
 
 const PodHealthDot = ({ status }: { status?: K8sHealthStatus }) => {
   if (!status) return null;
@@ -312,9 +312,14 @@ const Dashboard = () => {
       }
     }
     if (msg.type === 'instance.status') {
-      const payload = msg.payload as { instance_id?: string; k8s_status?: K8sHealthStatus };
-      if (payload.instance_id && payload.k8s_status) {
-        setInstanceHealth((prev) => ({ ...prev, [payload.instance_id!]: payload.k8s_status! }));
+      const payload = msg.payload as {
+        instance_id?: string;
+        status?: string;
+        namespace_status?: { status?: K8sHealthStatus };
+      };
+      const nextHealth = payload.namespace_status?.status;
+      if (payload.instance_id && nextHealth) {
+        setInstanceHealth((prev) => ({ ...prev, [payload.instance_id!]: nextHealth }));
       }
     }
   }, []);

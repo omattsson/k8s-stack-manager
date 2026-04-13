@@ -4377,6 +4377,12 @@ paths:
             additionalProperties:
               type: string
             type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
         "502":
           description: Bad Gateway
           schema:
