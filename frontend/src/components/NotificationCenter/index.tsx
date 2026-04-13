@@ -180,8 +180,8 @@ const NotificationCenter = () => {
                 slotProps={{
                   primary: {
                     variant: 'body2',
-                    fontWeight: notification.is_read ? 400 : 600,
                     noWrap: true,
+                    sx: { fontWeight: notification.is_read ? 400 : 600 },
                   },
                 }}
               />

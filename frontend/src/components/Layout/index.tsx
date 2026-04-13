@@ -250,7 +250,7 @@ const Layout = ({ children }: LayoutProps) => {
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
         <AccountCircleOutlined sx={{ color: 'text.secondary' }} />
         <Box sx={{ overflow: 'hidden' }}>
-          <Typography variant="body2" fontWeight={600} noWrap>
+          <Typography variant="body2" sx={{ fontWeight: 600 }} noWrap>
             {user?.username}
           </Typography>
           <Chip
@@ -270,7 +270,7 @@ const Layout = ({ children }: LayoutProps) => {
         >
           <ListItemText
             primary="Profile"
-            slotProps={{ primary: { variant: 'body2', textAlign: 'center' } }}
+            slotProps={{ primary: { variant: 'body2', sx: { textAlign: 'center' } } }}
           />
         </ListItemButton>
         <ListItemButton
@@ -279,7 +279,7 @@ const Layout = ({ children }: LayoutProps) => {
         >
           <ListItemText
             primary="Logout"
-            slotProps={{ primary: { variant: 'body2', textAlign: 'center' } }}
+            slotProps={{ primary: { variant: 'body2', sx: { textAlign: 'center' } } }}
           />
         </ListItemButton>
       </Box>

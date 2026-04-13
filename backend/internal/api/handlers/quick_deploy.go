@@ -192,6 +192,7 @@ func (h *QuickDeployHandler) QuickDeploy(c *gin.Context) {
 			ChartName:         tc.ChartName,
 			RepositoryURL:     tc.RepositoryURL,
 			SourceRepoURL:     tc.SourceRepoURL,
+			BuildPipelineID:   tc.BuildPipelineID,
 			ChartPath:         tc.ChartPath,
 			ChartVersion:      tc.ChartVersion,
 			DefaultValues:     tc.DefaultValues,
@@ -399,6 +400,7 @@ func (h *QuickDeployHandler) triggerDeploy(
 
 	templateVars := helm.TemplateVars{
 		Branch:       inst.Branch,
+		ImageTag:     helm.SanitizeImageTag(inst.Branch),
 		Namespace:    inst.Namespace,
 		InstanceName: inst.Name,
 		StackName:    def.Name,

@@ -44,13 +44,14 @@ type DefinitionExportData struct {
 
 // ChartConfigExportData holds the exportable fields of a chart configuration.
 type ChartConfigExportData struct {
-	ChartName     string `json:"chart_name"`
-	RepositoryURL string `json:"repository_url"`
-	SourceRepoURL string `json:"source_repo_url"`
-	ChartPath     string `json:"chart_path"`
-	ChartVersion  string `json:"chart_version"`
-	DefaultValues string `json:"default_values"`
-	DeployOrder   int    `json:"deploy_order"`
+	ChartName       string `json:"chart_name"`
+	RepositoryURL   string `json:"repository_url"`
+	SourceRepoURL   string `json:"source_repo_url"`
+	BuildPipelineID string `json:"build_pipeline_id,omitempty"`
+	ChartPath       string `json:"chart_path"`
+	ChartVersion    string `json:"chart_version"`
+	DefaultValues   string `json:"default_values"`
+	DeployOrder     int    `json:"deploy_order"`
 }
 
 // DefinitionHandler handles stack definition and chart config endpoints.
@@ -367,13 +368,14 @@ func (h *DefinitionHandler) ExportDefinition(c *gin.Context) {
 	exportCharts := make([]ChartConfigExportData, 0, len(charts))
 	for _, ch := range charts {
 		exportCharts = append(exportCharts, ChartConfigExportData{
-			ChartName:     ch.ChartName,
-			RepositoryURL: ch.RepositoryURL,
-			SourceRepoURL: ch.SourceRepoURL,
-			ChartPath:     ch.ChartPath,
-			ChartVersion:  ch.ChartVersion,
-			DefaultValues: ch.DefaultValues,
-			DeployOrder:   ch.DeployOrder,
+			ChartName:       ch.ChartName,
+			RepositoryURL:   ch.RepositoryURL,
+			SourceRepoURL:   ch.SourceRepoURL,
+			BuildPipelineID: ch.BuildPipelineID,
+			ChartPath:       ch.ChartPath,
+			ChartVersion:    ch.ChartVersion,
+			DefaultValues:   ch.DefaultValues,
+			DeployOrder:     ch.DeployOrder,
 		})
 	}
 
@@ -464,6 +466,7 @@ func (h *DefinitionHandler) ImportDefinition(c *gin.Context) {
 			ChartName:         ch.ChartName,
 			RepositoryURL:     ch.RepositoryURL,
 			SourceRepoURL:     ch.SourceRepoURL,
+			BuildPipelineID:   ch.BuildPipelineID,
 			ChartPath:         ch.ChartPath,
 			ChartVersion:      ch.ChartVersion,
 			DefaultValues:     ch.DefaultValues,

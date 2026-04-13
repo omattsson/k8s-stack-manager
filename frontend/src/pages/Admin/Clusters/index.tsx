@@ -262,7 +262,7 @@ const Clusters = () => {
               clusters.map((cluster) => (
                 <TableRow key={cluster.id}>
                   <TableCell>
-                    <Typography fontWeight="medium">{cluster.name}</Typography>
+                    <Typography sx={{ fontWeight: 'medium' }}>{cluster.name}</Typography>
                     {cluster.description && (
                       <Typography variant="body2" color="text.secondary">{cluster.description}</Typography>
                     )}

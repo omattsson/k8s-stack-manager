@@ -56,7 +56,7 @@ const NamespaceUsageRow = ({ ns }: { ns: NamespaceResourceUsage }) => {
   return (
     <TableRow>
       <TableCell>
-        <Typography variant="body2" fontWeight="medium">{ns.namespace}</Typography>
+        <Typography variant="body2" sx={{ fontWeight: 'medium' }}>{ns.namespace}</Typography>
       </TableCell>
       <TableCell>
         {hasCpuQuota

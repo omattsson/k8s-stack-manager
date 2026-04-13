@@ -810,6 +810,7 @@ func (h *InstanceHandler) ExportChartValues(c *gin.Context) {
 		ChartBranch:    chartBranch,
 		TemplateVars: helm.TemplateVars{
 			Branch:       inst.Branch,
+			ImageTag:     helm.SanitizeImageTag(inst.Branch),
 			Namespace:    inst.Namespace,
 			InstanceName: inst.Name,
 			StackName:    def.Name,
@@ -896,6 +897,7 @@ func (h *InstanceHandler) ExportAllValues(c *gin.Context) {
 		Charts: chartValues,
 		TemplateVars: helm.TemplateVars{
 			Branch:       inst.Branch,
+			ImageTag:     helm.SanitizeImageTag(inst.Branch),
 			Namespace:    inst.Namespace,
 			InstanceName: inst.Name,
 			StackName:    def.Name,

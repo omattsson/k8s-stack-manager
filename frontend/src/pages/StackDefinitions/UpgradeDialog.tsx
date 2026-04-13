@@ -15,10 +15,10 @@ import {
   ListItemIcon,
   ListItemText,
 } from '@mui/material';
-import AddCircleOutlineIcon from '@mui/icons-material/AddCircleOutline';
-import RemoveCircleOutlineIcon from '@mui/icons-material/RemoveCircleOutline';
+import AddCircleOutlinedIcon from '@mui/icons-material/AddCircleOutlined';
+import RemoveCircleOutlinedIcon from '@mui/icons-material/RemoveCircleOutlined';
 import EditIcon from '@mui/icons-material/Edit';
-import CheckCircleOutlineIcon from '@mui/icons-material/CheckCircleOutline';
+import CheckCircleOutlinedIcon from '@mui/icons-material/CheckCircleOutlined';
 import ArrowForwardIcon from '@mui/icons-material/ArrowForward';
 import { definitionService } from '../../api/client';
 import { useNotification } from '../../context/NotificationContext';
@@ -112,7 +112,7 @@ const UpgradeDialog = ({ definitionId, open, onClose, onUpgraded }: UpgradeDialo
                   {changes.charts_added.map((name) => (
                     <ListItem key={`added-${name}`}>
                       <ListItemIcon sx={{ minWidth: 36 }}>
-                        <AddCircleOutlineIcon color="success" fontSize="small" />
+                        <AddCircleOutlinedIcon color="success" fontSize="small" />
                       </ListItemIcon>
                       <ListItemText
                         primary={name}
@@ -125,7 +125,7 @@ const UpgradeDialog = ({ definitionId, open, onClose, onUpgraded }: UpgradeDialo
                   {changes.charts_removed.map((name) => (
                     <ListItem key={`removed-${name}`}>
                       <ListItemIcon sx={{ minWidth: 36 }}>
-                        <RemoveCircleOutlineIcon color="warning" fontSize="small" />
+                        <RemoveCircleOutlinedIcon color="warning" fontSize="small" />
                       </ListItemIcon>
                       <ListItemText
                         primary={name}
@@ -151,7 +151,7 @@ const UpgradeDialog = ({ definitionId, open, onClose, onUpgraded }: UpgradeDialo
                   {changes.charts_unchanged.map((name) => (
                     <ListItem key={`unchanged-${name}`}>
                       <ListItemIcon sx={{ minWidth: 36 }}>
-                        <CheckCircleOutlineIcon color="disabled" fontSize="small" />
+                        <CheckCircleOutlinedIcon color="disabled" fontSize="small" />
                       </ListItemIcon>
                       <ListItemText
                         primary={name}

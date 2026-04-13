@@ -14,10 +14,44 @@ import (
 // TemplateVars holds the variables available for substitution in YAML string values.
 type TemplateVars struct {
 	Branch       string
+	ImageTag     string // Docker-safe tag derived from Branch (slashes→dashes, truncated, lowercase)
 	Namespace    string
 	InstanceName string
 	StackName    string
 	Owner        string
+}
+
+// SanitizeImageTag converts a git branch name to a valid Docker image tag.
+// Docker tags: [a-zA-Z0-9_.-], max 128 chars, cannot start with '.' or '-'.
+func SanitizeImageTag(branch string) string {
+	tag := strings.ToLower(branch)
+	tag = strings.NewReplacer(
+		"/", "-",
+		" ", "-",
+		"_", "-",
+	).Replace(tag)
+
+	// Remove any characters not valid in Docker tags
+	var cleaned strings.Builder
+	for _, r := range tag {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-' || r == '.' {
+			cleaned.WriteRune(r)
+		}
+	}
+	tag = cleaned.String()
+
+	// Strip leading dots/dashes
+	tag = strings.TrimLeft(tag, "-.")
+
+	// Truncate to 128 chars (Docker tag limit)
+	if len(tag) > 128 {
+		tag = tag[:128]
+	}
+
+	if tag == "" {
+		tag = "latest"
+	}
+	return tag
 }
 
 // GenerateParams holds parameters for single-chart values generation.

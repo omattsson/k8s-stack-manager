@@ -6,11 +6,7 @@ interface LoadingStateProps {
 
 const LoadingState = ({ label }: LoadingStateProps) => (
   <Box
-    display="flex"
-    flexDirection="column"
-    alignItems="center"
-    justifyContent="center"
-    minHeight="200px"
+    sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: '200px' }}
     aria-live="polite"
     role="status"
   >

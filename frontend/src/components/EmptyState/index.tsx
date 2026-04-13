@@ -10,12 +10,7 @@ interface EmptyStateProps {
 
 const EmptyState = ({ icon, title, description, action }: EmptyStateProps) => (
   <Box
-    display="flex"
-    flexDirection="column"
-    alignItems="center"
-    justifyContent="center"
-    minHeight="200px"
-    sx={{ py: 4 }}
+    sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: '200px', py: 4 }}
   >
     {icon && (
       <Box sx={{ mb: 2, color: 'text.secondary', '& .MuiSvgIcon-root': { fontSize: 48 } }}>
