@@ -302,16 +302,13 @@ const Dashboard = () => {
   // Live-update instance statuses via WebSocket.
   const handleWsMessage = useCallback((msg: WsMessage) => {
     if (msg.type === 'deployment.status') {
-      const payload = msg.payload as { instance_id?: string; status?: string; k8s_status?: K8sHealthStatus };
+      const payload = msg.payload as { instance_id?: string; status?: string };
       if (!payload.instance_id || !payload.status) return;
       setInstances((prev) =>
         prev.map((inst) =>
           inst.id === payload.instance_id ? { ...inst, status: payload.status as string } : inst
         )
       );
-      if (payload.k8s_status) {
-        setInstanceHealth((prev) => ({ ...prev, [payload.instance_id!]: payload.k8s_status! }));
-      }
     }
     if (msg.type === 'instance.status') {
       const payload = msg.payload as {

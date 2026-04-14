@@ -4401,6 +4401,8 @@ paths:
             additionalProperties:
               type: string
             type: object
+      security:
+      - BearerAuth: []
       summary: Get instance pod status
       tags:
       - stack-instances

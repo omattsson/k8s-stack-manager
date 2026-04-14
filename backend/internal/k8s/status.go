@@ -453,8 +453,10 @@ func (c *Client) GetNamespaceStatus(ctx context.Context, namespace string, opts 
 	var events []PodEvent
 	if opts.IncludeEvents {
 		var eventsTimeoutSeconds int64 = 5
+		var eventListLimit int64 = 200
 		eventList, evErr := c.clientset.CoreV1().Events(namespace).List(ctx, metav1.ListOptions{
 			TimeoutSeconds: &eventsTimeoutSeconds,
+			Limit:          eventListLimit,
 		})
 		if evErr != nil {
 			slog.Warn("Failed to list events, skipping", "namespace", namespace, "error", evErr)

@@ -1409,6 +1409,7 @@ func (h *InstanceHandler) GetInstanceStatus(c *gin.Context) {
 // @Description Returns detailed pod health including container states, conditions, and recent events
 // @Tags        stack-instances
 // @Produce     json
+// @Security    BearerAuth
 // @Param       id path string true "Instance ID"
 // @Success     200 {object} k8s.NamespaceStatus
 // @Failure     400 {object} map[string]string

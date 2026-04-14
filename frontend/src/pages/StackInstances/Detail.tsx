@@ -111,7 +111,7 @@ const Detail = () => {
           setDeployLogs(logs);
         } catch { /* ignore — no logs yet */ }
 
-        // Fetch K8s status if instance is running or deploying
+        // Fetch pod health for active instances (includes container states + events).
         if (inst.status === 'running' || inst.status === 'deploying' || inst.status === 'error' || inst.status === 'stopping' || inst.status === 'cleaning') {
           try {
             setStatusLoading(true);

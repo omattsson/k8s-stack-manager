@@ -4966,6 +4966,11 @@ const docTemplate = `{
         },
         "/api/v1/stack-instances/{id}/pods": {
             "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
                 "description": "Returns detailed pod health including container states, conditions, and recent events",
                 "produces": [
                     "application/json"
