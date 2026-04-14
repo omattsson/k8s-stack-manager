@@ -116,10 +116,10 @@ type NamespaceStatus struct {
 type PodEvent struct {
 	FirstSeen time.Time `json:"first_seen"`
 	LastSeen  time.Time `json:"last_seen"`
-	Type      string    `json:"type"`       // "Normal", "Warning"
+	Type      string    `json:"type"` // "Normal", "Warning"
 	Reason    string    `json:"reason"`
 	Message   string    `json:"message"`
-	Object    string    `json:"object"`     // "Pod/my-pod-xyz"
+	Object    string    `json:"object"` // "Pod/my-pod-xyz"
 	Count     int32     `json:"count"`
 }
 
@@ -160,7 +160,7 @@ type PodInfo struct {
 type ContainerStateInfo struct {
 	ExitCode     *int32 `json:"exit_code,omitempty"`
 	Name         string `json:"name"`
-	State        string `json:"state"`              // "running", "waiting", "terminated", "unknown"
+	State        string `json:"state"` // "running", "waiting", "terminated", "unknown"
 	Reason       string `json:"reason,omitempty"`
 	Message      string `json:"message,omitempty"`
 	Image        string `json:"image"`
@@ -170,8 +170,8 @@ type ContainerStateInfo struct {
 
 // PodConditionInfo represents a single condition reported by the kubelet for a pod.
 type PodConditionInfo struct {
-	Type    string `json:"type"`     // "Ready", "ContainersReady", "Initialized", "PodScheduled"
-	Status  string `json:"status"`   // "True", "False", "Unknown"
+	Type    string `json:"type"`   // "Ready", "ContainersReady", "Initialized", "PodScheduled"
+	Status  string `json:"status"` // "True", "False", "Unknown"
 	Reason  string `json:"reason,omitempty"`
 	Message string `json:"message,omitempty"`
 }
@@ -312,7 +312,8 @@ func (c *Client) GetNamespaceStatus(ctx context.Context, namespace string, opts 
 				state.State = "terminated"
 				state.Reason = cs.State.Terminated.Reason
 				state.Message = cs.State.Terminated.Message
-				state.ExitCode = &cs.State.Terminated.ExitCode
+				exitCode := cs.State.Terminated.ExitCode
+				state.ExitCode = &exitCode
 			} else {
 				state.State = "unknown"
 			}
