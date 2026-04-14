@@ -33,8 +33,11 @@ const getContainerStateColor = (state: ContainerStateInfo): 'success' | 'warning
 };
 
 const hasContainerDetails = (pod: PodInfo): boolean => {
+  if (pod.restart_count > 0) return true;
   if (!pod.container_states || pod.container_states.length === 0) return false;
-  return pod.container_states.some((cs) => cs.reason);
+  return pod.container_states.some(
+    (cs) => cs.reason || cs.message || cs.exit_code !== undefined || cs.state !== 'running'
+  );
 };
 
 interface PodRowProps {
@@ -94,7 +97,7 @@ const PodRow = ({ pod, podPhaseColor }: PodRowProps) => {
                 <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600, mb: 0.5, display: 'block' }}>
                   Container States
                 </Typography>
-                {pod.container_states!.map((cs) => (
+                {(pod.container_states || []).map((cs) => (
                   <Box key={cs.name} sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.5, flexWrap: 'wrap' }}>
                     <Typography variant="caption" sx={{ fontFamily: 'monospace', minWidth: 100 }}>
                       {cs.name}
