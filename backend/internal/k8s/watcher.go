@@ -217,6 +217,12 @@ func statusDetailsChanged(prev, curr *NamespaceStatus) bool {
 		}
 	}
 
+	// Check total restart counts — catches CrashLoopBackOff increments
+	// even when phase/ready remain unchanged.
+	if totalRestarts(prev) != totalRestarts(curr) {
+		return true
+	}
+
 	// Check ready replica counts on deployments.
 	prevReady := countReadyReplicas(prev)
 	currReady := countReadyReplicas(curr)
@@ -236,6 +242,17 @@ func countPodStates(ns *NamespaceStatus) map[string]int {
 		}
 	}
 	return counts
+}
+
+// totalRestarts sums restart counts across all pods.
+func totalRestarts(ns *NamespaceStatus) int32 {
+	var total int32
+	for _, chart := range ns.Charts {
+		for _, pod := range chart.Pods {
+			total += pod.RestartCount
+		}
+	}
+	return total
 }
 
 // countReadyReplicas sums ready replicas across all deployments.

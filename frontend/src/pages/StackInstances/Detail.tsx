@@ -161,10 +161,16 @@ const Detail = () => {
     }
 
     // Live K8s status updates from the watcher (pod state changes, etc.).
+    // Merge with existing status to preserve events (watcher doesn't include them).
     if (msg.type === 'instance.status') {
       const nsPayload = msg.payload as { instance_id?: string; namespace_status?: NamespaceStatus };
       if (nsPayload.namespace_status) {
-        setK8sStatus(nsPayload.namespace_status);
+        setK8sStatus((prev) => {
+          const incoming = nsPayload.namespace_status!;
+          if (!prev || !prev.events?.length) return incoming;
+          // Preserve events from the previous getPods() call.
+          return { ...incoming, events: incoming.events?.length ? incoming.events : prev.events };
+        });
       }
     }
 
