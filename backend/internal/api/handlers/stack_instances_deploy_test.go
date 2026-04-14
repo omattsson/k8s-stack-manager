@@ -236,6 +236,7 @@ func setupDeployRouter(
 		insts.POST("/:id/clean", h.CleanInstance)
 		insts.GET("/:id/deploy-log", h.GetDeployLog)
 		insts.GET("/:id/status", h.GetInstanceStatus)
+		insts.GET("/:id/pods", h.GetInstancePods)
 	}
 	return r
 }
@@ -723,6 +724,127 @@ func TestGetInstanceStatus(t *testing.T) {
 		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 		assert.Equal(t, "stack-stack-a-owner", resp.Namespace)
 		assert.Equal(t, "healthy", resp.Status)
+	})
+}
+
+// ---- GetInstancePods tests ----
+
+func TestGetInstancePods(t *testing.T) {
+	t.Parallel()
+
+	t.Run("returns 503 when no registry configured", func(t *testing.T) {
+		t.Parallel()
+
+		instRepo := NewMockStackInstanceRepository()
+		seedInstance(t, instRepo, "i1", "stack-a", "d1", "uid-1", models.StackStatusRunning)
+
+		router := setupDeployRouter(t,
+			instRepo, NewMockValueOverrideRepository(),
+			NewMockStackDefinitionRepository(), NewMockChartConfigRepository(),
+			NewMockStackTemplateRepository(), NewMockTemplateChartConfigRepository(),
+			nil, nil, nil, NewMockDeploymentLogRepository(),
+			"uid-1", "alice", "user",
+		)
+
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest(http.MethodGet, "/api/v1/stack-instances/i1/pods", nil)
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusServiceUnavailable, w.Code)
+		var resp map[string]string
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+		assert.Contains(t, resp["error"], "not configured")
+	})
+
+	t.Run("instance not found returns 404", func(t *testing.T) {
+		t.Parallel()
+
+		router := setupDeployRouter(t,
+			NewMockStackInstanceRepository(), NewMockValueOverrideRepository(),
+			NewMockStackDefinitionRepository(), NewMockChartConfigRepository(),
+			NewMockStackTemplateRepository(), NewMockTemplateChartConfigRepository(),
+			nil, nil, nil, NewMockDeploymentLogRepository(),
+			"uid-1", "alice", "user",
+		)
+
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest(http.MethodGet, "/api/v1/stack-instances/missing/pods", nil)
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusNotFound, w.Code)
+	})
+
+	t.Run("success with events", func(t *testing.T) {
+		t.Parallel()
+
+		instRepo := NewMockStackInstanceRepository()
+		seedInstance(t, instRepo, "i1", "stack-a", "d1", "uid-1", models.StackStatusRunning)
+
+		// Create a fake K8s client with a namespace and a pod.
+		cs := fake.NewSimpleClientset(
+			&corev1.Namespace{
+				ObjectMeta: metav1.ObjectMeta{Name: "stack-stack-a-owner"},
+			},
+			&corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "nginx-abc123",
+					Namespace: "stack-stack-a-owner",
+				},
+				Status: corev1.PodStatus{
+					Phase: corev1.PodRunning,
+				},
+			},
+		)
+		k8sClient := k8s.NewClientFromInterface(cs)
+		registry := cluster.NewRegistryForTest("default", k8sClient, nil)
+
+		router := setupDeployRouter(t,
+			instRepo, NewMockValueOverrideRepository(),
+			NewMockStackDefinitionRepository(), NewMockChartConfigRepository(),
+			NewMockStackTemplateRepository(), NewMockTemplateChartConfigRepository(),
+			nil, nil, registry, NewMockDeploymentLogRepository(),
+			"uid-1", "alice", "user",
+		)
+
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest(http.MethodGet, "/api/v1/stack-instances/i1/pods", nil)
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		var resp k8s.NamespaceStatus
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+		assert.Equal(t, "stack-stack-a-owner", resp.Namespace)
+	})
+
+	t.Run("unknown cluster_id returns 400", func(t *testing.T) {
+		t.Parallel()
+
+		instRepo := NewMockStackInstanceRepository()
+		inst := seedInstance(t, instRepo, "i1", "stack-a", "d1", "uid-1", models.StackStatusRunning)
+		inst.ClusterID = "nonexistent-cluster"
+		require.NoError(t, instRepo.Update(inst))
+
+		// Use NewRegistry with an empty cluster repo so GetClients returns ErrNotFound.
+		registry := cluster.NewRegistry(cluster.RegistryConfig{
+			ClusterRepo: NewMockClusterRepository(),
+		})
+
+		router := setupDeployRouter(t,
+			instRepo, NewMockValueOverrideRepository(),
+			NewMockStackDefinitionRepository(), NewMockChartConfigRepository(),
+			NewMockStackTemplateRepository(), NewMockTemplateChartConfigRepository(),
+			nil, nil, registry, NewMockDeploymentLogRepository(),
+			"uid-1", "alice", "user",
+		)
+
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest(http.MethodGet, "/api/v1/stack-instances/i1/pods", nil)
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+		var resp map[string]string
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+		assert.Contains(t, resp["error"], "Unknown cluster_id")
 	})
 }
 
