@@ -137,7 +137,7 @@ export interface DeploymentStatusInfo {
 
 export interface ContainerStateInfo {
   name: string;
-  state: 'running' | 'waiting' | 'terminated';
+  state: 'running' | 'waiting' | 'terminated' | 'unknown';
   reason?: string;
   message?: string;
   restart_count: number;

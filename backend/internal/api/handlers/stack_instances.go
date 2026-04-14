@@ -1431,15 +1431,7 @@ func (h *InstanceHandler) GetInstancePods(c *gin.Context) {
 		return
 	}
 
-	// Try cached status from watcher first.
-	if h.k8sWatcher != nil {
-		if nsStatus, ok := h.k8sWatcher.GetStatus(id); ok {
-			c.JSON(http.StatusOK, nsStatus)
-			return
-		}
-	}
-
-	// Fall back to direct query with events included.
+	// Always query directly with events — the watcher cache does not include events.
 	if h.registry != nil {
 		client, clientErr := h.registry.GetK8sClient(inst.ClusterID)
 		if clientErr != nil {

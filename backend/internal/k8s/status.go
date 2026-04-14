@@ -160,7 +160,7 @@ type PodInfo struct {
 type ContainerStateInfo struct {
 	ExitCode     *int32 `json:"exit_code,omitempty"`
 	Name         string `json:"name"`
-	State        string `json:"state"`              // "running", "waiting", "terminated"
+	State        string `json:"state"`              // "running", "waiting", "terminated", "unknown"
 	Reason       string `json:"reason,omitempty"`
 	Message      string `json:"message,omitempty"`
 	Image        string `json:"image"`

@@ -7804,7 +7804,7 @@ const docTemplate = `{
                     "type": "integer"
                 },
                 "state": {
-                    "description": "\"running\", \"waiting\", \"terminated\"",
+                    "description": "\"running\", \"waiting\", \"terminated\", \"unknown\"",
                     "type": "string"
                 }
             }
