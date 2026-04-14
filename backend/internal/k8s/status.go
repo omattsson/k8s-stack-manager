@@ -441,7 +441,12 @@ func (c *Client) GetNamespaceStatus(ctx context.Context, namespace string) (*Nam
 	// Fetch namespace events (non-fatal on failure).
 	// Only include Warning events or events from the last hour.
 	var events []PodEvent
-	eventList, err := c.clientset.CoreV1().Events(namespace).List(ctx, metav1.ListOptions{})
+	var maxEventsToScan int64 = 200
+	var eventsTimeoutSeconds int64 = 5
+	eventList, err := c.clientset.CoreV1().Events(namespace).List(ctx, metav1.ListOptions{
+		Limit:          maxEventsToScan,
+		TimeoutSeconds: &eventsTimeoutSeconds,
+	})
 	if err != nil {
 		slog.Warn("Failed to list events, skipping", "namespace", namespace, "error", err)
 	} else {

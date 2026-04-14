@@ -225,8 +225,8 @@ const PodStatusDisplay = ({ status, loading }: PodStatusDisplayProps) => {
       {warningEvents.length > 0 && (
         <Box sx={{ mt: 2 }}>
           <Typography variant="subtitle2" gutterBottom>Recent Warnings</Typography>
-          {warningEvents.slice(0, 10).map((event, i) => (
-            <Alert key={i} severity="warning" sx={{ mb: 0.5, py: 0, '& .MuiAlert-message': { py: 0.5 } }}>
+          {warningEvents.slice(0, 10).map((event) => (
+            <Alert key={`${event.object}-${event.reason}-${event.last_seen}`} severity="warning" sx={{ mb: 0.5, py: 0, '& .MuiAlert-message': { py: 0.5 } }}>
               <Typography variant="caption" sx={{ fontWeight: 600 }}>{event.reason}</Typography>
               {' \u2014 '}
               <Typography variant="caption">{event.message}</Typography>

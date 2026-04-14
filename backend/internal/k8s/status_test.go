@@ -3,6 +3,7 @@ package k8s
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -974,7 +975,7 @@ func TestGetNamespaceStatus_ContainerStates(t *testing.T) {
 			},
 			Status: corev1.PodStatus{
 				Phase: corev1.PodRunning,
-				StartTime: &metav1.Time{Time: metav1.Now().Add(-10 * 60 * 1000000000)},
+				StartTime: &metav1.Time{Time: metav1.Now().Add(-10 * time.Minute)},
 				Conditions: []corev1.PodCondition{
 					{Type: corev1.PodReady, Status: corev1.ConditionFalse, Reason: "ContainersNotReady", Message: "sidecar not ready"},
 					{Type: corev1.PodInitialized, Status: corev1.ConditionTrue},

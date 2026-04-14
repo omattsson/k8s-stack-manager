@@ -85,7 +85,7 @@ const PodHealthDot = ({ status }: { status?: K8sHealthStatus }) => {
     not_found: 'grey.400',
   };
   return (
-    <Tooltip title={`Cluster: ${status}`} arrow>
+    <Tooltip title={`Health: ${status}`} arrow>
       <Box
         component="span"
         role="status"
