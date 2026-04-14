@@ -153,7 +153,7 @@ import useCountdown from '../../../hooks/useCountdown';
 
 type MockFn = ReturnType<typeof vi.fn>;
 
-const setupMocks = (instanceOverrides: Partial<typeof mockInstance> = {}, opts: { logs?: unknown[]; status?: unknown; deployLogReject?: boolean; statusReject?: boolean; branchOverrides?: unknown[] } = {}) => {
+const setupMocks = (instanceOverrides: Partial<typeof mockInstance> = {}, opts: { logs?: unknown[]; status?: unknown; podsStatus?: unknown; deployLogReject?: boolean; statusReject?: boolean; branchOverrides?: unknown[] } = {}) => {
   const inst = { ...mockInstance, ...instanceOverrides };
   (instanceService.get as MockFn).mockResolvedValue(inst);
   (definitionService.get as MockFn).mockResolvedValue(mockDefinition);
@@ -169,7 +169,7 @@ const setupMocks = (instanceOverrides: Partial<typeof mockInstance> = {}, opts: 
     (instanceService.getPods as MockFn).mockRejectedValue(new Error('no pods'));
   } else {
     (instanceService.getStatus as MockFn).mockResolvedValue(opts.status ?? null);
-    (instanceService.getPods as MockFn).mockResolvedValue(opts.status ?? null);
+    (instanceService.getPods as MockFn).mockResolvedValue(opts.podsStatus ?? opts.status ?? null);
   }
   return inst;
 };

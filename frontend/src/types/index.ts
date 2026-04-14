@@ -169,7 +169,7 @@ export interface PodInfo {
   ready: boolean;
   restart_count: number;
   image: string;
-  container_states?: ContainerStateInfo[];
+  container_states: ContainerStateInfo[];
   conditions?: PodConditionInfo[];
   start_time?: string;
   node_name?: string;
