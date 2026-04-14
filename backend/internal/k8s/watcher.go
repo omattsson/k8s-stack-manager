@@ -139,7 +139,7 @@ func (w *Watcher) poll(ctx context.Context) {
 
 		// Use a per-namespace timeout to avoid one slow check blocking others.
 		checkCtx, checkCancel := context.WithTimeout(ctx, 5*time.Second)
-		nsStatus, err := client.GetNamespaceStatus(checkCtx, inst.Namespace)
+		nsStatus, err := client.GetNamespaceStatus(checkCtx, inst.Namespace, StatusOptions{})
 		checkCancel()
 
 		if err != nil {

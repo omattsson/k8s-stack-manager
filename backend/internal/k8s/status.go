@@ -187,8 +187,13 @@ type ServiceInfo struct {
 	IngressHosts []string `json:"ingress_hosts,omitempty"`
 }
 
+// StatusOptions controls optional data included in GetNamespaceStatus.
+type StatusOptions struct {
+	IncludeEvents bool
+}
+
 // GetNamespaceStatus queries the K8s API for the status of all resources in a namespace.
-func (c *Client) GetNamespaceStatus(ctx context.Context, namespace string) (*NamespaceStatus, error) {
+func (c *Client) GetNamespaceStatus(ctx context.Context, namespace string, opts StatusOptions) (*NamespaceStatus, error) {
 	exists, err := c.NamespaceExists(ctx, namespace)
 	if err != nil {
 		return nil, fmt.Errorf("check namespace: %w", err)
@@ -305,6 +310,8 @@ func (c *Client) GetNamespaceStatus(ctx context.Context, namespace string) (*Nam
 				state.Reason = cs.State.Terminated.Reason
 				state.Message = cs.State.Terminated.Message
 				state.ExitCode = &cs.State.Terminated.ExitCode
+			} else {
+				state.State = "unknown"
 			}
 			containerStates = append(containerStates, state)
 		}
@@ -438,55 +445,57 @@ func (c *Client) GetNamespaceStatus(ctx context.Context, namespace string) (*Nam
 		}
 	}
 
-	// Fetch namespace events (non-fatal on failure).
+	// Fetch namespace events only when explicitly requested (non-fatal on failure).
 	// Only include Warning events or events from the last hour.
 	var events []PodEvent
-	var maxEventsToScan int64 = 200
-	var eventsTimeoutSeconds int64 = 5
-	eventList, err := c.clientset.CoreV1().Events(namespace).List(ctx, metav1.ListOptions{
-		Limit:          maxEventsToScan,
-		TimeoutSeconds: &eventsTimeoutSeconds,
-	})
-	if err != nil {
-		slog.Warn("Failed to list events, skipping", "namespace", namespace, "error", err)
-	} else {
-		oneHourAgo := time.Now().UTC().Add(-1 * time.Hour)
-		for _, e := range eventList.Items {
-			lastSeen := e.LastTimestamp.Time
-			if lastSeen.IsZero() {
-				lastSeen = e.CreationTimestamp.Time
-			}
-			firstSeen := e.FirstTimestamp.Time
-			if firstSeen.IsZero() {
-				firstSeen = e.CreationTimestamp.Time
-			}
-
-			// Include Warning events regardless of age, or any event from the last hour.
-			if e.Type != "Warning" && lastSeen.Before(oneHourAgo) {
-				continue
-			}
-
-			objectRef := ""
-			if e.InvolvedObject.Kind != "" {
-				objectRef = e.InvolvedObject.Kind + "/" + e.InvolvedObject.Name
-			}
-
-			events = append(events, PodEvent{
-				Type:      e.Type,
-				Reason:    e.Reason,
-				Message:   e.Message,
-				Object:    objectRef,
-				Count:     e.Count,
-				FirstSeen: firstSeen,
-				LastSeen:  lastSeen,
-			})
-		}
-		// Sort by most recent first and cap at 50 to bound payload size.
-		sort.Slice(events, func(i, j int) bool {
-			return events[i].LastSeen.After(events[j].LastSeen)
+	if opts.IncludeEvents {
+		var maxEventsToScan int64 = 200
+		var eventsTimeoutSeconds int64 = 5
+		eventList, evErr := c.clientset.CoreV1().Events(namespace).List(ctx, metav1.ListOptions{
+			Limit:          maxEventsToScan,
+			TimeoutSeconds: &eventsTimeoutSeconds,
 		})
-		if len(events) > 50 {
-			events = events[:50]
+		if evErr != nil {
+			slog.Warn("Failed to list events, skipping", "namespace", namespace, "error", evErr)
+		} else {
+			oneHourAgo := time.Now().UTC().Add(-1 * time.Hour)
+			for _, e := range eventList.Items {
+				lastSeen := e.LastTimestamp.Time
+				if lastSeen.IsZero() {
+					lastSeen = e.CreationTimestamp.Time
+				}
+				firstSeen := e.FirstTimestamp.Time
+				if firstSeen.IsZero() {
+					firstSeen = e.CreationTimestamp.Time
+				}
+
+				// Include Warning events regardless of age, or any event from the last hour.
+				if e.Type != "Warning" && lastSeen.Before(oneHourAgo) {
+					continue
+				}
+
+				objectRef := ""
+				if e.InvolvedObject.Kind != "" {
+					objectRef = e.InvolvedObject.Kind + "/" + e.InvolvedObject.Name
+				}
+
+				events = append(events, PodEvent{
+					Type:      e.Type,
+					Reason:    e.Reason,
+					Message:   e.Message,
+					Object:    objectRef,
+					Count:     e.Count,
+					FirstSeen: firstSeen,
+					LastSeen:  lastSeen,
+				})
+			}
+			// Sort by most recent first and cap at 50 to bound payload size.
+			sort.Slice(events, func(i, j int) bool {
+				return events[i].LastSeen.After(events[j].LastSeen)
+			})
+			if len(events) > 50 {
+				events = events[:50]
+			}
 		}
 	}
 

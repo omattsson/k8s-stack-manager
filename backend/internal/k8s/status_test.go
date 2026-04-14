@@ -21,7 +21,7 @@ func TestGetNamespaceStatus_NotFound(t *testing.T) {
 	cs := fake.NewSimpleClientset()
 	client := NewClientFromInterface(cs)
 
-	status, err := client.GetNamespaceStatus(context.Background(), "nonexistent")
+	status, err := client.GetNamespaceStatus(context.Background(), "nonexistent", StatusOptions{})
 	assert.NoError(t, err)
 	require.NotNil(t, status)
 	assert.Equal(t, StatusNotFound, status.Status)
@@ -37,7 +37,7 @@ func TestGetNamespaceStatus_EmptyNamespace(t *testing.T) {
 	})
 	client := NewClientFromInterface(cs)
 
-	status, err := client.GetNamespaceStatus(context.Background(), "empty-ns")
+	status, err := client.GetNamespaceStatus(context.Background(), "empty-ns", StatusOptions{})
 	assert.NoError(t, err)
 	require.NotNil(t, status)
 	assert.Equal(t, StatusHealthy, status.Status)
@@ -107,7 +107,7 @@ func TestGetNamespaceStatus_WithHealthyResources(t *testing.T) {
 	)
 
 	client := NewClientFromInterface(cs)
-	status, err := client.GetNamespaceStatus(context.Background(), ns)
+	status, err := client.GetNamespaceStatus(context.Background(), ns, StatusOptions{})
 
 	assert.NoError(t, err)
 	require.NotNil(t, status)
@@ -167,7 +167,7 @@ func TestGetNamespaceStatus_MultipleReleases(t *testing.T) {
 	)
 
 	client := NewClientFromInterface(cs)
-	status, err := client.GetNamespaceStatus(context.Background(), ns)
+	status, err := client.GetNamespaceStatus(context.Background(), ns, StatusOptions{})
 
 	assert.NoError(t, err)
 	require.NotNil(t, status)
@@ -211,7 +211,7 @@ func TestGetNamespaceStatus_DegradedPod(t *testing.T) {
 	)
 
 	client := NewClientFromInterface(cs)
-	status, err := client.GetNamespaceStatus(context.Background(), ns)
+	status, err := client.GetNamespaceStatus(context.Background(), ns, StatusOptions{})
 
 	assert.NoError(t, err)
 	require.NotNil(t, status)
@@ -243,7 +243,7 @@ func TestGetNamespaceStatus_FailedPod(t *testing.T) {
 	)
 
 	client := NewClientFromInterface(cs)
-	status, err := client.GetNamespaceStatus(context.Background(), ns)
+	status, err := client.GetNamespaceStatus(context.Background(), ns, StatusOptions{})
 
 	assert.NoError(t, err)
 	require.NotNil(t, status)
@@ -363,7 +363,7 @@ func TestGetNamespaceStatus_WithIngress(t *testing.T) {
 	)
 
 	client := NewClientFromInterface(cs)
-	status, err := client.GetNamespaceStatus(context.Background(), ns)
+	status, err := client.GetNamespaceStatus(context.Background(), ns, StatusOptions{})
 
 	assert.NoError(t, err)
 	require.NotNil(t, status)
@@ -423,7 +423,7 @@ func TestGetNamespaceStatus_WithIngressNoTLS(t *testing.T) {
 	)
 
 	client := NewClientFromInterface(cs)
-	status, err := client.GetNamespaceStatus(context.Background(), ns)
+	status, err := client.GetNamespaceStatus(context.Background(), ns, StatusOptions{})
 
 	assert.NoError(t, err)
 	require.NotNil(t, status)
@@ -468,7 +468,7 @@ func TestGetNamespaceStatus_LoadBalancerExternalIP(t *testing.T) {
 	)
 
 	client := NewClientFromInterface(cs)
-	status, err := client.GetNamespaceStatus(context.Background(), ns)
+	status, err := client.GetNamespaceStatus(context.Background(), ns, StatusOptions{})
 
 	assert.NoError(t, err)
 	require.NotNil(t, status)
@@ -510,7 +510,7 @@ func TestGetNamespaceStatus_LoadBalancerHostname(t *testing.T) {
 	)
 
 	client := NewClientFromInterface(cs)
-	status, err := client.GetNamespaceStatus(context.Background(), ns)
+	status, err := client.GetNamespaceStatus(context.Background(), ns, StatusOptions{})
 
 	assert.NoError(t, err)
 	require.NotNil(t, status)
@@ -544,7 +544,7 @@ func TestGetNamespaceStatus_NodePortService(t *testing.T) {
 	)
 
 	client := NewClientFromInterface(cs)
-	status, err := client.GetNamespaceStatus(context.Background(), ns)
+	status, err := client.GetNamespaceStatus(context.Background(), ns, StatusOptions{})
 
 	assert.NoError(t, err)
 	require.NotNil(t, status)
@@ -581,7 +581,7 @@ func TestGetNamespaceStatus_ProgressingDeployment(t *testing.T) {
 	)
 
 	client := NewClientFromInterface(cs)
-	status, err := client.GetNamespaceStatus(context.Background(), ns)
+	status, err := client.GetNamespaceStatus(context.Background(), ns, StatusOptions{})
 
 	assert.NoError(t, err)
 	require.NotNil(t, status)
@@ -614,7 +614,7 @@ func TestGetNamespaceStatus_UnmanagedResources(t *testing.T) {
 	)
 
 	client := NewClientFromInterface(cs)
-	status, err := client.GetNamespaceStatus(context.Background(), ns)
+	status, err := client.GetNamespaceStatus(context.Background(), ns, StatusOptions{})
 
 	assert.NoError(t, err)
 	require.NotNil(t, status)
@@ -649,7 +649,7 @@ func TestGetNamespaceStatus_HelmShReleaseLabel(t *testing.T) {
 	)
 
 	client := NewClientFromInterface(cs)
-	status, err := client.GetNamespaceStatus(context.Background(), ns)
+	status, err := client.GetNamespaceStatus(context.Background(), ns, StatusOptions{})
 
 	assert.NoError(t, err)
 	require.NotNil(t, status)
@@ -1021,7 +1021,7 @@ func TestGetNamespaceStatus_ContainerStates(t *testing.T) {
 	)
 
 	client := NewClientFromInterface(cs)
-	status, err := client.GetNamespaceStatus(context.Background(), ns)
+	status, err := client.GetNamespaceStatus(context.Background(), ns, StatusOptions{})
 
 	assert.NoError(t, err)
 	require.NotNil(t, status)
@@ -1097,7 +1097,7 @@ func TestGetNamespaceStatus_EmptyContainerStates(t *testing.T) {
 	)
 
 	client := NewClientFromInterface(cs)
-	status, err := client.GetNamespaceStatus(context.Background(), ns)
+	status, err := client.GetNamespaceStatus(context.Background(), ns, StatusOptions{})
 
 	assert.NoError(t, err)
 	require.NotNil(t, status)
@@ -1155,7 +1155,7 @@ func TestGetNamespaceStatus_WithEvents(t *testing.T) {
 	)
 
 	client := NewClientFromInterface(cs)
-	status, err := client.GetNamespaceStatus(context.Background(), ns)
+	status, err := client.GetNamespaceStatus(context.Background(), ns, StatusOptions{IncludeEvents: true})
 
 	assert.NoError(t, err)
 	require.NotNil(t, status)
@@ -1214,7 +1214,7 @@ func TestGetNamespaceStatus_PodStartTimeAndNodeName(t *testing.T) {
 	)
 
 	client := NewClientFromInterface(cs)
-	status, err := client.GetNamespaceStatus(context.Background(), ns)
+	status, err := client.GetNamespaceStatus(context.Background(), ns, StatusOptions{})
 
 	assert.NoError(t, err)
 	require.NotNil(t, status)

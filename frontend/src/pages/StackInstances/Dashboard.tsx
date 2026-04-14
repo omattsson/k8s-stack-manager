@@ -143,7 +143,9 @@ const InstanceCard = ({ instance, isSelected, isFavorite, clusterName, url, k8sH
         </Box>
         <Box sx={{ display: 'flex', alignItems: 'center' }}>
           <StatusBadge status={instance.status} />
-          <PodHealthDot status={k8sHealth} />
+          {(instance.status === 'running' || instance.status === 'deploying') && k8sHealth && (
+            <PodHealthDot status={k8sHealth} />
+          )}
         </Box>
       </Box>
       <Typography variant="body2" color="text.secondary">Branch: {instance.branch}</Typography>
