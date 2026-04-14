@@ -115,7 +115,7 @@ const Detail = () => {
         if (inst.status === 'running' || inst.status === 'deploying' || inst.status === 'error' || inst.status === 'stopping' || inst.status === 'cleaning') {
           try {
             setStatusLoading(true);
-            const status = await instanceService.getStatus(id);
+            const status = await instanceService.getPods(id);
             setK8sStatus(status);
           } catch { /* ignore */ }
           finally { setStatusLoading(false); }
@@ -148,7 +148,7 @@ const Detail = () => {
 
       // Fetch current K8s status for terminal states where resources may exist.
       if (newStatus === 'running' || newStatus === 'error') {
-        instanceService.getStatus(id).then(setK8sStatus).catch(() => {});
+        instanceService.getPods(id).then(setK8sStatus).catch(() => {});
       }
 
       // Refresh deploy logs on terminal states.

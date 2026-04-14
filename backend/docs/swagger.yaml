@@ -4395,6 +4395,12 @@ paths:
             additionalProperties:
               type: string
             type: object
+        "504":
+          description: Gateway Timeout
+          schema:
+            additionalProperties:
+              type: string
+            type: object
       summary: Get instance pod status
       tags:
       - stack-instances

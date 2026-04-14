@@ -49,6 +49,7 @@ vi.mock('../../../api/client', () => ({
     clean: vi.fn(),
     getDeployLog: vi.fn(),
     getStatus: vi.fn(),
+    getPods: vi.fn(),
     extend: vi.fn(),
   },
   definitionService: {
@@ -165,8 +166,10 @@ const setupMocks = (instanceOverrides: Partial<typeof mockInstance> = {}, opts: 
   }
   if (opts.statusReject) {
     (instanceService.getStatus as MockFn).mockRejectedValue(new Error('no status'));
+    (instanceService.getPods as MockFn).mockRejectedValue(new Error('no status'));
   } else {
     (instanceService.getStatus as MockFn).mockResolvedValue(opts.status ?? null);
+    (instanceService.getPods as MockFn).mockResolvedValue(opts.status ?? null);
   }
   return inst;
 };
@@ -530,7 +533,7 @@ describe('StackInstances Detail', () => {
     });
 
     await waitFor(() => {
-      expect(instanceService.getStatus).toHaveBeenCalledWith('123');
+      expect(instanceService.getPods).toHaveBeenCalledWith('123');
     });
   });
 

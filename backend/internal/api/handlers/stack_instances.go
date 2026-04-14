@@ -1416,6 +1416,7 @@ func (h *InstanceHandler) GetInstanceStatus(c *gin.Context) {
 // @Failure     500 {object} map[string]string
 // @Failure     502 {object} map[string]string
 // @Failure     503 {object} map[string]string
+// @Failure     504 {object} map[string]string
 // @Router      /api/v1/stack-instances/{id}/pods [get]
 func (h *InstanceHandler) GetInstancePods(c *gin.Context) {
 	id := c.Param("id")
@@ -1448,8 +1449,20 @@ func (h *InstanceHandler) GetInstancePods(c *gin.Context) {
 			}
 			return
 		}
-		nsStatus, nsErr := client.GetNamespaceStatus(c.Request.Context(), inst.Namespace, k8s.StatusOptions{IncludeEvents: true})
+		statusCtx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
+		defer cancel()
+
+		nsStatus, nsErr := client.GetNamespaceStatus(statusCtx, inst.Namespace, k8s.StatusOptions{IncludeEvents: true})
 		if nsErr != nil {
+			if statusCtx.Err() == context.DeadlineExceeded {
+				slog.Error("Timed out getting namespace status for pods",
+					logKeyInstanceID, id,
+					"namespace", inst.Namespace,
+					"error", nsErr,
+				)
+				c.JSON(http.StatusGatewayTimeout, gin.H{"error": "Timed out fetching pod status"})
+				return
+			}
 			slog.Error("Failed to get namespace status for pods",
 				logKeyInstanceID, id,
 				"namespace", inst.Namespace,

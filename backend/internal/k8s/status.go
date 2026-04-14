@@ -287,7 +287,10 @@ func (c *Client) GetNamespaceStatus(ctx context.Context, namespace string, opts 
 		ready := true
 		var restarts int32
 		var containerStates []ContainerStateInfo
-		for _, cs := range p.Status.ContainerStatuses {
+		// Include init containers so that init-phase failures (CrashLoopBackOff,
+		// ImagePullBackOff) are visible in the pod health response.
+		allContainers := append(p.Status.InitContainerStatuses, p.Status.ContainerStatuses...) //nolint:gocritic
+		for _, cs := range allContainers {
 			if !cs.Ready {
 				ready = false
 			}

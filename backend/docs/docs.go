@@ -5034,6 +5034,15 @@ const docTemplate = `{
                                 "type": "string"
                             }
                         }
+                    },
+                    "504": {
+                        "description": "Gateway Timeout",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
                     }
                 }
             }
