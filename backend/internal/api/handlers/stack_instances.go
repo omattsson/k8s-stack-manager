@@ -1896,6 +1896,7 @@ func (h *InstanceHandler) buildChartValues(ctx context.Context, inst *models.Sta
 
 	templateVars := helm.TemplateVars{
 		Branch:       inst.Branch,
+		ImageTag:     helm.SanitizeImageTag(inst.Branch),
 		Namespace:    inst.Namespace,
 		InstanceName: inst.Name,
 		StackName:    def.Name,
