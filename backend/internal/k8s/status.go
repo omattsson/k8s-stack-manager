@@ -452,10 +452,8 @@ func (c *Client) GetNamespaceStatus(ctx context.Context, namespace string, opts 
 	// Only include Warning events or events from the last hour.
 	var events []PodEvent
 	if opts.IncludeEvents {
-		var maxEventsToScan int64 = 200
 		var eventsTimeoutSeconds int64 = 5
 		eventList, evErr := c.clientset.CoreV1().Events(namespace).List(ctx, metav1.ListOptions{
-			Limit:          maxEventsToScan,
 			TimeoutSeconds: &eventsTimeoutSeconds,
 		})
 		if evErr != nil {

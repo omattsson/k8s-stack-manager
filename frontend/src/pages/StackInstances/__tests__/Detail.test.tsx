@@ -166,7 +166,7 @@ const setupMocks = (instanceOverrides: Partial<typeof mockInstance> = {}, opts: 
   }
   if (opts.statusReject) {
     (instanceService.getStatus as MockFn).mockRejectedValue(new Error('no status'));
-    (instanceService.getPods as MockFn).mockRejectedValue(new Error('no status'));
+    (instanceService.getPods as MockFn).mockRejectedValue(new Error('no pods'));
   } else {
     (instanceService.getStatus as MockFn).mockResolvedValue(opts.status ?? null);
     (instanceService.getPods as MockFn).mockResolvedValue(opts.status ?? null);
