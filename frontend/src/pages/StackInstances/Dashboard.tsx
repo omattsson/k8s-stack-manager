@@ -73,7 +73,7 @@ const getPrimaryUrl = (status: NamespaceStatus): string | null => {
   return null;
 };
 
-type K8sHealthStatus = 'healthy' | 'degraded' | 'error' | 'not_found' | 'progressing';
+type K8sHealthStatus = NamespaceStatus['status'];
 
 const PodHealthDot = ({ status }: { status?: K8sHealthStatus }) => {
   if (!status) return null;

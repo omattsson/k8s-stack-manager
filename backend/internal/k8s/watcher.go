@@ -2,7 +2,9 @@ package k8s
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -223,6 +225,12 @@ func statusDetailsChanged(prev, curr *NamespaceStatus) bool {
 		return true
 	}
 
+	// Check container state digests — catches reason transitions like
+	// ErrImagePull → ImagePullBackOff where phase/ready/restarts stay the same.
+	if containerStateDigest(prev) != containerStateDigest(curr) {
+		return true
+	}
+
 	// Check ready replica counts on deployments.
 	prevReady := countReadyReplicas(prev)
 	currReady := countReadyReplicas(curr)
@@ -253,6 +261,21 @@ func totalRestarts(ns *NamespaceStatus) int32 {
 		}
 	}
 	return total
+}
+
+// containerStateDigest builds a comparable string from container states
+// so that reason/exit-code transitions trigger broadcasts even when
+// phase, ready count, and restart count remain unchanged.
+func containerStateDigest(ns *NamespaceStatus) string {
+	var b strings.Builder
+	for _, chart := range ns.Charts {
+		for _, pod := range chart.Pods {
+			for _, cs := range pod.ContainerStates {
+				fmt.Fprintf(&b, "%s:%s:%s:%d;", cs.Name, cs.State, cs.Reason, cs.RestartCount)
+			}
+		}
+	}
+	return b.String()
 }
 
 // countReadyReplicas sums ready replicas across all deployments.
