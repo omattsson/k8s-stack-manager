@@ -774,13 +774,14 @@ func TestGetInstancePods(t *testing.T) {
 		assert.Equal(t, http.StatusNotFound, w.Code)
 	})
 
-	t.Run("success with events", func(t *testing.T) {
+	t.Run("success — returns pod and event data", func(t *testing.T) {
 		t.Parallel()
 
 		instRepo := NewMockStackInstanceRepository()
 		seedInstance(t, instRepo, "i1", "stack-a", "d1", "uid-1", models.StackStatusRunning)
 
-		// Create a fake K8s client with a namespace and a pod.
+		now := time.Now()
+		// Create a fake K8s client with a namespace, a pod, and a warning event.
 		cs := fake.NewSimpleClientset(
 			&corev1.Namespace{
 				ObjectMeta: metav1.ObjectMeta{Name: "stack-stack-a-owner"},
@@ -793,6 +794,22 @@ func TestGetInstancePods(t *testing.T) {
 				Status: corev1.PodStatus{
 					Phase: corev1.PodRunning,
 				},
+			},
+			&corev1.Event{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "nginx-abc123.oom",
+					Namespace: "stack-stack-a-owner",
+				},
+				InvolvedObject: corev1.ObjectReference{
+					Kind: "Pod",
+					Name: "nginx-abc123",
+				},
+				Type:           "Warning",
+				Reason:         "OOMKilled",
+				Message:        "Container exceeded memory limit",
+				Count:          1,
+				FirstTimestamp: metav1.NewTime(now),
+				LastTimestamp:  metav1.NewTime(now),
 			},
 		)
 		k8sClient := k8s.NewClientFromInterface(cs)
@@ -814,6 +831,9 @@ func TestGetInstancePods(t *testing.T) {
 		var resp k8s.NamespaceStatus
 		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 		assert.Equal(t, "stack-stack-a-owner", resp.Namespace)
+		require.NotEmpty(t, resp.Events, "expected events from IncludeEvents=true")
+		assert.Equal(t, "Warning", resp.Events[0].Type)
+		assert.Equal(t, "OOMKilled", resp.Events[0].Reason)
 	})
 
 	t.Run("unknown cluster_id returns 400", func(t *testing.T) {

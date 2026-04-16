@@ -153,7 +153,7 @@ import useCountdown from '../../../hooks/useCountdown';
 
 type MockFn = ReturnType<typeof vi.fn>;
 
-const setupMocks = (instanceOverrides: Partial<typeof mockInstance> = {}, opts: { logs?: unknown[]; status?: unknown; podsStatus?: unknown; deployLogReject?: boolean; statusReject?: boolean; branchOverrides?: unknown[] } = {}) => {
+const setupMocks = (instanceOverrides: Partial<typeof mockInstance> = {}, opts: { logs?: unknown[]; k8sStatus?: unknown; podsStatus?: unknown; deployLogReject?: boolean; k8sReject?: boolean; branchOverrides?: unknown[] } = {}) => {
   const inst = { ...mockInstance, ...instanceOverrides };
   (instanceService.get as MockFn).mockResolvedValue(inst);
   (definitionService.get as MockFn).mockResolvedValue(mockDefinition);
@@ -164,12 +164,12 @@ const setupMocks = (instanceOverrides: Partial<typeof mockInstance> = {}, opts: 
   } else {
     (instanceService.getDeployLog as MockFn).mockResolvedValue(opts.logs ?? []);
   }
-  if (opts.statusReject) {
+  if (opts.k8sReject) {
     (instanceService.getStatus as MockFn).mockRejectedValue(new Error('no status'));
     (instanceService.getPods as MockFn).mockRejectedValue(new Error('no pods'));
   } else {
-    (instanceService.getStatus as MockFn).mockResolvedValue(opts.status ?? null);
-    (instanceService.getPods as MockFn).mockResolvedValue(opts.podsStatus ?? opts.status ?? null);
+    (instanceService.getStatus as MockFn).mockResolvedValue(opts.k8sStatus ?? null);
+    (instanceService.getPods as MockFn).mockResolvedValue(opts.podsStatus ?? opts.k8sStatus ?? null);
   }
   return inst;
 };
@@ -497,7 +497,7 @@ describe('StackInstances Detail', () => {
 
   it('shows Cluster Resources for running instance', async () => {
     const mockStatus = { namespace: 'stack-test', pods: [], services: [] };
-    setupMocks({ status: 'running' }, { status: mockStatus });
+    setupMocks({ status: 'running' }, { k8sStatus: mockStatus });
 
     renderDetail();
 
@@ -592,7 +592,7 @@ describe('StackInstances Detail', () => {
 
   it('shows Cluster Resources for stopping instance', async () => {
     const mockStatus = { namespace: 'stack-test', pods: [], services: [] };
-    setupMocks({ status: 'stopping' }, { status: mockStatus });
+    setupMocks({ status: 'stopping' }, { k8sStatus: mockStatus });
 
     renderDetail();
 
@@ -801,7 +801,7 @@ describe('StackInstances Detail', () => {
       ingresses: [{ name: 'web', host: 'app.example.com', path: '/', tls: true, url: 'https://app.example.com' }],
       last_checked: '2025-01-01T00:00:00Z',
     };
-    setupMocks({ status: 'running' }, { status: mockStatus });
+    setupMocks({ status: 'running' }, { k8sStatus: mockStatus });
     renderDetail();
 
     await waitFor(() => {
@@ -822,7 +822,7 @@ describe('StackInstances Detail', () => {
   });
 
   it('does not show Access URLs for running instance without k8s status', async () => {
-    setupMocks({ status: 'running' }, { statusReject: true });
+    setupMocks({ status: 'running' }, { k8sReject: true });
     renderDetail();
 
     await waitFor(() => {

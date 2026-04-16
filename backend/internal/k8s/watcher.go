@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -263,19 +264,26 @@ func totalRestarts(ns *NamespaceStatus) int32 {
 	return total
 }
 
-// containerStateDigest builds a comparable string from container states
-// so that reason/exit-code transitions trigger broadcasts even when
-// phase, ready count, and restart count remain unchanged.
+// containerStateDigest builds a deterministic, order-independent string from
+// all container states so that state/reason/exit-code transitions trigger
+// broadcasts even when phase, ready count, and restart count remain unchanged.
+// Entries are sorted by pod name + container name for stability.
 func containerStateDigest(ns *NamespaceStatus) string {
-	var b strings.Builder
+	var entries []string
 	for _, chart := range ns.Charts {
 		for _, pod := range chart.Pods {
 			for _, cs := range pod.ContainerStates {
-				fmt.Fprintf(&b, "%s:%s:%s:%d;", cs.Name, cs.State, cs.Reason, cs.RestartCount)
+				exitCode := int32(0)
+				if cs.ExitCode != nil {
+					exitCode = *cs.ExitCode
+				}
+				entries = append(entries, fmt.Sprintf("%s/%s:%s:%s:%d:%d",
+					pod.Name, cs.Name, cs.State, cs.Reason, exitCode, cs.RestartCount))
 			}
 		}
 	}
-	return b.String()
+	sort.Strings(entries)
+	return strings.Join(entries, ";")
 }
 
 // countReadyReplicas sums ready replicas across all deployments.
