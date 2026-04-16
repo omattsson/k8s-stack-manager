@@ -28,6 +28,7 @@ const mockStatus: NamespaceStatus = {
           ready: true,
           restart_count: 0,
           image: 'myimage:v1',
+          container_states: [],
         },
       ],
       services: [
@@ -89,6 +90,7 @@ describe('PodStatusDisplay', () => {
               ready: true,
               restart_count: 10,
               image: 'myimage:v1',
+              container_states: [],
             },
           ],
         },
