@@ -967,10 +967,12 @@ func TestGetNamespaceStatus_ContainerStates(t *testing.T) {
 			},
 			Spec: corev1.PodSpec{
 				NodeName: "node-1",
+				InitContainers: []corev1.Container{
+					{Name: "init-done", Image: "init:v1"},
+				},
 				Containers: []corev1.Container{
 					{Name: "app", Image: "myimage:v1"},
 					{Name: "sidecar", Image: "sidecar:v1"},
-					{Name: "init-done", Image: "init:v1"},
 				},
 			},
 			Status: corev1.PodStatus{
@@ -979,6 +981,21 @@ func TestGetNamespaceStatus_ContainerStates(t *testing.T) {
 				Conditions: []corev1.PodCondition{
 					{Type: corev1.PodReady, Status: corev1.ConditionFalse, Reason: "ContainersNotReady", Message: "sidecar not ready"},
 					{Type: corev1.PodInitialized, Status: corev1.ConditionTrue},
+				},
+				InitContainerStatuses: []corev1.ContainerStatus{
+					{
+						Name:         "init-done",
+						Ready:        true,
+						RestartCount: 1,
+						Image:        "init:v1",
+						State: corev1.ContainerState{
+							Terminated: &corev1.ContainerStateTerminated{
+								Reason:   "OOMKilled",
+								Message:  "out of memory",
+								ExitCode: exitCode,
+							},
+						},
+					},
 				},
 				ContainerStatuses: []corev1.ContainerStatus{
 					{
@@ -999,19 +1016,6 @@ func TestGetNamespaceStatus_ContainerStates(t *testing.T) {
 							Waiting: &corev1.ContainerStateWaiting{
 								Reason:  "CrashLoopBackOff",
 								Message: "back-off 5m0s restarting",
-							},
-						},
-					},
-					{
-						Name:         "init-done",
-						Ready:        true,
-						RestartCount: 1,
-						Image:        "init:v1",
-						State: corev1.ContainerState{
-							Terminated: &corev1.ContainerStateTerminated{
-								Reason:   "OOMKilled",
-								Message:  "out of memory",
-								ExitCode: exitCode,
 							},
 						},
 					},
@@ -1039,29 +1043,29 @@ func TestGetNamespaceStatus_ContainerStates(t *testing.T) {
 	// Container states
 	require.Len(t, pod.ContainerStates, 3)
 
-	// Running container
-	assert.Equal(t, "app", pod.ContainerStates[0].Name)
-	assert.Equal(t, "running", pod.ContainerStates[0].State)
-	assert.True(t, pod.ContainerStates[0].Ready)
-	assert.Equal(t, int32(0), pod.ContainerStates[0].RestartCount)
-	assert.Nil(t, pod.ContainerStates[0].ExitCode)
+	// Init container (terminated — appears first because init statuses are prepended)
+	assert.Equal(t, "init-done", pod.ContainerStates[0].Name)
+	assert.Equal(t, "terminated", pod.ContainerStates[0].State)
+	assert.Equal(t, "OOMKilled", pod.ContainerStates[0].Reason)
+	assert.Equal(t, "out of memory", pod.ContainerStates[0].Message)
+	require.NotNil(t, pod.ContainerStates[0].ExitCode)
+	assert.Equal(t, int32(137), *pod.ContainerStates[0].ExitCode)
 
-	// Waiting container
-	assert.Equal(t, "sidecar", pod.ContainerStates[1].Name)
-	assert.Equal(t, "waiting", pod.ContainerStates[1].State)
-	assert.Equal(t, "CrashLoopBackOff", pod.ContainerStates[1].Reason)
-	assert.Equal(t, "back-off 5m0s restarting", pod.ContainerStates[1].Message)
-	assert.False(t, pod.ContainerStates[1].Ready)
-	assert.Equal(t, int32(3), pod.ContainerStates[1].RestartCount)
+	// Running container
+	assert.Equal(t, "app", pod.ContainerStates[1].Name)
+	assert.Equal(t, "running", pod.ContainerStates[1].State)
+	assert.True(t, pod.ContainerStates[1].Ready)
+	assert.Equal(t, int32(0), pod.ContainerStates[1].RestartCount)
 	assert.Nil(t, pod.ContainerStates[1].ExitCode)
 
-	// Terminated container
-	assert.Equal(t, "init-done", pod.ContainerStates[2].Name)
-	assert.Equal(t, "terminated", pod.ContainerStates[2].State)
-	assert.Equal(t, "OOMKilled", pod.ContainerStates[2].Reason)
-	assert.Equal(t, "out of memory", pod.ContainerStates[2].Message)
-	require.NotNil(t, pod.ContainerStates[2].ExitCode)
-	assert.Equal(t, int32(137), *pod.ContainerStates[2].ExitCode)
+	// Waiting container
+	assert.Equal(t, "sidecar", pod.ContainerStates[2].Name)
+	assert.Equal(t, "waiting", pod.ContainerStates[2].State)
+	assert.Equal(t, "CrashLoopBackOff", pod.ContainerStates[2].Reason)
+	assert.Equal(t, "back-off 5m0s restarting", pod.ContainerStates[2].Message)
+	assert.False(t, pod.ContainerStates[2].Ready)
+	assert.Equal(t, int32(3), pod.ContainerStates[2].RestartCount)
+	assert.Nil(t, pod.ContainerStates[2].ExitCode)
 
 	// Pod conditions
 	require.Len(t, pod.Conditions, 2)
