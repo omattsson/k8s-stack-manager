@@ -146,9 +146,9 @@ func (c *Client) CopySecret(ctx context.Context, sourceNS, sourceName, targetNS,
 			Name:      targetName,
 			Namespace: targetNS,
 			Labels: map[string]string{
-				"managed-by":           "k8s-stack-manager",
-				"klaravik.se/copied-from-namespace": sourceNS,
-				"klaravik.se/copied-from-secret":    sourceName,
+				"managed-by": "k8s-stack-manager",
+				"k8s-stack-manager.io/copied-from-namespace": sourceNS,
+				"k8s-stack-manager.io/copied-from-secret":    sourceName,
 			},
 		},
 		Type: src.Type,
@@ -162,11 +162,19 @@ func (c *Client) CopySecret(ctx context.Context, sourceNS, sourceName, targetNS,
 
 	if k8serrors.IsNotFound(err) {
 		_, err = c.clientset.CoreV1().Secrets(targetNS).Create(ctx, target, metav1.CreateOptions{})
-		if err != nil && !k8serrors.IsAlreadyExists(err) {
+		if err == nil {
+			slog.Info("Copied secret", "from", sourceNS+"/"+sourceName, "to", targetNS+"/"+targetName)
+			return nil
+		}
+		if !k8serrors.IsAlreadyExists(err) {
 			return fmt.Errorf("create target secret %s/%s: %w", targetNS, targetName, err)
 		}
-		slog.Info("Copied secret", "from", sourceNS+"/"+sourceName, "to", targetNS+"/"+targetName)
-		return nil
+		// Race: another caller created the secret between our Get and Create.
+		// Fall through to fetch the existing one and update its data to match.
+		existing, err = c.clientset.CoreV1().Secrets(targetNS).Get(ctx, targetName, metav1.GetOptions{})
+		if err != nil {
+			return fmt.Errorf("get target secret after create race %s/%s: %w", targetNS, targetName, err)
+		}
 	}
 
 	existing.Data = src.Data

@@ -272,7 +272,17 @@ func (m *Manager) executeDeploy(helm HelmExecutor, instanceID string, deployLog 
 	// chart installs, so ingresses with tlsSecretName can reference it from
 	// the first reconcile. Non-fatal: log and continue on error (the ingress
 	// will still route plaintext; only TLS termination breaks).
-	if m.wildcardTLSSourceSecret != "" {
+	//
+	// Feature requires both source namespace and source secret to be configured.
+	// If only one is set, warn and skip rather than calling with an empty value
+	// (which would produce a confusing "" namespace error).
+	switch {
+	case m.wildcardTLSSourceSecret != "" && m.wildcardTLSSourceNS == "":
+		slog.Warn("wildcard TLS source secret configured without source namespace — skipping replication",
+			"instance_id", instanceID,
+			"source_secret", m.wildcardTLSSourceSecret,
+		)
+	case m.wildcardTLSSourceSecret != "":
 		if wildcardErr := m.replicateWildcardTLS(ctx, instanceID, namespace); wildcardErr != nil {
 			slog.Warn("failed to replicate wildcard TLS secret",
 				"instance_id", instanceID,

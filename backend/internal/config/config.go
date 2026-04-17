@@ -520,7 +520,7 @@ func loadDeploymentConfig() DeploymentConfig {
 		DeploymentTimeout:         getEnvDuration("DEPLOYMENT_TIMEOUT", 10*time.Minute),
 		ClusterHealthPollInterval: getEnvDuration("CLUSTER_HEALTH_POLL_INTERVAL", 60*time.Second),
 		MaxConcurrentDeploys:      getEnvInt32("MAX_CONCURRENT_DEPLOYS", 5),
-		WildcardTLSSourceNamespace: getEnv("WILDCARD_TLS_SOURCE_NAMESPACE", "kvk-system"),
+		WildcardTLSSourceNamespace: getEnv("WILDCARD_TLS_SOURCE_NAMESPACE", ""),
 		WildcardTLSSourceSecret:    getEnv("WILDCARD_TLS_SOURCE_SECRET", ""),
 		WildcardTLSTargetSecret:    getEnv("WILDCARD_TLS_TARGET_SECRET", ""),
 	}
