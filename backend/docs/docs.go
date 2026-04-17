@@ -700,7 +700,7 @@ const docTemplate = `{
         },
         "/api/v1/auth/login": {
             "post": {
-                "description": "Authenticate with username and password, returns a JWT token",
+                "description": "Authenticate with username and password, returns a JWT access token and sets a refresh token cookie",
                 "consumes": [
                     "application/json"
                 ],
@@ -740,6 +740,85 @@ const docTemplate = `{
                     },
                     "401": {
                         "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/auth/logout": {
+            "post": {
+                "description": "Revokes the current refresh token and blocklists the access token",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "auth"
+                ],
+                "summary": "Logout",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/auth/logout-all": {
+            "post": {
+                "description": "Revokes all refresh tokens for the current user",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "auth"
+                ],
+                "summary": "Logout from all sessions",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {
@@ -894,6 +973,56 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/auth/refresh": {
+            "post": {
+                "description": "Issues a new access token using the refresh token cookie. Rotates the refresh token (old one invalidated, new one issued).",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "auth"
+                ],
+                "summary": "Refresh access token",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.RefreshResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Invalid, expired, or revoked refresh token",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "501": {
+                        "description": "Refresh tokens not enabled",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/auth/register": {
             "post": {
                 "description": "Create a new user account (admin only, or when self-registration is enabled)",
@@ -962,7 +1091,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Returns all registered clusters. Kubeconfig data is never included in responses.",
+                "description": "Returns all registered clusters. Kubeconfig data is never included in responses. Admin/DevOps users receive full cluster details; other roles receive a summary (id, name, is_default only).",
                 "produces": [
                     "application/json"
                 ],
@@ -972,11 +1101,11 @@ const docTemplate = `{
                 "summary": "List all clusters",
                 "responses": {
                     "200": {
-                        "description": "OK",
+                        "description": "Summary (other roles)",
                         "schema": {
                             "type": "array",
                             "items": {
-                                "$ref": "#/definitions/models.Cluster"
+                                "$ref": "#/definitions/handlers.ClusterSummary"
                             }
                         }
                     },
@@ -1063,7 +1192,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Returns a single cluster by ID. Kubeconfig data is never included.",
+                "description": "Returns a single cluster by ID. Kubeconfig data is never included. Admin/DevOps users receive full cluster details; other roles receive a summary (id, name, is_default only).",
                 "produces": [
                     "application/json"
                 ],
@@ -1082,9 +1211,9 @@ const docTemplate = `{
                 ],
                 "responses": {
                     "200": {
-                        "description": "OK",
+                        "description": "Summary (other roles)",
                         "schema": {
-                            "$ref": "#/definitions/models.Cluster"
+                            "$ref": "#/definitions/handlers.ClusterSummary"
                         }
                     },
                     "404": {
@@ -2690,7 +2819,8 @@ const docTemplate = `{
                         "schema": {
                             "type": "object",
                             "additionalProperties": {
-                                "type": "integer"
+                                "type": "integer",
+                                "format": "int64"
                             }
                         }
                     },
@@ -2997,6 +3127,21 @@ const docTemplate = `{
                         "type": "integer",
                         "description": "Items per page (default 25, max 100)",
                         "name": "pageSize",
+                        "in": "query"
+                    },
+                    {
+                        "maximum": 100,
+                        "minimum": 1,
+                        "type": "integer",
+                        "description": "Max items to return (default 25, max 100)",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "minimum": 0,
+                        "type": "integer",
+                        "description": "Number of items to skip (default 0)",
+                        "name": "offset",
                         "in": "query"
                     }
                 ],
@@ -4584,6 +4729,76 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/stack-instances/{id}/deploy-preview": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Compare pending merged values against last-deployed values per chart",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "stack-instances"
+                ],
+                "summary": "Preview deployment changes",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Instance ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.DeployPreviewResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/stack-instances/{id}/extend": {
             "post": {
                 "description": "Extend the expiry time of a stack instance. Uses provided ttl_minutes or the instance's existing TTLMinutes.",
@@ -4739,6 +4954,94 @@ const docTemplate = `{
                     },
                     "404": {
                         "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/stack-instances/{id}/pods": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns detailed pod health including container states, conditions, and recent events",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "stack-instances"
+                ],
+                "summary": "Get instance pod status",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Instance ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/k8s.NamespaceStatus"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "502": {
+                        "description": "Bad Gateway",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "504": {
+                        "description": "Gateway Timeout",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {
@@ -6350,7 +6653,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Generates a new API key. The raw key is returned once in raw_key and cannot be retrieved again.",
+                "description": "Generates a new API key. Optionally set expires_at (YYYY-MM-DD or RFC3339) or expires_in_days (positive int), but not both. If API_KEY_MAX_LIFETIME_DAYS is configured, keys without explicit expiry are auto-capped. The raw key is returned once in raw_key and cannot be retrieved again.",
                 "consumes": [
                     "application/json"
                 ],
@@ -6552,6 +6855,14 @@ const docTemplate = `{
                     "health"
                 ],
                 "summary": "Readiness Check",
+                "parameters": [
+                    {
+                        "type": "boolean",
+                        "description": "Include per-check details",
+                        "name": "verbose",
+                        "in": "query"
+                    }
+                ],
                 "responses": {
                     "200": {
                         "description": "OK",
@@ -6570,17 +6881,34 @@ const docTemplate = `{
         },
         "/ws": {
             "get": {
-                "description": "Upgrades the HTTP connection to a WebSocket for real-time events.",
+                "description": "Upgrades the HTTP connection to a WebSocket for real-time events. Requires a valid JWT token via ?token= query parameter or Authorization: Bearer header.",
                 "tags": [
                     "websocket"
                 ],
                 "summary": "Open a WebSocket connection",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "JWT authentication token",
+                        "name": "token",
+                        "in": "query"
+                    }
+                ],
                 "responses": {
                     "101": {
                         "description": "Switching Protocols"
                     },
                     "400": {
                         "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {
@@ -6733,6 +7061,9 @@ const docTemplate = `{
         "handlers.ChartConfigExportData": {
             "type": "object",
             "properties": {
+                "build_pipeline_id": {
+                    "type": "string"
+                },
                 "chart_name": {
                     "type": "string"
                 },
@@ -6756,10 +7087,41 @@ const docTemplate = `{
                 }
             }
         },
+        "handlers.ChartDeployPreview": {
+            "type": "object",
+            "properties": {
+                "chart_name": {
+                    "type": "string"
+                },
+                "has_changes": {
+                    "type": "boolean"
+                },
+                "pending_values": {
+                    "type": "string"
+                },
+                "previous_values": {
+                    "type": "string"
+                }
+            }
+        },
+        "handlers.ClusterSummary": {
+            "type": "object",
+            "properties": {
+                "id": {
+                    "type": "string"
+                },
+                "is_default": {
+                    "type": "boolean"
+                },
+                "name": {
+                    "type": "string"
+                }
+            }
+        },
         "handlers.ClusterUtilization": {
             "type": "object",
             "properties": {
-                "clusterID": {
+                "cluster_id": {
                     "type": "string"
                 },
                 "namespaces": {
@@ -6833,6 +7195,9 @@ const docTemplate = `{
                 "expires_at": {
                     "type": "string"
                 },
+                "expires_in_days": {
+                    "type": "integer"
+                },
                 "name": {
                     "type": "string"
                 }
@@ -6865,7 +7230,6 @@ const docTemplate = `{
         "handlers.CreateClusterRequest": {
             "type": "object",
             "required": [
-                "api_server_url",
                 "name"
             ],
             "properties": {
@@ -6895,6 +7259,9 @@ const docTemplate = `{
                 },
                 "region": {
                     "type": "string"
+                },
+                "use_in_cluster": {
+                    "type": "boolean"
                 }
             }
         },
@@ -6928,6 +7295,23 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "name": {
+                    "type": "string"
+                }
+            }
+        },
+        "handlers.DeployPreviewResponse": {
+            "type": "object",
+            "properties": {
+                "charts": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/handlers.ChartDeployPreview"
+                    }
+                },
+                "instance_id": {
+                    "type": "string"
+                },
+                "instance_name": {
                     "type": "string"
                 }
             }
@@ -7047,6 +7431,14 @@ const docTemplate = `{
                 }
             }
         },
+        "handlers.RefreshResponse": {
+            "type": "object",
+            "properties": {
+                "token": {
+                    "type": "string"
+                }
+            }
+        },
         "handlers.RegisterRequest": {
             "type": "object",
             "required": [
@@ -7132,6 +7524,9 @@ const docTemplate = `{
                 },
                 "region": {
                     "type": "string"
+                },
+                "use_in_cluster": {
+                    "type": "boolean"
                 }
             }
         },
@@ -7398,6 +7793,36 @@ const docTemplate = `{
                 }
             }
         },
+        "k8s.ContainerStateInfo": {
+            "type": "object",
+            "properties": {
+                "exit_code": {
+                    "type": "integer"
+                },
+                "image": {
+                    "type": "string"
+                },
+                "message": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "ready": {
+                    "type": "boolean"
+                },
+                "reason": {
+                    "type": "string"
+                },
+                "restart_count": {
+                    "type": "integer"
+                },
+                "state": {
+                    "description": "\"running\", \"waiting\", \"terminated\", \"unknown\"",
+                    "type": "string"
+                }
+            }
+        },
         "k8s.DeploymentInfo": {
             "type": "object",
             "properties": {
@@ -7461,6 +7886,12 @@ const docTemplate = `{
                         "$ref": "#/definitions/k8s.ChartStatus"
                     }
                 },
+                "events": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/k8s.PodEvent"
+                    }
+                },
                 "ingresses": {
                     "type": "array",
                     "items": {
@@ -7520,13 +7951,75 @@ const docTemplate = `{
                 }
             }
         },
+        "k8s.PodConditionInfo": {
+            "type": "object",
+            "properties": {
+                "message": {
+                    "type": "string"
+                },
+                "reason": {
+                    "type": "string"
+                },
+                "status": {
+                    "description": "\"True\", \"False\", \"Unknown\"",
+                    "type": "string"
+                },
+                "type": {
+                    "description": "\"Ready\", \"ContainersReady\", \"Initialized\", \"PodScheduled\"",
+                    "type": "string"
+                }
+            }
+        },
+        "k8s.PodEvent": {
+            "type": "object",
+            "properties": {
+                "count": {
+                    "type": "integer"
+                },
+                "first_seen": {
+                    "type": "string"
+                },
+                "last_seen": {
+                    "type": "string"
+                },
+                "message": {
+                    "type": "string"
+                },
+                "object": {
+                    "description": "\"Pod/my-pod-xyz\"",
+                    "type": "string"
+                },
+                "reason": {
+                    "type": "string"
+                },
+                "type": {
+                    "description": "\"Normal\", \"Warning\"",
+                    "type": "string"
+                }
+            }
+        },
         "k8s.PodInfo": {
             "type": "object",
             "properties": {
+                "conditions": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/k8s.PodConditionInfo"
+                    }
+                },
+                "container_states": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/k8s.ContainerStateInfo"
+                    }
+                },
                 "image": {
                     "type": "string"
                 },
                 "name": {
+                    "type": "string"
+                },
+                "node_name": {
                     "type": "string"
                 },
                 "phase": {
@@ -7537,6 +8030,9 @@ const docTemplate = `{
                 },
                 "restart_count": {
                     "type": "integer"
+                },
+                "start_time": {
+                    "type": "string"
                 }
             }
         },
@@ -7682,6 +8178,10 @@ const docTemplate = `{
         "models.ChartConfig": {
             "type": "object",
             "properties": {
+                "build_pipeline_id": {
+                    "description": "CI pipeline ID to trigger for image builds",
+                    "type": "string"
+                },
                 "chart_name": {
                     "type": "string"
                 },
@@ -7793,6 +8293,9 @@ const docTemplate = `{
                 },
                 "updated_at": {
                     "type": "string"
+                },
+                "use_in_cluster": {
+                    "type": "boolean"
                 }
             }
         },
@@ -8182,6 +8685,10 @@ const docTemplate = `{
         "models.TemplateChartConfig": {
             "type": "object",
             "properties": {
+                "build_pipeline_id": {
+                    "description": "CI pipeline ID to trigger for image builds",
+                    "type": "string"
+                },
                 "chart_name": {
                     "type": "string"
                 },

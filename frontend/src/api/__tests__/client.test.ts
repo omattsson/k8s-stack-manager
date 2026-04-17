@@ -598,6 +598,17 @@ describe('instanceService', () => {
     expect(result).toEqual(status);
   });
 
+  it('getPods sends GET to pods endpoint', async () => {
+    const api = mockApi;
+    const podStatus = { namespace: 'stack-test', status: 'healthy', charts: [], last_checked: '2024-01-01T00:00:00Z' };
+    api.get.mockResolvedValueOnce(mockResponse(podStatus));
+
+    const result = await instanceService.getPods('i1');
+
+    expect(api.get).toHaveBeenCalledWith('/api/v1/stack-instances/i1/pods');
+    expect(result).toEqual(podStatus);
+  });
+
   it('extend sends POST with ttl_minutes when provided', async () => {
     const api = mockApi;
     const extended = { id: 'i1', ttl_minutes: 120 };
@@ -1851,6 +1862,11 @@ describe('instanceService — error paths', () => {
   it('getStatus throws on error', async () => {
     mockApi.get.mockRejectedValueOnce(new Error('Unavailable'));
     await expect(instanceService.getStatus('i1')).rejects.toThrow('Unavailable');
+  });
+
+  it('getPods throws on error', async () => {
+    mockApi.get.mockRejectedValueOnce(new Error('Pod fetch failed'));
+    await expect(instanceService.getPods('i1')).rejects.toThrow('Pod fetch failed');
   });
 
   it('extend throws on error', async () => {

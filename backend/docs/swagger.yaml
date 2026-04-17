@@ -85,6 +85,8 @@ definitions:
     type: object
   handlers.ChartConfigExportData:
     properties:
+      build_pipeline_id:
+        type: string
       chart_name:
         type: string
       chart_path:
@@ -100,9 +102,29 @@ definitions:
       source_repo_url:
         type: string
     type: object
+  handlers.ChartDeployPreview:
+    properties:
+      chart_name:
+        type: string
+      has_changes:
+        type: boolean
+      pending_values:
+        type: string
+      previous_values:
+        type: string
+    type: object
+  handlers.ClusterSummary:
+    properties:
+      id:
+        type: string
+      is_default:
+        type: boolean
+      name:
+        type: string
+    type: object
   handlers.ClusterUtilization:
     properties:
-      clusterID:
+      cluster_id:
         type: string
       namespaces:
         items:
@@ -148,6 +170,8 @@ definitions:
     properties:
       expires_at:
         type: string
+      expires_in_days:
+        type: integer
       name:
         type: string
     required:
@@ -189,8 +213,9 @@ definitions:
         type: string
       region:
         type: string
+      use_in_cluster:
+        type: boolean
     required:
-    - api_server_url
     - name
     type: object
   handlers.DefinitionExportBundle:
@@ -213,6 +238,17 @@ definitions:
       description:
         type: string
       name:
+        type: string
+    type: object
+  handlers.DeployPreviewResponse:
+    properties:
+      charts:
+        items:
+          $ref: '#/definitions/handlers.ChartDeployPreview'
+        type: array
+      instance_id:
+        type: string
+      instance_name:
         type: string
     type: object
   handlers.LoginRequest:
@@ -290,6 +326,11 @@ definitions:
       total_users:
         type: integer
     type: object
+  handlers.RefreshResponse:
+    properties:
+      token:
+        type: string
+    type: object
   handlers.RegisterRequest:
     properties:
       display_name:
@@ -347,6 +388,8 @@ definitions:
         type: string
       region:
         type: string
+      use_in_cluster:
+        type: boolean
     type: object
   handlers.UpdateQuotaRequest:
     properties:
@@ -521,6 +564,26 @@ definitions:
       total_memory:
         type: string
     type: object
+  k8s.ContainerStateInfo:
+    properties:
+      exit_code:
+        type: integer
+      image:
+        type: string
+      message:
+        type: string
+      name:
+        type: string
+      ready:
+        type: boolean
+      reason:
+        type: string
+      restart_count:
+        type: integer
+      state:
+        description: '"running", "waiting", "terminated", "unknown"'
+        type: string
+    type: object
   k8s.DeploymentInfo:
     properties:
       available:
@@ -562,6 +625,10 @@ definitions:
         items:
           $ref: '#/definitions/k8s.ChartStatus'
         type: array
+      events:
+        items:
+          $ref: '#/definitions/k8s.PodEvent'
+        type: array
       ingresses:
         items:
           $ref: '#/definitions/k8s.IngressInfo'
@@ -601,11 +668,53 @@ definitions:
         description: '"Ready" or "NotReady"'
         type: string
     type: object
+  k8s.PodConditionInfo:
+    properties:
+      message:
+        type: string
+      reason:
+        type: string
+      status:
+        description: '"True", "False", "Unknown"'
+        type: string
+      type:
+        description: '"Ready", "ContainersReady", "Initialized", "PodScheduled"'
+        type: string
+    type: object
+  k8s.PodEvent:
+    properties:
+      count:
+        type: integer
+      first_seen:
+        type: string
+      last_seen:
+        type: string
+      message:
+        type: string
+      object:
+        description: '"Pod/my-pod-xyz"'
+        type: string
+      reason:
+        type: string
+      type:
+        description: '"Normal", "Warning"'
+        type: string
+    type: object
   k8s.PodInfo:
     properties:
+      conditions:
+        items:
+          $ref: '#/definitions/k8s.PodConditionInfo'
+        type: array
+      container_states:
+        items:
+          $ref: '#/definitions/k8s.ContainerStateInfo'
+        type: array
       image:
         type: string
       name:
+        type: string
+      node_name:
         type: string
       phase:
         type: string
@@ -613,6 +722,8 @@ definitions:
         type: boolean
       restart_count:
         type: integer
+      start_time:
+        type: string
     type: object
   k8s.ResourceCounts:
     properties:
@@ -707,6 +818,9 @@ definitions:
     type: object
   models.ChartConfig:
     properties:
+      build_pipeline_id:
+        description: CI pipeline ID to trigger for image builds
+        type: string
       chart_name:
         type: string
       chart_path:
@@ -783,6 +897,8 @@ definitions:
         type: string
       updated_at:
         type: string
+      use_in_cluster:
+        type: boolean
     type: object
   models.DeploymentLog:
     properties:
@@ -1040,6 +1156,9 @@ definitions:
     type: object
   models.TemplateChartConfig:
     properties:
+      build_pipeline_id:
+        description: CI pipeline ID to trigger for image builds
+        type: string
       chart_name:
         type: string
       chart_path:
@@ -1640,7 +1759,8 @@ paths:
     post:
       consumes:
       - application/json
-      description: Authenticate with username and password, returns a JWT token
+      description: Authenticate with username and password, returns a JWT access token
+        and sets a refresh token cookie
       parameters:
       - description: Login credentials
         in: body
@@ -1668,6 +1788,58 @@ paths:
               type: string
             type: object
       summary: User login
+      tags:
+      - auth
+  /api/v1/auth/logout:
+    post:
+      consumes:
+      - application/json
+      description: Revokes the current refresh token and blocklists the access token
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Logout
+      tags:
+      - auth
+  /api/v1/auth/logout-all:
+    post:
+      consumes:
+      - application/json
+      description: Revokes all refresh tokens for the current user
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Logout from all sessions
       tags:
       - auth
   /api/v1/auth/me:
@@ -1769,6 +1941,40 @@ paths:
       summary: Get OIDC configuration
       tags:
       - auth
+  /api/v1/auth/refresh:
+    post:
+      consumes:
+      - application/json
+      description: Issues a new access token using the refresh token cookie. Rotates
+        the refresh token (old one invalidated, new one issued).
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handlers.RefreshResponse'
+        "401":
+          description: Invalid, expired, or revoked refresh token
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "501":
+          description: Refresh tokens not enabled
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Refresh access token
+      tags:
+      - auth
   /api/v1/auth/register:
     post:
       consumes:
@@ -1813,15 +2019,16 @@ paths:
   /api/v1/clusters:
     get:
       description: Returns all registered clusters. Kubeconfig data is never included
-        in responses.
+        in responses. Admin/DevOps users receive full cluster details; other roles
+        receive a summary (id, name, is_default only).
       produces:
       - application/json
       responses:
         "200":
-          description: OK
+          description: Summary (other roles)
           schema:
             items:
-              $ref: '#/definitions/models.Cluster'
+              $ref: '#/definitions/handlers.ClusterSummary'
             type: array
         "500":
           description: Internal Server Error
@@ -1916,6 +2123,8 @@ paths:
       - clusters
     get:
       description: Returns a single cluster by ID. Kubeconfig data is never included.
+        Admin/DevOps users receive full cluster details; other roles receive a summary
+        (id, name, is_default only).
       parameters:
       - description: Cluster ID
         in: path
@@ -1926,9 +2135,9 @@ paths:
       - application/json
       responses:
         "200":
-          description: OK
+          description: Summary (other roles)
           schema:
-            $ref: '#/definitions/models.Cluster'
+            $ref: '#/definitions/handlers.ClusterSummary'
         "404":
           description: Not Found
           schema:
@@ -2984,6 +3193,7 @@ paths:
           description: OK
           schema:
             additionalProperties:
+              format: int64
               type: integer
             type: object
         "401":
@@ -3136,6 +3346,17 @@ paths:
         maximum: 100
         minimum: 1
         name: pageSize
+        type: integer
+      - description: Max items to return (default 25, max 100)
+        in: query
+        maximum: 100
+        minimum: 1
+        name: limit
+        type: integer
+      - description: Number of items to skip (default 0)
+        in: query
+        minimum: 0
+        name: offset
         type: integer
       produces:
       - application/json
@@ -3971,6 +4192,52 @@ paths:
       summary: Get deployment logs
       tags:
       - stack-instances
+  /api/v1/stack-instances/{id}/deploy-preview:
+    get:
+      description: Compare pending merged values against last-deployed values per
+        chart
+      parameters:
+      - description: Instance ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handlers.DeployPreviewResponse'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Preview deployment changes
+      tags:
+      - stack-instances
   /api/v1/stack-instances/{id}/extend:
     post:
       consumes:
@@ -4081,6 +4348,64 @@ paths:
       summary: Set or update override for a chart
       tags:
       - value-overrides
+  /api/v1/stack-instances/{id}/pods:
+    get:
+      description: Returns detailed pod health including container states, conditions,
+        and recent events
+      parameters:
+      - description: Instance ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/k8s.NamespaceStatus'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "502":
+          description: Bad Gateway
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "503":
+          description: Service Unavailable
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "504":
+          description: Gateway Timeout
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get instance pod status
+      tags:
+      - stack-instances
   /api/v1/stack-instances/{id}/quota-overrides:
     delete:
       description: Remove the per-instance resource quota override for a stack instance
@@ -5373,8 +5698,10 @@ paths:
     post:
       consumes:
       - application/json
-      description: Generates a new API key. The raw key is returned once in raw_key
-        and cannot be retrieved again.
+      description: Generates a new API key. Optionally set expires_at (YYYY-MM-DD
+        or RFC3339) or expires_in_days (positive int), but not both. If API_KEY_MAX_LIFETIME_DAYS
+        is configured, keys without explicit expiry are auto-capped. The raw key is
+        returned once in raw_key and cannot be retrieved again.
       parameters:
       - description: User ID
         in: path
@@ -5502,6 +5829,11 @@ paths:
   /health/ready:
     get:
       description: Get API readiness status
+      parameters:
+      - description: Include per-check details
+        in: query
+        name: verbose
+        type: boolean
       produces:
       - application/json
       responses:
@@ -5518,12 +5850,25 @@ paths:
       - health
   /ws:
     get:
-      description: Upgrades the HTTP connection to a WebSocket for real-time events.
+      description: 'Upgrades the HTTP connection to a WebSocket for real-time events.
+        Requires a valid JWT token via ?token= query parameter or Authorization: Bearer
+        header.'
+      parameters:
+      - description: JWT authentication token
+        in: query
+        name: token
+        type: string
       responses:
         "101":
           description: Switching Protocols
         "400":
           description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
           schema:
             additionalProperties:
               type: string

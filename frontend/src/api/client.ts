@@ -1027,6 +1027,21 @@ export const instanceService = {
     }
   },
   /**
+   * Get detailed pod health status including container states and events.
+   * @param id - Instance ID
+   * @returns Namespace status with pod details
+   * @see GET /api/v1/stack-instances/:id/pods
+   */
+  getPods: async (id: string): Promise<NamespaceStatus> => {
+    try {
+      const response = await api.get<NamespaceStatus>(`/api/v1/stack-instances/${id}/pods`);
+      return response.data;
+    } catch (error) {
+      console.error('Failed to fetch pod status:', error);
+      throw error;
+    }
+  },
+  /**
    * Extend the TTL of a running instance.
    * @param id - Instance ID
    * @param ttlMinutes - New TTL in minutes (uses default if omitted)

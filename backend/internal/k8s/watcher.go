@@ -2,7 +2,10 @@ package k8s
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
+	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -139,7 +142,7 @@ func (w *Watcher) poll(ctx context.Context) {
 
 		// Use a per-namespace timeout to avoid one slow check blocking others.
 		checkCtx, checkCancel := context.WithTimeout(ctx, 5*time.Second)
-		nsStatus, err := client.GetNamespaceStatus(checkCtx, inst.Namespace)
+		nsStatus, err := client.GetNamespaceStatus(checkCtx, inst.Namespace, StatusOptions{})
 		checkCancel()
 
 		if err != nil {
@@ -217,6 +220,18 @@ func statusDetailsChanged(prev, curr *NamespaceStatus) bool {
 		}
 	}
 
+	// Check total restart counts — catches CrashLoopBackOff increments
+	// even when phase/ready remain unchanged.
+	if totalRestarts(prev) != totalRestarts(curr) {
+		return true
+	}
+
+	// Check container state digests — catches reason transitions like
+	// ErrImagePull → ImagePullBackOff where phase/ready/restarts stay the same.
+	if containerStateDigest(prev) != containerStateDigest(curr) {
+		return true
+	}
+
 	// Check ready replica counts on deployments.
 	prevReady := countReadyReplicas(prev)
 	currReady := countReadyReplicas(curr)
@@ -236,6 +251,39 @@ func countPodStates(ns *NamespaceStatus) map[string]int {
 		}
 	}
 	return counts
+}
+
+// totalRestarts sums restart counts across all pods.
+func totalRestarts(ns *NamespaceStatus) int32 {
+	var total int32
+	for _, chart := range ns.Charts {
+		for _, pod := range chart.Pods {
+			total += pod.RestartCount
+		}
+	}
+	return total
+}
+
+// containerStateDigest builds a deterministic, order-independent string from
+// all container states so that state/reason/exit-code transitions trigger
+// broadcasts even when phase, ready count, and restart count remain unchanged.
+// Entries are sorted by pod name + container name for stability.
+func containerStateDigest(ns *NamespaceStatus) string {
+	var entries []string
+	for _, chart := range ns.Charts {
+		for _, pod := range chart.Pods {
+			for _, cs := range pod.ContainerStates {
+				exitCode := int32(0)
+				if cs.ExitCode != nil {
+					exitCode = *cs.ExitCode
+				}
+				entries = append(entries, fmt.Sprintf("%s/%s:%s:%s:%d:%d",
+					pod.Name, cs.Name, cs.State, cs.Reason, exitCode, cs.RestartCount))
+			}
+		}
+	}
+	sort.Strings(entries)
+	return strings.Join(entries, ";")
 }
 
 // countReadyReplicas sums ready replicas across all deployments.

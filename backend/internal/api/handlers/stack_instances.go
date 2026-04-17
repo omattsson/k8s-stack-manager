@@ -1387,12 +1387,87 @@ func (h *InstanceHandler) GetInstanceStatus(c *gin.Context) {
 			}
 			return
 		}
-		nsStatus, err := client.GetNamespaceStatus(c.Request.Context(), inst.Namespace)
+		nsStatus, err := client.GetNamespaceStatus(c.Request.Context(), inst.Namespace, k8s.StatusOptions{})
 		if err != nil {
 			slog.Error("Failed to get namespace status",
 				logKeyInstanceID, id,
 				"namespace", inst.Namespace,
 				"error", err,
+			)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
+			return
+		}
+		c.JSON(http.StatusOK, nsStatus)
+		return
+	}
+
+	c.JSON(http.StatusServiceUnavailable, gin.H{"error": "K8s monitoring not configured"})
+}
+
+// GetInstancePods godoc
+// @Summary     Get instance pod status
+// @Description Returns detailed pod health including container states, conditions, and recent events
+// @Tags        stack-instances
+// @Produce     json
+// @Security    BearerAuth
+// @Param       id path string true "Instance ID"
+// @Success     200 {object} k8s.NamespaceStatus
+// @Failure     400 {object} map[string]string
+// @Failure     404 {object} map[string]string
+// @Failure     500 {object} map[string]string
+// @Failure     502 {object} map[string]string
+// @Failure     503 {object} map[string]string
+// @Failure     504 {object} map[string]string
+// @Router      /api/v1/stack-instances/{id}/pods [get]
+func (h *InstanceHandler) GetInstancePods(c *gin.Context) {
+	id := c.Param("id")
+	if id == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": msgInstanceIDRequired})
+		return
+	}
+
+	inst, err := h.instanceRepo.FindByID(id)
+	if err != nil {
+		status, message := mapError(err, entityStackInstance)
+		c.JSON(status, gin.H{"error": message})
+		return
+	}
+
+	// Always query directly with events — the watcher cache does not include events.
+	if h.registry != nil {
+		client, clientErr := h.registry.GetK8sClient(inst.ClusterID)
+		if clientErr != nil {
+			slog.Warn("Failed to get k8s client for instance pods",
+				logKeyInstanceID, id,
+				"cluster_id", inst.ClusterID,
+				"error", clientErr,
+			)
+			var dbErr *dberrors.DatabaseError
+			if errors.As(clientErr, &dbErr) && errors.Is(dbErr.Unwrap(), dberrors.ErrNotFound) {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "Unknown cluster_id"})
+			} else {
+				c.JSON(http.StatusBadGateway, gin.H{"error": "Failed to connect to cluster"})
+			}
+			return
+		}
+		statusCtx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
+		defer cancel()
+
+		nsStatus, nsErr := client.GetNamespaceStatus(statusCtx, inst.Namespace, k8s.StatusOptions{IncludeEvents: true})
+		if nsErr != nil {
+			if statusCtx.Err() == context.DeadlineExceeded {
+				slog.Error("Timed out getting namespace status for pods",
+					logKeyInstanceID, id,
+					"namespace", inst.Namespace,
+					"error", nsErr,
+				)
+				c.JSON(http.StatusGatewayTimeout, gin.H{"error": "Timed out fetching pod status"})
+				return
+			}
+			slog.Error("Failed to get namespace status for pods",
+				logKeyInstanceID, id,
+				"namespace", inst.Namespace,
+				"error", nsErr,
 			)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
 			return

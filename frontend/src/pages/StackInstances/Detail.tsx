@@ -111,11 +111,11 @@ const Detail = () => {
           setDeployLogs(logs);
         } catch { /* ignore — no logs yet */ }
 
-        // Fetch K8s status if instance is running or deploying
+        // Fetch pod health for active instances (includes container states + events).
         if (inst.status === 'running' || inst.status === 'deploying' || inst.status === 'error' || inst.status === 'stopping' || inst.status === 'cleaning') {
           try {
             setStatusLoading(true);
-            const status = await instanceService.getStatus(id);
+            const status = await instanceService.getPods(id);
             setK8sStatus(status);
           } catch { /* ignore */ }
           finally { setStatusLoading(false); }
@@ -148,7 +148,7 @@ const Detail = () => {
 
       // Fetch current K8s status for terminal states where resources may exist.
       if (newStatus === 'running' || newStatus === 'error') {
-        instanceService.getStatus(id).then(setK8sStatus).catch(() => {});
+        instanceService.getPods(id).then(setK8sStatus).catch(() => {});
       }
 
       // Refresh deploy logs on terminal states.
@@ -161,10 +161,16 @@ const Detail = () => {
     }
 
     // Live K8s status updates from the watcher (pod state changes, etc.).
+    // Merge with existing status to preserve events (watcher doesn't include them).
     if (msg.type === 'instance.status') {
       const nsPayload = msg.payload as { instance_id?: string; namespace_status?: NamespaceStatus };
       if (nsPayload.namespace_status) {
-        setK8sStatus(nsPayload.namespace_status);
+        setK8sStatus((prev) => {
+          const incoming = nsPayload.namespace_status!;
+          if (!prev || !prev.events?.length) return incoming;
+          // Preserve events from the previous getPods() call.
+          return { ...incoming, events: incoming.events?.length ? incoming.events : prev.events };
+        });
       }
     }
 

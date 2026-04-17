@@ -135,12 +135,44 @@ export interface DeploymentStatusInfo {
   available: boolean;
 }
 
+export interface ContainerStateInfo {
+  name: string;
+  state: 'running' | 'waiting' | 'terminated' | 'unknown';
+  reason?: string;
+  message?: string;
+  restart_count: number;
+  ready: boolean;
+  image: string;
+  exit_code?: number;
+}
+
+export interface PodConditionInfo {
+  type: string;
+  status: 'True' | 'False' | 'Unknown';
+  reason?: string;
+  message?: string;
+}
+
+export interface PodEvent {
+  type: 'Normal' | 'Warning';
+  reason: string;
+  message: string;
+  object: string;
+  count: number;
+  first_seen: string;
+  last_seen: string;
+}
+
 export interface PodInfo {
   name: string;
   phase: string;
   ready: boolean;
   restart_count: number;
   image: string;
+  container_states: ContainerStateInfo[];
+  conditions?: PodConditionInfo[];
+  start_time?: string;
+  node_name?: string;
 }
 
 export interface ServiceInfo {
@@ -163,9 +195,10 @@ export interface IngressInfo {
 
 export interface NamespaceStatus {
   namespace: string;
-  status: 'healthy' | 'degraded' | 'error' | 'not_found';
+  status: 'healthy' | 'degraded' | 'error' | 'not_found' | 'progressing';
   charts: ChartStatus[];
   ingresses?: IngressInfo[];
+  events?: PodEvent[];
   last_checked: string;
 }
 

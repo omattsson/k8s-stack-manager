@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import PodStatusDisplay from '../index';
 import type { NamespaceStatus } from '../../../types';
 
@@ -27,6 +28,7 @@ const mockStatus: NamespaceStatus = {
           ready: true,
           restart_count: 0,
           image: 'myimage:v1',
+          container_states: [],
         },
       ],
       services: [
@@ -88,6 +90,7 @@ describe('PodStatusDisplay', () => {
               ready: true,
               restart_count: 10,
               image: 'myimage:v1',
+              container_states: [],
             },
           ],
         },
@@ -96,12 +99,222 @@ describe('PodStatusDisplay', () => {
     render(<PodStatusDisplay status={highRestartStatus} />);
     const restartText = screen.getByText('10');
     expect(restartText).toBeInTheDocument();
-    // The Typography has color="error" when restart_count > 5.
-    // MUI applies the error color via Emotion CSS-in-JS. The generated class
-    // differs from the non-error variant, so we verify the element does NOT
-    // share the same class as a normal "text.primary" Typography. We also
-    // verify the computed style contains the theme error color (#d32f2f).
     const normalText = screen.getByText('crash-pod');
     expect(restartText.className).not.toBe(normalText.className);
+  });
+
+  describe('Container States', () => {
+    it('shows expand button when pod has container states with reasons', () => {
+      const statusWithContainers: NamespaceStatus = {
+        ...mockStatus,
+        charts: [
+          {
+            ...mockStatus.charts[0],
+            pods: [
+              {
+                name: 'crash-pod',
+                phase: 'Running',
+                ready: false,
+                restart_count: 5,
+                image: 'myimage:v1',
+                container_states: [
+                  {
+                    name: 'main',
+                    state: 'waiting',
+                    reason: 'CrashLoopBackOff',
+                    message: 'back-off 5m0s restarting',
+                    restart_count: 5,
+                    ready: false,
+                    image: 'myimage:v1',
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      };
+      render(<PodStatusDisplay status={statusWithContainers} />);
+      expect(screen.getByRole('button', { name: 'Expand container details' })).toBeInTheDocument();
+    });
+
+    it('shows container state details when expanded', async () => {
+      const user = userEvent.setup();
+      const statusWithContainers: NamespaceStatus = {
+        ...mockStatus,
+        charts: [
+          {
+            ...mockStatus.charts[0],
+            pods: [
+              {
+                name: 'crash-pod',
+                phase: 'Running',
+                ready: false,
+                restart_count: 5,
+                image: 'myimage:v1',
+                container_states: [
+                  {
+                    name: 'main',
+                    state: 'waiting',
+                    reason: 'CrashLoopBackOff',
+                    message: 'back-off 5m0s restarting',
+                    restart_count: 5,
+                    ready: false,
+                    image: 'myimage:v1',
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      };
+      render(<PodStatusDisplay status={statusWithContainers} />);
+      await user.click(screen.getByRole('button', { name: 'Expand container details' }));
+      expect(screen.getByText('Container States')).toBeInTheDocument();
+      expect(screen.getByText('main')).toBeInTheDocument();
+      expect(screen.getByText('CrashLoopBackOff')).toBeInTheDocument();
+      expect(screen.getByText('waiting')).toBeInTheDocument();
+    });
+
+    it('shows exit code for terminated containers', async () => {
+      const user = userEvent.setup();
+      const statusWithTerminated: NamespaceStatus = {
+        ...mockStatus,
+        charts: [
+          {
+            ...mockStatus.charts[0],
+            pods: [
+              {
+                name: 'oom-pod',
+                phase: 'Running',
+                ready: false,
+                restart_count: 3,
+                image: 'myimage:v1',
+                container_states: [
+                  {
+                    name: 'worker',
+                    state: 'terminated',
+                    reason: 'OOMKilled',
+                    restart_count: 3,
+                    ready: false,
+                    image: 'myimage:v1',
+                    exit_code: 137,
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      };
+      render(<PodStatusDisplay status={statusWithTerminated} />);
+      await user.click(screen.getByRole('button', { name: 'Expand container details' }));
+      expect(screen.getByText('OOMKilled')).toBeInTheDocument();
+      expect(screen.getByText('(exit code: 137)')).toBeInTheDocument();
+    });
+
+    it('does not show expand button when container states have no reasons', () => {
+      const statusNoReasons: NamespaceStatus = {
+        ...mockStatus,
+        charts: [
+          {
+            ...mockStatus.charts[0],
+            pods: [
+              {
+                name: 'healthy-pod',
+                phase: 'Running',
+                ready: true,
+                restart_count: 0,
+                image: 'myimage:v1',
+                container_states: [
+                  {
+                    name: 'main',
+                    state: 'running',
+                    restart_count: 0,
+                    ready: true,
+                    image: 'myimage:v1',
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      };
+      render(<PodStatusDisplay status={statusNoReasons} />);
+      expect(screen.queryByRole('button', { name: 'Expand container details' })).not.toBeInTheDocument();
+    });
+  });
+
+  describe('Warning Events', () => {
+    it('shows warning events section when events exist', () => {
+      const statusWithEvents: NamespaceStatus = {
+        ...mockStatus,
+        events: [
+          {
+            type: 'Warning',
+            reason: 'FailedScheduling',
+            message: 'Insufficient cpu',
+            object: 'pod/my-pod',
+            count: 3,
+            first_seen: '2026-03-19T09:00:00Z',
+            last_seen: '2026-03-19T10:00:00Z',
+          },
+        ],
+      };
+      render(<PodStatusDisplay status={statusWithEvents} />);
+      expect(screen.getByText('Recent Warnings')).toBeInTheDocument();
+      expect(screen.getByText('FailedScheduling')).toBeInTheDocument();
+      expect(screen.getByText('Insufficient cpu')).toBeInTheDocument();
+      expect(screen.getByText('(pod/my-pod, x3)')).toBeInTheDocument();
+    });
+
+    it('does not show events section when no warning events', () => {
+      const statusOnlyNormal: NamespaceStatus = {
+        ...mockStatus,
+        events: [
+          {
+            type: 'Normal',
+            reason: 'Scheduled',
+            message: 'Successfully assigned',
+            object: 'pod/my-pod',
+            count: 1,
+            first_seen: '2026-03-19T09:00:00Z',
+            last_seen: '2026-03-19T10:00:00Z',
+          },
+        ],
+      };
+      render(<PodStatusDisplay status={statusOnlyNormal} />);
+      expect(screen.queryByText('Recent Warnings')).not.toBeInTheDocument();
+    });
+
+    it('does not show events section when events array is empty', () => {
+      const statusEmptyEvents: NamespaceStatus = {
+        ...mockStatus,
+        events: [],
+      };
+      render(<PodStatusDisplay status={statusEmptyEvents} />);
+      expect(screen.queryByText('Recent Warnings')).not.toBeInTheDocument();
+    });
+
+    it('limits warning events to 10', () => {
+      const manyEvents = Array.from({ length: 15 }, (_, i) => ({
+        type: 'Warning' as const,
+        reason: `Reason${i}`,
+        message: `Message ${i}`,
+        object: `pod/pod-${i}`,
+        count: 1,
+        first_seen: '2026-03-19T09:00:00Z',
+        last_seen: '2026-03-19T10:00:00Z',
+      }));
+      const statusManyEvents: NamespaceStatus = {
+        ...mockStatus,
+        events: manyEvents,
+      };
+      render(<PodStatusDisplay status={statusManyEvents} />);
+      expect(screen.getByText('Recent Warnings')).toBeInTheDocument();
+      // Should show first 10
+      expect(screen.getByText('Reason0')).toBeInTheDocument();
+      expect(screen.getByText('Reason9')).toBeInTheDocument();
+      // Should not show 11th+
+      expect(screen.queryByText('Reason10')).not.toBeInTheDocument();
+    });
   });
 });

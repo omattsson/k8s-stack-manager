@@ -108,6 +108,19 @@ type NamespaceStatus struct {
 	Status      string        `json:"status"`
 	Charts      []ChartStatus `json:"charts"`
 	Ingresses   []IngressInfo `json:"ingresses,omitempty"`
+	Events      []PodEvent    `json:"events,omitempty"`
+}
+
+// PodEvent represents a Kubernetes event associated with a pod or other resource
+// in the namespace.
+type PodEvent struct {
+	FirstSeen time.Time `json:"first_seen"`
+	LastSeen  time.Time `json:"last_seen"`
+	Type      string    `json:"type"` // "Normal", "Warning"
+	Reason    string    `json:"reason"`
+	Message   string    `json:"message"`
+	Object    string    `json:"object"` // "Pod/my-pod-xyz"
+	Count     int32     `json:"count"`
 }
 
 // ChartStatus represents the status of a single Helm release's resources.
@@ -131,11 +144,36 @@ type DeploymentInfo struct {
 
 // PodInfo summarizes a Kubernetes Pod.
 type PodInfo struct {
+	StartTime       *time.Time           `json:"start_time,omitempty"`
+	ContainerStates []ContainerStateInfo `json:"container_states"`
+	Conditions      []PodConditionInfo   `json:"conditions,omitempty"`
+	Name            string               `json:"name"`
+	Phase           string               `json:"phase"`
+	Image           string               `json:"image"`
+	NodeName        string               `json:"node_name,omitempty"`
+	RestartCount    int32                `json:"restart_count"`
+	Ready           bool                 `json:"ready"`
+}
+
+// ContainerStateInfo provides detailed state information for a single container
+// within a pod, including its running/waiting/terminated state and reason.
+type ContainerStateInfo struct {
+	ExitCode     *int32 `json:"exit_code,omitempty"`
 	Name         string `json:"name"`
-	Phase        string `json:"phase"`
+	State        string `json:"state"` // "running", "waiting", "terminated", "unknown"
+	Reason       string `json:"reason,omitempty"`
+	Message      string `json:"message,omitempty"`
 	Image        string `json:"image"`
 	RestartCount int32  `json:"restart_count"`
 	Ready        bool   `json:"ready"`
+}
+
+// PodConditionInfo represents a single condition reported by the kubelet for a pod.
+type PodConditionInfo struct {
+	Type    string `json:"type"`   // "Ready", "ContainersReady", "Initialized", "PodScheduled"
+	Status  string `json:"status"` // "True", "False", "Unknown"
+	Reason  string `json:"reason,omitempty"`
+	Message string `json:"message,omitempty"`
 }
 
 // ServiceInfo summarizes a Kubernetes Service.
@@ -149,8 +187,13 @@ type ServiceInfo struct {
 	IngressHosts []string `json:"ingress_hosts,omitempty"`
 }
 
+// StatusOptions controls optional data included in GetNamespaceStatus.
+type StatusOptions struct {
+	IncludeEvents bool
+}
+
 // GetNamespaceStatus queries the K8s API for the status of all resources in a namespace.
-func (c *Client) GetNamespaceStatus(ctx context.Context, namespace string) (*NamespaceStatus, error) {
+func (c *Client) GetNamespaceStatus(ctx context.Context, namespace string, opts StatusOptions) (*NamespaceStatus, error) {
 	exists, err := c.NamespaceExists(ctx, namespace)
 	if err != nil {
 		return nil, fmt.Errorf("check namespace: %w", err)
@@ -243,11 +286,51 @@ func (c *Client) GetNamespaceStatus(ctx context.Context, namespace string) (*Nam
 
 		ready := true
 		var restarts int32
-		for _, cs := range p.Status.ContainerStatuses {
+		var containerStates []ContainerStateInfo
+		// Include init containers so that init-phase failures (CrashLoopBackOff,
+		// ImagePullBackOff) are visible in the pod health response.
+		allContainers := append(p.Status.InitContainerStatuses, p.Status.ContainerStatuses...) //nolint:gocritic
+		for _, cs := range allContainers {
 			if !cs.Ready {
 				ready = false
 			}
 			restarts += cs.RestartCount
+
+			state := ContainerStateInfo{
+				Name:         cs.Name,
+				RestartCount: cs.RestartCount,
+				Ready:        cs.Ready,
+				Image:        cs.Image,
+			}
+			if cs.State.Running != nil {
+				state.State = "running"
+			} else if cs.State.Waiting != nil {
+				state.State = "waiting"
+				state.Reason = cs.State.Waiting.Reason
+				state.Message = cs.State.Waiting.Message
+			} else if cs.State.Terminated != nil {
+				state.State = "terminated"
+				state.Reason = cs.State.Terminated.Reason
+				state.Message = cs.State.Terminated.Message
+				exitCode := cs.State.Terminated.ExitCode
+				state.ExitCode = &exitCode
+			} else {
+				state.State = "unknown"
+			}
+			containerStates = append(containerStates, state)
+		}
+		if containerStates == nil {
+			containerStates = []ContainerStateInfo{}
+		}
+
+		var conditions []PodConditionInfo
+		for _, cond := range p.Status.Conditions {
+			conditions = append(conditions, PodConditionInfo{
+				Type:    string(cond.Type),
+				Status:  string(cond.Status),
+				Reason:  cond.Reason,
+				Message: cond.Message,
+			})
 		}
 
 		image := ""
@@ -255,13 +338,22 @@ func (c *Client) GetNamespaceStatus(ctx context.Context, namespace string) (*Nam
 			image = p.Spec.Containers[0].Image
 		}
 
-		cr.pods = append(cr.pods, PodInfo{
-			Name:         p.Name,
-			Phase:        string(p.Status.Phase),
-			Ready:        ready,
-			RestartCount: restarts,
-			Image:        image,
-		})
+		podInfo := PodInfo{
+			Name:            p.Name,
+			Phase:           string(p.Status.Phase),
+			Ready:           ready,
+			RestartCount:    restarts,
+			Image:           image,
+			ContainerStates: containerStates,
+			Conditions:      conditions,
+			NodeName:        p.Spec.NodeName,
+		}
+		if p.Status.StartTime != nil {
+			t := p.Status.StartTime.Time
+			podInfo.StartTime = &t
+		}
+
+		cr.pods = append(cr.pods, podInfo)
 	}
 
 	for _, s := range svcList.Items {
@@ -357,6 +449,60 @@ func (c *Client) GetNamespaceStatus(ctx context.Context, namespace string) (*Nam
 		}
 	}
 
+	// Fetch namespace events only when explicitly requested (non-fatal on failure).
+	// Only include Warning events or events from the last hour.
+	var events []PodEvent
+	if opts.IncludeEvents {
+		var eventsTimeoutSeconds int64 = 5
+		var eventListLimit int64 = 200
+		eventList, evErr := c.clientset.CoreV1().Events(namespace).List(ctx, metav1.ListOptions{
+			TimeoutSeconds: &eventsTimeoutSeconds,
+			Limit:          eventListLimit,
+		})
+		if evErr != nil {
+			slog.Warn("Failed to list events, skipping", "namespace", namespace, "error", evErr)
+		} else {
+			oneHourAgo := time.Now().UTC().Add(-1 * time.Hour)
+			for _, e := range eventList.Items {
+				lastSeen := e.LastTimestamp.Time
+				if lastSeen.IsZero() {
+					lastSeen = e.CreationTimestamp.Time
+				}
+				firstSeen := e.FirstTimestamp.Time
+				if firstSeen.IsZero() {
+					firstSeen = e.CreationTimestamp.Time
+				}
+
+				// Include Warning events regardless of age, or any event from the last hour.
+				if e.Type != "Warning" && lastSeen.Before(oneHourAgo) {
+					continue
+				}
+
+				objectRef := ""
+				if e.InvolvedObject.Kind != "" {
+					objectRef = e.InvolvedObject.Kind + "/" + e.InvolvedObject.Name
+				}
+
+				events = append(events, PodEvent{
+					Type:      e.Type,
+					Reason:    e.Reason,
+					Message:   e.Message,
+					Object:    objectRef,
+					Count:     e.Count,
+					FirstSeen: firstSeen,
+					LastSeen:  lastSeen,
+				})
+			}
+			// Sort by most recent first and cap at 50 to bound payload size.
+			sort.Slice(events, func(i, j int) bool {
+				return events[i].LastSeen.After(events[j].LastSeen)
+			})
+			if len(events) > 50 {
+				events = events[:50]
+			}
+		}
+	}
+
 	// Build chart statuses.
 	var chartStatuses []ChartStatus
 	for release, cr := range charts {
@@ -384,6 +530,7 @@ func (c *Client) GetNamespaceStatus(ctx context.Context, namespace string) (*Nam
 		Status:      overall,
 		Charts:      chartStatuses,
 		Ingresses:   ingresses,
+		Events:      events,
 		LastChecked: time.Now().UTC(),
 	}, nil
 }
