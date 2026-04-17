@@ -66,7 +66,7 @@ backend:
     WILDCARD_TLS_SOURCE_NAMESPACE: ""
     WILDCARD_TLS_SOURCE_SECRET: ""
     WILDCARD_TLS_TARGET_SECRET: ""
-    # ---- refresh-db (POST /stack-instances/:id/refresh-db) ----
+    # ---- refresh-db (POST /api/v1/stack-instances/:id/refresh-db) ----
     # Optional DB refresh flow that wipes the MySQL PVC, flushes Redis, and
     # restarts the app deployments — all without rerunning Helm. Disabled by
     # default: the backend rejects requests until the four *required* env vars

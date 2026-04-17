@@ -1329,9 +1329,15 @@ func (h *InstanceHandler) RefreshDB(c *gin.Context) {
 			// that's a deployment-wide config gap, not a client bug.
 			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "refresh-db is not configured on this server"})
 		case errors.Is(err, deployer.ErrRefreshDBInstanceNotRunning):
-			// The upfront status check above passed but the manager re-checked
-			// and lost the race — surface the actual (post-race) status.
-			c.JSON(http.StatusConflict, gin.H{"error": fmt.Sprintf("Cannot refresh-db: instance is currently %s", inst.Status)})
+			// The upfront status check above passed but the manager's own
+			// check rejected the (now possibly-stale) inst we passed in.
+			// Re-fetch so the 409 body reflects the instance's current state
+			// rather than the stale Running snapshot we started with.
+			latestStatus := inst.Status
+			if latest, findErr := h.instanceRepo.FindByID(id); findErr == nil && latest != nil {
+				latestStatus = latest.Status
+			}
+			c.JSON(http.StatusConflict, gin.H{"error": fmt.Sprintf("Cannot refresh-db: instance is currently %s", latestStatus)})
 		default:
 			c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
 		}

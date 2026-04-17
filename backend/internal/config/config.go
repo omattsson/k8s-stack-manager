@@ -76,7 +76,7 @@ type DeploymentConfig struct {
 	WildcardTLSSourceSecret    string
 	WildcardTLSTargetSecret    string
 
-	// RefreshDB — configuration for the POST /stack-instances/:id/refresh-db
+	// RefreshDB — configuration for the POST /api/v1/stack-instances/:id/refresh-db
 	// operation. This wipes the MySQL data PVC so its init container re-extracts
 	// the golden-db tarball on next boot, flushes Redis, and restarts the app
 	// deployments — all without rerunning Helm.
