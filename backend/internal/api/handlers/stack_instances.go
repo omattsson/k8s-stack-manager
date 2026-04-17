@@ -1323,7 +1323,18 @@ func (h *InstanceHandler) RefreshDB(c *gin.Context) {
 			logKeyInstanceID, id,
 			"error", err,
 		)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
+		switch {
+		case errors.Is(err, deployer.ErrRefreshDBNotConfigured):
+			// Feature is off until the operator sets the REFRESH_DB_* env vars —
+			// that's a deployment-wide config gap, not a client bug.
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "refresh-db is not configured on this server"})
+		case errors.Is(err, deployer.ErrRefreshDBInstanceNotRunning):
+			// The upfront status check above passed but the manager re-checked
+			// and lost the race — surface the actual (post-race) status.
+			c.JSON(http.StatusConflict, gin.H{"error": fmt.Sprintf("Cannot refresh-db: instance is currently %s", inst.Status)})
+		default:
+			c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
+		}
 		return
 	}
 

@@ -300,6 +300,23 @@ func newTestManagerWithK8s(t *testing.T, instRepo models.StackInstanceRepository
 	})
 }
 
+// newTestManagerWithK8sNoRefreshConfig mirrors newTestManagerWithK8s but
+// deliberately omits the RefreshDB* fields, so Manager.RefreshDB returns
+// ErrRefreshDBNotConfigured. Used to verify the handler maps that sentinel
+// to a 503 response instead of the generic 500.
+func newTestManagerWithK8sNoRefreshConfig(t *testing.T, instRepo models.StackInstanceRepository, logRepo models.DeploymentLogRepository) *deployer.Manager {
+	t.Helper()
+	k8sClient := k8s.NewClientFromInterface(fake.NewSimpleClientset())
+	testRegistry := cluster.NewRegistryForTest("test-cluster", k8sClient, &noopHelmExecutor{})
+	return deployer.NewManager(deployer.ManagerConfig{
+		Registry:      testRegistry,
+		InstanceRepo:  instRepo,
+		DeployLogRepo: logRepo,
+		Hub:           &MockBroadcastSender{},
+		MaxConcurrent: 2,
+	})
+}
+
 // ---- DeployInstance tests ----
 
 func TestDeployInstance(t *testing.T) {
@@ -451,6 +468,7 @@ func TestDeployInstance(t *testing.T) {
 	}
 }
 
+
 // ---- StopInstance tests ----
 
 func TestStopInstance(t *testing.T) {
@@ -558,6 +576,7 @@ func TestStopInstance(t *testing.T) {
 		})
 	}
 }
+
 
 // ---- GetDeployLog tests ----
 
@@ -1017,6 +1036,7 @@ func TestCleanInstance(t *testing.T) {
 	}
 }
 
+
 // ---- RefreshDB tests ----
 
 func TestRefreshDB(t *testing.T) {
@@ -1132,3 +1152,38 @@ func TestRefreshDB(t *testing.T) {
 		})
 	}
 }
+
+// TestRefreshDB_NotConfigured_Returns503 covers the sentinel-error mapping
+// introduced in the handler. Previously every Manager error became a 500,
+// making a deployment-wide config gap look like a server bug. Now
+// deployer.ErrRefreshDBNotConfigured → 503 so operators can tell the feature
+// is simply not turned on for this server.
+func TestRefreshDB_NotConfigured_Returns503(t *testing.T) {
+	t.Parallel()
+
+	instRepo := NewMockStackInstanceRepository()
+	defRepo := NewMockStackDefinitionRepository()
+	ccRepo := NewMockChartConfigRepository()
+	logRepo := NewMockDeploymentLogRepository()
+	seedInstance(t, instRepo, "rc1", "stack-rc1", "d1", "uid-1", models.StackStatusRunning)
+
+	mgr := newTestManagerWithK8sNoRefreshConfig(t, instRepo, logRepo)
+
+	router := setupDeployRouter(t,
+		instRepo, NewMockValueOverrideRepository(),
+		defRepo, ccRepo,
+		NewMockStackTemplateRepository(), NewMockTemplateChartConfigRepository(),
+		mgr, nil, nil, logRepo,
+		"uid-1", "alice", "user",
+	)
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest(http.MethodPost, "/api/v1/stack-instances/rc1/refresh-db", nil)
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
+	var resp map[string]string
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Contains(t, resp["error"], "refresh-db is not configured")
+}
+

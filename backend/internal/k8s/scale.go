@@ -26,6 +26,22 @@ var ErrDeploymentNotFound = errors.New("deployment not found")
 // API quota on fast transitions.
 const defaultPollInterval = 2 * time.Second
 
+// deploymentPodSelector returns the LabelSelector string for a Deployment's
+// own pods, rejecting a nil / all-empty selector. A Deployment with no
+// selector is a server-side-apply edge case (or a malformed object) — treating
+// the empty selector as "match anything in the namespace" would let scale /
+// exec helpers act on unrelated workloads, so we fail loudly instead.
+func deploymentPodSelector(deploy *appsv1.Deployment) (string, error) {
+	sel := deploy.Spec.Selector
+	if sel == nil || (len(sel.MatchLabels) == 0 && len(sel.MatchExpressions) == 0) {
+		return "", fmt.Errorf(
+			"deployment %s/%s has no pod selector (spec.selector is empty); refusing to list pods",
+			deploy.Namespace, deploy.Name,
+		)
+	}
+	return metav1.FormatLabelSelector(sel), nil
+}
+
 // ScaleDeployment sets the target Deployment's replicas to the provided value.
 // Returns ErrDeploymentNotFound (wrapped) when the Deployment is missing so
 // callers can choose to skip silently (e.g. optional app deployments that
@@ -79,7 +95,10 @@ func (c *Client) WaitForDeploymentPodsGone(ctx context.Context, namespace, name 
 		return fmt.Errorf("get deployment %s/%s: %w", namespace, name, err)
 	}
 
-	selector := metav1.FormatLabelSelector(deploy.Spec.Selector)
+	selector, err := deploymentPodSelector(deploy)
+	if err != nil {
+		return err
+	}
 
 	waitCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()

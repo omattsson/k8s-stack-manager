@@ -25,12 +25,6 @@ const (
 	refreshDBOverallBudget = 10 * time.Minute
 )
 
-// defaultRefreshDBScaleTargets is intentionally empty. RefreshDB scaling must
-// be explicitly configured per environment via REFRESH_DB_SCALE_TARGETS (or
-// ManagerConfig.RefreshDBScaleTargets), so the feature doesn't silently drag
-// in any specific company's resource naming scheme.
-var defaultRefreshDBScaleTargets = []string{}
-
 // ErrRefreshDBNotConfigured is returned by Manager.RefreshDB when the caller
 // has not provided the minimum configuration (scale targets + MySQL/Redis/sync
 // release names) needed to run the flow safely.

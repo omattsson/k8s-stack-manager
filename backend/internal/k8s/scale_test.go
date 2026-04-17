@@ -92,6 +92,92 @@ func TestWaitForDeploymentPodsGone_MissingDeployment(t *testing.T) {
 	assert.NoError(t, err)
 }
 
+func TestDeploymentPodSelector(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		deploy  *appsv1.Deployment
+		wantSel string
+		wantErr bool
+	}{
+		{
+			name: "matchLabels returns non-empty selector",
+			deploy: &appsv1.Deployment{
+				ObjectMeta: metav1.ObjectMeta{Namespace: "ns", Name: "app"},
+				Spec: appsv1.DeploymentSpec{
+					Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": "x"}},
+				},
+			},
+			wantSel: "app=x",
+		},
+		{
+			name: "matchExpressions returns a formatted selector",
+			deploy: &appsv1.Deployment{
+				ObjectMeta: metav1.ObjectMeta{Namespace: "ns", Name: "app"},
+				Spec: appsv1.DeploymentSpec{
+					Selector: &metav1.LabelSelector{
+						MatchExpressions: []metav1.LabelSelectorRequirement{
+							{Key: "tier", Operator: metav1.LabelSelectorOpIn, Values: []string{"web"}},
+						},
+					},
+				},
+			},
+			// We don't pin the exact format, just that it's non-empty.
+			wantSel: "tier in (web)",
+		},
+		{
+			name: "nil selector is refused",
+			deploy: &appsv1.Deployment{
+				ObjectMeta: metav1.ObjectMeta{Namespace: "ns", Name: "bare"},
+				Spec:       appsv1.DeploymentSpec{},
+			},
+			wantErr: true,
+		},
+		{
+			name: "empty selector struct is refused",
+			deploy: &appsv1.Deployment{
+				ObjectMeta: metav1.ObjectMeta{Namespace: "ns", Name: "empty-sel"},
+				Spec:       appsv1.DeploymentSpec{Selector: &metav1.LabelSelector{}},
+			},
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got, err := deploymentPodSelector(tt.deploy)
+			if tt.wantErr {
+				assert.Error(t, err)
+				assert.Contains(t, err.Error(), "no pod selector")
+				return
+			}
+			assert.NoError(t, err)
+			assert.Equal(t, tt.wantSel, got)
+		})
+	}
+}
+
+func TestWaitForDeploymentPodsGone_NilSelectorRefused(t *testing.T) {
+	t.Parallel()
+
+	// Deployment with no pod selector — FormatLabelSelector would produce an
+	// empty string that matches every pod in the namespace. We must refuse,
+	// not scan unrelated workloads.
+	deploy := &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "ns4", Name: "noselector"},
+		Spec:       appsv1.DeploymentSpec{},
+	}
+	cs := fake.NewSimpleClientset(deploy)
+	c := NewClientFromInterface(cs)
+
+	err := c.WaitForDeploymentPodsGone(context.Background(), "ns4", "noselector", time.Second)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "no pod selector")
+}
+
 func TestWaitForDeploymentPodsGone_Timeout(t *testing.T) {
 	t.Parallel()
 

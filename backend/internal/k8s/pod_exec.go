@@ -38,7 +38,10 @@ func (c *Client) ExecInDeploymentPod(
 	if err != nil {
 		return "", fmt.Errorf("get deployment %s/%s: %w", namespace, deploymentName, err)
 	}
-	selector := metav1.FormatLabelSelector(deploy.Spec.Selector)
+	selector, err := deploymentPodSelector(deploy)
+	if err != nil {
+		return "", err
+	}
 
 	pods, err := c.clientset.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{
 		LabelSelector: selector,
