@@ -280,17 +280,23 @@ func newTestManager(instRepo models.StackInstanceRepository, logRepo models.Depl
 
 // newTestManagerWithK8s creates a Manager wired with a real k8s.Client (built
 // from a fake clientset) so that refresh-db can exercise its orchestration
-// paths. Helm is stubbed with the noop executor.
+// paths. Helm is stubbed with the noop executor. RefreshDB config is supplied
+// with neutral placeholder release names so the opt-in gate is satisfied; the
+// fake clientset is empty so scale/wait calls return ErrDeploymentNotFound.
 func newTestManagerWithK8s(t *testing.T, instRepo models.StackInstanceRepository, logRepo models.DeploymentLogRepository) *deployer.Manager {
 	t.Helper()
 	k8sClient := k8s.NewClientFromInterface(fake.NewSimpleClientset())
 	testRegistry := cluster.NewRegistryForTest("test-cluster", k8sClient, &noopHelmExecutor{})
 	return deployer.NewManager(deployer.ManagerConfig{
-		Registry:      testRegistry,
-		InstanceRepo:  instRepo,
-		DeployLogRepo: logRepo,
-		Hub:           &MockBroadcastSender{},
-		MaxConcurrent: 2,
+		Registry:              testRegistry,
+		InstanceRepo:          instRepo,
+		DeployLogRepo:         logRepo,
+		Hub:                   &MockBroadcastSender{},
+		MaxConcurrent:         2,
+		RefreshDBScaleTargets: []string{"app-core"},
+		RefreshDBMysqlRelease: "app-mysql",
+		RefreshDBRedisRelease: "app-redis",
+		RefreshDBSyncJobName:  "app-sync",
 	})
 }
 

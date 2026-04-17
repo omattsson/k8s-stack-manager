@@ -25,17 +25,21 @@ const (
 	refreshDBOverallBudget = 10 * time.Minute
 )
 
-// defaultRefreshDBScaleTargets mirrors the env-var default applied in
-// config.loadDeploymentConfig. Duplicated here so unit tests that instantiate
-// Manager directly get the same behaviour without wiring config.
-var defaultRefreshDBScaleTargets = []string{
-	"kvk-core",
-	"kvk-storefront",
-	"kvk-storefront-worker",
-	"kvk-pdf-service",
-	"kvk-pdf-service-gotenberg",
-	"kvk-admin",
-}
+// defaultRefreshDBScaleTargets is intentionally empty. RefreshDB scaling must
+// be explicitly configured per environment via REFRESH_DB_SCALE_TARGETS (or
+// ManagerConfig.RefreshDBScaleTargets), so the feature doesn't silently drag
+// in any specific company's resource naming scheme.
+var defaultRefreshDBScaleTargets = []string{}
+
+// ErrRefreshDBNotConfigured is returned by Manager.RefreshDB when the caller
+// has not provided the minimum configuration (scale targets + MySQL/Redis/sync
+// release names) needed to run the flow safely.
+var ErrRefreshDBNotConfigured = errors.New("refresh-db is not configured: set REFRESH_DB_SCALE_TARGETS, REFRESH_DB_MYSQL_RELEASE, REFRESH_DB_REDIS_RELEASE, and REFRESH_DB_SYNC_JOB_NAME")
+
+// ErrRefreshDBInstanceNotRunning is returned by Manager.RefreshDB when the
+// instance is not in the running state. This defense matches the HTTP handler
+// check so direct/future callers cannot bypass it.
+var ErrRefreshDBInstanceNotRunning = errors.New("refresh-db: instance is not running")
 
 // RefreshDB wipes the MySQL PVC, flushes Redis, and restarts the app
 // Deployments in a stack namespace without re-running Helm. The MySQL chart's
@@ -56,6 +60,19 @@ func (m *Manager) RefreshDB(ctx context.Context, instance *models.StackInstance)
 	}
 	if m.registry == nil {
 		return "", fmt.Errorf("cluster registry is not configured")
+	}
+	// Defense in depth: the HTTP handler already enforces this, but a direct
+	// caller must not be able to mutate a non-running instance (the mid-flight
+	// state transitions below would otherwise corrupt clean/stop/deploy races).
+	if instance.Status != models.StackStatusRunning {
+		return "", ErrRefreshDBInstanceNotRunning
+	}
+	// Require an explicit configuration — refuse to run with empty defaults.
+	if len(m.refreshDBScaleTargets) == 0 ||
+		m.refreshDBMysqlRelease == "" ||
+		m.refreshDBRedisRelease == "" ||
+		m.refreshDBSyncJobName == "" {
+		return "", ErrRefreshDBNotConfigured
 	}
 
 	clusterID, err := m.registry.ResolveClusterID(instance.ClusterID)
@@ -114,26 +131,15 @@ func (m *Manager) RefreshDB(ctx context.Context, instance *models.StackInstance)
 	return logID, nil
 }
 
-// refreshDBConfig returns effective RefreshDB configuration with the same
-// defaults that config.loadDeploymentConfig applies, so unit tests that
-// build a Manager directly still behave sensibly.
+// refreshDBConfig returns effective RefreshDB configuration. All required
+// fields are validated up front in RefreshDB(), so callers can rely on them
+// being non-empty here. Only the cleanup-Job image falls back to a generic
+// default (alpine) when not configured.
 func (m *Manager) refreshDBConfig() (scaleTargets []string, mysqlRelease, redisRelease, syncJobName, cleanupImage string) {
 	scaleTargets = m.refreshDBScaleTargets
-	if len(scaleTargets) == 0 {
-		scaleTargets = defaultRefreshDBScaleTargets
-	}
 	mysqlRelease = m.refreshDBMysqlRelease
-	if mysqlRelease == "" {
-		mysqlRelease = "kvk-mysql"
-	}
 	redisRelease = m.refreshDBRedisRelease
-	if redisRelease == "" {
-		redisRelease = "kvk-redis"
-	}
 	syncJobName = m.refreshDBSyncJobName
-	if syncJobName == "" {
-		syncJobName = "kvk-storefront-sync"
-	}
 	cleanupImage = m.refreshDBCleanupImage
 	if cleanupImage == "" {
 		cleanupImage = "alpine:3.20"
@@ -184,6 +190,9 @@ func (m *Manager) executeRefreshDB(k8sClient *k8s.Client, instanceID string, dep
 			}
 			refreshErr = fmt.Errorf("scaling down %s: %w", target, err)
 			appendLine("ERROR: %s", refreshErr.Error())
+			// Best-effort rollback: any targets we already scaled to 0 would
+			// otherwise be stranded. Scaling a running deployment to 1 is a no-op.
+			m.scaleAppsUp(ctx, k8sClient, namespace, scaleTargets, appendLine)
 			m.finalizeRefreshDB(instanceID, deployLog, allOutput, refreshErr)
 			return
 		}
@@ -195,6 +204,8 @@ func (m *Manager) executeRefreshDB(k8sClient *k8s.Client, instanceID string, dep
 	if err := k8sClient.ScaleDeployment(ctx, namespace, mysqlRelease, 0); err != nil {
 		refreshErr = fmt.Errorf("scaling down %s: %w", mysqlRelease, err)
 		appendLine("ERROR: %s", refreshErr.Error())
+		// All apps are at 0 after step 1; don't leave the stack dark.
+		m.scaleAppsUp(ctx, k8sClient, namespace, scaleTargets, appendLine)
 		m.finalizeRefreshDB(instanceID, deployLog, allOutput, refreshErr)
 		return
 	}

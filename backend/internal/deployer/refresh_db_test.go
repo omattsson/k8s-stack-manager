@@ -70,7 +70,7 @@ func TestManager_RefreshDB_CancelledContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	_, err := mgr.RefreshDB(ctx, &models.StackInstance{ID: "inst-refresh-cancel"})
+	_, err := mgr.RefreshDB(ctx, runningInstance("inst-refresh-cancel"))
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "request cancelled")
 }
@@ -86,15 +86,31 @@ func TestManager_RefreshDB_NilRegistry(t *testing.T) {
 		MaxConcurrent: 2,
 	})
 
-	_, err := mgr.RefreshDB(context.Background(), &models.StackInstance{ID: "inst-refresh-nilreg"})
+	_, err := mgr.RefreshDB(context.Background(), runningInstance("inst-refresh-nilreg"))
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "cluster registry is not configured")
+}
+
+// runningInstance returns a minimal StackInstance that passes RefreshDB's
+// status gate, so individual tests can focus on a single failure mode.
+func runningInstance(id string) *models.StackInstance {
+	return &models.StackInstance{ID: id, Status: models.StackStatusRunning}
+}
+
+// fullyConfiguredManagerConfig sets the four required RefreshDB fields to
+// neutral placeholder values so tests past the config gate.
+func fullyConfiguredManagerConfig(base ManagerConfig) ManagerConfig {
+	base.RefreshDBScaleTargets = []string{"app-core"}
+	base.RefreshDBMysqlRelease = "app-mysql"
+	base.RefreshDBRedisRelease = "app-redis"
+	base.RefreshDBSyncJobName = "app-sync"
+	return base
 }
 
 func TestManager_RefreshDB_K8sClientError(t *testing.T) {
 	t.Parallel()
 
-	mgr := NewManager(ManagerConfig{
+	mgr := NewManager(fullyConfiguredManagerConfig(ManagerConfig{
 		Registry: &mockClusterResolver{
 			k8sErr: fmt.Errorf("no k8s client"),
 		},
@@ -102,9 +118,9 @@ func TestManager_RefreshDB_K8sClientError(t *testing.T) {
 		DeployLogRepo: newMockDeployLogRepo(),
 		Hub:           &mockBroadcaster{},
 		MaxConcurrent: 2,
-	})
+	}))
 
-	_, err := mgr.RefreshDB(context.Background(), &models.StackInstance{ID: "inst-refresh-k8serr"})
+	_, err := mgr.RefreshDB(context.Background(), runningInstance("inst-refresh-k8serr"))
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "getting cluster k8s client")
 }
@@ -112,17 +128,53 @@ func TestManager_RefreshDB_K8sClientError(t *testing.T) {
 func TestManager_RefreshDB_NilK8sClient(t *testing.T) {
 	t.Parallel()
 
-	mgr := NewManager(ManagerConfig{
+	mgr := NewManager(fullyConfiguredManagerConfig(ManagerConfig{
 		Registry:      &mockClusterResolver{k8sClient: nil},
+		InstanceRepo:  newMockInstanceRepo(),
+		DeployLogRepo: newMockDeployLogRepo(),
+		Hub:           &mockBroadcaster{},
+		MaxConcurrent: 2,
+	}))
+
+	_, err := mgr.RefreshDB(context.Background(), runningInstance("inst-refresh-nilk8s"))
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "k8s client is nil")
+}
+
+func TestManager_RefreshDB_NotRunning(t *testing.T) {
+	t.Parallel()
+
+	mgr := NewManager(fullyConfiguredManagerConfig(ManagerConfig{
+		Registry:      &mockClusterResolver{k8sClient: k8s.NewClientFromInterface(fake.NewSimpleClientset())},
+		InstanceRepo:  newMockInstanceRepo(),
+		DeployLogRepo: newMockDeployLogRepo(),
+		Hub:           &mockBroadcaster{},
+		MaxConcurrent: 2,
+	}))
+
+	// Instance not in Running state — defense-in-depth gate should trip
+	// before any cluster-mutating work happens.
+	_, err := mgr.RefreshDB(context.Background(), &models.StackInstance{
+		ID:     "inst-refresh-draft",
+		Status: models.StackStatusDraft,
+	})
+	assert.ErrorIs(t, err, ErrRefreshDBInstanceNotRunning)
+}
+
+func TestManager_RefreshDB_NotConfigured(t *testing.T) {
+	t.Parallel()
+
+	// Omit RefreshDB* fields entirely — should refuse to run.
+	mgr := NewManager(ManagerConfig{
+		Registry:      &mockClusterResolver{k8sClient: k8s.NewClientFromInterface(fake.NewSimpleClientset())},
 		InstanceRepo:  newMockInstanceRepo(),
 		DeployLogRepo: newMockDeployLogRepo(),
 		Hub:           &mockBroadcaster{},
 		MaxConcurrent: 2,
 	})
 
-	_, err := mgr.RefreshDB(context.Background(), &models.StackInstance{ID: "inst-refresh-nilk8s"})
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "k8s client is nil")
+	_, err := mgr.RefreshDB(context.Background(), runningInstance("inst-refresh-unconfigured"))
+	assert.ErrorIs(t, err, ErrRefreshDBNotConfigured)
 }
 
 func TestManager_RefreshDB_Success(t *testing.T) {
@@ -261,9 +313,14 @@ func TestManager_RefreshDB_MissingMysqlDeployment(t *testing.T) {
 		Hub:           hub,
 		MaxConcurrent: 2,
 
-		RefreshDBScaleTargets: []string{},
+		// Scale targets must be non-empty to satisfy the config gate, but the
+		// named deployments don't exist in the cluster so they'll be treated
+		// as ErrDeploymentNotFound and skipped. The real failure surfaces in
+		// step 2 when MySQL is missing.
+		RefreshDBScaleTargets: []string{"app-core"},
 		RefreshDBMysqlRelease: "kvk-mysql",
 		RefreshDBRedisRelease: "kvk-redis",
+		RefreshDBSyncJobName:  "kvk-storefront-sync",
 		RefreshDBCleanupImage: "alpine:3.20",
 	})
 
@@ -301,10 +358,14 @@ func TestManager_refreshDBConfig_Defaults(t *testing.T) {
 		MaxConcurrent: 1,
 	})
 
+	// With no config wired in, refreshDBConfig should return empty required
+	// fields (Manager.RefreshDB will reject the call with ErrRefreshDBNotConfigured
+	// before this ever runs in production). Only the cleanup image has a
+	// generic fallback.
 	targets, mysql, redis, sync, image := mgr.refreshDBConfig()
-	assert.Equal(t, defaultRefreshDBScaleTargets, targets)
-	assert.Equal(t, "kvk-mysql", mysql)
-	assert.Equal(t, "kvk-redis", redis)
-	assert.Equal(t, "kvk-storefront-sync", sync)
+	assert.Empty(t, targets)
+	assert.Empty(t, mysql)
+	assert.Empty(t, redis)
+	assert.Empty(t, sync)
 	assert.Equal(t, "alpine:3.20", image)
 }

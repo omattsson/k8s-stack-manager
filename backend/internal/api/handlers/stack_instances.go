@@ -1276,12 +1276,14 @@ func (h *InstanceHandler) CleanInstance(c *gin.Context) {
 // @Summary     Refresh the MySQL database of a stack instance
 // @Description Wipes the MySQL data PVC so the init container re-extracts the golden dataset, flushes Redis, and restarts the app deployments — all without re-running Helm. Only allowed when the instance is running.
 // @Tags        stack-instances
+// @Accept      json
 // @Produce     json
 // @Param       id path string true "Instance ID"
 // @Success     202 {object} map[string]string "Refresh-DB initiated"
 // @Failure     400 {object} map[string]string
 // @Failure     404 {object} map[string]string
 // @Failure     409 {object} map[string]string "Invalid status for refresh-db"
+// @Failure     500 {object} map[string]string "Failed to start refresh-db"
 // @Failure     503 {object} map[string]string "Deployment service not configured"
 // @Security    BearerAuth
 // @Router      /api/v1/stack-instances/{id}/refresh-db [post]

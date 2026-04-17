@@ -221,9 +221,15 @@ func (c *Client) RunPVCCleanupJob(ctx context.Context, req PVCCleanupJobRequest)
 
 	// Always attempt to delete the Job on exit (defensive: TTL will also GC
 	// it eventually, but we want the namespace tidy and the Job slot freed
-	// before the next refresh).
+	// before the next refresh). Use a bounded context so cleanup cannot hang
+	// indefinitely if the API server or network is unhealthy — otherwise a
+	// stuck delete would block the refresh-db goroutine and the shutdown
+	// WaitGroup that tracks it.
 	defer func() {
-		if err := c.deleteJob(context.Background(), req.Namespace, req.JobName); err != nil {
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cleanupCancel()
+
+		if err := c.deleteJob(cleanupCtx, req.Namespace, req.JobName); err != nil {
 			slog.Warn("failed to delete cleanup Job after run",
 				"namespace", req.Namespace, "job", req.JobName, "error", err)
 		}
