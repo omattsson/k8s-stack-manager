@@ -21,7 +21,7 @@ import (
 const (
 	refreshDBScaleDownWait = 60 * time.Second
 	refreshDBCleanupWait   = 3 * time.Minute
-	refreshDBMysqlReadyWat = 5 * time.Minute
+	refreshDBMysqlReadyWait = 5 * time.Minute
 	refreshDBOverallBudget = 10 * time.Minute
 )
 
@@ -230,7 +230,7 @@ func (m *Manager) executeRefreshDB(k8sClient *k8s.Client, instanceID string, dep
 
 	// Step 4 — scale MySQL back to 1 and wait for Available (init container
 	// re-extracts the golden-db tarball — ~2 min for a 7 GB tarball).
-	appendLine("[4/8] Scaling MySQL deployment %q to 1 and waiting up to %s for Available", mysqlRelease, refreshDBMysqlReadyWat)
+	appendLine("[4/8] Scaling MySQL deployment %q to 1 and waiting up to %s for Available", mysqlRelease, refreshDBMysqlReadyWait)
 	if err := k8sClient.ScaleDeployment(ctx, namespace, mysqlRelease, 1); err != nil {
 		refreshErr = fmt.Errorf("scaling up %s: %w", mysqlRelease, err)
 		appendLine("ERROR: %s", refreshErr.Error())
@@ -238,7 +238,7 @@ func (m *Manager) executeRefreshDB(k8sClient *k8s.Client, instanceID string, dep
 		m.finalizeRefreshDB(instanceID, deployLog, allOutput, refreshErr)
 		return
 	}
-	if err := k8sClient.WaitForDeploymentAvailable(ctx, namespace, mysqlRelease, refreshDBMysqlReadyWat); err != nil {
+	if err := k8sClient.WaitForDeploymentAvailable(ctx, namespace, mysqlRelease, refreshDBMysqlReadyWait); err != nil {
 		refreshErr = fmt.Errorf("waiting for MySQL Available: %w", err)
 		appendLine("ERROR: %s", refreshErr.Error())
 		m.scaleAppsUp(ctx, k8sClient, namespace, scaleTargets, appendLine)

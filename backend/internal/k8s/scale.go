@@ -253,17 +253,25 @@ func (c *Client) RunPVCCleanupJob(ctx context.Context, req PVCCleanupJobRequest)
 	return nil
 }
 
-// DeleteJob removes a Job by name, including the pods it owns. Returns nil
-// when the Job is already absent so callers can use it safely after another
-// process may have already cleaned up.
+// DeleteJob removes a Job by name, including the pods it owns, and waits for
+// the Job to be fully gone from the API before returning. Returns nil when the
+// Job is already absent so callers can use it safely after another process may
+// have already cleaned up.
+//
+// Callers rely on the Job being absent (so a subsequent Helm hook can recreate
+// it) — hence foreground propagation + a short poll loop, rather than the
+// fire-and-forget background policy.
 func (c *Client) DeleteJob(ctx context.Context, namespace, name string) error {
 	return c.deleteJob(ctx, namespace, name)
 }
 
-// deleteJob deletes a Job with foreground propagation so its pods are cleaned
-// up before the call returns.
+// deleteJob deletes a Job with foreground propagation and blocks until the
+// Job is NotFound (or ctx is cancelled / the short poll budget elapses).
+// Foreground propagation causes the API to keep the Job object around until
+// its owned pods are gone, so polling Get until NotFound gives us a reliable
+// "the Job and its pods are fully removed" signal.
 func (c *Client) deleteJob(ctx context.Context, namespace, name string) error {
-	policy := metav1.DeletePropagationBackground
+	policy := metav1.DeletePropagationForeground
 	err := c.clientset.BatchV1().Jobs(namespace).Delete(ctx, name, metav1.DeleteOptions{
 		PropagationPolicy: &policy,
 	})
@@ -273,6 +281,24 @@ func (c *Client) deleteJob(ctx context.Context, namespace, name string) error {
 		}
 		return fmt.Errorf("delete Job %s/%s: %w", namespace, name, err)
 	}
-	slog.Debug("deleted Job", "namespace", namespace, "job", name)
-	return nil
+
+	// Poll until the Job is gone. 30s is ample — foreground deletion of a
+	// completed single-pod Job typically finishes in a few seconds.
+	waitCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	for {
+		_, getErr := c.clientset.BatchV1().Jobs(namespace).Get(waitCtx, name, metav1.GetOptions{})
+		if k8serrors.IsNotFound(getErr) {
+			slog.Debug("deleted Job", "namespace", namespace, "job", name)
+			return nil
+		}
+		if getErr != nil && waitCtx.Err() == nil {
+			return fmt.Errorf("poll deleted Job %s/%s: %w", namespace, name, getErr)
+		}
+		select {
+		case <-waitCtx.Done():
+			return fmt.Errorf("delete Job %s/%s: timed out waiting for removal: %w", namespace, name, waitCtx.Err())
+		case <-time.After(500 * time.Millisecond):
+		}
+	}
 }
