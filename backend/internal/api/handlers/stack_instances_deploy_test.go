@@ -234,6 +234,7 @@ func setupDeployRouter(
 		insts.POST("/:id/deploy", h.DeployInstance)
 		insts.POST("/:id/stop", h.StopInstance)
 		insts.POST("/:id/clean", h.CleanInstance)
+		insts.POST("/:id/refresh-db", h.RefreshDB)
 		insts.GET("/:id/deploy-log", h.GetDeployLog)
 		insts.GET("/:id/status", h.GetInstanceStatus)
 		insts.GET("/:id/pods", h.GetInstancePods)
@@ -268,6 +269,22 @@ func (n *noopHelmExecutor) Timeout() time.Duration {
 // newTestManager creates a Manager with a test registry for handler tests.
 func newTestManager(instRepo models.StackInstanceRepository, logRepo models.DeploymentLogRepository) *deployer.Manager {
 	testRegistry := cluster.NewRegistryForTest("test-cluster", nil, &noopHelmExecutor{})
+	return deployer.NewManager(deployer.ManagerConfig{
+		Registry:      testRegistry,
+		InstanceRepo:  instRepo,
+		DeployLogRepo: logRepo,
+		Hub:           &MockBroadcastSender{},
+		MaxConcurrent: 2,
+	})
+}
+
+// newTestManagerWithK8s creates a Manager wired with a real k8s.Client (built
+// from a fake clientset) so that refresh-db can exercise its orchestration
+// paths. Helm is stubbed with the noop executor.
+func newTestManagerWithK8s(t *testing.T, instRepo models.StackInstanceRepository, logRepo models.DeploymentLogRepository) *deployer.Manager {
+	t.Helper()
+	k8sClient := k8s.NewClientFromInterface(fake.NewSimpleClientset())
+	testRegistry := cluster.NewRegistryForTest("test-cluster", k8sClient, &noopHelmExecutor{})
 	return deployer.NewManager(deployer.ManagerConfig{
 		Registry:      testRegistry,
 		InstanceRepo:  instRepo,
@@ -984,6 +1001,122 @@ func TestCleanInstance(t *testing.T) {
 
 			w := httptest.NewRecorder()
 			req, _ := http.NewRequest(http.MethodPost, "/api/v1/stack-instances/"+tt.instanceID+"/clean", nil)
+			router.ServeHTTP(w, req)
+
+			assert.Equal(t, tt.wantStatus, w.Code)
+			if tt.checkFn != nil {
+				tt.checkFn(t, w)
+			}
+		})
+	}
+}
+
+// ---- RefreshDB tests ----
+
+func TestRefreshDB(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		instanceID string
+		setup      func(*MockStackInstanceRepository)
+		noManager  bool
+		wantStatus int
+		checkFn    func(*testing.T, *httptest.ResponseRecorder)
+	}{
+		{
+			name:       "running instance returns 202",
+			instanceID: "r1",
+			setup: func(instRepo *MockStackInstanceRepository) {
+				seedInstance(t, instRepo, "r1", "stack-r1", "d1", "uid-1", models.StackStatusRunning)
+			},
+			wantStatus: http.StatusAccepted,
+			checkFn: func(t *testing.T, w *httptest.ResponseRecorder) {
+				var resp map[string]string
+				require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+				assert.NotEmpty(t, resp["log_id"])
+				assert.Equal(t, "Refresh-DB initiated", resp["message"])
+			},
+		},
+		{
+			name:       "draft instance returns 409",
+			instanceID: "r2",
+			setup: func(instRepo *MockStackInstanceRepository) {
+				seedInstance(t, instRepo, "r2", "stack-r2", "d1", "uid-1", models.StackStatusDraft)
+			},
+			wantStatus: http.StatusConflict,
+		},
+		{
+			name:       "stopped instance returns 409",
+			instanceID: "r3",
+			setup: func(instRepo *MockStackInstanceRepository) {
+				seedInstance(t, instRepo, "r3", "stack-r3", "d1", "uid-1", models.StackStatusStopped)
+			},
+			wantStatus: http.StatusConflict,
+		},
+		{
+			name:       "error instance returns 409",
+			instanceID: "r4",
+			setup: func(instRepo *MockStackInstanceRepository) {
+				seedInstance(t, instRepo, "r4", "stack-r4", "d1", "uid-1", models.StackStatusError)
+			},
+			wantStatus: http.StatusConflict,
+		},
+		{
+			name:       "deploying instance returns 409",
+			instanceID: "r5",
+			setup: func(instRepo *MockStackInstanceRepository) {
+				seedInstance(t, instRepo, "r5", "stack-r5", "d1", "uid-1", models.StackStatusDeploying)
+			},
+			wantStatus: http.StatusConflict,
+		},
+		{
+			name:       "nil deploy manager returns 503",
+			instanceID: "r6",
+			setup: func(instRepo *MockStackInstanceRepository) {
+				seedInstance(t, instRepo, "r6", "stack-r6", "d1", "uid-1", models.StackStatusRunning)
+			},
+			noManager:  true,
+			wantStatus: http.StatusServiceUnavailable,
+		},
+		{
+			name:       "instance not found returns 404",
+			instanceID: "missing-r",
+			setup:      func(_ *MockStackInstanceRepository) {},
+			wantStatus: http.StatusNotFound,
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			instRepo := NewMockStackInstanceRepository()
+			defRepo := NewMockStackDefinitionRepository()
+			ccRepo := NewMockChartConfigRepository()
+			logRepo := NewMockDeploymentLogRepository()
+			tt.setup(instRepo)
+
+			var mgr *deployer.Manager
+			if !tt.noManager {
+				// Use a Manager with a real k8s.Client (backed by a fake clientset)
+				// so RefreshDB's registry resolution succeeds. The background
+				// goroutine will fail quickly because the fake has no Deployments,
+				// but we only assert on the initial 202/409/404/503 response here.
+				mgr = newTestManagerWithK8s(t, instRepo, logRepo)
+			}
+
+			router := setupDeployRouter(t,
+				instRepo, NewMockValueOverrideRepository(),
+				defRepo, ccRepo,
+				NewMockStackTemplateRepository(), NewMockTemplateChartConfigRepository(),
+				mgr, nil, nil, logRepo,
+				"uid-1", "alice", "user",
+			)
+
+			w := httptest.NewRecorder()
+			req, _ := http.NewRequest(http.MethodPost, "/api/v1/stack-instances/"+tt.instanceID+"/refresh-db", nil)
 			router.ServeHTTP(w, req)
 
 			assert.Equal(t, tt.wantStatus, w.Code)

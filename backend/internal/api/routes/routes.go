@@ -326,6 +326,7 @@ func SetupRoutes(router *gin.Engine, deps Deps) *RateLimiters {
 				instances.GET("/:id/deploy-preview", deps.InstanceHandler.DeployPreview)
 				instances.POST("/:id/stop", deps.InstanceHandler.StopInstance)
 				instances.POST("/:id/clean", deps.InstanceHandler.CleanInstance)
+				instances.POST("/:id/refresh-db", deps.InstanceHandler.RefreshDB)
 				instances.POST("/:id/extend", deps.InstanceHandler.ExtendTTL)
 				instances.GET("/:id/deploy-log", deps.InstanceHandler.GetDeployLog)
 				instances.GET("/:id/status", deps.InstanceHandler.GetInstanceStatus)

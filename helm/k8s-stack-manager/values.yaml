@@ -66,6 +66,16 @@ backend:
     WILDCARD_TLS_SOURCE_NAMESPACE: ""
     WILDCARD_TLS_SOURCE_SECRET: ""
     WILDCARD_TLS_TARGET_SECRET: ""
+    # ---- refresh-db (POST /stack-instances/:id/refresh-db) ----
+    # Opt-in overrides for the DB refresh flow that wipes the MySQL PVC,
+    # flushes Redis, and restarts the app deployments — all without rerunning
+    # Helm. Leave commented to accept defaults (which target the Klaravik
+    # dev-stack layout).
+    # REFRESH_DB_SCALE_TARGETS: "kvk-core,kvk-storefront,kvk-storefront-worker,kvk-pdf-service,kvk-pdf-service-gotenberg,kvk-admin"
+    # REFRESH_DB_MYSQL_RELEASE: "kvk-mysql"
+    # REFRESH_DB_REDIS_RELEASE: "kvk-redis"
+    # REFRESH_DB_SYNC_JOB_NAME: "kvk-storefront-sync"
+    # REFRESH_DB_CLEANUP_IMAGE: "alpine:3.20"
     JWT_EXPIRATION: "24h"
     ADMIN_USERNAME: admin
     # OIDC (disabled by default)
