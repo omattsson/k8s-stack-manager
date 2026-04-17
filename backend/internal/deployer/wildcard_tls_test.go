@@ -16,7 +16,7 @@ import (
 )
 
 // TestManager_Deploy_ReplicatesWildcardTLS exercises the wildcard-secret
-// replication path in executeDeploy. Three variants:
+// replication path in executeDeploy. Four variants:
 //
 //  1. Configured + source exists: the Copy runs, the target namespace ends
 //     up with an identical secret, the deploy completes normally.
@@ -24,6 +24,8 @@ import (
 //     still runs the chart loop and finalizes with success (non-fatal).
 //  3. Not configured: no k8s client lookup happens at all (a nil resolver
 //     must not panic).
+//  4. Partial config (secret name set, source namespace empty): replication
+//     is skipped with a warning instead of calling CopySecret with "".
 func TestManager_Deploy_ReplicatesWildcardTLS(t *testing.T) {
 	t.Parallel()
 

@@ -131,10 +131,11 @@ func (c *Client) Clientset() kubernetes.Interface {
 }
 
 // CopySecret copies a secret from a source namespace to a target namespace.
-// Used for replicating shared TLS certs (e.g. a klaradocker-issued wildcard cert
-// held in kvk-system) into each stack namespace so ingresses can reference it.
-// If the target secret already exists, its data and type are updated to match
-// the source. Source secret must exist; this function returns an error otherwise.
+// Used for replicating shared TLS certificates (for example, a pre-existing
+// wildcard TLS secret stored in a shared namespace) into each stack namespace
+// so ingresses can reference it. If the target secret already exists, its data
+// and type are updated to match the source. Source secret must exist; this
+// function returns an error otherwise.
 func (c *Client) CopySecret(ctx context.Context, sourceNS, sourceName, targetNS, targetName string) error {
 	src, err := c.clientset.CoreV1().Secrets(sourceNS).Get(ctx, sourceName, metav1.GetOptions{})
 	if err != nil {

@@ -75,7 +75,7 @@ type ManagerConfig struct {
 	// Optional wildcard TLS secret replication. When WildcardTLSSourceSecret is
 	// empty, the feature is disabled. When set, the secret named by it in
 	// WildcardTLSSourceNamespace is copied into each stack namespace before any
-	// charts install, so ingresses can reference the shared local-dev cert.
+	// charts install, so ingresses can reference the shared TLS secret.
 	WildcardTLSSourceNamespace string
 	WildcardTLSSourceSecret    string
 	WildcardTLSTargetSecret    string // optional — defaults to WildcardTLSSourceSecret

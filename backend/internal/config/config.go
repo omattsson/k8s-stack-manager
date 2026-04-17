@@ -67,14 +67,15 @@ type DeploymentConfig struct {
 	HelmBinary                string
 	KubeconfigPath            string
 	KubeconfigEncryptionKey   string
-	MaxConcurrentDeploys      int32
 	// WildcardTLSSourceNamespace + WildcardTLSSourceSecret point at a pre-existing
 	// TLS secret that is copied into each stack namespace before chart install
 	// (so ingresses can reference it). When WildcardTLSSourceSecret is empty, the
-	// feature is disabled. Used for local dev with klaradocker mkcert wildcard.
+	// feature is disabled. Used for local development with a pre-existing wildcard
+	// TLS secret.
 	WildcardTLSSourceNamespace string
 	WildcardTLSSourceSecret    string
 	WildcardTLSTargetSecret    string
+	MaxConcurrentDeploys       int32
 }
 
 // OIDCConfig holds OpenID Connect configuration for external SSO authentication.
