@@ -38,7 +38,11 @@ func TestManager_Deploy_ReplicatesWildcardTLS(t *testing.T) {
 	t.Run("replicates when configured and source exists", func(t *testing.T) {
 		t.Parallel()
 
-		cs := fake.NewSimpleClientset(srcSecret)
+		cs := fake.NewSimpleClientset(
+			&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "source-ns"}},
+			&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "stack-target-a"}},
+			srcSecret,
+		)
 		k8sClient := k8s.NewClientFromInterface(cs)
 
 		instanceRepo := newMockInstanceRepo()
@@ -77,10 +81,16 @@ func TestManager_Deploy_ReplicatesWildcardTLS(t *testing.T) {
 			Charts:     nil,
 		})
 		require.NoError(t, err)
-		time.Sleep(300 * time.Millisecond)
 
-		got, err := cs.CoreV1().Secrets("stack-target-a").Get(context.Background(), "wildcard-tls", metav1.GetOptions{})
-		require.NoError(t, err, "wildcard secret should have been replicated into target namespace")
+		// Wait on the observable condition (secret appears) rather than a
+		// fixed sleep — keeps this deterministic on slow CI nodes.
+		var got *corev1.Secret
+		require.Eventually(t, func() bool {
+			var gerr error
+			got, gerr = cs.CoreV1().Secrets("stack-target-a").Get(context.Background(), "wildcard-tls", metav1.GetOptions{})
+			return gerr == nil
+		}, 3*time.Second, 20*time.Millisecond, "wildcard secret should have been replicated into target namespace")
+
 		assert.Equal(t, corev1.SecretTypeTLS, got.Type)
 		assert.Equal(t, []byte("CERT"), got.Data["tls.crt"])
 		assert.Equal(t, "k8s-stack-manager", got.Labels["managed-by"])
@@ -90,7 +100,13 @@ func TestManager_Deploy_ReplicatesWildcardTLS(t *testing.T) {
 	t.Run("source secret missing is non-fatal", func(t *testing.T) {
 		t.Parallel()
 
-		cs := fake.NewSimpleClientset() // no source secret
+		// Namespaces exist in the cluster but the source secret does not —
+		// matches the real case of an operator enabling the feature without
+		// creating the secret yet.
+		cs := fake.NewSimpleClientset(
+			&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "source-ns"}},
+			&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "stack-target-b"}},
+		)
 		k8sClient := k8s.NewClientFromInterface(cs)
 
 		instanceRepo := newMockInstanceRepo()
@@ -128,7 +144,13 @@ func TestManager_Deploy_ReplicatesWildcardTLS(t *testing.T) {
 			Charts:     nil,
 		})
 		require.NoError(t, err)
-		time.Sleep(300 * time.Millisecond)
+
+		// Wait for async completion by observing the instance transition out
+		// of the deploying state. Slow CI nodes otherwise flake on a fixed sleep.
+		require.Eventually(t, func() bool {
+			cur, findErr := instanceRepo.FindByID(inst.ID)
+			return findErr == nil && cur.Status != models.StackStatusDeploying
+		}, 3*time.Second, 20*time.Millisecond, "deploy goroutine never finalized")
 
 		final, err := instanceRepo.FindByID(inst.ID)
 		require.NoError(t, err)
@@ -177,7 +199,11 @@ func TestManager_Deploy_ReplicatesWildcardTLS(t *testing.T) {
 			Charts:     nil,
 		})
 		require.NoError(t, err)
-		time.Sleep(200 * time.Millisecond)
+
+		require.Eventually(t, func() bool {
+			cur, findErr := instanceRepo.FindByID(inst.ID)
+			return findErr == nil && cur.Status != models.StackStatusDeploying
+		}, 3*time.Second, 20*time.Millisecond, "deploy goroutine never finalized")
 
 		final, err := instanceRepo.FindByID(inst.ID)
 		require.NoError(t, err)
@@ -218,7 +244,11 @@ func TestManager_Deploy_ReplicatesWildcardTLS(t *testing.T) {
 			Charts:     nil,
 		})
 		require.NoError(t, err)
-		time.Sleep(200 * time.Millisecond)
+
+		require.Eventually(t, func() bool {
+			cur, findErr := instanceRepo.FindByID(inst.ID)
+			return findErr == nil && cur.Status != models.StackStatusDeploying
+		}, 3*time.Second, 20*time.Millisecond, "deploy goroutine never finalized")
 
 		final, err := instanceRepo.FindByID(inst.ID)
 		require.NoError(t, err)

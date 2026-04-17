@@ -164,6 +164,13 @@ func TestNamespaceExists(t *testing.T) {
 	}
 }
 
+// nsObj returns a minimal Namespace object for the fake clientset. Seeding
+// namespaces alongside the secrets they contain matches real-cluster shape —
+// a Secret can't exist without a parent Namespace.
+func nsObj(name string) *corev1.Namespace {
+	return &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: name}}
+}
+
 func TestCopySecret_CreatesInTarget(t *testing.T) {
 	t.Parallel()
 
@@ -172,7 +179,7 @@ func TestCopySecret_CreatesInTarget(t *testing.T) {
 		Type:       corev1.SecretTypeTLS,
 		Data:       map[string][]byte{"tls.crt": []byte("CERT"), "tls.key": []byte("KEY")},
 	}
-	cs := fake.NewSimpleClientset(src)
+	cs := fake.NewSimpleClientset(nsObj("source-ns"), nsObj("target-ns"), src)
 	c := NewClientFromInterface(cs)
 
 	err := c.CopySecret(context.Background(), "source-ns", "wildcard-tls", "target-ns", "wildcard-tls")
@@ -205,7 +212,7 @@ func TestCopySecret_UpdatesExistingTarget(t *testing.T) {
 		Type: corev1.SecretTypeOpaque,
 		Data: map[string][]byte{"tls.crt": []byte("OLD_CERT")},
 	}
-	cs := fake.NewSimpleClientset(src, stale)
+	cs := fake.NewSimpleClientset(nsObj("source-ns"), nsObj("target-ns"), src, stale)
 	c := NewClientFromInterface(cs)
 
 	err := c.CopySecret(context.Background(), "source-ns", "wildcard-tls", "target-ns", "wildcard-tls")
@@ -231,7 +238,7 @@ func TestCopySecret_RenamesIntoTarget(t *testing.T) {
 		Type:       corev1.SecretTypeTLS,
 		Data:       map[string][]byte{"tls.crt": []byte("CERT")},
 	}
-	cs := fake.NewSimpleClientset(src)
+	cs := fake.NewSimpleClientset(nsObj("source-ns"), nsObj("target-ns"), src)
 	c := NewClientFromInterface(cs)
 
 	err := c.CopySecret(context.Background(), "source-ns", "source-name", "target-ns", "different-target-name")
@@ -248,7 +255,9 @@ func TestCopySecret_RenamesIntoTarget(t *testing.T) {
 func TestCopySecret_SourceNotFound(t *testing.T) {
 	t.Parallel()
 
-	cs := fake.NewSimpleClientset()
+	// Namespaces exist but the source secret does not — mirrors the real-cluster
+	// case where an operator enabled the feature but forgot to create the secret.
+	cs := fake.NewSimpleClientset(nsObj("source-ns"), nsObj("target-ns"))
 	c := NewClientFromInterface(cs)
 
 	err := c.CopySecret(context.Background(), "source-ns", "missing-secret", "target-ns", "target-secret")
