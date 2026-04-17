@@ -55,6 +55,11 @@ type Manager struct {
 	shutdownCancel    context.CancelFunc
 	wg                sync.WaitGroup
 	shuttingDown      atomic.Bool
+	// Wildcard TLS secret replication (local dev). When wildcardTLSSourceSecret
+	// is empty, replication is disabled.
+	wildcardTLSSourceNS     string
+	wildcardTLSSourceSecret string
+	wildcardTLSTargetSecret string
 }
 
 // ManagerConfig holds the dependencies for creating a Manager.
@@ -67,6 +72,13 @@ type ManagerConfig struct {
 	MaxConcurrent     int
 	QuotaRepo         models.ResourceQuotaRepository         // optional: apply quotas on deploy
 	QuotaOverrideRepo models.InstanceQuotaOverrideRepository // optional: per-instance quota overrides
+	// Optional wildcard TLS secret replication. When WildcardTLSSourceSecret is
+	// empty, the feature is disabled. When set, the secret named by it in
+	// WildcardTLSSourceNamespace is copied into each stack namespace before any
+	// charts install, so ingresses can reference the shared local-dev cert.
+	WildcardTLSSourceNamespace string
+	WildcardTLSSourceSecret    string
+	WildcardTLSTargetSecret    string // optional — defaults to WildcardTLSSourceSecret
 }
 
 // DeployRequest contains everything needed to deploy a stack instance.
@@ -92,17 +104,31 @@ func NewManager(cfg ManagerConfig) *Manager {
 
 	ctx, cancel := context.WithCancel(context.Background())
 
+	wildcardTarget := cfg.WildcardTLSTargetSecret
+	if wildcardTarget == "" {
+		wildcardTarget = cfg.WildcardTLSSourceSecret
+	}
+
+	slog.Info("deploy manager init",
+		"wildcard_tls_source_ns", cfg.WildcardTLSSourceNamespace,
+		"wildcard_tls_source_secret", cfg.WildcardTLSSourceSecret,
+		"wildcard_tls_target_secret", wildcardTarget,
+	)
+
 	return &Manager{
-		registry:          cfg.Registry,
-		instanceRepo:      cfg.InstanceRepo,
-		logRepo:           cfg.DeployLogRepo,
-		hub:               cfg.Hub,
-		txRunner:          cfg.TxRunner,
-		quotaRepo:         cfg.QuotaRepo,
-		quotaOverrideRepo: cfg.QuotaOverrideRepo,
-		semaphore:         make(chan struct{}, maxConcurrent),
-		shutdownCtx:       ctx,
-		shutdownCancel:    cancel,
+		registry:                cfg.Registry,
+		instanceRepo:            cfg.InstanceRepo,
+		logRepo:                 cfg.DeployLogRepo,
+		hub:                     cfg.Hub,
+		txRunner:                cfg.TxRunner,
+		quotaRepo:               cfg.QuotaRepo,
+		quotaOverrideRepo:       cfg.QuotaOverrideRepo,
+		semaphore:               make(chan struct{}, maxConcurrent),
+		shutdownCtx:             ctx,
+		shutdownCancel:          cancel,
+		wildcardTLSSourceNS:     cfg.WildcardTLSSourceNamespace,
+		wildcardTLSSourceSecret: cfg.WildcardTLSSourceSecret,
+		wildcardTLSTargetSecret: wildcardTarget,
 	}
 }
 
@@ -241,6 +267,21 @@ func (m *Manager) executeDeploy(helm HelmExecutor, instanceID string, deployLog 
 	}
 	ctx, cancel := context.WithTimeout(m.shutdownCtx, timeout)
 	defer cancel()
+
+	// Replicate the wildcard TLS secret into the target namespace before any
+	// chart installs, so ingresses with tlsSecretName can reference it from
+	// the first reconcile. Non-fatal: log and continue on error (the ingress
+	// will still route plaintext; only TLS termination breaks).
+	if m.wildcardTLSSourceSecret != "" {
+		if wildcardErr := m.replicateWildcardTLS(ctx, instanceID, namespace); wildcardErr != nil {
+			slog.Warn("failed to replicate wildcard TLS secret",
+				"instance_id", instanceID,
+				"namespace", namespace,
+				"error", wildcardErr,
+			)
+			allOutput += fmt.Sprintf("WARNING: failed to replicate wildcard TLS secret: %s\n", wildcardErr.Error())
+		}
+	}
 
 	// Track successfully installed charts for rollback on partial failure.
 	var installedCharts []ChartDeployInfo
@@ -946,6 +987,36 @@ func (m *Manager) finalizeClean(instanceID string, deployLog *models.DeploymentL
 	} else {
 		m.broadcastStatus(instanceID, models.StackStatusDraft, deployLog.ID)
 	}
+}
+
+// replicateWildcardTLS ensures the target namespace exists and copies the
+// configured wildcard TLS secret into it. No-op if replication is not
+// configured. Used for local dev to share a single mkcert-issued cert across
+// all stack namespaces.
+func (m *Manager) replicateWildcardTLS(ctx context.Context, instanceID, namespace string) error {
+	instance, err := m.instanceRepo.FindByID(instanceID)
+	if err != nil {
+		return fmt.Errorf("finding instance: %w", err)
+	}
+
+	clusterID, err := m.registry.ResolveClusterID(instance.ClusterID)
+	if err != nil {
+		return fmt.Errorf("resolving cluster: %w", err)
+	}
+
+	k8sClient, err := m.registry.GetK8sClient(clusterID)
+	if err != nil {
+		return fmt.Errorf("getting k8s client: %w", err)
+	}
+
+	if err := k8sClient.EnsureNamespace(ctx, namespace); err != nil {
+		return fmt.Errorf("ensuring namespace: %w", err)
+	}
+
+	return k8sClient.CopySecret(ctx,
+		m.wildcardTLSSourceNS, m.wildcardTLSSourceSecret,
+		namespace, m.wildcardTLSTargetSecret,
+	)
 }
 
 // truncateString returns s truncated to maxLen characters. If truncation

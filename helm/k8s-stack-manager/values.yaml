@@ -59,6 +59,13 @@ backend:
     HELM_BINARY: helm
     DEPLOYMENT_TIMEOUT: "10m"
     MAX_CONCURRENT_DEPLOYS: "5"
+    # Wildcard TLS secret replication — copies a shared TLS secret into every
+    # stack namespace so ingresses can reference it. Disabled when
+    # WILDCARD_TLS_SOURCE_SECRET is empty. Set to enable for local dev flows
+    # where a single pre-existing cert is reused across all stacks.
+    WILDCARD_TLS_SOURCE_NAMESPACE: ""
+    WILDCARD_TLS_SOURCE_SECRET: ""
+    WILDCARD_TLS_TARGET_SECRET: ""
     JWT_EXPIRATION: "24h"
     ADMIN_USERNAME: admin
     # OIDC (disabled by default)

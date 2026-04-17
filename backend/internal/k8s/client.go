@@ -129,3 +129,58 @@ func (c *Client) NamespaceExists(ctx context.Context, name string) (bool, error)
 func (c *Client) Clientset() kubernetes.Interface {
 	return c.clientset
 }
+
+// CopySecret copies a secret from a source namespace to a target namespace.
+// Used for replicating shared TLS certs (e.g. a klaradocker-issued wildcard cert
+// held in kvk-system) into each stack namespace so ingresses can reference it.
+// If the target secret already exists, its data and type are updated to match
+// the source. Source secret must exist; this function returns an error otherwise.
+func (c *Client) CopySecret(ctx context.Context, sourceNS, sourceName, targetNS, targetName string) error {
+	src, err := c.clientset.CoreV1().Secrets(sourceNS).Get(ctx, sourceName, metav1.GetOptions{})
+	if err != nil {
+		return fmt.Errorf("get source secret %s/%s: %w", sourceNS, sourceName, err)
+	}
+
+	target := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      targetName,
+			Namespace: targetNS,
+			Labels: map[string]string{
+				"managed-by":           "k8s-stack-manager",
+				"klaravik.se/copied-from-namespace": sourceNS,
+				"klaravik.se/copied-from-secret":    sourceName,
+			},
+		},
+		Type: src.Type,
+		Data: src.Data,
+	}
+
+	existing, err := c.clientset.CoreV1().Secrets(targetNS).Get(ctx, targetName, metav1.GetOptions{})
+	if err != nil && !k8serrors.IsNotFound(err) {
+		return fmt.Errorf("get target secret %s/%s: %w", targetNS, targetName, err)
+	}
+
+	if k8serrors.IsNotFound(err) {
+		_, err = c.clientset.CoreV1().Secrets(targetNS).Create(ctx, target, metav1.CreateOptions{})
+		if err != nil && !k8serrors.IsAlreadyExists(err) {
+			return fmt.Errorf("create target secret %s/%s: %w", targetNS, targetName, err)
+		}
+		slog.Info("Copied secret", "from", sourceNS+"/"+sourceName, "to", targetNS+"/"+targetName)
+		return nil
+	}
+
+	existing.Data = src.Data
+	existing.Type = src.Type
+	if existing.Labels == nil {
+		existing.Labels = map[string]string{}
+	}
+	for k, v := range target.Labels {
+		existing.Labels[k] = v
+	}
+	_, err = c.clientset.CoreV1().Secrets(targetNS).Update(ctx, existing, metav1.UpdateOptions{})
+	if err != nil {
+		return fmt.Errorf("update target secret %s/%s: %w", targetNS, targetName, err)
+	}
+	slog.Debug("Updated copied secret", "from", sourceNS+"/"+sourceName, "to", targetNS+"/"+targetName)
+	return nil
+}
