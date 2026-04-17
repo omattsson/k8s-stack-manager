@@ -174,6 +174,16 @@ func (m *Manager) Deploy(ctx context.Context, req DeployRequest) (string, error)
 	if helmExec == nil {
 		return "", fmt.Errorf("getting cluster clients: helm executor is nil")
 	}
+	// Resolve the k8s client up front too, only when we'll actually need it
+	// for wildcard TLS replication. Avoids the executeDeploy goroutine
+	// re-fetching the instance + re-resolving the cluster on every deploy.
+	var k8sClient *k8s.Client
+	if m.wildcardTLSSourceSecret != "" && m.wildcardTLSSourceNS != "" {
+		k8sClient, err = m.registry.GetK8sClient(clusterID)
+		if err != nil {
+			return "", fmt.Errorf("getting cluster k8s client: %w", err)
+		}
+	}
 
 	logID := uuid.New().String()
 	now := time.Now().UTC()
@@ -220,16 +230,19 @@ func (m *Manager) Deploy(ctx context.Context, req DeployRequest) (string, error)
 		return charts[i].ChartConfig.DeployOrder < charts[j].ChartConfig.DeployOrder
 	})
 
-	// Launch async deployment, passing the deployLog to avoid re-fetching.
+	// Launch async deployment, passing pre-resolved clients/log to avoid
+	// re-fetching the instance and re-resolving the cluster in the goroutine.
 	m.wg.Add(1)
-	go m.executeDeploy(helmExec, req.Instance.ID, deployLog, req.Instance.Namespace, charts, req.LastDeployedValues)
+	go m.executeDeploy(helmExec, k8sClient, req.Instance.ID, deployLog, req.Instance.Namespace, charts, req.LastDeployedValues)
 
 	return logID, nil
 }
 
 // executeDeploy runs the helm install for each chart sequentially within
-// a concurrency-limited goroutine.
-func (m *Manager) executeDeploy(helm HelmExecutor, instanceID string, deployLog *models.DeploymentLog, namespace string, charts []ChartDeployInfo, lastDeployedValues string) {
+// a concurrency-limited goroutine. k8sClient is only non-nil when wildcard
+// TLS replication is configured — Deploy() resolves it up front so this
+// goroutine doesn't re-hit the repo/registry on every run.
+func (m *Manager) executeDeploy(helm HelmExecutor, k8sClient *k8s.Client, instanceID string, deployLog *models.DeploymentLog, namespace string, charts []ChartDeployInfo, lastDeployedValues string) {
 	defer m.wg.Done()
 	// Acquire semaphore.
 	m.semaphore <- struct{}{}
@@ -283,7 +296,7 @@ func (m *Manager) executeDeploy(helm HelmExecutor, instanceID string, deployLog 
 			"source_secret", m.wildcardTLSSourceSecret,
 		)
 	case m.wildcardTLSSourceSecret != "":
-		if wildcardErr := m.replicateWildcardTLS(ctx, instanceID, namespace); wildcardErr != nil {
+		if wildcardErr := m.replicateWildcardTLS(ctx, k8sClient, namespace); wildcardErr != nil {
 			slog.Warn("failed to replicate wildcard TLS secret",
 				"instance_id", instanceID,
 				"namespace", namespace,
@@ -1000,23 +1013,13 @@ func (m *Manager) finalizeClean(instanceID string, deployLog *models.DeploymentL
 }
 
 // replicateWildcardTLS ensures the target namespace exists and copies the
-// configured wildcard TLS secret into it. No-op if replication is not
-// configured. Used for local dev to share a single mkcert-issued cert across
-// all stack namespaces.
-func (m *Manager) replicateWildcardTLS(ctx context.Context, instanceID, namespace string) error {
-	instance, err := m.instanceRepo.FindByID(instanceID)
-	if err != nil {
-		return fmt.Errorf("finding instance: %w", err)
-	}
-
-	clusterID, err := m.registry.ResolveClusterID(instance.ClusterID)
-	if err != nil {
-		return fmt.Errorf("resolving cluster: %w", err)
-	}
-
-	k8sClient, err := m.registry.GetK8sClient(clusterID)
-	if err != nil {
-		return fmt.Errorf("getting k8s client: %w", err)
+// configured wildcard TLS secret into it. Deploy() pre-resolves the k8s
+// client so this method avoids re-hitting the repo/registry on every deploy.
+// The caller is responsible for only invoking this when wildcard TLS is
+// configured (source namespace + source secret non-empty).
+func (m *Manager) replicateWildcardTLS(ctx context.Context, k8sClient *k8s.Client, namespace string) error {
+	if k8sClient == nil {
+		return fmt.Errorf("replicateWildcardTLS: k8s client is nil")
 	}
 
 	if err := k8sClient.EnsureNamespace(ctx, namespace); err != nil {
