@@ -1272,6 +1272,81 @@ func (h *InstanceHandler) CleanInstance(c *gin.Context) {
 	c.JSON(http.StatusAccepted, gin.H{"log_id": logID, "message": "Namespace cleanup initiated"})
 }
 
+// RefreshDB godoc
+// @Summary     Refresh the MySQL database of a stack instance
+// @Description Wipes the MySQL data PVC so the init container re-extracts the golden dataset, flushes Redis, and restarts the app deployments — all without re-running Helm. Only allowed when the instance is running.
+// @Tags        stack-instances
+// @Accept      json
+// @Produce     json
+// @Param       id path string true "Instance ID"
+// @Success     202 {object} map[string]string "Refresh-DB initiated"
+// @Failure     400 {object} map[string]string
+// @Failure     404 {object} map[string]string
+// @Failure     409 {object} map[string]string "Invalid status for refresh-db"
+// @Failure     500 {object} map[string]string "Failed to start refresh-db"
+// @Failure     503 {object} map[string]string "Deployment service not configured"
+// @Security    BearerAuth
+// @Router      /api/v1/stack-instances/{id}/refresh-db [post]
+func (h *InstanceHandler) RefreshDB(c *gin.Context) {
+	id := c.Param("id")
+	if id == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": msgInstanceIDRequired})
+		return
+	}
+
+	if h.deployManager == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": msgDeployerNotConfigured})
+		return
+	}
+
+	inst, err := h.instanceRepo.FindByID(id)
+	if err != nil {
+		status, message := mapError(err, entityStackInstance)
+		c.JSON(status, gin.H{"error": message})
+		return
+	}
+
+	// Only refresh a stack that is currently running — otherwise we risk
+	// wiping data out from under a deploy/stop/clean that is in flight.
+	// The same racy check-then-act caveat as Clean/Stop applies; the
+	// frontend disables the button optimistically to mitigate.
+	// RBAC: the backend's ClusterRole already has resources:["*"] with all
+	// verbs, so scale/exec/jobs operations work without changes.
+	if inst.Status != models.StackStatusRunning {
+		c.JSON(http.StatusConflict, gin.H{"error": fmt.Sprintf("Cannot refresh-db: instance is currently %s", inst.Status)})
+		return
+	}
+
+	logID, err := h.deployManager.RefreshDB(c.Request.Context(), inst)
+	if err != nil {
+		slog.Error("Failed to start refresh-db operation",
+			logKeyInstanceID, id,
+			"error", err,
+		)
+		switch {
+		case errors.Is(err, deployer.ErrRefreshDBNotConfigured):
+			// Feature is off until the operator sets the REFRESH_DB_* env vars —
+			// that's a deployment-wide config gap, not a client bug.
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "refresh-db is not configured on this server"})
+		case errors.Is(err, deployer.ErrRefreshDBInstanceNotRunning):
+			// The upfront status check above passed but the manager's own
+			// check rejected the (now possibly-stale) inst we passed in.
+			// Re-fetch so the 409 body reflects the instance's current state
+			// rather than the stale Running snapshot we started with.
+			latestStatus := inst.Status
+			if latest, findErr := h.instanceRepo.FindByID(id); findErr == nil && latest != nil {
+				latestStatus = latest.Status
+			}
+			c.JSON(http.StatusConflict, gin.H{"error": fmt.Sprintf("Cannot refresh-db: instance is currently %s", latestStatus)})
+		default:
+			c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
+		}
+		return
+	}
+
+	c.JSON(http.StatusAccepted, gin.H{"log_id": logID, "message": "Refresh-DB initiated"})
+}
+
 // GetDeployLog godoc
 // @Summary     Get deployment logs
 // @Description Get deployment log history for a stack instance. Supports cursor-based pagination for efficient large dataset traversal.

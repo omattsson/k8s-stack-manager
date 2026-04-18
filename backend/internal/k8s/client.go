@@ -19,7 +19,8 @@ import (
 
 // Client wraps the Kubernetes clientset for namespace and resource operations.
 type Client struct {
-	clientset kubernetes.Interface
+	clientset  kubernetes.Interface
+	restConfig *rest.Config
 }
 
 // NewClient creates a Kubernetes client.
@@ -56,13 +57,21 @@ func NewClient(kubeconfigPath string) (*Client, error) {
 	}
 
 	slog.Info("Kubernetes client initialized", "host", config.Host)
-	return &Client{clientset: clientset}, nil
+	return &Client{clientset: clientset, restConfig: config}, nil
 }
 
 // NewClientFromInterface creates a Client from an existing kubernetes.Interface.
-// This is primarily useful for testing with a fake clientset.
+// This is primarily useful for testing with a fake clientset. The restConfig
+// is left nil; operations that require it (e.g. pod exec) will error when called.
 func NewClientFromInterface(cs kubernetes.Interface) *Client {
 	return &Client{clientset: cs}
+}
+
+// RESTConfig returns the underlying *rest.Config, or nil when the client was
+// constructed from a fake (e.g. in tests). Helpers that need a REST config
+// (such as pod exec via SPDY) must handle the nil case by returning a clear error.
+func (c *Client) RESTConfig() *rest.Config {
+	return c.restConfig
 }
 
 // EnsureNamespace creates a namespace if it doesn't exist.

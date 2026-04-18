@@ -60,6 +60,13 @@ type Manager struct {
 	wildcardTLSSourceNS     string
 	wildcardTLSSourceSecret string
 	wildcardTLSTargetSecret string
+
+	// RefreshDB configuration — see ManagerConfig.RefreshDB* for semantics.
+	refreshDBScaleTargets []string
+	refreshDBMysqlRelease string
+	refreshDBRedisRelease string
+	refreshDBSyncJobName  string
+	refreshDBCleanupImage string
 }
 
 // ManagerConfig holds the dependencies for creating a Manager.
@@ -79,6 +86,23 @@ type ManagerConfig struct {
 	WildcardTLSSourceNamespace string
 	WildcardTLSSourceSecret    string
 	WildcardTLSTargetSecret    string // optional — defaults to WildcardTLSSourceSecret
+
+	// RefreshDBScaleTargets lists app Deployment names to scale to 0 at the
+	// start of a RefreshDB operation and back to 1 at the end. Entries that
+	// don't exist in the target namespace are skipped silently.
+	RefreshDBScaleTargets []string
+	// RefreshDBMysqlRelease is the Deployment name of the MySQL chart. Its
+	// PVC is assumed to be <RefreshDBMysqlRelease>-data.
+	RefreshDBMysqlRelease string
+	// RefreshDBRedisRelease is the Deployment name of the Redis chart. A
+	// redis-cli FLUSHALL is exec'd into the first Ready pod.
+	RefreshDBRedisRelease string
+	// RefreshDBSyncJobName is the Helm post-install hook Job deleted during
+	// RefreshDB so the next `stack deploy` recreates it.
+	RefreshDBSyncJobName string
+	// RefreshDBCleanupImage is the container image used by the short-lived
+	// PVC cleanup Job. Defaults to alpine when empty.
+	RefreshDBCleanupImage string
 }
 
 // DeployRequest contains everything needed to deploy a stack instance.
@@ -129,6 +153,12 @@ func NewManager(cfg ManagerConfig) *Manager {
 		wildcardTLSSourceNS:     cfg.WildcardTLSSourceNamespace,
 		wildcardTLSSourceSecret: cfg.WildcardTLSSourceSecret,
 		wildcardTLSTargetSecret: wildcardTarget,
+
+		refreshDBScaleTargets: cfg.RefreshDBScaleTargets,
+		refreshDBMysqlRelease: cfg.RefreshDBMysqlRelease,
+		refreshDBRedisRelease: cfg.RefreshDBRedisRelease,
+		refreshDBSyncJobName:  cfg.RefreshDBSyncJobName,
+		refreshDBCleanupImage: cfg.RefreshDBCleanupImage,
 	}
 }
 
@@ -743,7 +773,10 @@ func sanitizeDeployError(err error) string {
 
 	// Look for the pattern "deploying chart ..." or "uninstalling chart ..."
 	// which is the outermost fmt.Errorf wrapper in executeDeploy / executeStopWithCharts.
-	for _, prefix := range []string{"deploying chart ", "uninstalling chart ", "deleting namespace ", "creating temp directory"} {
+	for _, prefix := range []string{
+		"deploying chart ", "uninstalling chart ", "deleting namespace ", "creating temp directory",
+		"scaling down ", "scaling up ", "waiting for MySQL", "running PVC cleanup",
+	} {
 		if strings.HasPrefix(msg, prefix) {
 			// Find the chart name in quotes if present.
 			if idx := strings.Index(msg, ":"); idx > 0 {

@@ -75,7 +75,18 @@ type DeploymentConfig struct {
 	WildcardTLSSourceNamespace string
 	WildcardTLSSourceSecret    string
 	WildcardTLSTargetSecret    string
-	MaxConcurrentDeploys       int32
+
+	// RefreshDB — configuration for the POST /api/v1/stack-instances/:id/refresh-db
+	// operation. This wipes the MySQL data PVC so its init container re-extracts
+	// the golden-db tarball on next boot, flushes Redis, and restarts the app
+	// deployments — all without rerunning Helm.
+	RefreshDBScaleTargets []string // comma-separated app Deployment names to scale to 0 and back
+	RefreshDBMysqlRelease string   // Deployment name for MySQL (PVC assumed at <release>-data)
+	RefreshDBRedisRelease string   // Deployment name for Redis (for redis-cli FLUSHALL via exec)
+	RefreshDBSyncJobName  string   // Helm post-install hook Job name to delete (recreated on next deploy)
+	RefreshDBCleanupImage string   // small image used by the short-lived PVC cleanup Job
+
+	MaxConcurrentDeploys int32
 }
 
 // OIDCConfig holds OpenID Connect configuration for external SSO authentication.
@@ -514,16 +525,25 @@ func loadGitProviderConfig() GitProviderConfig {
 }
 
 func loadDeploymentConfig() DeploymentConfig {
+	// RefreshDB is opt-in. Operators who want the endpoint enabled must set
+	// REFRESH_DB_SCALE_TARGETS, REFRESH_DB_MYSQL_RELEASE, REFRESH_DB_REDIS_RELEASE,
+	// and REFRESH_DB_SYNC_JOB_NAME to match their stack's release names. The
+	// endpoint rejects requests with ErrRefreshDBNotConfigured when any are empty.
 	return DeploymentConfig{
 		HelmBinary:                getEnv("HELM_BINARY", "helm"),
 		KubeconfigPath:            getEnv("KUBECONFIG_PATH", getEnv("KUBECONFIG", "")),
 		KubeconfigEncryptionKey:   getEnv("KUBECONFIG_ENCRYPTION_KEY", ""),
 		DeploymentTimeout:         getEnvDuration("DEPLOYMENT_TIMEOUT", 10*time.Minute),
-		ClusterHealthPollInterval: getEnvDuration("CLUSTER_HEALTH_POLL_INTERVAL", 60*time.Second),
-		MaxConcurrentDeploys:      getEnvInt32("MAX_CONCURRENT_DEPLOYS", 5),
+		ClusterHealthPollInterval:  getEnvDuration("CLUSTER_HEALTH_POLL_INTERVAL", 60*time.Second),
+		MaxConcurrentDeploys:       getEnvInt32("MAX_CONCURRENT_DEPLOYS", 5),
 		WildcardTLSSourceNamespace: getEnv("WILDCARD_TLS_SOURCE_NAMESPACE", ""),
 		WildcardTLSSourceSecret:    getEnv("WILDCARD_TLS_SOURCE_SECRET", ""),
 		WildcardTLSTargetSecret:    getEnv("WILDCARD_TLS_TARGET_SECRET", ""),
+		RefreshDBScaleTargets:      parseCSV(getEnv("REFRESH_DB_SCALE_TARGETS", "")),
+		RefreshDBMysqlRelease:      getEnv("REFRESH_DB_MYSQL_RELEASE", ""),
+		RefreshDBRedisRelease:      getEnv("REFRESH_DB_REDIS_RELEASE", ""),
+		RefreshDBSyncJobName:       getEnv("REFRESH_DB_SYNC_JOB_NAME", ""),
+		RefreshDBCleanupImage:      getEnv("REFRESH_DB_CLEANUP_IMAGE", "alpine:3.20"),
 	}
 }
 
