@@ -129,6 +129,7 @@ type InstanceHandler struct {
 	defaultTTLMinutes  int
 	txRunner           database.TxRunner
 	hooks              *hooks.Dispatcher
+	actions            *hooks.ActionRegistry
 }
 
 // WithHooks attaches a webhook dispatcher for instance lifecycle events
@@ -139,24 +140,38 @@ func (h *InstanceHandler) WithHooks(d *hooks.Dispatcher) *InstanceHandler {
 	return h
 }
 
+// WithActions attaches an action registry for the generic
+// POST /api/v1/stack-instances/:id/actions/:name route. Pass nil to disable.
+func (h *InstanceHandler) WithActions(r *hooks.ActionRegistry) *InstanceHandler {
+	h.actions = r
+	return h
+}
+
+// instanceRefFor builds a hooks.InstanceRef snapshot from a model.
+// Returns nil when instance is nil so callers can pass through.
+func instanceRefFor(instance *models.StackInstance) *hooks.InstanceRef {
+	if instance == nil {
+		return nil
+	}
+	return &hooks.InstanceRef{
+		ID:                instance.ID,
+		Name:              instance.Name,
+		Namespace:         instance.Namespace,
+		OwnerID:           instance.OwnerID,
+		StackDefinitionID: instance.StackDefinitionID,
+		Branch:            instance.Branch,
+		ClusterID:         instance.ClusterID,
+		Status:            instance.Status,
+	}
+}
+
 // fireInstanceHook dispatches event with an envelope built from instance.
 // No-ops when no dispatcher is attached or instance is nil.
 func (h *InstanceHandler) fireInstanceHook(ctx context.Context, event string, instance *models.StackInstance) error {
 	if h.hooks == nil || instance == nil {
 		return nil
 	}
-	return h.hooks.Fire(ctx, event, hooks.EventEnvelope{
-		InstanceRef: &hooks.InstanceRef{
-			ID:                instance.ID,
-			Name:              instance.Name,
-			Namespace:         instance.Namespace,
-			OwnerID:           instance.OwnerID,
-			StackDefinitionID: instance.StackDefinitionID,
-			Branch:            instance.Branch,
-			ClusterID:         instance.ClusterID,
-			Status:            instance.Status,
-		},
-	})
+	return h.hooks.Fire(ctx, event, hooks.EventEnvelope{InstanceRef: instanceRefFor(instance)})
 }
 
 // NewInstanceHandler creates a new InstanceHandler.
@@ -701,6 +716,71 @@ func (h *InstanceHandler) DeleteInstance(c *gin.Context) {
 	_ = h.fireInstanceHook(c.Request.Context(), hooks.EventPostInstanceDelete, snapshot)
 
 	c.Status(http.StatusNoContent)
+}
+
+type invokeActionRequest struct {
+	Parameters map[string]any `json:"parameters,omitempty"`
+}
+
+// InvokeAction godoc
+// @Summary     Invoke a registered action against a stack instance
+// @Description Dispatches to the action subscriber webhook and returns its response verbatim. Action discovery and registration happen out-of-band.
+// @Tags        stack-instances
+// @Accept      json
+// @Produce     json
+// @Param       id      path     string                true "Instance ID"
+// @Param       name    path     string                true "Action name"
+// @Param       request body     invokeActionRequest   false "Optional parameters passed through to the subscriber"
+// @Success     200 {object} map[string]any
+// @Failure     400 {object} map[string]string
+// @Failure     404 {object} map[string]string "Instance not found or action not registered"
+// @Failure     502 {object} map[string]string "Subscriber unreachable"
+// @Failure     503 {object} map[string]string "Action registry not configured"
+// @Router      /api/v1/stack-instances/{id}/actions/{name} [post]
+func (h *InstanceHandler) InvokeAction(c *gin.Context) {
+	id := c.Param("id")
+	name := c.Param("name")
+	if id == "" || name == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "instance id and action name are required"})
+		return
+	}
+	if h.actions == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "action registry not configured"})
+		return
+	}
+
+	inst, err := h.instanceRepo.FindByID(id)
+	if err != nil {
+		status, message := mapError(err, entityStackInstance)
+		c.JSON(status, gin.H{"error": message})
+		return
+	}
+
+	var req invokeActionRequest
+	if c.Request.ContentLength > 0 {
+		if bindErr := c.ShouldBindJSON(&req); bindErr != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": msgInvalidRequestFormat})
+			return
+		}
+	}
+
+	res, invokeErr := h.actions.Invoke(c.Request.Context(), name, instanceRefFor(inst), req.Parameters)
+	if invokeErr != nil {
+		var unk hooks.ErrUnknownAction
+		if errors.As(invokeErr, &unk) {
+			c.JSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("unknown action %q", unk.Name)})
+			return
+		}
+		c.JSON(http.StatusBadGateway, gin.H{"error": invokeErr.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"action":      name,
+		"instance_id": id,
+		"status_code": res.StatusCode,
+		"result":      json.RawMessage(res.Body),
+	})
 }
 
 // CloneInstance godoc

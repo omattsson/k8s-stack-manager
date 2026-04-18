@@ -81,11 +81,21 @@ func (r *handlerHookRecorder) dispatcher(t *testing.T, fp hooks.FailurePolicy) *
 }
 
 // setupInstanceRouterWithHooks mirrors setupInstanceRouter but attaches
-// a hooks.Dispatcher to the InstanceHandler.
+// a hooks.Dispatcher (and optionally an ActionRegistry) to the InstanceHandler.
 func setupInstanceRouterWithHooks(
 	instanceRepo *MockStackInstanceRepository,
 	defRepo *MockStackDefinitionRepository,
 	dispatcher *hooks.Dispatcher,
+	callerID, callerUsername string,
+) *gin.Engine {
+	return setupInstanceRouterWithHooksAndActions(instanceRepo, defRepo, dispatcher, nil, callerID, callerUsername)
+}
+
+func setupInstanceRouterWithHooksAndActions(
+	instanceRepo *MockStackInstanceRepository,
+	defRepo *MockStackDefinitionRepository,
+	dispatcher *hooks.Dispatcher,
+	registry *hooks.ActionRegistry,
 	callerID, callerUsername string,
 ) *gin.Engine {
 	gin.SetMode(gin.TestMode)
@@ -113,11 +123,13 @@ func setupInstanceRouterWithHooks(
 		BranchOverride: boRepo,
 	}}
 	h.WithHooks(dispatcher)
+	h.WithActions(registry)
 
 	insts := r.Group("/api/v1/stack-instances")
 	{
 		insts.POST("", h.CreateInstance)
 		insts.DELETE("/:id", h.DeleteInstance)
+		insts.POST("/:id/actions/:name", h.InvokeAction)
 	}
 	return r
 }
@@ -192,6 +204,115 @@ func TestDeleteInstance_FiresPreAndPostHooks(t *testing.T) {
 	assert.Equal(t,
 		[]string{hooks.EventPreInstanceDelete, hooks.EventPostInstanceDelete},
 		rec.names())
+}
+
+func TestInvokeAction_RoutesToSubscriberAndForwardsResult(t *testing.T) {
+	t.Parallel()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		var body hooks.ActionRequest
+		require.NoError(t, json.NewDecoder(req.Body).Decode(&body))
+		assert.Equal(t, "refresh-db", body.Action)
+		require.NotNil(t, body.Instance)
+		assert.Equal(t, "i-1", body.Instance.ID)
+		assert.Equal(t, "alpine", body.Parameters["image"])
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "wiped": []string{"mysql-data"}})
+	}))
+	defer srv.Close()
+
+	registry, err := hooks.NewActionRegistry([]hooks.ActionSubscription{{
+		Name: "refresh-db", URL: srv.URL, TimeoutSeconds: 5,
+	}}, srv.Client())
+	require.NoError(t, err)
+
+	instRepo := NewMockStackInstanceRepository()
+	defRepo := NewMockStackDefinitionRepository()
+	seedInstance(t, instRepo, "i-1", "demo", "d1", "uid-1", "running")
+
+	router := setupInstanceRouterWithHooksAndActions(instRepo, defRepo, nil, registry, "uid-1", "alice")
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest(http.MethodPost,
+		"/api/v1/stack-instances/i-1/actions/refresh-db",
+		bytes.NewBufferString(`{"parameters":{"image":"alpine"}}`))
+	req.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+	var resp struct {
+		Action     string         `json:"action"`
+		InstanceID string         `json:"instance_id"`
+		StatusCode int            `json:"status_code"`
+		Result     map[string]any `json:"result"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, "refresh-db", resp.Action)
+	assert.Equal(t, "i-1", resp.InstanceID)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, true, resp.Result["ok"])
+}
+
+func TestInvokeAction_UnknownActionReturns404(t *testing.T) {
+	t.Parallel()
+
+	registry, err := hooks.NewActionRegistry(nil, nil)
+	require.NoError(t, err)
+
+	instRepo := NewMockStackInstanceRepository()
+	seedInstance(t, instRepo, "i-1", "demo", "d1", "uid-1", "running")
+
+	router := setupInstanceRouterWithHooksAndActions(instRepo,
+		NewMockStackDefinitionRepository(), nil, registry, "uid-1", "alice")
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest(http.MethodPost,
+		"/api/v1/stack-instances/i-1/actions/missing", nil)
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusNotFound, w.Code)
+	assert.Contains(t, w.Body.String(), "missing")
+}
+
+func TestInvokeAction_NoRegistryReturns503(t *testing.T) {
+	t.Parallel()
+
+	instRepo := NewMockStackInstanceRepository()
+	seedInstance(t, instRepo, "i-1", "demo", "d1", "uid-1", "running")
+	router := setupInstanceRouterWithHooksAndActions(instRepo,
+		NewMockStackDefinitionRepository(), nil, nil, "uid-1", "alice")
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest(http.MethodPost,
+		"/api/v1/stack-instances/i-1/actions/x", nil)
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
+}
+
+func TestInvokeAction_UnknownInstanceReturns404(t *testing.T) {
+	t.Parallel()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
+		t.Fatal("subscriber should not be called when instance is unknown")
+	}))
+	defer srv.Close()
+
+	registry, err := hooks.NewActionRegistry([]hooks.ActionSubscription{{
+		Name: "x", URL: srv.URL, TimeoutSeconds: 5,
+	}}, srv.Client())
+	require.NoError(t, err)
+
+	router := setupInstanceRouterWithHooksAndActions(NewMockStackInstanceRepository(),
+		NewMockStackDefinitionRepository(), nil, registry, "uid-1", "alice")
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest(http.MethodPost,
+		"/api/v1/stack-instances/missing/actions/x", nil)
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusNotFound, w.Code)
 }
 
 func TestDeleteInstance_PreHookDenialReturns403(t *testing.T) {
