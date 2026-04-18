@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"backend/internal/database"
+	"backend/internal/hooks"
 	"backend/internal/k8s"
 	"backend/internal/models"
 	"backend/internal/websocket"
@@ -67,6 +68,10 @@ type Manager struct {
 	refreshDBRedisRelease string
 	refreshDBSyncJobName  string
 	refreshDBCleanupImage string
+
+	// hooks dispatches lifecycle events to user-configured webhooks.
+	// nil disables all hook dispatch.
+	hooks *hooks.Dispatcher
 }
 
 // ManagerConfig holds the dependencies for creating a Manager.
@@ -103,6 +108,10 @@ type ManagerConfig struct {
 	// RefreshDBCleanupImage is the container image used by the short-lived
 	// PVC cleanup Job. Defaults to alpine when empty.
 	RefreshDBCleanupImage string
+
+	// Hooks dispatches lifecycle events (pre-deploy, post-deploy, deploy-finalized)
+	// to configured outbound webhooks. Optional — nil disables all hook dispatch.
+	Hooks *hooks.Dispatcher
 }
 
 // DeployRequest contains everything needed to deploy a stack instance.
@@ -159,7 +168,39 @@ func NewManager(cfg ManagerConfig) *Manager {
 		refreshDBRedisRelease: cfg.RefreshDBRedisRelease,
 		refreshDBSyncJobName:  cfg.RefreshDBSyncJobName,
 		refreshDBCleanupImage: cfg.RefreshDBCleanupImage,
+
+		hooks: cfg.Hooks,
 	}
+}
+
+// fireDeployHook dispatches event to configured hook subscribers using a
+// snapshot of instance state. Returns nil immediately when no dispatcher is
+// configured. The instance pointer must not be nil.
+//
+// Hook dispatch is synchronous: a subscriber with FailurePolicyFail can abort
+// pre-* events. Post-* events should use FailurePolicyIgnore (the default) so
+// a slow subscriber cannot stall the deploy goroutine indefinitely; per-call
+// timeout (max 30s) bounds the worst case.
+func (m *Manager) fireDeployHook(ctx context.Context, event string, instance *models.StackInstance, deploymentID string) error {
+	if m.hooks == nil || instance == nil {
+		return nil
+	}
+	env := hooks.EventEnvelope{
+		InstanceRef: &hooks.InstanceRef{
+			ID:                instance.ID,
+			Name:              instance.Name,
+			Namespace:         instance.Namespace,
+			OwnerID:           instance.OwnerID,
+			StackDefinitionID: instance.StackDefinitionID,
+			Branch:            instance.Branch,
+			ClusterID:         instance.ClusterID,
+			Status:            instance.Status,
+		},
+	}
+	if deploymentID != "" {
+		env.Deployment = &hooks.DeploymentRef{ID: deploymentID, StartedAt: time.Now().UTC()}
+	}
+	return m.hooks.Fire(ctx, event, env)
 }
 
 // Shutdown cancels the context used by background deploy/stop goroutines,
@@ -216,6 +257,14 @@ func (m *Manager) Deploy(ctx context.Context, req DeployRequest) (string, error)
 	}
 
 	logID := uuid.New().String()
+
+	// Fire pre-deploy hook before any state changes. A subscriber with
+	// failure_policy=fail can abort the deploy here — the instance keeps its
+	// previous status and no deployment log is created.
+	if err := m.fireDeployHook(ctx, hooks.EventPreDeploy, req.Instance, logID); err != nil {
+		return "", fmt.Errorf("pre-deploy hook: %w", err)
+	}
+
 	now := time.Now().UTC()
 
 	// Create deployment log entry and update instance status atomically.
@@ -536,6 +585,16 @@ func (m *Manager) finalizeDeploy(instanceID string, deployLog *models.Deployment
 	} else {
 		m.broadcastStatus(instanceID, models.StackStatusRunning, deployLog.ID)
 	}
+
+	// Fire post-* hooks. These run on a fresh background context because the
+	// original request context (and the deploy timeout context) are gone by
+	// now. Errors are absorbed by the dispatcher when subscribers use
+	// failure_policy=ignore (the default for post-* events).
+	hookCtx := context.Background()
+	if deployErr == nil {
+		_ = m.fireDeployHook(hookCtx, hooks.EventPostDeploy, instance, deployLog.ID)
+	}
+	_ = m.fireDeployHook(hookCtx, hooks.EventDeployFinalized, instance, deployLog.ID)
 }
 
 // StopWithCharts starts an async stop/uninstall with explicit chart information.

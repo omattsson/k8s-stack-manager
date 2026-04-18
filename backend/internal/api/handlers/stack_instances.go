@@ -18,6 +18,7 @@ import (
 	"backend/internal/database"
 	"backend/internal/deployer"
 	"backend/internal/helm"
+	"backend/internal/hooks"
 	"backend/internal/k8s"
 	"backend/internal/models"
 	"backend/pkg/dberrors"
@@ -127,6 +128,35 @@ type InstanceHandler struct {
 	clusterRepo        models.ClusterRepository
 	defaultTTLMinutes  int
 	txRunner           database.TxRunner
+	hooks              *hooks.Dispatcher
+}
+
+// WithHooks attaches a webhook dispatcher for instance lifecycle events
+// (pre/post instance-create, pre/post instance-delete). Returns h for chaining.
+// Pass nil (or skip the call entirely) to disable hook dispatch.
+func (h *InstanceHandler) WithHooks(d *hooks.Dispatcher) *InstanceHandler {
+	h.hooks = d
+	return h
+}
+
+// fireInstanceHook dispatches event with an envelope built from instance.
+// No-ops when no dispatcher is attached or instance is nil.
+func (h *InstanceHandler) fireInstanceHook(ctx context.Context, event string, instance *models.StackInstance) error {
+	if h.hooks == nil || instance == nil {
+		return nil
+	}
+	return h.hooks.Fire(ctx, event, hooks.EventEnvelope{
+		InstanceRef: &hooks.InstanceRef{
+			ID:                instance.ID,
+			Name:              instance.Name,
+			Namespace:         instance.Namespace,
+			OwnerID:           instance.OwnerID,
+			StackDefinitionID: instance.StackDefinitionID,
+			Branch:            instance.Branch,
+			ClusterID:         instance.ClusterID,
+			Status:            instance.Status,
+		},
+	})
 }
 
 // NewInstanceHandler creates a new InstanceHandler.
@@ -423,6 +453,14 @@ func (h *InstanceHandler) CreateInstance(c *gin.Context) {
 		return
 	}
 
+	// Pre-instance-create hook: a subscriber with failure_policy=fail can abort
+	// before any DB write. Fired after validation so subscribers see a canonical
+	// instance shape (resolved cluster, sanitized namespace, etc).
+	if err := h.fireInstanceHook(c.Request.Context(), hooks.EventPreInstanceCreate, &inst); err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+		return
+	}
+
 	// Check namespace uniqueness.
 	// NOTE: This is a TOCTOU check — concurrent creates can still race past it.
 	// For strict uniqueness, a storage-level constraint (e.g. unique index or
@@ -487,6 +525,11 @@ func (h *InstanceHandler) CreateInstance(c *gin.Context) {
 			return
 		}
 	}
+
+	// Post-instance-create hook: ignore-by-default. Cannot undo the create at
+	// this point; subscribers exist for downstream notification (CMDB sync,
+	// audit logs, etc).
+	_ = h.fireInstanceHook(c.Request.Context(), hooks.EventPostInstanceCreate, &inst)
 
 	c.JSON(http.StatusCreated, inst)
 }
@@ -619,6 +662,22 @@ func (h *InstanceHandler) DeleteInstance(c *gin.Context) {
 		return
 	}
 
+	// Look up the instance once for the hook envelope. Skip when no hooks are
+	// attached — avoid the extra DB call for the common case.
+	var snapshot *models.StackInstance
+	if h.hooks != nil {
+		if inst, lookupErr := h.instanceRepo.FindByID(id); lookupErr == nil {
+			snapshot = inst
+		}
+	}
+
+	// Pre-instance-delete hook: a subscriber with failure_policy=fail can block
+	// the delete (e.g. enforce dependency checks).
+	if err := h.fireInstanceHook(c.Request.Context(), hooks.EventPreInstanceDelete, snapshot); err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+		return
+	}
+
 	if h.txRunner != nil {
 		// Transactional path — branch override cleanup + instance delete are atomic.
 		txErr := h.txRunner.RunInTx(func(repos database.TxRepos) error {
@@ -637,6 +696,9 @@ func (h *InstanceHandler) DeleteInstance(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
 		return
 	}
+
+	// Post-instance-delete hook: notify only; the delete is committed.
+	_ = h.fireInstanceHook(c.Request.Context(), hooks.EventPostInstanceDelete, snapshot)
 
 	c.Status(http.StatusNoContent)
 }
