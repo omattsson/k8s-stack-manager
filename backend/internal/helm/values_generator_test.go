@@ -606,7 +606,7 @@ func TestSubstituteVars(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			got, err := substituteVars(tt.input, vars)
+			got, err := substituteVars(tt.input, vars, nil)
 
 			if tt.wantErr {
 				require.Error(t, err)
