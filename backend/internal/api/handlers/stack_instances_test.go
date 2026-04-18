@@ -1240,3 +1240,51 @@ func TestDeployPreview(t *testing.T) {
 		assert.Equal(t, http.StatusOK, w.Code)
 	})
 }
+
+// TestDeployPreview_SubstitutesImageTag guards against a regression where
+// buildChartValues omitted TemplateVars.ImageTag, causing chart defaults of the
+// form `tag: "{{.ImageTag}}"` to render with an empty tag (→ `image: repo:`).
+// It's a handler-level counterpart to the helm package's unit coverage of
+// other template variables.
+func TestDeployPreview_SubstitutesImageTag(t *testing.T) {
+	t.Parallel()
+
+	instRepo := NewMockStackInstanceRepository()
+	overrideRepo := NewMockValueOverrideRepository()
+	defRepo := NewMockStackDefinitionRepository()
+	ccRepo := NewMockChartConfigRepository()
+
+	seedDefinition(t, defRepo, "d1", "My Def", "uid-1")
+	inst := seedInstance(t, instRepo, "i1", "stack-a", "d1", "uid-1", models.StackStatusRunning)
+	inst.Branch = "feature/slashes-and-mixedCase" // forces SanitizeImageTag transform
+	require.NoError(t, instRepo.Update(inst))
+
+	require.NoError(t, ccRepo.Create(&models.ChartConfig{
+		ID:                "c1",
+		StackDefinitionID: "d1",
+		ChartName:         "backend",
+		DefaultValues: "image:\n" +
+			"  repository: example.com/app\n" +
+			"  tag: \"{{.ImageTag}}\"\n",
+	}))
+
+	router := setupInstanceRouter(instRepo, overrideRepo, defRepo, ccRepo, NewMockStackTemplateRepository(), NewMockTemplateChartConfigRepository(), "uid-1", "alice", "user")
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest(http.MethodGet, "/api/v1/stack-instances/i1/deploy-preview", nil)
+	router.ServeHTTP(w, req)
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var resp DeployPreviewResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	require.Len(t, resp.Charts, 1)
+
+	pending := resp.Charts[0].PendingValues
+	require.NotContains(t, pending, "{{.ImageTag}}",
+		"template var should have been substituted, got:\n%s", pending)
+	require.NotContains(t, pending, "tag: \"\"",
+		"ImageTag must not be empty when Branch is set, got:\n%s", pending)
+
+	want := helm.SanitizeImageTag(inst.Branch)
+	require.Contains(t, pending, "tag: "+want,
+		"expected sanitized image tag %q in rendered values:\n%s", want, pending)
+}

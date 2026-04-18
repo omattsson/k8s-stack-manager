@@ -197,14 +197,17 @@ func main() {
 
 	// Deployment manager — uses registry for multi-cluster deploys
 	deployManager := deployer.NewManager(deployer.ManagerConfig{
-		Registry:          clusterRegistry,
-		InstanceRepo:      instanceRepo,
-		DeployLogRepo:     deployLogRepo,
-		Hub:               hub,
-		TxRunner:          repos.TxRunner,
-		MaxConcurrent:     int(cfg.Deployment.MaxConcurrentDeploys),
-		QuotaRepo:         quotaRepo,
-		QuotaOverrideRepo: quotaOverrideRepo,
+		Registry:                   clusterRegistry,
+		InstanceRepo:               instanceRepo,
+		DeployLogRepo:              deployLogRepo,
+		Hub:                        hub,
+		TxRunner:                   repos.TxRunner,
+		MaxConcurrent:              int(cfg.Deployment.MaxConcurrentDeploys),
+		QuotaRepo:                  quotaRepo,
+		QuotaOverrideRepo:          quotaOverrideRepo,
+		WildcardTLSSourceNamespace: cfg.Deployment.WildcardTLSSourceNamespace,
+		WildcardTLSSourceSecret:    cfg.Deployment.WildcardTLSSourceSecret,
+		WildcardTLSTargetSecret:    cfg.Deployment.WildcardTLSTargetSecret,
 	})
 
 	// ------------------------------------------------------------------
