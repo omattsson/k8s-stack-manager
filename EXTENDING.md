@@ -357,14 +357,65 @@ If your k8s-stack-manager instance is reachable by untrusted actors who could cr
 
 ## Observability
 
-Every dispatch emits a structured log line. Use `request_id` to correlate across systems:
+### Metrics (OpenTelemetry)
+
+Every dispatch and every action invocation increments counters + histograms in the `hooks` meter scope. All instruments are always on — if OTel is disabled they fall back to no-op. Names and labels:
+
+| Metric | Type | Labels | Meaning |
+|---|---|---|---|
+| `hook.dispatches_total` | Counter | `hook.event`, `hook.subscription`, `hook.outcome` | One per event → subscriber attempt |
+| `hook.dispatch_duration` | Histogram (seconds) | `hook.event`, `hook.subscription` | Wall-clock time for the POST + response |
+| `hook.action_invocations_total` | Counter | `hook.action`, `hook.outcome` | One per `/actions/{name}` call |
+| `hook.action_invocation_duration` | Histogram (seconds) | `hook.action` | Wall-clock time for the action POST |
+
+`hook.outcome` is a small, stable set so dashboards can enumerate it: `success`, `denied`, `http_error`, `transport_error`, `timeout`, `unknown_action`, `marshal_error`.
+
+**Prometheus queries you probably want:**
+
+```promql
+# dispatch error rate per subscription (last 5m)
+sum by (hook_subscription, hook_outcome) (
+  rate(hook_dispatches_total{hook_outcome!="success"}[5m])
+)
+
+# p95 dispatch latency per event
+histogram_quantile(0.95, sum by (le, hook_event) (rate(hook_dispatch_duration_bucket[5m])))
+
+# actions that repeatedly return non-2xx
+sum by (hook_action) (increase(hook_action_invocations_total{hook_outcome="http_error"}[15m])) > 0
+```
+
+### Traces (OpenTelemetry)
+
+Every dispatch opens a span: `hooks.dispatch` for event subscriber calls, `hooks.action` for action invocations. Each span carries:
+
+- `hook.event` / `hook.action` — which event or action is firing
+- `hook.subscription` — subscriber name (for events)
+- `hook.request_id` — same value as `X-StackManager-Request-Id`, so you can correlate logs ↔ traces ↔ subscriber-side records
+- `hook.outcome` — terminal label matching the metric outcome
+- `hook.status_code` — HTTP status when a response was observed
+- `span.status` — `Ok` on success, `Error` on any non-success outcome
+
+**Trace context propagation:** k8s-stack-manager installs the W3C TraceContext propagator globally, and every outbound hook/action request carries a `Traceparent` header. Subscribers that run their own OTel SDK automatically stitch as children. The Python reference at [backend/examples/webhook-handler-python/](backend/examples/webhook-handler-python/) shows the minimal server side; the Go reference at [backend/examples/webhook-handler/](backend/examples/webhook-handler/) does the same.
+
+In Jaeger / Tempo you'll see a trace like:
 
 ```
-level=info subscription=cmdb-sync event=post-instance-create request_id=req-abc status=success duration_ms=12
-level=warn subscription=cmdb-sync event=post-instance-create request_id=req-def status=transport_error error="connection refused" duration_ms=5001
+│ stack-manager: deployer.deploy        (root)
+│  ├─ hooks.dispatch                    pre-deploy → cmdb-sync        outcome=success
+│  ├─ hooks.dispatch                    pre-deploy → maintenance-gate outcome=denied
+│  └─ cmdb-sync-server: POST /events    (from subscriber's OTel SDK)
 ```
 
-Integrate with your log aggregator on `subscription=` label.
+### Structured logs
+
+Dispatch failures still emit slog lines for quick triage:
+
+```
+level=warn subscription=cmdb-sync event=post-instance-create request_id=req-abc status=transport_error error="connection refused"
+```
+
+Correlate across systems via `request_id` — it appears on the metric/span attributes above and in the `X-StackManager-Request-Id` header on every outbound request.
 
 ---
 

@@ -83,8 +83,11 @@ func (d *Dispatcher) Fire(ctx context.Context, event string, envelope EventEnvel
 }
 
 func (d *Dispatcher) invoke(ctx context.Context, sub Subscription, envelope EventEnvelope) error {
-	resp, err := deliver(ctx, d.client, sub, envelope)
+	ctx, _, finish := startDispatchSpan(ctx, envelope.Event, sub.Name, envelope.RequestID)
+
+	resp, statusCode, err := deliver(ctx, d.client, sub, envelope)
 	if err != nil {
+		finish(classifyErr(err), err, statusCode)
 		return err
 	}
 	if !resp.Allowed {
@@ -92,8 +95,11 @@ func (d *Dispatcher) invoke(ctx context.Context, sub Subscription, envelope Even
 		if msg == "" {
 			msg = "subscriber denied"
 		}
-		return errors.New(msg)
+		denyErr := errors.New(msg)
+		finish(outcomeDenied, denyErr, statusCode)
+		return denyErr
 	}
+	finish(outcomeSuccess, nil, statusCode)
 	return nil
 }
 

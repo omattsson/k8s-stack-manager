@@ -251,13 +251,38 @@ that need at-least-once + dedup semantics should track recently-seen IDs
 
 ## Observability
 
-Every dispatch logs structured events to the server's log stream with these
-fields:
+### Metrics
 
-- `event`
-- `subscription` (name from config)
-- `request_id`
-- `status` (success | denied | transport_error | timeout)
-- `duration_ms`
+Emitted by the `hooks` OTel meter scope:
 
-Correlate across systems via `request_id`.
+| Metric | Type | Labels |
+|---|---|---|
+| `hook.dispatches_total` | Counter | `hook.event`, `hook.subscription`, `hook.outcome` |
+| `hook.dispatch_duration` | Histogram (s) | `hook.event`, `hook.subscription` |
+| `hook.action_invocations_total` | Counter | `hook.action`, `hook.outcome` |
+| `hook.action_invocation_duration` | Histogram (s) | `hook.action` |
+
+`hook.outcome` is a stable, small set:
+`success`, `denied`, `http_error`, `transport_error`, `timeout`,
+`unknown_action`, `marshal_error`.
+
+### Traces
+
+Spans: `hooks.dispatch` (event subscriber calls), `hooks.action` (action
+invocations). Span attributes: `hook.event` / `hook.action`,
+`hook.subscription`, `hook.request_id`, `hook.outcome`, `hook.status_code`.
+
+Outbound requests carry `Traceparent` (W3C TraceContext). Subscribers with
+their own OTel SDK automatically stitch their spans as children of ours.
+
+### Structured logs
+
+Dispatch failures emit slog lines for quick triage:
+
+```
+level=warn subscription=cmdb-sync event=post-instance-create request_id=req-abc status=transport_error error="connection refused"
+```
+
+Correlate across metrics, spans, logs, and subscriber-side records via
+`request_id` (same value as `hook.request_id` attribute and
+`X-StackManager-Request-Id` header).

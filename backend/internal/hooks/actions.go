@@ -104,10 +104,20 @@ func (e ErrUnknownAction) Error() string {
 // Returns ErrUnknownAction when name is not registered. Network/HTTP errors
 // propagate; non-2xx responses are returned as ActionResult with the status
 // and body for the caller to surface.
+//
+// Emits an OTel span "hooks.action" for each invocation and the
+// hook.action_invocations_total / hook.action_invocation_duration metrics.
+// The outbound request carries W3C traceparent so subscribers can stitch
+// their own spans as children.
 func (r *ActionRegistry) Invoke(ctx context.Context, name string, instance *InstanceRef, params map[string]any) (ActionResult, error) {
 	sub, ok := r.Lookup(name)
 	if !ok {
-		return ActionResult{}, ErrUnknownAction{Name: name}
+		// Record an outcome metric for unknown actions too — operators want to
+		// see spikes in bad action names, not just invocation successes.
+		_, _, finish := startActionSpan(ctx, name, "")
+		err := ErrUnknownAction{Name: name}
+		finish(outcomeUnknownAction, err, 0)
+		return ActionResult{}, err
 	}
 
 	req := ActionRequest{
@@ -120,8 +130,11 @@ func (r *ActionRegistry) Invoke(ctx context.Context, name string, instance *Inst
 		Parameters: params,
 	}
 
+	ctx, _, finish := startActionSpan(ctx, name, req.RequestID)
+
 	body, err := json.Marshal(req)
 	if err != nil {
+		finish(outcomeMarshalError, err, 0)
 		return ActionResult{}, fmt.Errorf("marshal action request: %w", err)
 	}
 
@@ -131,6 +144,7 @@ func (r *ActionRegistry) Invoke(ctx context.Context, name string, instance *Inst
 
 	httpReq, err := http.NewRequestWithContext(reqCtx, http.MethodPost, sub.URL, bytes.NewReader(body))
 	if err != nil {
+		finish(outcomeTransportError, err, 0)
 		return ActionResult{}, fmt.Errorf("build request: %w", err)
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
@@ -140,15 +154,18 @@ func (r *ActionRegistry) Invoke(ctx context.Context, name string, instance *Inst
 	if sub.Secret != "" {
 		httpReq.Header.Set(headerSignature, sign(body, sub.Secret))
 	}
+	injectTraceContext(reqCtx, httpReq)
 
 	resp, err := r.client.Do(httpReq)
 	if err != nil {
+		finish(classifyErr(err), err, 0)
 		return ActionResult{}, fmt.Errorf("post action: %w", err)
 	}
 	defer resp.Body.Close()
 
 	respBody, err := io.ReadAll(io.LimitReader(resp.Body, maxHookResponseBytes))
 	if err != nil {
+		finish(outcomeTransportError, err, resp.StatusCode)
 		return ActionResult{}, fmt.Errorf("read action response: %w", err)
 	}
 
@@ -157,6 +174,15 @@ func (r *ActionRegistry) Invoke(ctx context.Context, name string, instance *Inst
 		respBody = []byte("null")
 	}
 
+	// Actions are RPC-style and forward arbitrary JSON; a 2xx is a successful
+	// invocation from our perspective even if the subscriber encoded its own
+	// logical error in the body. A non-2xx is classified as http_error so
+	// dashboards can spot bad subscribers.
+	outcome := outcomeSuccess
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		outcome = outcomeHTTPError
+	}
+	finish(outcome, nil, resp.StatusCode)
 	return ActionResult{StatusCode: resp.StatusCode, Body: json.RawMessage(respBody)}, nil
 }
 
