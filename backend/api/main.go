@@ -14,6 +14,7 @@ import (
 	"backend/internal/gitprovider"
 	"backend/internal/health"
 	"backend/internal/helm"
+	"backend/internal/hooks"
 	"backend/internal/k8s"
 	"backend/internal/models"
 	"backend/internal/scheduler"
@@ -195,6 +196,32 @@ func main() {
 	watcherCtx, watcherCancel := context.WithCancel(context.Background())
 	k8sWatcher.Start(watcherCtx)
 
+	// Load webhook subscription + action configuration (optional). When
+	// HOOKS_CONFIG_FILE is unset, the server starts with an empty
+	// dispatcher/registry — lifecycle hook calls become no-ops and the
+	// /actions/{name} route returns 503. This keeps the binary runnable
+	// without any extension config for simple deployments.
+	hookCfg, actionSpecs, hookErr := hooks.LoadConfigFile(cfg.Deployment.HooksConfigFile)
+	if hookErr != nil {
+		slog.Error("failed to load hooks config", "file", cfg.Deployment.HooksConfigFile, "error", hookErr)
+		os.Exit(1)
+	}
+	hookDispatcher, hookErr := hooks.NewDispatcher(hookCfg, http.DefaultClient)
+	if hookErr != nil {
+		slog.Error("failed to build hooks dispatcher", "error", hookErr)
+		os.Exit(1)
+	}
+	actionRegistry, hookErr := hooks.NewActionRegistry(actionSpecs, http.DefaultClient)
+	if hookErr != nil {
+		slog.Error("failed to build action registry", "error", hookErr)
+		os.Exit(1)
+	}
+	slog.Info("hooks configured",
+		"config_file", cfg.Deployment.HooksConfigFile,
+		"subscribed_events", hookDispatcher.EventNames(),
+		"actions", actionRegistry.Names(),
+	)
+
 	// Deployment manager — uses registry for multi-cluster deploys
 	deployManager := deployer.NewManager(deployer.ManagerConfig{
 		Registry:                   clusterRegistry,
@@ -213,6 +240,7 @@ func main() {
 		RefreshDBRedisRelease:      cfg.Deployment.RefreshDBRedisRelease,
 		RefreshDBSyncJobName:       cfg.Deployment.RefreshDBSyncJobName,
 		RefreshDBCleanupImage:      cfg.Deployment.RefreshDBCleanupImage,
+		Hooks:                      hookDispatcher,
 	})
 
 	// ------------------------------------------------------------------
@@ -272,6 +300,7 @@ func main() {
 		slog.Error("failed to create instance handler", "error", err)
 		os.Exit(1)
 	}
+	instanceHandler.WithHooks(hookDispatcher).WithActions(actionRegistry)
 	gitHandler := handlers.NewGitHandler(gitRegistry)
 	auditLogHandler := handlers.NewAuditLogHandler(auditRepo)
 	userHandler := handlers.NewUserHandler(userRepo)

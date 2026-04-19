@@ -86,6 +86,14 @@ type DeploymentConfig struct {
 	RefreshDBSyncJobName  string   // Helm post-install hook Job name to delete (recreated on next deploy)
 	RefreshDBCleanupImage string   // small image used by the short-lived PVC cleanup Job
 
+	// HooksConfigFile points at a JSON file describing outbound webhook
+	// subscriptions (for lifecycle events) and registered named actions. When
+	// empty, the server starts with no hooks configured — lifecycle events
+	// still fire through the dispatcher but no subscribers receive them, and
+	// the /actions/{name} route returns 503. See internal/hooks/configfile.go
+	// for the schema.
+	HooksConfigFile string
+
 	MaxConcurrentDeploys int32
 }
 
@@ -544,6 +552,7 @@ func loadDeploymentConfig() DeploymentConfig {
 		RefreshDBRedisRelease:      getEnv("REFRESH_DB_REDIS_RELEASE", ""),
 		RefreshDBSyncJobName:       getEnv("REFRESH_DB_SYNC_JOB_NAME", ""),
 		RefreshDBCleanupImage:      getEnv("REFRESH_DB_CLEANUP_IMAGE", "alpine:3.20"),
+		HooksConfigFile:            getEnv("HOOKS_CONFIG_FILE", ""),
 	}
 }
 
