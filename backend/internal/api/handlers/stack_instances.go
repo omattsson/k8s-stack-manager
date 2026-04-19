@@ -489,7 +489,8 @@ func (h *InstanceHandler) CreateInstance(c *gin.Context) {
 	// and definition existence checks so subscribers only see creates that are
 	// otherwise eligible to succeed.
 	if err := h.fireInstanceHook(c.Request.Context(), hooks.EventPreInstanceCreate, &inst); err != nil {
-		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+		slog.Error("pre-instance-create hook failed", "instance_name", inst.Name, "error", err)
+		c.JSON(http.StatusForbidden, gin.H{"error": "pre-instance-create hook rejected the request"})
 		return
 	}
 
@@ -679,19 +680,25 @@ func (h *InstanceHandler) DeleteInstance(c *gin.Context) {
 		return
 	}
 
-	// Look up the instance once for the hook envelope. Skip when no hooks are
-	// attached — avoid the extra DB call for the common case.
+	// Look up the instance for the hook envelope and the delete itself.
+	// A failed lookup is a real error — don't silently proceed with a nil
+	// snapshot that would make the pre-delete hook a no-op.
 	var snapshot *models.StackInstance
 	if h.hooks != nil {
-		if inst, lookupErr := h.instanceRepo.FindByID(id); lookupErr == nil {
-			snapshot = inst
+		inst, lookupErr := h.instanceRepo.FindByID(id)
+		if lookupErr != nil {
+			status, message := mapError(lookupErr, entityStackInstance)
+			c.JSON(status, gin.H{"error": message})
+			return
 		}
+		snapshot = inst
 	}
 
 	// Pre-instance-delete hook: a subscriber with failure_policy=fail can block
 	// the delete (e.g. enforce dependency checks).
 	if err := h.fireInstanceHook(c.Request.Context(), hooks.EventPreInstanceDelete, snapshot); err != nil {
-		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+		slog.Error("pre-instance-delete hook failed", logKeyInstanceID, id, "error", err)
+		c.JSON(http.StatusForbidden, gin.H{"error": "pre-instance-delete hook rejected the request"})
 		return
 	}
 
@@ -784,12 +791,13 @@ func (h *InstanceHandler) InvokeAction(c *gin.Context) {
 		slog.Error("action invocation failed",
 			logKeyInstanceID, id,
 			"action", name,
+			"hook_request_id", res.RequestID,
 			"error", invokeErr,
 		)
 		c.JSON(http.StatusBadGateway, gin.H{
 			"error":      "action subscriber unreachable or returned transport error",
 			"action":     name,
-			"request_id": c.GetString("request_id"),
+			"request_id": res.RequestID,
 		})
 		return
 	}

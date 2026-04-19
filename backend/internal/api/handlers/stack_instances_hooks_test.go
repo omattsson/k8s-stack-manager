@@ -176,7 +176,7 @@ func TestCreateInstance_PreHookDenialReturns403(t *testing.T) {
 	router.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusForbidden, w.Code)
-	assert.Contains(t, w.Body.String(), "policy says no")
+	assert.Contains(t, w.Body.String(), "pre-instance-create hook rejected the request")
 	// Only pre-create was attempted; the create never reached the post hook.
 	assert.Equal(t, []string{hooks.EventPreInstanceCreate}, rec.names())
 	// And nothing was persisted.
@@ -332,7 +332,7 @@ func TestDeleteInstance_PreHookDenialReturns403(t *testing.T) {
 	router.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusForbidden, w.Code)
-	assert.Contains(t, w.Body.String(), "still in use")
+	assert.Contains(t, w.Body.String(), "pre-instance-delete hook rejected the request")
 	// Instance must still exist.
 	stored, err := instRepo.FindByID("i-1")
 	require.NoError(t, err)
