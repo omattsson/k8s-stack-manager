@@ -32,9 +32,16 @@ const (
 	FailurePolicyIgnore FailurePolicy = "ignore"
 )
 
-// envelopeAPIVersion is the contract version for EventEnvelope payloads.
-// Bump when fields are added or semantics change.
+// envelopeAPIVersion is the contract version for EventEnvelope and
+// ActionRequest payloads. Subscribers should ignore envelopes with an
+// unknown apiVersion rather than erroring, since the dispatcher bumps
+// this on additive changes too. Version negotiation is handler-side
+// only in v1 — the dispatcher does not read it back.
 const envelopeAPIVersion = "hooks.k8sstackmanager.io/v1"
+
+// maxHookResponseBytes caps subscriber response body reads to keep a
+// misbehaving handler from causing OOM on the dispatch path.
+const maxHookResponseBytes = 1 << 20 // 1 MiB
 
 // EventEnvelope is the JSON payload posted to subscriber URLs.
 type EventEnvelope struct {

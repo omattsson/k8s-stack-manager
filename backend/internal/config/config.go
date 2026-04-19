@@ -523,10 +523,9 @@ func loadGitProviderConfig() GitProviderConfig {
 }
 
 func loadDeploymentConfig() DeploymentConfig {
-	// RefreshDB is opt-in. Operators who want the endpoint enabled must set
-	// REFRESH_DB_SCALE_TARGETS, REFRESH_DB_MYSQL_RELEASE, REFRESH_DB_REDIS_RELEASE,
-	// and REFRESH_DB_SYNC_JOB_NAME to match their stack's release names. The
-	// endpoint rejects requests with ErrRefreshDBNotConfigured when any are empty.
+	// Operation-specific behaviour (database refresh, snapshot restore, etc.)
+	// lives in out-of-process extension subscribers — see internal/hooks and
+	// EXTENDING.md. HOOKS_CONFIG_FILE points at the JSON file describing them.
 	return DeploymentConfig{
 		HelmBinary:                getEnv("HELM_BINARY", "helm"),
 		KubeconfigPath:            getEnv("KUBECONFIG_PATH", getEnv("KUBECONFIG", "")),

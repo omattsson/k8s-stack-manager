@@ -57,7 +57,7 @@ func deliver(ctx context.Context, client httpClient, sub Subscription, envelope 
 	}
 	defer resp.Body.Close()
 
-	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	respBody, err := io.ReadAll(io.LimitReader(resp.Body, maxHookResponseBytes))
 	if err != nil {
 		return HookResponse{}, fmt.Errorf("read hook response: %w", err)
 	}

@@ -66,21 +66,19 @@ backend:
     WILDCARD_TLS_SOURCE_NAMESPACE: ""
     WILDCARD_TLS_SOURCE_SECRET: ""
     WILDCARD_TLS_TARGET_SECRET: ""
-    # ---- refresh-db (POST /api/v1/stack-instances/:id/refresh-db) ----
-    # Optional DB refresh flow that wipes the MySQL PVC, flushes Redis, and
-    # restarts the app deployments — all without rerunning Helm. Disabled by
-    # default: the backend rejects requests until the four *required* env vars
-    # below are set to match your stack's Deployment and Job names.
+    # ---- Extension hooks (see EXTENDING.md) ----
+    # Point this at a JSON file describing outbound webhook subscriptions
+    # (for lifecycle events) and named actions (invoked via the generic
+    # POST /api/v1/stack-instances/:id/actions/:name route). When unset, the
+    # dispatcher fires no-ops and the /actions/{name} route returns 503.
+    # Mount the file into the pod via an extra ConfigMap volume.
+    # HOOKS_CONFIG_FILE: /etc/hooks/hooks.json
     #
-    # Required — all four must be set for the endpoint to activate:
-    # REFRESH_DB_SCALE_TARGETS: "app-core,app-web,app-worker,app-admin"
-    # REFRESH_DB_MYSQL_RELEASE: "app-mysql"
-    # REFRESH_DB_REDIS_RELEASE: "app-redis"
-    # REFRESH_DB_SYNC_JOB_NAME: "app-sync"
-    #
-    # Optional — has a safe default in code (alpine:3.20), override only if
-    # your cluster can't pull from Docker Hub:
-    # REFRESH_DB_CLEANUP_IMAGE: "alpine:3.20"
+    # Database-refresh, snapshot, CMDB-sync and similar operations are now
+    # implemented as out-of-process webhook subscribers, not in-core env
+    # vars. The Klaravik refresh-db reference lives at
+    # kvk-devops-tools/refresh-db/ — it's the model for any team-specific
+    # operation you want to add.
     JWT_EXPIRATION: "24h"
     ADMIN_USERNAME: admin
     # OIDC (disabled by default)

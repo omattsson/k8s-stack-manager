@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -188,13 +189,14 @@ func TestDispatcher_NoSubscriptionsForEvent(t *testing.T) {
 func TestDispatcher_MultipleSubscriptionsInRegistrationOrder(t *testing.T) {
 	t.Parallel()
 
-	var calls []string
-	mu := make(chan struct{}, 1)
-	mu <- struct{}{}
+	var (
+		mu    sync.Mutex
+		calls []string
+	)
 	record := func(name string) {
-		<-mu
+		mu.Lock()
+		defer mu.Unlock()
 		calls = append(calls, name)
-		mu <- struct{}{}
 	}
 
 	srvA := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

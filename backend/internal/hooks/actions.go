@@ -8,7 +8,6 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"sync"
 	"time"
 )
 
@@ -45,13 +44,14 @@ type ActionResult struct {
 }
 
 // ActionRegistry holds named action subscriptions and dispatches invocations.
-// Concurrency-safe after construction; subscriptions are immutable for the
-// registry's lifetime.
+// Safe for concurrent use: the actions map is written only by
+// NewActionRegistry before the pointer escapes, and read-only afterwards
+// (mirrors Dispatcher). Adding runtime registration would require a lock;
+// the current shape matches the "config-at-boot" operational model.
 type ActionRegistry struct {
 	actions map[string]ActionSubscription
 	client  httpClient
 	now     func() time.Time
-	mu      sync.RWMutex
 }
 
 // NewActionRegistry validates each subscription, normalizes optional fields,
@@ -80,8 +80,6 @@ func NewActionRegistry(actions []ActionSubscription, client httpClient) (*Action
 // Names returns the registered action names in unspecified order.
 // Useful for serving a discoverability endpoint.
 func (r *ActionRegistry) Names() []string {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
 	out := make([]string, 0, len(r.actions))
 	for name := range r.actions {
 		out = append(out, name)
@@ -91,8 +89,6 @@ func (r *ActionRegistry) Names() []string {
 
 // Lookup returns the subscription registered for name, if any.
 func (r *ActionRegistry) Lookup(name string) (ActionSubscription, bool) {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
 	s, ok := r.actions[name]
 	return s, ok
 }
@@ -151,7 +147,7 @@ func (r *ActionRegistry) Invoke(ctx context.Context, name string, instance *Inst
 	}
 	defer resp.Body.Close()
 
-	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	respBody, err := io.ReadAll(io.LimitReader(resp.Body, maxHookResponseBytes))
 	if err != nil {
 		return ActionResult{}, fmt.Errorf("read action response: %w", err)
 	}
