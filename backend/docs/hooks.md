@@ -1,4 +1,9 @@
-# Extensibility: Webhooks and Actions
+# Extensibility reference: Webhooks and Actions
+
+> **Looking to get started?** Read [EXTENDING.md](../../EXTENDING.md) at the
+> repo root — it's tutorial-first with a 10-minute walkthrough, real-world
+> recipes, and troubleshooting. This file is the authoritative schema + field
+> reference, useful when you're implementing a subscriber and want precision.
 
 k8s-stack-manager exposes two integration points for third-party behaviour:
 
