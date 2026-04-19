@@ -450,6 +450,95 @@ A post-deploy subscriber that posts to Slack on `status=error` only. Drops on 2x
 
 pre-deploy subscriber that calls your FinOps backend: rejects deploys to a specific cluster when predicted monthly cost exceeds budget.
 
+### Security scan gate — block deploys with critical CVEs
+
+A `pre-deploy` subscriber with `failure_policy: fail` that calls a vulnerability scanner (Trivy, Grype, or your registry's scan API) for every chart image before allowing the deploy to proceed. The subscriber extracts image references from `charts` and `values`, queries the scan backend, and returns `{"allowed": false, "message": "CVE-2026-1234 (critical) in web:v1.3.7"}` if any image exceeds the configured severity threshold.
+
+```json
+{
+  "subscriptions": [
+    {
+      "name": "security-scan-gate",
+      "events": ["pre-deploy"],
+      "url": "http://image-scanner.security.svc.cluster.local:8080/scan",
+      "timeout_seconds": 15,
+      "failure_policy": "fail",
+      "secret_env": "SCANNER_WEBHOOK_SECRET"
+    }
+  ]
+}
+```
+
+The handler is typically a thin Go or Python service that shells out to `trivy image --severity CRITICAL --exit-code 1 <image>` or queries a registry API. Short timeout (15s) keeps deploys snappy; the scanner should cache results per image digest. Returns `{"allowed": true}` when all images are clean.
+
+### Generate debug bundle — collect diagnostics on demand
+
+An action that gathers pod logs, `kubectl describe`, events, and resource metrics for every release in the instance's namespace, compresses them into a tarball, uploads to object storage, and returns a pre-signed download URL. Useful for support workflows where developers can't access the cluster directly.
+
+```json
+{
+  "actions": [
+    {
+      "name": "generate-debug-bundle",
+      "url": "http://debug-bundler.ops.svc.cluster.local:8080/bundle",
+      "description": "Collect pod logs, events, and resource usage into a downloadable archive",
+      "timeout_seconds": 60,
+      "secret_env": "DEBUG_BUNDLE_WEBHOOK_SECRET"
+    }
+  ]
+}
+```
+
+Invoke:
+```bash
+curl -X POST https://stack-manager.example/api/v1/stack-instances/$ID/actions/generate-debug-bundle \
+     -H "Authorization: Bearer $TOKEN"
+```
+
+Response:
+```json
+{
+  "action": "generate-debug-bundle",
+  "instance_id": "6c9f1e14-...",
+  "status_code": 200,
+  "result": {
+    "bundle_url": "https://storage.example/debug-bundles/stack-demo-alice-20260419T1430.tar.gz",
+    "expires_in": "24h",
+    "pod_count": 5,
+    "namespace": "stack-demo-alice"
+  }
+}
+```
+
+The handler needs a ServiceAccount with `get`/`list` on pods, events, and logs in the target namespace. Upload destination is configurable (S3, Azure Blob, MinIO).
+
+### Pre-delete backup verification — ensure backups exist before teardown
+
+A `pre-instance-delete` subscriber with `failure_policy: fail` that queries your backup system (Velero, custom snapshot API, or a database backup service) to confirm a recent successful backup exists for the instance. Prevents accidental data loss from deleting a stack whose last backup failed silently.
+
+```json
+{
+  "subscriptions": [
+    {
+      "name": "backup-verification",
+      "events": ["pre-instance-delete"],
+      "url": "http://backup-verifier.ops.svc.cluster.local:8080/verify",
+      "timeout_seconds": 10,
+      "failure_policy": "fail",
+      "secret_env": "BACKUP_VERIFY_SECRET"
+    }
+  ]
+}
+```
+
+The handler receives the instance envelope, queries the backup system for the namespace (e.g., `velero backup get --selector namespace=stack-demo-alice`), and returns:
+
+```json
+{ "allowed": false, "message": "No successful backup in the last 24h for stack-demo-alice; last backup failed at 2026-04-18T03:00Z" }
+```
+
+or `{"allowed": true}` when a recent backup is confirmed. Operators can force-delete by temporarily removing the subscription from the config if needed — this is intentional friction.
+
 ---
 
 ## Reference implementations (examples/)
