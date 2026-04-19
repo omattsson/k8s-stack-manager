@@ -733,7 +733,7 @@ type invokeActionRequest struct {
 
 // InvokeAction godoc
 // @Summary     Invoke a registered action against a stack instance
-// @Description Dispatches to the action subscriber webhook and returns its response verbatim. Action discovery and registration happen out-of-band.
+// @Description Dispatches to the action subscriber webhook and wraps its response in an envelope containing action, instance_id, status_code, and result fields. The subscriber's JSON body is nested under the result key. Returns 200 even for non-2xx subscriber responses — check status_code to distinguish.
 // @Tags        stack-instances
 // @Accept      json
 // @Produce     json

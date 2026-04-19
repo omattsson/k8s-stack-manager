@@ -3,6 +3,7 @@ package hooks
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -116,7 +117,10 @@ func (d *Dispatcher) EventNames() []string {
 func newRequestID() string {
 	var b [12]byte
 	if _, err := rand.Read(b[:]); err != nil {
-		return fmt.Sprintf("req-%d", time.Now().UnixNano())
+		// Fallback preserves the req- + 24-hex-char format so parsers and
+		// dashboards see a consistent shape even when entropy is unavailable.
+		fb := sha256.Sum256([]byte(fmt.Sprintf("%d", time.Now().UnixNano())))
+		return "req-" + hex.EncodeToString(fb[:12])
 	}
 	return "req-" + hex.EncodeToString(b[:])
 }
