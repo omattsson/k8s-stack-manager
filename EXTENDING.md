@@ -550,6 +550,8 @@ or `{"allowed": true}` when a recent backup is confirmed. Operators can force-de
 
 All examples focus on the **protocol** (envelope shape, signature, response). They're starting points — replace the echo/allow logic with your real policy and business rules.
 
+For production-ready extensions with Dockerfiles, k8s manifests, and real-world logic, see the [community extensions repo](https://github.com/omattsson/k8s-stack-manager-extensions).
+
 ---
 
 ## Writing production-grade handlers
@@ -604,4 +606,5 @@ Check you registered for `post-deploy` (not `pre-deploy`) and that `failure_poli
 
 - [backend/docs/hooks.md](backend/docs/hooks.md) — authoritative reference (schema tables, field-by-field)
 - [backend/examples/webhook-handler/README.md](backend/examples/webhook-handler/README.md) — Go reference implementation
+- [Community extensions](https://github.com/omattsson/k8s-stack-manager-extensions) — production-ready hooks (Slack notifier, maintenance gate, security scan gate, debug bundle) with Dockerfiles and k8s manifests
 - [Extending stackctl](https://github.com/omattsson/stackctl/blob/main/EXTENDING.md) — the CLI side: how to add `stackctl my-action` as a plugin
