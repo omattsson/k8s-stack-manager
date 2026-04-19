@@ -178,6 +178,12 @@ func (r *ActionRegistry) Invoke(ctx context.Context, name string, instance *Inst
 		respBody = []byte("null")
 	}
 
+	if !json.Valid(respBody) {
+		badJSON := fmt.Errorf("action %q subscriber returned non-JSON body (%d bytes)", name, len(respBody))
+		finish(outcomeTransportError, badJSON, resp.StatusCode)
+		return ActionResult{}, badJSON
+	}
+
 	// Actions are RPC-style and forward arbitrary JSON; a 2xx is a successful
 	// invocation from our perspective even if the subscriber encoded its own
 	// logical error in the body. A non-2xx is classified as http_error so

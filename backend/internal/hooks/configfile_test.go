@@ -39,8 +39,8 @@ func TestLoadConfigFile_ParsesSubscriptionsAndActions(t *testing.T) {
   "actions": [
     {
       "name": "refresh-db",
-      "url": "http://refresh-db.kvk:8080/",
-      "description": "Klaravik golden-db refresh",
+      "url": "http://refresh-db.example:8080/",
+      "description": "Wipe and re-extract golden DB",
       "timeout_seconds": 30,
       "secret_env": "REFRESH_DB_SECRET"
     }

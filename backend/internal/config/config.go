@@ -78,10 +78,9 @@ type DeploymentConfig struct {
 
 	// HooksConfigFile points at a JSON file describing outbound webhook
 	// subscriptions (for lifecycle events) and registered named actions. When
-	// empty, the server starts with no hooks configured — lifecycle events
-	// still fire through the dispatcher but no subscribers receive them, and
-	// the /actions/{name} route returns 503. See internal/hooks/configfile.go
-	// for the schema.
+	// empty, the server starts with hooks disabled — no dispatcher or action
+	// registry is created, lifecycle events are no-ops, and the /actions/{name}
+	// route returns 503. See internal/hooks/configfile.go for the schema.
 	HooksConfigFile string
 
 	MaxConcurrentDeploys int32

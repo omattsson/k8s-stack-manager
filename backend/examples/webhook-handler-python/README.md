@@ -3,7 +3,7 @@
 Reference subscriber for k8s-stack-manager events and actions. Python 3.9+,
 stdlib only — no Flask, no FastAPI, no dependencies to install. Serves as a
 starting point for subscribers written in Python, which is typical for
-ops-adjacent tools (it's what Klaravik's RefreshDB handler is built on).
+ops-adjacent tooling.
 
 Covers the full protocol:
 
@@ -75,6 +75,5 @@ curl -s -X POST http://localhost:8080/actions/my-action \
 
 For operations longer than ~30s, return 202 immediately with a job id and run
 the work on a background thread. See [../../../examples/webhook-handler/](../webhook-handler/)
-for a Go reference, and [kvk-devops-tools/refresh-db/refresh-db-server.py](https://dev.azure.com/tbauctions/Brand%20Platforms%20and%20Apps/_git/kvk-devops-tools?path=/refresh-db/refresh-db-server.py)
-for a production-grade Python handler with threading, per-job progress logs,
-and kubectl orchestration.
+for a Go reference. Production-grade Python handlers typically add threading,
+per-job progress logs, and kubectl orchestration on top of this skeleton.

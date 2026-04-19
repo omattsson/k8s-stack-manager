@@ -469,14 +469,6 @@ func (h *InstanceHandler) CreateInstance(c *gin.Context) {
 		return
 	}
 
-	// Pre-instance-create hook: a subscriber with failure_policy=fail can abort
-	// before any DB write. Fired after validation so subscribers see a canonical
-	// instance shape (resolved cluster, sanitized namespace, etc).
-	if err := h.fireInstanceHook(c.Request.Context(), hooks.EventPreInstanceCreate, &inst); err != nil {
-		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
-		return
-	}
-
 	// Check namespace uniqueness.
 	// NOTE: This is a TOCTOU check — concurrent creates can still race past it.
 	// For strict uniqueness, a storage-level constraint (e.g. unique index or
@@ -489,6 +481,15 @@ func (h *InstanceHandler) CreateInstance(c *gin.Context) {
 	if _, err := h.definitionRepo.FindByID(inst.StackDefinitionID); err != nil {
 		status, message := mapError(err, entityStackDefinition)
 		c.JSON(status, gin.H{"error": message})
+		return
+	}
+
+	// Pre-instance-create hook: a subscriber with failure_policy=fail can abort
+	// before any DB write. Fired after field validation, namespace uniqueness,
+	// and definition existence checks so subscribers only see creates that are
+	// otherwise eligible to succeed.
+	if err := h.fireInstanceHook(c.Request.Context(), hooks.EventPreInstanceCreate, &inst); err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
 		return
 	}
 
