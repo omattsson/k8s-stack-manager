@@ -65,6 +65,12 @@ func LoadConfigFile(path string) (Config, []ActionSubscription, error) {
 		}
 		if s.SecretEnv != "" {
 			sub.Secret = os.Getenv(s.SecretEnv)
+			if sub.Secret == "" {
+				// Fail closed: if operators declared a secret_env, they
+				// expect signed requests. Silently dropping the secret
+				// and calling unsigned is a high-impact misconfiguration.
+				return Config{}, nil, fmt.Errorf("subscription %q: secret_env %q resolves to an empty value — either set that env var in the process environment or omit secret_env to opt into unsigned dispatch", s.Name, s.SecretEnv)
+			}
 		}
 		cfg.Subscriptions = append(cfg.Subscriptions, sub)
 	}
@@ -79,6 +85,9 @@ func LoadConfigFile(path string) (Config, []ActionSubscription, error) {
 		}
 		if a.SecretEnv != "" {
 			act.Secret = os.Getenv(a.SecretEnv)
+			if act.Secret == "" {
+				return Config{}, nil, fmt.Errorf("action %q: secret_env %q resolves to an empty value — either set that env var in the process environment or omit secret_env to opt into unsigned dispatch", a.Name, a.SecretEnv)
+			}
 		}
 		actions = append(actions, act)
 	}

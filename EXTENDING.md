@@ -421,18 +421,18 @@ Correlate across systems via `request_id` — it appears on the metric/span attr
 
 ## Real-world examples
 
-### Database refresh — ships as a reference implementation
+### Database refresh
 
-Klaravik's "refresh-db" operation (wipe MySQL PVC, flush Redis, restart apps) was the original reason the extension mechanism exists. It now lives as a Python webhook at [kvk-devops-tools/refresh-db/](https://dev.azure.com/tbauctions/Brand%20Platforms%20and%20Apps/_git/kvk-devops-tools) with:
+A "refresh-db" operation (wipe the per-instance MySQL PVC, flush Redis, restart app pods) is the canonical action-webhook use case: it needs cluster credentials, runs a multi-step kubectl sequence, and is logically an RPC on the instance. A reference implementation pattern:
 
-- 340 lines of Python (stdlib only, no framework)
-- kubectl orchestration for the 8-step sequence
-- Per-job progress log for real-time tailing
-- HMAC signature verification
-- Kubernetes Deployment + ClusterRole + Service manifests included
-- Docker image (alpine + python + kubectl) under 40MB
+- Python webhook server (~340 lines, stdlib only — `http.server.ThreadingHTTPServer` + `subprocess` for kubectl)
+- kubectl orchestration for the restore sequence (scale down, truncate, flush, re-extract golden DB, scale up)
+- Per-job progress log on disk for real-time tailing
+- HMAC signature verification on every request
+- Ships as a Kubernetes Deployment + ClusterRole + Service
+- ~40 MB container (alpine + python + kubectl)
 
-Full parity verification run against a real Klaravik stack completed in 167.7s end-to-end.
+End-to-end (webhook receives request → kubectl orchestration completes → response) is typically in the minutes range depending on DB size.
 
 ### Policy gate — block deploys outside business hours
 

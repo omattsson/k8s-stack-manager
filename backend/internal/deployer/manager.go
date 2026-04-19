@@ -154,7 +154,7 @@ func NewManager(cfg ManagerConfig) *Manager {
 // pre-* events. Post-* events should use FailurePolicyIgnore (the default) so
 // a slow subscriber cannot stall the deploy goroutine indefinitely; per-call
 // timeout (max 30s) bounds the worst case.
-func (m *Manager) fireDeployHook(ctx context.Context, event string, instance *models.StackInstance, deploymentID string) error {
+func (m *Manager) fireDeployHook(ctx context.Context, event string, instance *models.StackInstance, deploymentID string, deployStartedAt time.Time) error {
 	if m.hooks == nil || instance == nil {
 		return nil
 	}
@@ -171,7 +171,11 @@ func (m *Manager) fireDeployHook(ctx context.Context, event string, instance *mo
 		},
 	}
 	if deploymentID != "" {
-		env.Deployment = &hooks.DeploymentRef{ID: deploymentID, StartedAt: time.Now().UTC()}
+		startedAt := deployStartedAt
+		if startedAt.IsZero() {
+			startedAt = time.Now().UTC()
+		}
+		env.Deployment = &hooks.DeploymentRef{ID: deploymentID, StartedAt: startedAt.UTC()}
 	}
 	return m.hooks.Fire(ctx, event, env)
 }
@@ -234,7 +238,7 @@ func (m *Manager) Deploy(ctx context.Context, req DeployRequest) (string, error)
 	// Fire pre-deploy hook before any state changes. A subscriber with
 	// failure_policy=fail can abort the deploy here — the instance keeps its
 	// previous status and no deployment log is created.
-	if err := m.fireDeployHook(ctx, hooks.EventPreDeploy, req.Instance, logID); err != nil {
+	if err := m.fireDeployHook(ctx, hooks.EventPreDeploy, req.Instance, logID, time.Time{}); err != nil {
 		return "", fmt.Errorf("pre-deploy hook: %w", err)
 	}
 
@@ -559,15 +563,15 @@ func (m *Manager) finalizeDeploy(instanceID string, deployLog *models.Deployment
 		m.broadcastStatus(instanceID, models.StackStatusRunning, deployLog.ID)
 	}
 
-	// Fire post-* hooks. These run on a fresh background context because the
-	// original request context (and the deploy timeout context) are gone by
-	// now. Errors are absorbed by the dispatcher when subscribers use
+	// Fire post-* hooks. These use the manager's shutdown context so a Shutdown
+	// call cancels in-flight deliveries instead of letting them run past
+	// process exit. Errors are absorbed by the dispatcher when subscribers use
 	// failure_policy=ignore (the default for post-* events).
-	hookCtx := context.Background()
+	hookCtx := m.shutdownCtx
 	if deployErr == nil {
-		_ = m.fireDeployHook(hookCtx, hooks.EventPostDeploy, instance, deployLog.ID)
+		_ = m.fireDeployHook(hookCtx, hooks.EventPostDeploy, instance, deployLog.ID, deployLog.StartedAt)
 	}
-	_ = m.fireDeployHook(hookCtx, hooks.EventDeployFinalized, instance, deployLog.ID)
+	_ = m.fireDeployHook(hookCtx, hooks.EventDeployFinalized, instance, deployLog.ID, deployLog.StartedAt)
 }
 
 // StopWithCharts starts an async stop/uninstall with explicit chart information.

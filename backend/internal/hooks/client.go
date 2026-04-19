@@ -13,6 +13,20 @@ import (
 	"time"
 )
 
+// readLimitedBody reads up to limit bytes from r. It returns (body, true, nil)
+// when the source had more data than the limit so callers can fail explicitly
+// instead of silently truncating.
+func readLimitedBody(r io.Reader, limit int64) ([]byte, bool, error) {
+	buf, err := io.ReadAll(io.LimitReader(r, limit+1))
+	if err != nil {
+		return nil, false, err
+	}
+	if int64(len(buf)) > limit {
+		return buf[:limit], true, nil
+	}
+	return buf, false, nil
+}
+
 const (
 	headerSignature = "X-StackManager-Signature"
 	headerEvent     = "X-StackManager-Event"
@@ -63,9 +77,12 @@ func deliver(ctx context.Context, client httpClient, sub Subscription, envelope 
 	}
 	defer resp.Body.Close()
 
-	respBody, err := io.ReadAll(io.LimitReader(resp.Body, maxHookResponseBytes))
+	respBody, truncated, err := readLimitedBody(resp.Body, maxHookResponseBytes)
 	if err != nil {
 		return HookResponse{}, resp.StatusCode, fmt.Errorf("read hook response: %w", err)
+	}
+	if truncated {
+		return HookResponse{}, resp.StatusCode, fmt.Errorf("hook response exceeded %d-byte limit", maxHookResponseBytes)
 	}
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {

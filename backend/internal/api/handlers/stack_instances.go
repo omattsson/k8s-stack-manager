@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"regexp"
@@ -756,9 +757,14 @@ func (h *InstanceHandler) InvokeAction(c *gin.Context) {
 		return
 	}
 
+	// Attempt to bind body when one is present — ContentLength == -1 for
+	// chunked transfer-encoding, so we can't gate on that. We only skip
+	// binding when the request genuinely has no body (nil or http.NoBody)
+	// so actions with no parameters work with a request like POST /.../
+	// without a Content-Length header. EOF on empty body is tolerated.
 	var req invokeActionRequest
-	if c.Request.ContentLength > 0 {
-		if bindErr := c.ShouldBindJSON(&req); bindErr != nil {
+	if c.Request.Body != nil && c.Request.Body != http.NoBody {
+		if bindErr := c.ShouldBindJSON(&req); bindErr != nil && !errors.Is(bindErr, io.EOF) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": msgInvalidRequestFormat})
 			return
 		}
@@ -771,7 +777,38 @@ func (h *InstanceHandler) InvokeAction(c *gin.Context) {
 			c.JSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("unknown action %q", unk.Name)})
 			return
 		}
-		c.JSON(http.StatusBadGateway, gin.H{"error": invokeErr.Error()})
+		// Log the detailed error server-side (includes internal URLs, DNS,
+		// transport specifics) but return a generic message to the client
+		// with the request_id as a correlation key.
+		slog.Error("action invocation failed",
+			logKeyInstanceID, id,
+			"action", name,
+			"error", invokeErr,
+		)
+		c.JSON(http.StatusBadGateway, gin.H{
+			"error":      "action subscriber unreachable or returned transport error",
+			"action":     name,
+			"request_id": c.GetString("request_id"),
+		})
+		return
+	}
+
+	// Validate the subscriber's body is JSON before forwarding: embedding
+	// arbitrary bytes as json.RawMessage would produce invalid JSON (and a
+	// 500 from gin's marshal) if the subscriber responded with plain text
+	// or a truncated body.
+	result := res.Body
+	if !json.Valid(result) {
+		slog.Error("action subscriber returned non-JSON body",
+			logKeyInstanceID, id,
+			"action", name,
+			"status_code", res.StatusCode,
+		)
+		c.JSON(http.StatusBadGateway, gin.H{
+			"error":       "action subscriber returned a non-JSON body",
+			"action":      name,
+			"status_code": res.StatusCode,
+		})
 		return
 	}
 
@@ -779,7 +816,7 @@ func (h *InstanceHandler) InvokeAction(c *gin.Context) {
 		"action":      name,
 		"instance_id": id,
 		"status_code": res.StatusCode,
-		"result":      json.RawMessage(res.Body),
+		"result":      json.RawMessage(result),
 	})
 }
 

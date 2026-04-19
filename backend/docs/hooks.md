@@ -45,16 +45,30 @@ subscriber cannot stall the deploy goroutine.
 
 ### Subscription shape
 
-```yaml
-hooks:
-  subscriptions:
-    - name: cmdb-sync
-      events: [post-instance-create, post-instance-delete]
-      url: https://cmdb.internal/hooks/stackmgr
-      timeout_seconds: 5         # optional, default 5, max 30
-      failure_policy: ignore     # optional, default ignore; set "fail" to block the operation on error
-      # secret: <ref>            # shared HMAC secret (see Security below)
+The file loader (`HOOKS_CONFIG_FILE`) reads JSON. The top-level object has
+`subscriptions` (event subscribers) and `actions` (RPC handlers). Secrets
+are resolved from environment variables named by `secret_env`, so the
+file can be committed to version control:
+
+```json
+{
+  "subscriptions": [
+    {
+      "name": "cmdb-sync",
+      "events": ["post-instance-create", "post-instance-delete"],
+      "url": "https://cmdb.example.com/hooks/stackmgr",
+      "timeout_seconds": 5,
+      "failure_policy": "ignore",
+      "secret_env": "CMDB_HOOK_SECRET"
+    }
+  ]
+}
 ```
+
+- `timeout_seconds` — optional, default 5, max 30
+- `failure_policy` — optional, default `ignore`; set `fail` to block on error
+- `secret_env` — optional; names an env var holding the HMAC secret. If set,
+  the process env var MUST be non-empty or startup fails closed.
 
 ### Request envelope
 
@@ -133,15 +147,22 @@ Content-Type: application/json
 
 ### Registration
 
-```yaml
-hooks:
-  actions:
-    - name: refresh-db
-      url: https://kvk-devops-tools.internal/actions/refresh-db
-      description: Wipe MySQL PVC and flush Redis for the instance
-      timeout_seconds: 120       # optional, default 30, max 300
-      # secret: <ref>
+```json
+{
+  "actions": [
+    {
+      "name": "refresh-db",
+      "url": "https://handlers.example.com/actions/refresh-db",
+      "description": "Wipe MySQL PVC and flush Redis for the instance",
+      "timeout_seconds": 120,
+      "secret_env": "REFRESH_DB_HOOK_SECRET"
+    }
+  ]
+}
 ```
+
+- `timeout_seconds` — optional, default 30, max 300
+- `secret_env` — optional; same fail-closed semantics as subscriptions
 
 ### Request envelope
 

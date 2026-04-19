@@ -76,9 +76,8 @@ backend:
     #
     # Database-refresh, snapshot, CMDB-sync and similar operations are now
     # implemented as out-of-process webhook subscribers, not in-core env
-    # vars. The Klaravik refresh-db reference lives at
-    # kvk-devops-tools/refresh-db/ — it's the model for any team-specific
-    # operation you want to add.
+    # vars. See EXTENDING.md for the webhook contract and a reference
+    # implementation pattern.
     JWT_EXPIRATION: "24h"
     ADMIN_USERNAME: admin
     # OIDC (disabled by default)

@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"time"
@@ -163,10 +162,15 @@ func (r *ActionRegistry) Invoke(ctx context.Context, name string, instance *Inst
 	}
 	defer resp.Body.Close()
 
-	respBody, err := io.ReadAll(io.LimitReader(resp.Body, maxHookResponseBytes))
+	respBody, truncated, err := readLimitedBody(resp.Body, maxHookResponseBytes)
 	if err != nil {
 		finish(outcomeTransportError, err, resp.StatusCode)
 		return ActionResult{}, fmt.Errorf("read action response: %w", err)
+	}
+	if truncated {
+		tooLarge := fmt.Errorf("action response exceeded %d-byte limit", maxHookResponseBytes)
+		finish(outcomeTransportError, tooLarge, resp.StatusCode)
+		return ActionResult{}, tooLarge
 	}
 
 	// Empty bodies are returned as "null" so the JSON envelope stays valid.
