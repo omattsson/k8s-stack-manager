@@ -62,13 +62,6 @@ type Manager struct {
 	wildcardTLSSourceSecret string
 	wildcardTLSTargetSecret string
 
-	// RefreshDB configuration — see ManagerConfig.RefreshDB* for semantics.
-	refreshDBScaleTargets []string
-	refreshDBMysqlRelease string
-	refreshDBRedisRelease string
-	refreshDBSyncJobName  string
-	refreshDBCleanupImage string
-
 	// hooks dispatches lifecycle events to user-configured webhooks.
 	// nil disables all hook dispatch.
 	hooks *hooks.Dispatcher
@@ -92,25 +85,11 @@ type ManagerConfig struct {
 	WildcardTLSSourceSecret    string
 	WildcardTLSTargetSecret    string // optional — defaults to WildcardTLSSourceSecret
 
-	// RefreshDBScaleTargets lists app Deployment names to scale to 0 at the
-	// start of a RefreshDB operation and back to 1 at the end. Entries that
-	// don't exist in the target namespace are skipped silently.
-	RefreshDBScaleTargets []string
-	// RefreshDBMysqlRelease is the Deployment name of the MySQL chart. Its
-	// PVC is assumed to be <RefreshDBMysqlRelease>-data.
-	RefreshDBMysqlRelease string
-	// RefreshDBRedisRelease is the Deployment name of the Redis chart. A
-	// redis-cli FLUSHALL is exec'd into the first Ready pod.
-	RefreshDBRedisRelease string
-	// RefreshDBSyncJobName is the Helm post-install hook Job deleted during
-	// RefreshDB so the next `stack deploy` recreates it.
-	RefreshDBSyncJobName string
-	// RefreshDBCleanupImage is the container image used by the short-lived
-	// PVC cleanup Job. Defaults to alpine when empty.
-	RefreshDBCleanupImage string
-
 	// Hooks dispatches lifecycle events (pre-deploy, post-deploy, deploy-finalized)
 	// to configured outbound webhooks. Optional — nil disables all hook dispatch.
+	// Stack-manager-specific operations like database refreshes are implemented
+	// as out-of-process action subscribers (see internal/api/routes for the
+	// /actions/{name} router); the core no longer ships any such operations itself.
 	Hooks *hooks.Dispatcher
 }
 
@@ -162,12 +141,6 @@ func NewManager(cfg ManagerConfig) *Manager {
 		wildcardTLSSourceNS:     cfg.WildcardTLSSourceNamespace,
 		wildcardTLSSourceSecret: cfg.WildcardTLSSourceSecret,
 		wildcardTLSTargetSecret: wildcardTarget,
-
-		refreshDBScaleTargets: cfg.RefreshDBScaleTargets,
-		refreshDBMysqlRelease: cfg.RefreshDBMysqlRelease,
-		refreshDBRedisRelease: cfg.RefreshDBRedisRelease,
-		refreshDBSyncJobName:  cfg.RefreshDBSyncJobName,
-		refreshDBCleanupImage: cfg.RefreshDBCleanupImage,
 
 		hooks: cfg.Hooks,
 	}

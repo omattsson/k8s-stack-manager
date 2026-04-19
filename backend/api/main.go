@@ -235,11 +235,6 @@ func main() {
 		WildcardTLSSourceNamespace: cfg.Deployment.WildcardTLSSourceNamespace,
 		WildcardTLSSourceSecret:    cfg.Deployment.WildcardTLSSourceSecret,
 		WildcardTLSTargetSecret:    cfg.Deployment.WildcardTLSTargetSecret,
-		RefreshDBScaleTargets:      cfg.Deployment.RefreshDBScaleTargets,
-		RefreshDBMysqlRelease:      cfg.Deployment.RefreshDBMysqlRelease,
-		RefreshDBRedisRelease:      cfg.Deployment.RefreshDBRedisRelease,
-		RefreshDBSyncJobName:       cfg.Deployment.RefreshDBSyncJobName,
-		RefreshDBCleanupImage:      cfg.Deployment.RefreshDBCleanupImage,
 		Hooks:                      hookDispatcher,
 	})
 
