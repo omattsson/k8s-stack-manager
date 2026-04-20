@@ -44,6 +44,15 @@ func (m *mockClusterHelmExecutor) Status(_ context.Context, name, _ string) (*de
 func (m *mockClusterHelmExecutor) ListReleases(_ context.Context, _ string) ([]string, error) {
 	return []string{}, nil
 }
+func (m *mockClusterHelmExecutor) History(_ context.Context, _ string, _ string, _ int) ([]deployer.ReleaseRevision, error) {
+	return nil, nil
+}
+func (m *mockClusterHelmExecutor) Rollback(_ context.Context, _ string, _ string, _ int) (string, error) {
+	return "", nil
+}
+func (m *mockClusterHelmExecutor) GetValues(_ context.Context, _ string, _ string, _ int) (string, error) {
+	return "", nil
+}
 func (m *mockClusterHelmExecutor) Timeout() time.Duration { return 30 * time.Second }
 
 // setupClusterRouter creates a gin engine wired to ClusterHandler routes.

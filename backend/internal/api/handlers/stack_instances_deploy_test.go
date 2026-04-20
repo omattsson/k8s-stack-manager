@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -259,6 +260,18 @@ func (n *noopHelmExecutor) Status(_ context.Context, name, _ string) (*deployer.
 
 func (n *noopHelmExecutor) ListReleases(_ context.Context, _ string) ([]string, error) {
 	return nil, nil
+}
+
+func (n *noopHelmExecutor) History(_ context.Context, _ string, _ string, _ int) ([]deployer.ReleaseRevision, error) {
+	return nil, nil
+}
+
+func (n *noopHelmExecutor) Rollback(_ context.Context, _ string, _ string, _ int) (string, error) {
+	return "", nil
+}
+
+func (n *noopHelmExecutor) GetValues(_ context.Context, _ string, _ string, _ int) (string, error) {
+	return "", nil
 }
 
 func (n *noopHelmExecutor) Timeout() time.Duration {
@@ -996,3 +1009,318 @@ func TestCleanInstance(t *testing.T) {
 	}
 }
 
+// setupRollbackRouter creates a test gin engine with rollback and deploy-log-values routes.
+func setupRollbackRouter(
+	t *testing.T,
+	instanceRepo *MockStackInstanceRepository,
+	defRepo *MockStackDefinitionRepository,
+	ccRepo *MockChartConfigRepository,
+	deployManager *deployer.Manager,
+	deployLogRepo models.DeploymentLogRepository,
+	callerID, callerUsername string,
+) *gin.Engine {
+	t.Helper()
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.Use(func(c *gin.Context) {
+		if callerID != "" {
+			c.Set("userID", callerID)
+		}
+		if callerUsername != "" {
+			c.Set("username", callerUsername)
+		}
+		c.Set("role", "user")
+		c.Next()
+	})
+
+	valuesGen := helm.NewValuesGenerator()
+	userRepo := NewMockUserRepository()
+
+	h, err := NewInstanceHandlerWithDeployer(
+		instanceRepo, NewMockValueOverrideRepository(), nil, defRepo, ccRepo,
+		NewMockStackTemplateRepository(), NewMockTemplateChartConfigRepository(),
+		valuesGen, userRepo,
+		deployManager, nil, nil, deployLogRepo, nil,
+		0, &mockHandlerTxRunner{},
+	)
+	require.NoError(t, err)
+
+	insts := r.Group("/api/v1/stack-instances")
+	{
+		insts.POST("/:id/rollback", h.RollbackInstance)
+		insts.GET("/:id/deploy-log/:logId/values", h.GetDeployLogValues)
+	}
+	return r
+}
+
+// ---- RollbackInstance tests ----
+
+func TestRollbackInstance(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		instanceID string
+		body       string
+		setup      func(*MockStackInstanceRepository, *MockStackDefinitionRepository, *MockChartConfigRepository)
+		noManager  bool
+		wantStatus int
+		checkFn    func(*testing.T, *httptest.ResponseRecorder)
+	}{
+		{
+			name:       "success — running instance returns 202 with log_id",
+			instanceID: "i1",
+			body:       `{}`,
+			setup: func(instRepo *MockStackInstanceRepository, defRepo *MockStackDefinitionRepository, ccRepo *MockChartConfigRepository) {
+				seedInstance(t, instRepo, "i1", "stack-a", "d1", "uid-1", models.StackStatusRunning)
+				seedDefinition(t, defRepo, "d1", "My Def", "uid-1")
+				seedChartConfig(t, ccRepo, "cc1", "d1", "nginx")
+			},
+			wantStatus: http.StatusAccepted,
+			checkFn: func(t *testing.T, w *httptest.ResponseRecorder) {
+				var resp map[string]string
+				require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+				assert.NotEmpty(t, resp["log_id"])
+				assert.Equal(t, "Rollback started", resp["message"])
+			},
+		},
+		{
+			name:       "error instance can be rolled back",
+			instanceID: "i2",
+			body:       `{}`,
+			setup: func(instRepo *MockStackInstanceRepository, defRepo *MockStackDefinitionRepository, ccRepo *MockChartConfigRepository) {
+				seedInstance(t, instRepo, "i2", "stack-b", "d1", "uid-1", models.StackStatusError)
+				seedDefinition(t, defRepo, "d1", "My Def", "uid-1")
+				seedChartConfig(t, ccRepo, "cc2", "d1", "redis")
+			},
+			wantStatus: http.StatusAccepted,
+		},
+		{
+			name:       "draft instance returns 409",
+			instanceID: "i3",
+			setup: func(instRepo *MockStackInstanceRepository, _ *MockStackDefinitionRepository, _ *MockChartConfigRepository) {
+				seedInstance(t, instRepo, "i3", "stack-c", "d1", "uid-1", models.StackStatusDraft)
+			},
+			wantStatus: http.StatusConflict,
+		},
+		{
+			name:       "stopped instance returns 409",
+			instanceID: "i4",
+			setup: func(instRepo *MockStackInstanceRepository, _ *MockStackDefinitionRepository, _ *MockChartConfigRepository) {
+				seedInstance(t, instRepo, "i4", "stack-d", "d1", "uid-1", models.StackStatusStopped)
+			},
+			wantStatus: http.StatusConflict,
+		},
+		{
+			name:       "instance not found returns 404",
+			instanceID: "missing",
+			setup:      func(_ *MockStackInstanceRepository, _ *MockStackDefinitionRepository, _ *MockChartConfigRepository) {},
+			wantStatus: http.StatusNotFound,
+		},
+		{
+			name:       "no charts configured returns 400",
+			instanceID: "i5",
+			setup: func(instRepo *MockStackInstanceRepository, defRepo *MockStackDefinitionRepository, _ *MockChartConfigRepository) {
+				seedInstance(t, instRepo, "i5", "stack-e", "d1", "uid-1", models.StackStatusRunning)
+				seedDefinition(t, defRepo, "d1", "My Def", "uid-1")
+				// No charts added to ccRepo.
+			},
+			wantStatus: http.StatusBadRequest,
+		},
+		{
+			name:       "nil deploy manager returns 503",
+			instanceID: "i6",
+			setup: func(instRepo *MockStackInstanceRepository, _ *MockStackDefinitionRepository, _ *MockChartConfigRepository) {
+				seedInstance(t, instRepo, "i6", "stack-f", "d1", "uid-1", models.StackStatusRunning)
+			},
+			noManager:  true,
+			wantStatus: http.StatusServiceUnavailable,
+		},
+		{
+			name:       "malformed JSON body returns 400",
+			instanceID: "i7",
+			body:       `{bad json`,
+			setup: func(instRepo *MockStackInstanceRepository, _ *MockStackDefinitionRepository, _ *MockChartConfigRepository) {
+				seedInstance(t, instRepo, "i7", "stack-g", "d1", "uid-1", models.StackStatusRunning)
+			},
+			wantStatus: http.StatusBadRequest,
+		},
+		{
+			name:       "optional target_log_id accepted",
+			instanceID: "i8",
+			body:       `{"target_log_id":"log-abc"}`,
+			setup: func(instRepo *MockStackInstanceRepository, defRepo *MockStackDefinitionRepository, ccRepo *MockChartConfigRepository) {
+				seedInstance(t, instRepo, "i8", "stack-h", "d1", "uid-1", models.StackStatusRunning)
+				seedDefinition(t, defRepo, "d1", "My Def", "uid-1")
+				seedChartConfig(t, ccRepo, "cc3", "d1", "postgres")
+			},
+			wantStatus: http.StatusAccepted,
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			instRepo := NewMockStackInstanceRepository()
+			defRepo := NewMockStackDefinitionRepository()
+			ccRepo := NewMockChartConfigRepository()
+			logRepo := NewMockDeploymentLogRepository()
+			tt.setup(instRepo, defRepo, ccRepo)
+
+			var mgr *deployer.Manager
+			if !tt.noManager {
+				mgr = newTestManager(instRepo, logRepo)
+			}
+
+			router := setupRollbackRouter(t,
+				instRepo, defRepo, ccRepo,
+				mgr, logRepo,
+				"uid-1", "alice",
+			)
+
+			body := tt.body
+			if body == "" {
+				body = "{}"
+			}
+
+			w := httptest.NewRecorder()
+			req, _ := http.NewRequest(http.MethodPost, "/api/v1/stack-instances/"+tt.instanceID+"/rollback", bytes.NewBufferString(body))
+			req.Header.Set("Content-Type", "application/json")
+			router.ServeHTTP(w, req)
+
+			assert.Equal(t, tt.wantStatus, w.Code)
+			if tt.checkFn != nil {
+				tt.checkFn(t, w)
+			}
+		})
+	}
+}
+
+// ---- GetDeployLogValues tests ----
+
+func TestGetDeployLogValues(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		instanceID string
+		logID      string
+		setup      func(*MockStackInstanceRepository, *MockDeploymentLogRepository)
+		wantStatus int
+		checkFn    func(*testing.T, *httptest.ResponseRecorder)
+	}{
+		{
+			name:       "success — log with values snapshot returns 200",
+			instanceID: "i1",
+			logID:      "log-1",
+			setup: func(instRepo *MockStackInstanceRepository, logRepo *MockDeploymentLogRepository) {
+				seedInstance(t, instRepo, "i1", "stack-a", "d1", "uid-1", models.StackStatusRunning)
+				require.NoError(t, logRepo.Create(context.Background(), &models.DeploymentLog{
+					ID:              "log-1",
+					StackInstanceID: "i1",
+					Action:          models.DeployActionDeploy,
+					Status:          models.DeployLogSuccess,
+					StartedAt:       time.Now().UTC(),
+					ValuesSnapshot:  `{"replicas":3,"image":"myapp:v2"}`,
+				}))
+			},
+			wantStatus: http.StatusOK,
+			checkFn: func(t *testing.T, w *httptest.ResponseRecorder) {
+				var resp map[string]interface{}
+				require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+				assert.Equal(t, "log-1", resp["log_id"])
+				vals, ok := resp["values"].(map[string]interface{})
+				require.True(t, ok, "values should be a JSON object")
+				assert.Equal(t, float64(3), vals["replicas"])
+			},
+		},
+		{
+			name:       "log exists but no values snapshot returns 200 with null values",
+			instanceID: "i2",
+			logID:      "log-2",
+			setup: func(instRepo *MockStackInstanceRepository, logRepo *MockDeploymentLogRepository) {
+				seedInstance(t, instRepo, "i2", "stack-b", "d1", "uid-1", models.StackStatusRunning)
+				require.NoError(t, logRepo.Create(context.Background(), &models.DeploymentLog{
+					ID:              "log-2",
+					StackInstanceID: "i2",
+					Action:          models.DeployActionDeploy,
+					Status:          models.DeployLogSuccess,
+					StartedAt:       time.Now().UTC(),
+					ValuesSnapshot:  "", // no snapshot
+				}))
+			},
+			wantStatus: http.StatusOK,
+			checkFn: func(t *testing.T, w *httptest.ResponseRecorder) {
+				var resp map[string]interface{}
+				require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+				assert.Equal(t, "log-2", resp["log_id"])
+				assert.Nil(t, resp["values"])
+			},
+		},
+		{
+			name:       "log not found returns 404",
+			instanceID: "i3",
+			logID:      "nonexistent-log",
+			setup: func(instRepo *MockStackInstanceRepository, _ *MockDeploymentLogRepository) {
+				seedInstance(t, instRepo, "i3", "stack-c", "d1", "uid-1", models.StackStatusRunning)
+			},
+			wantStatus: http.StatusNotFound,
+		},
+		{
+			name:       "log belongs to different instance returns 404",
+			instanceID: "i4",
+			logID:      "log-other",
+			setup: func(instRepo *MockStackInstanceRepository, logRepo *MockDeploymentLogRepository) {
+				seedInstance(t, instRepo, "i4", "stack-d", "d1", "uid-1", models.StackStatusRunning)
+				// Log belongs to a different instance.
+				require.NoError(t, logRepo.Create(context.Background(), &models.DeploymentLog{
+					ID:              "log-other",
+					StackInstanceID: "i99", // wrong instance
+					Action:          models.DeployActionDeploy,
+					Status:          models.DeployLogSuccess,
+					StartedAt:       time.Now().UTC(),
+					ValuesSnapshot:  `{"key":"val"}`,
+				}))
+			},
+			wantStatus: http.StatusNotFound,
+		},
+		{
+			name:       "instance not found returns 404",
+			instanceID: "missing-inst",
+			logID:      "log-x",
+			setup:      func(_ *MockStackInstanceRepository, _ *MockDeploymentLogRepository) {},
+			wantStatus: http.StatusNotFound,
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			instRepo := NewMockStackInstanceRepository()
+			logRepo := NewMockDeploymentLogRepository()
+			tt.setup(instRepo, logRepo)
+
+			router := setupRollbackRouter(t,
+				instRepo, NewMockStackDefinitionRepository(), NewMockChartConfigRepository(),
+				nil, logRepo,
+				"uid-1", "alice",
+			)
+
+			w := httptest.NewRecorder()
+			req, _ := http.NewRequest(http.MethodGet,
+				"/api/v1/stack-instances/"+tt.instanceID+"/deploy-log/"+tt.logID+"/values",
+				nil,
+			)
+			router.ServeHTTP(w, req)
+
+			assert.Equal(t, tt.wantStatus, w.Code)
+			if tt.checkFn != nil {
+				tt.checkFn(t, w)
+			}
+		})
+	}
+}

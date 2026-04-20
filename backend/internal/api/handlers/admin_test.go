@@ -53,6 +53,18 @@ func (m *mockAdminHelmExecutor) ListReleases(ctx context.Context, namespace stri
 	return []string{}, nil
 }
 
+func (m *mockAdminHelmExecutor) History(_ context.Context, _ string, _ string, _ int) ([]deployer.ReleaseRevision, error) {
+	return nil, nil
+}
+
+func (m *mockAdminHelmExecutor) Rollback(_ context.Context, _ string, _ string, _ int) (string, error) {
+	return "", nil
+}
+
+func (m *mockAdminHelmExecutor) GetValues(_ context.Context, _ string, _ string, _ int) (string, error) {
+	return "", nil
+}
+
 func (m *mockAdminHelmExecutor) Timeout() time.Duration {
 	return 30 * time.Second
 }
