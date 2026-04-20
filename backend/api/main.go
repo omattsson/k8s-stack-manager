@@ -14,6 +14,7 @@ import (
 	"backend/internal/gitprovider"
 	"backend/internal/health"
 	"backend/internal/helm"
+	"backend/internal/hooks"
 	"backend/internal/k8s"
 	"backend/internal/models"
 	"backend/internal/scheduler"
@@ -195,6 +196,51 @@ func main() {
 	watcherCtx, watcherCancel := context.WithCancel(context.Background())
 	k8sWatcher.Start(watcherCtx)
 
+	// Load webhook subscription + action configuration (optional). When
+	// HOOKS_CONFIG_FILE is unset — or sets no subscriptions and no actions —
+	// the server starts with NIL dispatcher and registry handles: lifecycle
+	// hook calls become no-ops, and the /actions/{name} route returns 503
+	// (matches the documented contract). A non-nil registry with zero
+	// actions would otherwise make that route return 404 (unknown action),
+	// which misleads operators into thinking the feature is enabled.
+	hookCfg, actionSpecs, hookErr := hooks.LoadConfigFile(cfg.Deployment.HooksConfigFile)
+	if hookErr != nil {
+		slog.Error("failed to load hooks config", "file", cfg.Deployment.HooksConfigFile, "error", hookErr)
+		os.Exit(1)
+	}
+
+	var hookDispatcher *hooks.Dispatcher
+	if len(hookCfg.Subscriptions) > 0 {
+		hookDispatcher, hookErr = hooks.NewDispatcher(hookCfg, http.DefaultClient)
+		if hookErr != nil {
+			slog.Error("failed to build hooks dispatcher", "error", hookErr)
+			os.Exit(1)
+		}
+	}
+
+	var actionRegistry *hooks.ActionRegistry
+	if len(actionSpecs) > 0 {
+		actionRegistry, hookErr = hooks.NewActionRegistry(actionSpecs, http.DefaultClient)
+		if hookErr != nil {
+			slog.Error("failed to build action registry", "error", hookErr)
+			os.Exit(1)
+		}
+	}
+
+	var subscribedEvents []string
+	if hookDispatcher != nil {
+		subscribedEvents = hookDispatcher.EventNames()
+	}
+	var actionNames []string
+	if actionRegistry != nil {
+		actionNames = actionRegistry.Names()
+	}
+	slog.Info("hooks configured",
+		"config_file", cfg.Deployment.HooksConfigFile,
+		"subscribed_events", subscribedEvents,
+		"actions", actionNames,
+	)
+
 	// Deployment manager — uses registry for multi-cluster deploys
 	deployManager := deployer.NewManager(deployer.ManagerConfig{
 		Registry:                   clusterRegistry,
@@ -208,11 +254,7 @@ func main() {
 		WildcardTLSSourceNamespace: cfg.Deployment.WildcardTLSSourceNamespace,
 		WildcardTLSSourceSecret:    cfg.Deployment.WildcardTLSSourceSecret,
 		WildcardTLSTargetSecret:    cfg.Deployment.WildcardTLSTargetSecret,
-		RefreshDBScaleTargets:      cfg.Deployment.RefreshDBScaleTargets,
-		RefreshDBMysqlRelease:      cfg.Deployment.RefreshDBMysqlRelease,
-		RefreshDBRedisRelease:      cfg.Deployment.RefreshDBRedisRelease,
-		RefreshDBSyncJobName:       cfg.Deployment.RefreshDBSyncJobName,
-		RefreshDBCleanupImage:      cfg.Deployment.RefreshDBCleanupImage,
+		Hooks:                      hookDispatcher,
 	})
 
 	// ------------------------------------------------------------------
@@ -272,6 +314,7 @@ func main() {
 		slog.Error("failed to create instance handler", "error", err)
 		os.Exit(1)
 	}
+	instanceHandler.WithHooks(hookDispatcher).WithActions(actionRegistry)
 	gitHandler := handlers.NewGitHandler(gitRegistry)
 	auditLogHandler := handlers.NewAuditLogHandler(auditRepo)
 	userHandler := handlers.NewUserHandler(userRepo)

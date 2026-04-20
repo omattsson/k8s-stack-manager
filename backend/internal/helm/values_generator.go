@@ -82,11 +82,35 @@ type GenerateAllParams struct {
 }
 
 // ValuesGenerator merges YAML value layers and substitutes template variables.
-type ValuesGenerator struct{}
+// funcMap holds user-registered template functions available from YAML values.
+// Register functions at startup — concurrent registration while generating is
+// not safe (map reads during Execute assume no writer).
+type ValuesGenerator struct {
+	funcMap template.FuncMap
+}
 
-// NewValuesGenerator creates a new ValuesGenerator.
+// NewValuesGenerator creates a new ValuesGenerator with no custom funcs.
+// Callers extend the generator via RegisterFunc before putting it into use.
 func NewValuesGenerator() *ValuesGenerator {
-	return &ValuesGenerator{}
+	return &ValuesGenerator{funcMap: template.FuncMap{}}
+}
+
+// RegisterFunc attaches a user-defined template function callable from YAML
+// string values (e.g. `image: "{{ .Owner | dnsify }}"`). Returns g for chaining.
+//
+// Register at startup, before the generator is used by any request. fn must
+// match one of the function signatures accepted by text/template (see the
+// text/template docs) — otherwise Execute will fail at render time.
+//
+// Built-in variables on TemplateVars (.Branch, .ImageTag, .Namespace,
+// .InstanceName, .StackName, .Owner) are always available; registered funcs
+// supplement them.
+func (g *ValuesGenerator) RegisterFunc(name string, fn any) *ValuesGenerator {
+	if g.funcMap == nil {
+		g.funcMap = template.FuncMap{}
+	}
+	g.funcMap[name] = fn
+	return g
 }
 
 // GenerateValues produces a merged values.yaml for a single chart.
@@ -130,7 +154,7 @@ func (g *ValuesGenerator) GenerateValues(_ context.Context, params GenerateParam
 	}
 
 	// Substitute template variables in all string values
-	merged, err = substituteVars(merged, vars)
+	merged, err = substituteVars(merged, vars, g.funcMap)
 	if err != nil {
 		return nil, fmt.Errorf("substituting template variables: %w", err)
 	}
@@ -264,10 +288,11 @@ func toMap(v interface{}) (map[string]interface{}, bool) {
 }
 
 // substituteVars walks the merged map and applies Go template substitution to all string values.
-func substituteVars(m map[string]interface{}, vars TemplateVars) (map[string]interface{}, error) {
+// funcs may be nil; when non-nil, registered functions become callable from templates.
+func substituteVars(m map[string]interface{}, vars TemplateVars, funcs template.FuncMap) (map[string]interface{}, error) {
 	result := make(map[string]interface{}, len(m))
 	for k, v := range m {
-		substituted, err := substituteValue(v, vars)
+		substituted, err := substituteValue(v, vars, funcs)
 		if err != nil {
 			return nil, fmt.Errorf("key %q: %w", k, err)
 		}
@@ -277,13 +302,17 @@ func substituteVars(m map[string]interface{}, vars TemplateVars) (map[string]int
 }
 
 // substituteValue recursively substitutes template variables in a value.
-func substituteValue(v interface{}, vars TemplateVars) (interface{}, error) {
+func substituteValue(v interface{}, vars TemplateVars, funcs template.FuncMap) (interface{}, error) {
 	switch val := v.(type) {
 	case string:
 		if !strings.Contains(val, "{{") {
 			return val, nil
 		}
-		tmpl, err := template.New("val").Option("missingkey=error").Parse(val)
+		tmpl := template.New("val").Option("missingkey=error")
+		if len(funcs) > 0 {
+			tmpl = tmpl.Funcs(funcs)
+		}
+		tmpl, err := tmpl.Parse(val)
 		if err != nil {
 			return nil, fmt.Errorf("parsing template %q: %w", val, err)
 		}
@@ -294,12 +323,12 @@ func substituteValue(v interface{}, vars TemplateVars) (interface{}, error) {
 		return buf.String(), nil
 
 	case map[string]interface{}:
-		return substituteVars(val, vars)
+		return substituteVars(val, vars, funcs)
 
 	case []interface{}:
 		out := make([]interface{}, len(val))
 		for i, item := range val {
-			substituted, err := substituteValue(item, vars)
+			substituted, err := substituteValue(item, vars, funcs)
 			if err != nil {
 				return nil, err
 			}

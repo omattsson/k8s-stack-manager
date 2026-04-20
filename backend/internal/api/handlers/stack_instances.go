@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"regexp"
@@ -18,6 +19,7 @@ import (
 	"backend/internal/database"
 	"backend/internal/deployer"
 	"backend/internal/helm"
+	"backend/internal/hooks"
 	"backend/internal/k8s"
 	"backend/internal/models"
 	"backend/pkg/dberrors"
@@ -127,6 +129,50 @@ type InstanceHandler struct {
 	clusterRepo        models.ClusterRepository
 	defaultTTLMinutes  int
 	txRunner           database.TxRunner
+	hooks              *hooks.Dispatcher
+	actions            *hooks.ActionRegistry
+}
+
+// WithHooks attaches a webhook dispatcher for instance lifecycle events
+// (pre/post instance-create, pre/post instance-delete). Returns h for chaining.
+// Pass nil (or skip the call entirely) to disable hook dispatch.
+func (h *InstanceHandler) WithHooks(d *hooks.Dispatcher) *InstanceHandler {
+	h.hooks = d
+	return h
+}
+
+// WithActions attaches an action registry for the generic
+// POST /api/v1/stack-instances/:id/actions/:name route. Pass nil to disable.
+func (h *InstanceHandler) WithActions(r *hooks.ActionRegistry) *InstanceHandler {
+	h.actions = r
+	return h
+}
+
+// instanceRefFor builds a hooks.InstanceRef snapshot from a model.
+// Returns nil when instance is nil so callers can pass through.
+func instanceRefFor(instance *models.StackInstance) *hooks.InstanceRef {
+	if instance == nil {
+		return nil
+	}
+	return &hooks.InstanceRef{
+		ID:                instance.ID,
+		Name:              instance.Name,
+		Namespace:         instance.Namespace,
+		OwnerID:           instance.OwnerID,
+		StackDefinitionID: instance.StackDefinitionID,
+		Branch:            instance.Branch,
+		ClusterID:         instance.ClusterID,
+		Status:            instance.Status,
+	}
+}
+
+// fireInstanceHook dispatches event with an envelope built from instance.
+// No-ops when no dispatcher is attached or instance is nil.
+func (h *InstanceHandler) fireInstanceHook(ctx context.Context, event string, instance *models.StackInstance) error {
+	if h.hooks == nil || instance == nil {
+		return nil
+	}
+	return h.hooks.Fire(ctx, event, hooks.EventEnvelope{InstanceRef: instanceRefFor(instance)})
 }
 
 // NewInstanceHandler creates a new InstanceHandler.
@@ -438,6 +484,16 @@ func (h *InstanceHandler) CreateInstance(c *gin.Context) {
 		return
 	}
 
+	// Pre-instance-create hook: a subscriber with failure_policy=fail can abort
+	// before any DB write. Fired after field validation, namespace uniqueness,
+	// and definition existence checks so subscribers only see creates that are
+	// otherwise eligible to succeed.
+	if err := h.fireInstanceHook(c.Request.Context(), hooks.EventPreInstanceCreate, &inst); err != nil {
+		slog.Error("pre-instance-create hook failed", "instance_name", inst.Name, "error", err)
+		c.JSON(http.StatusForbidden, gin.H{"error": "pre-instance-create hook rejected the request"})
+		return
+	}
+
 	if h.txRunner != nil && maxInstancesPerUser > 0 {
 		// Transactional path — count check + create are serialized within
 		// a transaction, closing the TOCTOU window for concurrent creates.
@@ -487,6 +543,11 @@ func (h *InstanceHandler) CreateInstance(c *gin.Context) {
 			return
 		}
 	}
+
+	// Post-instance-create hook: ignore-by-default. Cannot undo the create at
+	// this point; subscribers exist for downstream notification (CMDB sync,
+	// audit logs, etc).
+	_ = h.fireInstanceHook(c.Request.Context(), hooks.EventPostInstanceCreate, &inst)
 
 	c.JSON(http.StatusCreated, inst)
 }
@@ -619,6 +680,28 @@ func (h *InstanceHandler) DeleteInstance(c *gin.Context) {
 		return
 	}
 
+	// Look up the instance for the hook envelope and the delete itself.
+	// A failed lookup is a real error — don't silently proceed with a nil
+	// snapshot that would make the pre-delete hook a no-op.
+	var snapshot *models.StackInstance
+	if h.hooks != nil {
+		inst, lookupErr := h.instanceRepo.FindByID(id)
+		if lookupErr != nil {
+			status, message := mapError(lookupErr, entityStackInstance)
+			c.JSON(status, gin.H{"error": message})
+			return
+		}
+		snapshot = inst
+	}
+
+	// Pre-instance-delete hook: a subscriber with failure_policy=fail can block
+	// the delete (e.g. enforce dependency checks).
+	if err := h.fireInstanceHook(c.Request.Context(), hooks.EventPreInstanceDelete, snapshot); err != nil {
+		slog.Error("pre-instance-delete hook failed", logKeyInstanceID, id, "error", err)
+		c.JSON(http.StatusForbidden, gin.H{"error": "pre-instance-delete hook rejected the request"})
+		return
+	}
+
 	if h.txRunner != nil {
 		// Transactional path — branch override cleanup + instance delete are atomic.
 		txErr := h.txRunner.RunInTx(func(repos database.TxRepos) error {
@@ -638,7 +721,112 @@ func (h *InstanceHandler) DeleteInstance(c *gin.Context) {
 		return
 	}
 
+	// Post-instance-delete hook: notify only; the delete is committed.
+	_ = h.fireInstanceHook(c.Request.Context(), hooks.EventPostInstanceDelete, snapshot)
+
 	c.Status(http.StatusNoContent)
+}
+
+type invokeActionRequest struct {
+	Parameters map[string]any `json:"parameters,omitempty"`
+}
+
+// InvokeAction godoc
+// @Summary     Invoke a registered action against a stack instance
+// @Description Dispatches to the action subscriber webhook and wraps its response in an envelope containing action, instance_id, status_code, and result fields. The subscriber's JSON body is nested under the result key. Returns 200 even for non-2xx subscriber responses — check status_code to distinguish.
+// @Tags        stack-instances
+// @Accept      json
+// @Produce     json
+// @Param       id      path     string                true "Instance ID"
+// @Param       name    path     string                true "Action name"
+// @Param       request body     invokeActionRequest   false "Optional parameters passed through to the subscriber"
+// @Success     200 {object} map[string]any
+// @Failure     400 {object} map[string]string
+// @Failure     404 {object} map[string]string "Instance not found or action not registered"
+// @Failure     502 {object} map[string]string "Subscriber unreachable"
+// @Failure     503 {object} map[string]string "Action registry not configured"
+// @Router      /api/v1/stack-instances/{id}/actions/{name} [post]
+func (h *InstanceHandler) InvokeAction(c *gin.Context) {
+	id := c.Param("id")
+	name := c.Param("name")
+	if id == "" || name == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "instance id and action name are required"})
+		return
+	}
+	if h.actions == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "action registry not configured"})
+		return
+	}
+
+	inst, err := h.instanceRepo.FindByID(id)
+	if err != nil {
+		status, message := mapError(err, entityStackInstance)
+		c.JSON(status, gin.H{"error": message})
+		return
+	}
+
+	// Attempt to bind body when one is present — ContentLength == -1 for
+	// chunked transfer-encoding, so we can't gate on that. We only skip
+	// binding when the request genuinely has no body (nil or http.NoBody)
+	// so actions with no parameters work with a request like POST /.../
+	// without a Content-Length header. EOF on empty body is tolerated.
+	var req invokeActionRequest
+	if c.Request.Body != nil && c.Request.Body != http.NoBody {
+		if bindErr := c.ShouldBindJSON(&req); bindErr != nil && !errors.Is(bindErr, io.EOF) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": msgInvalidRequestFormat})
+			return
+		}
+	}
+
+	res, invokeErr := h.actions.Invoke(c.Request.Context(), name, instanceRefFor(inst), req.Parameters)
+	if invokeErr != nil {
+		var unk hooks.ErrUnknownAction
+		if errors.As(invokeErr, &unk) {
+			c.JSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("unknown action %q", unk.Name)})
+			return
+		}
+		// Log the detailed error server-side (includes internal URLs, DNS,
+		// transport specifics) but return a generic message to the client
+		// with the request_id as a correlation key.
+		slog.Error("action invocation failed",
+			logKeyInstanceID, id,
+			"action", name,
+			"hook_request_id", res.RequestID,
+			"error", invokeErr,
+		)
+		c.JSON(http.StatusBadGateway, gin.H{
+			"error":      "action subscriber unreachable or returned transport error",
+			"action":     name,
+			"request_id": res.RequestID,
+		})
+		return
+	}
+
+	// Validate the subscriber's body is JSON before forwarding: embedding
+	// arbitrary bytes as json.RawMessage would produce invalid JSON (and a
+	// 500 from gin's marshal) if the subscriber responded with plain text
+	// or a truncated body.
+	result := res.Body
+	if !json.Valid(result) {
+		slog.Error("action subscriber returned non-JSON body",
+			logKeyInstanceID, id,
+			"action", name,
+			"status_code", res.StatusCode,
+		)
+		c.JSON(http.StatusBadGateway, gin.H{
+			"error":       "action subscriber returned a non-JSON body",
+			"action":      name,
+			"status_code": res.StatusCode,
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"action":      name,
+		"instance_id": id,
+		"status_code": res.StatusCode,
+		"result":      json.RawMessage(result),
+	})
 }
 
 // CloneInstance godoc
@@ -1270,81 +1458,6 @@ func (h *InstanceHandler) CleanInstance(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusAccepted, gin.H{"log_id": logID, "message": "Namespace cleanup initiated"})
-}
-
-// RefreshDB godoc
-// @Summary     Refresh the MySQL database of a stack instance
-// @Description Wipes the MySQL data PVC so the init container re-extracts the golden dataset, flushes Redis, and restarts the app deployments — all without re-running Helm. Only allowed when the instance is running.
-// @Tags        stack-instances
-// @Accept      json
-// @Produce     json
-// @Param       id path string true "Instance ID"
-// @Success     202 {object} map[string]string "Refresh-DB initiated"
-// @Failure     400 {object} map[string]string
-// @Failure     404 {object} map[string]string
-// @Failure     409 {object} map[string]string "Invalid status for refresh-db"
-// @Failure     500 {object} map[string]string "Failed to start refresh-db"
-// @Failure     503 {object} map[string]string "Deployment service not configured"
-// @Security    BearerAuth
-// @Router      /api/v1/stack-instances/{id}/refresh-db [post]
-func (h *InstanceHandler) RefreshDB(c *gin.Context) {
-	id := c.Param("id")
-	if id == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": msgInstanceIDRequired})
-		return
-	}
-
-	if h.deployManager == nil {
-		c.JSON(http.StatusServiceUnavailable, gin.H{"error": msgDeployerNotConfigured})
-		return
-	}
-
-	inst, err := h.instanceRepo.FindByID(id)
-	if err != nil {
-		status, message := mapError(err, entityStackInstance)
-		c.JSON(status, gin.H{"error": message})
-		return
-	}
-
-	// Only refresh a stack that is currently running — otherwise we risk
-	// wiping data out from under a deploy/stop/clean that is in flight.
-	// The same racy check-then-act caveat as Clean/Stop applies; the
-	// frontend disables the button optimistically to mitigate.
-	// RBAC: the backend's ClusterRole already has resources:["*"] with all
-	// verbs, so scale/exec/jobs operations work without changes.
-	if inst.Status != models.StackStatusRunning {
-		c.JSON(http.StatusConflict, gin.H{"error": fmt.Sprintf("Cannot refresh-db: instance is currently %s", inst.Status)})
-		return
-	}
-
-	logID, err := h.deployManager.RefreshDB(c.Request.Context(), inst)
-	if err != nil {
-		slog.Error("Failed to start refresh-db operation",
-			logKeyInstanceID, id,
-			"error", err,
-		)
-		switch {
-		case errors.Is(err, deployer.ErrRefreshDBNotConfigured):
-			// Feature is off until the operator sets the REFRESH_DB_* env vars —
-			// that's a deployment-wide config gap, not a client bug.
-			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "refresh-db is not configured on this server"})
-		case errors.Is(err, deployer.ErrRefreshDBInstanceNotRunning):
-			// The upfront status check above passed but the manager's own
-			// check rejected the (now possibly-stale) inst we passed in.
-			// Re-fetch so the 409 body reflects the instance's current state
-			// rather than the stale Running snapshot we started with.
-			latestStatus := inst.Status
-			if latest, findErr := h.instanceRepo.FindByID(id); findErr == nil && latest != nil {
-				latestStatus = latest.Status
-			}
-			c.JSON(http.StatusConflict, gin.H{"error": fmt.Sprintf("Cannot refresh-db: instance is currently %s", latestStatus)})
-		default:
-			c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
-		}
-		return
-	}
-
-	c.JSON(http.StatusAccepted, gin.H{"log_id": logID, "message": "Refresh-DB initiated"})
 }
 
 // GetDeployLog godoc

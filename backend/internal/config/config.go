@@ -76,15 +76,12 @@ type DeploymentConfig struct {
 	WildcardTLSSourceSecret    string
 	WildcardTLSTargetSecret    string
 
-	// RefreshDB — configuration for the POST /api/v1/stack-instances/:id/refresh-db
-	// operation. This wipes the MySQL data PVC so its init container re-extracts
-	// the golden-db tarball on next boot, flushes Redis, and restarts the app
-	// deployments — all without rerunning Helm.
-	RefreshDBScaleTargets []string // comma-separated app Deployment names to scale to 0 and back
-	RefreshDBMysqlRelease string   // Deployment name for MySQL (PVC assumed at <release>-data)
-	RefreshDBRedisRelease string   // Deployment name for Redis (for redis-cli FLUSHALL via exec)
-	RefreshDBSyncJobName  string   // Helm post-install hook Job name to delete (recreated on next deploy)
-	RefreshDBCleanupImage string   // small image used by the short-lived PVC cleanup Job
+	// HooksConfigFile points at a JSON file describing outbound webhook
+	// subscriptions (for lifecycle events) and registered named actions. When
+	// empty, the server starts with hooks disabled — no dispatcher or action
+	// registry is created, lifecycle events are no-ops, and the /actions/{name}
+	// route returns 503. See internal/hooks/configfile.go for the schema.
+	HooksConfigFile string
 
 	MaxConcurrentDeploys int32
 }
@@ -525,10 +522,9 @@ func loadGitProviderConfig() GitProviderConfig {
 }
 
 func loadDeploymentConfig() DeploymentConfig {
-	// RefreshDB is opt-in. Operators who want the endpoint enabled must set
-	// REFRESH_DB_SCALE_TARGETS, REFRESH_DB_MYSQL_RELEASE, REFRESH_DB_REDIS_RELEASE,
-	// and REFRESH_DB_SYNC_JOB_NAME to match their stack's release names. The
-	// endpoint rejects requests with ErrRefreshDBNotConfigured when any are empty.
+	// Operation-specific behaviour (database refresh, snapshot restore, etc.)
+	// lives in out-of-process extension subscribers — see internal/hooks and
+	// EXTENDING.md. HOOKS_CONFIG_FILE points at the JSON file describing them.
 	return DeploymentConfig{
 		HelmBinary:                getEnv("HELM_BINARY", "helm"),
 		KubeconfigPath:            getEnv("KUBECONFIG_PATH", getEnv("KUBECONFIG", "")),
@@ -539,11 +535,7 @@ func loadDeploymentConfig() DeploymentConfig {
 		WildcardTLSSourceNamespace: getEnv("WILDCARD_TLS_SOURCE_NAMESPACE", ""),
 		WildcardTLSSourceSecret:    getEnv("WILDCARD_TLS_SOURCE_SECRET", ""),
 		WildcardTLSTargetSecret:    getEnv("WILDCARD_TLS_TARGET_SECRET", ""),
-		RefreshDBScaleTargets:      parseCSV(getEnv("REFRESH_DB_SCALE_TARGETS", "")),
-		RefreshDBMysqlRelease:      getEnv("REFRESH_DB_MYSQL_RELEASE", ""),
-		RefreshDBRedisRelease:      getEnv("REFRESH_DB_REDIS_RELEASE", ""),
-		RefreshDBSyncJobName:       getEnv("REFRESH_DB_SYNC_JOB_NAME", ""),
-		RefreshDBCleanupImage:      getEnv("REFRESH_DB_CLEANUP_IMAGE", "alpine:3.20"),
+		HooksConfigFile:            getEnv("HOOKS_CONFIG_FILE", ""),
 	}
 }
 

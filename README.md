@@ -56,6 +56,19 @@ Manage your account, generate API keys for CI/CD automation, and configure notif
 - **Shared values** — Per-cluster shared Helm values applied to all instances, merged by priority before instance-specific overrides.
 - **Dark mode** — Full dark/light theme support.
 
+### Extending — bring your own operations
+
+k8s-stack-manager is deliberately free of organisation-specific logic. Database refreshes, CMDB sync, policy gates, custom snapshots, Slack notifications — all of this can be added **without forking**, in any language, as a small out-of-process service.
+
+Two mechanisms:
+
+- **Event hooks** — POST handlers subscribe to lifecycle events (`pre-deploy`, `post-instance-create`, …). `failure_policy: fail` subscribers can abort operations to enforce policy.
+- **Actions** — `POST /api/v1/stack-instances/:id/actions/:name` dispatches to a subscriber you register. Subscriber responses are forwarded verbatim to callers — so stackctl can expose them as first-class subcommands via [plugin discovery](https://github.com/omattsson/stackctl/blob/main/EXTENDING.md).
+
+Both run over plain HTTP with HMAC signing. Build a subscriber in 10 minutes using Python stdlib (see [backend/examples/webhook-handler-python/](backend/examples/webhook-handler-python/)) or in Go ([backend/examples/webhook-handler/](backend/examples/webhook-handler/)).
+
+👉 **[Full guide: EXTENDING.md](EXTENDING.md)** — tutorial, event reference, action contract, security, real-world recipes.
+
 ## Architecture
 
 ```
