@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
@@ -62,8 +63,9 @@ func (h *AuthHandler) SetTokenBlocklist(bl *middleware.TokenBlocklist) {
 // and the submitted password. Including the submitted password ensures that
 // only the correct password produces a cache hit.
 func loginCacheKey(username, passwordHash, submittedPassword string) string {
-	h := sha256.Sum256([]byte(username + ":" + passwordHash + ":" + submittedPassword))
-	return hex.EncodeToString(h[:])
+	mac := hmac.New(sha256.New, []byte(passwordHash))
+	mac.Write([]byte(username + ":" + submittedPassword))
+	return hex.EncodeToString(mac.Sum(nil))
 }
 
 // LoginRequest represents the login request body.

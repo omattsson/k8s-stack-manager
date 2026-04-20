@@ -3,6 +3,7 @@ package handlers
 import (
 	"errors"
 	"log/slog"
+	"math/bits"
 	"net/http"
 	"strconv"
 	"strings"
@@ -18,6 +19,14 @@ import (
 const (
 	msgInvalidIDFormat = "Invalid ID format"
 )
+
+func parseUintParam(s string) (uint, error) {
+	id, err := strconv.ParseUint(s, 10, bits.UintSize)
+	if err != nil {
+		return 0, err
+	}
+	return uint(id), nil
+}
 
 
 type Handler struct {
@@ -180,14 +189,14 @@ func (h *Handler) GetItems(c *gin.Context) {
 // @Failure 404 {object} map[string]string
 // @Router /api/v1/items/{id} [get]
 func (h *Handler) GetItem(c *gin.Context) {
-	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	id, err := parseUintParam(c.Param("id"))
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": msgInvalidIDFormat})
 		return
 	}
 
 	var item models.Item
-	if err := h.repository.FindByID(c.Request.Context(), uint(id), &item); err != nil {
+	if err := h.repository.FindByID(c.Request.Context(), id, &item); err != nil {
 		status, message := handleDBError(err)
 		c.JSON(status, gin.H{"error": message})
 		return
@@ -208,7 +217,7 @@ func (h *Handler) GetItem(c *gin.Context) {
 // @Failure 404 {object} map[string]string
 // @Router /api/v1/items/{id} [put]
 func (h *Handler) UpdateItem(c *gin.Context) {
-	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	id, err := parseUintParam(c.Param("id"))
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": msgInvalidIDFormat})
 		return
@@ -216,7 +225,7 @@ func (h *Handler) UpdateItem(c *gin.Context) {
 
 	// Get the current version from the database
 	var currentItem models.Item
-	if err := h.repository.FindByID(c.Request.Context(), uint(id), &currentItem); err != nil {
+	if err := h.repository.FindByID(c.Request.Context(), id, &currentItem); err != nil {
 		status, message := handleDBError(err)
 		c.JSON(status, gin.H{"error": message})
 		return
@@ -265,7 +274,7 @@ func (h *Handler) UpdateItem(c *gin.Context) {
 // @Failure 404 {object} map[string]string
 // @Router /api/v1/items/{id} [delete]
 func (h *Handler) DeleteItem(c *gin.Context) {
-	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	id, err := parseUintParam(c.Param("id"))
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": msgInvalidIDFormat})
 		return
@@ -273,7 +282,7 @@ func (h *Handler) DeleteItem(c *gin.Context) {
 
 	// Delete directly — the repository returns ErrNotFound if the item doesn't exist.
 	// This avoids a race condition between a FindByID check and the actual delete.
-	item := &models.Item{Base: models.Base{ID: uint(id)}}
+	item := &models.Item{Base: models.Base{ID: id}}
 	if err := h.repository.Delete(c.Request.Context(), item); err != nil {
 		status, message := handleDBError(err)
 		c.JSON(status, gin.H{"error": message})
