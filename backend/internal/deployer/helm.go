@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os/exec"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -192,6 +193,81 @@ func (h *HelmClient) ListReleases(ctx context.Context, namespace string) ([]stri
 	}
 
 	return releases, nil
+}
+
+// History runs: helm history <release> -n <namespace> --max <max> -o json
+// Returns parsed release revision history.
+func (h *HelmClient) History(ctx context.Context, releaseName, namespace string, max int) ([]ReleaseRevision, error) {
+	if err := validatePositionalArg("release name", releaseName); err != nil {
+		return nil, err
+	}
+
+	if max <= 0 {
+		max = 256
+	}
+
+	args := []string{
+		"history",
+		releaseName,
+		"-n", namespace,
+		"--max", strconv.Itoa(max),
+		"-o", "json",
+	}
+
+	output, err := h.run(ctx, args)
+	if err != nil {
+		return nil, fmt.Errorf("helm history: %w", err)
+	}
+
+	var revisions []ReleaseRevision
+	if err := json.Unmarshal([]byte(output), &revisions); err != nil {
+		return nil, fmt.Errorf("parsing helm history output: %w", err)
+	}
+
+	return revisions, nil
+}
+
+// Rollback runs: helm rollback <release> <revision> -n <namespace>
+// Returns combined stdout+stderr output and error.
+func (h *HelmClient) Rollback(ctx context.Context, releaseName, namespace string, revision int) (string, error) {
+	if err := validatePositionalArg("release name", releaseName); err != nil {
+		return "", err
+	}
+
+	args := []string{
+		"rollback",
+		releaseName,
+		strconv.Itoa(revision),
+		"-n", namespace,
+		"--timeout", h.timeout.String(),
+	}
+
+	return h.run(ctx, args)
+}
+
+// GetValues runs: helm get values <release> -n <namespace> --revision <revision> -o yaml
+// Returns the values YAML for the given release revision.
+func (h *HelmClient) GetValues(ctx context.Context, releaseName, namespace string, revision int) (string, error) {
+	if err := validatePositionalArg("release name", releaseName); err != nil {
+		return "", err
+	}
+
+	args := []string{
+		"get", "values",
+		releaseName,
+		"-n", namespace,
+		"-o", "yaml",
+	}
+	if revision > 0 {
+		args = append(args, "--revision", strconv.Itoa(revision))
+	}
+
+	output, err := h.run(ctx, args)
+	if err != nil {
+		return "", fmt.Errorf("helm get values: %w", err)
+	}
+
+	return output, nil
 }
 
 // run executes a helm command with the given arguments and returns the combined output.

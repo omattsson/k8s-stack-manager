@@ -525,6 +525,7 @@ func (m *Manager) finalizeDeploy(instanceID string, deployLog *models.Deployment
 		instance.LastDeployedAt = &now
 		instance.LastDeployedValues = lastDeployedValues
 		deployLog.Status = models.DeployLogSuccess
+		deployLog.ValuesSnapshot = lastDeployedValues
 
 		slog.Info("deployment succeeded",
 			"instance_id", instanceID,
@@ -1078,6 +1079,231 @@ func (m *Manager) finalizeClean(instanceID string, deployLog *models.DeploymentL
 		m.broadcastStatusWithError(instanceID, models.StackStatusError, deployLog.ID, instance.ErrorMessage)
 	} else {
 		m.broadcastStatus(instanceID, models.StackStatusDraft, deployLog.ID)
+	}
+}
+
+// RollbackRequest contains everything needed to rollback a stack instance.
+type RollbackRequest struct {
+	Instance    *models.StackInstance
+	Charts      []ChartDeployInfo
+	TargetLogID string
+}
+
+// Rollback starts an async rollback of all charts in a stack instance to their
+// previous Helm revision. Each chart release is rolled back by one revision.
+// Returns the deployment log ID immediately.
+func (m *Manager) Rollback(ctx context.Context, req RollbackRequest) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", fmt.Errorf("request cancelled: %w", err)
+	}
+	if m.shuttingDown.Load() {
+		return "", fmt.Errorf("server is shutting down")
+	}
+	if m.registry == nil {
+		return "", fmt.Errorf("cluster registry is not configured")
+	}
+
+	clusterID, err := m.registry.ResolveClusterID(req.Instance.ClusterID)
+	if err != nil {
+		return "", fmt.Errorf("resolving cluster: %w", err)
+	}
+	helmExec, err := m.registry.GetHelmExecutor(clusterID)
+	if err != nil {
+		return "", fmt.Errorf("getting cluster clients: %w", err)
+	}
+	if helmExec == nil {
+		return "", fmt.Errorf("getting cluster clients: helm executor is nil")
+	}
+
+	logID := uuid.New().String()
+
+	if err := m.fireDeployHook(ctx, hooks.EventPreRollback, req.Instance, logID, time.Time{}); err != nil {
+		return "", fmt.Errorf("pre-rollback hook: %w", err)
+	}
+
+	now := time.Now().UTC()
+
+	deployLog := &models.DeploymentLog{
+		ID:              logID,
+		StackInstanceID: req.Instance.ID,
+		Action:          models.DeployActionRollback,
+		Status:          models.DeployLogRunning,
+		StartedAt:       now,
+		TargetLogID:     req.TargetLogID,
+	}
+	req.Instance.Status = models.StackStatusDeploying
+	req.Instance.ErrorMessage = ""
+
+	if m.txRunner != nil {
+		if err := m.txRunner.RunInTx(func(repos database.TxRepos) error {
+			if err := repos.DeploymentLog.Create(ctx, deployLog); err != nil {
+				return fmt.Errorf("creating deployment log: %w", err)
+			}
+			if err := repos.StackInstance.Update(req.Instance); err != nil {
+				return fmt.Errorf("updating instance status: %w", err)
+			}
+			return nil
+		}); err != nil {
+			return "", err
+		}
+	} else {
+		if err := m.logRepo.Create(ctx, deployLog); err != nil {
+			return "", fmt.Errorf("creating deployment log: %w", err)
+		}
+		if err := m.instanceRepo.Update(req.Instance); err != nil {
+			return "", fmt.Errorf("updating instance status: %w", err)
+		}
+	}
+
+	m.broadcastStatus(req.Instance.ID, models.StackStatusDeploying, logID)
+
+	charts := make([]ChartDeployInfo, len(req.Charts))
+	copy(charts, req.Charts)
+	sort.Slice(charts, func(i, j int) bool {
+		return charts[i].ChartConfig.DeployOrder < charts[j].ChartConfig.DeployOrder
+	})
+
+	m.wg.Add(1)
+	go m.executeRollback(helmExec, req.Instance.ID, deployLog, req.Instance.Namespace, charts)
+
+	return logID, nil
+}
+
+// executeRollback rolls back each chart release by one Helm revision.
+func (m *Manager) executeRollback(helm HelmExecutor, instanceID string, deployLog *models.DeploymentLog, namespace string, charts []ChartDeployInfo) {
+	defer m.wg.Done()
+	m.semaphore <- struct{}{}
+	defer func() { <-m.semaphore }()
+
+	_, _, finishSpan := startDeploySpan(context.Background(), "deployer.rollback", //nolint:gosec // G118: intentional — Helm operations must outlive HTTP request
+		attribute.String("instance.id", instanceID),
+		attribute.String("namespace", namespace),
+		attribute.String("log.id", deployLog.ID),
+	)
+
+	var allOutput string
+	var rollbackErr error
+	defer func() { finishSpan(rollbackErr) }()
+
+	var timeout time.Duration
+	if helm != nil {
+		timeout = helm.Timeout()
+	} else {
+		timeout = 5 * time.Minute
+	}
+	ctx, cancel := context.WithTimeout(m.shutdownCtx, timeout)
+	defer cancel()
+
+	for _, chart := range charts {
+		releaseName := chart.ChartConfig.ChartName
+
+		slog.Info("rolling back chart",
+			"instance_id", instanceID,
+			"chart", releaseName,
+			"namespace", namespace,
+		)
+
+		// Query Helm history to find the current revision, then roll back by one.
+		revisions, err := helm.History(ctx, releaseName, namespace, 2)
+		if err != nil {
+			rollbackErr = fmt.Errorf("getting history for chart %q: %w", releaseName, err)
+			allOutput += fmt.Sprintf("ERROR: %s\n", rollbackErr.Error())
+			break
+		}
+
+		if len(revisions) < 2 {
+			allOutput += fmt.Sprintf("=== Chart: %s === (skipped: only %d revision)\n", releaseName, len(revisions))
+			continue
+		}
+
+		// Helm history is sorted ascending by revision; second-to-last is the target.
+		targetRevision := revisions[len(revisions)-2].Revision
+
+		output, err := helm.Rollback(ctx, releaseName, namespace, targetRevision)
+		allOutput += fmt.Sprintf("=== Chart: %s (→ rev %d) ===\n%s\n", releaseName, targetRevision, output)
+		m.broadcastLog(instanceID, deployLog.ID, output)
+
+		if err != nil {
+			rollbackErr = fmt.Errorf("rolling back chart %q to revision %d: %w", releaseName, targetRevision, err)
+			allOutput += fmt.Sprintf("ERROR: %s\n", rollbackErr.Error())
+			break
+		}
+	}
+
+	m.finalizeRollback(instanceID, deployLog, allOutput, rollbackErr)
+}
+
+// finalizeRollback updates the instance and deployment log with the final rollback status.
+func (m *Manager) finalizeRollback(instanceID string, deployLog *models.DeploymentLog, output string, rollbackErr error) {
+	now := time.Now().UTC()
+
+	instance, err := m.instanceRepo.FindByID(instanceID)
+	if err != nil {
+		slog.Error("failed to find instance for rollback finalization",
+			"instance_id", instanceID, "error", err)
+		return
+	}
+
+	deployLog.Output = truncateString(output, maxOutputLen)
+	deployLog.CompletedAt = &now
+
+	if rollbackErr != nil {
+		sanitized := sanitizeDeployError(rollbackErr)
+		instance.Status = models.StackStatusError
+		instance.ErrorMessage = truncateString(sanitized, maxInstanceErrorLen)
+		deployLog.Status = models.DeployLogError
+		deployLog.ErrorMessage = truncateString(sanitized, maxLogErrorLen)
+
+		slog.Error("rollback failed",
+			"instance_id", instanceID,
+			"log_id", deployLog.ID,
+			"error", rollbackErr,
+		)
+	} else {
+		instance.Status = models.StackStatusRunning
+		instance.ErrorMessage = ""
+		instance.LastDeployedAt = &now
+		deployLog.Status = models.DeployLogSuccess
+
+		slog.Info("rollback succeeded",
+			"instance_id", instanceID,
+			"log_id", deployLog.ID,
+		)
+	}
+
+	if m.txRunner != nil {
+		if err := m.txRunner.RunInTx(func(repos database.TxRepos) error {
+			if err := repos.StackInstance.Update(instance); err != nil {
+				return fmt.Errorf("updating instance: %w", err)
+			}
+			if err := repos.DeploymentLog.Update(context.Background(), deployLog); err != nil {
+				return fmt.Errorf("updating deploy log: %w", err)
+			}
+			return nil
+		}); err != nil {
+			slog.Error("failed to finalize rollback atomically",
+				"instance_id", instanceID, "error", err)
+		}
+	} else {
+		if err := m.instanceRepo.Update(instance); err != nil {
+			slog.Error("failed to update instance after rollback",
+				"instance_id", instanceID, "deploy_log_id", deployLog.ID, "error", err)
+		}
+		if err := m.logRepo.Update(m.shutdownCtx, deployLog); err != nil {
+			slog.Error("failed to update deploy log after rollback",
+				"instance_id", instanceID, "deploy_log_id", deployLog.ID, "error", err)
+		}
+	}
+
+	if rollbackErr != nil {
+		m.broadcastStatusWithError(instanceID, models.StackStatusError, deployLog.ID, instance.ErrorMessage)
+	} else {
+		m.broadcastStatus(instanceID, models.StackStatusRunning, deployLog.ID)
+	}
+
+	hookCtx := m.shutdownCtx
+	if rollbackErr == nil {
+		_ = m.fireDeployHook(hookCtx, hooks.EventPostRollback, instance, deployLog.ID, deployLog.StartedAt)
 	}
 }
 

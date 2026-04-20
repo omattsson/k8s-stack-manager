@@ -2125,3 +2125,155 @@ func (h *InstanceHandler) buildLockedValuesMap(def *models.StackDefinition) (map
 	}
 	return lockedMap, nil
 }
+
+// RollbackInstance godoc
+// @Summary     Rollback a stack instance
+// @Description Rollback all Helm releases in a stack instance to their previous revision
+// @Tags        stack-instances
+// @Accept      json
+// @Produce     json
+// @Param       id   path     string true "Instance ID"
+// @Param       body body     object false "Optional: {\"target_log_id\": \"...\"}"
+// @Success     202 {object} map[string]string
+// @Failure     400 {object} map[string]string
+// @Failure     404 {object} map[string]string
+// @Failure     409 {object} map[string]string
+// @Router      /api/v1/stack-instances/{id}/rollback [post]
+func (h *InstanceHandler) RollbackInstance(c *gin.Context) {
+	id := c.Param("id")
+	if id == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": msgInstanceIDRequired})
+		return
+	}
+
+	if h.deployManager == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": msgDeployerNotConfigured})
+		return
+	}
+
+	inst, err := h.instanceRepo.FindByID(id)
+	if err != nil {
+		status, message := mapError(err, entityStackInstance)
+		c.JSON(status, gin.H{"error": message})
+		return
+	}
+
+	switch inst.Status {
+	case models.StackStatusRunning, models.StackStatusError:
+		// OK
+	default:
+		c.JSON(http.StatusConflict, gin.H{"error": fmt.Sprintf("Cannot rollback: instance is in state %s", inst.Status)})
+		return
+	}
+
+	var body struct {
+		TargetLogID string `json:"target_log_id"`
+	}
+	if c.Request.Body != nil && c.Request.Body != http.NoBody {
+		_ = c.ShouldBindJSON(&body)
+	}
+
+	def, err := h.definitionRepo.FindByID(inst.StackDefinitionID)
+	if err != nil {
+		status, message := mapError(err, entityStackDefinition)
+		c.JSON(status, gin.H{"error": message})
+		return
+	}
+
+	charts, err := h.chartConfigRepo.ListByDefinition(def.ID)
+	if err != nil {
+		status, message := mapError(err, entityChartConfigs)
+		c.JSON(status, gin.H{"error": message})
+		return
+	}
+
+	if len(charts) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "No charts configured for this stack definition"})
+		return
+	}
+
+	var chartInfos []deployer.ChartDeployInfo
+	for _, ch := range charts {
+		chartInfos = append(chartInfos, deployer.ChartDeployInfo{ChartConfig: ch})
+	}
+
+	logID, err := h.deployManager.Rollback(c.Request.Context(), deployer.RollbackRequest{
+		Instance:    inst,
+		Charts:      chartInfos,
+		TargetLogID: body.TargetLogID,
+	})
+	if err != nil {
+		slog.Error("Failed to start rollback",
+			logKeyInstanceID, id,
+			"error", err,
+		)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
+		return
+	}
+
+	c.JSON(http.StatusAccepted, gin.H{"log_id": logID, "message": "Rollback started"})
+}
+
+// GetDeployLogValues godoc
+// @Summary     Get values snapshot for a deployment log entry
+// @Description Returns the merged Helm values that were used for a specific deployment
+// @Tags        stack-instances
+// @Produce     json
+// @Param       id    path     string true "Instance ID"
+// @Param       logId path     string true "Deployment Log ID"
+// @Success     200 {object} map[string]string
+// @Failure     404 {object} map[string]string
+// @Router      /api/v1/stack-instances/{id}/deploy-log/{logId}/values [get]
+func (h *InstanceHandler) GetDeployLogValues(c *gin.Context) {
+	instanceID := c.Param("id")
+	logID := c.Param("logId")
+	if instanceID == "" || logID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Instance ID and log ID are required"})
+		return
+	}
+
+	if h.deployLogRepo == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Deployment log service not configured"})
+		return
+	}
+
+	if _, err := h.instanceRepo.FindByID(instanceID); err != nil {
+		status, message := mapError(err, entityStackInstance)
+		c.JSON(status, gin.H{"error": message})
+		return
+	}
+
+	logEntry, err := h.deployLogRepo.FindByID(c.Request.Context(), logID)
+	if err != nil {
+		status, message := mapError(err, "Deployment log")
+		c.JSON(status, gin.H{"error": message})
+		return
+	}
+
+	if logEntry.StackInstanceID != instanceID {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Deployment log not found for this instance"})
+		return
+	}
+
+	if logEntry.ValuesSnapshot == "" {
+		c.JSON(http.StatusOK, gin.H{
+			"log_id": logID,
+			"values": nil,
+		})
+		return
+	}
+
+	var values map[string]interface{}
+	if err := json.Unmarshal([]byte(logEntry.ValuesSnapshot), &values); err != nil {
+		c.JSON(http.StatusOK, gin.H{
+			"log_id": logID,
+			"values": logEntry.ValuesSnapshot,
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"log_id": logID,
+		"values": values,
+	})
+}

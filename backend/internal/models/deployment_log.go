@@ -11,17 +11,20 @@ type DeploymentLog struct {
 	CompletedAt     *time.Time `json:"completed_at,omitempty"`
 	ID              string     `json:"id" gorm:"primaryKey;size:36"`
 	StackInstanceID string     `json:"stack_instance_id" gorm:"size:36"`
-	Action          string     `json:"action" gorm:"size:50"` // "deploy", "stop", "clean"
+	Action          string     `json:"action" gorm:"size:50"` // "deploy", "stop", "clean", "rollback"
 	Status          string     `json:"status" gorm:"size:50"` // "running", "success", "error"
 	Output          string     `json:"output" gorm:"type:longtext"`
 	ErrorMessage    string     `json:"error_message,omitempty" gorm:"type:text"`
+	ValuesSnapshot  string     `json:"values_snapshot,omitempty" gorm:"type:longtext"`
+	TargetLogID     string     `json:"target_log_id,omitempty" gorm:"size:36"`
 }
 
 // Deployment log action constants.
 const (
-	DeployActionDeploy    = "deploy"
-	DeployActionStop      = "stop"
-	DeployActionClean     = "clean"
+	DeployActionDeploy   = "deploy"
+	DeployActionStop     = "stop"
+	DeployActionClean    = "clean"
+	DeployActionRollback = "rollback"
 )
 
 // Deployment log status constants.

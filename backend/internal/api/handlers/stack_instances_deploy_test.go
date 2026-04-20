@@ -261,6 +261,18 @@ func (n *noopHelmExecutor) ListReleases(_ context.Context, _ string) ([]string, 
 	return nil, nil
 }
 
+func (n *noopHelmExecutor) History(_ context.Context, _ string, _ string, _ int) ([]deployer.ReleaseRevision, error) {
+	return nil, nil
+}
+
+func (n *noopHelmExecutor) Rollback(_ context.Context, _ string, _ string, _ int) (string, error) {
+	return "", nil
+}
+
+func (n *noopHelmExecutor) GetValues(_ context.Context, _ string, _ string, _ int) (string, error) {
+	return "", nil
+}
+
 func (n *noopHelmExecutor) Timeout() time.Duration {
 	return 30 * time.Second
 }

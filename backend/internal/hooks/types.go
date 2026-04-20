@@ -18,6 +18,8 @@ const (
 	EventPostInstanceDelete  = "post-instance-delete"
 	EventPreNamespaceCreate  = "pre-namespace-create"
 	EventPostNamespaceCreate = "post-namespace-create"
+	EventPreRollback         = "pre-rollback"
+	EventPostRollback        = "post-rollback"
 	EventDeployFinalized     = "deploy-finalized"
 )
 

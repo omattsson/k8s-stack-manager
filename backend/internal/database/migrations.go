@@ -771,6 +771,26 @@ func (d *Database) AutoMigrate() error {
 		},
 	})
 
+	migrator.AddMigration(schema.Migration{
+		Version:     "20231201000032",
+		Name:        "add_deployment_log_rollback_columns",
+		Description: "Add values_snapshot and target_log_id columns to deployment_logs for rollback support",
+		Up: func(tx *gorm.DB) error {
+			return tx.AutoMigrate(&models.DeploymentLog{})
+		},
+		Down: func(tx *gorm.DB) error {
+			if tx.Migrator().HasColumn(&models.DeploymentLog{}, "values_snapshot") {
+				if err := tx.Migrator().DropColumn(&models.DeploymentLog{}, "values_snapshot"); err != nil {
+					return err
+				}
+			}
+			if tx.Migrator().HasColumn(&models.DeploymentLog{}, "target_log_id") {
+				return tx.Migrator().DropColumn(&models.DeploymentLog{}, "target_log_id")
+			}
+			return nil
+		},
+	})
+
 	// Run migrations
 	if err := migrator.MigrateUp(); err != nil {
 		return err

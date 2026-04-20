@@ -1457,6 +1457,18 @@ func (m *mockHelmExecutor) ListReleases(_ context.Context, _ string) ([]string, 
 	return nil, nil
 }
 
+func (m *mockHelmExecutor) History(_ context.Context, _ string, _ string, _ int) ([]ReleaseRevision, error) {
+	return nil, nil
+}
+
+func (m *mockHelmExecutor) Rollback(_ context.Context, releaseName string, _ string, _ int) (string, error) {
+	return "rolled back " + releaseName, nil
+}
+
+func (m *mockHelmExecutor) GetValues(_ context.Context, _ string, _ string, _ int) (string, error) {
+	return "", nil
+}
+
 func (m *mockHelmExecutor) Timeout() time.Duration {
 	if m.timeout > 0 {
 		return m.timeout
