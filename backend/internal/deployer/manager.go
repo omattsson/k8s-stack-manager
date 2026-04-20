@@ -2,6 +2,7 @@ package deployer
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os"
@@ -791,7 +792,7 @@ func (m *Manager) finalizeStop(instanceID string, deployLog *models.DeploymentLo
 }
 
 // sanitizeDeployError extracts the relevant error message from Helm/K8s
-// command output for deploy, stop, and clean operations, stripping verbose output.
+// command output for deploy, stop, clean, and rollback operations, stripping verbose output.
 // The full Helm output may contain sensitive data
 // (cluster names, internal URLs, credentials in env vars) and must not be
 // exposed in user-visible fields like StackInstance.ErrorMessage. The raw
@@ -813,6 +814,7 @@ func sanitizeDeployError(err error) string {
 	for _, prefix := range []string{
 		"deploying chart ", "uninstalling chart ", "deleting namespace ", "creating temp directory",
 		"scaling down ", "scaling up ", "waiting for MySQL", "running PVC cleanup",
+		"getting history for chart ", "rolling back chart ",
 	} {
 		if strings.HasPrefix(msg, prefix) {
 			// Find the chart name in quotes if present.
@@ -1216,8 +1218,9 @@ func (m *Manager) executeRollback(helm HelmExecutor, instanceID string, deployLo
 			continue
 		}
 
-		// Helm history is sorted ascending by revision; second-to-last is the target.
-		targetRevision := revisions[len(revisions)-2].Revision
+		// Helm history returns revisions sorted ascending (oldest first).
+		// With max=2 we get [previous, current]; index 0 is the rollback target.
+		targetRevision := revisions[0].Revision
 
 		output, err := helm.Rollback(ctx, releaseName, namespace, targetRevision)
 		allOutput += fmt.Sprintf("=== Chart: %s (→ rev %d) ===\n%s\n", releaseName, targetRevision, output)
@@ -1230,11 +1233,41 @@ func (m *Manager) executeRollback(helm HelmExecutor, instanceID string, deployLo
 		}
 	}
 
-	m.finalizeRollback(instanceID, deployLog, allOutput, rollbackErr)
+	// Collect post-rollback values for snapshot.
+	var valuesSnapshot string
+	if rollbackErr == nil {
+		valuesSnapshot = m.collectChartValues(context.Background(), helm, namespace, charts) //nolint:gosec // G118: intentional — must outlive HTTP request
+	}
+
+	m.finalizeRollback(instanceID, deployLog, allOutput, rollbackErr, valuesSnapshot)
+}
+
+// collectChartValues gathers the current Helm values for all charts and returns
+// them as a JSON string for storage in the deployment log values snapshot.
+func (m *Manager) collectChartValues(ctx context.Context, helm HelmExecutor, namespace string, charts []ChartDeployInfo) string {
+	allValues := make(map[string]interface{})
+	for _, chart := range charts {
+		vals, err := helm.GetValues(ctx, chart.ChartConfig.ChartName, namespace, 0)
+		if err != nil {
+			continue
+		}
+		var parsed interface{}
+		if jsonErr := json.Unmarshal([]byte(vals), &parsed); jsonErr == nil {
+			allValues[chart.ChartConfig.ChartName] = parsed
+		}
+	}
+	if len(allValues) == 0 {
+		return ""
+	}
+	data, err := json.Marshal(allValues)
+	if err != nil {
+		return ""
+	}
+	return string(data)
 }
 
 // finalizeRollback updates the instance and deployment log with the final rollback status.
-func (m *Manager) finalizeRollback(instanceID string, deployLog *models.DeploymentLog, output string, rollbackErr error) {
+func (m *Manager) finalizeRollback(instanceID string, deployLog *models.DeploymentLog, output string, rollbackErr error, valuesSnapshot string) {
 	now := time.Now().UTC()
 
 	instance, err := m.instanceRepo.FindByID(instanceID)
@@ -1264,6 +1297,11 @@ func (m *Manager) finalizeRollback(instanceID string, deployLog *models.Deployme
 		instance.ErrorMessage = ""
 		instance.LastDeployedAt = &now
 		deployLog.Status = models.DeployLogSuccess
+
+		if valuesSnapshot != "" {
+			instance.LastDeployedValues = valuesSnapshot
+			deployLog.ValuesSnapshot = valuesSnapshot
+		}
 
 		slog.Info("rollback succeeded",
 			"instance_id", instanceID,

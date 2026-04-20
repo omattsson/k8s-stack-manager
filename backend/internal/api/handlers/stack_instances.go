@@ -2132,12 +2132,15 @@ func (h *InstanceHandler) buildLockedValuesMap(def *models.StackDefinition) (map
 // @Tags        stack-instances
 // @Accept      json
 // @Produce     json
+// @Security    BearerAuth
 // @Param       id   path     string true "Instance ID"
 // @Param       body body     object false "Optional: {\"target_log_id\": \"...\"}"
 // @Success     202 {object} map[string]string
 // @Failure     400 {object} map[string]string
 // @Failure     404 {object} map[string]string
 // @Failure     409 {object} map[string]string
+// @Failure     500 {object} map[string]string
+// @Failure     503 {object} map[string]string
 // @Router      /api/v1/stack-instances/{id}/rollback [post]
 func (h *InstanceHandler) RollbackInstance(c *gin.Context) {
 	id := c.Param("id")
@@ -2170,7 +2173,10 @@ func (h *InstanceHandler) RollbackInstance(c *gin.Context) {
 		TargetLogID string `json:"target_log_id"`
 	}
 	if c.Request.Body != nil && c.Request.Body != http.NoBody {
-		_ = c.ShouldBindJSON(&body)
+		if bindErr := c.ShouldBindJSON(&body); bindErr != nil && !errors.Is(bindErr, io.EOF) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": msgInvalidRequestFormat})
+			return
+		}
 	}
 
 	def, err := h.definitionRepo.FindByID(inst.StackDefinitionID)
@@ -2219,10 +2225,13 @@ func (h *InstanceHandler) RollbackInstance(c *gin.Context) {
 // @Description Returns the merged Helm values that were used for a specific deployment
 // @Tags        stack-instances
 // @Produce     json
+// @Security    BearerAuth
 // @Param       id    path     string true "Instance ID"
 // @Param       logId path     string true "Deployment Log ID"
 // @Success     200 {object} map[string]string
+// @Failure     400 {object} map[string]string
 // @Failure     404 {object} map[string]string
+// @Failure     503 {object} map[string]string
 // @Router      /api/v1/stack-instances/{id}/deploy-log/{logId}/values [get]
 func (h *InstanceHandler) GetDeployLogValues(c *gin.Context) {
 	instanceID := c.Param("id")
