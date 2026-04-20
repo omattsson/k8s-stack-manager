@@ -352,9 +352,13 @@ func (h *HelmClient) runStreaming(ctx context.Context, args []string, onLine fun
 	var mu sync.Mutex
 	var wg sync.WaitGroup
 
+	// Two goroutines scan stdout and stderr concurrently. Lines from both
+	// streams are interleaved non-deterministically in the combined buffer
+	// and in onLine calls — this matches Helm's own combined output behavior.
 	scanPipe := func(r io.Reader) {
 		defer wg.Done()
 		scanner := bufio.NewScanner(r)
+		scanner.Buffer(make([]byte, 0, 256*1024), 256*1024)
 		for scanner.Scan() {
 			line := scanner.Text()
 			mu.Lock()
@@ -362,6 +366,9 @@ func (h *HelmClient) runStreaming(ctx context.Context, args []string, onLine fun
 			combined.WriteByte('\n')
 			mu.Unlock()
 			onLine(line)
+		}
+		if err := scanner.Err(); err != nil {
+			slog.Warn("scanner error reading helm output", "error", err)
 		}
 	}
 

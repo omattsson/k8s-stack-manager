@@ -193,6 +193,19 @@ func (m *Manager) fireDeployHook(ctx context.Context, event string, instance *mo
 	return m.hooks.Fire(ctx, event, env)
 }
 
+// wrapStreaming checks if helm implements StreamingHelmExecutor and, if so,
+// returns a wrapped executor that broadcasts each output line via WebSocket.
+// The returned bool indicates whether streaming is active (used to gate
+// per-chart broadcastLog calls that would duplicate streaming output).
+func (m *Manager) wrapStreaming(helm HelmExecutor, instanceID, logID string) (HelmExecutor, bool) {
+	if streamer, ok := helm.(StreamingHelmExecutor); ok {
+		return streamer.WithLineHandler(func(line string) {
+			m.broadcastLog(instanceID, logID, line)
+		}), true
+	}
+	return helm, false
+}
+
 // Shutdown cancels the context used by background deploy/stop goroutines,
 // signalling them to abort at the next cancellation check point.
 func (m *Manager) Shutdown() {
@@ -339,14 +352,7 @@ func (m *Manager) executeDeploy(helm HelmExecutor, k8sClient *k8s.Client, regCfg
 	var deployErr error
 	defer func() { finishSpan(deployErr) }()
 
-	// Enable line-by-line streaming if the executor supports it.
-	streaming := false
-	if streamer, ok := helm.(StreamingHelmExecutor); ok {
-		helm = streamer.WithLineHandler(func(line string) {
-			m.broadcastLog(instanceID, deployLog.ID, line)
-		})
-		streaming = true
-	}
+	helm, streaming := m.wrapStreaming(helm, instanceID, deployLog.ID)
 
 	// Create a temp directory for values files.
 	tmpDir, err := os.MkdirTemp("", "deploy-"+instanceID+"-")
@@ -746,14 +752,7 @@ func (m *Manager) executeStopWithCharts(helm HelmExecutor, instanceID string, de
 	var stopErr error
 	defer func() { finishSpan(stopErr) }()
 
-	// Enable line-by-line streaming if the executor supports it.
-	streaming := false
-	if streamer, ok := helm.(StreamingHelmExecutor); ok {
-		helm = streamer.WithLineHandler(func(line string) {
-			m.broadcastLog(instanceID, deployLog.ID, line)
-		})
-		streaming = true
-	}
+	helm, streaming := m.wrapStreaming(helm, instanceID, deployLog.ID)
 
 	// Use a bounded context derived from the shutdown context so that
 	// operations are cancelled both on timeout and on server shutdown.
@@ -1016,14 +1015,7 @@ func (m *Manager) executeClean(helm HelmExecutor, k8sClient *k8s.Client, instanc
 	var cleanErr error
 	defer func() { finishSpan(cleanErr) }()
 
-	// Enable line-by-line streaming if the executor supports it.
-	streaming := false
-	if streamer, ok := helm.(StreamingHelmExecutor); ok {
-		helm = streamer.WithLineHandler(func(line string) {
-			m.broadcastLog(instanceID, deployLog.ID, line)
-		})
-		streaming = true
-	}
+	helm, streaming := m.wrapStreaming(helm, instanceID, deployLog.ID)
 
 	// Use a bounded context derived from the shutdown context so that
 	// operations are cancelled both on timeout and on server shutdown.
@@ -1301,15 +1293,7 @@ func (m *Manager) executeRollback(helm HelmExecutor, instanceID string, deployLo
 	var rollbackErr error
 	defer func() { finishSpan(rollbackErr) }()
 
-	// Enable line-by-line streaming if the executor supports it.
-	streaming := false
-	if streamer, ok := helm.(StreamingHelmExecutor); ok {
-		helm = streamer.WithLineHandler(func(line string) {
-			m.broadcastLog(instanceID, deployLog.ID, line)
-		})
-		streaming = true
-	}
-	_ = streaming // used only for broadcastLog gating below
+	helm, streaming := m.wrapStreaming(helm, instanceID, deployLog.ID)
 
 	var timeout time.Duration
 	if helm != nil {

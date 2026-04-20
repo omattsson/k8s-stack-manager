@@ -78,13 +78,15 @@ const DeploymentLogViewer = ({ logs, loading, streamingLines }: DeploymentLogVie
     }
   }, [logs]);
 
+  const activeStreamLineCount = expanded && streamingLines?.[expanded]?.length;
+
   // Auto-scroll streaming output to bottom as new lines arrive.
   useEffect(() => {
     const el = streamContainerRef.current;
     if (el) {
       el.scrollTop = el.scrollHeight;
     }
-  }, [streamingLines, expanded]);
+  }, [activeStreamLineCount]);
 
   // Auto-scroll when a running log's output updates
   useEffect(() => {

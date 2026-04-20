@@ -157,7 +157,7 @@ const Detail = () => {
       const logId = (payload as { log_id?: string }).log_id;
       if ((newStatus === 'deploying' || newStatus === 'stopping' || newStatus === 'cleaning') && logId) {
         const actionMap: Record<string, DeploymentLog['action']> = {
-          deploying: 'deploy', stopping: 'stop', cleaning: 'clean',
+          deploying: 'deploy', stopping: 'stop', cleaning: 'clean', rolling_back: 'rollback',
         };
         setDeployLogs((prev) => {
           if (prev.some((l) => l.id === logId)) return prev;
@@ -186,10 +186,14 @@ const Detail = () => {
     if (msg.type === 'deployment.log') {
       const logPayload = msg.payload as { log_id?: string; line?: string };
       if (logPayload.log_id && logPayload.line !== undefined) {
-        setStreamingLines((prev) => ({
-          ...prev,
-          [logPayload.log_id!]: [...(prev[logPayload.log_id!] || []), logPayload.line!],
-        }));
+        const MAX_STREAMING_LINES = 5000;
+        setStreamingLines((prev) => {
+          const existing = prev[logPayload.log_id!] || [];
+          const updated = existing.length >= MAX_STREAMING_LINES
+            ? [...existing.slice(existing.length - MAX_STREAMING_LINES + 1), logPayload.line!]
+            : [...existing, logPayload.line!];
+          return { ...prev, [logPayload.log_id!]: updated };
+        });
       }
     }
 

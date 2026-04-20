@@ -1445,6 +1445,8 @@ type mockHelmExecutor struct {
 	mu             sync.Mutex
 	installFunc    func(ctx context.Context, req InstallRequest) (string, error)
 	uninstallFunc  func(ctx context.Context, req UninstallRequest) (string, error)
+	historyFunc    func(ctx context.Context, releaseName, namespace string, max int) ([]ReleaseRevision, error)
+	rollbackFunc   func(ctx context.Context, releaseName, namespace string, revision int) (string, error)
 	installCalls   []InstallRequest
 	uninstallCalls []UninstallRequest
 	timeout        time.Duration
@@ -1478,11 +1480,17 @@ func (m *mockHelmExecutor) ListReleases(_ context.Context, _ string) ([]string, 
 	return nil, nil
 }
 
-func (m *mockHelmExecutor) History(_ context.Context, _ string, _ string, _ int) ([]ReleaseRevision, error) {
+func (m *mockHelmExecutor) History(ctx context.Context, releaseName, namespace string, max int) ([]ReleaseRevision, error) {
+	if m.historyFunc != nil {
+		return m.historyFunc(ctx, releaseName, namespace, max)
+	}
 	return nil, nil
 }
 
-func (m *mockHelmExecutor) Rollback(_ context.Context, releaseName string, _ string, _ int) (string, error) {
+func (m *mockHelmExecutor) Rollback(ctx context.Context, releaseName, namespace string, revision int) (string, error) {
+	if m.rollbackFunc != nil {
+		return m.rollbackFunc(ctx, releaseName, namespace, revision)
+	}
 	return "rolled back " + releaseName, nil
 }
 
@@ -3504,6 +3512,76 @@ func TestManager_Deploy_StreamingPartialFailure_StillBroadcastsLines(t *testing.
 		}
 	}
 	assert.Greater(t, logMsgCount, 0, "streaming deploy with failure should still produce per-line log messages")
+}
+
+func TestManager_Rollback_StreamingSupport(t *testing.T) {
+	t.Parallel()
+
+	instanceRepo := newMockInstanceRepo()
+	logRepo := newMockDeployLogRepo()
+	hub := &mockBroadcaster{}
+
+	inst := &models.StackInstance{
+		ID:                "inst-rollback-stream",
+		StackDefinitionID: "def-1",
+		Name:              "rollback-stream",
+		Namespace:         "stack-rollback-stream",
+		OwnerID:           "user-1",
+		Branch:            "main",
+		Status:            models.StackStatusRunning,
+	}
+	require.NoError(t, instanceRepo.Create(inst))
+
+	helmMock := &streamingMockHelmExecutor{
+		mockHelmExecutor: &mockHelmExecutor{
+			historyFunc: func(_ context.Context, _ string, _ string, _ int) ([]ReleaseRevision, error) {
+				return []ReleaseRevision{
+					{Revision: 1, Status: "deployed"},
+					{Revision: 2, Status: "deployed"},
+				}, nil
+			},
+			rollbackFunc: func(_ context.Context, releaseName string, _ string, _ int) (string, error) {
+				return "rolling back " + releaseName + "\nrollback complete", nil
+			},
+		},
+	}
+
+	mgr := NewManager(ManagerConfig{
+		Registry:      &mockClusterResolver{helm: helmMock},
+		InstanceRepo:  instanceRepo,
+		DeployLogRepo: logRepo,
+		TxRunner:      &mockTxRunner{instanceRepo: instanceRepo, logRepo: logRepo},
+		Hub:           hub,
+		MaxConcurrent: 2,
+	})
+
+	req := RollbackRequest{
+		Instance: inst,
+		Charts: []ChartDeployInfo{
+			{ChartConfig: models.ChartConfig{ChartName: "web", DeployOrder: 1}},
+		},
+	}
+
+	logID, err := mgr.Rollback(context.Background(), req)
+	require.NoError(t, err)
+	assert.NotEmpty(t, logID)
+
+	time.Sleep(500 * time.Millisecond)
+
+	final, err := instanceRepo.FindByID(inst.ID)
+	require.NoError(t, err)
+	assert.Equal(t, models.StackStatusRunning, final.Status)
+
+	assert.True(t, helmMock.wasLineHandlerSet(), "streaming helm executor should have WithLineHandler called")
+
+	messages := hub.getMessages()
+	var logMsgCount int
+	for _, msg := range messages {
+		if parseBroadcastMessageType(msg) == "deployment.log" {
+			logMsgCount++
+		}
+	}
+	assert.Greater(t, logMsgCount, 0, "rollback with streaming executor should produce per-line log messages")
 }
 
 // Verify that streamingMockHelmExecutor satisfies StreamingHelmExecutor at compile time.
