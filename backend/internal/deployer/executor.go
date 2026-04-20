@@ -18,6 +18,15 @@ type HelmExecutor interface {
 	Timeout() time.Duration
 }
 
+// StreamingHelmExecutor extends HelmExecutor with line-by-line output streaming.
+// When the underlying executor supports streaming, the Manager wraps it via
+// WithLineHandler so each line of Helm CLI output is broadcast over WebSocket
+// in real time rather than waiting for the command to finish.
+type StreamingHelmExecutor interface {
+	HelmExecutor
+	WithLineHandler(fn func(string)) HelmExecutor
+}
+
 // ReleaseRevision represents a single entry from helm history.
 type ReleaseRevision struct {
 	Revision    int    `json:"revision"`

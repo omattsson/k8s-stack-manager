@@ -552,3 +552,272 @@ func TestHelmClient_GetValues_RevisionZeroOmitsFlag(t *testing.T) {
 		assert.Contains(t, output, "--revision")
 	})
 }
+
+// ---- Streaming & arg builder tests ----
+
+// Compile-time interface compliance check: HelmClient must implement StreamingHelmExecutor.
+var _ StreamingHelmExecutor = (*HelmClient)(nil)
+
+func TestHelmClient_BuildInstallArgs(t *testing.T) {
+	t.Parallel()
+
+	client := NewHelmClient("helm", "/home/user/.kube/config", 3*time.Minute)
+
+	tests := []struct {
+		name        string
+		req         InstallRequest
+		wantErr     bool
+		errContains string
+		wantArgs    []string // subset of expected args (checked with Contains)
+	}{
+		{
+			name: "minimal valid request",
+			req: InstallRequest{
+				ReleaseName: "my-app",
+				ChartPath:   "nginx",
+				Namespace:   "default",
+			},
+			wantArgs: []string{"upgrade", "--install", "my-app", "nginx", "-n", "default", "--create-namespace", "--timeout", "3m0s"},
+		},
+		{
+			name: "full request with repo, version, values, skip-crds",
+			req: InstallRequest{
+				ReleaseName: "my-app",
+				ChartPath:   "nginx",
+				RepoURL:     "https://charts.example.com",
+				Version:     "1.2.3",
+				ValuesFile:  "/tmp/values.yaml",
+				Namespace:   "prod",
+				SkipCRDs:    true,
+			},
+			wantArgs: []string{"upgrade", "--install", "my-app", "nginx", "-n", "prod", "--repo", "https://charts.example.com", "--version", "1.2.3", "-f", "/tmp/values.yaml", "--skip-crds"},
+		},
+		{
+			name: "optional fields omitted when empty",
+			req: InstallRequest{
+				ReleaseName: "my-app",
+				ChartPath:   "nginx",
+				Namespace:   "default",
+				RepoURL:     "",
+				Version:     "",
+				ValuesFile:  "",
+				SkipCRDs:    false,
+			},
+			wantArgs: []string{"upgrade", "--install", "my-app", "nginx", "-n", "default"},
+		},
+		{
+			name: "dash-prefixed release name rejected",
+			req: InstallRequest{
+				ReleaseName: "--evil",
+				ChartPath:   "nginx",
+				Namespace:   "default",
+			},
+			wantErr:     true,
+			errContains: "release name",
+		},
+		{
+			name: "dash-prefixed chart path rejected",
+			req: InstallRequest{
+				ReleaseName: "ok",
+				ChartPath:   "-bad-chart",
+				Namespace:   "default",
+			},
+			wantErr:     true,
+			errContains: "chart path",
+		},
+		{
+			name: "dash-prefixed namespace rejected",
+			req: InstallRequest{
+				ReleaseName: "ok",
+				ChartPath:   "nginx",
+				Namespace:   "--admin",
+			},
+			wantErr:     true,
+			errContains: "namespace",
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			args, err := client.buildInstallArgs(tt.req)
+			if tt.wantErr {
+				assert.Error(t, err)
+				assert.Nil(t, args)
+				if tt.errContains != "" {
+					assert.Contains(t, err.Error(), tt.errContains)
+				}
+				assert.True(t, errors.Is(err, errArgDashPrefix))
+			} else {
+				assert.NoError(t, err)
+				for _, want := range tt.wantArgs {
+					assert.Contains(t, args, want)
+				}
+			}
+		})
+	}
+}
+
+func TestHelmClient_BuildUninstallArgs(t *testing.T) {
+	t.Parallel()
+
+	client := NewHelmClient("helm", "", 2*time.Minute)
+
+	tests := []struct {
+		name        string
+		req         UninstallRequest
+		wantErr     bool
+		errContains string
+		wantArgs    []string
+	}{
+		{
+			name: "valid request",
+			req: UninstallRequest{
+				ReleaseName: "my-app",
+				Namespace:   "default",
+			},
+			wantArgs: []string{"uninstall", "my-app", "-n", "default"},
+		},
+		{
+			name: "dash-prefixed release name rejected",
+			req: UninstallRequest{
+				ReleaseName: "--kubeconfig=/etc/secret",
+				Namespace:   "default",
+			},
+			wantErr:     true,
+			errContains: "release name",
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			args, err := client.buildUninstallArgs(tt.req)
+			if tt.wantErr {
+				assert.Error(t, err)
+				assert.Nil(t, args)
+				assert.True(t, errors.Is(err, errArgDashPrefix))
+			} else {
+				assert.NoError(t, err)
+				assert.Equal(t, tt.wantArgs, args)
+			}
+		})
+	}
+}
+
+func TestHelmClient_BuildRollbackArgs(t *testing.T) {
+	t.Parallel()
+
+	client := NewHelmClient("helm", "", 4*time.Minute)
+
+	tests := []struct {
+		name        string
+		release     string
+		namespace   string
+		revision    int
+		wantErr     bool
+		errContains string
+		wantArgs    []string
+	}{
+		{
+			name:      "valid rollback",
+			release:   "my-app",
+			namespace: "prod",
+			revision:  3,
+			wantArgs:  []string{"rollback", "my-app", "3", "-n", "prod", "--timeout", "4m0s"},
+		},
+		{
+			name:      "revision zero",
+			release:   "my-app",
+			namespace: "default",
+			revision:  0,
+			wantArgs:  []string{"rollback", "my-app", "0", "-n", "default", "--timeout", "4m0s"},
+		},
+		{
+			name:        "dash-prefixed release name rejected",
+			release:     "-evil",
+			namespace:   "default",
+			revision:    1,
+			wantErr:     true,
+			errContains: "release name",
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			args, err := client.buildRollbackArgs(tt.release, tt.namespace, tt.revision)
+			if tt.wantErr {
+				assert.Error(t, err)
+				assert.Nil(t, args)
+				assert.True(t, errors.Is(err, errArgDashPrefix))
+			} else {
+				assert.NoError(t, err)
+				assert.Equal(t, tt.wantArgs, args)
+			}
+		})
+	}
+}
+
+func TestHelmClient_WithLineHandler_ReturnsValidExecutor(t *testing.T) {
+	t.Parallel()
+
+	client := NewHelmClient("helm", "/home/user/.kube/config", 7*time.Minute)
+
+	var captured []string
+	executor := client.WithLineHandler(func(line string) {
+		captured = append(captured, line)
+	})
+
+	// The returned executor must not be nil.
+	assert.NotNil(t, executor)
+
+	// It should be a *streamingHelmClient under the hood.
+	streaming, ok := executor.(*streamingHelmClient)
+	assert.True(t, ok, "WithLineHandler should return a *streamingHelmClient")
+	assert.NotNil(t, streaming.onLine)
+
+	// Timeout should delegate to the underlying HelmClient.
+	assert.Equal(t, 7*time.Minute, executor.Timeout())
+}
+
+func TestHelmClient_WithLineHandler_OnLineFuncIsCalled(t *testing.T) {
+	t.Parallel()
+
+	client := NewHelmClient("helm", "", 1*time.Minute)
+
+	var captured []string
+	executor := client.WithLineHandler(func(line string) {
+		captured = append(captured, line)
+	})
+
+	// Verify the onLine callback is the one we passed.
+	streaming := executor.(*streamingHelmClient)
+	streaming.onLine("hello")
+	streaming.onLine("world")
+	assert.Equal(t, []string{"hello", "world"}, captured)
+}
+
+func TestHelmClient_WithLineHandler_DifferentHandlersAreIndependent(t *testing.T) {
+	t.Parallel()
+
+	client := NewHelmClient("helm", "", 1*time.Minute)
+
+	var captured1, captured2 []string
+	exec1 := client.WithLineHandler(func(line string) {
+		captured1 = append(captured1, line)
+	})
+	exec2 := client.WithLineHandler(func(line string) {
+		captured2 = append(captured2, line)
+	})
+
+	// Each executor has its own handler.
+	exec1.(*streamingHelmClient).onLine("only-for-1")
+	exec2.(*streamingHelmClient).onLine("only-for-2")
+
+	assert.Equal(t, []string{"only-for-1"}, captured1)
+	assert.Equal(t, []string{"only-for-2"}, captured2)
+}

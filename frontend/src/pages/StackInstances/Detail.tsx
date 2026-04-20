@@ -58,6 +58,7 @@ const Detail = () => {
   const [cleaning, setCleaning] = useState(false);
   const [cleanDialogOpen, setCleanDialogOpen] = useState(false);
   const [deployLogs, setDeployLogs] = useState<DeploymentLog[]>([]);
+  const [streamingLines, setStreamingLines] = useState<Record<string, string[]>>({});
   const [k8sStatus, setK8sStatus] = useState<NamespaceStatus | null>(null);
   const [statusLoading, setStatusLoading] = useState(false);
   const [extending, setExtending] = useState(false);
@@ -151,12 +152,44 @@ const Detail = () => {
         instanceService.getPods(id).then(setK8sStatus).catch(() => {});
       }
 
-      // Refresh deploy logs on terminal states.
+      // On active states, insert a placeholder log entry so streaming lines
+      // have an accordion to attach to before the REST refresh completes.
+      const logId = (payload as { log_id?: string }).log_id;
+      if ((newStatus === 'deploying' || newStatus === 'stopping' || newStatus === 'cleaning') && logId) {
+        const actionMap: Record<string, DeploymentLog['action']> = {
+          deploying: 'deploy', stopping: 'stop', cleaning: 'clean',
+        };
+        setDeployLogs((prev) => {
+          if (prev.some((l) => l.id === logId)) return prev;
+          return [{
+            id: logId,
+            stack_instance_id: id,
+            action: actionMap[newStatus] || 'deploy',
+            status: 'running' as const,
+            output: '',
+            started_at: new Date().toISOString(),
+          }, ...prev];
+        });
+      }
+
+      // Refresh deploy logs on terminal states and clear streaming lines.
       if (newStatus === 'running' || newStatus === 'stopped' || newStatus === 'error' || newStatus === 'draft') {
         instanceService.getDeployLog(id).then(setDeployLogs).catch(() => {});
+        setStreamingLines({});
         setDeploying(false);
         setStopping(false);
         setCleaning(false);
+      }
+    }
+
+    // Real-time log line streaming from active deployments.
+    if (msg.type === 'deployment.log') {
+      const logPayload = msg.payload as { log_id?: string; line?: string };
+      if (logPayload.log_id && logPayload.line !== undefined) {
+        setStreamingLines((prev) => ({
+          ...prev,
+          [logPayload.log_id!]: [...(prev[logPayload.log_id!] || []), logPayload.line!],
+        }));
       }
     }
 
@@ -626,7 +659,7 @@ const Detail = () => {
           <Typography variant="h6" sx={{ mb: 1 }}>
             Deployment History ({deployLogs.length})
           </Typography>
-          <DeploymentLogViewer logs={deployLogs} />
+          <DeploymentLogViewer logs={deployLogs} streamingLines={streamingLines} />
         </Box>
       )}
 
