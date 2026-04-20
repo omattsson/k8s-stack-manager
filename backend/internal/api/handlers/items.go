@@ -3,7 +3,6 @@ package handlers
 import (
 	"errors"
 	"log/slog"
-	"math/bits"
 	"net/http"
 	"strconv"
 	"strings"
@@ -20,10 +19,15 @@ const (
 	msgInvalidIDFormat = "Invalid ID format"
 )
 
+const maxUint = uint64(^uint(0))
+
 func parseUintParam(s string) (uint, error) {
-	id, err := strconv.ParseUint(s, 10, bits.UintSize)
+	id, err := strconv.ParseUint(s, 10, 64)
 	if err != nil {
 		return 0, err
+	}
+	if id > maxUint {
+		return 0, strconv.ErrRange
 	}
 	return uint(id), nil
 }
