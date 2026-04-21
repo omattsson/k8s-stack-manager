@@ -292,11 +292,13 @@ func TestGetDefinition(t *testing.T) {
 		req, _ := http.NewRequest(http.MethodGet, "/api/v1/stack-definitions/d1", nil)
 		router.ServeHTTP(w, req)
 
-		assert.Equal(t, http.StatusOK, w.Code)
-		var resp map[string]interface{}
+		require.Equal(t, http.StatusOK, w.Code)
+		var resp DefinitionWithChartsResponse
 		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-		assert.NotNil(t, resp["definition"])
-		assert.NotNil(t, resp["charts"])
+		assert.Equal(t, "d1", resp.ID)
+		assert.Equal(t, "My Stack", resp.Name)
+		assert.Len(t, resp.Charts, 1)
+		assert.Equal(t, "backend", resp.Charts[0].ChartName)
 	})
 
 	t.Run("not found returns 404", func(t *testing.T) {
@@ -731,15 +733,12 @@ func TestImportDefinition(t *testing.T) {
 			}
 
 			if tt.wantStatus == http.StatusCreated {
-				var resp map[string]json.RawMessage
+				var resp DefinitionWithChartsResponse
 				require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-
-				var def models.StackDefinition
-				require.NoError(t, json.Unmarshal(resp["definition"], &def))
-				assert.NotEmpty(t, def.ID)
-				assert.Equal(t, tt.callerID, def.OwnerID)
-				assert.NotEmpty(t, def.CreatedAt)
-				assert.NotEmpty(t, def.UpdatedAt)
+				assert.NotEmpty(t, resp.ID)
+				assert.Equal(t, tt.callerID, resp.OwnerID)
+				assert.NotEmpty(t, resp.CreatedAt)
+				assert.NotEmpty(t, resp.UpdatedAt)
 			}
 		})
 	}
@@ -783,25 +782,20 @@ func TestExportImportRoundTrip(t *testing.T) {
 
 		require.Equal(t, http.StatusCreated, w2.Code)
 
-		var resp map[string]json.RawMessage
+		var resp DefinitionWithChartsResponse
 		require.NoError(t, json.Unmarshal(w2.Body.Bytes(), &resp))
 
-		var importedDef models.StackDefinition
-		require.NoError(t, json.Unmarshal(resp["definition"], &importedDef))
-
 		// Fresh ID, different from original.
-		assert.NotEqual(t, "d1", importedDef.ID)
-		assert.Equal(t, "Round Trip Stack", importedDef.Name)
+		assert.NotEqual(t, "d1", resp.ID)
+		assert.Equal(t, "Round Trip Stack", resp.Name)
 		// Owner is the importing user.
-		assert.Equal(t, "uid-2", importedDef.OwnerID)
+		assert.Equal(t, "uid-2", resp.OwnerID)
 
-		var importedCharts []models.ChartConfig
-		require.NoError(t, json.Unmarshal(resp["charts"], &importedCharts))
-		assert.Len(t, importedCharts, 1)
-		assert.NotEqual(t, "c1", importedCharts[0].ID)
-		assert.Equal(t, importedDef.ID, importedCharts[0].StackDefinitionID)
-		assert.Equal(t, "api", importedCharts[0].ChartName)
-		assert.Equal(t, "https://charts.example.com", importedCharts[0].RepositoryURL)
-		assert.Equal(t, "port: 8080", importedCharts[0].DefaultValues)
+		assert.Len(t, resp.Charts, 1)
+		assert.NotEqual(t, "c1", resp.Charts[0].ID)
+		assert.Equal(t, resp.ID, resp.Charts[0].StackDefinitionID)
+		assert.Equal(t, "api", resp.Charts[0].ChartName)
+		assert.Equal(t, "https://charts.example.com", resp.Charts[0].RepositoryURL)
+		assert.Equal(t, "port: 8080", resp.Charts[0].DefaultValues)
 	})
 }

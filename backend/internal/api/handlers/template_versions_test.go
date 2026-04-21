@@ -551,20 +551,15 @@ func TestApplyUpgrade(t *testing.T) {
 			wantStatus: http.StatusOK,
 			check: func(t *testing.T, w *httptest.ResponseRecorder, ccRepo *MockChartConfigRepository) {
 				t.Helper()
-				var resp map[string]json.RawMessage
+				var resp DefinitionWithChartsResponse
 				require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+				assert.Equal(t, "2.0", resp.SourceTemplateVersion)
 
-				var def models.StackDefinition
-				require.NoError(t, json.Unmarshal(resp["definition"], &def))
-				assert.Equal(t, "2.0", def.SourceTemplateVersion)
-
-				var charts []models.ChartConfig
-				require.NoError(t, json.Unmarshal(resp["charts"], &charts))
 				// Should have: frontend (updated), user-custom (preserved), backend (added)
-				assert.Len(t, charts, 3)
+				assert.Len(t, resp.Charts, 3)
 
 				chartMap := make(map[string]models.ChartConfig)
-				for _, ch := range charts {
+				for _, ch := range resp.Charts {
 					chartMap[ch.ChartName] = ch
 				}
 				assert.Equal(t, "port: 8080", chartMap["frontend"].DefaultValues)
