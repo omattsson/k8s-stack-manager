@@ -82,6 +82,20 @@ type TemplateListItem struct {
 	OwnerUsername   string `json:"owner_username,omitempty"`
 }
 
+// TemplateDetailResponse is a flat response for GET /templates/:id that embeds
+// chart configs directly instead of wrapping in a "template" key.
+type TemplateDetailResponse struct {
+	models.StackTemplate
+	Charts []models.TemplateChartConfig `json:"charts"`
+}
+
+// DefinitionWithChartsResponse is a flat response for endpoints that return a
+// stack definition together with its chart configs.
+type DefinitionWithChartsResponse struct {
+	models.StackDefinition
+	Charts []models.ChartConfig `json:"charts"`
+}
+
 // ListTemplates godoc
 // @Summary     List stack templates
 // @Description List published templates for regular users, all templates for devops/admin. Includes definition_count and owner_username. Supports server-side pagination.
@@ -223,7 +237,7 @@ func (h *TemplateHandler) CreateTemplate(c *gin.Context) {
 // @Tags        templates
 // @Produce     json
 // @Param       id  path     string true "Template ID"
-// @Success     200 {object} models.StackTemplate
+// @Success     200 {object} TemplateDetailResponse
 // @Failure     404 {object} map[string]string
 // @Router      /api/v1/templates/{id} [get]
 func (h *TemplateHandler) GetTemplate(c *gin.Context) {
@@ -247,9 +261,12 @@ func (h *TemplateHandler) GetTemplate(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"template": tmpl,
-		"charts":   charts,
+	if charts == nil {
+		charts = []models.TemplateChartConfig{}
+	}
+	c.JSON(http.StatusOK, TemplateDetailResponse{
+		StackTemplate: *tmpl,
+		Charts:        charts,
 	})
 }
 
@@ -468,7 +485,7 @@ func (h *TemplateHandler) UnpublishTemplate(c *gin.Context) {
 // @Produce     json
 // @Param       id   path     string                true "Template ID"
 // @Param       body body     models.StackDefinition true "Definition overrides (name, description)"
-// @Success     201  {object} models.StackDefinition
+// @Success     201  {object} DefinitionWithChartsResponse
 // @Failure     400  {object} map[string]string
 // @Failure     404  {object} map[string]string
 // @Router      /api/v1/templates/{id}/instantiate [post]
@@ -525,9 +542,9 @@ func (h *TemplateHandler) InstantiateTemplate(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusCreated, gin.H{
-		"definition": def,
-		"charts":     chartConfigs,
+	c.JSON(http.StatusCreated, DefinitionWithChartsResponse{
+		StackDefinition: *def,
+		Charts:          chartConfigs,
 	})
 }
 

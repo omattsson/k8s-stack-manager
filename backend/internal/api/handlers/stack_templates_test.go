@@ -300,6 +300,45 @@ func TestGetTemplate(t *testing.T) {
 			assert.Equal(t, tt.wantStatus, w.Code)
 		})
 	}
+
+	t.Run("response is flat with charts array", func(t *testing.T) {
+		t.Parallel()
+		repo := NewMockStackTemplateRepository()
+		seedTemplate(t, repo, "t1", "My Template", "owner-1", true)
+		chartRepo := NewMockTemplateChartConfigRepository()
+		require.NoError(t, chartRepo.Create(&models.TemplateChartConfig{
+			ID:              "tc1",
+			StackTemplateID: "t1",
+			ChartName:       "backend",
+		}))
+
+		router := setupTemplateRouter(repo, chartRepo, NewMockStackDefinitionRepository(), NewMockChartConfigRepository(), "uid-1", "user")
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest(http.MethodGet, "/api/v1/templates/t1", nil)
+		router.ServeHTTP(w, req)
+
+		require.Equal(t, http.StatusOK, w.Code)
+		var resp TemplateDetailResponse
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+		assert.Equal(t, "t1", resp.ID)
+		assert.Equal(t, "My Template", resp.Name)
+		assert.Len(t, resp.Charts, 1)
+		assert.Equal(t, "backend", resp.Charts[0].ChartName)
+	})
+
+	t.Run("response has empty array not null when no charts", func(t *testing.T) {
+		t.Parallel()
+		repo := NewMockStackTemplateRepository()
+		seedTemplate(t, repo, "t2", "Empty Template", "owner-1", false)
+
+		router := setupTemplateRouter(repo, NewMockTemplateChartConfigRepository(), NewMockStackDefinitionRepository(), NewMockChartConfigRepository(), "uid-1", "user")
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest(http.MethodGet, "/api/v1/templates/t2", nil)
+		router.ServeHTTP(w, req)
+
+		require.Equal(t, http.StatusOK, w.Code)
+		assert.Contains(t, w.Body.String(), `"charts":[]`)
+	})
 }
 
 // ---- UpdateTemplate ----
@@ -496,20 +535,16 @@ func TestInstantiateTemplate(t *testing.T) {
 		router.ServeHTTP(w, req)
 
 		assert.Equal(t, http.StatusCreated, w.Code)
-		var resp map[string]json.RawMessage
+		var resp DefinitionWithChartsResponse
 		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-		var def models.StackDefinition
-		require.NoError(t, json.Unmarshal(resp["definition"], &def))
-		assert.Equal(t, "my-def", def.Name)
-		assert.Equal(t, "t1", def.SourceTemplateID)
-		assert.Equal(t, "uid-1", def.OwnerID)
+		assert.Equal(t, "my-def", resp.Name)
+		assert.Equal(t, "t1", resp.SourceTemplateID)
+		assert.Equal(t, "uid-1", resp.OwnerID)
 
 		// Verify that created chart configs are returned (non-empty).
-		var charts []models.ChartConfig
-		require.NoError(t, json.Unmarshal(resp["charts"], &charts))
-		assert.Len(t, charts, 1, "response should contain the copied chart config")
-		assert.Equal(t, "my-service", charts[0].ChartName)
-		assert.Equal(t, def.ID, charts[0].StackDefinitionID)
+		assert.Len(t, resp.Charts, 1, "response should contain the copied chart config")
+		assert.Equal(t, "my-service", resp.Charts[0].ChartName)
+		assert.Equal(t, resp.ID, resp.Charts[0].StackDefinitionID)
 	})
 
 	t.Run("template not found returns 404", func(t *testing.T) {

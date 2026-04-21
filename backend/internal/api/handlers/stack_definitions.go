@@ -213,7 +213,7 @@ func (h *DefinitionHandler) CreateDefinition(c *gin.Context) {
 // @Tags        stack-definitions
 // @Produce     json
 // @Param       id  path     string true "Definition ID"
-// @Success     200 {object} models.StackDefinition
+// @Success     200 {object} DefinitionWithChartsResponse
 // @Failure     404 {object} map[string]string
 // @Router      /api/v1/stack-definitions/{id} [get]
 func (h *DefinitionHandler) GetDefinition(c *gin.Context) {
@@ -237,9 +237,9 @@ func (h *DefinitionHandler) GetDefinition(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"definition": def,
-		"charts":     charts,
+	c.JSON(http.StatusOK, DefinitionWithChartsResponse{
+		StackDefinition: *def,
+		Charts:          charts,
 	})
 }
 
@@ -400,7 +400,7 @@ func (h *DefinitionHandler) ExportDefinition(c *gin.Context) {
 // @Accept      json
 // @Produce     json
 // @Param       bundle body     DefinitionExportBundle true "Export bundle"
-// @Success     201    {object} map[string]interface{}
+// @Success     201    {object} DefinitionWithChartsResponse
 // @Failure     400    {object} map[string]string
 // @Failure     500    {object} map[string]string
 // @Router      /api/v1/stack-definitions/import [post]
@@ -501,9 +501,9 @@ func (h *DefinitionHandler) ImportDefinition(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusCreated, gin.H{
-		"definition": def,
-		"charts":     createdCharts,
+	c.JSON(http.StatusCreated, DefinitionWithChartsResponse{
+		StackDefinition: def,
+		Charts:          createdCharts,
 	})
 }
 
@@ -633,7 +633,7 @@ func computeUpgradeChanges(defCharts []models.ChartConfig, templateCharts []mode
 // @Accept      json
 // @Produce     json
 // @Param       id  path     string true "Definition ID"
-// @Success     200 {object} map[string]interface{}
+// @Success     200 {object} DefinitionWithChartsResponse
 // @Failure     400 {object} map[string]string
 // @Failure     404 {object} map[string]string
 // @Failure     409 {object} map[string]string
@@ -753,8 +753,8 @@ func (h *DefinitionHandler) ApplyUpgrade(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"definition": def,
-		"charts":     updatedCharts,
+	c.JSON(http.StatusOK, DefinitionWithChartsResponse{
+		StackDefinition: *def,
+		Charts:          updatedCharts,
 	})
 }
