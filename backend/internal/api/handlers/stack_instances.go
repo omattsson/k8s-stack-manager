@@ -684,12 +684,15 @@ func (h *InstanceHandler) UpdateInstance(c *gin.Context) {
 
 // DeleteInstance godoc
 // @Summary     Delete a stack instance
-// @Description Delete a stack instance
+// @Description Deletes a stack instance. If the instance has running resources (status running/stopped/error), a cleanup is initiated first — helm releases are uninstalled and the namespace is deleted before the database record is removed. Returns 204 for immediate deletion (draft instances) or 202 when async cleanup is required.
 // @Tags        stack-instances
 // @Produce     json
 // @Param       id  path     string true "Instance ID"
-// @Success     204 "No Content"
+// @Success     202 {object} map[string]string "Cleanup initiated, instance will be deleted after resources are removed"
+// @Success     204 "No Content — instance deleted immediately (no resources to clean)"
 // @Failure     404 {object} map[string]string
+// @Failure     409 {object} map[string]string "Instance is in a transient state (deploying/stopping/cleaning)"
+// @Failure     503 {object} map[string]string "Deploy manager not configured"
 // @Router      /api/v1/stack-instances/{id} [delete]
 func (h *InstanceHandler) DeleteInstance(c *gin.Context) {
 	id := c.Param("id")
@@ -698,30 +701,66 @@ func (h *InstanceHandler) DeleteInstance(c *gin.Context) {
 		return
 	}
 
-	// Look up the instance for the hook envelope and the delete itself.
-	// A failed lookup is a real error — don't silently proceed with a nil
-	// snapshot that would make the pre-delete hook a no-op.
-	var snapshot *models.StackInstance
-	if h.hooks != nil {
-		inst, lookupErr := h.instanceRepo.FindByID(id)
-		if lookupErr != nil {
-			status, message := mapError(lookupErr, entityStackInstance)
-			c.JSON(status, gin.H{"error": message})
-			return
-		}
-		snapshot = inst
+	inst, err := h.instanceRepo.FindByID(id)
+	if err != nil {
+		status, message := mapError(err, entityStackInstance)
+		c.JSON(status, gin.H{"error": message})
+		return
 	}
 
 	// Pre-instance-delete hook: a subscriber with failure_policy=fail can block
 	// the delete (e.g. enforce dependency checks).
-	if err := h.fireInstanceHook(c.Request.Context(), hooks.EventPreInstanceDelete, snapshot); err != nil {
+	if err := h.fireInstanceHook(c.Request.Context(), hooks.EventPreInstanceDelete, inst); err != nil {
 		slog.Error("pre-instance-delete hook failed", logKeyInstanceID, id, "error", err)
 		c.JSON(http.StatusForbidden, gin.H{"error": "pre-instance-delete hook rejected the request"})
 		return
 	}
 
+	switch inst.Status {
+	case models.StackStatusDeploying, models.StackStatusStopping, models.StackStatusCleaning, models.StackStatusQueued:
+		c.JSON(http.StatusConflict, gin.H{"error": fmt.Sprintf("Cannot delete: instance is currently %s", inst.Status)})
+		return
+
+	case models.StackStatusRunning, models.StackStatusStopped, models.StackStatusError:
+		if h.deployManager == nil {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": msgDeployerNotConfigured})
+			return
+		}
+
+		def, err := h.definitionRepo.FindByID(inst.StackDefinitionID)
+		if err != nil {
+			status, message := mapError(err, entityStackDefinition)
+			c.JSON(status, gin.H{"error": message})
+			return
+		}
+		charts, err := h.chartConfigRepo.ListByDefinition(def.ID)
+		if err != nil {
+			status, message := mapError(err, entityChartConfigs)
+			c.JSON(status, gin.H{"error": message})
+			return
+		}
+
+		h.deployManager.ScheduleDeleteAfterClean(id)
+
+		logID, err := h.deployManager.Clean(c.Request.Context(), inst, charts)
+		if err != nil {
+			slog.Error("Failed to start clean for delete",
+				logKeyInstanceID, id, "error", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
+			return
+		}
+
+		c.JSON(http.StatusAccepted, gin.H{
+			"log_id":  logID,
+			"message": "Cleanup initiated; instance will be deleted after resources are removed",
+		})
+		return
+
+	default:
+		// draft or unknown — no resources to clean, delete immediately
+	}
+
 	if h.txRunner != nil {
-		// Transactional path — branch override cleanup + instance delete are atomic.
 		txErr := h.txRunner.RunInTx(func(repos database.TxRepos) error {
 			if err := repos.BranchOverride.DeleteByInstance(id); err != nil {
 				return err
@@ -739,8 +778,7 @@ func (h *InstanceHandler) DeleteInstance(c *gin.Context) {
 		return
 	}
 
-	// Post-instance-delete hook: notify only; the delete is committed.
-	_ = h.fireInstanceHook(c.Request.Context(), hooks.EventPostInstanceDelete, snapshot)
+	_ = h.fireInstanceHook(c.Request.Context(), hooks.EventPostInstanceDelete, inst)
 
 	c.Status(http.StatusNoContent)
 }

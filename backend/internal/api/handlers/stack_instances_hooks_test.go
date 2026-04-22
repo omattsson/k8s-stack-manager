@@ -191,7 +191,7 @@ func TestDeleteInstance_FiresPreAndPostHooks(t *testing.T) {
 
 	instRepo := NewMockStackInstanceRepository()
 	defRepo := NewMockStackDefinitionRepository()
-	seedInstance(t, instRepo, "i-1", "to-delete", "d1", "uid-1", "running")
+	seedInstance(t, instRepo, "i-1", "to-delete", "d1", "uid-1", "draft")
 
 	router := setupInstanceRouterWithHooks(instRepo, defRepo,
 		rec.dispatcher(t, hooks.FailurePolicyIgnore), "uid-1", "alice")

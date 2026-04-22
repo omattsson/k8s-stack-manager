@@ -66,6 +66,10 @@ type Manager struct {
 	// hooks dispatches lifecycle events to user-configured webhooks.
 	// nil disables all hook dispatch.
 	hooks *hooks.Dispatcher
+
+	// pendingDeletes tracks instances that should be deleted from the database
+	// after their async clean operation completes successfully.
+	pendingDeletes sync.Map
 }
 
 // ManagerConfig holds the dependencies for creating a Manager.
@@ -145,6 +149,13 @@ func NewManager(cfg ManagerConfig) *Manager {
 
 		hooks: cfg.Hooks,
 	}
+}
+
+// ScheduleDeleteAfterClean marks an instance for DB deletion once its async
+// clean operation finishes successfully. If the clean fails, the instance
+// remains in the database with an error status.
+func (m *Manager) ScheduleDeleteAfterClean(instanceID string) {
+	m.pendingDeletes.Store(instanceID, struct{}{})
 }
 
 // fireDeployHook dispatches event to configured hook subscribers using a
@@ -1077,8 +1088,31 @@ func (m *Manager) finalizeClean(instanceID string, deployLog *models.DeploymentL
 		}
 	}
 
+	_, shouldDelete := m.pendingDeletes.LoadAndDelete(instanceID)
+
 	if cleanErr != nil {
 		m.broadcastStatusWithError(instanceID, models.StackStatusError, deployLog.ID, instance.ErrorMessage)
+	} else if shouldDelete {
+		if m.txRunner != nil {
+			if err := m.txRunner.RunInTx(func(repos database.TxRepos) error {
+				if err := repos.BranchOverride.DeleteByInstance(instanceID); err != nil {
+					return fmt.Errorf("deleting branch overrides: %w", err)
+				}
+				return repos.StackInstance.Delete(instanceID)
+			}); err != nil {
+				slog.Error("failed to delete instance after clean",
+					"instance_id", instanceID, "error", err)
+				m.broadcastStatus(instanceID, models.StackStatusDraft, deployLog.ID)
+			} else {
+				slog.Info("instance deleted after clean",
+					"instance_id", instanceID, "log_id", deployLog.ID)
+			}
+		} else {
+			if err := m.instanceRepo.Delete(instanceID); err != nil {
+				slog.Error("failed to delete instance after clean",
+					"instance_id", instanceID, "error", err)
+			}
+		}
 	} else {
 		m.broadcastStatus(instanceID, models.StackStatusDraft, deployLog.ID)
 	}
