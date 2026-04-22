@@ -87,6 +87,7 @@ spec:
               path: /health/ready
               port: http
             periodSeconds: 5
+            timeoutSeconds: 5
             failureThreshold: 60
           livenessProbe:
             httpGet:
