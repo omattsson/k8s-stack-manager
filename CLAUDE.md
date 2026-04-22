@@ -133,7 +133,7 @@ backend/
     models/                      # Domain models, repository interfaces, validation
     health/health.go             # Dependency health checks (liveness/readiness)
     auth/                        # OIDC provider + state store for OpenID Connect auth
-    cluster/                     # ClusterRegistry (multi-cluster coordination) + health poller
+    cluster/                     # ClusterRegistry (multi-cluster coordination), health poller, secret refresher
     deployer/                    # Helm CLI wrapper for deploy/undeploy/status (multi-cluster via registry)
     k8s/                         # Kubernetes cluster client, status monitoring, resource quota management
     gitprovider/                 # Azure DevOps + GitLab branch listing, URL detection
@@ -251,7 +251,7 @@ This application enables developers to configure, store, and deploy multi-servic
 
 ```
 backend/internal/
-  cluster/               # ClusterRegistry: multi-cluster client management, health poller
+  cluster/               # ClusterRegistry: multi-cluster client management, health poller, secret refresher
   gitprovider/           # Azure DevOps + GitLab branch listing, URL detection, caching
   helm/                  # Values deep-merge, template variable substitution, YAML export
   deployer/              # Helm CLI wrapper for deploy/undeploy/status (multi-cluster via registry), cleanup executor, expiry stopper
@@ -267,7 +267,7 @@ backend/internal/
 - **Audit trail**: Every mutating API endpoint (POST, PUT, DELETE) must create an AuditLog entry
 - **Branch default**: "master" unless overridden per stack definition's `DefaultBranch` field
 - **Namespace naming**: Auto-generated as `stack-{instance-name}-{owner}`
-- **Multi-cluster**: Clusters are registered via `/api/v1/clusters` with kubeconfig data (encrypted at rest via `pkg/crypto`) or kubeconfig path. `ClusterRegistry` manages per-cluster K8s/Helm clients. Health poller monitors cluster status. Stack instances target a specific cluster (or the default).
+- **Multi-cluster**: Clusters are registered via `/api/v1/clusters` with kubeconfig data (encrypted at rest via `pkg/crypto`) or kubeconfig path. `ClusterRegistry` manages per-cluster K8s/Helm clients. Health poller monitors cluster status. Stack instances target a specific cluster (or the default). Per-cluster container registry credentials (`registry_url`, `registry_username`, `registry_password`) enable automatic image pull secret provisioning at deploy time and periodic refresh (4h) via `SecretRefresher`.
 - **Git provider detection**: URL-based — `dev.azure.com`/`visualstudio.com` → Azure DevOps; `gitlab.com` or custom → GitLab
 - **Helm values merge**: Deep-merge chart defaults + instance overrides; substitute template vars `{{.Branch}}`, `{{.Namespace}}`, `{{.InstanceName}}`, `{{.StackName}}`, `{{.Owner}}`
 - **Auth**: JWT with `Authorization: Bearer <token>` header; middleware injects `userID`, `username`, `role` into Gin context

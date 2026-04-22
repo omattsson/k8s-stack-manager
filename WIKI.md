@@ -24,6 +24,8 @@ Every mutating API call (POST, PUT, DELETE) is recorded with user, action, entit
 ### Cluster
 A registered Kubernetes cluster that stack instances can be deployed to. Each cluster stores connection details (kubeconfig path or encrypted kubeconfig data) and is monitored via periodic health checks. One cluster can be designated as the **default** target. Clusters are managed by admins through `/admin/clusters`.
 
+Clusters can optionally store **container registry credentials** (`registry_url`, `registry_username`, `registry_password`, `image_pull_secret_name`) for automatic image pull secret provisioning. When configured, a `kubernetes.io/dockerconfigjson` secret is created in each stack namespace before chart installs and refreshed periodically (every 4 hours) by a background service to handle short-lived tokens (e.g. ACR). The registry password is encrypted at rest using the same AES-GCM scheme as kubeconfig data.
+
 ## Architecture
 
 ### Data Flow
@@ -46,6 +48,7 @@ Template → (instantiate) → Definition + ChartConfigs → (create instance) �
 - A health poller periodically checks cluster connectivity and updates status
 - Stack instances target a specific cluster (or the default cluster)
 - The `deployer` package routes deploy/undeploy/status operations through the registry to the correct cluster
+- Per-cluster container registry credentials enable automatic image pull secret provisioning; a `SecretRefresher` runs every 4 hours to keep tokens current
 
 ### Git Integration
 - Auto-detects provider from repository URL (`dev.azure.com` → Azure DevOps, `gitlab.com` → GitLab)
