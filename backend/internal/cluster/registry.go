@@ -234,6 +234,48 @@ func (r *Registry) GetHelmExecutor(clusterID string) (deployer.HelmExecutor, err
 	return clients.Helm, nil
 }
 
+// GetRegistryConfig returns the registry configuration for the given cluster,
+// or nil if the cluster has no container registry configured. Used by the
+// deployer to auto-provision image pull secrets in stack namespaces.
+func (r *Registry) GetRegistryConfig(clusterID string) (*models.RegistryConfig, error) {
+	if r.clusterRepo == nil {
+		return nil, nil
+	}
+	if clusterID == "" {
+		r.mu.RLock()
+		resolved := r.defaultResolved
+		id := r.defaultID
+		r.mu.RUnlock()
+
+		if !resolved {
+			r.mu.Lock()
+			if !r.defaultResolved {
+				cluster, err := r.clusterRepo.FindDefault()
+				if err != nil {
+					r.mu.Unlock()
+					return nil, nil // no default cluster, no registry
+				}
+				r.defaultResolved = true
+				r.defaultID = cluster.ID
+				id = cluster.ID
+			} else {
+				id = r.defaultID
+			}
+			r.mu.Unlock()
+		}
+		if id == "" {
+			return nil, nil
+		}
+		clusterID = id
+	}
+
+	cluster, err := r.clusterRepo.FindByID(clusterID)
+	if err != nil {
+		return nil, fmt.Errorf("cluster %s: %w", clusterID, err)
+	}
+	return cluster.RegistryConfig(), nil
+}
+
 // InvalidateClient removes cached clients for the given cluster ID and cleans up temp files.
 func (r *Registry) InvalidateClient(clusterID string) {
 	r.mu.Lock()

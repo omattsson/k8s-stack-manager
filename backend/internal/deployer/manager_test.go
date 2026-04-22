@@ -330,11 +330,12 @@ func (m *mockBroadcaster) messageCount() int {
 
 // mockClusterResolver implements ClusterResolver for tests.
 type mockClusterResolver struct {
-	helm       HelmExecutor
-	k8sClient  *k8s.Client
-	resolveErr error
-	helmErr    error
-	k8sErr     error
+	helm           HelmExecutor
+	k8sClient      *k8s.Client
+	registryConfig *models.RegistryConfig
+	resolveErr     error
+	helmErr        error
+	k8sErr         error
 }
 
 func (m *mockClusterResolver) ResolveClusterID(clusterID string) (string, error) {
@@ -359,6 +360,10 @@ func (m *mockClusterResolver) GetK8sClient(_ string) (*k8s.Client, error) {
 		return nil, m.k8sErr
 	}
 	return m.k8sClient, nil
+}
+
+func (m *mockClusterResolver) GetRegistryConfig(_ string) (*models.RegistryConfig, error) {
+	return m.registryConfig, nil
 }
 
 func TestNewManager(t *testing.T) {
