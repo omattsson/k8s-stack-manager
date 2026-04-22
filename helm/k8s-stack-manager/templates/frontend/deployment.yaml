@@ -10,6 +10,11 @@ spec:
   replicas: {{ .Values.frontend.replicas }}
   {{- end }}
   revisionHistoryLimit: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
   selector:
     matchLabels:
       {{- include "k8s-stack-manager.frontend.selectorLabels" . | nindent 6 }}
@@ -35,6 +40,7 @@ spec:
         seccompProfile:
           type: RuntimeDefault
         {{- end }}
+      terminationGracePeriodSeconds: 35
       containers:
         - name: nginx
           image: {{ include "k8s-stack-manager.frontend.image" . }}
@@ -43,6 +49,10 @@ spec:
             - name: http
               containerPort: {{ .Values.frontend.port }}
               protocol: TCP
+          lifecycle:
+            preStop:
+              exec:
+                command: ["/bin/sh", "-c", "sleep 5; nginx -s quit"]
           livenessProbe:
             httpGet:
               path: /
