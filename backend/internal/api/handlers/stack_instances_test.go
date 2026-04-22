@@ -195,6 +195,55 @@ func TestListInstances(t *testing.T) {
 		assert.Equal(t, 1, resp.Total)
 	})
 
+	t.Run("filters by name", func(t *testing.T) {
+		t.Parallel()
+		instRepo := NewMockStackInstanceRepository()
+		seedInstance(t, instRepo, "i1", "my-stack", "d1", "uid-1", models.StackStatusRunning)
+		seedInstance(t, instRepo, "i2", "other-stack", "d1", "uid-2", models.StackStatusDraft)
+
+		router := setupInstanceRouter(instRepo, NewMockValueOverrideRepository(), NewMockStackDefinitionRepository(), NewMockChartConfigRepository(), NewMockStackTemplateRepository(), NewMockTemplateChartConfigRepository(), "uid-1", "alice", "user")
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest(http.MethodGet, "/api/v1/stack-instances?name=my-stack", nil)
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		var resp pagedResponse
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+		assert.Len(t, resp.Data, 1)
+		assert.Equal(t, "my-stack", resp.Data[0].Name)
+		assert.Equal(t, 1, resp.Total)
+	})
+
+	t.Run("filters by name returns empty when no match", func(t *testing.T) {
+		t.Parallel()
+		instRepo := NewMockStackInstanceRepository()
+		seedInstance(t, instRepo, "i1", "my-stack", "d1", "uid-1", models.StackStatusRunning)
+
+		router := setupInstanceRouter(instRepo, NewMockValueOverrideRepository(), NewMockStackDefinitionRepository(), NewMockChartConfigRepository(), NewMockStackTemplateRepository(), NewMockTemplateChartConfigRepository(), "uid-1", "alice", "user")
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest(http.MethodGet, "/api/v1/stack-instances?name=nonexistent", nil)
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		var resp pagedResponse
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+		assert.Len(t, resp.Data, 0)
+		assert.Equal(t, 0, resp.Total)
+	})
+
+	t.Run("name filter with repository error returns 500", func(t *testing.T) {
+		t.Parallel()
+		instRepo := NewMockStackInstanceRepository()
+		instRepo.SetError(errInternal)
+
+		router := setupInstanceRouter(instRepo, NewMockValueOverrideRepository(), NewMockStackDefinitionRepository(), NewMockChartConfigRepository(), NewMockStackTemplateRepository(), NewMockTemplateChartConfigRepository(), "uid-1", "alice", "user")
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest(http.MethodGet, "/api/v1/stack-instances?name=my-stack", nil)
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusInternalServerError, w.Code)
+	})
+
 	t.Run("repository error returns 500", func(t *testing.T) {
 		t.Parallel()
 		instRepo := NewMockStackInstanceRepository()

@@ -140,6 +140,8 @@ func (m *mockInstanceRepo) ListIDsByOwnerIDs(_ []string) (map[string][]string, e
 	return nil, nil
 }
 
+func (m *mockInstanceRepo) FindByName(_ string) ([]models.StackInstance, error) { return nil, nil }
+
 func (m *mockInstanceRepo) ListExpired() ([]*models.StackInstance, error) {
 	return nil, nil
 }

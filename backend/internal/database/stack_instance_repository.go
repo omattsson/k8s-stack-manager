@@ -131,6 +131,15 @@ func (r *GORMStackInstanceRepository) ListByOwner(ownerID string) ([]models.Stac
 	return instances, nil
 }
 
+// FindByName returns all stack instances with the given exact name.
+func (r *GORMStackInstanceRepository) FindByName(name string) ([]models.StackInstance, error) {
+	var instances []models.StackInstance
+	if err := r.db.Select(listColumns).Where("name = ?", name).Find(&instances).Error; err != nil {
+		return nil, dberrors.NewDatabaseError("find_by_name", err)
+	}
+	return instances, nil
+}
+
 // FindByCluster returns all stack instances targeting the given cluster.
 func (r *GORMStackInstanceRepository) FindByCluster(clusterID string) ([]models.StackInstance, error) {
 	var instances []models.StackInstance

@@ -717,6 +717,9 @@ func (r *cleanupMockInstanceRepo) List() ([]models.StackInstance, error) { retur
 func (r *cleanupMockInstanceRepo) ListByOwner(_ string) ([]models.StackInstance, error) {
 	return nil, nil
 }
+func (r *cleanupMockInstanceRepo) FindByName(_ string) ([]models.StackInstance, error) {
+	return nil, nil
+}
 func (r *cleanupMockInstanceRepo) FindByCluster(id string) ([]models.StackInstance, error) {
 	var result []models.StackInstance
 	for _, inst := range r.instances {

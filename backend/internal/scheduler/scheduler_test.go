@@ -130,6 +130,7 @@ func (r *mockInstanceRepo) ListIDsByDefinitionIDs(_ []string) (map[string][]stri
 func (r *mockInstanceRepo) ListIDsByOwnerIDs(_ []string) (map[string][]string, error) {
 	return nil, nil
 }
+func (r *mockInstanceRepo) FindByName(_ string) ([]models.StackInstance, error) { return nil, nil }
 
 // mockAuditRepo is a minimal in-memory mock for AuditLogRepository.
 type mockAuditRepo struct {

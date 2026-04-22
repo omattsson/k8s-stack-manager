@@ -252,10 +252,11 @@ const listPageSizeMax = 100
 
 // ListInstances godoc
 // @Summary     List stack instances
-// @Description List stack instances with server-side pagination. Supports page/pageSize or legacy limit/offset params. Use owner=me to filter by the authenticated user.
+// @Description List stack instances with server-side pagination. Supports page/pageSize or legacy limit/offset params. Use owner=me to filter by the authenticated user. Filter precedence: owner > name > pagination (only the first matching filter is applied).
 // @Tags        stack-instances
 // @Produce     json
 // @Param       owner    query    string false "Filter by owner (use 'me' for current user)"
+// @Param       name     query    string false "Filter by exact instance name"
 // @Param       page     query    int    false "Page number (1-based, default: 1)"
 // @Param       pageSize query    int    false "Results per page (default: 25, max: 100)"
 // @Param       limit    query    int    false "Legacy: maximum number of results"
@@ -270,6 +271,23 @@ func (h *InstanceHandler) ListInstances(c *gin.Context) {
 	if owner == "me" {
 		userID := middleware.GetUserIDFromContext(c)
 		instances, err := h.instanceRepo.ListByOwner(userID)
+		if err != nil {
+			status, message := mapError(err, entityStackInstance)
+			c.JSON(status, gin.H{"error": message})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{
+			"data":     instances,
+			"total":    len(instances),
+			"page":     1,
+			"pageSize": len(instances),
+		})
+		return
+	}
+
+	// Name-filtered list — exact match, no pagination needed.
+	if name := c.Query("name"); name != "" {
+		instances, err := h.instanceRepo.FindByName(name)
 		if err != nil {
 			status, message := mapError(err, entityStackInstance)
 			c.JSON(status, gin.H{"error": message})
