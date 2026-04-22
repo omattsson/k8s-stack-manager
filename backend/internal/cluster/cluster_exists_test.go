@@ -53,7 +53,7 @@ func TestNewRegistry_Fields(t *testing.T) {
 	t.Parallel()
 
 	repo := newMockClusterRepo()
-	cfg := RegistryConfig{
+	cfg := RegistryOptions{
 		ClusterRepo: repo,
 		HelmBinary:  "/usr/local/bin/helm",
 		HelmTimeout: 10 * time.Minute,

@@ -813,7 +813,7 @@ func (d *Database) AutoMigrate() error {
 
 	// Migration 34: Add container registry fields to clusters for auto pull secret provisioning
 	migrator.AddMigration(schema.Migration{
-		Version:     "20231201000034",
+		Version:     "20260422000034",
 		Name:        "add_registry_fields_to_clusters",
 		Description: "Add registry_url, registry_username, registry_password, and image_pull_secret_name columns to clusters table for automatic image pull secret provisioning",
 		Up: func(tx *gorm.DB) error {

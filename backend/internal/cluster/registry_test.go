@@ -124,7 +124,7 @@ func failingK8sFactory(_ string) (*k8s.Client, error) {
 // --- Helpers ---
 
 func newTestRegistry(repo models.ClusterRepository) *Registry {
-	r := NewRegistry(RegistryConfig{
+	r := NewRegistry(RegistryOptions{
 		ClusterRepo: repo,
 		HelmBinary:  "helm",
 		HelmTimeout: 5 * time.Minute,

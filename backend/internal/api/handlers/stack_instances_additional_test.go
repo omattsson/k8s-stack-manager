@@ -1608,7 +1608,7 @@ func TestCreateInstance_Additional(t *testing.T) {
 
 		// Use a real cluster repo mock that returns not-found for unknown clusters
 		clusterRepo := NewMockClusterRepository()
-		registry := cluster.NewRegistry(cluster.RegistryConfig{
+		registry := cluster.NewRegistry(cluster.RegistryOptions{
 			ClusterRepo: clusterRepo,
 		})
 

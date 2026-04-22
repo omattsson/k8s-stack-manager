@@ -55,6 +55,7 @@ func TestSecretRefresher_RefreshesRunningInstances(t *testing.T) {
 	cs := fake.NewSimpleClientset(
 		&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "stack-ns-1"}},
 		&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "stack-ns-2"}},
+		&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "stack-ns-3"}},
 	)
 
 	clusterRepo := newMockClusterRepo()
@@ -72,6 +73,7 @@ func TestSecretRefresher_RefreshesRunningInstances(t *testing.T) {
 		instances: []models.StackInstance{
 			{ID: "inst-1", ClusterID: "cluster-1", Namespace: "stack-ns-1", Status: models.StackStatusRunning},
 			{ID: "inst-2", ClusterID: "cluster-1", Namespace: "stack-ns-2", Status: models.StackStatusStopped},
+			{ID: "inst-3", ClusterID: "cluster-1", Namespace: "stack-ns-3", Status: models.StackStatusDeploying},
 		},
 	}
 
@@ -94,6 +96,10 @@ func TestSecretRefresher_RefreshesRunningInstances(t *testing.T) {
 
 	_, err = cs.CoreV1().Secrets("stack-ns-2").Get(context.Background(), "acr-pull-secret", metav1.GetOptions{})
 	assert.Error(t, err, "stopped instance should not get a pull secret")
+
+	got3, err := cs.CoreV1().Secrets("stack-ns-3").Get(context.Background(), "acr-pull-secret", metav1.GetOptions{})
+	require.NoError(t, err, "deploying instance should get a pull secret")
+	assert.Equal(t, corev1.SecretTypeDockerConfigJson, got3.Type)
 }
 
 func TestSecretRefresher_SkipsClusterWithoutRegistry(t *testing.T) {

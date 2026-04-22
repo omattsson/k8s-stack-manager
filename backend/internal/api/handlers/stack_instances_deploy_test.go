@@ -860,7 +860,7 @@ func TestGetInstancePods(t *testing.T) {
 		require.NoError(t, instRepo.Update(inst))
 
 		// Use NewRegistry with an empty cluster repo so GetClients returns ErrNotFound.
-		registry := cluster.NewRegistry(cluster.RegistryConfig{
+		registry := cluster.NewRegistry(cluster.RegistryOptions{
 			ClusterRepo: NewMockClusterRepository(),
 		})
 

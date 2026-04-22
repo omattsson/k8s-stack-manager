@@ -32,8 +32,8 @@ type ClusterClients struct {
 	kubeconfigPath string // temp file path if created from kubeconfig data (for cleanup)
 }
 
-// RegistryConfig holds constructor dependencies.
-type RegistryConfig struct {
+// RegistryOptions holds constructor dependencies.
+type RegistryOptions struct {
 	ClusterRepo models.ClusterRepository
 	HelmBinary  string
 	HelmTimeout time.Duration
@@ -57,7 +57,7 @@ type Registry struct {
 }
 
 // NewRegistry creates a Registry with the given configuration.
-func NewRegistry(cfg RegistryConfig) *Registry {
+func NewRegistry(cfg RegistryOptions) *Registry {
 	return &Registry{
 		clients:     make(map[string]*ClusterClients),
 		clusterRepo: cfg.ClusterRepo,
@@ -234,7 +234,7 @@ func (r *Registry) GetHelmExecutor(clusterID string) (deployer.HelmExecutor, err
 	return clients.Helm, nil
 }
 
-// GetRegistryConfig returns the registry configuration for the given cluster,
+// GetRegistryOptions returns the registry configuration for the given cluster,
 // or nil if the cluster has no container registry configured. Used by the
 // deployer to auto-provision image pull secrets in stack namespaces.
 func (r *Registry) GetRegistryConfig(clusterID string) (*models.RegistryConfig, error) {

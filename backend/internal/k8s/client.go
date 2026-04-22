@@ -4,6 +4,8 @@ package k8s
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os"
@@ -139,28 +141,49 @@ func (c *Client) Clientset() kubernetes.Interface {
 	return c.clientset
 }
 
+type dockerConfigJSON struct {
+	Auths map[string]dockerConfigEntry `json:"auths"`
+}
+
+type dockerConfigEntry struct {
+	Username string `json:"username"`
+	Password string `json:"password"`
+	Auth     string `json:"auth"`
+}
+
 // EnsureDockerRegistrySecret creates or updates a docker-registry type secret
 // in the given namespace. Used for automatic image pull secret provisioning
 // so that pods can pull images from private registries like ACR.
 func (c *Client) EnsureDockerRegistrySecret(ctx context.Context, namespace, secretName, server, username, password string) error {
-	dockerConfigJSON := fmt.Sprintf(
-		`{"auths":{%q:{"username":%q,"password":%q,"auth":""}}}`,
-		server, username, password,
-	)
+	cfg := dockerConfigJSON{
+		Auths: map[string]dockerConfigEntry{
+			server: {
+				Username: username,
+				Password: password,
+				Auth:     base64.StdEncoding.EncodeToString([]byte(username + ":" + password)),
+			},
+		},
+	}
+	cfgBytes, err := json.Marshal(cfg)
+	if err != nil {
+		return fmt.Errorf("marshal docker config: %w", err)
+	}
 
 	secret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      secretName,
 			Namespace: namespace,
 			Labels: map[string]string{
-				"managed-by":                               "k8s-stack-manager",
-				"k8s-stack-manager.io/image-pull-secret":   "true",
-				"k8s-stack-manager.io/registry":            server,
+				"managed-by":                             "k8s-stack-manager",
+				"k8s-stack-manager.io/image-pull-secret": "true",
+			},
+			Annotations: map[string]string{
+				"k8s-stack-manager.io/registry": server,
 			},
 		},
 		Type: corev1.SecretTypeDockerConfigJson,
 		Data: map[string][]byte{
-			corev1.DockerConfigJsonKey: []byte(dockerConfigJSON),
+			corev1.DockerConfigJsonKey: cfgBytes,
 		},
 	}
 
@@ -193,6 +216,12 @@ func (c *Client) EnsureDockerRegistrySecret(ctx context.Context, namespace, secr
 	}
 	for k, v := range secret.Labels {
 		existing.Labels[k] = v
+	}
+	if existing.Annotations == nil {
+		existing.Annotations = map[string]string{}
+	}
+	for k, v := range secret.Annotations {
+		existing.Annotations[k] = v
 	}
 	if _, err := c.clientset.CoreV1().Secrets(namespace).Update(ctx, existing, metav1.UpdateOptions{}); err != nil {
 		return fmt.Errorf("update secret %s/%s: %w", namespace, secretName, err)

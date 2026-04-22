@@ -167,7 +167,7 @@ func main() {
 	ensureDefaultCluster(clusterRepo, instanceRepo, cfg)
 
 	// Create cluster registry for multi-cluster client management
-	clusterRegistry := cluster.NewRegistry(cluster.RegistryConfig{
+	clusterRegistry := cluster.NewRegistry(cluster.RegistryOptions{
 		ClusterRepo: clusterRepo,
 		HelmBinary:  cfg.Deployment.HelmBinary,
 		HelmTimeout: cfg.Deployment.DeploymentTimeout,

@@ -73,6 +73,8 @@ func (r *SecretRefresher) Stop() {
 func (r *SecretRefresher) run() {
 	defer close(r.done)
 
+	r.refresh()
+
 	ticker := time.NewTicker(r.interval)
 	defer ticker.Stop()
 

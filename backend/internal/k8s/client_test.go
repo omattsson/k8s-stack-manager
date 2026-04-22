@@ -2,6 +2,7 @@ package k8s
 
 import (
 	"context"
+	"encoding/base64"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -188,12 +189,13 @@ func TestEnsureDockerRegistrySecret_Creates(t *testing.T) {
 	assert.Equal(t, corev1.SecretTypeDockerConfigJson, got.Type)
 	assert.Equal(t, "k8s-stack-manager", got.Labels["managed-by"])
 	assert.Equal(t, "true", got.Labels["k8s-stack-manager.io/image-pull-secret"])
-	assert.Equal(t, "myregistry.azurecr.io", got.Labels["k8s-stack-manager.io/registry"])
+	assert.Equal(t, "myregistry.azurecr.io", got.Annotations["k8s-stack-manager.io/registry"])
 
 	dockerCfg := string(got.Data[corev1.DockerConfigJsonKey])
 	assert.Contains(t, dockerCfg, "myregistry.azurecr.io")
 	assert.Contains(t, dockerCfg, "user")
 	assert.Contains(t, dockerCfg, "pass123")
+	assert.Contains(t, dockerCfg, base64.StdEncoding.EncodeToString([]byte("user:pass123")))
 }
 
 func TestEnsureDockerRegistrySecret_UpdatesExisting(t *testing.T) {
@@ -226,7 +228,7 @@ func TestEnsureDockerRegistrySecret_UpdatesExisting(t *testing.T) {
 	assert.Equal(t, "label", got.Labels["custom"])
 	// Our labels added
 	assert.Equal(t, "k8s-stack-manager", got.Labels["managed-by"])
-	assert.Equal(t, "new.registry.io", got.Labels["k8s-stack-manager.io/registry"])
+	assert.Equal(t, "new.registry.io", got.Annotations["k8s-stack-manager.io/registry"])
 }
 
 func TestEnsureDockerRegistrySecret_Idempotent(t *testing.T) {

@@ -889,7 +889,7 @@ func TestGracefulShutdown(t *testing.T) {
 	// Start the reaper so Stop() can signal it to exit.
 	go reaper.Start()
 
-	clusterRegistry := cluster.NewRegistry(cluster.RegistryConfig{})
+	clusterRegistry := cluster.NewRegistry(cluster.RegistryOptions{})
 	healthPoller := cluster.NewHealthPoller(cluster.HealthPollerConfig{
 		Interval: 1 * time.Hour,
 	})
@@ -951,7 +951,7 @@ func TestGracefulShutdown_RepoCloseError(t *testing.T) {
 	reaper := ttl.NewReaper(newMockInstanceRepo(), nil, hub, nil, 60*time.Second)
 	go reaper.Start()
 
-	clusterRegistry := cluster.NewRegistry(cluster.RegistryConfig{})
+	clusterRegistry := cluster.NewRegistry(cluster.RegistryOptions{})
 	healthPoller := cluster.NewHealthPoller(cluster.HealthPollerConfig{
 		Interval: 1 * time.Hour,
 	})

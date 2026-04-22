@@ -178,6 +178,15 @@ func (c *Cluster) Validate() error {
 	default:
 		return fmt.Errorf("invalid health_status: %s", c.HealthStatus)
 	}
+	hasRegURL := c.RegistryURL != ""
+	hasRegUser := c.RegistryUsername != ""
+	hasRegPass := c.RegistryPassword != ""
+	if hasRegURL && (!hasRegUser || !hasRegPass) {
+		return errors.New("registry_username and registry_password are required when registry_url is set")
+	}
+	if (hasRegUser || hasRegPass) && !hasRegURL {
+		return errors.New("registry_url is required when registry_username or registry_password is set")
+	}
 	return nil
 }
 

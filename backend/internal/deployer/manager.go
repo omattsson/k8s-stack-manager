@@ -360,22 +360,36 @@ func (m *Manager) executeDeploy(helm HelmExecutor, k8sClient *k8s.Client, regCfg
 	ctx, cancel := context.WithTimeout(m.shutdownCtx, timeout)
 	defer cancel()
 
+	// Ensure the target namespace exists before any pre-install resource
+	// provisioning (wildcard TLS, pull secrets). Called once here so that
+	// the individual feature blocks don't each need their own EnsureNamespace.
+	needsNS := (m.wildcardTLSSourceSecret != "" && m.wildcardTLSSourceNS != "") || regCfg != nil
+	nsReady := false
+	if needsNS && k8sClient != nil {
+		if err := k8sClient.EnsureNamespace(ctx, namespace); err != nil {
+			slog.Warn("failed to ensure namespace for pre-install resources",
+				"instance_id", instanceID, "namespace", namespace, "error", err,
+			)
+		} else {
+			nsReady = true
+		}
+	}
+
 	// Replicate the wildcard TLS secret into the target namespace before any
 	// chart installs, so ingresses with tlsSecretName can reference it from
 	// the first reconcile. Non-fatal: log and continue on error (the ingress
 	// will still route plaintext; only TLS termination breaks).
-	//
-	// Feature requires both source namespace and source secret to be configured.
-	// If only one is set, warn and skip rather than calling with an empty value
-	// (which would produce a confusing "" namespace error).
 	switch {
 	case m.wildcardTLSSourceSecret != "" && m.wildcardTLSSourceNS == "":
 		slog.Warn("wildcard TLS source secret configured without source namespace — skipping replication",
 			"instance_id", instanceID,
 			"source_secret", m.wildcardTLSSourceSecret,
 		)
-	case m.wildcardTLSSourceSecret != "":
-		if wildcardErr := m.replicateWildcardTLS(ctx, k8sClient, namespace); wildcardErr != nil {
+	case m.wildcardTLSSourceSecret != "" && nsReady:
+		if wildcardErr := k8sClient.CopySecret(ctx,
+			m.wildcardTLSSourceNS, m.wildcardTLSSourceSecret,
+			namespace, m.wildcardTLSTargetSecret,
+		); wildcardErr != nil {
 			slog.Warn("failed to replicate wildcard TLS secret",
 				"instance_id", instanceID,
 				"namespace", namespace,
@@ -385,35 +399,23 @@ func (m *Manager) executeDeploy(helm HelmExecutor, k8sClient *k8s.Client, regCfg
 		}
 	}
 
-	// Provision image pull secret from per-cluster registry config. This runs
-	// after namespace creation (wildcard TLS ensures namespace) but before any
-	// chart installs, so pods can reference the secret from their first pull.
-	// Non-fatal: log and continue — charts may still work if images are public
-	// or use a different pull mechanism.
-	if regCfg != nil {
-		if k8sClient == nil {
-			slog.Warn("registry config present but k8s client is nil — skipping pull secret provisioning",
+	// Provision image pull secret from per-cluster registry config. Non-fatal:
+	// log and continue — charts may still work if images are public or use a
+	// different pull mechanism.
+	if regCfg != nil && nsReady {
+		if secretErr := k8sClient.EnsureDockerRegistrySecret(
+			ctx, namespace, regCfg.SecretName,
+			regCfg.URL, regCfg.Username, regCfg.Password,
+		); secretErr != nil {
+			slog.Warn("failed to provision image pull secret",
 				"instance_id", instanceID,
+				"namespace", namespace,
+				"registry", regCfg.URL,
+				"error", secretErr,
 			)
+			allOutput += fmt.Sprintf("WARNING: failed to provision image pull secret: %s\n", secretErr.Error())
 		} else {
-			if err := k8sClient.EnsureNamespace(ctx, namespace); err != nil {
-				slog.Warn("failed to ensure namespace for pull secret",
-					"instance_id", instanceID, "namespace", namespace, "error", err,
-				)
-			} else if secretErr := k8sClient.EnsureDockerRegistrySecret(
-				ctx, namespace, regCfg.SecretName,
-				regCfg.URL, regCfg.Username, regCfg.Password,
-			); secretErr != nil {
-				slog.Warn("failed to provision image pull secret",
-					"instance_id", instanceID,
-					"namespace", namespace,
-					"registry", regCfg.URL,
-					"error", secretErr,
-				)
-				allOutput += fmt.Sprintf("WARNING: failed to provision image pull secret: %s\n", secretErr.Error())
-			} else {
-				allOutput += fmt.Sprintf("Image pull secret %q provisioned for registry %s\n", regCfg.SecretName, regCfg.URL)
-			}
+			allOutput += fmt.Sprintf("Image pull secret %q provisioned for registry %s\n", regCfg.SecretName, regCfg.URL)
 		}
 	}
 
@@ -1422,25 +1424,6 @@ func (m *Manager) finalizeRollback(instanceID string, deployLog *models.Deployme
 	}
 }
 
-// replicateWildcardTLS ensures the target namespace exists and copies the
-// configured wildcard TLS secret into it. Deploy() pre-resolves the k8s
-// client so this method avoids re-hitting the repo/registry on every deploy.
-// The caller is responsible for only invoking this when wildcard TLS is
-// configured (source namespace + source secret non-empty).
-func (m *Manager) replicateWildcardTLS(ctx context.Context, k8sClient *k8s.Client, namespace string) error {
-	if k8sClient == nil {
-		return fmt.Errorf("replicateWildcardTLS: k8s client is nil")
-	}
-
-	if err := k8sClient.EnsureNamespace(ctx, namespace); err != nil {
-		return fmt.Errorf("ensuring namespace: %w", err)
-	}
-
-	return k8sClient.CopySecret(ctx,
-		m.wildcardTLSSourceNS, m.wildcardTLSSourceSecret,
-		namespace, m.wildcardTLSTargetSecret,
-	)
-}
 
 // truncateString returns s truncated to maxLen characters. If truncation
 // occurs, the last three characters are replaced with "..." to signal that
