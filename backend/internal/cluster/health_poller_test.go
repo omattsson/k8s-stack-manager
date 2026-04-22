@@ -36,7 +36,7 @@ func (m *mockBroadcastSender) messageCount() int {
 // healthPollerTestRegistry creates a Registry with a stubbed k8s factory that returns
 // a client backed by a fake clientset (Discovery().ServerVersion() succeeds).
 func healthPollerTestRegistry(repo models.ClusterRepository) *Registry {
-	r := NewRegistry(RegistryConfig{
+	r := NewRegistry(RegistryOptions{
 		ClusterRepo: repo,
 		HelmBinary:  "helm",
 		HelmTimeout: 5 * time.Minute,
@@ -50,7 +50,7 @@ func healthPollerTestRegistry(repo models.ClusterRepository) *Registry {
 
 // healthPollerFailingRegistry creates a Registry whose k8s factory always fails.
 func healthPollerFailingRegistry(repo models.ClusterRepository) *Registry {
-	r := NewRegistry(RegistryConfig{
+	r := NewRegistry(RegistryOptions{
 		ClusterRepo: repo,
 		HelmBinary:  "helm",
 		HelmTimeout: 5 * time.Minute,

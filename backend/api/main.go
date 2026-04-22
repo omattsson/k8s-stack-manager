@@ -167,7 +167,7 @@ func main() {
 	ensureDefaultCluster(clusterRepo, instanceRepo, cfg)
 
 	// Create cluster registry for multi-cluster client management
-	clusterRegistry := cluster.NewRegistry(cluster.RegistryConfig{
+	clusterRegistry := cluster.NewRegistry(cluster.RegistryOptions{
 		ClusterRepo: clusterRepo,
 		HelmBinary:  cfg.Deployment.HelmBinary,
 		HelmTimeout: cfg.Deployment.DeploymentTimeout,
@@ -190,6 +190,14 @@ func main() {
 		Hub:         hub,
 	})
 	healthPoller.Start()
+
+	// Start image pull secret refresher for clusters with registry config
+	secretRefresher := cluster.NewSecretRefresher(cluster.SecretRefresherConfig{
+		ClusterRepo:  clusterRepo,
+		InstanceRepo: instanceRepo,
+		Registry:     clusterRegistry,
+	})
+	secretRefresher.Start()
 
 	// K8s watcher — uses registry for multi-cluster monitoring
 	k8sWatcher := k8s.NewWatcher(clusterRegistry, instanceRepo, hub, 30*time.Second)
@@ -478,6 +486,7 @@ func main() {
 		cleanupScheduler: cleanupScheduler,
 		deployManager:    deployManager,
 		healthPoller:     healthPoller,
+		secretRefresher:  secretRefresher,
 		k8sWatcher:       k8sWatcher,
 		hub:              hub,
 		clusterRegistry:  clusterRegistry,
@@ -494,6 +503,7 @@ type shutdownDeps struct {
 	cleanupScheduler *scheduler.Scheduler
 	deployManager    *deployer.Manager
 	healthPoller     *cluster.HealthPoller
+	secretRefresher  *cluster.SecretRefresher
 	k8sWatcher       *k8s.Watcher
 	hub              *websocket.Hub
 	clusterRegistry  *cluster.Registry
@@ -521,6 +531,9 @@ func gracefulShutdown(srv *http.Server, timeout time.Duration, deps shutdownDeps
 
 	// 4. Stop remaining services.
 	deps.healthPoller.Stop()
+	if deps.secretRefresher != nil {
+		deps.secretRefresher.Stop()
+	}
 	if deps.k8sWatcher != nil {
 		deps.k8sWatcher.Stop()
 	}

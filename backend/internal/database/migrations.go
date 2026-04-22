@@ -811,6 +811,49 @@ func (d *Database) AutoMigrate() error {
 		},
 	})
 
+	// Migration 34: Add container registry fields to clusters for auto pull secret provisioning
+	migrator.AddMigration(schema.Migration{
+		Version:     "20260422000034",
+		Name:        "add_registry_fields_to_clusters",
+		Description: "Add registry_url, registry_username, registry_password, and image_pull_secret_name columns to clusters table for automatic image pull secret provisioning",
+		Up: func(tx *gorm.DB) error {
+			cols := []struct {
+				field string
+				sql   string
+			}{
+				{"RegistryURL", "ALTER TABLE clusters ADD COLUMN registry_url VARCHAR(500) NOT NULL DEFAULT ''"},
+				{"RegistryUsername", "ALTER TABLE clusters ADD COLUMN registry_username VARCHAR(255) NOT NULL DEFAULT ''"},
+				{"RegistryPassword", "ALTER TABLE clusters ADD COLUMN registry_password TEXT"},
+				{"ImagePullSecretName", "ALTER TABLE clusters ADD COLUMN image_pull_secret_name VARCHAR(255) NOT NULL DEFAULT ''"},
+			}
+			for _, col := range cols {
+				if tx.Migrator().HasColumn(&models.Cluster{}, col.field) {
+					continue
+				}
+				if tx.Dialector.Name() == "mysql" {
+					if err := tx.Exec(col.sql).Error; err != nil { // #nosec G202 -- SQL from hardcoded struct constants
+						return err
+					}
+				} else {
+					if err := tx.Migrator().AddColumn(&models.Cluster{}, col.field); err != nil {
+						return err
+					}
+				}
+			}
+			return nil
+		},
+		Down: func(tx *gorm.DB) error {
+			for _, col := range []string{"ImagePullSecretName", "RegistryPassword", "RegistryUsername", "RegistryURL"} {
+				if tx.Migrator().HasColumn(&models.Cluster{}, col) {
+					if err := tx.Migrator().DropColumn(&models.Cluster{}, col); err != nil {
+						return err
+					}
+				}
+			}
+			return nil
+		},
+	})
+
 	// Run migrations
 	if err := migrator.MigrateUp(); err != nil {
 		return err

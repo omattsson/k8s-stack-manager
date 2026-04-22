@@ -2,6 +2,7 @@ package k8s
 
 import (
 	"context"
+	"encoding/base64"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -169,6 +170,83 @@ func TestNamespaceExists(t *testing.T) {
 // a Secret can't exist without a parent Namespace.
 func nsObj(name string) *corev1.Namespace {
 	return &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: name}}
+}
+
+func TestEnsureDockerRegistrySecret_Creates(t *testing.T) {
+	t.Parallel()
+
+	cs := fake.NewSimpleClientset(nsObj("stack-ns"))
+	c := NewClientFromInterface(cs)
+
+	err := c.EnsureDockerRegistrySecret(
+		context.Background(), "stack-ns", "acr-pull-secret",
+		"myregistry.azurecr.io", "user", "pass123",
+	)
+	assert.NoError(t, err)
+
+	got, err := cs.CoreV1().Secrets("stack-ns").Get(context.Background(), "acr-pull-secret", metav1.GetOptions{})
+	assert.NoError(t, err)
+	assert.Equal(t, corev1.SecretTypeDockerConfigJson, got.Type)
+	assert.Equal(t, "k8s-stack-manager", got.Labels["managed-by"])
+	assert.Equal(t, "true", got.Labels["k8s-stack-manager.io/image-pull-secret"])
+	assert.Equal(t, "myregistry.azurecr.io", got.Annotations["k8s-stack-manager.io/registry"])
+
+	dockerCfg := string(got.Data[corev1.DockerConfigJsonKey])
+	assert.Contains(t, dockerCfg, "myregistry.azurecr.io")
+	assert.Contains(t, dockerCfg, "user")
+	assert.Contains(t, dockerCfg, "pass123")
+	assert.Contains(t, dockerCfg, base64.StdEncoding.EncodeToString([]byte("user:pass123")))
+}
+
+func TestEnsureDockerRegistrySecret_UpdatesExisting(t *testing.T) {
+	t.Parallel()
+
+	existing := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "acr-pull-secret", Namespace: "stack-ns",
+			Labels: map[string]string{"custom": "label"},
+		},
+		Type: corev1.SecretTypeDockerConfigJson,
+		Data: map[string][]byte{corev1.DockerConfigJsonKey: []byte(`{"auths":{"old.registry":{}}}`)},
+	}
+	cs := fake.NewSimpleClientset(nsObj("stack-ns"), existing)
+	c := NewClientFromInterface(cs)
+
+	err := c.EnsureDockerRegistrySecret(
+		context.Background(), "stack-ns", "acr-pull-secret",
+		"new.registry.io", "newuser", "newpass",
+	)
+	assert.NoError(t, err)
+
+	got, err := cs.CoreV1().Secrets("stack-ns").Get(context.Background(), "acr-pull-secret", metav1.GetOptions{})
+	assert.NoError(t, err)
+	// New credentials
+	dockerCfg := string(got.Data[corev1.DockerConfigJsonKey])
+	assert.Contains(t, dockerCfg, "new.registry.io")
+	assert.Contains(t, dockerCfg, "newuser")
+	// Pre-existing labels preserved
+	assert.Equal(t, "label", got.Labels["custom"])
+	// Our labels added
+	assert.Equal(t, "k8s-stack-manager", got.Labels["managed-by"])
+	assert.Equal(t, "new.registry.io", got.Annotations["k8s-stack-manager.io/registry"])
+}
+
+func TestEnsureDockerRegistrySecret_Idempotent(t *testing.T) {
+	t.Parallel()
+
+	cs := fake.NewSimpleClientset(nsObj("stack-ns"))
+	c := NewClientFromInterface(cs)
+
+	// Create twice with same params — should not error.
+	err := c.EnsureDockerRegistrySecret(context.Background(), "stack-ns", "pull-secret", "reg.io", "u", "p")
+	assert.NoError(t, err)
+	err = c.EnsureDockerRegistrySecret(context.Background(), "stack-ns", "pull-secret", "reg.io", "u", "p")
+	assert.NoError(t, err)
+
+	// Only one secret should exist.
+	list, err := cs.CoreV1().Secrets("stack-ns").List(context.Background(), metav1.ListOptions{})
+	assert.NoError(t, err)
+	assert.Len(t, list.Items, 1)
 }
 
 func TestCopySecret_CreatesInTarget(t *testing.T) {

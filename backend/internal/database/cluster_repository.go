@@ -73,6 +73,38 @@ func (r *GORMClusterRepository) decryptKubeconfig(cluster *models.Cluster) error
 	return nil
 }
 
+// encryptRegistryPassword encrypts RegistryPassword in-place before persisting.
+// Returns the original plaintext so the caller can restore it after the DB write.
+func (r *GORMClusterRepository) encryptRegistryPassword(cluster *models.Cluster) (string, error) {
+	original := cluster.RegistryPassword
+	if original == "" || len(r.encryptionKey) == 0 {
+		return original, nil
+	}
+	encrypted, err := crypto.Encrypt([]byte(original), r.encryptionKey)
+	if err != nil {
+		return "", dberrors.NewDatabaseError("encrypt registry password", err)
+	}
+	cluster.RegistryPassword = base64.StdEncoding.EncodeToString(encrypted)
+	return original, nil
+}
+
+// decryptRegistryPassword decrypts RegistryPassword in-place after reading from DB.
+func (r *GORMClusterRepository) decryptRegistryPassword(cluster *models.Cluster) error {
+	if cluster.RegistryPassword == "" || len(r.encryptionKey) == 0 {
+		return nil
+	}
+	decoded, err := base64.StdEncoding.DecodeString(cluster.RegistryPassword)
+	if err != nil {
+		return nil
+	}
+	decrypted, err := crypto.Decrypt(decoded, r.encryptionKey)
+	if err != nil {
+		return dberrors.NewDatabaseError("decrypt registry password", err)
+	}
+	cluster.RegistryPassword = string(decrypted)
+	return nil
+}
+
 // Create inserts a new cluster record.
 func (r *GORMClusterRepository) Create(cluster *models.Cluster) error {
 	if cluster.ID == "" {
@@ -85,17 +117,25 @@ func (r *GORMClusterRepository) Create(cluster *models.Cluster) error {
 	cluster.CreatedAt = now
 	cluster.UpdatedAt = now
 
-	original, err := r.encryptKubeconfig(cluster)
+	originalKC, err := r.encryptKubeconfig(cluster)
 	if err != nil {
+		return err
+	}
+	originalRP, err := r.encryptRegistryPassword(cluster)
+	if err != nil {
+		if originalKC != "" {
+			cluster.KubeconfigData = originalKC
+		}
 		return err
 	}
 
 	dbErr := r.db.Create(cluster).Error
 
 	// Restore plaintext so the caller's struct is not mutated.
-	if original != "" {
-		cluster.KubeconfigData = original
+	if originalKC != "" {
+		cluster.KubeconfigData = originalKC
 	}
+	cluster.RegistryPassword = originalRP
 
 	if dbErr != nil {
 		if isDuplicateKeyError(dbErr) {
@@ -118,6 +158,9 @@ func (r *GORMClusterRepository) FindByID(id string) (*models.Cluster, error) {
 	if err := r.decryptKubeconfig(&cluster); err != nil {
 		return nil, err
 	}
+	if err := r.decryptRegistryPassword(&cluster); err != nil {
+		return nil, err
+	}
 	return &cluster, nil
 }
 
@@ -125,17 +168,25 @@ func (r *GORMClusterRepository) FindByID(id string) (*models.Cluster, error) {
 func (r *GORMClusterRepository) Update(cluster *models.Cluster) error {
 	cluster.UpdatedAt = time.Now().UTC()
 
-	original, err := r.encryptKubeconfig(cluster)
+	originalKC, err := r.encryptKubeconfig(cluster)
 	if err != nil {
+		return err
+	}
+	originalRP, err := r.encryptRegistryPassword(cluster)
+	if err != nil {
+		if originalKC != "" {
+			cluster.KubeconfigData = originalKC
+		}
 		return err
 	}
 
 	dbErr := r.db.Save(cluster).Error
 
 	// Restore plaintext so the caller's struct is not mutated.
-	if original != "" {
-		cluster.KubeconfigData = original
+	if originalKC != "" {
+		cluster.KubeconfigData = originalKC
 	}
+	cluster.RegistryPassword = originalRP
 
 	if dbErr != nil {
 		if isDuplicateKeyError(dbErr) {
@@ -168,6 +219,9 @@ func (r *GORMClusterRepository) List() ([]models.Cluster, error) {
 		if err := r.decryptKubeconfig(&clusters[i]); err != nil {
 			return nil, err
 		}
+		if err := r.decryptRegistryPassword(&clusters[i]); err != nil {
+			return nil, err
+		}
 	}
 	return clusters, nil
 }
@@ -182,6 +236,9 @@ func (r *GORMClusterRepository) FindDefault() (*models.Cluster, error) {
 		return nil, dberrors.NewDatabaseError("find_default", err)
 	}
 	if err := r.decryptKubeconfig(&cluster); err != nil {
+		return nil, err
+	}
+	if err := r.decryptRegistryPassword(&cluster); err != nil {
 		return nil, err
 	}
 	return &cluster, nil

@@ -56,6 +56,10 @@ type CreateClusterRequest struct {
 	MaxInstancesPerUser int    `json:"max_instances_per_user"`
 	IsDefault           bool   `json:"is_default"`
 	UseInCluster        bool   `json:"use_in_cluster"`
+	RegistryURL         string `json:"registry_url"`
+	RegistryUsername    string `json:"registry_username"`
+	RegistryPassword    string `json:"registry_password"`
+	ImagePullSecretName string `json:"image_pull_secret_name"`
 }
 
 // UpdateClusterRequest is the input payload for updating a cluster.
@@ -70,6 +74,10 @@ type UpdateClusterRequest struct {
 	MaxInstancesPerUser *int    `json:"max_instances_per_user,omitempty"`
 	IsDefault           *bool   `json:"is_default,omitempty"`
 	UseInCluster        *bool   `json:"use_in_cluster,omitempty"`
+	RegistryURL         *string `json:"registry_url,omitempty"`
+	RegistryUsername    *string `json:"registry_username,omitempty"`
+	RegistryPassword    *string `json:"registry_password,omitempty"`
+	ImagePullSecretName *string `json:"image_pull_secret_name,omitempty"`
 }
 
 // ClusterHandler provides CRUD endpoints for cluster management.
@@ -170,6 +178,10 @@ func (h *ClusterHandler) CreateCluster(c *gin.Context) {
 		IsDefault:           false,
 		HealthStatus:        models.ClusterUnreachable,
 		UseInCluster:        req.UseInCluster,
+		RegistryURL:         req.RegistryURL,
+		RegistryUsername:    req.RegistryUsername,
+		RegistryPassword:    req.RegistryPassword,
+		ImagePullSecretName: req.ImagePullSecretName,
 	}
 
 	if err := cl.Validate(); err != nil {
@@ -318,6 +330,18 @@ func (h *ClusterHandler) UpdateCluster(c *gin.Context) {
 			existing.KubeconfigPath = ""
 			kubeconfigChanged = true
 		}
+	}
+	if req.RegistryURL != nil {
+		existing.RegistryURL = *req.RegistryURL
+	}
+	if req.RegistryUsername != nil {
+		existing.RegistryUsername = *req.RegistryUsername
+	}
+	if req.RegistryPassword != nil {
+		existing.RegistryPassword = *req.RegistryPassword
+	}
+	if req.ImagePullSecretName != nil {
+		existing.ImagePullSecretName = *req.ImagePullSecretName
 	}
 	if req.IsDefault != nil {
 		if *req.IsDefault && !existing.IsDefault {

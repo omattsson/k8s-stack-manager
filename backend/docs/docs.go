@@ -3234,8 +3234,7 @@ const docTemplate = `{
                     "201": {
                         "description": "Created",
                         "schema": {
-                            "type": "object",
-                            "additionalProperties": true
+                            "$ref": "#/definitions/handlers.DefinitionWithChartsResponse"
                         }
                     },
                     "400": {
@@ -3282,7 +3281,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/models.StackDefinition"
+                            "$ref": "#/definitions/handlers.DefinitionWithChartsResponse"
                         }
                     },
                     "404": {
@@ -3700,8 +3699,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "type": "object",
-                            "additionalProperties": true
+                            "$ref": "#/definitions/handlers.DefinitionWithChartsResponse"
                         }
                     },
                     "400": {
@@ -3745,7 +3743,7 @@ const docTemplate = `{
         },
         "/api/v1/stack-instances": {
             "get": {
-                "description": "List stack instances with server-side pagination. Supports page/pageSize or legacy limit/offset params. Use owner=me to filter by the authenticated user.",
+                "description": "List stack instances with server-side pagination. Supports page/pageSize or legacy limit/offset params. Use owner=me to filter by the authenticated user. Filter precedence: owner \u003e name \u003e pagination (only the first matching filter is applied).",
                 "produces": [
                     "application/json"
                 ],
@@ -3758,6 +3756,12 @@ const docTemplate = `{
                         "type": "string",
                         "description": "Filter by owner (use 'me' for current user)",
                         "name": "owner",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter by exact instance name",
+                        "name": "name",
                         "in": "query"
                     },
                     {
@@ -4244,7 +4248,7 @@ const docTemplate = `{
                 }
             },
             "delete": {
-                "description": "Delete a stack instance",
+                "description": "Deletes a stack instance. If the instance has running resources (status running/stopped/error), a cleanup is initiated first — helm releases are uninstalled and the namespace is deleted before the database record is removed. Returns 204 for immediate deletion (draft instances) or 202 when async cleanup is required.",
                 "produces": [
                     "application/json"
                 ],
@@ -4262,11 +4266,122 @@ const docTemplate = `{
                     }
                 ],
                 "responses": {
+                    "202": {
+                        "description": "Cleanup initiated, instance will be deleted after resources are removed",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
                     "204": {
-                        "description": "No Content"
+                        "description": "No Content — instance deleted immediately (no resources to clean)"
                     },
                     "404": {
                         "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "409": {
+                        "description": "Instance is in a transient state (deploying/stopping/cleaning)",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "503": {
+                        "description": "Deploy manager not configured",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/stack-instances/{id}/actions/{name}": {
+            "post": {
+                "description": "Dispatches to the action subscriber webhook and wraps its response in an envelope containing action, instance_id, status_code, and result fields. The subscriber's JSON body is nested under the result key. Returns 200 even for non-2xx subscriber responses — check status_code to distinguish.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "stack-instances"
+                ],
+                "summary": "Invoke a registered action against a stack instance",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Instance ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Action name",
+                        "name": "name",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Optional parameters passed through to the subscriber",
+                        "name": "request",
+                        "in": "body",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.invokeActionRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Instance not found or action not registered",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "502": {
+                        "description": "Subscriber unreachable",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "503": {
+                        "description": "Action registry not configured",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {
@@ -4719,6 +4834,77 @@ const docTemplate = `{
                     },
                     "404": {
                         "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/stack-instances/{id}/deploy-log/{logId}/values": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns the merged Helm values that were used for a specific deployment",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "stack-instances"
+                ],
+                "summary": "Get values snapshot for a deployment log entry",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Instance ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Deployment Log ID",
+                        "name": "logId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {
@@ -5249,6 +5435,99 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/stack-instances/{id}/rollback": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Rollback all Helm releases in a stack instance to their previous revision",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "stack-instances"
+                ],
+                "summary": "Rollback a stack instance",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Instance ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Optional: {\\",
+                        "name": "body",
+                        "in": "body",
+                        "schema": {
+                            "type": "object"
+                        }
+                    }
+                ],
+                "responses": {
+                    "202": {
+                        "description": "Accepted",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/stack-instances/{id}/status": {
             "get": {
                 "description": "Get detailed Kubernetes resource status for a stack instance",
@@ -5753,7 +6032,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/models.StackTemplate"
+                            "$ref": "#/definitions/handlers.TemplateDetailResponse"
                         }
                     },
                     "404": {
@@ -6105,7 +6384,7 @@ const docTemplate = `{
                     "201": {
                         "description": "Created",
                         "schema": {
-                            "$ref": "#/definitions/models.StackDefinition"
+                            "$ref": "#/definitions/handlers.DefinitionWithChartsResponse"
                         }
                     },
                     "400": {
@@ -7239,6 +7518,9 @@ const docTemplate = `{
                 "description": {
                     "type": "string"
                 },
+                "image_pull_secret_name": {
+                    "type": "string"
+                },
                 "is_default": {
                     "type": "boolean"
                 },
@@ -7258,6 +7540,15 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "region": {
+                    "type": "string"
+                },
+                "registry_password": {
+                    "type": "string"
+                },
+                "registry_url": {
+                    "type": "string"
+                },
+                "registry_username": {
                     "type": "string"
                 },
                 "use_in_cluster": {
@@ -7295,6 +7586,44 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "name": {
+                    "type": "string"
+                }
+            }
+        },
+        "handlers.DefinitionWithChartsResponse": {
+            "type": "object",
+            "properties": {
+                "charts": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/models.ChartConfig"
+                    }
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "default_branch": {
+                    "type": "string"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "owner_id": {
+                    "type": "string"
+                },
+                "source_template_id": {
+                    "type": "string"
+                },
+                "source_template_version": {
+                    "type": "string"
+                },
+                "updated_at": {
                     "type": "string"
                 }
             }
@@ -7460,6 +7789,47 @@ const docTemplate = `{
                 }
             }
         },
+        "handlers.TemplateDetailResponse": {
+            "type": "object",
+            "properties": {
+                "category": {
+                    "type": "string"
+                },
+                "charts": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/models.TemplateChartConfig"
+                    }
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "default_branch": {
+                    "type": "string"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "is_published": {
+                    "type": "boolean"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "owner_id": {
+                    "type": "string"
+                },
+                "updated_at": {
+                    "type": "string"
+                },
+                "version": {
+                    "type": "string"
+                }
+            }
+        },
         "handlers.TemplateStats": {
             "type": "object",
             "properties": {
@@ -7504,6 +7874,9 @@ const docTemplate = `{
                 "description": {
                     "type": "string"
                 },
+                "image_pull_secret_name": {
+                    "type": "string"
+                },
                 "is_default": {
                     "type": "boolean"
                 },
@@ -7523,6 +7896,15 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "region": {
+                    "type": "string"
+                },
+                "registry_password": {
+                    "type": "string"
+                },
+                "registry_url": {
+                    "type": "string"
+                },
+                "registry_username": {
                     "type": "string"
                 },
                 "use_in_cluster": {
@@ -7589,6 +7971,15 @@ const docTemplate = `{
             "properties": {
                 "ttl_minutes": {
                     "type": "integer"
+                }
+            }
+        },
+        "handlers.invokeActionRequest": {
+            "type": "object",
+            "properties": {
+                "parameters": {
+                    "type": "object",
+                    "additionalProperties": {}
                 }
             }
         },
@@ -8275,6 +8666,9 @@ const docTemplate = `{
                 "id": {
                     "type": "string"
                 },
+                "image_pull_secret_name": {
+                    "type": "string"
+                },
                 "is_default": {
                     "type": "boolean"
                 },
@@ -8291,6 +8685,13 @@ const docTemplate = `{
                 "region": {
                     "type": "string"
                 },
+                "registry_url": {
+                    "description": "Registry fields for automatic image pull secret provisioning.\nWhen RegistryURL is non-empty, a docker-registry secret is created/refreshed\nin each stack namespace before chart installs.",
+                    "type": "string"
+                },
+                "registry_username": {
+                    "type": "string"
+                },
                 "updated_at": {
                     "type": "string"
                 },
@@ -8303,7 +8704,7 @@ const docTemplate = `{
             "type": "object",
             "properties": {
                 "action": {
-                    "description": "\"deploy\", \"stop\", or \"clean\"",
+                    "description": "\"deploy\", \"stop\", \"clean\", \"rollback\"",
                     "type": "string"
                 },
                 "completed_at": {
@@ -8326,6 +8727,12 @@ const docTemplate = `{
                 },
                 "status": {
                     "description": "\"running\", \"success\", \"error\"",
+                    "type": "string"
+                },
+                "target_log_id": {
+                    "type": "string"
+                },
+                "values_snapshot": {
                     "type": "string"
                 }
             }

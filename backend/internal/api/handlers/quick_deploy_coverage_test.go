@@ -445,7 +445,7 @@ func TestQuickDeploy_UnknownCluster(t *testing.T) {
 
 	clusterRepo := NewMockClusterRepository()
 	seedCluster(clusterRepo, "cl-1", "test-cluster")
-	registry := cluster.NewRegistry(cluster.RegistryConfig{ClusterRepo: clusterRepo})
+	registry := cluster.NewRegistry(cluster.RegistryOptions{ClusterRepo: clusterRepo})
 
 	r := setupQuickDeployRouter(t,
 		tmplRepo, tmplChartRepo, defRepo, ccRepo, instRepo,
@@ -485,7 +485,7 @@ func TestQuickDeploy_NoDefaultCluster(t *testing.T) {
 	seedTemplate(t, tmplRepo, "t1", "My Template", "owner-1", true)
 
 	clusterRepo := NewMockClusterRepository()
-	registry := cluster.NewRegistry(cluster.RegistryConfig{ClusterRepo: clusterRepo})
+	registry := cluster.NewRegistry(cluster.RegistryOptions{ClusterRepo: clusterRepo})
 
 	r := setupQuickDeployRouter(t,
 		tmplRepo, tmplChartRepo, defRepo, ccRepo, instRepo,

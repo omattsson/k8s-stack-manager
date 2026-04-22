@@ -906,7 +906,7 @@ func TestTestClusterConnection_ErrorPaths(t *testing.T) {
 		// Create a registry whose cluster repo doesn't have cl-1,
 		// so GetK8sClient will fail to build.
 		emptyClusterRepo := NewMockClusterRepository()
-		reg := cluster.NewRegistry(cluster.RegistryConfig{
+		reg := cluster.NewRegistry(cluster.RegistryOptions{
 			ClusterRepo: emptyClusterRepo,
 			HelmBinary:  "helm",
 			HelmTimeout: 5 * time.Minute,

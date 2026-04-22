@@ -199,6 +199,8 @@ definitions:
         type: string
       description:
         type: string
+      image_pull_secret_name:
+        type: string
       is_default:
         type: boolean
       kubeconfig_data:
@@ -212,6 +214,12 @@ definitions:
       name:
         type: string
       region:
+        type: string
+      registry_password:
+        type: string
+      registry_url:
+        type: string
+      registry_username:
         type: string
       use_in_cluster:
         type: boolean
@@ -238,6 +246,31 @@ definitions:
       description:
         type: string
       name:
+        type: string
+    type: object
+  handlers.DefinitionWithChartsResponse:
+    properties:
+      charts:
+        items:
+          $ref: '#/definitions/models.ChartConfig'
+        type: array
+      created_at:
+        type: string
+      default_branch:
+        type: string
+      description:
+        type: string
+      id:
+        type: string
+      name:
+        type: string
+      owner_id:
+        type: string
+      source_template_id:
+        type: string
+      source_template_version:
+        type: string
+      updated_at:
         type: string
     type: object
   handlers.DeployPreviewResponse:
@@ -345,6 +378,33 @@ definitions:
     - password
     - username
     type: object
+  handlers.TemplateDetailResponse:
+    properties:
+      category:
+        type: string
+      charts:
+        items:
+          $ref: '#/definitions/models.TemplateChartConfig'
+        type: array
+      created_at:
+        type: string
+      default_branch:
+        type: string
+      description:
+        type: string
+      id:
+        type: string
+      is_published:
+        type: boolean
+      name:
+        type: string
+      owner_id:
+        type: string
+      updated_at:
+        type: string
+      version:
+        type: string
+    type: object
   handlers.TemplateStats:
     properties:
       category:
@@ -374,6 +434,8 @@ definitions:
         type: string
       description:
         type: string
+      image_pull_secret_name:
+        type: string
       is_default:
         type: boolean
       kubeconfig_data:
@@ -387,6 +449,12 @@ definitions:
       name:
         type: string
       region:
+        type: string
+      registry_password:
+        type: string
+      registry_url:
+        type: string
+      registry_username:
         type: string
       use_in_cluster:
         type: boolean
@@ -430,6 +498,12 @@ definitions:
     properties:
       ttl_minutes:
         type: integer
+    type: object
+  handlers.invokeActionRequest:
+    properties:
+      parameters:
+        additionalProperties: {}
+        type: object
     type: object
   handlers.quickDeployRequest:
     properties:
@@ -884,6 +958,8 @@ definitions:
         type: string
       id:
         type: string
+      image_pull_secret_name:
+        type: string
       is_default:
         type: boolean
       max_instances_per_user:
@@ -895,6 +971,14 @@ definitions:
         type: string
       region:
         type: string
+      registry_url:
+        description: |-
+          Registry fields for automatic image pull secret provisioning.
+          When RegistryURL is non-empty, a docker-registry secret is created/refreshed
+          in each stack namespace before chart installs.
+        type: string
+      registry_username:
+        type: string
       updated_at:
         type: string
       use_in_cluster:
@@ -903,7 +987,7 @@ definitions:
   models.DeploymentLog:
     properties:
       action:
-        description: '"deploy", "stop", or "clean"'
+        description: '"deploy", "stop", "clean", "rollback"'
         type: string
       completed_at:
         type: string
@@ -919,6 +1003,10 @@ definitions:
         type: string
       status:
         description: '"running", "success", "error"'
+        type: string
+      target_log_id:
+        type: string
+      values_snapshot:
         type: string
     type: object
   models.DeploymentLogResult:
@@ -3445,7 +3533,7 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/models.StackDefinition'
+            $ref: '#/definitions/handlers.DefinitionWithChartsResponse'
         "404":
           description: Not Found
           schema:
@@ -3698,8 +3786,7 @@ paths:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/handlers.DefinitionWithChartsResponse'
         "400":
           description: Bad Request
           schema:
@@ -3746,8 +3833,7 @@ paths:
         "201":
           description: Created
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/handlers.DefinitionWithChartsResponse'
         "400":
           description: Bad Request
           schema:
@@ -3765,13 +3851,18 @@ paths:
       - stack-definitions
   /api/v1/stack-instances:
     get:
-      description: List stack instances with server-side pagination. Supports page/pageSize
+      description: 'List stack instances with server-side pagination. Supports page/pageSize
         or legacy limit/offset params. Use owner=me to filter by the authenticated
-        user.
+        user. Filter precedence: owner > name > pagination (only the first matching
+        filter is applied).'
       parameters:
       - description: Filter by owner (use 'me' for current user)
         in: query
         name: owner
+        type: string
+      - description: Filter by exact instance name
+        in: query
+        name: name
         type: string
       - description: 'Page number (1-based, default: 1)'
         in: query
@@ -3808,7 +3899,11 @@ paths:
       - stack-instances
   /api/v1/stack-instances/{id}:
     delete:
-      description: Delete a stack instance
+      description: Deletes a stack instance. If the instance has running resources
+        (status running/stopped/error), a cleanup is initiated first — helm releases
+        are uninstalled and the namespace is deleted before the database record is
+        removed. Returns 204 for immediate deletion (draft instances) or 202 when
+        async cleanup is required.
       parameters:
       - description: Instance ID
         in: path
@@ -3818,10 +3913,30 @@ paths:
       produces:
       - application/json
       responses:
+        "202":
+          description: Cleanup initiated, instance will be deleted after resources
+            are removed
+          schema:
+            additionalProperties:
+              type: string
+            type: object
         "204":
-          description: No Content
+          description: No Content — instance deleted immediately (no resources to
+            clean)
         "404":
           description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "409":
+          description: Instance is in a transient state (deploying/stopping/cleaning)
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "503":
+          description: Deploy manager not configured
           schema:
             additionalProperties:
               type: string
@@ -3889,6 +4004,65 @@ paths:
               type: string
             type: object
       summary: Update a stack instance
+      tags:
+      - stack-instances
+  /api/v1/stack-instances/{id}/actions/{name}:
+    post:
+      consumes:
+      - application/json
+      description: Dispatches to the action subscriber webhook and wraps its response
+        in an envelope containing action, instance_id, status_code, and result fields.
+        The subscriber's JSON body is nested under the result key. Returns 200 even
+        for non-2xx subscriber responses — check status_code to distinguish.
+      parameters:
+      - description: Instance ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Action name
+        in: path
+        name: name
+        required: true
+        type: string
+      - description: Optional parameters passed through to the subscriber
+        in: body
+        name: request
+        schema:
+          $ref: '#/definitions/handlers.invokeActionRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Instance not found or action not registered
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "502":
+          description: Subscriber unreachable
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "503":
+          description: Action registry not configured
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Invoke a registered action against a stack instance
       tags:
       - stack-instances
   /api/v1/stack-instances/{id}/branches:
@@ -4190,6 +4364,52 @@ paths:
               type: string
             type: object
       summary: Get deployment logs
+      tags:
+      - stack-instances
+  /api/v1/stack-instances/{id}/deploy-log/{logId}/values:
+    get:
+      description: Returns the merged Helm values that were used for a specific deployment
+      parameters:
+      - description: Instance ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Deployment Log ID
+        in: path
+        name: logId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "503":
+          description: Service Unavailable
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get values snapshot for a deployment log entry
       tags:
       - stack-instances
   /api/v1/stack-instances/{id}/deploy-preview:
@@ -4531,6 +4751,67 @@ paths:
       security:
       - BearerAuth: []
       summary: Set or update quota override for an instance
+      tags:
+      - stack-instances
+  /api/v1/stack-instances/{id}/rollback:
+    post:
+      consumes:
+      - application/json
+      description: Rollback all Helm releases in a stack instance to their previous
+        revision
+      parameters:
+      - description: Instance ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: 'Optional: {\'
+        in: body
+        name: body
+        schema:
+          type: object
+      produces:
+      - application/json
+      responses:
+        "202":
+          description: Accepted
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "409":
+          description: Conflict
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "503":
+          description: Service Unavailable
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Rollback a stack instance
       tags:
       - stack-instances
   /api/v1/stack-instances/{id}/status:
@@ -5007,7 +5288,7 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/models.StackTemplate'
+            $ref: '#/definitions/handlers.TemplateDetailResponse'
         "404":
           description: Not Found
           schema:
@@ -5214,7 +5495,7 @@ paths:
         "201":
           description: Created
           schema:
-            $ref: '#/definitions/models.StackDefinition'
+            $ref: '#/definitions/handlers.DefinitionWithChartsResponse'
         "400":
           description: Bad Request
           schema:

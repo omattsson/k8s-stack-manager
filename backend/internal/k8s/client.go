@@ -4,6 +4,8 @@ package k8s
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os"
@@ -137,6 +139,95 @@ func (c *Client) NamespaceExists(ctx context.Context, name string) (bool, error)
 // Clientset returns the underlying kubernetes.Interface for advanced operations.
 func (c *Client) Clientset() kubernetes.Interface {
 	return c.clientset
+}
+
+type dockerConfigJSON struct {
+	Auths map[string]dockerConfigEntry `json:"auths"`
+}
+
+type dockerConfigEntry struct {
+	Username string `json:"username"`
+	Password string `json:"password"`
+	Auth     string `json:"auth"`
+}
+
+// EnsureDockerRegistrySecret creates or updates a docker-registry type secret
+// in the given namespace. Used for automatic image pull secret provisioning
+// so that pods can pull images from private registries like ACR.
+func (c *Client) EnsureDockerRegistrySecret(ctx context.Context, namespace, secretName, server, username, password string) error {
+	cfg := dockerConfigJSON{
+		Auths: map[string]dockerConfigEntry{
+			server: {
+				Username: username,
+				Password: password,
+				Auth:     base64.StdEncoding.EncodeToString([]byte(username + ":" + password)),
+			},
+		},
+	}
+	cfgBytes, err := json.Marshal(cfg)
+	if err != nil {
+		return fmt.Errorf("marshal docker config: %w", err)
+	}
+
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      secretName,
+			Namespace: namespace,
+			Labels: map[string]string{
+				"managed-by":                             "k8s-stack-manager",
+				"k8s-stack-manager.io/image-pull-secret": "true",
+			},
+			Annotations: map[string]string{
+				"k8s-stack-manager.io/registry": server,
+			},
+		},
+		Type: corev1.SecretTypeDockerConfigJson,
+		Data: map[string][]byte{
+			corev1.DockerConfigJsonKey: cfgBytes,
+		},
+	}
+
+	existing, err := c.clientset.CoreV1().Secrets(namespace).Get(ctx, secretName, metav1.GetOptions{})
+	if err != nil {
+		if !k8serrors.IsNotFound(err) {
+			return fmt.Errorf("get existing secret %s/%s: %w", namespace, secretName, err)
+		}
+		// Secret doesn't exist — create it.
+		if _, err := c.clientset.CoreV1().Secrets(namespace).Create(ctx, secret, metav1.CreateOptions{}); err != nil {
+			if !k8serrors.IsAlreadyExists(err) {
+				return fmt.Errorf("create secret %s/%s: %w", namespace, secretName, err)
+			}
+			// Race: another caller created it between Get and Create — fall through to update.
+			existing, err = c.clientset.CoreV1().Secrets(namespace).Get(ctx, secretName, metav1.GetOptions{})
+			if err != nil {
+				return fmt.Errorf("get secret after create race %s/%s: %w", namespace, secretName, err)
+			}
+		} else {
+			slog.Info("Created image pull secret", "namespace", namespace, "secret", secretName, "registry", server)
+			return nil
+		}
+	}
+
+	// Update existing secret with fresh credentials.
+	existing.Data = secret.Data
+	existing.Type = secret.Type
+	if existing.Labels == nil {
+		existing.Labels = map[string]string{}
+	}
+	for k, v := range secret.Labels {
+		existing.Labels[k] = v
+	}
+	if existing.Annotations == nil {
+		existing.Annotations = map[string]string{}
+	}
+	for k, v := range secret.Annotations {
+		existing.Annotations[k] = v
+	}
+	if _, err := c.clientset.CoreV1().Secrets(namespace).Update(ctx, existing, metav1.UpdateOptions{}); err != nil {
+		return fmt.Errorf("update secret %s/%s: %w", namespace, secretName, err)
+	}
+	slog.Debug("Updated image pull secret", "namespace", namespace, "secret", secretName, "registry", server)
+	return nil
 }
 
 // CopySecret copies a secret from a source namespace to a target namespace.
