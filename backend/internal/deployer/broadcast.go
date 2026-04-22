@@ -53,6 +53,8 @@ func (m *Manager) broadcastStatusWithError(instanceID, status, logID, errorMessa
 }
 
 // broadcastLog sends a deployment log line via WebSocket for real-time log streaming.
+// Uses targeted broadcast when the hub supports it, so only clients subscribed to
+// the instance receive the high-volume log output.
 func (m *Manager) broadcastLog(instanceID, logID, line string) {
 	if m.hub == nil {
 		return
@@ -74,5 +76,9 @@ func (m *Manager) broadcastLog(instanceID, logID, line string) {
 		return
 	}
 
-	m.hub.Broadcast(data)
+	if targeted, ok := m.hub.(websocket.TargetedSender); ok {
+		targeted.BroadcastToInstance(instanceID, data)
+	} else {
+		m.hub.Broadcast(data)
+	}
 }

@@ -163,7 +163,7 @@ const DeploymentLogViewer = ({ logs, loading, streamingLines }: DeploymentLogVie
                   sx={terminalSx}
                 >
                   {lines.map((line, i) => (
-                    <div key={i}>{line || '\u00A0'}</div>
+                    <div key={`line-${i}`}>{line || '\u00A0'}</div>
                   ))}
                 </Box>
               ) : log.output ? (

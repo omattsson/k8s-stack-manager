@@ -59,6 +59,8 @@ const Detail = () => {
   const [cleanDialogOpen, setCleanDialogOpen] = useState(false);
   const [deployLogs, setDeployLogs] = useState<DeploymentLog[]>([]);
   const [streamingLines, setStreamingLines] = useState<Record<string, string[]>>({});
+  const streamingBufferRef = useRef<Record<string, string[]>>({});
+  const flushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [k8sStatus, setK8sStatus] = useState<NamespaceStatus | null>(null);
   const [statusLoading, setStatusLoading] = useState(false);
   const [extending, setExtending] = useState(false);
@@ -155,7 +157,7 @@ const Detail = () => {
       // On active states, insert a placeholder log entry so streaming lines
       // have an accordion to attach to before the REST refresh completes.
       const logId = (payload as { log_id?: string }).log_id;
-      if ((newStatus === 'deploying' || newStatus === 'stopping' || newStatus === 'cleaning') && logId) {
+      if ((newStatus === 'deploying' || newStatus === 'stopping' || newStatus === 'cleaning' || newStatus === 'rolling_back') && logId) {
         const actionMap: Record<string, DeploymentLog['action']> = {
           deploying: 'deploy', stopping: 'stop', cleaning: 'clean', rolling_back: 'rollback',
         };
@@ -176,6 +178,11 @@ const Detail = () => {
       if (newStatus === 'running' || newStatus === 'stopped' || newStatus === 'error' || newStatus === 'draft') {
         instanceService.getDeployLog(id).then(setDeployLogs).catch(() => {});
         setStreamingLines({});
+        streamingBufferRef.current = {};
+        if (flushTimerRef.current) {
+          clearTimeout(flushTimerRef.current);
+          flushTimerRef.current = null;
+        }
         setDeploying(false);
         setStopping(false);
         setCleaning(false);
@@ -183,17 +190,34 @@ const Detail = () => {
     }
 
     // Real-time log line streaming from active deployments.
+    // Lines are buffered and flushed in batches (50ms) to reduce GC pressure
+    // and React re-renders during high-throughput output (e.g. helm --debug).
     if (msg.type === 'deployment.log') {
       const logPayload = msg.payload as { log_id?: string; line?: string };
       if (logPayload.log_id && logPayload.line !== undefined) {
-        const MAX_STREAMING_LINES = 5000;
-        setStreamingLines((prev) => {
-          const existing = prev[logPayload.log_id!] || [];
-          const updated = existing.length >= MAX_STREAMING_LINES
-            ? [...existing.slice(existing.length - MAX_STREAMING_LINES + 1), logPayload.line!]
-            : [...existing, logPayload.line!];
-          return { ...prev, [logPayload.log_id!]: updated };
-        });
+        const buf = streamingBufferRef.current;
+        if (!buf[logPayload.log_id!]) buf[logPayload.log_id!] = [];
+        buf[logPayload.log_id!].push(logPayload.line!);
+
+        if (!flushTimerRef.current) {
+          flushTimerRef.current = setTimeout(() => {
+            flushTimerRef.current = null;
+            const pending = { ...streamingBufferRef.current };
+            streamingBufferRef.current = {};
+            setStreamingLines((prev) => {
+              const MAX_STREAMING_LINES = 5000;
+              const next = { ...prev };
+              for (const [logId, newLines] of Object.entries(pending)) {
+                const existing = next[logId] || [];
+                const merged = [...existing, ...newLines];
+                next[logId] = merged.length > MAX_STREAMING_LINES
+                  ? merged.slice(merged.length - MAX_STREAMING_LINES)
+                  : merged;
+              }
+              return next;
+            });
+          }, 50);
+        }
       }
     }
 
@@ -213,7 +237,15 @@ const Detail = () => {
 
   }, [id]);
 
-  useWebSocket(handleWsMessage);
+  const { send } = useWebSocket(handleWsMessage);
+
+  useEffect(() => {
+    if (!id) return;
+    send('subscribe', { instance_id: id });
+    return () => {
+      send('unsubscribe', { instance_id: id });
+    };
+  }, [id, send]);
 
   const handleChartBranchChange = async (chartId: string, newBranch: string) => {
     if (!id) return;

@@ -14,7 +14,6 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 )
 
@@ -319,9 +318,13 @@ func (h *HelmClient) run(ctx context.Context, args []string) (string, error) {
 	return output, nil
 }
 
+const maxScannerLineSize = 256 * 1024
+
 // runStreaming executes a helm command, calling onLine for each line of combined
 // stdout/stderr output as it is produced. The full output is still accumulated
 // and returned so callers can store it in the deployment log.
+// Stdout and stderr are merged via io.MultiReader into a single scanner to
+// preserve deterministic line ordering (same approach as the non-streaming run()).
 func (h *HelmClient) runStreaming(ctx context.Context, args []string, onLine func(string)) (string, error) {
 	if h.kubeconfig != "" {
 		args = append([]string{"--kubeconfig", h.kubeconfig}, args...)
@@ -349,33 +352,18 @@ func (h *HelmClient) runStreaming(ctx context.Context, args []string, onLine fun
 	}
 
 	var combined strings.Builder
-	var mu sync.Mutex
-	var wg sync.WaitGroup
-
-	// Two goroutines scan stdout and stderr concurrently. Lines from both
-	// streams are interleaved non-deterministically in the combined buffer
-	// and in onLine calls — this matches Helm's own combined output behavior.
-	scanPipe := func(r io.Reader) {
-		defer wg.Done()
-		scanner := bufio.NewScanner(r)
-		scanner.Buffer(make([]byte, 0, 256*1024), 256*1024)
-		for scanner.Scan() {
-			line := scanner.Text()
-			mu.Lock()
-			combined.WriteString(line)
-			combined.WriteByte('\n')
-			mu.Unlock()
-			onLine(line)
-		}
-		if err := scanner.Err(); err != nil {
-			slog.Warn("scanner error reading helm output", "error", err)
-		}
+	scanner := bufio.NewScanner(io.MultiReader(stdout, stderr))
+	scanner.Buffer(make([]byte, 0, maxScannerLineSize), maxScannerLineSize)
+	for scanner.Scan() {
+		line := scanner.Text()
+		combined.WriteString(line)
+		combined.WriteByte('\n')
+		onLine(line)
 	}
-
-	wg.Add(2)
-	go scanPipe(stdout)
-	go scanPipe(stderr)
-	wg.Wait()
+	if err := scanner.Err(); err != nil {
+		slog.Warn("scanner error reading helm output", "error", err)
+		onLine(fmt.Sprintf("[scanner error: %v]", err))
+	}
 
 	err = cmd.Wait()
 	output := combined.String()

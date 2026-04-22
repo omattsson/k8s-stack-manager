@@ -340,6 +340,29 @@ func (m *mockBroadcaster) getMessages() [][]byte {
 	return cp
 }
 
+// ---- helpers ----
+
+// waitForTerminalStatus polls the instance repo until the instance reaches a
+// terminal status (not queued/deploying/stopping/cleaning). This replaces
+// fixed time.Sleep calls, making tests faster and less flaky.
+func waitForTerminalStatus(t *testing.T, repo *mockInstanceRepo, instanceID string) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		inst, err := repo.FindByID(instanceID)
+		if err == nil {
+			switch inst.Status {
+			case models.StackStatusQueued, models.StackStatusDeploying,
+				models.StackStatusStopping, models.StackStatusCleaning:
+			default:
+				return
+			}
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("timed out waiting for terminal instance status")
+}
+
 // ---- tests ----
 
 // mockClusterResolver implements ClusterResolver for tests.
@@ -537,7 +560,7 @@ func TestManager_Deploy_WithCharts_Fails(t *testing.T) {
 	assert.NotEmpty(t, logID)
 
 	// Wait for async completion.
-	time.Sleep(500 * time.Millisecond)
+	waitForTerminalStatus(t, instanceRepo, inst.ID)
 
 	// Verify instance status is error.
 	final, err := instanceRepo.FindByID(inst.ID)
@@ -820,7 +843,7 @@ func TestManager_Deploy_ChartsSortedByDeployOrder(t *testing.T) {
 	assert.NoError(t, err)
 
 	// Wait for async completion.
-	time.Sleep(500 * time.Millisecond)
+	waitForTerminalStatus(t, instanceRepo, inst.ID)
 
 	// The error should reference the first chart (deploy order 1) since it fails first.
 	finalLog, err := logRepo.FindByID(context.Background(), logID)
@@ -876,7 +899,7 @@ func TestManager_StopWithCharts_ExecutesUninstall(t *testing.T) {
 	assert.NotEmpty(t, logID)
 
 	// Wait for async completion.
-	time.Sleep(500 * time.Millisecond)
+	waitForTerminalStatus(t, instanceRepo, inst.ID)
 
 	// Verify final status is error (because helm binary is nonexistent).
 	final, err := instanceRepo.FindByID(inst.ID)
@@ -1216,7 +1239,7 @@ func TestManager_StopWithCharts_ReversesDeployOrder(t *testing.T) {
 	assert.NoError(t, err)
 
 	// Wait for async.
-	time.Sleep(500 * time.Millisecond)
+	waitForTerminalStatus(t, instanceRepo, inst.ID)
 
 	// The error should reference the third chart (highest deploy order),
 	// which should be uninstalled first (reverse order).
@@ -1567,7 +1590,7 @@ func TestManager_Deploy_PartialRollback(t *testing.T) {
 	assert.NotEmpty(t, logID)
 
 	// Wait for async completion.
-	time.Sleep(500 * time.Millisecond)
+	waitForTerminalStatus(t, instanceRepo, inst.ID)
 
 	// Verify instance status is error with original failure message.
 	final, err := instanceRepo.FindByID(inst.ID)
@@ -1646,7 +1669,7 @@ func TestManager_Deploy_PartialRollback_RollbackFails(t *testing.T) {
 	assert.NotEmpty(t, logID)
 
 	// Wait for async completion.
-	time.Sleep(500 * time.Millisecond)
+	waitForTerminalStatus(t, instanceRepo, inst.ID)
 
 	// Verify instance status is error with the ORIGINAL deploy failure (not rollback failure).
 	final, err := instanceRepo.FindByID(inst.ID)
@@ -1722,7 +1745,7 @@ func TestManager_Clean_Success(t *testing.T) {
 	assert.Equal(t, models.StackStatusCleaning, updated.Status)
 
 	// Wait for async completion.
-	time.Sleep(500 * time.Millisecond)
+	waitForTerminalStatus(t, instanceRepo, inst.ID)
 
 	// Verify final status is draft.
 	final, err := instanceRepo.FindByID(inst.ID)
@@ -1785,7 +1808,7 @@ func TestManager_Clean_Success_NoK8sClient(t *testing.T) {
 	assert.NotEmpty(t, logID)
 
 	// Wait for async completion.
-	time.Sleep(500 * time.Millisecond)
+	waitForTerminalStatus(t, instanceRepo, inst.ID)
 
 	// Verify final status is draft (namespace delete skipped).
 	final, err := instanceRepo.FindByID(inst.ID)
@@ -1844,7 +1867,7 @@ func TestManager_Clean_HelmFails(t *testing.T) {
 	assert.NotEmpty(t, logID)
 
 	// Wait for async completion.
-	time.Sleep(500 * time.Millisecond)
+	waitForTerminalStatus(t, instanceRepo, inst.ID)
 
 	// Best-effort: uninstall failures are warnings, not errors.
 	// With no K8s client, namespace deletion is skipped, so the clean succeeds.
@@ -1915,7 +1938,7 @@ func TestManager_Clean_ReleasesAlreadyGone(t *testing.T) {
 	assert.NotEmpty(t, logID)
 
 	// Wait for async completion.
-	time.Sleep(500 * time.Millisecond)
+	waitForTerminalStatus(t, instanceRepo, inst.ID)
 
 	// Should succeed — "not found" releases are treated as already removed.
 	final, err := instanceRepo.FindByID(inst.ID)
@@ -1977,7 +2000,7 @@ func TestManager_Deploy_FirstChartFails_NoRollback(t *testing.T) {
 	assert.NotEmpty(t, logID)
 
 	// Wait for async completion.
-	time.Sleep(500 * time.Millisecond)
+	waitForTerminalStatus(t, instanceRepo, inst.ID)
 
 	// Verify instance is in error state.
 	final, err := instanceRepo.FindByID(inst.ID)
@@ -3136,7 +3159,7 @@ func TestManager_Deploy_StreamingBroadcastsPerLine(t *testing.T) {
 	assert.NotEmpty(t, logID)
 
 	// Wait for async completion.
-	time.Sleep(500 * time.Millisecond)
+	waitForTerminalStatus(t, instanceRepo, inst.ID)
 
 	// Verify the streaming executor's WithLineHandler was called.
 	assert.True(t, helmMock.wasLineHandlerSet(), "WithLineHandler should have been called")
@@ -3216,7 +3239,7 @@ func TestManager_Deploy_NonStreamingBroadcastsPerChart(t *testing.T) {
 	assert.NotEmpty(t, logID)
 
 	// Wait for async completion.
-	time.Sleep(500 * time.Millisecond)
+	waitForTerminalStatus(t, instanceRepo, inst.ID)
 
 	// Verify instance completed successfully.
 	final, err := instanceRepo.FindByID(inst.ID)
@@ -3288,7 +3311,7 @@ func TestManager_StopWithCharts_StreamingSupport(t *testing.T) {
 	assert.NotEmpty(t, logID)
 
 	// Wait for async completion.
-	time.Sleep(500 * time.Millisecond)
+	waitForTerminalStatus(t, instanceRepo, inst.ID)
 
 	// Verify the streaming executor's WithLineHandler was called.
 	assert.True(t, helmMock.wasLineHandlerSet(), "WithLineHandler should have been called for stop")
@@ -3354,7 +3377,7 @@ func TestManager_StopWithCharts_NonStreamingBroadcastsPerChart(t *testing.T) {
 	assert.NotEmpty(t, logID)
 
 	// Wait for async completion.
-	time.Sleep(500 * time.Millisecond)
+	waitForTerminalStatus(t, instanceRepo, inst.ID)
 
 	// Verify instance completed successfully.
 	final, err := instanceRepo.FindByID(inst.ID)
@@ -3422,7 +3445,7 @@ func TestManager_Clean_StreamingSupport(t *testing.T) {
 	assert.NotEmpty(t, logID)
 
 	// Wait for async completion.
-	time.Sleep(500 * time.Millisecond)
+	waitForTerminalStatus(t, instanceRepo, inst.ID)
 
 	// Verify the streaming executor's WithLineHandler was called.
 	assert.True(t, helmMock.wasLineHandlerSet(), "WithLineHandler should have been called for clean")
@@ -3495,7 +3518,7 @@ func TestManager_Deploy_StreamingPartialFailure_StillBroadcastsLines(t *testing.
 	assert.NotEmpty(t, logID)
 
 	// Wait for async completion.
-	time.Sleep(500 * time.Millisecond)
+	waitForTerminalStatus(t, instanceRepo, inst.ID)
 
 	// Verify instance ended in error state.
 	final, err := instanceRepo.FindByID(inst.ID)
@@ -3566,7 +3589,7 @@ func TestManager_Rollback_StreamingSupport(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotEmpty(t, logID)
 
-	time.Sleep(500 * time.Millisecond)
+	waitForTerminalStatus(t, instanceRepo, inst.ID)
 
 	final, err := instanceRepo.FindByID(inst.ID)
 	require.NoError(t, err)

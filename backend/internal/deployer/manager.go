@@ -199,6 +199,7 @@ func (m *Manager) fireDeployHook(ctx context.Context, event string, instance *mo
 // per-chart broadcastLog calls that would duplicate streaming output).
 func (m *Manager) wrapStreaming(helm HelmExecutor, instanceID, logID string) (HelmExecutor, bool) {
 	if streamer, ok := helm.(StreamingHelmExecutor); ok {
+		slog.Info("streaming enabled for helm operations", "instance_id", instanceID, "log_id", logID)
 		return streamer.WithLineHandler(func(line string) {
 			m.broadcastLog(instanceID, logID, line)
 		}), true
