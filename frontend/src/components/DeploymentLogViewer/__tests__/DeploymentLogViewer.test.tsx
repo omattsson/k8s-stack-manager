@@ -153,8 +153,7 @@ describe('DeploymentLogViewer', () => {
     expect(screen.getByText(/Error: release not found/)).toBeVisible();
   });
 
-  it('shows error_message prefixed with "Error:" for error logs', async () => {
-    const user = userEvent.setup();
+  it('shows error_message prefixed with "Error:" for error logs', () => {
     const errorLog: DeploymentLog = {
       id: 'log-err-detail',
       stack_instance_id: 'inst-1',
