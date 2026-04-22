@@ -791,6 +791,26 @@ func (d *Database) AutoMigrate() error {
 		},
 	})
 
+	// Migration 33: Add index on stack_instances.name for name-based lookup
+	migrator.AddMigration(schema.Migration{
+		Version:     "20231201000033",
+		Name:        "add_stack_instances_name_index",
+		Description: "Add index on stack_instances(name) for FindByName queries used by CLI name resolution",
+		Up: func(tx *gorm.DB) error {
+			var count int64
+			tx.Raw("SELECT COUNT(1) FROM information_schema.statistics WHERE table_schema = DATABASE() AND table_name = ? AND index_name = ?",
+				"stack_instances", "idx_stack_instances_name").Scan(&count)
+			if count > 0 {
+				return nil
+			}
+			return tx.Exec("CREATE INDEX idx_stack_instances_name ON stack_instances(name)").Error
+		},
+		Down: func(tx *gorm.DB) error {
+			_ = tx.Exec("DROP INDEX idx_stack_instances_name ON stack_instances").Error
+			return nil
+		},
+	})
+
 	// Run migrations
 	if err := migrator.MigrateUp(); err != nil {
 		return err

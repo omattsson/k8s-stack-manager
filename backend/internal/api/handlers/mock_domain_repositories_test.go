@@ -795,6 +795,21 @@ func (m *MockStackInstanceRepository) ListByOwner(ownerID string) ([]models.Stac
 	return out, nil
 }
 
+func (m *MockStackInstanceRepository) FindByName(name string) ([]models.StackInstance, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.err != nil {
+		return nil, m.err
+	}
+	var out []models.StackInstance
+	for _, i := range m.items {
+		if i.Name == name {
+			out = append(out, *i)
+		}
+	}
+	return out, nil
+}
+
 func (m *MockStackInstanceRepository) FindByCluster(clusterID string) ([]models.StackInstance, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
