@@ -29,6 +29,7 @@ func NewNotificationHandler(repo models.NotificationRepository) *NotificationHan
 type updatePreferenceRequest struct {
 	EventType string `json:"event_type"`
 	Enabled   bool   `json:"enabled"`
+	Channel   string `json:"channel,omitempty"`
 }
 
 // List godoc
@@ -231,11 +232,16 @@ func (h *NotificationHandler) UpdatePreferences(c *gin.Context) {
 	}
 
 	for _, r := range reqs {
+		channel := r.Channel
+		if channel == "" {
+			channel = "in_app"
+		}
 		pref := &models.NotificationPreference{
 			ID:        generateID(),
 			UserID:    userID,
 			EventType: r.EventType,
 			Enabled:   r.Enabled,
+			Channel:   channel,
 		}
 
 		if err := h.repo.UpdatePreference(c.Request.Context(), pref); err != nil {

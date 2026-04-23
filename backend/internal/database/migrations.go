@@ -854,6 +854,27 @@ func (d *Database) AutoMigrate() error {
 		},
 	})
 
+	migrator.AddMigration(schema.Migration{
+		Version:     "20260423000035",
+		Name:        "add_channel_to_notification_preferences",
+		Description: "Add channel column to notification_preferences for routing notifications to different delivery channels",
+		Up: func(tx *gorm.DB) error {
+			if tx.Migrator().HasColumn(&models.NotificationPreference{}, "Channel") {
+				return nil
+			}
+			if tx.Dialector.Name() == "mysql" {
+				return tx.Exec("ALTER TABLE notification_preferences ADD COLUMN channel VARCHAR(20) NOT NULL DEFAULT 'in_app'").Error // #nosec G202
+			}
+			return tx.Migrator().AddColumn(&models.NotificationPreference{}, "Channel")
+		},
+		Down: func(tx *gorm.DB) error {
+			if tx.Migrator().HasColumn(&models.NotificationPreference{}, "Channel") {
+				return tx.Migrator().DropColumn(&models.NotificationPreference{}, "Channel")
+			}
+			return nil
+		},
+	})
+
 	// Run migrations
 	if err := migrator.MigrateUp(); err != nil {
 		return err

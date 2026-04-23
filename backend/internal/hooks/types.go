@@ -21,6 +21,11 @@ const (
 	EventPreRollback         = "pre-rollback"
 	EventPostRollback        = "post-rollback"
 	EventDeployFinalized     = "deploy-finalized"
+	EventStopCompleted       = "stop-completed"
+	EventCleanCompleted      = "clean-completed"
+	EventRollbackCompleted   = "rollback-completed"
+	EventDeleteCompleted     = "delete-completed"
+	EventInstanceCreated     = "instance-created"
 )
 
 // FailurePolicy controls how dispatch errors propagate to the caller.

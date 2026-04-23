@@ -18,12 +18,14 @@ type Notification struct {
 	IsRead     bool      `json:"is_read" gorm:"default:false;index"`
 }
 
-// NotificationPreference controls whether a user receives a specific event type.
+// NotificationPreference controls whether a user receives a specific event type
+// and which channel it is delivered to.
 type NotificationPreference struct {
 	ID        string `json:"id" gorm:"primaryKey;size:36"`
 	UserID    string `json:"user_id" gorm:"size:36;uniqueIndex:idx_user_event;not null"`
 	EventType string `json:"event_type" gorm:"size:50;uniqueIndex:idx_user_event;not null"`
 	Enabled   bool   `json:"enabled" gorm:"default:true"`
+	Channel   string `json:"channel" gorm:"size:20;default:in_app;not null"`
 }
 
 // PaginatedNotifications wraps a page of notification results with metadata.

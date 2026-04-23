@@ -82,3 +82,17 @@ func (m *Manager) broadcastLog(instanceID, logID, line string) {
 		m.hub.Broadcast(data)
 	}
 }
+
+// notifyUser sends an in-app notification to a specific user.
+// Silently returns if no notifier is configured.
+func (m *Manager) notifyUser(ownerID, instanceID, notifType, title, message string) {
+	if m.notifier == nil {
+		return
+	}
+
+	if err := m.notifier.Notify(m.shutdownCtx, ownerID, notifType, title, message, "stack_instance", instanceID); err != nil {
+		slog.Error("failed to create lifecycle notification",
+			"instance_id", instanceID, "type", notifType, "error", err)
+	}
+}
+

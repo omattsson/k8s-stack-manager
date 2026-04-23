@@ -73,7 +73,11 @@ func isKnownEvent(e string) bool {
 		EventPreInstanceCreate, EventPostInstanceCreate,
 		EventPreInstanceDelete, EventPostInstanceDelete,
 		EventPreNamespaceCreate, EventPostNamespaceCreate,
-		EventDeployFinalized:
+		EventPreRollback, EventPostRollback,
+		EventDeployFinalized,
+		EventStopCompleted, EventCleanCompleted,
+		EventRollbackCompleted, EventDeleteCompleted,
+		EventInstanceCreated:
 		return true
 	}
 	return false

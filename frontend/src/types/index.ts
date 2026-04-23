@@ -554,6 +554,7 @@ export interface NotificationPreference {
   user_id?: string;
   event_type: string;
   enabled: boolean;
+  channel?: string;
 }
 
 export interface NotificationListResponse {
