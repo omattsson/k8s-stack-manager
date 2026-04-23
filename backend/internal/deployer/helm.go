@@ -3,11 +3,13 @@
 package deployer
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"os/exec"
 	"strconv"
@@ -90,6 +92,14 @@ func (h *HelmClient) Timeout() time.Duration {
 // Install runs: helm upgrade --install <release> <chart> -f <valuesFile> -n <namespace> --create-namespace --timeout <timeout>
 // Returns combined stdout+stderr output and error.
 func (h *HelmClient) Install(ctx context.Context, req InstallRequest) (string, error) {
+	args, err := h.buildInstallArgs(req)
+	if err != nil {
+		return "", err
+	}
+	return h.run(ctx, args)
+}
+
+func (h *HelmClient) buildInstallArgs(req InstallRequest) ([]string, error) {
 	// Validate positional arguments to prevent argument injection. Namespace
 	// is validated upstream (RFC 1123 in StackInstance.Validate), but we
 	// re-check here as defense-in-depth since it is security-critical.
@@ -99,7 +109,7 @@ func (h *HelmClient) Install(ctx context.Context, req InstallRequest) (string, e
 		{"namespace", req.Namespace},
 	} {
 		if err := validatePositionalArg(check.name, check.value); err != nil {
-			return "", err
+			return nil, err
 		}
 	}
 
@@ -123,24 +133,28 @@ func (h *HelmClient) Install(ctx context.Context, req InstallRequest) (string, e
 	if req.SkipCRDs {
 		args = append(args, "--skip-crds")
 	}
-
-	return h.run(ctx, args)
+	return args, nil
 }
 
 // Uninstall runs: helm uninstall <release> -n <namespace>
 // Returns combined stdout+stderr output and error.
 func (h *HelmClient) Uninstall(ctx context.Context, req UninstallRequest) (string, error) {
-	if err := validatePositionalArg("release name", req.ReleaseName); err != nil {
+	args, err := h.buildUninstallArgs(req)
+	if err != nil {
 		return "", err
 	}
+	return h.run(ctx, args)
+}
 
-	args := []string{
+func (h *HelmClient) buildUninstallArgs(req UninstallRequest) ([]string, error) {
+	if err := validatePositionalArg("release name", req.ReleaseName); err != nil {
+		return nil, err
+	}
+	return []string{
 		"uninstall",
 		req.ReleaseName,
 		"-n", req.Namespace,
-	}
-
-	return h.run(ctx, args)
+	}, nil
 }
 
 // Status runs: helm status <release> -n <namespace> -o json
@@ -230,19 +244,24 @@ func (h *HelmClient) History(ctx context.Context, releaseName, namespace string,
 // Rollback runs: helm rollback <release> <revision> -n <namespace>
 // Returns combined stdout+stderr output and error.
 func (h *HelmClient) Rollback(ctx context.Context, releaseName, namespace string, revision int) (string, error) {
-	if err := validatePositionalArg("release name", releaseName); err != nil {
+	args, err := h.buildRollbackArgs(releaseName, namespace, revision)
+	if err != nil {
 		return "", err
 	}
+	return h.run(ctx, args)
+}
 
-	args := []string{
+func (h *HelmClient) buildRollbackArgs(releaseName, namespace string, revision int) ([]string, error) {
+	if err := validatePositionalArg("release name", releaseName); err != nil {
+		return nil, err
+	}
+	return []string{
 		"rollback",
 		releaseName,
 		strconv.Itoa(revision),
 		"-n", namespace,
 		"--timeout", h.timeout.String(),
-	}
-
-	return h.run(ctx, args)
+	}, nil
 }
 
 // GetValues runs: helm get values <release> -n <namespace> --revision <revision> -o yaml
@@ -297,4 +316,97 @@ func (h *HelmClient) run(ctx context.Context, args []string) (string, error) {
 	}
 
 	return output, nil
+}
+
+const maxScannerLineSize = 256 * 1024
+
+// runStreaming executes a helm command, calling onLine for each line of combined
+// stdout/stderr output as it is produced. The full output is still accumulated
+// and returned so callers can store it in the deployment log.
+// Stdout and stderr are merged via io.MultiReader into a single scanner to
+// preserve deterministic line ordering (same approach as the non-streaming run()).
+func (h *HelmClient) runStreaming(ctx context.Context, args []string, onLine func(string)) (string, error) {
+	if h.kubeconfig != "" {
+		args = append([]string{"--kubeconfig", h.kubeconfig}, args...)
+	}
+
+	slog.Info("executing helm command",
+		"binary", h.binaryPath,
+		"args", args,
+		"streaming", true,
+	)
+
+	cmd := exec.CommandContext(ctx, h.binaryPath, args...) //nolint:gosec // G204: same justification as run()
+
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return "", fmt.Errorf("creating stdout pipe: %w", err)
+	}
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		return "", fmt.Errorf("creating stderr pipe: %w", err)
+	}
+
+	if err := cmd.Start(); err != nil {
+		return "", fmt.Errorf("starting helm command: %w", err)
+	}
+
+	var combined strings.Builder
+	scanner := bufio.NewScanner(io.MultiReader(stdout, stderr))
+	scanner.Buffer(make([]byte, 0, maxScannerLineSize), maxScannerLineSize)
+	for scanner.Scan() {
+		line := scanner.Text()
+		combined.WriteString(line)
+		combined.WriteByte('\n')
+		onLine(line)
+	}
+	if err := scanner.Err(); err != nil {
+		slog.Warn("scanner error reading helm output", "error", err)
+		onLine(fmt.Sprintf("[scanner error: %v]", err))
+	}
+
+	err = cmd.Wait()
+	output := combined.String()
+	if err != nil {
+		return output, fmt.Errorf("helm command failed: %w", err)
+	}
+	return output, nil
+}
+
+// WithLineHandler returns a new HelmExecutor that streams each output line to fn.
+// Implements StreamingHelmExecutor. Methods that don't produce significant
+// streaming output (Status, ListReleases, History, GetValues) pass through
+// to the underlying HelmClient unchanged.
+func (h *HelmClient) WithLineHandler(fn func(string)) HelmExecutor {
+	return &streamingHelmClient{HelmClient: h, onLine: fn}
+}
+
+// streamingHelmClient wraps a HelmClient and streams each output line via onLine.
+type streamingHelmClient struct {
+	*HelmClient
+	onLine func(string)
+}
+
+func (s *streamingHelmClient) Install(ctx context.Context, req InstallRequest) (string, error) {
+	args, err := s.buildInstallArgs(req)
+	if err != nil {
+		return "", err
+	}
+	return s.runStreaming(ctx, args, s.onLine)
+}
+
+func (s *streamingHelmClient) Uninstall(ctx context.Context, req UninstallRequest) (string, error) {
+	args, err := s.buildUninstallArgs(req)
+	if err != nil {
+		return "", err
+	}
+	return s.runStreaming(ctx, args, s.onLine)
+}
+
+func (s *streamingHelmClient) Rollback(ctx context.Context, releaseName, namespace string, revision int) (string, error) {
+	args, err := s.buildRollbackArgs(releaseName, namespace, revision)
+	if err != nil {
+		return "", err
+	}
+	return s.runStreaming(ctx, args, s.onLine)
 }

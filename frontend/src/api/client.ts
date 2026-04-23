@@ -306,7 +306,8 @@ export const templateService = {
   get: async (id: string): Promise<StackTemplate> => {
     try {
       const response = await api.get(`/api/v1/templates/${id}`);
-      return { ...response.data, charts: response.data.charts || [] };
+      const { template, charts } = response.data;
+      return { ...template, charts: charts || [] };
     } catch (error) {
       console.error('Failed to fetch template:', error);
       throw error;
@@ -396,7 +397,7 @@ export const templateService = {
   instantiate: async (id: string, data: InstantiateTemplateRequest): Promise<StackDefinition> => {
     try {
       const response = await api.post(`/api/v1/templates/${id}/instantiate`, data);
-      return response.data;
+      return response.data.definition ?? response.data;
     } catch (error) {
       console.error('Failed to instantiate template:', error);
       throw error;

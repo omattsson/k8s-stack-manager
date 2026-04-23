@@ -1,6 +1,7 @@
 package websocket
 
 import (
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"time"
@@ -76,15 +77,14 @@ func (c *Client) readPump() {
 	})
 
 	for {
-		_, _, err := c.conn.ReadMessage()
+		_, data, err := c.conn.ReadMessage()
 		if err != nil {
 			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseNormalClosure) {
 				slog.Warn("WebSocket unexpected close", "error", err)
 			}
 			return
 		}
-		// Inbound messages from clients are currently ignored.
-		// Future: route client messages through the hub or a handler.
+		c.handleInbound(data)
 	}
 }
 
@@ -161,4 +161,36 @@ func (c *Client) writeMessage(data []byte) error {
 		return err
 	}
 	return w.Close()
+}
+
+// inboundMsg is the minimal envelope parsed from client-sent JSON.
+type inboundMsg struct {
+	Type    string          `json:"type"`
+	Payload json.RawMessage `json:"payload"`
+}
+
+type subscribePayload struct {
+	InstanceID string `json:"instance_id"`
+}
+
+// handleInbound routes inbound client messages. Currently supports:
+//   - subscribe: register interest in an instance's deployment logs
+//   - unsubscribe: remove interest
+func (c *Client) handleInbound(data []byte) {
+	var msg inboundMsg
+	if err := json.Unmarshal(data, &msg); err != nil {
+		return
+	}
+	switch msg.Type {
+	case "subscribe":
+		var p subscribePayload
+		if json.Unmarshal(msg.Payload, &p) == nil && p.InstanceID != "" {
+			c.hub.Subscribe(c, p.InstanceID)
+		}
+	case "unsubscribe":
+		var p subscribePayload
+		if json.Unmarshal(msg.Payload, &p) == nil && p.InstanceID != "" {
+			c.hub.Unsubscribe(c, p.InstanceID)
+		}
+	}
 }

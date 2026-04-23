@@ -13,6 +13,7 @@ import type { DeploymentLog } from '../../types';
 interface DeploymentLogViewerProps {
   logs: DeploymentLog[];
   loading?: boolean;
+  streamingLines?: Record<string, string[]>;
 }
 
 const statusColor = (status: string): 'success' | 'error' | 'info' | 'default' => {
@@ -24,11 +25,12 @@ const statusColor = (status: string): 'success' | 'error' | 'info' | 'default' =
   }
 };
 
-const actionColor = (action: string): 'primary' | 'warning' | 'error' => {
+const actionColor = (action: string): 'primary' | 'warning' | 'error' | 'info' => {
   switch (action) {
     case 'deploy': return 'primary';
     case 'stop': return 'warning';
     case 'clean': return 'error';
+    case 'rollback': return 'info';
     default: return 'primary';
   }
 };
@@ -43,8 +45,22 @@ const formatDuration = (startedAt: string, completedAt: string): string => {
   return `${minutes}m ${remainingSeconds}s`;
 };
 
-const DeploymentLogViewer = ({ logs, loading }: DeploymentLogViewerProps) => {
+const terminalSx = {
+  p: 2,
+  bgcolor: '#1e1e1e',
+  color: '#d4d4d4',
+  fontFamily: 'monospace',
+  fontSize: '0.8rem',
+  lineHeight: 1.6,
+  maxHeight: 300,
+  overflow: 'auto',
+  whiteSpace: 'pre-wrap',
+  wordBreak: 'break-all',
+} as const;
+
+const DeploymentLogViewer = ({ logs, loading, streamingLines }: DeploymentLogViewerProps) => {
   const bottomRef = useRef<HTMLDivElement>(null);
+  const streamContainerRef = useRef<HTMLDivElement>(null);
   const [expanded, setExpanded] = useState<string | false>(false);
 
   // Expand the most recent log by default, but only when there's no user selection
@@ -61,6 +77,16 @@ const DeploymentLogViewer = ({ logs, loading }: DeploymentLogViewerProps) => {
       });
     }
   }, [logs]);
+
+  const activeStreamLineCount = expanded && streamingLines?.[expanded]?.length;
+
+  // Auto-scroll streaming output to bottom as new lines arrive.
+  useEffect(() => {
+    const el = streamContainerRef.current;
+    if (el) {
+      el.scrollTop = el.scrollHeight;
+    }
+  }, [activeStreamLineCount]);
 
   // Auto-scroll when a running log's output updates
   useEffect(() => {
@@ -84,65 +110,82 @@ const DeploymentLogViewer = ({ logs, loading }: DeploymentLogViewerProps) => {
 
   return (
     <Box>
-      {logs.map((log) => (
-        <Accordion
-          key={log.id}
-          expanded={expanded === log.id}
-          onChange={handleAccordionChange(log.id)}
-          sx={{ mb: 1, '&:before': { display: 'none' } }}
-        >
-          <AccordionSummary expandIcon={<ExpandMoreIcon />}>
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, width: '100%', mr: 1 }}>
-              <Chip
-                label={log.action}
-                size="small"
-                color={actionColor(log.action)}
-                variant="outlined"
-              />
-              <Chip
-                label={log.status}
-                size="small"
-                color={statusColor(log.status)}
-              />
-              <Typography variant="caption" color="text.secondary" sx={{ ml: 'auto' }}>
-                {new Date(log.started_at).toLocaleString()}
-                {log.completed_at && ` (${formatDuration(log.started_at, log.completed_at)})`}
-              </Typography>
-            </Box>
-          </AccordionSummary>
-          <AccordionDetails sx={{ p: 0 }}>
-            {log.output ? (
-              <Box
-                sx={{
-                  p: 2,
-                  bgcolor: '#1e1e1e',
-                  color: '#d4d4d4',
-                  fontFamily: 'monospace',
-                  fontSize: '0.8rem',
-                  lineHeight: 1.6,
-                  maxHeight: 300,
-                  overflow: 'auto',
-                  whiteSpace: 'pre-wrap',
-                  wordBreak: 'break-all',
-                }}
-              >
-                {log.output}
-                {log.error_message && (
-                  <Box sx={{ color: '#f44336', mt: 1 }}>
-                    Error: {log.error_message}
-                  </Box>
+      {logs.map((log) => {
+        const lines = streamingLines?.[log.id];
+        const isStreaming = log.status === 'running' && lines && lines.length > 0;
+        const isExpanded = expanded === log.id;
+
+        return (
+          <Accordion
+            key={log.id}
+            expanded={isExpanded}
+            onChange={handleAccordionChange(log.id)}
+            sx={{ mb: 1, '&:before': { display: 'none' } }}
+          >
+            <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, width: '100%', mr: 1 }}>
+                <Chip
+                  label={log.action}
+                  size="small"
+                  color={actionColor(log.action)}
+                  variant="outlined"
+                />
+                <Chip
+                  label={log.status}
+                  size="small"
+                  color={statusColor(log.status)}
+                />
+                {isStreaming && (
+                  <Chip
+                    label="LIVE"
+                    size="small"
+                    color="info"
+                    variant="filled"
+                    sx={{
+                      animation: 'pulse 2s infinite',
+                      '@keyframes pulse': {
+                        '0%, 100%': { opacity: 1 },
+                        '50%': { opacity: 0.5 },
+                      },
+                    }}
+                  />
                 )}
-              </Box>
-            ) : (
-              <Box sx={{ p: 2 }}>
-                <Typography variant="body2" color="text.secondary">
-                  {log.status === 'running' ? 'Waiting for output...' : 'No output recorded'}
+                <Typography variant="caption" color="text.secondary" sx={{ ml: 'auto' }}>
+                  {new Date(log.started_at).toLocaleString()}
+                  {log.completed_at && ` (${formatDuration(log.started_at, log.completed_at)})`}
                 </Typography>
               </Box>
-            )}
-          </AccordionDetails>
-        </Accordion>
-      ))}
+            </AccordionSummary>
+            <AccordionDetails sx={{ p: 0 }}>
+              {isStreaming ? (
+                <Box
+                  ref={isExpanded ? streamContainerRef : undefined}
+                  sx={terminalSx}
+                >
+                  {lines.map((line, i) => (
+                    <div key={`line-${i}`}>{line || '\u00A0'}</div>
+                  ))}
+                </Box>
+              ) : log.output ? (
+                <Box sx={terminalSx}>
+                  {log.output}
+                  {log.error_message && (
+                    <Box sx={{ color: '#f44336', mt: 1 }}>
+                      Error: {log.error_message}
+                    </Box>
+                  )}
+                </Box>
+              ) : (
+                <Box sx={{ p: 2 }}>
+                  <Typography variant="body2" color="text.secondary">
+                    {log.status === 'running' ? 'Waiting for output...' : 'No output recorded'}
+                  </Typography>
+                </Box>
+              )}
+            </AccordionDetails>
+          </Accordion>
+        );
+      })}
       <div ref={bottomRef} />
     </Box>
   );

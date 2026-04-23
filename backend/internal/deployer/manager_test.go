@@ -2,6 +2,7 @@ package deployer
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -326,6 +327,42 @@ func (m *mockBroadcaster) messageCount() int {
 	return len(m.messages)
 }
 
+// getMessages returns a thread-safe copy of all broadcast messages.
+func (m *mockBroadcaster) getMessages() [][]byte {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	cp := make([][]byte, len(m.messages))
+	for i, msg := range m.messages {
+		c := make([]byte, len(msg))
+		copy(c, msg)
+		cp[i] = c
+	}
+	return cp
+}
+
+// ---- helpers ----
+
+// waitForTerminalStatus polls the instance repo until the instance reaches a
+// terminal status (not queued/deploying/stopping/cleaning). This replaces
+// fixed time.Sleep calls, making tests faster and less flaky.
+func waitForTerminalStatus(t *testing.T, repo *mockInstanceRepo, instanceID string) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		inst, err := repo.FindByID(instanceID)
+		if err == nil {
+			switch inst.Status {
+			case models.StackStatusQueued, models.StackStatusDeploying,
+				models.StackStatusStopping, models.StackStatusCleaning:
+			default:
+				return
+			}
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("timed out waiting for terminal instance status")
+}
+
 // ---- tests ----
 
 // mockClusterResolver implements ClusterResolver for tests.
@@ -523,7 +560,7 @@ func TestManager_Deploy_WithCharts_Fails(t *testing.T) {
 	assert.NotEmpty(t, logID)
 
 	// Wait for async completion.
-	time.Sleep(500 * time.Millisecond)
+	waitForTerminalStatus(t, instanceRepo, inst.ID)
 
 	// Verify instance status is error.
 	final, err := instanceRepo.FindByID(inst.ID)
@@ -806,7 +843,7 @@ func TestManager_Deploy_ChartsSortedByDeployOrder(t *testing.T) {
 	assert.NoError(t, err)
 
 	// Wait for async completion.
-	time.Sleep(500 * time.Millisecond)
+	waitForTerminalStatus(t, instanceRepo, inst.ID)
 
 	// The error should reference the first chart (deploy order 1) since it fails first.
 	finalLog, err := logRepo.FindByID(context.Background(), logID)
@@ -862,7 +899,7 @@ func TestManager_StopWithCharts_ExecutesUninstall(t *testing.T) {
 	assert.NotEmpty(t, logID)
 
 	// Wait for async completion.
-	time.Sleep(500 * time.Millisecond)
+	waitForTerminalStatus(t, instanceRepo, inst.ID)
 
 	// Verify final status is error (because helm binary is nonexistent).
 	final, err := instanceRepo.FindByID(inst.ID)
@@ -1202,7 +1239,7 @@ func TestManager_StopWithCharts_ReversesDeployOrder(t *testing.T) {
 	assert.NoError(t, err)
 
 	// Wait for async.
-	time.Sleep(500 * time.Millisecond)
+	waitForTerminalStatus(t, instanceRepo, inst.ID)
 
 	// The error should reference the third chart (highest deploy order),
 	// which should be uninstalled first (reverse order).
@@ -1431,6 +1468,8 @@ type mockHelmExecutor struct {
 	mu             sync.Mutex
 	installFunc    func(ctx context.Context, req InstallRequest) (string, error)
 	uninstallFunc  func(ctx context.Context, req UninstallRequest) (string, error)
+	historyFunc    func(ctx context.Context, releaseName, namespace string, max int) ([]ReleaseRevision, error)
+	rollbackFunc   func(ctx context.Context, releaseName, namespace string, revision int) (string, error)
 	installCalls   []InstallRequest
 	uninstallCalls []UninstallRequest
 	timeout        time.Duration
@@ -1464,11 +1503,17 @@ func (m *mockHelmExecutor) ListReleases(_ context.Context, _ string) ([]string, 
 	return nil, nil
 }
 
-func (m *mockHelmExecutor) History(_ context.Context, _ string, _ string, _ int) ([]ReleaseRevision, error) {
+func (m *mockHelmExecutor) History(ctx context.Context, releaseName, namespace string, max int) ([]ReleaseRevision, error) {
+	if m.historyFunc != nil {
+		return m.historyFunc(ctx, releaseName, namespace, max)
+	}
 	return nil, nil
 }
 
-func (m *mockHelmExecutor) Rollback(_ context.Context, releaseName string, _ string, _ int) (string, error) {
+func (m *mockHelmExecutor) Rollback(ctx context.Context, releaseName, namespace string, revision int) (string, error) {
+	if m.rollbackFunc != nil {
+		return m.rollbackFunc(ctx, releaseName, namespace, revision)
+	}
 	return "rolled back " + releaseName, nil
 }
 
@@ -1545,7 +1590,7 @@ func TestManager_Deploy_PartialRollback(t *testing.T) {
 	assert.NotEmpty(t, logID)
 
 	// Wait for async completion.
-	time.Sleep(500 * time.Millisecond)
+	waitForTerminalStatus(t, instanceRepo, inst.ID)
 
 	// Verify instance status is error with original failure message.
 	final, err := instanceRepo.FindByID(inst.ID)
@@ -1624,7 +1669,7 @@ func TestManager_Deploy_PartialRollback_RollbackFails(t *testing.T) {
 	assert.NotEmpty(t, logID)
 
 	// Wait for async completion.
-	time.Sleep(500 * time.Millisecond)
+	waitForTerminalStatus(t, instanceRepo, inst.ID)
 
 	// Verify instance status is error with the ORIGINAL deploy failure (not rollback failure).
 	final, err := instanceRepo.FindByID(inst.ID)
@@ -1700,7 +1745,7 @@ func TestManager_Clean_Success(t *testing.T) {
 	assert.Equal(t, models.StackStatusCleaning, updated.Status)
 
 	// Wait for async completion.
-	time.Sleep(500 * time.Millisecond)
+	waitForTerminalStatus(t, instanceRepo, inst.ID)
 
 	// Verify final status is draft.
 	final, err := instanceRepo.FindByID(inst.ID)
@@ -1763,7 +1808,7 @@ func TestManager_Clean_Success_NoK8sClient(t *testing.T) {
 	assert.NotEmpty(t, logID)
 
 	// Wait for async completion.
-	time.Sleep(500 * time.Millisecond)
+	waitForTerminalStatus(t, instanceRepo, inst.ID)
 
 	// Verify final status is draft (namespace delete skipped).
 	final, err := instanceRepo.FindByID(inst.ID)
@@ -1822,7 +1867,7 @@ func TestManager_Clean_HelmFails(t *testing.T) {
 	assert.NotEmpty(t, logID)
 
 	// Wait for async completion.
-	time.Sleep(500 * time.Millisecond)
+	waitForTerminalStatus(t, instanceRepo, inst.ID)
 
 	// Best-effort: uninstall failures are warnings, not errors.
 	// With no K8s client, namespace deletion is skipped, so the clean succeeds.
@@ -1893,7 +1938,7 @@ func TestManager_Clean_ReleasesAlreadyGone(t *testing.T) {
 	assert.NotEmpty(t, logID)
 
 	// Wait for async completion.
-	time.Sleep(500 * time.Millisecond)
+	waitForTerminalStatus(t, instanceRepo, inst.ID)
 
 	// Should succeed — "not found" releases are treated as already removed.
 	final, err := instanceRepo.FindByID(inst.ID)
@@ -1955,7 +2000,7 @@ func TestManager_Deploy_FirstChartFails_NoRollback(t *testing.T) {
 	assert.NotEmpty(t, logID)
 
 	// Wait for async completion.
-	time.Sleep(500 * time.Millisecond)
+	waitForTerminalStatus(t, instanceRepo, inst.ID)
 
 	// Verify instance is in error state.
 	final, err := instanceRepo.FindByID(inst.ID)
@@ -2962,3 +3007,605 @@ func TestManager_FinalizeDeploy_LastDeployedValuesNotSetOnError(t *testing.T) {
 	assert.Empty(t, updated.LastDeployedValues)
 	assert.Equal(t, models.StackStatusError, updated.Status)
 }
+
+// ---- streaming helm executor mock ----
+
+// streamingMockHelmExecutor embeds mockHelmExecutor and implements
+// StreamingHelmExecutor. WithLineHandler returns a wrapper that calls fn
+// for each line of output produced by Install/Uninstall/Rollback.
+type streamingMockHelmExecutor struct {
+	*mockHelmExecutor
+	mu2            sync.Mutex
+	lineHandlerSet bool
+}
+
+func (s *streamingMockHelmExecutor) WithLineHandler(fn func(string)) HelmExecutor {
+	s.mu2.Lock()
+	s.lineHandlerSet = true
+	s.mu2.Unlock()
+	return &streamingMockWrapper{inner: s.mockHelmExecutor, onLine: fn}
+}
+
+func (s *streamingMockHelmExecutor) wasLineHandlerSet() bool {
+	s.mu2.Lock()
+	defer s.mu2.Unlock()
+	return s.lineHandlerSet
+}
+
+// streamingMockWrapper wraps mockHelmExecutor and calls onLine for each
+// line in the output before returning.
+type streamingMockWrapper struct {
+	inner  *mockHelmExecutor
+	onLine func(string)
+}
+
+func (w *streamingMockWrapper) Install(ctx context.Context, req InstallRequest) (string, error) {
+	output, err := w.inner.Install(ctx, req)
+	if w.onLine != nil {
+		for _, line := range strings.Split(output, "\n") {
+			if line != "" {
+				w.onLine(line)
+			}
+		}
+	}
+	return output, err
+}
+
+func (w *streamingMockWrapper) Uninstall(ctx context.Context, req UninstallRequest) (string, error) {
+	output, err := w.inner.Uninstall(ctx, req)
+	if w.onLine != nil {
+		for _, line := range strings.Split(output, "\n") {
+			if line != "" {
+				w.onLine(line)
+			}
+		}
+	}
+	return output, err
+}
+
+func (w *streamingMockWrapper) Status(ctx context.Context, releaseName, namespace string) (*ReleaseStatus, error) {
+	return w.inner.Status(ctx, releaseName, namespace)
+}
+
+func (w *streamingMockWrapper) ListReleases(ctx context.Context, namespace string) ([]string, error) {
+	return w.inner.ListReleases(ctx, namespace)
+}
+
+func (w *streamingMockWrapper) History(ctx context.Context, releaseName, namespace string, max int) ([]ReleaseRevision, error) {
+	return w.inner.History(ctx, releaseName, namespace, max)
+}
+
+func (w *streamingMockWrapper) Rollback(ctx context.Context, releaseName, namespace string, revision int) (string, error) {
+	output, err := w.inner.Rollback(ctx, releaseName, namespace, revision)
+	if w.onLine != nil {
+		for _, line := range strings.Split(output, "\n") {
+			if line != "" {
+				w.onLine(line)
+			}
+		}
+	}
+	return output, err
+}
+
+func (w *streamingMockWrapper) GetValues(ctx context.Context, releaseName, namespace string, revision int) (string, error) {
+	return w.inner.GetValues(ctx, releaseName, namespace, revision)
+}
+
+func (w *streamingMockWrapper) Timeout() time.Duration {
+	return w.inner.Timeout()
+}
+
+// ---- streaming broadcast tests ----
+
+// parseBroadcastMessageType extracts the "type" field from a JSON-encoded
+// websocket.Message. Returns empty string on parse failure.
+func parseBroadcastMessageType(data []byte) string {
+	var envelope struct {
+		Type string `json:"type"`
+	}
+	if err := json.Unmarshal(data, &envelope); err != nil {
+		return ""
+	}
+	return envelope.Type
+}
+
+func TestManager_Deploy_StreamingBroadcastsPerLine(t *testing.T) {
+	t.Parallel()
+
+	instanceRepo := newMockInstanceRepo()
+	logRepo := newMockDeployLogRepo()
+	hub := &mockBroadcaster{}
+
+	inst := &models.StackInstance{
+		ID:                "inst-stream-deploy",
+		StackDefinitionID: "def-1",
+		Name:              "stream-deploy",
+		Namespace:         "stack-stream-deploy",
+		OwnerID:           "user-1",
+		Branch:            "main",
+		Status:            models.StackStatusDraft,
+	}
+	require.NoError(t, instanceRepo.Create(inst))
+
+	helmMock := &streamingMockHelmExecutor{
+		mockHelmExecutor: &mockHelmExecutor{
+			installFunc: func(_ context.Context, req InstallRequest) (string, error) {
+				// Return multi-line output to simulate real Helm streaming.
+				return fmt.Sprintf("installing %s\nprogress: 50%%\nprogress: 100%%\ndone", req.ReleaseName), nil
+			},
+		},
+	}
+
+	mgr := NewManager(ManagerConfig{
+		Registry:      &mockClusterResolver{helm: helmMock},
+		InstanceRepo:  instanceRepo,
+		DeployLogRepo: logRepo,
+		TxRunner:      &mockTxRunner{instanceRepo: instanceRepo, logRepo: logRepo},
+		Hub:           hub,
+		MaxConcurrent: 2,
+	})
+
+	req := DeployRequest{
+		Instance:   inst,
+		Definition: &models.StackDefinition{ID: "def-1", Name: "test-def"},
+		Charts: []ChartDeployInfo{
+			{ChartConfig: models.ChartConfig{ChartName: "redis", DeployOrder: 1}},
+			{ChartConfig: models.ChartConfig{ChartName: "nginx", DeployOrder: 2}},
+		},
+	}
+
+	logID, err := mgr.Deploy(context.Background(), req)
+	require.NoError(t, err)
+	assert.NotEmpty(t, logID)
+
+	// Wait for async completion.
+	waitForTerminalStatus(t, instanceRepo, inst.ID)
+
+	// Verify the streaming executor's WithLineHandler was called.
+	assert.True(t, helmMock.wasLineHandlerSet(), "WithLineHandler should have been called")
+
+	// Verify instance completed successfully.
+	final, err := instanceRepo.FindByID(inst.ID)
+	require.NoError(t, err)
+	assert.Equal(t, models.StackStatusRunning, final.Status)
+
+	// Parse broadcast messages and verify deployment.log messages are present.
+	messages := hub.getMessages()
+	assert.Greater(t, len(messages), 0, "should have broadcast messages")
+
+	var logMsgCount int
+	var statusMsgCount int
+	for _, msg := range messages {
+		msgType := parseBroadcastMessageType(msg)
+		switch msgType {
+		case "deployment.log":
+			logMsgCount++
+		case "deployment.status":
+			statusMsgCount++
+		}
+	}
+
+	// With streaming enabled, per-line broadcasts should appear as deployment.log.
+	// Each chart produces multi-line output (4 non-empty lines), and we have 2 charts.
+	assert.Greater(t, logMsgCount, 0, "streaming deploy should produce deployment.log messages")
+	assert.Greater(t, statusMsgCount, 0, "deploy should still produce deployment.status messages")
+}
+
+func TestManager_Deploy_NonStreamingBroadcastsPerChart(t *testing.T) {
+	t.Parallel()
+
+	instanceRepo := newMockInstanceRepo()
+	logRepo := newMockDeployLogRepo()
+	hub := &mockBroadcaster{}
+
+	inst := &models.StackInstance{
+		ID:                "inst-nonstream-deploy",
+		StackDefinitionID: "def-1",
+		Name:              "nonstream-deploy",
+		Namespace:         "stack-nonstream-deploy",
+		OwnerID:           "user-1",
+		Branch:            "main",
+		Status:            models.StackStatusDraft,
+	}
+	require.NoError(t, instanceRepo.Create(inst))
+
+	// Regular mockHelmExecutor does NOT implement StreamingHelmExecutor.
+	helmMock := &mockHelmExecutor{
+		installFunc: func(_ context.Context, req InstallRequest) (string, error) {
+			return "installed " + req.ReleaseName, nil
+		},
+	}
+
+	mgr := NewManager(ManagerConfig{
+		Registry:      &mockClusterResolver{helm: helmMock},
+		InstanceRepo:  instanceRepo,
+		DeployLogRepo: logRepo,
+		TxRunner:      &mockTxRunner{instanceRepo: instanceRepo, logRepo: logRepo},
+		Hub:           hub,
+		MaxConcurrent: 2,
+	})
+
+	req := DeployRequest{
+		Instance:   inst,
+		Definition: &models.StackDefinition{ID: "def-1", Name: "test-def"},
+		Charts: []ChartDeployInfo{
+			{ChartConfig: models.ChartConfig{ChartName: "redis", DeployOrder: 1}},
+			{ChartConfig: models.ChartConfig{ChartName: "nginx", DeployOrder: 2}},
+		},
+	}
+
+	logID, err := mgr.Deploy(context.Background(), req)
+	require.NoError(t, err)
+	assert.NotEmpty(t, logID)
+
+	// Wait for async completion.
+	waitForTerminalStatus(t, instanceRepo, inst.ID)
+
+	// Verify instance completed successfully.
+	final, err := instanceRepo.FindByID(inst.ID)
+	require.NoError(t, err)
+	assert.Equal(t, models.StackStatusRunning, final.Status)
+
+	// Parse broadcast messages: non-streaming should still produce
+	// deployment.log messages (one per chart, containing full output),
+	// plus deployment.status messages.
+	messages := hub.getMessages()
+	assert.Greater(t, len(messages), 0, "should have broadcast messages")
+
+	var logMsgCount int
+	var statusMsgCount int
+	for _, msg := range messages {
+		msgType := parseBroadcastMessageType(msg)
+		switch msgType {
+		case "deployment.log":
+			logMsgCount++
+		case "deployment.status":
+			statusMsgCount++
+		}
+	}
+
+	// Non-streaming: broadcastLog is called once per chart (not per line).
+	assert.Equal(t, 2, logMsgCount, "non-streaming deploy should produce exactly one deployment.log per chart")
+	assert.Greater(t, statusMsgCount, 0, "deploy should produce deployment.status messages")
+}
+
+func TestManager_StopWithCharts_StreamingSupport(t *testing.T) {
+	t.Parallel()
+
+	instanceRepo := newMockInstanceRepo()
+	logRepo := newMockDeployLogRepo()
+	hub := &mockBroadcaster{}
+
+	inst := &models.StackInstance{
+		ID:        "inst-stream-stop",
+		Name:      "stream-stop",
+		Namespace: "stack-stream-stop",
+		Status:    models.StackStatusRunning,
+	}
+	require.NoError(t, instanceRepo.Create(inst))
+
+	helmMock := &streamingMockHelmExecutor{
+		mockHelmExecutor: &mockHelmExecutor{
+			uninstallFunc: func(_ context.Context, req UninstallRequest) (string, error) {
+				return fmt.Sprintf("uninstalling %s\ncleaning up\ndone", req.ReleaseName), nil
+			},
+		},
+	}
+
+	mgr := NewManager(ManagerConfig{
+		Registry:      &mockClusterResolver{helm: helmMock},
+		InstanceRepo:  instanceRepo,
+		DeployLogRepo: logRepo,
+		TxRunner:      &mockTxRunner{instanceRepo: instanceRepo, logRepo: logRepo},
+		Hub:           hub,
+		MaxConcurrent: 2,
+	})
+
+	charts := []ChartDeployInfo{
+		{ChartConfig: models.ChartConfig{ChartName: "redis", DeployOrder: 1}},
+		{ChartConfig: models.ChartConfig{ChartName: "nginx", DeployOrder: 2}},
+	}
+
+	logID, err := mgr.StopWithCharts(context.Background(), inst, charts)
+	require.NoError(t, err)
+	assert.NotEmpty(t, logID)
+
+	// Wait for async completion.
+	waitForTerminalStatus(t, instanceRepo, inst.ID)
+
+	// Verify the streaming executor's WithLineHandler was called.
+	assert.True(t, helmMock.wasLineHandlerSet(), "WithLineHandler should have been called for stop")
+
+	// Verify instance completed successfully.
+	final, err := instanceRepo.FindByID(inst.ID)
+	require.NoError(t, err)
+	assert.Equal(t, models.StackStatusStopped, final.Status)
+
+	// Verify deployment.log messages were streamed.
+	messages := hub.getMessages()
+	assert.Greater(t, len(messages), 0, "should have broadcast messages")
+
+	var logMsgCount int
+	for _, msg := range messages {
+		if parseBroadcastMessageType(msg) == "deployment.log" {
+			logMsgCount++
+		}
+	}
+
+	// With streaming: per-line broadcasts. 2 charts, each produces 3 non-empty lines.
+	assert.Greater(t, logMsgCount, 0, "streaming stop should produce deployment.log messages")
+}
+
+func TestManager_StopWithCharts_NonStreamingBroadcastsPerChart(t *testing.T) {
+	t.Parallel()
+
+	instanceRepo := newMockInstanceRepo()
+	logRepo := newMockDeployLogRepo()
+	hub := &mockBroadcaster{}
+
+	inst := &models.StackInstance{
+		ID:        "inst-nonstream-stop",
+		Name:      "nonstream-stop",
+		Namespace: "stack-nonstream-stop",
+		Status:    models.StackStatusRunning,
+	}
+	require.NoError(t, instanceRepo.Create(inst))
+
+	// Regular mockHelmExecutor — no StreamingHelmExecutor.
+	helmMock := &mockHelmExecutor{
+		uninstallFunc: func(_ context.Context, req UninstallRequest) (string, error) {
+			return "uninstalled " + req.ReleaseName, nil
+		},
+	}
+
+	mgr := NewManager(ManagerConfig{
+		Registry:      &mockClusterResolver{helm: helmMock},
+		InstanceRepo:  instanceRepo,
+		DeployLogRepo: logRepo,
+		TxRunner:      &mockTxRunner{instanceRepo: instanceRepo, logRepo: logRepo},
+		Hub:           hub,
+		MaxConcurrent: 2,
+	})
+
+	charts := []ChartDeployInfo{
+		{ChartConfig: models.ChartConfig{ChartName: "redis", DeployOrder: 1}},
+		{ChartConfig: models.ChartConfig{ChartName: "nginx", DeployOrder: 2}},
+	}
+
+	logID, err := mgr.StopWithCharts(context.Background(), inst, charts)
+	require.NoError(t, err)
+	assert.NotEmpty(t, logID)
+
+	// Wait for async completion.
+	waitForTerminalStatus(t, instanceRepo, inst.ID)
+
+	// Verify instance completed successfully.
+	final, err := instanceRepo.FindByID(inst.ID)
+	require.NoError(t, err)
+	assert.Equal(t, models.StackStatusStopped, final.Status)
+
+	// Parse messages.
+	messages := hub.getMessages()
+	assert.Greater(t, len(messages), 0, "should have broadcast messages")
+
+	var logMsgCount int
+	for _, msg := range messages {
+		if parseBroadcastMessageType(msg) == "deployment.log" {
+			logMsgCount++
+		}
+	}
+
+	// Non-streaming: one broadcastLog per chart.
+	assert.Equal(t, 2, logMsgCount, "non-streaming stop should produce exactly one deployment.log per chart")
+}
+
+func TestManager_Clean_StreamingSupport(t *testing.T) {
+	t.Parallel()
+
+	instanceRepo := newMockInstanceRepo()
+	logRepo := newMockDeployLogRepo()
+	hub := &mockBroadcaster{}
+
+	fakeClient := fake.NewSimpleClientset(
+		&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "stack-stream-clean"}},
+	)
+	k8sClient := k8s.NewClientFromInterface(fakeClient)
+
+	inst := &models.StackInstance{
+		ID:        "inst-stream-clean",
+		Name:      "stream-clean",
+		Namespace: "stack-stream-clean",
+		Status:    models.StackStatusStopped,
+	}
+	require.NoError(t, instanceRepo.Create(inst))
+
+	helmMock := &streamingMockHelmExecutor{
+		mockHelmExecutor: &mockHelmExecutor{
+			uninstallFunc: func(_ context.Context, req UninstallRequest) (string, error) {
+				return fmt.Sprintf("uninstalling %s\ncleaned", req.ReleaseName), nil
+			},
+		},
+	}
+
+	mgr := NewManager(ManagerConfig{
+		Registry:      &mockClusterResolver{helm: helmMock, k8sClient: k8sClient},
+		InstanceRepo:  instanceRepo,
+		DeployLogRepo: logRepo,
+		TxRunner:      &mockTxRunner{instanceRepo: instanceRepo, logRepo: logRepo},
+		Hub:           hub,
+		MaxConcurrent: 2,
+	})
+
+	charts := []models.ChartConfig{
+		{ChartName: "redis", DeployOrder: 1},
+	}
+
+	logID, err := mgr.Clean(context.Background(), inst, charts)
+	require.NoError(t, err)
+	assert.NotEmpty(t, logID)
+
+	// Wait for async completion.
+	waitForTerminalStatus(t, instanceRepo, inst.ID)
+
+	// Verify the streaming executor's WithLineHandler was called.
+	assert.True(t, helmMock.wasLineHandlerSet(), "WithLineHandler should have been called for clean")
+
+	// Verify instance returned to draft status.
+	final, err := instanceRepo.FindByID(inst.ID)
+	require.NoError(t, err)
+	assert.Equal(t, models.StackStatusDraft, final.Status)
+
+	// Verify deployment.log messages were streamed.
+	messages := hub.getMessages()
+	var logMsgCount int
+	for _, msg := range messages {
+		if parseBroadcastMessageType(msg) == "deployment.log" {
+			logMsgCount++
+		}
+	}
+	assert.Greater(t, logMsgCount, 0, "streaming clean should produce deployment.log messages")
+}
+
+func TestManager_Deploy_StreamingPartialFailure_StillBroadcastsLines(t *testing.T) {
+	t.Parallel()
+
+	instanceRepo := newMockInstanceRepo()
+	logRepo := newMockDeployLogRepo()
+	hub := &mockBroadcaster{}
+
+	inst := &models.StackInstance{
+		ID:                "inst-stream-fail",
+		StackDefinitionID: "def-1",
+		Name:              "stream-fail",
+		Namespace:         "stack-stream-fail",
+		OwnerID:           "user-1",
+		Branch:            "main",
+		Status:            models.StackStatusDraft,
+	}
+	require.NoError(t, instanceRepo.Create(inst))
+
+	helmMock := &streamingMockHelmExecutor{
+		mockHelmExecutor: &mockHelmExecutor{
+			installFunc: func(_ context.Context, req InstallRequest) (string, error) {
+				if req.ReleaseName == "failing-chart" {
+					return "preparing\nerror: image pull failed", fmt.Errorf("helm command failed: exit status 1")
+				}
+				return "installed " + req.ReleaseName, nil
+			},
+		},
+	}
+
+	mgr := NewManager(ManagerConfig{
+		Registry:      &mockClusterResolver{helm: helmMock},
+		InstanceRepo:  instanceRepo,
+		DeployLogRepo: logRepo,
+		TxRunner:      &mockTxRunner{instanceRepo: instanceRepo, logRepo: logRepo},
+		Hub:           hub,
+		MaxConcurrent: 2,
+	})
+
+	req := DeployRequest{
+		Instance:   inst,
+		Definition: &models.StackDefinition{ID: "def-1", Name: "test-def"},
+		Charts: []ChartDeployInfo{
+			{ChartConfig: models.ChartConfig{ChartName: "good-chart", DeployOrder: 1}},
+			{ChartConfig: models.ChartConfig{ChartName: "failing-chart", DeployOrder: 2}},
+		},
+	}
+
+	logID, err := mgr.Deploy(context.Background(), req)
+	require.NoError(t, err)
+	assert.NotEmpty(t, logID)
+
+	// Wait for async completion.
+	waitForTerminalStatus(t, instanceRepo, inst.ID)
+
+	// Verify instance ended in error state.
+	final, err := instanceRepo.FindByID(inst.ID)
+	require.NoError(t, err)
+	assert.Equal(t, models.StackStatusError, final.Status)
+
+	// Even with failure, streaming should have broadcast per-line log messages
+	// for both the successful chart and the failing chart's partial output.
+	messages := hub.getMessages()
+	var logMsgCount int
+	for _, msg := range messages {
+		if parseBroadcastMessageType(msg) == "deployment.log" {
+			logMsgCount++
+		}
+	}
+	assert.Greater(t, logMsgCount, 0, "streaming deploy with failure should still produce per-line log messages")
+}
+
+func TestManager_Rollback_StreamingSupport(t *testing.T) {
+	t.Parallel()
+
+	instanceRepo := newMockInstanceRepo()
+	logRepo := newMockDeployLogRepo()
+	hub := &mockBroadcaster{}
+
+	inst := &models.StackInstance{
+		ID:                "inst-rollback-stream",
+		StackDefinitionID: "def-1",
+		Name:              "rollback-stream",
+		Namespace:         "stack-rollback-stream",
+		OwnerID:           "user-1",
+		Branch:            "main",
+		Status:            models.StackStatusRunning,
+	}
+	require.NoError(t, instanceRepo.Create(inst))
+
+	helmMock := &streamingMockHelmExecutor{
+		mockHelmExecutor: &mockHelmExecutor{
+			historyFunc: func(_ context.Context, _ string, _ string, _ int) ([]ReleaseRevision, error) {
+				return []ReleaseRevision{
+					{Revision: 1, Status: "deployed"},
+					{Revision: 2, Status: "deployed"},
+				}, nil
+			},
+			rollbackFunc: func(_ context.Context, releaseName string, _ string, _ int) (string, error) {
+				return "rolling back " + releaseName + "\nrollback complete", nil
+			},
+		},
+	}
+
+	mgr := NewManager(ManagerConfig{
+		Registry:      &mockClusterResolver{helm: helmMock},
+		InstanceRepo:  instanceRepo,
+		DeployLogRepo: logRepo,
+		TxRunner:      &mockTxRunner{instanceRepo: instanceRepo, logRepo: logRepo},
+		Hub:           hub,
+		MaxConcurrent: 2,
+	})
+
+	req := RollbackRequest{
+		Instance: inst,
+		Charts: []ChartDeployInfo{
+			{ChartConfig: models.ChartConfig{ChartName: "web", DeployOrder: 1}},
+		},
+	}
+
+	logID, err := mgr.Rollback(context.Background(), req)
+	require.NoError(t, err)
+	assert.NotEmpty(t, logID)
+
+	waitForTerminalStatus(t, instanceRepo, inst.ID)
+
+	final, err := instanceRepo.FindByID(inst.ID)
+	require.NoError(t, err)
+	assert.Equal(t, models.StackStatusRunning, final.Status)
+
+	assert.True(t, helmMock.wasLineHandlerSet(), "streaming helm executor should have WithLineHandler called")
+
+	messages := hub.getMessages()
+	var logMsgCount int
+	for _, msg := range messages {
+		if parseBroadcastMessageType(msg) == "deployment.log" {
+			logMsgCount++
+		}
+	}
+	assert.Greater(t, logMsgCount, 0, "rollback with streaming executor should produce per-line log messages")
+}
+
+// Verify that streamingMockHelmExecutor satisfies StreamingHelmExecutor at compile time.
+var _ StreamingHelmExecutor = (*streamingMockHelmExecutor)(nil)

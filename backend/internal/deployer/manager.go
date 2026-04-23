@@ -193,6 +193,20 @@ func (m *Manager) fireDeployHook(ctx context.Context, event string, instance *mo
 	return m.hooks.Fire(ctx, event, env)
 }
 
+// wrapStreaming checks if helm implements StreamingHelmExecutor and, if so,
+// returns a wrapped executor that broadcasts each output line via WebSocket.
+// The returned bool indicates whether streaming is active (used to gate
+// per-chart broadcastLog calls that would duplicate streaming output).
+func (m *Manager) wrapStreaming(helm HelmExecutor, instanceID, logID string) (HelmExecutor, bool) {
+	if streamer, ok := helm.(StreamingHelmExecutor); ok {
+		slog.Info("streaming enabled for helm operations", "instance_id", instanceID, "log_id", logID)
+		return streamer.WithLineHandler(func(line string) {
+			m.broadcastLog(instanceID, logID, line)
+		}), true
+	}
+	return helm, false
+}
+
 // Shutdown cancels the context used by background deploy/stop goroutines,
 // signalling them to abort at the next cancellation check point.
 func (m *Manager) Shutdown() {
@@ -339,6 +353,8 @@ func (m *Manager) executeDeploy(helm HelmExecutor, k8sClient *k8s.Client, regCfg
 	var deployErr error
 	defer func() { finishSpan(deployErr) }()
 
+	helm, streaming := m.wrapStreaming(helm, instanceID, deployLog.ID)
+
 	// Create a temp directory for values files.
 	tmpDir, err := os.MkdirTemp("", "deploy-"+instanceID+"-")
 	if err != nil {
@@ -471,7 +487,9 @@ func (m *Manager) executeDeploy(helm HelmExecutor, k8sClient *k8s.Client, regCfg
 		})
 
 		allOutput += fmt.Sprintf("=== Chart: %s ===\n%s\n", chart.ChartConfig.ChartName, output)
-		m.broadcastLog(instanceID, deployLog.ID, output)
+		if !streaming {
+			m.broadcastLog(instanceID, deployLog.ID, output)
+		}
 
 		if err != nil {
 			deployErr = fmt.Errorf("deploying chart %q: %w", chart.ChartConfig.ChartName, err)
@@ -497,7 +515,7 @@ func (m *Manager) executeDeploy(helm HelmExecutor, k8sClient *k8s.Client, regCfg
 
 	// Roll back successfully installed charts on partial failure.
 	if deployErr != nil && len(installedCharts) > 0 {
-		rollbackOutput := m.rollbackCharts(helm, ctx, instanceID, deployLog.ID, namespace, installedCharts)
+		rollbackOutput := m.rollbackCharts(helm, ctx, instanceID, deployLog.ID, namespace, installedCharts, streaming)
 		allOutput += rollbackOutput
 	}
 
@@ -508,7 +526,7 @@ func (m *Manager) executeDeploy(helm HelmExecutor, k8sClient *k8s.Client, regCfg
 // a partial deployment failure. It is best-effort: individual uninstall failures
 // are logged but do not stop the remaining rollbacks. Returns the accumulated
 // rollback output for inclusion in the deployment log.
-func (m *Manager) rollbackCharts(helm HelmExecutor, ctx context.Context, instanceID, logID, namespace string, charts []ChartDeployInfo) string {
+func (m *Manager) rollbackCharts(helm HelmExecutor, ctx context.Context, instanceID, logID, namespace string, charts []ChartDeployInfo, streaming bool) string {
 	var rollbackOutput string
 	rollbackOutput += "=== Rolling back installed charts ===\n"
 
@@ -529,7 +547,9 @@ func (m *Manager) rollbackCharts(helm HelmExecutor, ctx context.Context, instanc
 		})
 
 		rollbackOutput += fmt.Sprintf("=== Rollback: %s ===\n%s\n", releaseName, output)
-		m.broadcastLog(instanceID, logID, output)
+		if !streaming {
+			m.broadcastLog(instanceID, logID, output)
+		}
 
 		if err != nil {
 			slog.Error("rollback failed for chart",
@@ -733,6 +753,8 @@ func (m *Manager) executeStopWithCharts(helm HelmExecutor, instanceID string, de
 	var stopErr error
 	defer func() { finishSpan(stopErr) }()
 
+	helm, streaming := m.wrapStreaming(helm, instanceID, deployLog.ID)
+
 	// Use a bounded context derived from the shutdown context so that
 	// operations are cancelled both on timeout and on server shutdown.
 	var timeout time.Duration
@@ -760,7 +782,9 @@ func (m *Manager) executeStopWithCharts(helm HelmExecutor, instanceID string, de
 		})
 
 		allOutput += fmt.Sprintf("=== Chart: %s ===\n%s\n", chart.ChartConfig.ChartName, output)
-		m.broadcastLog(instanceID, deployLog.ID, output)
+		if !streaming {
+			m.broadcastLog(instanceID, deployLog.ID, output)
+		}
 
 		if err != nil {
 			// If the release is already gone, treat as a no-op.
@@ -992,6 +1016,8 @@ func (m *Manager) executeClean(helm HelmExecutor, k8sClient *k8s.Client, instanc
 	var cleanErr error
 	defer func() { finishSpan(cleanErr) }()
 
+	helm, streaming := m.wrapStreaming(helm, instanceID, deployLog.ID)
+
 	// Use a bounded context derived from the shutdown context so that
 	// operations are cancelled both on timeout and on server shutdown.
 	var timeout time.Duration
@@ -1020,7 +1046,9 @@ func (m *Manager) executeClean(helm HelmExecutor, k8sClient *k8s.Client, instanc
 		})
 
 		allOutput += fmt.Sprintf("=== Chart: %s ===\n%s\n", chart.ChartConfig.ChartName, output)
-		m.broadcastLog(instanceID, deployLog.ID, output)
+		if !streaming {
+			m.broadcastLog(instanceID, deployLog.ID, output)
+		}
 
 		if err != nil {
 			// If the release is already gone (e.g. instance was stopped),
@@ -1266,6 +1294,8 @@ func (m *Manager) executeRollback(helm HelmExecutor, instanceID string, deployLo
 	var rollbackErr error
 	defer func() { finishSpan(rollbackErr) }()
 
+	helm, streaming := m.wrapStreaming(helm, instanceID, deployLog.ID)
+
 	var timeout time.Duration
 	if helm != nil {
 		timeout = helm.Timeout()
@@ -1303,7 +1333,9 @@ func (m *Manager) executeRollback(helm HelmExecutor, instanceID string, deployLo
 
 		output, err := helm.Rollback(ctx, releaseName, namespace, targetRevision)
 		allOutput += fmt.Sprintf("=== Chart: %s (→ rev %d) ===\n%s\n", releaseName, targetRevision, output)
-		m.broadcastLog(instanceID, deployLog.ID, output)
+		if !streaming {
+			m.broadcastLog(instanceID, deployLog.ID, output)
+		}
 
 		if err != nil {
 			rollbackErr = fmt.Errorf("rolling back chart %q to revision %d: %w", releaseName, targetRevision, err)
