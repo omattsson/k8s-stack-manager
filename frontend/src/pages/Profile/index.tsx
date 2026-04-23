@@ -44,8 +44,14 @@ import LoadingState from '../../components/LoadingState';
 const EVENT_TYPE_LABELS: Record<string, string> = {
   'deployment.success': 'Deployment succeeded',
   'deployment.error': 'Deployment failed',
-  'deployment.stopped': 'Deployment stopped',
-  'instance.deleted': 'Instance deleted',
+  'deployment.stopped': 'Stack stopped',
+  'stop.error': 'Stop failed',
+  'instance.created': 'Stack created',
+  'instance.deleted': 'Stack deleted',
+  'clean.completed': 'Cleanup completed',
+  'clean.error': 'Cleanup failed',
+  'rollback.completed': 'Rollback completed',
+  'rollback.error': 'Rollback failed',
 };
 
 const DEFAULT_EVENT_TYPES = Object.keys(EVENT_TYPE_LABELS);

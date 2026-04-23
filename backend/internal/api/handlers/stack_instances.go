@@ -131,6 +131,7 @@ type InstanceHandler struct {
 	txRunner           database.TxRunner
 	hooks              *hooks.Dispatcher
 	actions            *hooks.ActionRegistry
+	notifier           deployer.LifecycleNotifier
 }
 
 // WithHooks attaches a webhook dispatcher for instance lifecycle events
@@ -145,6 +146,13 @@ func (h *InstanceHandler) WithHooks(d *hooks.Dispatcher) *InstanceHandler {
 // POST /api/v1/stack-instances/:id/actions/:name route. Pass nil to disable.
 func (h *InstanceHandler) WithActions(r *hooks.ActionRegistry) *InstanceHandler {
 	h.actions = r
+	return h
+}
+
+// WithNotifier attaches a lifecycle notifier for in-app notification creation
+// on instance create/delete events. Pass nil to disable.
+func (h *InstanceHandler) WithNotifier(n deployer.LifecycleNotifier) *InstanceHandler {
+	h.notifier = n
 	return h
 }
 
@@ -567,6 +575,11 @@ func (h *InstanceHandler) CreateInstance(c *gin.Context) {
 	// audit logs, etc).
 	_ = h.fireInstanceHook(c.Request.Context(), hooks.EventPostInstanceCreate, &inst)
 
+	if h.notifier != nil {
+		_ = h.notifier.Notify(c.Request.Context(), inst.OwnerID, "instance.created", "Stack created",
+			fmt.Sprintf("Stack %s has been created", inst.Name), "stack_instance", inst.ID)
+	}
+
 	c.JSON(http.StatusCreated, inst)
 }
 
@@ -779,6 +792,11 @@ func (h *InstanceHandler) DeleteInstance(c *gin.Context) {
 	}
 
 	_ = h.fireInstanceHook(c.Request.Context(), hooks.EventPostInstanceDelete, inst)
+
+	if h.notifier != nil {
+		_ = h.notifier.Notify(c.Request.Context(), inst.OwnerID, "instance.deleted", "Stack deleted",
+			fmt.Sprintf("Stack %s has been deleted", inst.Name), "stack_instance", inst.ID)
+	}
 
 	c.Status(http.StatusNoContent)
 }

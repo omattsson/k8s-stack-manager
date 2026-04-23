@@ -17,6 +17,7 @@ import (
 	"backend/internal/hooks"
 	"backend/internal/k8s"
 	"backend/internal/models"
+	"backend/internal/notifier"
 	"backend/internal/scheduler"
 	"backend/internal/telemetry"
 	"backend/internal/ttl"
@@ -249,6 +250,9 @@ func main() {
 		"actions", actionNames,
 	)
 
+	// Lifecycle notifier — creates in-app notifications for stack events
+	lifecycleNotifier := notifier.NewNotifier(notificationRepo, hub)
+
 	// Deployment manager — uses registry for multi-cluster deploys
 	deployManager := deployer.NewManager(deployer.ManagerConfig{
 		Registry:                   clusterRegistry,
@@ -263,6 +267,7 @@ func main() {
 		WildcardTLSSourceSecret:    cfg.Deployment.WildcardTLSSourceSecret,
 		WildcardTLSTargetSecret:    cfg.Deployment.WildcardTLSTargetSecret,
 		Hooks:                      hookDispatcher,
+		Notifier:                   lifecycleNotifier,
 	})
 
 	// ------------------------------------------------------------------
@@ -322,7 +327,7 @@ func main() {
 		slog.Error("failed to create instance handler", "error", err)
 		os.Exit(1)
 	}
-	instanceHandler.WithHooks(hookDispatcher).WithActions(actionRegistry)
+	instanceHandler.WithHooks(hookDispatcher).WithActions(actionRegistry).WithNotifier(lifecycleNotifier)
 	gitHandler := handlers.NewGitHandler(gitRegistry)
 	auditLogHandler := handlers.NewAuditLogHandler(auditRepo)
 	userHandler := handlers.NewUserHandler(userRepo)

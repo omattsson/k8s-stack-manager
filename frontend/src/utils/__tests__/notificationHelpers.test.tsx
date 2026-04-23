@@ -73,6 +73,36 @@ describe('notificationHelpers', () => {
       expect(icon.props.color).toBe('action');
     });
 
+    it('returns success icon for completed type', () => {
+      const icon = notificationIcon('clean.completed');
+      expect(icon).toBeTruthy();
+      expect(icon.props.color).toBe('success');
+    });
+
+    it('returns success icon for rollback.completed', () => {
+      const icon = notificationIcon('rollback.completed');
+      expect(icon).toBeTruthy();
+      expect(icon.props.color).toBe('success');
+    });
+
+    it('returns error icon for clean.error', () => {
+      const icon = notificationIcon('clean.error');
+      expect(icon).toBeTruthy();
+      expect(icon.props.color).toBe('error');
+    });
+
+    it('returns error icon for rollback.error', () => {
+      const icon = notificationIcon('rollback.error');
+      expect(icon).toBeTruthy();
+      expect(icon.props.color).toBe('error');
+    });
+
+    it('returns success icon for instance.created', () => {
+      const icon = notificationIcon('instance.created');
+      expect(icon).toBeTruthy();
+      expect(icon.props.color).toBe('success');
+    });
+
     it('returns info icon for unknown type', () => {
       const icon = notificationIcon('something.else');
       expect(icon).toBeTruthy();

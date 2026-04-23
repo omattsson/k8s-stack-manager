@@ -44,6 +44,11 @@ type ClusterResolver interface {
 	GetRegistryConfig(clusterID string) (*models.RegistryConfig, error)
 }
 
+// LifecycleNotifier creates in-app notifications for stack lifecycle events.
+type LifecycleNotifier interface {
+	Notify(ctx context.Context, userID, notifType, title, message, entityType, entityID string) error
+}
+
 // Manager orchestrates asynchronous deployments with concurrency control.
 type Manager struct {
 	registry          ClusterResolver
@@ -67,6 +72,10 @@ type Manager struct {
 	// hooks dispatches lifecycle events to user-configured webhooks.
 	// nil disables all hook dispatch.
 	hooks *hooks.Dispatcher
+
+	// notifier creates in-app notifications for stack lifecycle events.
+	// nil disables notification creation.
+	notifier LifecycleNotifier
 
 	// pendingDeletes tracks instances that should be deleted from the database
 	// after their async clean operation completes successfully.
@@ -97,6 +106,10 @@ type ManagerConfig struct {
 	// as out-of-process action subscribers (see internal/api/routes for the
 	// /actions/{name} router); the core no longer ships any such operations itself.
 	Hooks *hooks.Dispatcher
+
+	// Notifier creates in-app notifications for lifecycle events.
+	// Optional — nil disables notification creation from the deployer.
+	Notifier LifecycleNotifier
 }
 
 // DeployRequest contains everything needed to deploy a stack instance.
@@ -148,7 +161,8 @@ func NewManager(cfg ManagerConfig) *Manager {
 		wildcardTLSSourceSecret: cfg.WildcardTLSSourceSecret,
 		wildcardTLSTargetSecret: wildcardTarget,
 
-		hooks: cfg.Hooks,
+		hooks:    cfg.Hooks,
+		notifier: cfg.Notifier,
 	}
 }
 
@@ -650,6 +664,12 @@ func (m *Manager) finalizeDeploy(instanceID string, deployLog *models.Deployment
 		_ = m.fireDeployHook(hookCtx, hooks.EventPostDeploy, instance, deployLog.ID, deployLog.StartedAt)
 	}
 	_ = m.fireDeployHook(hookCtx, hooks.EventDeployFinalized, instance, deployLog.ID, deployLog.StartedAt)
+
+	if deployErr != nil {
+		m.notifyUser(instance.OwnerID, instanceID, "deployment.error", "Deployment failed", fmt.Sprintf("Deployment of %s failed: %s", instance.Name, instance.ErrorMessage))
+	} else {
+		m.notifyUser(instance.OwnerID, instanceID, "deployment.success", "Deployment succeeded", fmt.Sprintf("Deployment of %s completed successfully", instance.Name))
+	}
 }
 
 // StopWithCharts starts an async stop/uninstall with explicit chart information.
@@ -868,6 +888,13 @@ func (m *Manager) finalizeStop(instanceID string, deployLog *models.DeploymentLo
 		m.broadcastStatusWithError(instanceID, models.StackStatusError, deployLog.ID, instance.ErrorMessage)
 	} else {
 		m.broadcastStatus(instanceID, models.StackStatusStopped, deployLog.ID)
+	}
+
+	_ = m.fireDeployHook(m.shutdownCtx, hooks.EventStopCompleted, instance, deployLog.ID, deployLog.StartedAt)
+	if stopErr != nil {
+		m.notifyUser(instance.OwnerID, instanceID, "stop.error", "Stop failed", fmt.Sprintf("Stopping %s failed: %s", instance.Name, instance.ErrorMessage))
+	} else {
+		m.notifyUser(instance.OwnerID, instanceID, "deployment.stopped", "Stack stopped", fmt.Sprintf("Stack %s has been stopped", instance.Name))
 	}
 }
 
@@ -1189,6 +1216,17 @@ func (m *Manager) finalizeClean(instanceID string, deployLog *models.DeploymentL
 	} else {
 		m.broadcastStatus(instanceID, models.StackStatusDraft, deployLog.ID)
 	}
+
+	_ = m.fireDeployHook(m.shutdownCtx, hooks.EventCleanCompleted, instance, deployLog.ID, deployLog.StartedAt)
+
+	if cleanErr != nil {
+		m.notifyUser(instance.OwnerID, instanceID, "clean.error", "Cleanup failed", fmt.Sprintf("Cleanup of %s failed: %s", instance.Name, instance.ErrorMessage))
+	} else if shouldDelete {
+		m.notifyUser(instance.OwnerID, instanceID, "instance.deleted", "Stack deleted", fmt.Sprintf("Stack %s has been deleted", instance.Name))
+		_ = m.fireDeployHook(m.shutdownCtx, hooks.EventDeleteCompleted, instance, deployLog.ID, deployLog.StartedAt)
+	} else {
+		m.notifyUser(instance.OwnerID, instanceID, "clean.completed", "Cleanup completed", fmt.Sprintf("Stack %s has been cleaned and returned to draft", instance.Name))
+	}
 }
 
 // RollbackRequest contains everything needed to rollback a stack instance.
@@ -1451,8 +1489,12 @@ func (m *Manager) finalizeRollback(instanceID string, deployLog *models.Deployme
 	}
 
 	hookCtx := m.shutdownCtx
+	_ = m.fireDeployHook(hookCtx, hooks.EventRollbackCompleted, instance, deployLog.ID, deployLog.StartedAt)
 	if rollbackErr == nil {
 		_ = m.fireDeployHook(hookCtx, hooks.EventPostRollback, instance, deployLog.ID, deployLog.StartedAt)
+		m.notifyUser(instance.OwnerID, instanceID, "rollback.completed", "Rollback completed", fmt.Sprintf("Stack %s has been rolled back successfully", instance.Name))
+	} else {
+		m.notifyUser(instance.OwnerID, instanceID, "rollback.error", "Rollback failed", fmt.Sprintf("Rollback of %s failed: %s", instance.Name, instance.ErrorMessage))
 	}
 }
 

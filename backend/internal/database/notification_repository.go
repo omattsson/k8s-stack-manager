@@ -107,7 +107,7 @@ func (r *GORMNotificationRepository) UpdatePreference(ctx context.Context, pref 
 	if err := r.db.WithContext(ctx).
 		Clauses(clause.OnConflict{
 			Columns:   []clause.Column{{Name: "user_id"}, {Name: "event_type"}},
-			DoUpdates: clause.AssignmentColumns([]string{"enabled"}),
+			DoUpdates: clause.AssignmentColumns([]string{"enabled", "channel"}),
 		}).
 		Create(pref).Error; err != nil {
 		return dberrors.NewDatabaseError("update_preference", err)
