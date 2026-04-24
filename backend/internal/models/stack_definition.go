@@ -19,6 +19,7 @@ type StackDefinition struct {
 type StackDefinitionRepository interface {
 	Create(definition *StackDefinition) error
 	FindByID(id string) (*StackDefinition, error)
+	FindByName(name string) ([]StackDefinition, error)
 	Update(definition *StackDefinition) error
 	Delete(id string) error
 	List() ([]StackDefinition, error)

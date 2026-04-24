@@ -111,6 +111,7 @@ func NewDefinitionHandlerWithVersions(
 // @Description List stack definitions with server-side pagination
 // @Tags        stack-definitions
 // @Produce     json
+// @Param       name     query    string false "Filter by exact name"
 // @Param       page     query    int false "Page number (default 1)"     minimum(1)
 // @Param       pageSize query    int false "Items per page (default 25, max 100)" minimum(1) maximum(100)
 // @Param       limit    query    int false "Max items to return (default 25, max 100)" minimum(1) maximum(100)
@@ -119,6 +120,25 @@ func NewDefinitionHandlerWithVersions(
 // @Failure     500 {object} map[string]string
 // @Router      /api/v1/stack-definitions [get]
 func (h *DefinitionHandler) ListDefinitions(c *gin.Context) {
+	if name := c.Query("name"); name != "" {
+		defs, err := h.definitionRepo.FindByName(name)
+		if err != nil {
+			status, message := mapError(err, entityStackDefinition)
+			c.JSON(status, gin.H{"error": message})
+			return
+		}
+		if defs == nil {
+			defs = []models.StackDefinition{}
+		}
+		c.JSON(http.StatusOK, gin.H{
+			"data":     defs,
+			"total":    len(defs),
+			"page":     1,
+			"pageSize": len(defs),
+		})
+		return
+	}
+
 	pageSize := listPageSizeDefault
 	offset := 0
 	page := 1

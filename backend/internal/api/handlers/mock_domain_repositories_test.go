@@ -462,6 +462,21 @@ func (m *MockStackDefinitionRepository) FindByID(id string) (*models.StackDefini
 	return &cp, nil
 }
 
+func (m *MockStackDefinitionRepository) FindByName(name string) ([]models.StackDefinition, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.err != nil {
+		return nil, m.err
+	}
+	var result []models.StackDefinition
+	for _, d := range m.items {
+		if d.Name == name {
+			result = append(result, *d)
+		}
+	}
+	return result, nil
+}
+
 func (m *MockStackDefinitionRepository) Update(d *models.StackDefinition) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()

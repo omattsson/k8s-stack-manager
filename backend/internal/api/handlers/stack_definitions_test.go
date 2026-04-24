@@ -200,6 +200,59 @@ func TestListDefinitions(t *testing.T) {
 
 		assert.Equal(t, http.StatusInternalServerError, w.Code)
 	})
+
+	t.Run("filters by name query param", func(t *testing.T) {
+		t.Parallel()
+		defRepo := NewMockStackDefinitionRepository()
+		seedDefinition(t, defRepo, "d1", "klaravik-dev", "owner-1")
+		seedDefinition(t, defRepo, "d2", "klaravik-staging", "owner-1")
+
+		router := setupDefinitionRouter(defRepo, NewMockChartConfigRepository(), NewMockStackInstanceRepository(), "uid-1", "user")
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest(http.MethodGet, "/api/v1/stack-definitions?name=klaravik-dev", nil)
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		var resp map[string]json.RawMessage
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+
+		var data []models.StackDefinition
+		require.NoError(t, json.Unmarshal(resp["data"], &data))
+		assert.Len(t, data, 1)
+		assert.Equal(t, "klaravik-dev", data[0].Name)
+	})
+
+	t.Run("name filter returns empty when no match", func(t *testing.T) {
+		t.Parallel()
+		defRepo := NewMockStackDefinitionRepository()
+		seedDefinition(t, defRepo, "d1", "klaravik-dev", "owner-1")
+
+		router := setupDefinitionRouter(defRepo, NewMockChartConfigRepository(), NewMockStackInstanceRepository(), "uid-1", "user")
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest(http.MethodGet, "/api/v1/stack-definitions?name=nonexistent", nil)
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		var resp map[string]json.RawMessage
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+
+		var data []models.StackDefinition
+		require.NoError(t, json.Unmarshal(resp["data"], &data))
+		assert.Empty(t, data)
+	})
+
+	t.Run("name filter with repository error returns 500", func(t *testing.T) {
+		t.Parallel()
+		defRepo := NewMockStackDefinitionRepository()
+		defRepo.SetError(errInternal)
+
+		router := setupDefinitionRouter(defRepo, NewMockChartConfigRepository(), NewMockStackInstanceRepository(), "uid-1", "user")
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest(http.MethodGet, "/api/v1/stack-definitions?name=klaravik-dev", nil)
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusInternalServerError, w.Code)
+	})
 }
 
 // ---- CreateDefinition ----
