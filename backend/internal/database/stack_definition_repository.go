@@ -53,6 +53,15 @@ func (r *GORMStackDefinitionRepository) FindByID(id string) (*models.StackDefini
 	return &definition, nil
 }
 
+// FindByName returns all stack definitions with the given exact name.
+func (r *GORMStackDefinitionRepository) FindByName(name string) ([]models.StackDefinition, error) {
+	var definitions []models.StackDefinition
+	if err := r.db.Where("name = ?", name).Find(&definitions).Error; err != nil {
+		return nil, dberrors.NewDatabaseError("find_by_name", err)
+	}
+	return definitions, nil
+}
+
 // Update persists changes to an existing stack definition.
 func (r *GORMStackDefinitionRepository) Update(definition *models.StackDefinition) error {
 	definition.UpdatedAt = time.Now().UTC()

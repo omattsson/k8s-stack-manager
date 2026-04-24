@@ -45,6 +45,18 @@ func (m *mockDefinitionRepo) FindByID(id string) (*models.StackDefinition, error
 	return d, nil
 }
 
+func (m *mockDefinitionRepo) FindByName(name string) ([]models.StackDefinition, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	var result []models.StackDefinition
+	for _, d := range m.items {
+		if d.Name == name {
+			result = append(result, *d)
+		}
+	}
+	return result, nil
+}
+
 func (m *mockDefinitionRepo) Update(d *models.StackDefinition) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
