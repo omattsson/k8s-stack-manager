@@ -16,16 +16,18 @@ import (
 
 // Notifier creates notification records and broadcasts them in real time.
 type Notifier struct {
-	repo models.NotificationRepository
-	hub  *websocket.Hub
+	repo     models.NotificationRepository
+	hub      *websocket.Hub
+	userRepo models.UserRepository
 }
 
-// NewNotifier creates a new Notifier. hub may be nil if real-time broadcasting
-// is not needed.
-func NewNotifier(repo models.NotificationRepository, hub *websocket.Hub) *Notifier {
+// NewNotifier creates a new Notifier. hub and userRepo may be nil if real-time
+// broadcasting or system-wide notifications are not needed.
+func NewNotifier(repo models.NotificationRepository, hub *websocket.Hub, userRepo models.UserRepository) *Notifier {
 	return &Notifier{
-		repo: repo,
-		hub:  hub,
+		repo:     repo,
+		hub:      hub,
+		userRepo: userRepo,
 	}
 }
 
@@ -63,6 +65,27 @@ func (n *Notifier) Notify(ctx context.Context, userID, notifType, title, message
 		n.hub.Broadcast(data)
 	}
 
+	return nil
+}
+
+// NotifySystem creates a notification for all admin and devops users.
+// Requires userRepo to have been provided at construction time.
+func (n *Notifier) NotifySystem(ctx context.Context, notifType, title, message, entityType, entityID string) error {
+	if n.userRepo == nil {
+		slog.Warn("NotifySystem called without userRepo configured")
+		return nil
+	}
+
+	admins, err := n.userRepo.ListByRoles([]string{"admin", "devops"})
+	if err != nil {
+		return err
+	}
+
+	for _, u := range admins {
+		if err := n.Notify(ctx, u.ID, notifType, title, message, entityType, entityID); err != nil {
+			slog.Error("failed to create system notification for user", "user_id", u.ID, "type", notifType, "error", err)
+		}
+	}
 	return nil
 }
 

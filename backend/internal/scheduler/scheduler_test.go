@@ -121,7 +121,8 @@ func (r *mockInstanceRepo) CountByStatus(string) (int, error) { return 0, nil }
 func (r *mockInstanceRepo) ExistsByDefinitionAndStatus(string, string) (bool, error) {
 	return false, nil
 }
-func (r *mockInstanceRepo) ListExpired() ([]*models.StackInstance, error)           { return nil, nil }
+func (r *mockInstanceRepo) ListExpired() ([]*models.StackInstance, error)                        { return nil, nil }
+func (r *mockInstanceRepo) ListExpiringSoon(_ time.Duration) ([]*models.StackInstance, error) { return nil, nil }
 func (r *mockInstanceRepo) CountByDefinitionIDs(_ []string) (map[string]int, error) { return nil, nil }
 func (r *mockInstanceRepo) CountByOwnerIDs(_ []string) (map[string]int, error)      { return nil, nil }
 func (r *mockInstanceRepo) ListIDsByDefinitionIDs(_ []string) (map[string][]string, error) {
@@ -213,7 +214,7 @@ func TestSchedulerStartStop(t *testing.T) {
 	instanceRepo := &mockInstanceRepo{}
 	auditRepo := &mockAuditRepo{}
 
-	s := NewScheduler(policyRepo, instanceRepo, auditRepo, nil)
+	s := NewScheduler(policyRepo, instanceRepo, auditRepo, nil, nil)
 
 	err := s.Start()
 	assert.NoError(t, err)
@@ -239,7 +240,7 @@ func TestSchedulerReload(t *testing.T) {
 	instanceRepo := &mockInstanceRepo{}
 	auditRepo := &mockAuditRepo{}
 
-	s := NewScheduler(policyRepo, instanceRepo, auditRepo, nil)
+	s := NewScheduler(policyRepo, instanceRepo, auditRepo, nil, nil)
 	err := s.Start()
 	assert.NoError(t, err)
 	defer s.Stop()
@@ -284,7 +285,7 @@ func TestRunPolicyDryRun(t *testing.T) {
 	}
 	auditRepo := &mockAuditRepo{}
 
-	s := NewScheduler(policyRepo, instanceRepo, auditRepo, nil)
+	s := NewScheduler(policyRepo, instanceRepo, auditRepo, nil, nil)
 	err := s.Start()
 	assert.NoError(t, err)
 	defer s.Stop()
@@ -321,7 +322,7 @@ func TestRunPolicyWithExecutor(t *testing.T) {
 	auditRepo := &mockAuditRepo{}
 	executor := &mockExecutor{}
 
-	s := NewScheduler(policyRepo, instanceRepo, auditRepo, executor)
+	s := NewScheduler(policyRepo, instanceRepo, auditRepo, executor, nil)
 	err := s.Start()
 	assert.NoError(t, err)
 	defer s.Stop()
@@ -362,7 +363,7 @@ func TestRunPolicyCleanAction(t *testing.T) {
 	auditRepo := &mockAuditRepo{}
 	executor := &mockExecutor{}
 
-	s := NewScheduler(policyRepo, instanceRepo, auditRepo, executor)
+	s := NewScheduler(policyRepo, instanceRepo, auditRepo, executor, nil)
 	err := s.Start()
 	assert.NoError(t, err)
 	defer s.Stop()
@@ -398,7 +399,7 @@ func TestRunPolicyDeleteAction(t *testing.T) {
 	auditRepo := &mockAuditRepo{}
 	executor := &mockExecutor{}
 
-	s := NewScheduler(policyRepo, instanceRepo, auditRepo, executor)
+	s := NewScheduler(policyRepo, instanceRepo, auditRepo, executor, nil)
 	err := s.Start()
 	assert.NoError(t, err)
 	defer s.Stop()
@@ -434,7 +435,7 @@ func TestRunPolicyByCluster(t *testing.T) {
 	}
 	auditRepo := &mockAuditRepo{}
 
-	s := NewScheduler(policyRepo, instanceRepo, auditRepo, nil)
+	s := NewScheduler(policyRepo, instanceRepo, auditRepo, nil, nil)
 	err := s.Start()
 	assert.NoError(t, err)
 	defer s.Stop()
@@ -469,7 +470,7 @@ func TestRunPolicyExecutorError(t *testing.T) {
 	auditRepo := &mockAuditRepo{}
 	executor := &failingExecutor{}
 
-	s := NewScheduler(policyRepo, instanceRepo, auditRepo, executor)
+	s := NewScheduler(policyRepo, instanceRepo, auditRepo, executor, nil)
 	err := s.Start()
 	assert.NoError(t, err)
 	defer s.Stop()
@@ -488,7 +489,7 @@ func TestRunPolicyNotFound(t *testing.T) {
 	instanceRepo := &mockInstanceRepo{}
 	auditRepo := &mockAuditRepo{}
 
-	s := NewScheduler(policyRepo, instanceRepo, auditRepo, nil)
+	s := NewScheduler(policyRepo, instanceRepo, auditRepo, nil, nil)
 	err := s.Start()
 	assert.NoError(t, err)
 	defer s.Stop()

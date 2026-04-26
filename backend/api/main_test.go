@@ -480,6 +480,10 @@ func (m *mockInstanceRepo) ListExpired() ([]*models.StackInstance, error) {
 	return nil, nil
 }
 
+func (m *mockInstanceRepo) ListExpiringSoon(_ time.Duration) ([]*models.StackInstance, error) {
+	return nil, nil
+}
+
 // ---- extractAPIServerURL tests ----
 
 func TestExtractAPIServerURL(t *testing.T) {
@@ -895,7 +899,7 @@ func TestGracefulShutdown(t *testing.T) {
 	})
 	healthPoller.Start()
 
-	cleanupScheduler := scheduler.NewScheduler(&stubPolicyRepo{}, newMockInstanceRepo(), nil, nil)
+	cleanupScheduler := scheduler.NewScheduler(&stubPolicyRepo{}, newMockInstanceRepo(), nil, nil, nil)
 	// Start the scheduler so Stop() can signal it to exit.
 	_ = cleanupScheduler.Start()
 
@@ -957,7 +961,7 @@ func TestGracefulShutdown_RepoCloseError(t *testing.T) {
 	})
 	healthPoller.Start()
 
-	cleanupScheduler := scheduler.NewScheduler(&stubPolicyRepo{}, newMockInstanceRepo(), nil, nil)
+	cleanupScheduler := scheduler.NewScheduler(&stubPolicyRepo{}, newMockInstanceRepo(), nil, nil, nil)
 	_ = cleanupScheduler.Start()
 
 	deployManager := deployer.NewManager(deployer.ManagerConfig{MaxConcurrent: 1})

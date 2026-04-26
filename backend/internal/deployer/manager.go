@@ -3,6 +3,7 @@ package deployer
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -666,7 +667,16 @@ func (m *Manager) finalizeDeploy(instanceID string, deployLog *models.Deployment
 	_ = m.fireDeployHook(hookCtx, hooks.EventDeployFinalized, instance, deployLog.ID, deployLog.StartedAt)
 
 	if deployErr != nil {
-		m.notifyUser(instance.OwnerID, instanceID, "deployment.error", "Deployment failed", fmt.Sprintf("Deployment of %s failed: %s", instance.Name, instance.ErrorMessage))
+		if isTimeoutError(deployErr) {
+			m.notifyUser(instance.OwnerID, instanceID, "deploy.timeout",
+				"Deployment timed out",
+				fmt.Sprintf("Deployment of %s exceeded the timeout threshold", instance.Name))
+			_ = m.fireDeployHook(hookCtx, hooks.EventDeployTimeout, instance, deployLog.ID, deployLog.StartedAt)
+		} else {
+			m.notifyUser(instance.OwnerID, instanceID, "deployment.error",
+				"Deployment failed",
+				fmt.Sprintf("Deployment of %s failed: %s", instance.Name, instance.ErrorMessage))
+		}
 	} else {
 		m.notifyUser(instance.OwnerID, instanceID, "deployment.success", "Deployment succeeded", fmt.Sprintf("Deployment of %s completed successfully", instance.Name))
 	}
@@ -913,6 +923,17 @@ func (m *Manager) finalizeStop(instanceID string, deployLog *models.DeploymentLo
 //
 // The function keeps only the first wrapped layer (e.g. "deploying chart
 // \"nginx\"") plus a generic suffix.
+func isTimeoutError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "timed out") || strings.Contains(msg, "deadline exceeded")
+}
+
 func sanitizeDeployError(err error) string {
 	msg := err.Error()
 

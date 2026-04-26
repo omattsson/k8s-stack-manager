@@ -137,3 +137,15 @@ func (r *GORMUserRepository) List() ([]models.User, error) {
 	}
 	return users, nil
 }
+
+// ListByRoles returns users whose role matches any of the given roles.
+func (r *GORMUserRepository) ListByRoles(roles []string) ([]models.User, error) {
+	if len(roles) == 0 {
+		return nil, nil
+	}
+	var users []models.User
+	if err := r.db.Where("role IN ?", roles).Find(&users).Error; err != nil {
+		return nil, dberrors.NewDatabaseError("list_by_roles", err)
+	}
+	return users, nil
+}

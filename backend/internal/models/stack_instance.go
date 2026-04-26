@@ -54,4 +54,5 @@ type StackInstanceRepository interface {
 	ListIDsByOwnerIDs(ownerIDs []string) (map[string][]string, error)
 	ExistsByDefinitionAndStatus(definitionID, status string) (bool, error)
 	ListExpired() ([]*StackInstance, error)
+	ListExpiringSoon(threshold time.Duration) ([]*StackInstance, error)
 }

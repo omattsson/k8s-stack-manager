@@ -26,5 +26,6 @@ type UserRepository interface {
 	Update(user *User) error
 	Delete(id string) error
 	List() ([]User, error)
+	ListByRoles(roles []string) ([]User, error)
 	Count() (int64, error)
 }

@@ -32,6 +32,7 @@ func (s *stubUserRepo) Update(_ *models.User) error                           { 
 func (s *stubUserRepo) Delete(_ string) error                                 { return nil }
 func (s *stubUserRepo) List() ([]models.User, error)                          { return nil, nil }
 func (s *stubUserRepo) Count() (int64, error)                                 { return 0, nil }
+func (s *stubUserRepo) ListByRoles(_ []string) ([]models.User, error)         { return nil, nil }
 
 type stubAPIKeyRepo struct{}
 

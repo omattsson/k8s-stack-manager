@@ -132,7 +132,7 @@ func TestNotify(t *testing.T) {
 				defer tt.hub.Shutdown()
 			}
 
-			n := NewNotifier(repo, tt.hub)
+			n := NewNotifier(repo, tt.hub, nil)
 
 			err := n.Notify(
 				context.Background(),
@@ -178,7 +178,7 @@ func TestNotifyUUIDUniqueness(t *testing.T) {
 	t.Parallel()
 
 	repo := newMockNotificationRepo()
-	n := NewNotifier(repo, nil)
+	n := NewNotifier(repo, nil, nil)
 
 	// Create multiple notifications and verify unique IDs.
 	for i := 0; i < 10; i++ {
@@ -235,7 +235,7 @@ func TestNotifyFieldsAreSetCorrectly(t *testing.T) {
 			t.Parallel()
 
 			repo := newMockNotificationRepo()
-			n := NewNotifier(repo, nil)
+			n := NewNotifier(repo, nil, nil)
 
 			before := time.Now().UTC()
 			err := n.Notify(context.Background(), tt.userID, tt.notifType, tt.title, tt.message, tt.entityType, tt.entityID)
@@ -270,7 +270,7 @@ func TestNotifyWithHubBroadcasts(t *testing.T) {
 	defer hub.Shutdown()
 
 	repo := newMockNotificationRepo()
-	n := NewNotifier(repo, hub)
+	n := NewNotifier(repo, hub, nil)
 
 	err := n.Notify(context.Background(), "user-1", "deploy", "Done", "Deployed", "instance", "i1")
 	assert.NoError(t, err)
@@ -287,7 +287,7 @@ func TestNewNotifier(t *testing.T) {
 	t.Run("creates notifier with nil hub", func(t *testing.T) {
 		t.Parallel()
 		repo := newMockNotificationRepo()
-		n := NewNotifier(repo, nil)
+		n := NewNotifier(repo, nil, nil)
 		assert.NotNil(t, n)
 	})
 
@@ -295,7 +295,7 @@ func TestNewNotifier(t *testing.T) {
 		t.Parallel()
 		repo := newMockNotificationRepo()
 		hub := websocket.NewHub()
-		n := NewNotifier(repo, hub)
+		n := NewNotifier(repo, hub, nil)
 		assert.NotNil(t, n)
 	})
 }

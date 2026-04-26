@@ -203,6 +203,20 @@ func (r *GORMStackInstanceRepository) ListExpired() ([]*models.StackInstance, er
 	return instances, nil
 }
 
+// ListExpiringSoon returns running instances whose ExpiresAt is within the given
+// threshold from now (i.e., will expire soon but haven't expired yet).
+func (r *GORMStackInstanceRepository) ListExpiringSoon(threshold time.Duration) ([]*models.StackInstance, error) {
+	now := time.Now().UTC()
+	deadline := now.Add(threshold)
+	var instances []*models.StackInstance
+	if err := r.db.Where("status = ? AND expires_at IS NOT NULL AND expires_at > ? AND expires_at <= ?",
+		models.StackStatusRunning, now, deadline).
+		Find(&instances).Error; err != nil {
+		return nil, dberrors.NewDatabaseError("list_expiring_soon", err)
+	}
+	return instances, nil
+}
+
 // CountByDefinitionIDs returns a map of definition ID to instance count for the
 // given definition IDs in a single GROUP BY query. IDs are processed in chunks
 // of 500 to stay within MySQL's IN clause limits.

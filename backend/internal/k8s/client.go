@@ -4,12 +4,15 @@ package k8s
 
 import (
 	"context"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
@@ -178,7 +181,8 @@ func (c *Client) EnsureDockerRegistrySecret(ctx context.Context, namespace, secr
 				"k8s-stack-manager.io/image-pull-secret": "true",
 			},
 			Annotations: map[string]string{
-				"k8s-stack-manager.io/registry": server,
+				"k8s-stack-manager.io/registry":     server,
+				"k8s-stack-manager.io/refreshed-at": time.Now().UTC().Format(time.RFC3339),
 			},
 		},
 		Type: corev1.SecretTypeDockerConfigJson,
@@ -292,4 +296,87 @@ func (c *Client) CopySecret(ctx context.Context, sourceNS, sourceName, targetNS,
 	}
 	slog.Debug("Updated copied secret", "from", sourceNS+"/"+sourceName, "to", targetNS+"/"+targetName)
 	return nil
+}
+
+// ACRTokenLifetime is the assumed validity period for ACR pull-secret tokens.
+// Azure Container Registry refresh tokens default to 3 hours. Override this if
+// your registry uses a different token lifetime.
+var ACRTokenLifetime = 3 * time.Hour
+
+// ManagedSecret describes a secret managed by k8s-stack-manager with parsed
+// expiry information (when available).
+type ManagedSecret struct {
+	Name      string
+	Namespace string
+	Type      string // "pull-secret" or "tls"
+	ExpiresAt *time.Time
+}
+
+// ListManagedSecrets returns secrets in the given namespace that are managed by
+// k8s-stack-manager. For TLS secrets, it parses the certificate to extract the
+// expiry date.
+func (c *Client) ListManagedSecrets(ctx context.Context, namespace string) ([]ManagedSecret, error) {
+	secrets, err := c.clientset.CoreV1().Secrets(namespace).List(ctx, metav1.ListOptions{
+		LabelSelector: "managed-by=k8s-stack-manager",
+	})
+	if err != nil {
+		return nil, fmt.Errorf("list secrets in %q: %w", namespace, err)
+	}
+
+	var result []ManagedSecret
+	for i := range secrets.Items {
+		s := &secrets.Items[i]
+		ms := ManagedSecret{
+			Name:      s.Name,
+			Namespace: s.Namespace,
+		}
+
+		switch s.Type {
+		case corev1.SecretTypeTLS:
+			ms.Type = "tls"
+			if certPEM, ok := s.Data[corev1.TLSCertKey]; ok {
+				if exp, parseErr := parseCertExpiry(certPEM); parseErr == nil {
+					ms.ExpiresAt = &exp
+				}
+			}
+		case corev1.SecretTypeDockerConfigJson:
+			ms.Type = "pull-secret"
+			// Docker config secrets don't embed an expiry date in the payload.
+			// Use the secret's last-modified annotation if set by the refresher,
+			// otherwise treat as unknown expiry.
+			if ts, ok := s.Annotations["k8s-stack-manager.io/refreshed-at"]; ok {
+				if t, parseErr := time.Parse(time.RFC3339, ts); parseErr == nil {
+					exp := t.Add(ACRTokenLifetime)
+					ms.ExpiresAt = &exp
+				}
+			}
+		default:
+			// Copied secrets (e.g., wildcard TLS) labelled as managed.
+			if _, hasTLS := s.Data[corev1.TLSCertKey]; hasTLS {
+				ms.Type = "tls"
+				if certPEM, ok := s.Data[corev1.TLSCertKey]; ok {
+					if exp, parseErr := parseCertExpiry(certPEM); parseErr == nil {
+						ms.ExpiresAt = &exp
+					}
+				}
+			} else {
+				continue // skip unrecognized secret types
+			}
+		}
+		result = append(result, ms)
+	}
+	return result, nil
+}
+
+// parseCertExpiry reads the first PEM certificate and returns its NotAfter.
+func parseCertExpiry(certPEM []byte) (time.Time, error) {
+	block, _ := pem.Decode(certPEM)
+	if block == nil {
+		return time.Time{}, fmt.Errorf("no PEM block found")
+	}
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		return time.Time{}, err
+	}
+	return cert.NotAfter, nil
 }

@@ -30,9 +30,16 @@ type CleanupResult struct {
 	InstanceID   string `json:"instance_id"`
 	InstanceName string `json:"instance_name"`
 	Namespace    string `json:"namespace"`
+	OwnerID      string `json:"owner_id"`
 	Action       string `json:"action"`
 	Status       string `json:"status"` // "success", "error", "dry_run"
 	Error        string `json:"error,omitempty"`
+}
+
+// CleanupNotifier creates in-app notifications for cleanup events.
+type CleanupNotifier interface {
+	Notify(ctx context.Context, userID, notifType, title, message, entityType, entityID string) error
+	NotifySystem(ctx context.Context, notifType, title, message, entityType, entityID string) error
 }
 
 // Scheduler manages cron-based cleanup policy execution.
@@ -41,19 +48,21 @@ type Scheduler struct {
 	policyRepo   models.CleanupPolicyRepository
 	instanceRepo models.StackInstanceRepository
 	auditRepo    models.AuditLogRepository
-	executor     ActionExecutor // can be nil (dry-run only mode)
+	executor     ActionExecutor    // can be nil (dry-run only mode)
+	notifier     CleanupNotifier   // can be nil
 	mu           sync.Mutex
 	entryMap     map[string]cron.EntryID // policyID → cron entry
 	ctx          context.Context
 	cancel       context.CancelFunc
 }
 
-// NewScheduler creates a new cleanup scheduler.
+// NewScheduler creates a new cleanup scheduler. notifier may be nil.
 func NewScheduler(
 	policyRepo models.CleanupPolicyRepository,
 	instanceRepo models.StackInstanceRepository,
 	auditRepo models.AuditLogRepository,
 	executor ActionExecutor,
+	notifier CleanupNotifier,
 ) *Scheduler {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &Scheduler{
@@ -65,6 +74,7 @@ func NewScheduler(
 		instanceRepo: instanceRepo,
 		auditRepo:    auditRepo,
 		executor:     executor,
+		notifier:     notifier,
 		entryMap:     make(map[string]cron.EntryID),
 		ctx:          ctx,
 		cancel:       cancel,
@@ -152,6 +162,8 @@ func (s *Scheduler) executePolicy(policy models.CleanupPolicy) {
 		slog.Error("Failed to update policy LastRunAt", "policy", policy.ID, "error", updateErr)
 	}
 	slog.Info("Cleanup policy executed", "policy", policy.Name, "results", len(results))
+
+	s.notifyPolicyExecuted(&policy, results)
 }
 
 func (s *Scheduler) executePolicyWithOptions(policy *models.CleanupPolicy, dryRun bool) ([]CleanupResult, error) {
@@ -209,6 +221,7 @@ func (s *Scheduler) executePolicyWithOptions(policy *models.CleanupPolicy, dryRu
 			InstanceID:   inst.ID,
 			InstanceName: inst.Name,
 			Namespace:    inst.Namespace,
+			OwnerID:      inst.OwnerID,
 			Action:       policy.Action,
 		}
 
@@ -268,5 +281,58 @@ func (s *Scheduler) createAuditEntry(policy *models.CleanupPolicy, inst *models.
 	}
 	if err := s.auditRepo.Create(entry); err != nil {
 		slog.Error("Failed to create audit log for cleanup", "error", err)
+	}
+}
+
+func (s *Scheduler) notifyPolicyExecuted(policy *models.CleanupPolicy, results []CleanupResult) {
+	if s.notifier == nil || len(results) == 0 {
+		return
+	}
+	ctx := s.ctx
+
+	dryRunLabel := ""
+	if policy.DryRun {
+		dryRunLabel = " (dry run)"
+	}
+
+	var affected int
+	for _, r := range results {
+		if r.Status == "success" || r.Status == "dry_run" {
+			affected++
+		}
+	}
+	_ = s.notifier.NotifySystem(ctx,
+		"cleanup.policy.executed",
+		fmt.Sprintf("Cleanup policy %q ran%s", policy.Name, dryRunLabel),
+		fmt.Sprintf("Policy %q matched %d instance(s), action: %s%s", policy.Name, affected, policy.Action, dryRunLabel),
+		"cleanup_policy", policy.ID,
+	)
+
+	if policy.DryRun {
+		return
+	}
+	for _, r := range results {
+		if r.Status != "success" {
+			continue
+		}
+		notifType := "cleanup.policy." + r.Action
+		_ = s.notifier.Notify(ctx, r.OwnerID, notifType,
+			fmt.Sprintf("Stack %q %s by cleanup policy", r.InstanceName, actionPastTense(r.Action)),
+			fmt.Sprintf("Cleanup policy %q performed %s on your stack %q", policy.Name, r.Action, r.InstanceName),
+			"stack_instance", r.InstanceID,
+		)
+	}
+}
+
+func actionPastTense(action string) string {
+	switch action {
+	case "stop":
+		return "stopped"
+	case "clean":
+		return "cleaned"
+	case "delete":
+		return "deleted"
+	default:
+		return action + "ed"
 	}
 }

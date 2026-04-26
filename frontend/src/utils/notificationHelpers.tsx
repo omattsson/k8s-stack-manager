@@ -4,6 +4,10 @@ import StopCircleOutlined from '@mui/icons-material/StopCircleOutlined';
 import DeleteOutlined from '@mui/icons-material/DeleteOutlined';
 import AddCircleOutlined from '@mui/icons-material/AddCircleOutlined';
 import InfoOutlined from '@mui/icons-material/InfoOutlined';
+import TimerOffOutlined from '@mui/icons-material/TimerOffOutlined';
+import WarningAmberOutlined from '@mui/icons-material/WarningAmberOutlined';
+import CleaningServicesOutlined from '@mui/icons-material/CleaningServicesOutlined';
+import VpnKeyOutlined from '@mui/icons-material/VpnKeyOutlined';
 
 /**
  * Returns a human-readable relative time string for a given ISO date.
@@ -28,6 +32,11 @@ export function timeAgo(dateStr: string): string {
  * Returns an MUI icon element appropriate for the notification type.
  */
 export function notificationIcon(type: string) {
+  if (type === 'deploy.timeout') return <TimerOffOutlined color="error" fontSize="small" />;
+  if (type === 'stack.expiring') return <TimerOffOutlined color="warning" fontSize="small" />;
+  if (type === 'quota.warning') return <WarningAmberOutlined color="warning" fontSize="small" />;
+  if (type === 'secret.expiring') return <VpnKeyOutlined color="warning" fontSize="small" />;
+  if (type.includes('cleanup') || type === 'stack.expired') return <CleaningServicesOutlined color="action" fontSize="small" />;
   if (type.includes('error')) return <ErrorOutlined color="error" fontSize="small" />;
   if (type.includes('success') || type.includes('completed')) return <CheckCircleOutlined color="success" fontSize="small" />;
   if (type.includes('stopped')) return <StopCircleOutlined color="warning" fontSize="small" />;
@@ -47,6 +56,9 @@ export function entityRoute(entityType?: string): string {
       return '/stack-definitions';
     case 'stack_template':
       return '/templates';
+    case 'cluster':
+    case 'cleanup_policy':
+      return '/settings';
     default:
       return '';
   }

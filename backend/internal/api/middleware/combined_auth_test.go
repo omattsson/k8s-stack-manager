@@ -103,6 +103,7 @@ func (r *testUserRepo) Update(user *models.User) error   { return nil }
 func (r *testUserRepo) Delete(id string) error           { return nil }
 func (r *testUserRepo) List() ([]models.User, error)     { return nil, nil }
 func (r *testUserRepo) Count() (int64, error)            { return 0, nil }
+func (r *testUserRepo) ListByRoles(_ []string) ([]models.User, error) { return nil, nil }
 
 // ---- helpers ----
 

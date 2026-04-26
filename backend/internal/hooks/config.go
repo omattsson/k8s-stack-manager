@@ -77,7 +77,10 @@ func isKnownEvent(e string) bool {
 		EventDeployFinalized,
 		EventStopCompleted, EventCleanCompleted,
 		EventRollbackCompleted, EventDeleteCompleted,
-		EventInstanceCreated:
+		EventInstanceCreated,
+		EventDeployTimeout, EventCleanupPolicyExecuted,
+		EventStackExpired, EventStackExpiring,
+		EventQuotaWarning, EventSecretExpiring:
 		return true
 	}
 	return false
