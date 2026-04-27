@@ -445,7 +445,7 @@ func TestRunCleanupPolicy(t *testing.T) {
 			}
 			auditRepo := &cleanupMockAuditRepo{}
 
-			sched := scheduler.NewScheduler(policyRepo, instanceRepo, auditRepo, nil)
+			sched := scheduler.NewScheduler(policyRepo, instanceRepo, auditRepo, nil, nil)
 			_ = sched.Start()
 			defer sched.Stop()
 
@@ -759,6 +759,9 @@ func (r *cleanupMockInstanceRepo) ListIDsByOwnerIDs(_ []string) (map[string][]st
 	return nil, nil
 }
 func (r *cleanupMockInstanceRepo) ListExpired() ([]*models.StackInstance, error) { return nil, nil }
+func (r *cleanupMockInstanceRepo) ListExpiringSoon(_ time.Duration) ([]*models.StackInstance, error) {
+	return nil, nil
+}
 
 // cleanupMockAuditRepo implements models.AuditLogRepository for handler tests.
 type cleanupMockAuditRepo struct {

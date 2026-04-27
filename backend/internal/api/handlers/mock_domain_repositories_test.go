@@ -162,6 +162,22 @@ func (m *MockUserRepository) Count() (int64, error) {
 	return int64(len(m.users)), nil
 }
 
+func (m *MockUserRepository) ListByRoles(roles []string) ([]models.User, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	roleSet := make(map[string]struct{}, len(roles))
+	for _, r := range roles {
+		roleSet[r] = struct{}{}
+	}
+	var out []models.User
+	for _, u := range m.users {
+		if _, ok := roleSet[u.Role]; ok {
+			out = append(out, *u)
+		}
+	}
+	return out, nil
+}
+
 func (m *MockUserRepository) SetCreateError(err error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -925,6 +941,24 @@ func (m *MockStackInstanceRepository) ListExpired() ([]*models.StackInstance, er
 	var out []*models.StackInstance
 	for _, i := range m.items {
 		if i.Status == models.StackStatusRunning && i.ExpiresAt != nil && i.ExpiresAt.Before(now) {
+			cp := *i
+			out = append(out, &cp)
+		}
+	}
+	return out, nil
+}
+
+func (m *MockStackInstanceRepository) ListExpiringSoon(threshold time.Duration) ([]*models.StackInstance, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.err != nil {
+		return nil, m.err
+	}
+	now := time.Now()
+	deadline := now.Add(threshold)
+	var out []*models.StackInstance
+	for _, i := range m.items {
+		if i.Status == models.StackStatusRunning && i.ExpiresAt != nil && i.ExpiresAt.After(now) && !i.ExpiresAt.After(deadline) {
 			cp := *i
 			out = append(out, &cp)
 		}

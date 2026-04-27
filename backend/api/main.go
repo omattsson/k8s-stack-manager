@@ -251,7 +251,7 @@ func main() {
 	)
 
 	// Lifecycle notifier — creates in-app notifications for stack events
-	lifecycleNotifier := notifier.NewNotifier(notificationRepo, hub)
+	lifecycleNotifier := notifier.NewNotifier(notificationRepo, hub, userRepo)
 
 	// Deployment manager — uses registry for multi-cluster deploys
 	deployManager := deployer.NewManager(deployer.ManagerConfig{
@@ -362,7 +362,7 @@ func main() {
 	// Phase 6.2: Cleanup policies
 	// ------------------------------------------------------------------
 	cleanupExecutor := deployer.NewCleanupExecutor(deployManager, definitionRepo, chartConfigRepo, instanceRepo)
-	cleanupScheduler := scheduler.NewScheduler(cleanupPolicyRepo, instanceRepo, auditRepo, cleanupExecutor)
+	cleanupScheduler := scheduler.NewScheduler(cleanupPolicyRepo, instanceRepo, auditRepo, cleanupExecutor, lifecycleNotifier)
 	cleanupPolicyHandler := handlers.NewCleanupPolicyHandler(cleanupPolicyRepo, cleanupScheduler)
 
 	// Auto-create admin user on startup if ADMIN_PASSWORD is set.
@@ -409,6 +409,29 @@ func main() {
 	expiryStopper := deployer.NewExpiryStopper(deployManager, definitionRepo, chartConfigRepo)
 	reaper := ttl.NewReaper(instanceRepo, auditRepo, hub, expiryStopper, 60*time.Second)
 	go reaper.Start()
+
+	// Start TTL expiry warner — warns users before their stack expires (#189).
+	expiryWarner := ttl.NewWarner(instanceRepo, lifecycleNotifier, 30*time.Minute, 60*time.Second)
+	go expiryWarner.Start()
+
+	// Start quota monitor — alerts admins when cluster resource usage is high (#190).
+	quotaMonitor := cluster.NewQuotaMonitor(cluster.QuotaMonitorConfig{
+		ClusterRepo:  clusterRepo,
+		InstanceRepo: instanceRepo,
+		QuotaRepo:    quotaRepo,
+		Registry:     clusterRegistry,
+		Notifier:     lifecycleNotifier,
+	})
+	quotaMonitor.Start()
+
+	// Start secret expiry monitor — alerts admins before secrets expire (#191).
+	secretMonitor := cluster.NewSecretMonitor(cluster.SecretMonitorConfig{
+		ClusterRepo:  clusterRepo,
+		InstanceRepo: instanceRepo,
+		Registry:     clusterRegistry,
+		Notifier:     lifecycleNotifier,
+	})
+	secretMonitor.Start()
 
 	// Periodically clean up expired refresh tokens (every hour).
 	refreshTokenCleanupCtx, refreshTokenCleanupCancel := context.WithCancel(context.Background())
@@ -488,10 +511,13 @@ func main() {
 	gracefulShutdown(srv, shutdownTimeout, shutdownDeps{
 		telemetry:        tel,
 		reaper:           reaper,
+		expiryWarner:     expiryWarner,
 		cleanupScheduler: cleanupScheduler,
 		deployManager:    deployManager,
 		healthPoller:     healthPoller,
 		secretRefresher:  secretRefresher,
+		quotaMonitor:     quotaMonitor,
+		secretMonitor:    secretMonitor,
 		k8sWatcher:       k8sWatcher,
 		hub:              hub,
 		clusterRegistry:  clusterRegistry,
@@ -505,10 +531,13 @@ func main() {
 type shutdownDeps struct {
 	telemetry        *telemetry.Telemetry
 	reaper           *ttl.Reaper
+	expiryWarner     *ttl.Warner
 	cleanupScheduler *scheduler.Scheduler
 	deployManager    *deployer.Manager
 	healthPoller     *cluster.HealthPoller
 	secretRefresher  *cluster.SecretRefresher
+	quotaMonitor     *cluster.QuotaMonitor
+	secretMonitor    *cluster.SecretMonitor
 	k8sWatcher       *k8s.Watcher
 	hub              *websocket.Hub
 	clusterRegistry  *cluster.Registry
@@ -529,6 +558,9 @@ func gracefulShutdown(srv *http.Server, timeout time.Duration, deps shutdownDeps
 
 	// 2. Stop producers of deploy work.
 	deps.reaper.Stop()
+	if deps.expiryWarner != nil {
+		deps.expiryWarner.Stop()
+	}
 	deps.cleanupScheduler.Stop()
 
 	// 3. Now safe to wait for in-flight deploys.
@@ -538,6 +570,12 @@ func gracefulShutdown(srv *http.Server, timeout time.Duration, deps shutdownDeps
 	deps.healthPoller.Stop()
 	if deps.secretRefresher != nil {
 		deps.secretRefresher.Stop()
+	}
+	if deps.quotaMonitor != nil {
+		deps.quotaMonitor.Stop()
+	}
+	if deps.secretMonitor != nil {
+		deps.secretMonitor.Stop()
 	}
 	if deps.k8sWatcher != nil {
 		deps.k8sWatcher.Stop()

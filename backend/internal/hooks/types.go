@@ -7,8 +7,9 @@ package hooks
 
 import "time"
 
-// Event names. Use these constants when calling Dispatcher.Fire and when
-// declaring Subscription.Events to avoid typos.
+// Event names use kebab-case (e.g. "deploy-timeout") for webhook payloads.
+// In-app notification types in the notifier package use dot-separated names
+// (e.g. "deploy.timeout") — keep the two conventions distinct.
 const (
 	EventPreDeploy           = "pre-deploy"
 	EventPostDeploy          = "post-deploy"
@@ -26,6 +27,14 @@ const (
 	EventRollbackCompleted   = "rollback-completed"
 	EventDeleteCompleted     = "delete-completed"
 	EventInstanceCreated     = "instance-created"
+
+	// Phase 2 notification events (#189–#193).
+	EventDeployTimeout          = "deploy-timeout"
+	EventCleanupPolicyExecuted  = "cleanup-policy-executed"
+	EventStackExpired           = "stack-expired"
+	EventStackExpiring          = "stack-expiring"
+	EventQuotaWarning           = "quota-warning"
+	EventSecretExpiring         = "secret-expiring"
 )
 
 // FailurePolicy controls how dispatch errors propagate to the caller.
