@@ -619,9 +619,11 @@ export const definitionService = {
   get: async (id: string): Promise<StackDefinition> => {
     try {
       const response = await api.get(`/api/v1/stack-definitions/${id}`);
-      // API returns { definition: {...}, charts: [...] }
-      const { definition, charts } = response.data;
-      return { ...definition, charts: charts || [] };
+      const data = response.data;
+      if (data.definition) {
+        return { ...data.definition, charts: data.charts || [] };
+      }
+      return { ...data, charts: data.charts || [] };
     } catch (error) {
       console.error('Failed to fetch definition:', error);
       throw error;
