@@ -54,6 +54,20 @@ func NewDispatcher(cfg Config, client httpClient) (*Dispatcher, error) {
 // envelope.APIVersion, .Kind, .Event, .Timestamp, .RequestID are populated
 // by Fire — callers do not need to set them.
 func (d *Dispatcher) Fire(ctx context.Context, event string, envelope EventEnvelope) error {
+	return d.fireInternal(ctx, event, envelope, nil)
+}
+
+// FireWithProgress is like Fire but streams progress lines from the subscriber
+// response to onProgress. Subscribers can write "LOG: <message>\n" lines before
+// their final JSON response; each such line is forwarded to onProgress with the
+// prefix stripped. This enables long-running hooks (e.g. CI trigger gates) to
+// report status back to the deployment log in near-real-time.
+// When onProgress is nil, behaviour is identical to Fire.
+func (d *Dispatcher) FireWithProgress(ctx context.Context, event string, envelope EventEnvelope, onProgress func(string)) error {
+	return d.fireInternal(ctx, event, envelope, onProgress)
+}
+
+func (d *Dispatcher) fireInternal(ctx context.Context, event string, envelope EventEnvelope, onProgress func(string)) error {
 	indices := d.byEvent[event]
 	if len(indices) == 0 {
 		return nil
@@ -69,7 +83,7 @@ func (d *Dispatcher) Fire(ctx context.Context, event string, envelope EventEnvel
 
 	for _, idx := range indices {
 		sub := d.subs[idx]
-		if err := d.invoke(ctx, sub, envelope); err != nil {
+		if err := d.invoke(ctx, sub, envelope, onProgress); err != nil {
 			if sub.FailurePolicy == FailurePolicyFail {
 				return fmt.Errorf("hook %q failed (failure_policy=fail): %w", sub.Name, err)
 			}
@@ -83,10 +97,17 @@ func (d *Dispatcher) Fire(ctx context.Context, event string, envelope EventEnvel
 	return nil
 }
 
-func (d *Dispatcher) invoke(ctx context.Context, sub Subscription, envelope EventEnvelope) error {
+func (d *Dispatcher) invoke(ctx context.Context, sub Subscription, envelope EventEnvelope, onProgress func(string)) error {
 	ctx, _, finish := startDispatchSpan(ctx, envelope.Event, sub.Name, envelope.RequestID)
 
-	resp, statusCode, err := deliver(ctx, d.client, sub, envelope)
+	var resp HookResponse
+	var statusCode int
+	var err error
+	if onProgress != nil {
+		resp, statusCode, err = deliverStreaming(ctx, d.client, sub, envelope, onProgress)
+	} else {
+		resp, statusCode, err = deliver(ctx, d.client, sub, envelope)
+	}
 	if err != nil {
 		finish(classifyErr(err), err, statusCode)
 		return err

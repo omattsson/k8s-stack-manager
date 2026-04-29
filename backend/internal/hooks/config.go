@@ -8,7 +8,7 @@ import (
 
 const (
 	defaultTimeout = 5 * time.Second
-	maxTimeout     = 30 * time.Second
+	maxTimeout     = 10 * time.Minute
 )
 
 // Config holds dispatcher-wide settings and the registered subscriptions.

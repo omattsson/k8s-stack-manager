@@ -94,9 +94,11 @@ type DeploymentRef struct {
 
 // ChartRef describes a chart involved in the event.
 type ChartRef struct {
-	Name        string `json:"name"`
-	ReleaseName string `json:"release_name,omitempty"`
-	Version     string `json:"version,omitempty"`
+	Name            string `json:"name"`
+	ReleaseName     string `json:"release_name,omitempty"`
+	Version         string `json:"version,omitempty"`
+	SourceRepoURL   string `json:"source_repo_url,omitempty"`
+	BuildPipelineID string `json:"build_pipeline_id,omitempty"`
 }
 
 // HookResponse is the JSON shape subscribers return.

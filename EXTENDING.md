@@ -209,7 +209,7 @@ Both event subscriptions and action subscriptions live in the `HOOKS_CONFIG_FILE
 
 - **`secret_env`** names an environment variable holding the HMAC secret. The file itself is safe to commit to version control; secrets stay in env (mounted from a Kubernetes Secret, Vault, …).
 - Empty `secret_env` disables HMAC signing for that subscriber — safe only for internal localhost communication on a trust boundary.
-- `timeout_seconds`: events default 5s (max 30s); actions default 30s (max 300s).
+- `timeout_seconds`: events default 5s (max 600s); actions default 30s (max 300s).
 - `failure_policy`: `fail` or `ignore`; defaults to `ignore` if omitted.
 
 ## Request envelope — EventEnvelope
@@ -244,7 +244,7 @@ Body (`apiVersion: hooks.k8sstackmanager.io/v1`, `kind: EventEnvelope`):
     "status": "draft"
   },
   "deployment": { "id": "log-...", "started_at": "..." },
-  "charts":   [{"name": "web", "release_name": "web", "version": "1.2.3"}],
+  "charts":   [{"name": "web", "release_name": "web", "version": "1.2.3", "source_repo_url": "https://dev.azure.com/org/proj/_git/web", "build_pipeline_id": "42"}],
   "values":   {},
   "metadata": {},
   "extra":    {}
@@ -266,6 +266,46 @@ or to block a pre-* with `failure_policy: fail`:
 ```
 
 Any non-2xx response is treated as failure. Empty 200 bodies are interpreted as `{"allowed": true}`.
+
+### Streaming progress (long-running hooks)
+
+For hooks that take a long time (e.g. triggering CI builds and waiting for completion), subscribers can stream progress lines before the final JSON response. The deployment log viewer shows these lines in real-time with the LIVE indicator.
+
+**Protocol:** Write `LOG: <message>\n` lines to the response body, flushing after each line. The final line must be the JSON `HookResponse`. Lines without the `LOG: ` prefix are treated as the JSON response.
+
+```
+HTTP/1.1 200 OK
+Content-Type: application/x-ndjson
+Transfer-Encoding: chunked
+
+LOG: Checking image app-api:feature-x...
+LOG: Image not found, triggering ADO build #1234
+LOG: Build #1234: queued
+LOG: Build #1234: in progress
+LOG: Build #1234: completed successfully (3m12s)
+LOG: All images ready, proceeding with deployment
+{"allowed": true, "message": "all builds ready"}
+```
+
+Go example using `http.Flusher`:
+
+```go
+func handler(w http.ResponseWriter, r *http.Request) {
+    flusher, _ := w.(http.Flusher)
+    w.Header().Set("Content-Type", "application/x-ndjson")
+    w.WriteHeader(http.StatusOK)
+
+    fmt.Fprintln(w, "LOG: Starting checks...")
+    flusher.Flush()
+
+    // ... do work, write more LOG: lines ...
+
+    fmt.Fprintln(w, `{"allowed": true}`)
+    flusher.Flush()
+}
+```
+
+**Backward-compatible:** Subscribers that return plain JSON (no `LOG:` lines) work identically to before. The streaming protocol is opt-in per subscriber.
 
 ## Request envelope — ActionRequest
 
@@ -347,7 +387,7 @@ The server makes **outbound** HTTPS (or HTTP) to subscriber URLs. Subscribers li
 
 `failure_policy: fail` on a pre-* event blocks the operation when the subscriber fails. Use sparingly — a broken subscriber can halt every deploy. Prefer `ignore` + alerting for anything non-critical.
 
-Per-call timeouts (default 5s for events, 30s for actions; max 30s / 5min respectively) bound the worst case.
+Per-call timeouts (default 5s for events, 30s for actions; max 10min / 5min respectively) bound the worst case.
 
 ### Don't trust outbound URLs in a hostile environment
 
@@ -445,6 +485,29 @@ Post-instance-create + post-instance-delete subscribers that update an external 
 ### Slack notification — surface failures to #ops
 
 A post-deploy subscriber that posts to Slack on `status=error` only. Drops on 2xx fast path. Registered with a short timeout so transient Slack outages don't affect dispatch.
+
+### CI trigger gate — build images before deploy
+
+A `pre-deploy` subscriber with `failure_policy: fail` and a high timeout (600s) that checks if container images exist for the branch being deployed. When images are missing, it triggers CI builds (Azure DevOps, GitHub Actions, GitLab CI, etc.) and polls until they complete.
+
+The core sends `charts` with `source_repo_url` and `build_pipeline_id` in the pre-deploy envelope, plus `metadata.registry_url` for registry lookups. The subscriber uses the streaming progress protocol to show build status in the deployment log.
+
+```json
+{
+  "subscriptions": [{
+    "name": "ci-trigger-gate",
+    "events": ["pre-deploy"],
+    "url": "http://ci-trigger-gate.extensions.svc.cluster.local:8080/hook",
+    "timeout_seconds": 600,
+    "failure_policy": "fail",
+    "secret_env": "CI_TRIGGER_WEBHOOK_SECRET"
+  }]
+}
+```
+
+Skip logic keeps it fast: charts without `build_pipeline_id` are skipped (public/pre-built images), semver tags are skipped (release images), and an in-memory cache avoids re-checking images that were verified recently. A typical deploy with pre-built images adds <1s; a deploy that triggers builds blocks for 3-10 minutes with periodic status updates in the log viewer.
+
+See [k8s-stack-manager-extensions/hooks/ci-trigger-gate](https://github.com/omattsson/k8s-stack-manager-extensions) for a reference implementation with Azure DevOps support.
 
 ### Deploy-gate for expensive clusters
 

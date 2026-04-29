@@ -3,6 +3,7 @@ package hooks
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -302,4 +303,109 @@ func TestDispatcher_EnvelopeFieldsPopulated(t *testing.T) {
 	assert.NotEmpty(t, got.RequestID)
 	require.NotNil(t, got.InstanceRef)
 	assert.Equal(t, "i-1", got.InstanceRef.ID)
+}
+
+func TestDispatcher_FireWithProgress_StreamsLogLines(t *testing.T) {
+	t.Parallel()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			http.Error(w, "no flusher", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/x-ndjson")
+		w.WriteHeader(http.StatusOK)
+
+		fmt.Fprintln(w, "LOG: Checking image app-api:feat-x...")
+		flusher.Flush()
+		fmt.Fprintln(w, "LOG: Image not found, triggering build #42")
+		flusher.Flush()
+		fmt.Fprintln(w, "LOG: Build #42: completed (2m10s)")
+		flusher.Flush()
+		fmt.Fprintln(w, `{"allowed": true, "message": "all builds ready"}`)
+		flusher.Flush()
+	}))
+	defer srv.Close()
+
+	cfg := Config{Subscriptions: []Subscription{{
+		Name:           "ci-gate",
+		Events:         []string{EventPreDeploy},
+		URL:            srv.URL,
+		FailurePolicy:  FailurePolicyFail,
+		TimeoutSeconds: 10,
+	}}}
+	d, err := NewDispatcher(cfg, srv.Client())
+	require.NoError(t, err)
+
+	var mu sync.Mutex
+	var lines []string
+	err = d.FireWithProgress(context.Background(), EventPreDeploy, EventEnvelope{
+		InstanceRef: &InstanceRef{ID: "i-1", Name: "demo"},
+	}, func(line string) {
+		mu.Lock()
+		lines = append(lines, line)
+		mu.Unlock()
+	})
+	require.NoError(t, err)
+	assert.Equal(t, []string{
+		"Checking image app-api:feat-x...",
+		"Image not found, triggering build #42",
+		"Build #42: completed (2m10s)",
+	}, lines)
+}
+
+func TestDispatcher_FireWithProgress_DeniedWithProgressLines(t *testing.T) {
+	t.Parallel()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprintln(w, "LOG: Build #99 failed")
+		fmt.Fprintln(w, `{"allowed": false, "message": "build failed"}`)
+	}))
+	defer srv.Close()
+
+	cfg := Config{Subscriptions: []Subscription{{
+		Name:           "ci-gate",
+		Events:         []string{EventPreDeploy},
+		URL:            srv.URL,
+		FailurePolicy:  FailurePolicyFail,
+		TimeoutSeconds: 5,
+	}}}
+	d, err := NewDispatcher(cfg, srv.Client())
+	require.NoError(t, err)
+
+	var lines []string
+	err = d.FireWithProgress(context.Background(), EventPreDeploy, EventEnvelope{}, func(line string) {
+		lines = append(lines, line)
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "build failed")
+	assert.Equal(t, []string{"Build #99 failed"}, lines)
+}
+
+func TestDispatcher_FireWithProgress_PlainJSON(t *testing.T) {
+	t.Parallel()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(HookResponse{Allowed: true})
+	}))
+	defer srv.Close()
+
+	cfg := Config{Subscriptions: []Subscription{{
+		Name:           "simple",
+		Events:         []string{EventPreDeploy},
+		URL:            srv.URL,
+		FailurePolicy:  FailurePolicyFail,
+		TimeoutSeconds: 5,
+	}}}
+	d, err := NewDispatcher(cfg, srv.Client())
+	require.NoError(t, err)
+
+	var lines []string
+	err = d.FireWithProgress(context.Background(), EventPreDeploy, EventEnvelope{}, func(line string) {
+		lines = append(lines, line)
+	})
+	require.NoError(t, err)
+	assert.Empty(t, lines, "plain JSON response should produce no progress lines")
 }
