@@ -234,6 +234,31 @@ func (c *Client) EnsureDockerRegistrySecret(ctx context.Context, namespace, secr
 	return nil
 }
 
+// EnsureServiceAccountPullSecret patches the default ServiceAccount in the given
+// namespace to include the named imagePullSecret. This ensures all pods in the
+// namespace can pull from private registries regardless of chart-level support
+// for imagePullSecrets values.
+func (c *Client) EnsureServiceAccountPullSecret(ctx context.Context, namespace, secretName string) error {
+	sa, err := c.clientset.CoreV1().ServiceAccounts(namespace).Get(ctx, "default", metav1.GetOptions{})
+	if err != nil {
+		return fmt.Errorf("get default SA in %s: %w", namespace, err)
+	}
+
+	for _, ref := range sa.ImagePullSecrets {
+		if ref.Name == secretName {
+			return nil
+		}
+	}
+
+	sa.ImagePullSecrets = append(sa.ImagePullSecrets, corev1.LocalObjectReference{Name: secretName})
+	if _, err := c.clientset.CoreV1().ServiceAccounts(namespace).Update(ctx, sa, metav1.UpdateOptions{}); err != nil {
+		return fmt.Errorf("patch default SA in %s: %w", namespace, err)
+	}
+
+	slog.Info("Patched default SA with imagePullSecret", "namespace", namespace, "secret", secretName)
+	return nil
+}
+
 // CopySecret copies a secret from a source namespace to a target namespace.
 // Used for replicating shared TLS certificates (for example, a pre-existing
 // wildcard TLS secret stored in a shared namespace) into each stack namespace

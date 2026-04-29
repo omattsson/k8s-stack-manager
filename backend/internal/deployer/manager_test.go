@@ -1525,6 +1525,10 @@ func (m *mockHelmExecutor) GetValues(_ context.Context, _ string, _ string, _ in
 	return "", nil
 }
 
+func (m *mockHelmExecutor) RegistryLogin(_ context.Context, _, _, _ string) error {
+	return nil
+}
+
 func (m *mockHelmExecutor) Timeout() time.Duration {
 	if m.timeout > 0 {
 		return m.timeout
@@ -3093,6 +3097,10 @@ func (w *streamingMockWrapper) Rollback(ctx context.Context, releaseName, namesp
 
 func (w *streamingMockWrapper) GetValues(ctx context.Context, releaseName, namespace string, revision int) (string, error) {
 	return w.inner.GetValues(ctx, releaseName, namespace, revision)
+}
+
+func (w *streamingMockWrapper) RegistryLogin(_ context.Context, _, _, _ string) error {
+	return nil
 }
 
 func (w *streamingMockWrapper) Timeout() time.Duration {

@@ -15,6 +15,7 @@ type HelmExecutor interface {
 	History(ctx context.Context, releaseName, namespace string, max int) ([]ReleaseRevision, error)
 	Rollback(ctx context.Context, releaseName, namespace string, revision int) (string, error)
 	GetValues(ctx context.Context, releaseName, namespace string, revision int) (string, error)
+	RegistryLogin(ctx context.Context, host, username, password string) error
 	Timeout() time.Duration
 }
 

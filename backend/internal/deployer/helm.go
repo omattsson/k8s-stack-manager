@@ -289,6 +289,44 @@ func (h *HelmClient) GetValues(ctx context.Context, releaseName, namespace strin
 	return output, nil
 }
 
+// RegistryLogin runs: helm registry login <host> --username <user> --password-stdin
+// The login state persists in the helm config dir for the lifetime of the process.
+func (h *HelmClient) RegistryLogin(ctx context.Context, host, username, password string) error {
+	if host == "" || username == "" {
+		return nil
+	}
+	if err := validatePositionalArg("registry host", host); err != nil {
+		return err
+	}
+	if err := validatePositionalArg("registry username", username); err != nil {
+		return err
+	}
+
+	args := []string{
+		"registry", "login",
+		host,
+		"--username", username,
+		"--password-stdin",
+	}
+
+	slog.Info("executing helm registry login", "host", host, "username", username)
+
+	cmd := exec.CommandContext(ctx, h.binaryPath, args...) //nolint:gosec // G204: same justification as run()
+	cmd.Stdin = strings.NewReader(password)
+
+	var combined bytes.Buffer
+	cmd.Stdout = &combined
+	cmd.Stderr = &combined
+
+	if err := cmd.Run(); err != nil {
+		slog.Debug("helm registry login failed", "host", host, "output", combined.String())
+		return fmt.Errorf("helm registry login %s failed: %w", host, err)
+	}
+
+	slog.Info("helm registry login succeeded", "host", host)
+	return nil
+}
+
 // run executes a helm command with the given arguments and returns the combined output.
 func (h *HelmClient) run(ctx context.Context, args []string) (string, error) {
 	// Prepend --kubeconfig flag so helm always uses the configured kubeconfig

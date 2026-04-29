@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -447,6 +448,32 @@ func (m *Manager) executeDeploy(helm HelmExecutor, k8sClient *k8s.Client, regCfg
 			allOutput += fmt.Sprintf("WARNING: failed to provision image pull secret: %s\n", secretErr.Error())
 		} else {
 			allOutput += fmt.Sprintf("Image pull secret %q provisioned for registry %s\n", regCfg.SecretName, regCfg.URL)
+			if saErr := k8sClient.EnsureServiceAccountPullSecret(ctx, namespace, regCfg.SecretName); saErr != nil {
+				slog.Warn("failed to patch default SA with imagePullSecret",
+					"instance_id", instanceID,
+					"namespace", namespace,
+					"error", saErr,
+				)
+				allOutput += fmt.Sprintf("WARNING: failed to patch default SA with imagePullSecret: %s\n", saErr.Error())
+			}
+		}
+	}
+
+	// Ensure helm is logged in to OCI registries before installing charts.
+	if regCfg != nil {
+		host := regCfg.URL
+		if u, err := url.Parse(regCfg.URL); err == nil && u.Host != "" {
+			host = u.Host
+		}
+		if loginErr := helm.RegistryLogin(ctx, host, regCfg.Username, regCfg.Password); loginErr != nil {
+			slog.Warn("helm registry login failed",
+				"instance_id", instanceID,
+				"registry", regCfg.URL,
+				"error", loginErr,
+			)
+			allOutput += fmt.Sprintf("WARNING: helm registry login failed: %s\n", loginErr.Error())
+		} else {
+			allOutput += fmt.Sprintf("Helm registry login succeeded for %s\n", host)
 		}
 	}
 
