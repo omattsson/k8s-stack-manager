@@ -274,6 +274,10 @@ func (n *noopHelmExecutor) GetValues(_ context.Context, _ string, _ string, _ in
 	return "", nil
 }
 
+func (n *noopHelmExecutor) RegistryLogin(_ context.Context, _, _, _ string) error {
+	return nil
+}
+
 func (n *noopHelmExecutor) Timeout() time.Duration {
 	return 30 * time.Second
 }

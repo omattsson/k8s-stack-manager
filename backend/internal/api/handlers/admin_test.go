@@ -65,6 +65,10 @@ func (m *mockAdminHelmExecutor) GetValues(_ context.Context, _ string, _ string,
 	return "", nil
 }
 
+func (m *mockAdminHelmExecutor) RegistryLogin(_ context.Context, _, _, _ string) error {
+	return nil
+}
+
 func (m *mockAdminHelmExecutor) Timeout() time.Duration {
 	return 30 * time.Second
 }

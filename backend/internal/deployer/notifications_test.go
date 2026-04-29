@@ -376,6 +376,10 @@ func (f *failingHelmExecutor) GetValues(_ context.Context, _, _ string, _ int) (
 	return "", fmt.Errorf("%s", f.err)
 }
 
+func (f *failingHelmExecutor) RegistryLogin(_ context.Context, _, _, _ string) error {
+	return nil
+}
+
 func (f *failingHelmExecutor) Timeout() time.Duration {
 	return 30 * time.Second
 }

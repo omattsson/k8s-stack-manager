@@ -53,6 +53,7 @@ func (m *mockClusterHelmExecutor) Rollback(_ context.Context, _ string, _ string
 func (m *mockClusterHelmExecutor) GetValues(_ context.Context, _ string, _ string, _ int) (string, error) {
 	return "", nil
 }
+func (m *mockClusterHelmExecutor) RegistryLogin(_ context.Context, _, _, _ string) error { return nil }
 func (m *mockClusterHelmExecutor) Timeout() time.Duration { return 30 * time.Second }
 
 // setupClusterRouter creates a gin engine wired to ClusterHandler routes.
