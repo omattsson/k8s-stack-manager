@@ -215,12 +215,10 @@ func validateAction(a *ActionSubscription) error {
 		return fmt.Errorf("timeout_seconds must be >= 0")
 	}
 	if a.TimeoutSeconds == 0 {
-		// Actions tend to do real work (db wipes, syncs) — give them more headroom
-		// than event hooks. Default 30s, ceiling 5m.
 		a.TimeoutSeconds = 30
 	}
-	if time.Duration(a.TimeoutSeconds)*time.Second > 5*time.Minute {
-		return fmt.Errorf("timeout_seconds must be <= 300")
+	if time.Duration(a.TimeoutSeconds)*time.Second > 10*time.Minute {
+		return fmt.Errorf("timeout_seconds must be <= 600")
 	}
 	return nil
 }

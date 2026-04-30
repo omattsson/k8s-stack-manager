@@ -1,5 +1,6 @@
 global:
   imageRegistry: "ghcr.io/omattsson"
+  imagePullSecrets: []
   appArmor:
     enabled: false  # Set to true for environments with AppArmor support (e.g. most Linux distributions)
 
@@ -67,17 +68,9 @@ backend:
     WILDCARD_TLS_SOURCE_SECRET: ""
     WILDCARD_TLS_TARGET_SECRET: ""
     # ---- Extension hooks (see EXTENDING.md) ----
-    # Point this at a JSON file describing outbound webhook subscriptions
-    # (for lifecycle events) and named actions (invoked via the generic
-    # POST /api/v1/stack-instances/:id/actions/:name route). When unset, the
-    # dispatcher fires no-ops and the /actions/{name} route returns 503.
-    # Mount the file into the pod via an extra ConfigMap volume.
-    # HOOKS_CONFIG_FILE: /etc/hooks/hooks.json
-    #
-    # Database-refresh, snapshot, CMDB-sync and similar operations are now
-    # implemented as out-of-process webhook subscribers, not in-core env
-    # vars. See EXTENDING.md for the webhook contract and a reference
-    # implementation pattern.
+    # Hooks are configured via the top-level `hooks` section below.
+    # When hooks.enabled is true, a ConfigMap and volume mount are
+    # created automatically — no manual HOOKS_CONFIG_FILE needed.
     JWT_EXPIRATION: "24h"
     ADMIN_USERNAME: admin
     # OIDC (disabled by default)
@@ -237,6 +230,34 @@ otel:
       limits:
         cpu: 500m
         memory: 512Mi
+
+# ---------------------------------------------------------------------------
+# Extension Hooks (see EXTENDING.md)
+# ---------------------------------------------------------------------------
+# Lifecycle subscriptions (pre-deploy, deploy-finalized, etc.) and named
+# actions (redis-sync, db-refresh, etc.) invoked via the generic
+# POST /api/v1/stack-instances/:id/actions/:name route.
+hooks:
+  enabled: false
+  subscriptions: []
+  # - name: teams-notifier
+  #   events: ["deploy-finalized"]
+  #   url: "http://teams-notifier.extensions.svc.cluster.local:8080/hook"
+  #   timeout_seconds: 10
+  #   failure_policy: ignore
+  #   secret_env: TEAMS_NOTIFIER_HOOK_SECRET
+  # - name: ci-trigger-gate
+  #   events: ["pre-deploy"]
+  #   url: "http://ci-trigger-gate.extensions.svc.cluster.local:8080/hook"
+  #   timeout_seconds: 600
+  #   failure_policy: fail
+  #   secret_env: CI_TRIGGER_WEBHOOK_SECRET
+  actions: []
+  # - name: redis-sync
+  #   url: "http://redis-sync.extensions.svc.cluster.local:8080/action"
+  #   description: "Flush and reseed Redis cache"
+  #   timeout_seconds: 120
+  #   secret_env: REDIS_SYNC_HOOK_SECRET
 
 # ---------------------------------------------------------------------------
 # Ingress
