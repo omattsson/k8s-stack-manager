@@ -1383,7 +1383,8 @@ describe('StackInstances Detail', () => {
   });
 
   it('shows error when setting branch override fails', async () => {
-    const user = userEvent.setup();
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
     setupMocks();
     (branchOverrideService.set as MockFn).mockRejectedValue(new Error('fail'));
     renderDetail();
@@ -1395,13 +1396,17 @@ describe('StackInstances Detail', () => {
     const changeBtns = screen.getAllByText('change-branch');
     await user.click(changeBtns[1]);
 
+    await vi.advanceTimersByTimeAsync(900);
+
     await waitFor(() => {
-      expect(screen.getByRole('alert')).toHaveTextContent('Failed to set branch override');
+      expect(screen.getByRole('alert')).toHaveTextContent('Failed to update branch override');
     });
+    vi.useRealTimers();
   });
 
   it('shows error when removing branch override fails', async () => {
-    const user = userEvent.setup();
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
     setupMocks({}, { branchOverrides: [{ chart_config_id: 'chart1', branch: 'old-branch' }] });
     (branchOverrideService.delete as MockFn).mockRejectedValue(new Error('fail'));
     renderDetail();
@@ -1413,9 +1418,12 @@ describe('StackInstances Detail', () => {
     const clearBtns = screen.getAllByText('clear-branch');
     await user.click(clearBtns[1]);
 
+    await vi.advanceTimersByTimeAsync(900);
+
     await waitFor(() => {
-      expect(screen.getByRole('alert')).toHaveTextContent('Failed to remove branch override');
+      expect(screen.getByRole('alert')).toHaveTextContent('Failed to update branch override');
     });
+    vi.useRealTimers();
   });
 
   it('saves override values when Save Changes is clicked with edited overrides', async () => {
