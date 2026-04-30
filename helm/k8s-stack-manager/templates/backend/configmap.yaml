@@ -19,6 +19,9 @@ data:
   DB_MAX_IDLE_CONNS: "5"
   DB_CONN_MAX_LIFETIME: "5m"
   {{- end }}
+  {{- if .Values.hooks.enabled }}
+  HOOKS_CONFIG_FILE: "/etc/hooks/hooks.json"
+  {{- end }}
   {{- if .Values.otel.enabled }}
   OTEL_ENABLED: "true"
   OTEL_EXPORTER_OTLP_ENDPOINT: "{{ include "k8s-stack-manager.otel.serviceName" . }}:4317"

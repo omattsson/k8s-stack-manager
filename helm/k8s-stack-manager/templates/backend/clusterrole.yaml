@@ -26,7 +26,12 @@ rules:
       - endpoints
       - events
       - replicationcontrollers
+      - resourcequotas
+      - limitranges
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: [""]
+    resources: ["pods/exec"]
+    verbs: ["create"]
   - apiGroups: ["apps"]
     resources:
       - deployments

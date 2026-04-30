@@ -100,9 +100,9 @@ func TestConfigValidate(t *testing.T) {
 			name: "timeout above ceiling",
 			cfg: Config{Subscriptions: []Subscription{{
 				Name: "bad", Events: []string{EventPreDeploy}, URL: "https://example.com",
-				TimeoutSeconds: 31,
+				TimeoutSeconds: 601,
 			}}},
-			expectErr: "timeout_seconds must be <= 30",
+			expectErr: "timeout_seconds must be <= 600",
 		},
 	}
 

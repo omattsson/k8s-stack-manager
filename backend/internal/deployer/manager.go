@@ -126,6 +126,7 @@ type DeployRequest struct {
 type ChartDeployInfo struct {
 	ChartConfig models.ChartConfig
 	ValuesYAML  []byte
+	Branch      string // effective branch (override or instance default)
 }
 
 // NewManager creates a new deployment Manager with the given configuration.
@@ -175,6 +176,15 @@ func (m *Manager) ScheduleDeleteAfterClean(instanceID string) {
 	m.pendingDeletes.Store(instanceID, struct{}{})
 }
 
+// hookOpts carries optional data for fireDeployHook. Only pre-deploy hooks
+// typically need charts, metadata, and progress streaming; other call sites
+// pass a zero value.
+type hookOpts struct {
+	Charts     []hooks.ChartRef
+	Metadata   map[string]string
+	OnProgress func(string)
+}
+
 // fireDeployHook dispatches event to configured hook subscribers using a
 // snapshot of instance state. Returns nil immediately when no dispatcher is
 // configured. The instance pointer must not be nil.
@@ -182,8 +192,8 @@ func (m *Manager) ScheduleDeleteAfterClean(instanceID string) {
 // Hook dispatch is synchronous: a subscriber with FailurePolicyFail can abort
 // pre-* events. Post-* events should use FailurePolicyIgnore (the default) so
 // a slow subscriber cannot stall the deploy goroutine indefinitely; per-call
-// timeout (max 30s) bounds the worst case.
-func (m *Manager) fireDeployHook(ctx context.Context, event string, instance *models.StackInstance, deploymentID string, deployStartedAt time.Time) error {
+// timeout bounds the worst case.
+func (m *Manager) fireDeployHook(ctx context.Context, event string, instance *models.StackInstance, deploymentID string, deployStartedAt time.Time, opts hookOpts) error {
 	if m.hooks == nil || instance == nil {
 		return nil
 	}
@@ -198,6 +208,8 @@ func (m *Manager) fireDeployHook(ctx context.Context, event string, instance *mo
 			ClusterID:         instance.ClusterID,
 			Status:            instance.Status,
 		},
+		Charts:   opts.Charts,
+		Metadata: opts.Metadata,
 	}
 	if deploymentID != "" {
 		startedAt := deployStartedAt
@@ -205,6 +217,9 @@ func (m *Manager) fireDeployHook(ctx context.Context, event string, instance *mo
 			startedAt = time.Now().UTC()
 		}
 		env.Deployment = &hooks.DeploymentRef{ID: deploymentID, StartedAt: startedAt.UTC()}
+	}
+	if opts.OnProgress != nil {
+		return m.hooks.FireWithProgress(ctx, event, env, opts.OnProgress)
 	}
 	return m.hooks.Fire(ctx, event, env)
 }
@@ -286,17 +301,11 @@ func (m *Manager) Deploy(ctx context.Context, req DeployRequest) (string, error)
 	}
 
 	logID := uuid.New().String()
-
-	// Fire pre-deploy hook before any state changes. A subscriber with
-	// failure_policy=fail can abort the deploy here — the instance keeps its
-	// previous status and no deployment log is created.
-	if err := m.fireDeployHook(ctx, hooks.EventPreDeploy, req.Instance, logID, time.Time{}); err != nil {
-		return "", fmt.Errorf("pre-deploy hook: %w", err)
-	}
-
 	now := time.Now().UTC()
 
-	// Create deployment log entry and update instance status atomically.
+	// Create deployment log and set status to deploying BEFORE firing the
+	// pre-deploy hook, so that long-running hooks (e.g. CI trigger gates)
+	// can stream progress lines into the deployment log via broadcastLog.
 	deployLog := &models.DeploymentLog{
 		ID:              logID,
 		StackInstanceID: req.Instance.ID,
@@ -328,8 +337,30 @@ func (m *Manager) Deploy(ctx context.Context, req DeployRequest) (string, error)
 		}
 	}
 
-	// Broadcast initial status.
+	// Broadcast initial deploying status so the UI shows the LIVE indicator.
 	m.broadcastStatus(req.Instance.ID, models.StackStatusDeploying, logID)
+
+	// Build ChartRef list for the hook payload so subscribers (e.g. CI trigger
+	// gates) know which charts are being deployed and can check/trigger builds.
+	chartRefs := make([]hooks.ChartRef, 0, len(req.Charts))
+	for _, c := range req.Charts {
+		branch := c.Branch
+		if branch == "" {
+			branch = req.Instance.Branch
+		}
+		chartRefs = append(chartRefs, hooks.ChartRef{
+			Name:            c.ChartConfig.ChartName,
+			ReleaseName:     c.ChartConfig.ChartName,
+			Version:         c.ChartConfig.ChartVersion,
+			SourceRepoURL:   c.ChartConfig.SourceRepoURL,
+			BuildPipelineID: c.ChartConfig.BuildPipelineID,
+			Branch:          branch,
+		})
+	}
+	hookMeta := map[string]string{}
+	if regCfg != nil {
+		hookMeta["registry_url"] = regCfg.URL
+	}
 
 	// Sort charts by deploy order.
 	charts := make([]ChartDeployInfo, len(req.Charts))
@@ -338,10 +369,19 @@ func (m *Manager) Deploy(ctx context.Context, req DeployRequest) (string, error)
 		return charts[i].ChartConfig.DeployOrder < charts[j].ChartConfig.DeployOrder
 	})
 
-	// Launch async deployment, passing pre-resolved clients/log to avoid
-	// re-fetching the instance and re-resolving the cluster in the goroutine.
+	// Launch async deployment. The pre-deploy hook fires inside the goroutine
+	// (using shutdownCtx, not the HTTP request context) so long-running hooks
+	// (e.g. CI trigger gates that wait minutes for builds) don't block the API
+	// response or get cancelled when the HTTP client disconnects.
+	preDeployOpts := hookOpts{
+		Charts:   chartRefs,
+		Metadata: hookMeta,
+		OnProgress: func(line string) {
+			m.broadcastLog(req.Instance.ID, logID, line)
+		},
+	}
 	m.wg.Add(1)
-	go m.executeDeploy(helmExec, k8sClient, regCfg, req.Instance.ID, deployLog, req.Instance.Namespace, charts, req.LastDeployedValues)
+	go m.executeDeploy(helmExec, k8sClient, regCfg, req.Instance, deployLog, charts, req.LastDeployedValues, preDeployOpts)
 
 	return logID, nil
 }
@@ -351,8 +391,26 @@ func (m *Manager) Deploy(ctx context.Context, req DeployRequest) (string, error)
 // TLS replication or image pull secret provisioning is needed — Deploy()
 // resolves it up front so this goroutine doesn't re-hit the repo/registry
 // on every run. regCfg is nil when the cluster has no container registry configured.
-func (m *Manager) executeDeploy(helm HelmExecutor, k8sClient *k8s.Client, regCfg *models.RegistryConfig, instanceID string, deployLog *models.DeploymentLog, namespace string, charts []ChartDeployInfo, lastDeployedValues string) {
+//
+// The pre-deploy hook fires here (not in Deploy) so that long-running hooks
+// (e.g. CI trigger gates waiting minutes for builds) use shutdownCtx instead
+// of the HTTP request context, and don't block the API response.
+func (m *Manager) executeDeploy(helm HelmExecutor, k8sClient *k8s.Client, regCfg *models.RegistryConfig, instance *models.StackInstance, deployLog *models.DeploymentLog, charts []ChartDeployInfo, lastDeployedValues string, preDeployOpts hookOpts) {
 	defer m.wg.Done()
+
+	instanceID := instance.ID
+	namespace := instance.Namespace
+
+	// Fire pre-deploy hook BEFORE acquiring the semaphore so a long-running
+	// hook (e.g. CI trigger gate) doesn't hold a concurrency slot.
+	if err := m.fireDeployHook(m.shutdownCtx, hooks.EventPreDeploy, instance, deployLog.ID, deployLog.StartedAt, preDeployOpts); err != nil {
+		deployErr := fmt.Errorf("pre-deploy hook: %w", err)
+		slog.Error("pre-deploy hook denied deployment",
+			"instance_id", instanceID, "log_id", deployLog.ID, "error", err)
+		m.finalizeDeploy(instanceID, deployLog, "", deployErr, lastDeployedValues)
+		return
+	}
+
 	// Acquire semaphore.
 	m.semaphore <- struct{}{}
 	defer func() { <-m.semaphore }()
@@ -689,16 +747,16 @@ func (m *Manager) finalizeDeploy(instanceID string, deployLog *models.Deployment
 	// failure_policy=ignore (the default for post-* events).
 	hookCtx := m.shutdownCtx
 	if deployErr == nil {
-		_ = m.fireDeployHook(hookCtx, hooks.EventPostDeploy, instance, deployLog.ID, deployLog.StartedAt)
+		_ = m.fireDeployHook(hookCtx, hooks.EventPostDeploy, instance, deployLog.ID, deployLog.StartedAt, hookOpts{})
 	}
-	_ = m.fireDeployHook(hookCtx, hooks.EventDeployFinalized, instance, deployLog.ID, deployLog.StartedAt)
+	_ = m.fireDeployHook(hookCtx, hooks.EventDeployFinalized, instance, deployLog.ID, deployLog.StartedAt, hookOpts{})
 
 	if deployErr != nil {
 		if isTimeoutError(deployErr) {
 			m.notifyUser(instance.OwnerID, instanceID, "deploy.timeout",
 				"Deployment timed out",
 				fmt.Sprintf("Deployment of %s exceeded the timeout threshold", instance.Name))
-			_ = m.fireDeployHook(hookCtx, hooks.EventDeployTimeout, instance, deployLog.ID, deployLog.StartedAt)
+			_ = m.fireDeployHook(hookCtx, hooks.EventDeployTimeout, instance, deployLog.ID, deployLog.StartedAt, hookOpts{})
 		} else {
 			m.notifyUser(instance.OwnerID, instanceID, "deployment.error",
 				"Deployment failed",
@@ -927,7 +985,7 @@ func (m *Manager) finalizeStop(instanceID string, deployLog *models.DeploymentLo
 		m.broadcastStatus(instanceID, models.StackStatusStopped, deployLog.ID)
 	}
 
-	_ = m.fireDeployHook(m.shutdownCtx, hooks.EventStopCompleted, instance, deployLog.ID, deployLog.StartedAt)
+	_ = m.fireDeployHook(m.shutdownCtx, hooks.EventStopCompleted, instance, deployLog.ID, deployLog.StartedAt, hookOpts{})
 	if stopErr != nil {
 		m.notifyUser(instance.OwnerID, instanceID, "stop.error", "Stop failed", fmt.Sprintf("Stopping %s failed: %s", instance.Name, instance.ErrorMessage))
 	} else {
@@ -967,6 +1025,7 @@ func sanitizeDeployError(err error) string {
 	// Look for the pattern "deploying chart ..." or "uninstalling chart ..."
 	// which is the outermost fmt.Errorf wrapper in executeDeploy / executeStopWithCharts.
 	for _, prefix := range []string{
+		"pre-deploy hook", "pre-rollback hook",
 		"deploying chart ", "uninstalling chart ", "deleting namespace ", "creating temp directory",
 		"scaling down ", "scaling up ", "waiting for MySQL", "running PVC cleanup",
 		"getting history for chart ", "rolling back chart ",
@@ -1265,13 +1324,13 @@ func (m *Manager) finalizeClean(instanceID string, deployLog *models.DeploymentL
 		m.broadcastStatus(instanceID, models.StackStatusDraft, deployLog.ID)
 	}
 
-	_ = m.fireDeployHook(m.shutdownCtx, hooks.EventCleanCompleted, instance, deployLog.ID, deployLog.StartedAt)
+	_ = m.fireDeployHook(m.shutdownCtx, hooks.EventCleanCompleted, instance, deployLog.ID, deployLog.StartedAt, hookOpts{})
 
 	if cleanErr != nil {
 		m.notifyUser(instance.OwnerID, instanceID, "clean.error", "Cleanup failed", fmt.Sprintf("Cleanup of %s failed: %s", instance.Name, instance.ErrorMessage))
 	} else if shouldDelete {
 		m.notifyUser(instance.OwnerID, instanceID, "instance.deleted", "Stack deleted", fmt.Sprintf("Stack %s has been deleted", instance.Name))
-		_ = m.fireDeployHook(m.shutdownCtx, hooks.EventDeleteCompleted, instance, deployLog.ID, deployLog.StartedAt)
+		_ = m.fireDeployHook(m.shutdownCtx, hooks.EventDeleteCompleted, instance, deployLog.ID, deployLog.StartedAt, hookOpts{})
 	} else {
 		m.notifyUser(instance.OwnerID, instanceID, "clean.completed", "Cleanup completed", fmt.Sprintf("Stack %s has been cleaned and returned to draft", instance.Name))
 	}
@@ -1312,7 +1371,7 @@ func (m *Manager) Rollback(ctx context.Context, req RollbackRequest) (string, er
 
 	logID := uuid.New().String()
 
-	if err := m.fireDeployHook(ctx, hooks.EventPreRollback, req.Instance, logID, time.Time{}); err != nil {
+	if err := m.fireDeployHook(ctx, hooks.EventPreRollback, req.Instance, logID, time.Time{}, hookOpts{}); err != nil {
 		return "", fmt.Errorf("pre-rollback hook: %w", err)
 	}
 
@@ -1537,9 +1596,9 @@ func (m *Manager) finalizeRollback(instanceID string, deployLog *models.Deployme
 	}
 
 	hookCtx := m.shutdownCtx
-	_ = m.fireDeployHook(hookCtx, hooks.EventRollbackCompleted, instance, deployLog.ID, deployLog.StartedAt)
+	_ = m.fireDeployHook(hookCtx, hooks.EventRollbackCompleted, instance, deployLog.ID, deployLog.StartedAt, hookOpts{})
 	if rollbackErr == nil {
-		_ = m.fireDeployHook(hookCtx, hooks.EventPostRollback, instance, deployLog.ID, deployLog.StartedAt)
+		_ = m.fireDeployHook(hookCtx, hooks.EventPostRollback, instance, deployLog.ID, deployLog.StartedAt, hookOpts{})
 		m.notifyUser(instance.OwnerID, instanceID, "rollback.completed", "Rollback completed", fmt.Sprintf("Stack %s has been rolled back successfully", instance.Name))
 	} else {
 		m.notifyUser(instance.OwnerID, instanceID, "rollback.error", "Rollback failed", fmt.Sprintf("Rollback of %s failed: %s", instance.Name, instance.ErrorMessage))

@@ -51,8 +51,8 @@ func TestNewActionRegistry_Validation(t *testing.T) {
 		},
 		{
 			name:      "timeout above ceiling",
-			subs:      []ActionSubscription{{Name: "x", URL: "https://e/h", TimeoutSeconds: 301}},
-			expectErr: "timeout_seconds must be <= 300",
+			subs:      []ActionSubscription{{Name: "x", URL: "https://e/h", TimeoutSeconds: 601}},
+			expectErr: "timeout_seconds must be <= 600",
 		},
 	}
 	for _, tt := range tests {

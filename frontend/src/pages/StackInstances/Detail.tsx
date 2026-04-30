@@ -247,46 +247,37 @@ const Detail = () => {
     };
   }, [id, send]);
 
-  const handleChartBranchChange = async (chartId: string, newBranch: string) => {
+  const chartBranchTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+
+  const handleChartBranchChange = (chartId: string, newBranch: string) => {
     if (!id) return;
-    // If the new branch matches the instance-level branch (or is empty), remove the override
-    if (!newBranch || newBranch === branch) {
-      const previousValue = branchOverrides[chartId];
-      setBranchOverrides((prev) => {
+    setBranchOverrides((prev) => {
+      if (!newBranch || newBranch === branch) {
         const next = { ...prev };
         delete next[chartId];
         return next;
-      });
-      try {
-        await branchOverrideService.delete(id, chartId);
-      } catch {
-        // Restore previous override on failure
-        if (previousValue !== undefined) {
-          setBranchOverrides((prev) => ({ ...prev, [chartId]: previousValue }));
-        }
-        setError('Failed to remove branch override');
       }
-    } else {
-      const previousValue = branchOverrides[chartId];
-      // Optimistic update
-      setBranchOverrides((prev) => ({ ...prev, [chartId]: newBranch }));
-      try {
-        await branchOverrideService.set(id, chartId, newBranch);
-        showSuccess('Branch override saved');
-      } catch {
-        // Revert to previous value on failure
-        if (previousValue === undefined) {
-          setBranchOverrides((prev) => {
-            const next = { ...prev };
-            delete next[chartId];
-            return next;
-          });
-        } else {
-          setBranchOverrides((prev) => ({ ...prev, [chartId]: previousValue }));
-        }
-        setError('Failed to set branch override');
-      }
+      return { ...prev, [chartId]: newBranch };
+    });
+
+    if (chartBranchTimers.current[chartId]) {
+      clearTimeout(chartBranchTimers.current[chartId]);
     }
+
+    chartBranchTimers.current[chartId] = setTimeout(async () => {
+      delete chartBranchTimers.current[chartId];
+      const effectiveBranch = newBranch;
+      try {
+        if (!effectiveBranch || effectiveBranch === branch) {
+          await branchOverrideService.delete(id, chartId);
+        } else {
+          await branchOverrideService.set(id, chartId, effectiveBranch);
+          showSuccess('Branch override saved');
+        }
+      } catch {
+        setError('Failed to update branch override');
+      }
+    }, 800);
   };
 
   const handleSave = async () => {

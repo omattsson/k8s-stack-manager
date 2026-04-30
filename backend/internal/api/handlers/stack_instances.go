@@ -1261,11 +1261,22 @@ func (h *InstanceHandler) DeployInstance(c *gin.Context) {
 		return
 	}
 
+	branchMap := make(map[string]string)
+	if h.branchOverrideRepo != nil {
+		branchOverrides, boErr := h.branchOverrideRepo.List(inst.ID)
+		if boErr == nil {
+			for _, bo := range branchOverrides {
+				branchMap[bo.ChartConfigID] = bo.Branch
+			}
+		}
+	}
+
 	var chartInfos []deployer.ChartDeployInfo
 	for _, ch := range charts {
 		chartInfos = append(chartInfos, deployer.ChartDeployInfo{
 			ChartConfig: ch,
 			ValuesYAML:  []byte(valuesMap[ch.ChartName]),
+			Branch:      branchMap[ch.ID],
 		})
 	}
 

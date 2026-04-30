@@ -152,7 +152,74 @@ func TestManager_Deploy_FiresLifecycleHooks(t *testing.T) {
 	}
 }
 
-func TestManager_Deploy_PreHookAbortPreventsDBWritesAndDeploy(t *testing.T) {
+func TestManager_Deploy_PreDeployHookIncludesChartData(t *testing.T) {
+	t.Parallel()
+
+	rec := newHookRecorder(t)
+	instanceRepo := newMockInstanceRepo()
+	logRepo := newMockDeployLogRepo()
+
+	inst := &models.StackInstance{
+		ID:                "inst-charts-1",
+		StackDefinitionID: "def-1",
+		Name:              "chart-test",
+		Namespace:         "stack-chart-test",
+		OwnerID:           "user-1",
+		Branch:            "feature/foo",
+		Status:            models.StackStatusDraft,
+	}
+	require.NoError(t, instanceRepo.Create(inst))
+
+	mgr := NewManager(ManagerConfig{
+		Registry:      &mockClusterResolver{helm: NewHelmClient("/nonexistent/helm", "", 1*time.Second)},
+		InstanceRepo:  instanceRepo,
+		DeployLogRepo: logRepo,
+		TxRunner:      &mockTxRunner{instanceRepo: instanceRepo, logRepo: logRepo},
+		Hub:           &mockBroadcaster{},
+		MaxConcurrent: 2,
+		Hooks:         rec.dispatcherFor(t, hooks.FailurePolicyIgnore),
+	})
+
+	charts := []ChartDeployInfo{{
+		ChartConfig: models.ChartConfig{
+			ChartName:       "app-api",
+			ChartVersion:    "1.0.0",
+			SourceRepoURL:   "https://dev.azure.com/org/proj/_git/app-api",
+			BuildPipelineID: "42",
+		},
+	}, {
+		ChartConfig: models.ChartConfig{
+			ChartName:    "redis",
+			ChartVersion: "7.0.0",
+		},
+	}}
+
+	logID, err := mgr.Deploy(context.Background(), DeployRequest{
+		Instance:   inst,
+		Definition: &models.StackDefinition{ID: "def-1", Name: "test-def"},
+		Charts:     charts,
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, logID)
+
+	// Wait for the pre-deploy event to be recorded.
+	require.Eventually(t, func() bool {
+		return len(rec.eventNames()) >= 1
+	}, 2*time.Second, 20*time.Millisecond)
+
+	preDeployEvt := rec.snapshot()[0]
+	assert.Equal(t, hooks.EventPreDeploy, preDeployEvt.event)
+	require.Len(t, preDeployEvt.envelope.Charts, 2, "pre-deploy must include all charts")
+
+	assert.Equal(t, "app-api", preDeployEvt.envelope.Charts[0].Name)
+	assert.Equal(t, "42", preDeployEvt.envelope.Charts[0].BuildPipelineID)
+	assert.Equal(t, "https://dev.azure.com/org/proj/_git/app-api", preDeployEvt.envelope.Charts[0].SourceRepoURL)
+
+	assert.Equal(t, "redis", preDeployEvt.envelope.Charts[1].Name)
+	assert.Empty(t, preDeployEvt.envelope.Charts[1].BuildPipelineID)
+}
+
+func TestManager_Deploy_PreHookAbortFinalizesAsError(t *testing.T) {
 	t.Parallel()
 
 	rec := newHookRecorder(t)
@@ -182,28 +249,43 @@ func TestManager_Deploy_PreHookAbortPreventsDBWritesAndDeploy(t *testing.T) {
 		Hooks:         rec.dispatcherFor(t, hooks.FailurePolicyFail),
 	})
 
+	// Deploy returns a log ID immediately — the pre-deploy hook fires
+	// asynchronously inside the deploy goroutine.
 	logID, err := mgr.Deploy(context.Background(), DeployRequest{
 		Instance:   inst,
 		Definition: &models.StackDefinition{ID: "def-1", Name: "test-def"},
 		Charts:     nil,
 	})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "pre-deploy hook")
-	assert.Contains(t, err.Error(), "policy says no")
-	assert.Empty(t, logID)
+	require.NoError(t, err)
+	require.NotEmpty(t, logID)
 
-	// Instance must not be transitioned to deploying.
+	// Wait for the async goroutine to finalize.
+	require.Eventually(t, func() bool {
+		logs, _ := logRepo.ListByInstance(context.Background(), inst.ID)
+		return len(logs) > 0 && logs[0].Status != models.DeployLogRunning
+	}, 2*time.Second, 20*time.Millisecond, "deployment log should be finalized")
+
+	// Instance must be set to error status by finalizeDeploy.
 	stored, err := instanceRepo.FindByID(inst.ID)
 	require.NoError(t, err)
-	assert.Equal(t, models.StackStatusDraft, stored.Status, "instance must remain in draft when pre-deploy hook denies")
+	assert.Equal(t, models.StackStatusError, stored.Status, "instance must be error when pre-deploy hook denies")
+	assert.Contains(t, stored.ErrorMessage, "pre-deploy hook")
 
-	// No deploy log should have been created.
+	// Deployment log should be marked as error.
 	logs, listErr := logRepo.ListByInstance(context.Background(), inst.ID)
 	require.NoError(t, listErr)
-	assert.Empty(t, logs, "no deployment log when pre-deploy hook denies")
+	require.Len(t, logs, 1)
+	assert.Equal(t, models.DeployLogError, logs[0].Status)
+	assert.Contains(t, logs[0].ErrorMessage, "pre-deploy hook")
 
-	// Only the pre-deploy event was attempted.
-	assert.Equal(t, []string{hooks.EventPreDeploy}, rec.eventNames())
+	// Only the pre-deploy + deploy-finalized events fire (no post-deploy).
+	require.Eventually(t, func() bool {
+		return len(rec.eventNames()) >= 2
+	}, 2*time.Second, 20*time.Millisecond)
+	names := rec.eventNames()
+	assert.Contains(t, names, hooks.EventPreDeploy)
+	assert.Contains(t, names, hooks.EventDeployFinalized)
+	assert.NotContains(t, names, hooks.EventPostDeploy)
 }
 
 func TestManager_Deploy_NoDispatcherIsNoOp(t *testing.T) {

@@ -1,0 +1,14 @@
+{{- if .Values.hooks.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "k8s-stack-manager.fullname" . }}-hooks
+  labels:
+    {{- include "k8s-stack-manager.backend.labels" . | nindent 4 }}
+data:
+  hooks.json: |
+    {
+      "subscriptions": {{ .Values.hooks.subscriptions | default list | toJson }},
+      "actions": {{ .Values.hooks.actions | default list | toJson }}
+    }
+{{- end }}
