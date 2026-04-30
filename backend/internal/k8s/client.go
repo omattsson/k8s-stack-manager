@@ -139,6 +139,19 @@ func (c *Client) NamespaceExists(ctx context.Context, name string) (bool, error)
 	return true, nil
 }
 
+// GetNamespacePhase returns the phase of a namespace ("Active", "Terminating")
+// or an empty string if the namespace does not exist.
+func (c *Client) GetNamespacePhase(ctx context.Context, name string) (string, error) {
+	ns, err := c.clientset.CoreV1().Namespaces().Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		if k8serrors.IsNotFound(err) {
+			return "", nil
+		}
+		return "", fmt.Errorf("get namespace %q: %w", name, err)
+	}
+	return string(ns.Status.Phase), nil
+}
+
 // Clientset returns the underlying kubernetes.Interface for advanced operations.
 func (c *Client) Clientset() kubernetes.Interface {
 	return c.clientset

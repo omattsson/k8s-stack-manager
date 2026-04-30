@@ -23,14 +23,15 @@ type StackInstance struct {
 
 // Valid stack instance statuses.
 const (
-	StackStatusDraft     = "draft"
-	StackStatusQueued    = "queued"
-	StackStatusDeploying = "deploying"
-	StackStatusRunning   = "running"
-	StackStatusStopping  = "stopping"
-	StackStatusStopped   = "stopped"
-	StackStatusCleaning  = "cleaning"
-	StackStatusError     = "error"
+	StackStatusDraft       = "draft"
+	StackStatusQueued      = "queued"
+	StackStatusDeploying   = "deploying"
+	StackStatusStabilizing = "stabilizing"
+	StackStatusRunning     = "running"
+	StackStatusStopping    = "stopping"
+	StackStatusStopped     = "stopped"
+	StackStatusCleaning    = "cleaning"
+	StackStatusError       = "error"
 )
 
 // StackInstanceRepository defines data access operations for stack instances.

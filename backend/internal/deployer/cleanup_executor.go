@@ -61,7 +61,7 @@ func (e *CleanupExecutor) CleanInstance(ctx context.Context, inst *models.StackI
 // Callers should ensure the instance is stopped/cleaned before requesting deletion.
 func (e *CleanupExecutor) DeleteInstance(ctx context.Context, inst *models.StackInstance) error {
 	switch inst.Status {
-	case models.StackStatusRunning, models.StackStatusDeploying,
+	case models.StackStatusRunning, models.StackStatusDeploying, models.StackStatusStabilizing,
 		models.StackStatusStopping, models.StackStatusCleaning:
 		return fmt.Errorf("cannot delete instance %s while status is %s; stop/clean must complete first", inst.ID, inst.Status)
 	}

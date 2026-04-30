@@ -4,6 +4,7 @@ import type { StackStatus } from '../../types';
 const statusColors: Record<StackStatus, 'default' | 'info' | 'success' | 'warning' | 'error'> = {
   draft: 'default',
   deploying: 'info',
+  stabilizing: 'info',
   running: 'success',
   stopped: 'warning',
   stopping: 'warning',

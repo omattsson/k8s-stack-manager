@@ -357,7 +357,7 @@ func waitForTerminalStatus(t *testing.T, repo *mockInstanceRepo, instanceID stri
 		if err == nil {
 			switch inst.Status {
 			case models.StackStatusQueued, models.StackStatusDeploying,
-				models.StackStatusStopping, models.StackStatusCleaning:
+				models.StackStatusStabilizing, models.StackStatusStopping, models.StackStatusCleaning:
 			default:
 				return
 			}
@@ -373,6 +373,7 @@ func waitForTerminalStatus(t *testing.T, repo *mockInstanceRepo, instanceID stri
 type mockClusterResolver struct {
 	helm           HelmExecutor
 	k8sClient      *k8s.Client
+	noK8sClient    bool
 	registryConfig *models.RegistryConfig
 	resolveErr     error
 	helmErr        error
@@ -400,7 +401,13 @@ func (m *mockClusterResolver) GetK8sClient(_ string) (*k8s.Client, error) {
 	if m.k8sErr != nil {
 		return nil, m.k8sErr
 	}
-	return m.k8sClient, nil
+	if m.k8sClient != nil {
+		return m.k8sClient, nil
+	}
+	if m.noK8sClient {
+		return nil, nil
+	}
+	return k8s.NewClientFromInterface(fake.NewSimpleClientset()), nil
 }
 
 func (m *mockClusterResolver) GetRegistryConfig(_ string) (*models.RegistryConfig, error) {
@@ -1105,7 +1112,7 @@ func TestManager_FinalizeDeploy_InstanceNotFound(t *testing.T) {
 
 	// Should not panic when instance is not found.
 	orphanLog := &models.DeploymentLog{ID: "some-log-id", StackInstanceID: "nonexistent-id"}
-	mgr.finalizeDeploy("nonexistent-id", orphanLog, "output", nil, "")
+	mgr.finalizeDeploy("nonexistent-id", orphanLog, "output", nil, "", "")
 }
 
 func TestManager_BroadcastStatusWithError_NilHub(t *testing.T) {
@@ -1459,7 +1466,7 @@ func TestManager_FinalizeDeploy_OutputTruncation(t *testing.T) {
 
 	// Create output larger than maxOutputLen (64KB).
 	largeOutput := strings.Repeat("x", maxOutputLen+1000)
-	mgr.finalizeDeploy(inst.ID, deployLog, largeOutput, nil, "")
+	mgr.finalizeDeploy(inst.ID, deployLog, largeOutput, nil, "", "")
 
 	finalLog, err := logRepo.FindByID(context.Background(), deployLog.ID)
 	assert.NoError(t, err)
@@ -1799,7 +1806,7 @@ func TestManager_Clean_Success_NoK8sClient(t *testing.T) {
 	helmMock := &mockHelmExecutor{}
 
 	mgr := NewManager(ManagerConfig{
-		Registry:      &mockClusterResolver{helm: helmMock},
+		Registry:      &mockClusterResolver{helm: helmMock, noK8sClient: true},
 		InstanceRepo:  instanceRepo,
 		DeployLogRepo: logRepo,
 		TxRunner:      &mockTxRunner{instanceRepo: instanceRepo, logRepo: logRepo},
@@ -2967,7 +2974,7 @@ func TestManager_FinalizeDeploy_LastDeployedValues(t *testing.T) {
 	})
 
 	lastValues := `{"mychart":"key: value\n"}`
-	mgr.finalizeDeploy(inst.ID, deployLog, "deploy output", nil, lastValues)
+	mgr.finalizeDeploy(inst.ID, deployLog, "deploy output", nil, lastValues, "")
 
 	updated, err := instanceRepo.FindByID(inst.ID)
 	require.NoError(t, err)
@@ -3008,7 +3015,7 @@ func TestManager_FinalizeDeploy_LastDeployedValuesNotSetOnError(t *testing.T) {
 	})
 
 	lastValues := `{"mychart":"key: value\n"}`
-	mgr.finalizeDeploy(inst.ID, deployLog, "deploy output", fmt.Errorf("helm install failed"), lastValues)
+	mgr.finalizeDeploy(inst.ID, deployLog, "deploy output", fmt.Errorf("helm install failed"), lastValues, "")
 
 	updated, err := instanceRepo.FindByID(inst.ID)
 	require.NoError(t, err)
@@ -3617,6 +3624,361 @@ func TestManager_Rollback_StreamingSupport(t *testing.T) {
 		}
 	}
 	assert.Greater(t, logMsgCount, 0, "rollback with streaming executor should produce per-line log messages")
+}
+
+// ---- #182: namespace terminating rejection tests ----
+
+func TestDeploy_RejectsTerminatingNamespace(t *testing.T) {
+	t.Parallel()
+
+	instanceRepo := newMockInstanceRepo()
+	logRepo := newMockDeployLogRepo()
+
+	inst := &models.StackInstance{
+		ID:                "inst-terminating",
+		StackDefinitionID: "def-1",
+		Name:              "terminating-test",
+		Namespace:         "stack-terminating",
+		OwnerID:           "user-1",
+		Branch:            "main",
+		Status:            models.StackStatusDraft,
+	}
+	require.NoError(t, instanceRepo.Create(inst))
+
+	fakeCS := fake.NewSimpleClientset(&corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{Name: "stack-terminating"},
+		Status:     corev1.NamespaceStatus{Phase: corev1.NamespaceTerminating},
+	})
+	k8sClient := k8s.NewClientFromInterface(fakeCS)
+
+	mgr := NewManager(ManagerConfig{
+		Registry:      &mockClusterResolver{helm: &mockHelmExecutor{}, k8sClient: k8sClient},
+		InstanceRepo:  instanceRepo,
+		DeployLogRepo: logRepo,
+		TxRunner:      &mockTxRunner{instanceRepo: instanceRepo, logRepo: logRepo},
+		Hub:           &mockBroadcaster{},
+		MaxConcurrent: 2,
+	})
+
+	_, err := mgr.Deploy(context.Background(), DeployRequest{
+		Instance:   inst,
+		Definition: &models.StackDefinition{ID: "def-1", Name: "test-def"},
+		Charts:     []ChartDeployInfo{},
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "terminating")
+}
+
+func TestDeploy_AllowsActiveNamespace(t *testing.T) {
+	t.Parallel()
+
+	instanceRepo := newMockInstanceRepo()
+	logRepo := newMockDeployLogRepo()
+
+	inst := &models.StackInstance{
+		ID:                "inst-active",
+		StackDefinitionID: "def-1",
+		Name:              "active-test",
+		Namespace:         "stack-active",
+		OwnerID:           "user-1",
+		Branch:            "main",
+		Status:            models.StackStatusDraft,
+	}
+	require.NoError(t, instanceRepo.Create(inst))
+
+	fakeCS := fake.NewSimpleClientset(&corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{Name: "stack-active"},
+		Status:     corev1.NamespaceStatus{Phase: corev1.NamespaceActive},
+	})
+	k8sClient := k8s.NewClientFromInterface(fakeCS)
+
+	mgr := NewManager(ManagerConfig{
+		Registry:      &mockClusterResolver{helm: &mockHelmExecutor{}, k8sClient: k8sClient},
+		InstanceRepo:  instanceRepo,
+		DeployLogRepo: logRepo,
+		TxRunner:      &mockTxRunner{instanceRepo: instanceRepo, logRepo: logRepo},
+		Hub:           &mockBroadcaster{},
+		MaxConcurrent: 2,
+	})
+
+	logID, err := mgr.Deploy(context.Background(), DeployRequest{
+		Instance:   inst,
+		Definition: &models.StackDefinition{ID: "def-1", Name: "test-def"},
+		Charts:     []ChartDeployInfo{},
+	})
+	require.NoError(t, err)
+	assert.NotEmpty(t, logID)
+}
+
+func TestDeploy_AllowsNonExistentNamespace(t *testing.T) {
+	t.Parallel()
+
+	instanceRepo := newMockInstanceRepo()
+	logRepo := newMockDeployLogRepo()
+
+	inst := &models.StackInstance{
+		ID:                "inst-new-ns",
+		StackDefinitionID: "def-1",
+		Name:              "new-ns-test",
+		Namespace:         "stack-new",
+		OwnerID:           "user-1",
+		Branch:            "main",
+		Status:            models.StackStatusDraft,
+	}
+	require.NoError(t, instanceRepo.Create(inst))
+
+	// Empty clientset — namespace doesn't exist yet.
+	k8sClient := k8s.NewClientFromInterface(fake.NewSimpleClientset())
+
+	mgr := NewManager(ManagerConfig{
+		Registry:      &mockClusterResolver{helm: &mockHelmExecutor{}, k8sClient: k8sClient},
+		InstanceRepo:  instanceRepo,
+		DeployLogRepo: logRepo,
+		TxRunner:      &mockTxRunner{instanceRepo: instanceRepo, logRepo: logRepo},
+		Hub:           &mockBroadcaster{},
+		MaxConcurrent: 2,
+	})
+
+	logID, err := mgr.Deploy(context.Background(), DeployRequest{
+		Instance:   inst,
+		Definition: &models.StackDefinition{ID: "def-1", Name: "test-def"},
+		Charts:     []ChartDeployInfo{},
+	})
+	require.NoError(t, err)
+	assert.NotEmpty(t, logID)
+}
+
+// ---- #186: readiness gating tests ----
+
+func TestAwaitReadiness_HealthyImmediately(t *testing.T) {
+	t.Parallel()
+
+	instanceRepo := newMockInstanceRepo()
+	logRepo := newMockDeployLogRepo()
+	hub := &mockBroadcaster{}
+
+	inst := &models.StackInstance{
+		ID:                "inst-ready",
+		StackDefinitionID: "def-1",
+		Name:              "ready-test",
+		Namespace:         "stack-ready",
+		OwnerID:           "user-1",
+		Branch:            "main",
+		Status:            models.StackStatusDraft,
+	}
+	require.NoError(t, instanceRepo.Create(inst))
+
+	// Namespace exists with no pods/deployments → healthy immediately.
+	fakeCS := fake.NewSimpleClientset(&corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{Name: "stack-ready"},
+		Status:     corev1.NamespaceStatus{Phase: corev1.NamespaceActive},
+	})
+	k8sClient := k8s.NewClientFromInterface(fakeCS)
+
+	mgr := NewManager(ManagerConfig{
+		Registry:             &mockClusterResolver{helm: &mockHelmExecutor{}, k8sClient: k8sClient},
+		InstanceRepo:         instanceRepo,
+		DeployLogRepo:        logRepo,
+		TxRunner:             &mockTxRunner{instanceRepo: instanceRepo, logRepo: logRepo},
+		Hub:                  hub,
+		MaxConcurrent:        2,
+		StabilizeTimeout:     10 * time.Second,
+		StabilizePollInterval: 50 * time.Millisecond,
+	})
+
+	logID, err := mgr.Deploy(context.Background(), DeployRequest{
+		Instance:   inst,
+		Definition: &models.StackDefinition{ID: "def-1", Name: "test-def"},
+		Charts:     []ChartDeployInfo{},
+	})
+	require.NoError(t, err)
+	assert.NotEmpty(t, logID)
+
+	waitForTerminalStatus(t, instanceRepo, inst.ID)
+
+	final, err := instanceRepo.FindByID(inst.ID)
+	require.NoError(t, err)
+	assert.Equal(t, models.StackStatusRunning, final.Status)
+
+	// Verify stabilizing status was broadcast.
+	messages := hub.getMessages()
+	var sawStabilizing bool
+	for _, msg := range messages {
+		if strings.Contains(string(msg), "stabilizing") {
+			sawStabilizing = true
+			break
+		}
+	}
+	assert.True(t, sawStabilizing, "should have broadcast stabilizing status")
+}
+
+func TestAwaitReadiness_Timeout(t *testing.T) {
+	t.Parallel()
+
+	instanceRepo := newMockInstanceRepo()
+	logRepo := newMockDeployLogRepo()
+	hub := &mockBroadcaster{}
+
+	inst := &models.StackInstance{
+		ID:                "inst-timeout",
+		StackDefinitionID: "def-1",
+		Name:              "timeout-test",
+		Namespace:         "stack-timeout",
+		OwnerID:           "user-1",
+		Branch:            "main",
+		Status:            models.StackStatusDraft,
+	}
+	require.NoError(t, instanceRepo.Create(inst))
+
+	// Namespace with a pending pod → never becomes healthy.
+	fakeCS := fake.NewSimpleClientset(
+		&corev1.Namespace{
+			ObjectMeta: metav1.ObjectMeta{Name: "stack-timeout"},
+			Status:     corev1.NamespaceStatus{Phase: corev1.NamespaceActive},
+		},
+		&corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{Name: "stuck-pod", Namespace: "stack-timeout"},
+			Status: corev1.PodStatus{
+				Phase: corev1.PodPending,
+			},
+		},
+	)
+	k8sClient := k8s.NewClientFromInterface(fakeCS)
+
+	mgr := NewManager(ManagerConfig{
+		Registry:             &mockClusterResolver{helm: &mockHelmExecutor{}, k8sClient: k8sClient},
+		InstanceRepo:         instanceRepo,
+		DeployLogRepo:        logRepo,
+		TxRunner:             &mockTxRunner{instanceRepo: instanceRepo, logRepo: logRepo},
+		Hub:                  hub,
+		MaxConcurrent:        2,
+		StabilizeTimeout:     200 * time.Millisecond,
+		StabilizePollInterval: 50 * time.Millisecond,
+	})
+
+	logID, err := mgr.Deploy(context.Background(), DeployRequest{
+		Instance:   inst,
+		Definition: &models.StackDefinition{ID: "def-1", Name: "test-def"},
+		Charts:     []ChartDeployInfo{},
+	})
+	require.NoError(t, err)
+	assert.NotEmpty(t, logID)
+
+	waitForTerminalStatus(t, instanceRepo, inst.ID)
+
+	// Deploy still succeeds (readiness timeout is a warning, not a failure).
+	final, err := instanceRepo.FindByID(inst.ID)
+	require.NoError(t, err)
+	assert.Equal(t, models.StackStatusRunning, final.Status)
+
+	// Verify timeout warning was broadcast.
+	messages := hub.getMessages()
+	var sawTimeout bool
+	for _, msg := range messages {
+		if strings.Contains(string(msg), "readiness timeout") {
+			sawTimeout = true
+			break
+		}
+	}
+	assert.True(t, sawTimeout, "should have broadcast readiness timeout warning")
+}
+
+func TestAwaitReadiness_Disabled_WhenTimeoutZero(t *testing.T) {
+	t.Parallel()
+
+	instanceRepo := newMockInstanceRepo()
+	logRepo := newMockDeployLogRepo()
+	hub := &mockBroadcaster{}
+
+	inst := &models.StackInstance{
+		ID:                "inst-no-stabilize",
+		StackDefinitionID: "def-1",
+		Name:              "no-stabilize",
+		Namespace:         "stack-no-stabilize",
+		OwnerID:           "user-1",
+		Branch:            "main",
+		Status:            models.StackStatusDraft,
+	}
+	require.NoError(t, instanceRepo.Create(inst))
+
+	mgr := NewManager(ManagerConfig{
+		Registry:             &mockClusterResolver{helm: &mockHelmExecutor{}},
+		InstanceRepo:         instanceRepo,
+		DeployLogRepo:        logRepo,
+		TxRunner:             &mockTxRunner{instanceRepo: instanceRepo, logRepo: logRepo},
+		Hub:                  hub,
+		MaxConcurrent:        2,
+		StabilizeTimeout:     0, // disabled
+		StabilizePollInterval: 50 * time.Millisecond,
+	})
+
+	logID, err := mgr.Deploy(context.Background(), DeployRequest{
+		Instance:   inst,
+		Definition: &models.StackDefinition{ID: "def-1", Name: "test-def"},
+		Charts:     []ChartDeployInfo{},
+	})
+	require.NoError(t, err)
+	assert.NotEmpty(t, logID)
+
+	waitForTerminalStatus(t, instanceRepo, inst.ID)
+
+	final, err := instanceRepo.FindByID(inst.ID)
+	require.NoError(t, err)
+	assert.Equal(t, models.StackStatusRunning, final.Status)
+
+	// Should NOT see stabilizing status when timeout is 0.
+	messages := hub.getMessages()
+	for _, msg := range messages {
+		assert.NotContains(t, string(msg), "stabilizing", "should not enter stabilizing state when timeout=0")
+	}
+}
+
+func TestFinalizeDeploy_ReadinessWarning_AttachesHookMetadata(t *testing.T) {
+	t.Parallel()
+
+	instanceRepo := newMockInstanceRepo()
+	logRepo := newMockDeployLogRepo()
+	hub := &mockBroadcaster{}
+
+	inst := &models.StackInstance{
+		ID:                "inst-rw",
+		StackDefinitionID: "def-1",
+		Name:              "rw-test",
+		Namespace:         "stack-rw",
+		OwnerID:           "user-1",
+		Branch:            "main",
+		Status:            models.StackStatusDeploying,
+	}
+	require.NoError(t, instanceRepo.Create(inst))
+
+	deployLog := &models.DeploymentLog{
+		ID:              "log-rw",
+		StackInstanceID: inst.ID,
+		Action:          models.DeployActionDeploy,
+		Status:          models.DeployLogRunning,
+		StartedAt:       time.Now().UTC(),
+	}
+	require.NoError(t, logRepo.Create(context.Background(), deployLog))
+
+	mgr := NewManager(ManagerConfig{
+		Registry:      &mockClusterResolver{helm: &mockHelmExecutor{}},
+		InstanceRepo:  instanceRepo,
+		DeployLogRepo: logRepo,
+		TxRunner:      &mockTxRunner{instanceRepo: instanceRepo, logRepo: logRepo},
+		Hub:           hub,
+		MaxConcurrent: 2,
+	})
+
+	// Call finalizeDeploy with a readinessWarning — deploy succeeds but with metadata.
+	mgr.finalizeDeploy(inst.ID, deployLog, "deploy output", nil, "", "readiness timeout after 5m0s")
+
+	updated, err := instanceRepo.FindByID(inst.ID)
+	require.NoError(t, err)
+	assert.Equal(t, models.StackStatusRunning, updated.Status)
+
+	finalLog, err := logRepo.FindByID(context.Background(), deployLog.ID)
+	require.NoError(t, err)
+	assert.Equal(t, models.DeployLogSuccess, finalLog.Status)
 }
 
 // Verify that streamingMockHelmExecutor satisfies StreamingHelmExecutor at compile time.

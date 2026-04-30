@@ -130,7 +130,7 @@ func (r *SecretRefresher) refreshClusterSecrets(cl *models.Cluster, regCfg *mode
 	var refreshed, failed int
 	for j := range instances {
 		inst := &instances[j]
-		if inst.Status != models.StackStatusRunning && inst.Status != models.StackStatusDeploying {
+		if inst.Status != models.StackStatusRunning && inst.Status != models.StackStatusDeploying && inst.Status != models.StackStatusStabilizing {
 			continue
 		}
 		if inst.Namespace == "" {

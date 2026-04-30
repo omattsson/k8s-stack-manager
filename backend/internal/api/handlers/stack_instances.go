@@ -730,7 +730,7 @@ func (h *InstanceHandler) DeleteInstance(c *gin.Context) {
 	}
 
 	switch inst.Status {
-	case models.StackStatusDeploying, models.StackStatusStopping, models.StackStatusCleaning, models.StackStatusQueued:
+	case models.StackStatusDeploying, models.StackStatusStopping, models.StackStatusCleaning, models.StackStatusQueued, models.StackStatusStabilizing:
 		c.JSON(http.StatusConflict, gin.H{"error": fmt.Sprintf("Cannot delete: instance is currently %s", inst.Status)})
 		return
 
@@ -1211,7 +1211,7 @@ func (h *InstanceHandler) DeployInstance(c *gin.Context) {
 	switch inst.Status {
 	case models.StackStatusDraft, models.StackStatusStopped, models.StackStatusError, models.StackStatusRunning:
 		// OK — running triggers a helm upgrade with the latest values.
-	case models.StackStatusDeploying, models.StackStatusQueued, models.StackStatusStopping:
+	case models.StackStatusDeploying, models.StackStatusQueued, models.StackStatusStopping, models.StackStatusStabilizing:
 		c.JSON(http.StatusConflict, gin.H{"error": fmt.Sprintf("Cannot deploy: instance is currently %s", inst.Status)})
 		return
 	default:
@@ -1428,8 +1428,8 @@ func (h *InstanceHandler) StopInstance(c *gin.Context) {
 
 	// Only allow stop from running or deploying.
 	switch inst.Status {
-	case models.StackStatusRunning, models.StackStatusDeploying:
-		// OK
+	case models.StackStatusRunning, models.StackStatusDeploying, models.StackStatusStabilizing:
+		// OK — stabilizing means Helm succeeded, safe to stop
 	default:
 		c.JSON(http.StatusConflict, gin.H{"error": fmt.Sprintf("Cannot stop: instance is currently %s", inst.Status)})
 		return

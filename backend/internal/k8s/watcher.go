@@ -121,7 +121,8 @@ func (w *Watcher) poll(ctx context.Context) {
 
 		// Only monitor instances that are actively deployed.
 		if inst.Status != models.StackStatusRunning &&
-			inst.Status != models.StackStatusDeploying {
+			inst.Status != models.StackStatusDeploying &&
+			inst.Status != models.StackStatusStabilizing {
 			continue
 		}
 

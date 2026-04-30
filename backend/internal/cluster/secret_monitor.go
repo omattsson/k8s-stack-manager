@@ -160,7 +160,7 @@ func (m *SecretMonitor) scanCluster(cl *models.Cluster) {
 		if inst.Namespace == "" {
 			continue
 		}
-		if inst.Status != models.StackStatusRunning && inst.Status != models.StackStatusDeploying {
+		if inst.Status != models.StackStatusRunning && inst.Status != models.StackStatusDeploying && inst.Status != models.StackStatusStabilizing {
 			continue
 		}
 

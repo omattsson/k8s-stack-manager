@@ -71,6 +71,9 @@ type Manager struct {
 	wildcardTLSSourceSecret string
 	wildcardTLSTargetSecret string
 
+	stabilizeTimeout      time.Duration
+	stabilizePollInterval time.Duration
+
 	// hooks dispatches lifecycle events to user-configured webhooks.
 	// nil disables all hook dispatch.
 	hooks *hooks.Dispatcher
@@ -112,6 +115,14 @@ type ManagerConfig struct {
 	// Notifier creates in-app notifications for lifecycle events.
 	// Optional — nil disables notification creation from the deployer.
 	Notifier LifecycleNotifier
+
+	// StabilizeTimeout is how long to wait for pods to become ready after
+	// all Helm charts succeed. 0 disables readiness gating.
+	StabilizeTimeout time.Duration
+
+	// StabilizePollInterval controls how frequently pod readiness is checked
+	// during the stabilization window. Defaults to 5s if zero.
+	StabilizePollInterval time.Duration
 }
 
 // DeployRequest contains everything needed to deploy a stack instance.
@@ -143,10 +154,16 @@ func NewManager(cfg ManagerConfig) *Manager {
 		wildcardTarget = cfg.WildcardTLSSourceSecret
 	}
 
+	stabilizePoll := cfg.StabilizePollInterval
+	if stabilizePoll == 0 {
+		stabilizePoll = 5 * time.Second
+	}
+
 	slog.Info("deploy manager init",
 		"wildcard_tls_source_ns", cfg.WildcardTLSSourceNamespace,
 		"wildcard_tls_source_secret", cfg.WildcardTLSSourceSecret,
 		"wildcard_tls_target_secret", wildcardTarget,
+		"stabilize_timeout", cfg.StabilizeTimeout,
 	)
 
 	return &Manager{
@@ -163,6 +180,9 @@ func NewManager(cfg ManagerConfig) *Manager {
 		wildcardTLSSourceNS:     cfg.WildcardTLSSourceNamespace,
 		wildcardTLSSourceSecret: cfg.WildcardTLSSourceSecret,
 		wildcardTLSTargetSecret: wildcardTarget,
+
+		stabilizeTimeout:      cfg.StabilizeTimeout,
+		stabilizePollInterval: stabilizePoll,
 
 		hooks:    cfg.Hooks,
 		notifier: cfg.Notifier,
@@ -288,15 +308,21 @@ func (m *Manager) Deploy(ctx context.Context, req DeployRequest) (string, error)
 			"cluster_id", clusterID, "error", err)
 	}
 
-	// Resolve the k8s client up front when we'll need it for wildcard TLS
-	// replication or image pull secret provisioning. Avoids the executeDeploy
-	// goroutine re-fetching the instance + re-resolving the cluster on every deploy.
-	var k8sClient *k8s.Client
-	needsK8s := (m.wildcardTLSSourceSecret != "" && m.wildcardTLSSourceNS != "") || regCfg != nil
-	if needsK8s {
-		k8sClient, err = m.registry.GetK8sClient(clusterID)
-		if err != nil {
-			return "", fmt.Errorf("getting cluster k8s client: %w", err)
+	// Always resolve the k8s client: needed for namespace-terminating check
+	// (#182), readiness gating (#186), wildcard TLS, and pull secrets.
+	k8sClient, err := m.registry.GetK8sClient(clusterID)
+	if err != nil {
+		return "", fmt.Errorf("getting cluster k8s client: %w", err)
+	}
+
+	// Reject deploy when the target namespace is still terminating (#182).
+	if k8sClient != nil {
+		phase, phaseErr := k8sClient.GetNamespacePhase(ctx, req.Instance.Namespace)
+		if phaseErr != nil {
+			return "", fmt.Errorf("checking namespace phase: %w", phaseErr)
+		}
+		if phase == "Terminating" {
+			return "", fmt.Errorf("namespace %q is still terminating; wait for it to be fully removed, then retry", req.Instance.Namespace)
 		}
 	}
 
@@ -387,10 +413,9 @@ func (m *Manager) Deploy(ctx context.Context, req DeployRequest) (string, error)
 }
 
 // executeDeploy runs the helm install for each chart sequentially within
-// a concurrency-limited goroutine. k8sClient is only non-nil when wildcard
-// TLS replication or image pull secret provisioning is needed — Deploy()
-// resolves it up front so this goroutine doesn't re-hit the repo/registry
-// on every run. regCfg is nil when the cluster has no container registry configured.
+// a concurrency-limited goroutine. k8sClient may be nil when the cluster has
+// no k8s client configured; callers guard usage accordingly. regCfg is nil
+// when the cluster has no container registry configured.
 //
 // The pre-deploy hook fires here (not in Deploy) so that long-running hooks
 // (e.g. CI trigger gates waiting minutes for builds) use shutdownCtx instead
@@ -407,7 +432,7 @@ func (m *Manager) executeDeploy(helm HelmExecutor, k8sClient *k8s.Client, regCfg
 		deployErr := fmt.Errorf("pre-deploy hook: %w", err)
 		slog.Error("pre-deploy hook denied deployment",
 			"instance_id", instanceID, "log_id", deployLog.ID, "error", err)
-		m.finalizeDeploy(instanceID, deployLog, "", deployErr, lastDeployedValues)
+		m.finalizeDeploy(instanceID, deployLog, "", deployErr, lastDeployedValues, "")
 		return
 	}
 
@@ -434,7 +459,7 @@ func (m *Manager) executeDeploy(helm HelmExecutor, k8sClient *k8s.Client, regCfg
 	if err != nil {
 		deployErr = fmt.Errorf("creating temp directory: %w", err)
 		slog.Error("deployment failed", "instance_id", instanceID, "error", deployErr)
-		m.finalizeDeploy(instanceID, deployLog, allOutput, deployErr, lastDeployedValues)
+		m.finalizeDeploy(instanceID, deployLog, allOutput, deployErr, lastDeployedValues, "")
 		return
 	}
 	defer os.RemoveAll(tmpDir)
@@ -619,7 +644,17 @@ func (m *Manager) executeDeploy(helm HelmExecutor, k8sClient *k8s.Client, regCfg
 		allOutput += rollbackOutput
 	}
 
-	m.finalizeDeploy(instanceID, deployLog, allOutput, deployErr, lastDeployedValues)
+	// If all charts succeeded, wait for pods to become ready before
+	// firing deploy-finalized (#186).
+	var readinessWarning string
+	if deployErr == nil && m.stabilizeTimeout > 0 && k8sClient != nil {
+		if waitErr := m.awaitReadiness(k8sClient, instanceID, namespace, deployLog.ID); waitErr != nil {
+			readinessWarning = waitErr.Error()
+			allOutput += fmt.Sprintf("WARNING: %s\n", readinessWarning)
+		}
+	}
+
+	m.finalizeDeploy(instanceID, deployLog, allOutput, deployErr, lastDeployedValues, readinessWarning)
 }
 
 // rollbackCharts uninstalls previously-installed charts in reverse order after
@@ -665,10 +700,65 @@ func (m *Manager) rollbackCharts(helm HelmExecutor, ctx context.Context, instanc
 	return rollbackOutput
 }
 
+// awaitReadiness polls namespace status until all deployments are healthy or the
+// stabilize timeout expires. A timeout is returned as an error (treated as a
+// warning by the caller, not a hard deploy failure).
+func (m *Manager) awaitReadiness(k8sClient *k8s.Client, instanceID, namespace, logID string) error {
+	inst, err := m.instanceRepo.FindByID(instanceID)
+	if err != nil {
+		return fmt.Errorf("find instance for stabilize: %w", err)
+	}
+	inst.Status = models.StackStatusStabilizing
+	if err := m.instanceRepo.Update(inst); err != nil {
+		slog.Warn("failed to set stabilizing status", "instance_id", instanceID, "error", err)
+	}
+	m.broadcastStatus(instanceID, models.StackStatusStabilizing, logID)
+	m.broadcastLog(instanceID, logID, "Helm charts installed, waiting for pods to become ready...")
+
+	stabilizeCtx, stabilizeCancel := context.WithTimeout(m.shutdownCtx, m.stabilizeTimeout)
+	defer stabilizeCancel()
+
+	ticker := time.NewTicker(m.stabilizePollInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-stabilizeCtx.Done():
+			m.broadcastLog(instanceID, logID, fmt.Sprintf("WARNING: readiness timeout after %s", m.stabilizeTimeout))
+			return fmt.Errorf("readiness timeout after %s", m.stabilizeTimeout)
+		case <-ticker.C:
+			// Abort early if the instance was stopped/cleaned while stabilizing.
+			if current, findErr := m.instanceRepo.FindByID(instanceID); findErr == nil {
+				if current.Status != models.StackStatusStabilizing {
+					m.broadcastLog(instanceID, logID, fmt.Sprintf("Stabilization aborted: instance status changed to %s", current.Status))
+					return fmt.Errorf("stabilization aborted: status changed to %s", current.Status)
+				}
+			}
+
+			checkCtx, cancel := context.WithTimeout(stabilizeCtx, 5*time.Second)
+			nsStatus, statusErr := k8sClient.GetNamespaceStatus(checkCtx, namespace, k8s.StatusOptions{})
+			cancel()
+
+			if statusErr != nil {
+				slog.Warn("readiness poll failed", "instance_id", instanceID, "error", statusErr)
+				continue
+			}
+
+			if nsStatus.Status == k8s.StatusHealthy {
+				m.broadcastLog(instanceID, logID, "All pods healthy")
+				return nil
+			}
+
+			slog.Debug("readiness poll", "instance_id", instanceID, "status", nsStatus.Status)
+		}
+	}
+}
+
 // finalizeDeploy updates the instance and deployment log with the final status.
 // The deployLog is passed directly from the goroutine closure to avoid an
-// extra FindByID call.
-func (m *Manager) finalizeDeploy(instanceID string, deployLog *models.DeploymentLog, output string, deployErr error, lastDeployedValues string) {
+// extra FindByID call. readinessWarning is non-empty when pod readiness timed
+// out (deploy still succeeds, but the hook payload includes the warning).
+func (m *Manager) finalizeDeploy(instanceID string, deployLog *models.DeploymentLog, output string, deployErr error, lastDeployedValues string, readinessWarning string) {
 	now := time.Now().UTC()
 
 	instance, err := m.instanceRepo.FindByID(instanceID)
@@ -680,6 +770,29 @@ func (m *Manager) finalizeDeploy(instanceID string, deployLog *models.Deployment
 
 	deployLog.Output = truncateString(output, maxOutputLen)
 	deployLog.CompletedAt = &now
+
+	// If a concurrent operation (stop/clean) changed the instance status while
+	// we were deploying/stabilizing, don't overwrite it — just finalize the log.
+	concurrentOp := instance.Status != models.StackStatusDeploying &&
+		instance.Status != models.StackStatusStabilizing
+	if concurrentOp {
+		slog.Warn("finalizeDeploy: concurrent operation changed status, skipping instance update",
+			"instance_id", instanceID,
+			"current_status", instance.Status,
+		)
+		deployLog.Status = models.DeployLogSuccess
+		deployLog.ValuesSnapshot = lastDeployedValues
+		if deployErr != nil {
+			sanitized := sanitizeDeployError(deployErr)
+			deployLog.Status = models.DeployLogError
+			deployLog.ErrorMessage = truncateString(sanitized, maxLogErrorLen)
+		}
+		if err := m.logRepo.Update(m.shutdownCtx, deployLog); err != nil {
+			slog.Error("failed to update deploy log after concurrent op",
+				"instance_id", instanceID, "deploy_log_id", deployLog.ID, "error", err)
+		}
+		return
+	}
 
 	if deployErr != nil {
 		// Use a sanitized, high-level message for user-visible fields.
@@ -749,7 +862,11 @@ func (m *Manager) finalizeDeploy(instanceID string, deployLog *models.Deployment
 	if deployErr == nil {
 		_ = m.fireDeployHook(hookCtx, hooks.EventPostDeploy, instance, deployLog.ID, deployLog.StartedAt, hookOpts{})
 	}
-	_ = m.fireDeployHook(hookCtx, hooks.EventDeployFinalized, instance, deployLog.ID, deployLog.StartedAt, hookOpts{})
+	finalizeHookOpts := hookOpts{}
+	if readinessWarning != "" {
+		finalizeHookOpts.Metadata = map[string]string{"readiness": "timeout", "readiness_warning": readinessWarning}
+	}
+	_ = m.fireDeployHook(hookCtx, hooks.EventDeployFinalized, instance, deployLog.ID, deployLog.StartedAt, finalizeHookOpts)
 
 	if deployErr != nil {
 		if isTimeoutError(deployErr) {
@@ -1650,6 +1767,9 @@ func (m *Manager) applyNamespaceQuotas(ctx context.Context, instanceID, namespac
 	k8sClient, err := m.registry.GetK8sClient(clusterID)
 	if err != nil {
 		return fmt.Errorf("getting k8s client: %w", err)
+	}
+	if k8sClient == nil {
+		return fmt.Errorf("k8s client is nil for cluster %s", clusterID)
 	}
 
 	if err := k8sClient.EnsureResourceQuota(ctx, namespace, effectiveQuota); err != nil {
