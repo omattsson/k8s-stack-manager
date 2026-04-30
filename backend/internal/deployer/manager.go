@@ -126,6 +126,7 @@ type DeployRequest struct {
 type ChartDeployInfo struct {
 	ChartConfig models.ChartConfig
 	ValuesYAML  []byte
+	Branch      string // effective branch (override or instance default)
 }
 
 // NewManager creates a new deployment Manager with the given configuration.
@@ -343,12 +344,17 @@ func (m *Manager) Deploy(ctx context.Context, req DeployRequest) (string, error)
 	// gates) know which charts are being deployed and can check/trigger builds.
 	chartRefs := make([]hooks.ChartRef, 0, len(req.Charts))
 	for _, c := range req.Charts {
+		branch := c.Branch
+		if branch == "" {
+			branch = req.Instance.Branch
+		}
 		chartRefs = append(chartRefs, hooks.ChartRef{
 			Name:            c.ChartConfig.ChartName,
 			ReleaseName:     c.ChartConfig.ChartName,
 			Version:         c.ChartConfig.ChartVersion,
 			SourceRepoURL:   c.ChartConfig.SourceRepoURL,
 			BuildPipelineID: c.ChartConfig.BuildPipelineID,
+			Branch:          branch,
 		})
 	}
 	hookMeta := map[string]string{}

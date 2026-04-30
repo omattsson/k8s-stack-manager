@@ -99,6 +99,7 @@ type ChartRef struct {
 	Version         string `json:"version,omitempty"`
 	SourceRepoURL   string `json:"source_repo_url,omitempty"`
 	BuildPipelineID string `json:"build_pipeline_id,omitempty"`
+	Branch          string `json:"branch,omitempty"`
 }
 
 // HookResponse is the JSON shape subscribers return.
