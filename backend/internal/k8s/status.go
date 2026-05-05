@@ -545,6 +545,8 @@ func determineChartStatus(deployments []DeploymentInfo, pods []PodInfo) string {
 		switch {
 		case p.Phase == "Failed":
 			hasError = true
+		case p.Phase == "Succeeded":
+			// Completed job pods — not an error, not progressing.
 		case p.RestartCount >= degradedRestartThreshold:
 			hasDegraded = true
 		case p.Phase == "Pending" || !p.Ready:
