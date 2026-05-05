@@ -734,7 +734,7 @@ func (h *InstanceHandler) DeleteInstance(c *gin.Context) {
 		c.JSON(http.StatusConflict, gin.H{"error": fmt.Sprintf("Cannot delete: instance is currently %s", inst.Status)})
 		return
 
-	case models.StackStatusRunning, models.StackStatusStopped, models.StackStatusError:
+	case models.StackStatusRunning, models.StackStatusPartial, models.StackStatusStopped, models.StackStatusError:
 		if h.deployManager == nil {
 			c.JSON(http.StatusServiceUnavailable, gin.H{"error": msgDeployerNotConfigured})
 			return
@@ -1209,7 +1209,7 @@ func (h *InstanceHandler) DeployInstance(c *gin.Context) {
 
 	// Allow deploy from draft, stopped, error, or running (upgrade).
 	switch inst.Status {
-	case models.StackStatusDraft, models.StackStatusStopped, models.StackStatusError, models.StackStatusRunning:
+	case models.StackStatusDraft, models.StackStatusStopped, models.StackStatusError, models.StackStatusRunning, models.StackStatusPartial:
 		// OK — running triggers a helm upgrade with the latest values.
 	case models.StackStatusDeploying, models.StackStatusQueued, models.StackStatusStopping, models.StackStatusStabilizing:
 		c.JSON(http.StatusConflict, gin.H{"error": fmt.Sprintf("Cannot deploy: instance is currently %s", inst.Status)})
@@ -1428,8 +1428,8 @@ func (h *InstanceHandler) StopInstance(c *gin.Context) {
 
 	// Only allow stop from running or deploying.
 	switch inst.Status {
-	case models.StackStatusRunning, models.StackStatusDeploying, models.StackStatusStabilizing:
-		// OK — stabilizing means Helm succeeded, safe to stop
+	case models.StackStatusRunning, models.StackStatusPartial, models.StackStatusDeploying, models.StackStatusStabilizing:
+		// OK — partial/stabilizing means some Helm charts succeeded, safe to stop
 	default:
 		c.JSON(http.StatusConflict, gin.H{"error": fmt.Sprintf("Cannot stop: instance is currently %s", inst.Status)})
 		return
@@ -1511,7 +1511,7 @@ func (h *InstanceHandler) CleanInstance(c *gin.Context) {
 	// disabling buttons optimistically. A per-instance mutex would fix this
 	// but is deferred as a known limitation shared with Deploy/Stop.
 	switch inst.Status {
-	case models.StackStatusRunning, models.StackStatusStopped, models.StackStatusError:
+	case models.StackStatusRunning, models.StackStatusPartial, models.StackStatusStopped, models.StackStatusError:
 		// OK
 	default:
 		c.JSON(http.StatusConflict, gin.H{"error": fmt.Sprintf("Cannot clean: instance is currently %s", inst.Status)})
@@ -2247,7 +2247,7 @@ func (h *InstanceHandler) RollbackInstance(c *gin.Context) {
 	}
 
 	switch inst.Status {
-	case models.StackStatusRunning, models.StackStatusError:
+	case models.StackStatusRunning, models.StackStatusPartial, models.StackStatusError:
 		// OK
 	default:
 		c.JSON(http.StatusConflict, gin.H{"error": fmt.Sprintf("Cannot rollback: instance is in state %s", inst.Status)})

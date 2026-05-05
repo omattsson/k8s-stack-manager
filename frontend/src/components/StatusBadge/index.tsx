@@ -6,6 +6,7 @@ const statusColors: Record<StackStatus, 'default' | 'info' | 'success' | 'warnin
   deploying: 'info',
   stabilizing: 'info',
   running: 'success',
+  partial: 'warning',
   stopped: 'warning',
   stopping: 'warning',
   cleaning: 'warning',

@@ -44,7 +44,7 @@ import LoadingState from '../../components/LoadingState';
 import EmptyState from '../../components/EmptyState';
 import { useNotification } from '../../context/NotificationContext';
 
-const STATUSES = ['All', 'draft', 'deploying', 'stabilizing', 'running', 'stopped', 'error'];
+const STATUSES = ['All', 'draft', 'deploying', 'stabilizing', 'running', 'partial', 'stopped', 'error'];
 
 type BulkAction = 'deploy' | 'stop' | 'clean' | 'delete';
 
@@ -143,7 +143,7 @@ const InstanceCard = ({ instance, isSelected, isFavorite, clusterName, url, k8sH
         </Box>
         <Box sx={{ display: 'flex', alignItems: 'center' }}>
           <StatusBadge status={instance.status} />
-          {(instance.status === 'running' || instance.status === 'deploying' || instance.status === 'stabilizing') && k8sHealth && (
+          {(instance.status === 'running' || instance.status === 'partial' || instance.status === 'deploying' || instance.status === 'stabilizing') && k8sHealth && (
             <PodHealthDot status={k8sHealth} />
           )}
         </Box>
@@ -251,7 +251,7 @@ const Dashboard = () => {
   // Phase 2: fetch status/URLs for newly running/deploying instances
   useEffect(() => {
     const running = instances.filter(
-      (i) => i.status === 'running' || i.status === 'deploying' || i.status === 'stabilizing',
+      (i) => i.status === 'running' || i.status === 'partial' || i.status === 'deploying' || i.status === 'stabilizing',
     );
     const newRunning = running.filter(
       (i) => !fetchedStatusIdsRef.current.has(i.id) && !inFlightIdsRef.current.has(i.id),

@@ -432,7 +432,7 @@ func (m *Manager) executeDeploy(helm HelmExecutor, k8sClient *k8s.Client, regCfg
 		deployErr := fmt.Errorf("pre-deploy hook: %w", err)
 		slog.Error("pre-deploy hook denied deployment",
 			"instance_id", instanceID, "log_id", deployLog.ID, "error", err)
-		m.finalizeDeploy(instanceID, deployLog, "", deployErr, lastDeployedValues, "")
+		m.finalizeDeploy(instanceID, deployLog, "", deployErr, false, lastDeployedValues, "")
 		return
 	}
 
@@ -459,7 +459,7 @@ func (m *Manager) executeDeploy(helm HelmExecutor, k8sClient *k8s.Client, regCfg
 	if err != nil {
 		deployErr = fmt.Errorf("creating temp directory: %w", err)
 		slog.Error("deployment failed", "instance_id", instanceID, "error", deployErr)
-		m.finalizeDeploy(instanceID, deployLog, allOutput, deployErr, lastDeployedValues, "")
+		m.finalizeDeploy(instanceID, deployLog, allOutput, deployErr, false, lastDeployedValues, "")
 		return
 	}
 	defer os.RemoveAll(tmpDir)
@@ -560,13 +560,9 @@ func (m *Manager) executeDeploy(helm HelmExecutor, k8sClient *k8s.Client, regCfg
 		}
 	}
 
-	// Track successfully installed charts for rollback on partial failure.
-	var installedCharts []ChartDeployInfo
+	var failedCharts []string
 
 	for _, chart := range charts {
-		// Use chart name as release name. Releases are namespace-scoped, so
-		// there is no collision risk across instances (each gets its own namespace).
-		// This keeps names short to stay within the K8s 63-char name limit.
 		releaseName := chart.ChartConfig.ChartName
 
 		slog.Info("deploying chart",
@@ -581,16 +577,15 @@ func (m *Manager) executeDeploy(helm HelmExecutor, k8sClient *k8s.Client, regCfg
 		if len(chart.ValuesYAML) > 0 {
 			valuesPath := filepath.Join(tmpDir, chart.ChartConfig.ChartName+"-values.yaml")
 			if err := os.WriteFile(valuesPath, chart.ValuesYAML, 0600); err != nil {
-				deployErr = fmt.Errorf("writing values file for chart %q: %w", chart.ChartConfig.ChartName, err)
-				break
+				allOutput += fmt.Sprintf("=== Chart: %s ===\nERROR writing values: %s\n", chart.ChartConfig.ChartName, err)
+				failedCharts = append(failedCharts, chart.ChartConfig.ChartName)
+				slog.Error("failed to write values file",
+					"instance_id", instanceID, "chart", chart.ChartConfig.ChartName, "error", err)
+				continue
 			}
 			valuesFile = valuesPath
 		}
 
-		// Determine chart reference and optional --repo URL.
-		// For OCI registries (oci://...), combine repo URL and chart path into a
-		// single chart reference (e.g. oci://registry/charts/node) — --repo is
-		// not supported for OCI. For HTTP repos, pass --repo separately.
 		chartRef := chart.ChartConfig.ChartPath
 		if chartRef == "" {
 			chartRef = chart.ChartConfig.ChartName
@@ -608,7 +603,7 @@ func (m *Manager) executeDeploy(helm HelmExecutor, k8sClient *k8s.Client, regCfg
 			Version:     chart.ChartConfig.ChartVersion,
 			ValuesFile:  valuesFile,
 			Namespace:   namespace,
-			SkipCRDs:    true, // CRDs are cluster-scoped; skip to avoid conflicts across namespaces
+			SkipCRDs:    true,
 		})
 
 		allOutput += fmt.Sprintf("=== Chart: %s ===\n%s\n", chart.ChartConfig.ChartName, output)
@@ -617,18 +612,23 @@ func (m *Manager) executeDeploy(helm HelmExecutor, k8sClient *k8s.Client, regCfg
 		}
 
 		if err != nil {
-			deployErr = fmt.Errorf("deploying chart %q: %w", chart.ChartConfig.ChartName, err)
-			allOutput += fmt.Sprintf("ERROR: %s\n", deployErr.Error())
-			break
+			failedCharts = append(failedCharts, chart.ChartConfig.ChartName)
+			allOutput += fmt.Sprintf("ERROR: deploying chart %q: %s\n", chart.ChartConfig.ChartName, err)
+			slog.Error("chart deploy failed, continuing with remaining charts",
+				"instance_id", instanceID, "chart", chart.ChartConfig.ChartName, "error", err)
+			continue
 		}
+	}
 
-		installedCharts = append(installedCharts, chart)
+	if len(failedCharts) > 0 && len(failedCharts) == len(charts) {
+		deployErr = fmt.Errorf("all charts failed to deploy: %s", strings.Join(failedCharts, ", "))
+	} else if len(failedCharts) > 0 {
+		deployErr = fmt.Errorf("partial deploy — failed charts: %s", strings.Join(failedCharts, ", "))
 	}
 
 	// Apply resource quotas to the namespace if configured.
-	if deployErr == nil && m.quotaRepo != nil {
+	if len(failedCharts) < len(charts) && m.quotaRepo != nil {
 		if quotaErr := m.applyNamespaceQuotas(ctx, instanceID, namespace); quotaErr != nil {
-			// Quota application failure is non-fatal — log warning but don't fail the deploy.
 			slog.Warn("failed to apply resource quotas",
 				"instance_id", instanceID,
 				"namespace", namespace,
@@ -638,14 +638,7 @@ func (m *Manager) executeDeploy(helm HelmExecutor, k8sClient *k8s.Client, regCfg
 		}
 	}
 
-	// Roll back successfully installed charts on partial failure.
-	if deployErr != nil && len(installedCharts) > 0 {
-		rollbackOutput := m.rollbackCharts(helm, ctx, instanceID, deployLog.ID, namespace, installedCharts, streaming)
-		allOutput += rollbackOutput
-	}
-
-	// If all charts succeeded, wait for pods to become ready before
-	// firing deploy-finalized (#186).
+	// Wait for pods to become ready when at least some charts succeeded.
 	var readinessWarning string
 	if deployErr == nil && m.stabilizeTimeout > 0 && k8sClient != nil {
 		if waitErr := m.awaitReadiness(k8sClient, instanceID, namespace, deployLog.ID); waitErr != nil {
@@ -654,50 +647,7 @@ func (m *Manager) executeDeploy(helm HelmExecutor, k8sClient *k8s.Client, regCfg
 		}
 	}
 
-	m.finalizeDeploy(instanceID, deployLog, allOutput, deployErr, lastDeployedValues, readinessWarning)
-}
-
-// rollbackCharts uninstalls previously-installed charts in reverse order after
-// a partial deployment failure. It is best-effort: individual uninstall failures
-// are logged but do not stop the remaining rollbacks. Returns the accumulated
-// rollback output for inclusion in the deployment log.
-func (m *Manager) rollbackCharts(helm HelmExecutor, ctx context.Context, instanceID, logID, namespace string, charts []ChartDeployInfo, streaming bool) string {
-	var rollbackOutput string
-	rollbackOutput += "=== Rolling back installed charts ===\n"
-
-	// Iterate in reverse order (last installed first).
-	for i := len(charts) - 1; i >= 0; i-- {
-		chart := charts[i]
-		releaseName := chart.ChartConfig.ChartName
-
-		slog.Warn("rolling back chart",
-			"instance_id", instanceID,
-			"chart", releaseName,
-			"namespace", namespace,
-		)
-
-		output, err := helm.Uninstall(ctx, UninstallRequest{
-			ReleaseName: releaseName,
-			Namespace:   namespace,
-		})
-
-		rollbackOutput += fmt.Sprintf("=== Rollback: %s ===\n%s\n", releaseName, output)
-		if !streaming {
-			m.broadcastLog(instanceID, logID, output)
-		}
-
-		if err != nil {
-			slog.Error("rollback failed for chart",
-				"instance_id", instanceID,
-				"chart", releaseName,
-				"namespace", namespace,
-				"error", err,
-			)
-			rollbackOutput += fmt.Sprintf("ROLLBACK ERROR: %s\n", err.Error())
-		}
-	}
-
-	return rollbackOutput
+	m.finalizeDeploy(instanceID, deployLog, allOutput, deployErr, len(failedCharts) > 0 && len(failedCharts) < len(charts), lastDeployedValues, readinessWarning)
 }
 
 // awaitReadiness polls namespace status until all deployments are healthy or the
@@ -758,7 +708,7 @@ func (m *Manager) awaitReadiness(k8sClient *k8s.Client, instanceID, namespace, l
 // The deployLog is passed directly from the goroutine closure to avoid an
 // extra FindByID call. readinessWarning is non-empty when pod readiness timed
 // out (deploy still succeeds, but the hook payload includes the warning).
-func (m *Manager) finalizeDeploy(instanceID string, deployLog *models.DeploymentLog, output string, deployErr error, lastDeployedValues string, readinessWarning string) {
+func (m *Manager) finalizeDeploy(instanceID string, deployLog *models.DeploymentLog, output string, deployErr error, partialDeploy bool, lastDeployedValues string, readinessWarning string) {
 	now := time.Now().UTC()
 
 	instance, err := m.instanceRepo.FindByID(instanceID)
@@ -794,10 +744,7 @@ func (m *Manager) finalizeDeploy(instanceID string, deployLog *models.Deployment
 		return
 	}
 
-	if deployErr != nil {
-		// Use a sanitized, high-level message for user-visible fields.
-		// The full Helm output (which may contain sensitive data) is only
-		// stored in deployLog.Output.
+	if deployErr != nil && !partialDeploy {
 		sanitized := sanitizeDeployError(deployErr)
 		instance.Status = models.StackStatusError
 		instance.ErrorMessage = truncateString(sanitized, maxInstanceErrorLen)
@@ -805,6 +752,21 @@ func (m *Manager) finalizeDeploy(instanceID string, deployLog *models.Deployment
 		deployLog.ErrorMessage = truncateString(sanitized, maxLogErrorLen)
 
 		slog.Error("deployment failed",
+			"instance_id", instanceID,
+			"log_id", deployLog.ID,
+			"error", deployErr,
+		)
+	} else if partialDeploy {
+		sanitized := sanitizeDeployError(deployErr)
+		instance.Status = models.StackStatusPartial
+		instance.ErrorMessage = truncateString(sanitized, maxInstanceErrorLen)
+		instance.LastDeployedAt = &now
+		instance.LastDeployedValues = lastDeployedValues
+		deployLog.Status = models.DeployLogError
+		deployLog.ErrorMessage = truncateString(sanitized, maxLogErrorLen)
+		deployLog.ValuesSnapshot = lastDeployedValues
+
+		slog.Warn("deployment partially succeeded",
 			"instance_id", instanceID,
 			"log_id", deployLog.ID,
 			"error", deployErr,
@@ -848,18 +810,10 @@ func (m *Manager) finalizeDeploy(instanceID string, deployLog *models.Deployment
 	}
 
 	// Broadcast final status.
-	if deployErr != nil {
-		m.broadcastStatusWithError(instanceID, models.StackStatusError, deployLog.ID, instance.ErrorMessage)
-	} else {
-		m.broadcastStatus(instanceID, models.StackStatusRunning, deployLog.ID)
-	}
+	m.broadcastStatusWithError(instanceID, instance.Status, deployLog.ID, instance.ErrorMessage)
 
-	// Fire post-* hooks. These use the manager's shutdown context so a Shutdown
-	// call cancels in-flight deliveries instead of letting them run past
-	// process exit. Errors are absorbed by the dispatcher when subscribers use
-	// failure_policy=ignore (the default for post-* events).
 	hookCtx := m.shutdownCtx
-	if deployErr == nil {
+	if deployErr == nil || partialDeploy {
 		_ = m.fireDeployHook(hookCtx, hooks.EventPostDeploy, instance, deployLog.ID, deployLog.StartedAt, hookOpts{})
 	}
 	finalizeHookOpts := hookOpts{}
@@ -868,7 +822,7 @@ func (m *Manager) finalizeDeploy(instanceID string, deployLog *models.Deployment
 	}
 	_ = m.fireDeployHook(hookCtx, hooks.EventDeployFinalized, instance, deployLog.ID, deployLog.StartedAt, finalizeHookOpts)
 
-	if deployErr != nil {
+	if deployErr != nil && !partialDeploy {
 		if isTimeoutError(deployErr) {
 			m.notifyUser(instance.OwnerID, instanceID, "deploy.timeout",
 				"Deployment timed out",
@@ -879,6 +833,10 @@ func (m *Manager) finalizeDeploy(instanceID string, deployLog *models.Deployment
 				"Deployment failed",
 				fmt.Sprintf("Deployment of %s failed: %s", instance.Name, instance.ErrorMessage))
 		}
+	} else if partialDeploy {
+		m.notifyUser(instance.OwnerID, instanceID, "deployment.partial",
+			"Deployment partially succeeded",
+			fmt.Sprintf("Deployment of %s partially succeeded: %s", instance.Name, instance.ErrorMessage))
 	} else {
 		m.notifyUser(instance.OwnerID, instanceID, "deployment.success", "Deployment succeeded", fmt.Sprintf("Deployment of %s completed successfully", instance.Name))
 	}
@@ -1141,6 +1099,11 @@ func sanitizeDeployError(err error) string {
 
 	// Look for the pattern "deploying chart ..." or "uninstalling chart ..."
 	// which is the outermost fmt.Errorf wrapper in executeDeploy / executeStopWithCharts.
+	// Partial/total chart failure messages are already user-safe — pass through.
+	if strings.HasPrefix(msg, "all charts failed") || strings.HasPrefix(msg, "partial deploy") {
+		return msg
+	}
+
 	for _, prefix := range []string{
 		"pre-deploy hook", "pre-rollback hook",
 		"deploying chart ", "uninstalling chart ", "deleting namespace ", "creating temp directory",
@@ -1148,7 +1111,6 @@ func sanitizeDeployError(err error) string {
 		"getting history for chart ", "rolling back chart ",
 	} {
 		if strings.HasPrefix(msg, prefix) {
-			// Find the chart name in quotes if present.
 			if idx := strings.Index(msg, ":"); idx > 0 {
 				return msg[:idx] + ": operation failed"
 			}
@@ -1156,7 +1118,6 @@ func sanitizeDeployError(err error) string {
 		}
 	}
 
-	// Fallback: return a generic message if the format is unexpected.
 	return "deployment operation failed"
 }
 

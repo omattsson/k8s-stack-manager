@@ -161,7 +161,7 @@ func (m *QuotaMonitor) checkCluster(cl *models.Cluster) {
 	var running int
 	var namespaces []string
 	for j := range instances {
-		if instances[j].Status == models.StackStatusRunning || instances[j].Status == models.StackStatusDeploying || instances[j].Status == models.StackStatusStabilizing {
+		if instances[j].Status == models.StackStatusRunning || instances[j].Status == models.StackStatusPartial || instances[j].Status == models.StackStatusDeploying || instances[j].Status == models.StackStatusStabilizing {
 			running++
 			if instances[j].Namespace != "" {
 				namespaces = append(namespaces, instances[j].Namespace)

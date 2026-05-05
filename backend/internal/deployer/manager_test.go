@@ -856,11 +856,12 @@ func TestManager_Deploy_ChartsSortedByDeployOrder(t *testing.T) {
 	// Wait for async completion.
 	waitForTerminalStatus(t, instanceRepo, inst.ID)
 
-	// The error should reference the first chart (deploy order 1) since it fails first.
+	// Both charts fail (nonexistent binary) — error lists all failed charts.
 	finalLog, err := logRepo.FindByID(context.Background(), logID)
 	assert.NoError(t, err)
 	assert.Equal(t, models.DeployLogError, finalLog.Status)
 	assert.Contains(t, finalLog.ErrorMessage, "first-chart")
+	assert.Contains(t, finalLog.ErrorMessage, "second-chart")
 }
 
 func TestManager_StopWithCharts_ExecutesUninstall(t *testing.T) {
@@ -1112,7 +1113,7 @@ func TestManager_FinalizeDeploy_InstanceNotFound(t *testing.T) {
 
 	// Should not panic when instance is not found.
 	orphanLog := &models.DeploymentLog{ID: "some-log-id", StackInstanceID: "nonexistent-id"}
-	mgr.finalizeDeploy("nonexistent-id", orphanLog, "output", nil, "", "")
+	mgr.finalizeDeploy("nonexistent-id", orphanLog, "output", nil, false, "", "")
 }
 
 func TestManager_BroadcastStatusWithError_NilHub(t *testing.T) {
@@ -1466,7 +1467,7 @@ func TestManager_FinalizeDeploy_OutputTruncation(t *testing.T) {
 
 	// Create output larger than maxOutputLen (64KB).
 	largeOutput := strings.Repeat("x", maxOutputLen+1000)
-	mgr.finalizeDeploy(inst.ID, deployLog, largeOutput, nil, "", "")
+	mgr.finalizeDeploy(inst.ID, deployLog, largeOutput, nil, false, "", "")
 
 	finalLog, err := logRepo.FindByID(context.Background(), deployLog.ID)
 	assert.NoError(t, err)
@@ -1553,7 +1554,7 @@ func (m *mockHelmExecutor) getUninstallCalls() []UninstallRequest {
 
 // ---- rollback tests ----
 
-func TestManager_Deploy_PartialRollback(t *testing.T) {
+func TestManager_Deploy_PartialDeploy_KeepsSuccessfulCharts(t *testing.T) {
 	t.Parallel()
 
 	instanceRepo := newMockInstanceRepo()
@@ -1563,8 +1564,8 @@ func TestManager_Deploy_PartialRollback(t *testing.T) {
 	inst := &models.StackInstance{
 		ID:                "inst-rollback-1",
 		StackDefinitionID: "def-1",
-		Name:              "partial-rollback",
-		Namespace:         "stack-rollback-test",
+		Name:              "partial-keep",
+		Namespace:         "stack-partial-keep",
 		OwnerID:           "user-1",
 		Branch:            "main",
 		Status:            models.StackStatusDraft,
@@ -1573,7 +1574,6 @@ func TestManager_Deploy_PartialRollback(t *testing.T) {
 
 	helmMock := &mockHelmExecutor{
 		installFunc: func(_ context.Context, req InstallRequest) (string, error) {
-			// Charts 1 and 2 succeed, chart 3 fails.
 			if req.ReleaseName == "chart-c" {
 				return "install failed", fmt.Errorf("helm command failed: exit status 1")
 			}
@@ -1604,31 +1604,27 @@ func TestManager_Deploy_PartialRollback(t *testing.T) {
 	assert.NoError(t, err)
 	assert.NotEmpty(t, logID)
 
-	// Wait for async completion.
 	waitForTerminalStatus(t, instanceRepo, inst.ID)
 
-	// Verify instance status is error with original failure message.
+	// chart-c failed, chart-a and chart-b succeeded → partial status.
 	final, err := instanceRepo.FindByID(inst.ID)
 	assert.NoError(t, err)
-	assert.Equal(t, models.StackStatusError, final.Status)
+	assert.Equal(t, models.StackStatusPartial, final.Status)
 	assert.Contains(t, final.ErrorMessage, "chart-c")
 
-	// Verify deployment log contains rollback output.
 	finalLog, err := logRepo.FindByID(context.Background(), logID)
 	assert.NoError(t, err)
 	assert.Equal(t, models.DeployLogError, finalLog.Status)
-	assert.Contains(t, finalLog.Output, "Rollback: chart-b")
-	assert.Contains(t, finalLog.Output, "Rollback: chart-a")
+	assert.Contains(t, finalLog.Output, "ERROR:")
+	// No rollback — successful charts are preserved.
+	assert.NotContains(t, finalLog.Output, "Rolling back")
 
-	// Verify uninstall was called for chart-b and chart-a (reverse order),
-	// but NOT for chart-c (the one that failed).
+	// No uninstall calls.
 	uninstalls := helmMock.getUninstallCalls()
-	require.Len(t, uninstalls, 2)
-	assert.Equal(t, "chart-b", uninstalls[0].ReleaseName)
-	assert.Equal(t, "chart-a", uninstalls[1].ReleaseName)
+	assert.Empty(t, uninstalls)
 }
 
-func TestManager_Deploy_PartialRollback_RollbackFails(t *testing.T) {
+func TestManager_Deploy_PartialSuccess_ContinuesOnFailure(t *testing.T) {
 	t.Parallel()
 
 	instanceRepo := newMockInstanceRepo()
@@ -1638,8 +1634,8 @@ func TestManager_Deploy_PartialRollback_RollbackFails(t *testing.T) {
 	inst := &models.StackInstance{
 		ID:                "inst-rollback-2",
 		StackDefinitionID: "def-1",
-		Name:              "rollback-fails",
-		Namespace:         "stack-rollback-fail",
+		Name:              "partial-deploy",
+		Namespace:         "stack-partial",
 		OwnerID:           "user-1",
 		Branch:            "main",
 		Status:            models.StackStatusDraft,
@@ -1648,15 +1644,10 @@ func TestManager_Deploy_PartialRollback_RollbackFails(t *testing.T) {
 
 	helmMock := &mockHelmExecutor{
 		installFunc: func(_ context.Context, req InstallRequest) (string, error) {
-			// Chart 1 succeeds, chart 2 fails.
 			if req.ReleaseName == "chart-b" {
 				return "install failed", fmt.Errorf("helm command failed: exit status 1")
 			}
 			return "installed " + req.ReleaseName, nil
-		},
-		uninstallFunc: func(_ context.Context, req UninstallRequest) (string, error) {
-			// Rollback also fails.
-			return "uninstall failed", fmt.Errorf("helm uninstall failed: exit status 1")
 		},
 	}
 
@@ -1683,26 +1674,24 @@ func TestManager_Deploy_PartialRollback_RollbackFails(t *testing.T) {
 	assert.NoError(t, err)
 	assert.NotEmpty(t, logID)
 
-	// Wait for async completion.
 	waitForTerminalStatus(t, instanceRepo, inst.ID)
 
-	// Verify instance status is error with the ORIGINAL deploy failure (not rollback failure).
+	// Partial deploy: chart-b failed but chart-a and chart-c succeeded.
 	final, err := instanceRepo.FindByID(inst.ID)
 	assert.NoError(t, err)
-	assert.Equal(t, models.StackStatusError, final.Status)
+	assert.Equal(t, models.StackStatusPartial, final.Status)
 	assert.Contains(t, final.ErrorMessage, "chart-b")
 
-	// Verify deployment log contains both deploy error and rollback error.
 	finalLog, err := logRepo.FindByID(context.Background(), logID)
 	assert.NoError(t, err)
 	assert.Equal(t, models.DeployLogError, finalLog.Status)
 	assert.Contains(t, finalLog.Output, "ERROR:")
-	assert.Contains(t, finalLog.Output, "ROLLBACK ERROR:")
+	// No rollback — successful charts are kept.
+	assert.NotContains(t, finalLog.Output, "Rolling back")
 
-	// Verify uninstall was attempted for chart-a despite failure.
+	// No uninstall calls — we don't roll back on partial failure.
 	uninstalls := helmMock.getUninstallCalls()
-	require.Len(t, uninstalls, 1)
-	assert.Equal(t, "chart-a", uninstalls[0].ReleaseName)
+	assert.Empty(t, uninstalls)
 }
 
 // ---- Clean tests ----
@@ -1968,7 +1957,7 @@ func TestManager_Clean_ReleasesAlreadyGone(t *testing.T) {
 	assert.Contains(t, finalLog.Output, "Namespace stack-clean-stopped deleted")
 }
 
-func TestManager_Deploy_FirstChartFails_NoRollback(t *testing.T) {
+func TestManager_Deploy_AllChartsFail(t *testing.T) {
 	t.Parallel()
 
 	instanceRepo := newMockInstanceRepo()
@@ -1978,8 +1967,8 @@ func TestManager_Deploy_FirstChartFails_NoRollback(t *testing.T) {
 	inst := &models.StackInstance{
 		ID:                "inst-rollback-3",
 		StackDefinitionID: "def-1",
-		Name:              "first-chart-fails",
-		Namespace:         "stack-no-rollback",
+		Name:              "all-charts-fail",
+		Namespace:         "stack-all-fail",
 		OwnerID:           "user-1",
 		Branch:            "main",
 		Status:            models.StackStatusDraft,
@@ -2014,23 +2003,22 @@ func TestManager_Deploy_FirstChartFails_NoRollback(t *testing.T) {
 	assert.NoError(t, err)
 	assert.NotEmpty(t, logID)
 
-	// Wait for async completion.
 	waitForTerminalStatus(t, instanceRepo, inst.ID)
 
-	// Verify instance is in error state.
+	// All charts failed → full error status.
 	final, err := instanceRepo.FindByID(inst.ID)
 	assert.NoError(t, err)
 	assert.Equal(t, models.StackStatusError, final.Status)
 	assert.Contains(t, final.ErrorMessage, "chart-a")
+	assert.Contains(t, final.ErrorMessage, "chart-b")
 
-	// Verify NO uninstall calls were made (nothing to roll back).
+	// No uninstall calls — nothing succeeded.
 	uninstalls := helmMock.getUninstallCalls()
 	assert.Empty(t, uninstalls)
 
-	// Verify log does not contain rollback output.
 	finalLog, err := logRepo.FindByID(context.Background(), logID)
 	assert.NoError(t, err)
-	assert.NotContains(t, finalLog.Output, "Rollback:")
+	assert.NotContains(t, finalLog.Output, "Rolling back")
 }
 
 // ---- mergeQuotaOverride tests ----
@@ -2974,7 +2962,7 @@ func TestManager_FinalizeDeploy_LastDeployedValues(t *testing.T) {
 	})
 
 	lastValues := `{"mychart":"key: value\n"}`
-	mgr.finalizeDeploy(inst.ID, deployLog, "deploy output", nil, lastValues, "")
+	mgr.finalizeDeploy(inst.ID, deployLog, "deploy output", nil, false, lastValues, "")
 
 	updated, err := instanceRepo.FindByID(inst.ID)
 	require.NoError(t, err)
@@ -3015,7 +3003,7 @@ func TestManager_FinalizeDeploy_LastDeployedValuesNotSetOnError(t *testing.T) {
 	})
 
 	lastValues := `{"mychart":"key: value\n"}`
-	mgr.finalizeDeploy(inst.ID, deployLog, "deploy output", fmt.Errorf("helm install failed"), lastValues, "")
+	mgr.finalizeDeploy(inst.ID, deployLog, "deploy output", fmt.Errorf("helm install failed"), false, lastValues, "")
 
 	updated, err := instanceRepo.FindByID(inst.ID)
 	require.NoError(t, err)
@@ -3539,12 +3527,12 @@ func TestManager_Deploy_StreamingPartialFailure_StillBroadcastsLines(t *testing.
 	// Wait for async completion.
 	waitForTerminalStatus(t, instanceRepo, inst.ID)
 
-	// Verify instance ended in error state.
+	// good-chart succeeded, failing-chart failed → partial status.
 	final, err := instanceRepo.FindByID(inst.ID)
 	require.NoError(t, err)
-	assert.Equal(t, models.StackStatusError, final.Status)
+	assert.Equal(t, models.StackStatusPartial, final.Status)
 
-	// Even with failure, streaming should have broadcast per-line log messages
+	// Even with partial failure, streaming should have broadcast per-line log messages
 	// for both the successful chart and the failing chart's partial output.
 	messages := hub.getMessages()
 	var logMsgCount int
@@ -3970,7 +3958,7 @@ func TestFinalizeDeploy_ReadinessWarning_AttachesHookMetadata(t *testing.T) {
 	})
 
 	// Call finalizeDeploy with a readinessWarning — deploy succeeds but with metadata.
-	mgr.finalizeDeploy(inst.ID, deployLog, "deploy output", nil, "", "readiness timeout after 5m0s")
+	mgr.finalizeDeploy(inst.ID, deployLog, "deploy output", nil, false, "", "readiness timeout after 5m0s")
 
 	updated, err := instanceRepo.FindByID(inst.ID)
 	require.NoError(t, err)

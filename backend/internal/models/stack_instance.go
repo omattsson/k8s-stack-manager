@@ -31,6 +31,7 @@ const (
 	StackStatusStopping    = "stopping"
 	StackStatusStopped     = "stopped"
 	StackStatusCleaning    = "cleaning"
+	StackStatusPartial     = "partial"
 	StackStatusError       = "error"
 )
 

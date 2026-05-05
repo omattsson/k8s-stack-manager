@@ -195,22 +195,22 @@ func (r *GORMStackInstanceRepository) ExistsByDefinitionAndStatus(definitionID, 
 func (r *GORMStackInstanceRepository) ListExpired() ([]*models.StackInstance, error) {
 	var instances []*models.StackInstance
 	now := time.Now().UTC()
-	if err := r.db.Where("status = ? AND expires_at IS NOT NULL AND expires_at < ?",
-		models.StackStatusRunning, now).
+	if err := r.db.Where("status IN ? AND expires_at IS NOT NULL AND expires_at < ?",
+		[]string{models.StackStatusRunning, models.StackStatusPartial}, now).
 		Find(&instances).Error; err != nil {
 		return nil, dberrors.NewDatabaseError("list_expired", err)
 	}
 	return instances, nil
 }
 
-// ListExpiringSoon returns running instances whose ExpiresAt is within the given
+// ListExpiringSoon returns running/partial instances whose ExpiresAt is within the given
 // threshold from now (i.e., will expire soon but haven't expired yet).
 func (r *GORMStackInstanceRepository) ListExpiringSoon(threshold time.Duration) ([]*models.StackInstance, error) {
 	now := time.Now().UTC()
 	deadline := now.Add(threshold)
 	var instances []*models.StackInstance
-	if err := r.db.Where("status = ? AND expires_at IS NOT NULL AND expires_at > ? AND expires_at <= ?",
-		models.StackStatusRunning, now, deadline).
+	if err := r.db.Where("status IN ? AND expires_at IS NOT NULL AND expires_at > ? AND expires_at <= ?",
+		[]string{models.StackStatusRunning, models.StackStatusPartial}, now, deadline).
 		Find(&instances).Error; err != nil {
 		return nil, dberrors.NewDatabaseError("list_expiring_soon", err)
 	}

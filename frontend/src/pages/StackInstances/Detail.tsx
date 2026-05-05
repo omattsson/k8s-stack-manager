@@ -115,7 +115,7 @@ const Detail = () => {
         } catch { /* ignore — no logs yet */ }
 
         // Fetch pod health for active instances (includes container states + events).
-        if (inst.status === 'running' || inst.status === 'deploying' || inst.status === 'stabilizing' || inst.status === 'error' || inst.status === 'stopping' || inst.status === 'cleaning') {
+        if (inst.status === 'running' || inst.status === 'partial' || inst.status === 'deploying' || inst.status === 'stabilizing' || inst.status === 'error' || inst.status === 'stopping' || inst.status === 'cleaning') {
           try {
             setStatusLoading(true);
             const status = await instanceService.getPods(id);
@@ -150,7 +150,7 @@ const Detail = () => {
       }
 
       // Fetch current K8s status for terminal states where resources may exist.
-      if (newStatus === 'running' || newStatus === 'stabilizing' || newStatus === 'error') {
+      if (newStatus === 'running' || newStatus === 'partial' || newStatus === 'stabilizing' || newStatus === 'error') {
         instanceService.getPods(id).then(setK8sStatus).catch(() => {});
       }
 
@@ -175,7 +175,7 @@ const Detail = () => {
       }
 
       // Refresh deploy logs on terminal states and clear streaming lines.
-      if (newStatus === 'running' || newStatus === 'stopped' || newStatus === 'error' || newStatus === 'draft') {
+      if (newStatus === 'running' || newStatus === 'partial' || newStatus === 'stopped' || newStatus === 'error' || newStatus === 'draft') {
         instanceService.getDeployLog(id).then(setDeployLogs).catch(() => {});
         setStreamingLines({});
         streamingBufferRef.current = {};
@@ -462,9 +462,9 @@ const Detail = () => {
     return '';
   };
 
-  const canDeploy = instance?.status === 'draft' || instance?.status === 'stopped' || instance?.status === 'error';
-  const canStop = instance?.status === 'running' || instance?.status === 'deploying' || instance?.status === 'stabilizing';
-  const canClean = instance?.status === 'running' || instance?.status === 'stopped' || instance?.status === 'error';
+  const canDeploy = instance?.status === 'draft' || instance?.status === 'stopped' || instance?.status === 'error' || instance?.status === 'partial';
+  const canStop = instance?.status === 'running' || instance?.status === 'partial' || instance?.status === 'deploying' || instance?.status === 'stabilizing';
+  const canClean = instance?.status === 'running' || instance?.status === 'partial' || instance?.status === 'stopped' || instance?.status === 'error';
 
   const renderStatusActions = (status: string) => (
     <>
@@ -495,8 +495,8 @@ const Detail = () => {
   const LIFECYCLE_STEPS = ['draft', 'deploying', 'stabilizing', 'running'];
 
   const renderLifecycle = (status: string) => {
-    const activeStep = LIFECYCLE_STEPS.indexOf(status);
-    const isTerminal = status === 'error' || status === 'stopped' || status === 'stopping' || status === 'cleaning';
+    const activeStep = status === 'partial' ? LIFECYCLE_STEPS.indexOf('running') : LIFECYCLE_STEPS.indexOf(status);
+    const isTerminal = status === 'error' || status === 'partial' || status === 'stopped' || status === 'stopping' || status === 'cleaning';
 
     return (
       <Box sx={{ mb: 2 }}>
@@ -553,7 +553,7 @@ const Detail = () => {
             <Typography variant="body2" color="text.secondary">
               Owner: {instance.owner_id}
             </Typography>
-            {countdown && !countdown.isExpired && instance.status === 'running' && (
+            {countdown && !countdown.isExpired && (instance.status === 'running' || instance.status === 'partial') && (
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 0.5 }}>
                 <Chip
                   label={`Expires in ${countdown.remaining}`}
@@ -584,14 +584,14 @@ const Detail = () => {
 
         {renderLifecycle(instance.status)}
 
-        {(instance.status === 'running' || instance.status === 'deploying' || instance.status === 'stabilizing' || instance.status === 'error' || instance.status === 'stopping' || instance.status === 'cleaning') && (
+        {(instance.status === 'running' || instance.status === 'partial' || instance.status === 'deploying' || instance.status === 'stabilizing' || instance.status === 'error' || instance.status === 'stopping' || instance.status === 'cleaning') && (
           <Box sx={{ mb: 2 }}>
             <Typography variant="subtitle2" gutterBottom>Cluster Resources</Typography>
             <PodStatusDisplay status={k8sStatus} loading={statusLoading} />
           </Box>
         )}
 
-        {k8sStatus && instance.status === 'running' && (
+        {k8sStatus && (instance.status === 'running' || instance.status === 'partial') && (
           <AccessUrls status={k8sStatus} />
         )}
 
