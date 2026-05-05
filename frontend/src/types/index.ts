@@ -260,7 +260,7 @@ export interface InstantiateTemplateRequest {
   chart_overrides?: Record<string, string>;
 }
 
-export type StackStatus = 'draft' | 'deploying' | 'running' | 'stopped' | 'error' | 'stopping' | 'cleaning';
+export type StackStatus = 'draft' | 'deploying' | 'stabilizing' | 'running' | 'stopped' | 'error' | 'stopping' | 'cleaning';
 
 export interface CreateUserRequest {
   username: string;

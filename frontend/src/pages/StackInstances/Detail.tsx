@@ -115,7 +115,7 @@ const Detail = () => {
         } catch { /* ignore — no logs yet */ }
 
         // Fetch pod health for active instances (includes container states + events).
-        if (inst.status === 'running' || inst.status === 'deploying' || inst.status === 'error' || inst.status === 'stopping' || inst.status === 'cleaning') {
+        if (inst.status === 'running' || inst.status === 'deploying' || inst.status === 'stabilizing' || inst.status === 'error' || inst.status === 'stopping' || inst.status === 'cleaning') {
           try {
             setStatusLoading(true);
             const status = await instanceService.getPods(id);
@@ -150,14 +150,14 @@ const Detail = () => {
       }
 
       // Fetch current K8s status for terminal states where resources may exist.
-      if (newStatus === 'running' || newStatus === 'error') {
+      if (newStatus === 'running' || newStatus === 'stabilizing' || newStatus === 'error') {
         instanceService.getPods(id).then(setK8sStatus).catch(() => {});
       }
 
       // On active states, insert a placeholder log entry so streaming lines
       // have an accordion to attach to before the REST refresh completes.
       const logId = (payload as { log_id?: string }).log_id;
-      if ((newStatus === 'deploying' || newStatus === 'stopping' || newStatus === 'cleaning' || newStatus === 'rolling_back') && logId) {
+      if ((newStatus === 'deploying' || newStatus === 'stabilizing' || newStatus === 'stopping' || newStatus === 'cleaning' || newStatus === 'rolling_back') && logId) {
         const actionMap: Record<string, DeploymentLog['action']> = {
           deploying: 'deploy', stopping: 'stop', cleaning: 'clean', rolling_back: 'rollback',
         };
@@ -463,7 +463,7 @@ const Detail = () => {
   };
 
   const canDeploy = instance?.status === 'draft' || instance?.status === 'stopped' || instance?.status === 'error';
-  const canStop = instance?.status === 'running' || instance?.status === 'deploying';
+  const canStop = instance?.status === 'running' || instance?.status === 'deploying' || instance?.status === 'stabilizing';
   const canClean = instance?.status === 'running' || instance?.status === 'stopped' || instance?.status === 'error';
 
   const renderStatusActions = (status: string) => (
@@ -492,7 +492,7 @@ const Detail = () => {
     </>
   );
 
-  const LIFECYCLE_STEPS = ['draft', 'deploying', 'running'];
+  const LIFECYCLE_STEPS = ['draft', 'deploying', 'stabilizing', 'running'];
 
   const renderLifecycle = (status: string) => {
     const activeStep = LIFECYCLE_STEPS.indexOf(status);
@@ -584,7 +584,7 @@ const Detail = () => {
 
         {renderLifecycle(instance.status)}
 
-        {(instance.status === 'running' || instance.status === 'deploying' || instance.status === 'error' || instance.status === 'stopping' || instance.status === 'cleaning') && (
+        {(instance.status === 'running' || instance.status === 'deploying' || instance.status === 'stabilizing' || instance.status === 'error' || instance.status === 'stopping' || instance.status === 'cleaning') && (
           <Box sx={{ mb: 2 }}>
             <Typography variant="subtitle2" gutterBottom>Cluster Resources</Typography>
             <PodStatusDisplay status={k8sStatus} loading={statusLoading} />

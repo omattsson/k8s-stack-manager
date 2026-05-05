@@ -83,7 +83,11 @@ type DeploymentConfig struct {
 	// route returns 503. See internal/hooks/configfile.go for the schema.
 	HooksConfigFile string
 
-	MaxConcurrentDeploys int32
+	// StabilizeTimeout is how long to wait for pods to become ready after
+	// Helm charts succeed. 0 disables readiness gating (legacy behavior).
+	StabilizeTimeout      time.Duration
+	StabilizePollInterval time.Duration
+	MaxConcurrentDeploys  int32
 }
 
 // OIDCConfig holds OpenID Connect configuration for external SSO authentication.
@@ -531,6 +535,8 @@ func loadDeploymentConfig() DeploymentConfig {
 		KubeconfigEncryptionKey:   getEnv("KUBECONFIG_ENCRYPTION_KEY", ""),
 		DeploymentTimeout:         getEnvDuration("DEPLOYMENT_TIMEOUT", 10*time.Minute),
 		ClusterHealthPollInterval:  getEnvDuration("CLUSTER_HEALTH_POLL_INTERVAL", 60*time.Second),
+		StabilizeTimeout:           getEnvDuration("DEPLOY_STABILIZE_TIMEOUT", 5*time.Minute),
+		StabilizePollInterval:      getEnvDuration("DEPLOY_STABILIZE_POLL_INTERVAL", 5*time.Second),
 		MaxConcurrentDeploys:       getEnvInt32("MAX_CONCURRENT_DEPLOYS", 5),
 		WildcardTLSSourceNamespace: getEnv("WILDCARD_TLS_SOURCE_NAMESPACE", ""),
 		WildcardTLSSourceSecret:    getEnv("WILDCARD_TLS_SOURCE_SECRET", ""),

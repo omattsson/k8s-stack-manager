@@ -266,6 +266,8 @@ func main() {
 		WildcardTLSSourceNamespace: cfg.Deployment.WildcardTLSSourceNamespace,
 		WildcardTLSSourceSecret:    cfg.Deployment.WildcardTLSSourceSecret,
 		WildcardTLSTargetSecret:    cfg.Deployment.WildcardTLSTargetSecret,
+		StabilizeTimeout:           cfg.Deployment.StabilizeTimeout,
+		StabilizePollInterval:      cfg.Deployment.StabilizePollInterval,
 		Hooks:                      hookDispatcher,
 		Notifier:                   lifecycleNotifier,
 	})
