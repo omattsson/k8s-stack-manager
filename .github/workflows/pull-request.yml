@@ -143,7 +143,7 @@ jobs:
           cache-dependency-path: backend/go.sum
 
       - name: Run Gosec Security Scanner
-        uses: securego/gosec@v2.25.0
+        uses: securego/gosec@v2.26.1
         with:
           args: ./backend/...
 
