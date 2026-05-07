@@ -307,7 +307,7 @@ export const templateService = {
   get: async (id: string): Promise<StackTemplate> => {
     try {
       const response = await api.get(`/api/v1/templates/${id}`);
-      const { template, charts } = response.data;
+      const { charts, ...template } = response.data;
       return { ...template, charts: charts || [] };
     } catch (error) {
       console.error('Failed to fetch template:', error);
@@ -2064,7 +2064,13 @@ export const notificationService = {
   },
 };
 
+/** Dashboard overview service. Maps to `/api/v1/dashboard`. */
 export const dashboardService = {
+  /**
+   * Fetch aggregated dashboard overview data (cluster health, recent deploys, expiring/failing instances).
+   * @returns Dashboard overview with all widget data
+   * @see GET /api/v1/dashboard
+   */
   getOverview: async (): Promise<DashboardResponse> => {
     const response = await api.get('/api/v1/dashboard');
     return response.data;

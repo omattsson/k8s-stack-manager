@@ -63,6 +63,7 @@ Thumbs.db
 /frontend/playwright-report/
 /frontend/blob-report/
 /frontend/playwright/.cache/
+/frontend/test-logs/
 
 # SonarQube
 sonar-project.properties
