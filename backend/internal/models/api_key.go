@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
+	"strings"
 	"time"
 
 	"golang.org/x/crypto/argon2"
@@ -67,20 +68,20 @@ func HashAPIKeyWithSalt(rawKey string) (string, error) {
 	return encoded, nil
 }
 
-// HashAPIKey verifies a raw API key against a stored Argon2id hash.
-// Returns true if the hash matches, false otherwise.
+// VerifyAPIKeyHash verifies a raw API key against a stored Argon2id hash.
+// Returns true if the key matches, false otherwise.
 func VerifyAPIKeyHash(rawKey, encodedHash string) bool {
-	// Parse encoded hash
-	var saltB64, hashB64 string
-	_, err := fmt.Sscanf(encodedHash, "$argon2id$v=19$m=65536,t=1,p=4$%s$%s", &saltB64, &hashB64)
+	// Format: $argon2id$v=19$m=65536,t=1,p=4$<salt_b64>$<hash_b64>
+	// Split by "$" → ["", "argon2id", "v=19", "m=65536,t=1,p=4", saltB64, hashB64]
+	parts := strings.Split(encodedHash, "$")
+	if len(parts) != 6 || parts[1] != "argon2id" {
+		return false
+	}
+	salt, err := base64.RawStdEncoding.DecodeString(parts[4])
 	if err != nil {
 		return false
 	}
-	salt, err := base64.RawStdEncoding.DecodeString(saltB64)
-	if err != nil {
-		return false
-	}
-	expectedHash, err := base64.RawStdEncoding.DecodeString(hashB64)
+	expectedHash, err := base64.RawStdEncoding.DecodeString(parts[5])
 	if err != nil {
 		return false
 	}
