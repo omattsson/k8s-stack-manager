@@ -226,6 +226,101 @@ definitions:
     required:
     - name
     type: object
+  handlers.DashboardCluster:
+    properties:
+      allocatable_cpu:
+        type: string
+      allocatable_memory:
+        type: string
+      health_status:
+        type: string
+      id:
+        type: string
+      name:
+        type: string
+      namespace_count:
+        type: integer
+      node_count:
+        type: integer
+      ready_node_count:
+        type: integer
+      total_cpu:
+        type: string
+      total_memory:
+        type: string
+    type: object
+  handlers.DashboardDeployment:
+    properties:
+      action:
+        type: string
+      completed_at:
+        type: string
+      id:
+        type: string
+      instance_name:
+        type: string
+      owner_username:
+        type: string
+      stack_instance_id:
+        type: string
+      started_at:
+        type: string
+      status:
+        type: string
+    type: object
+  handlers.DashboardExpiring:
+    properties:
+      cluster_id:
+        type: string
+      expires_at:
+        type: string
+      id:
+        type: string
+      name:
+        type: string
+      namespace:
+        type: string
+      status:
+        type: string
+      ttl_minutes:
+        type: integer
+    type: object
+  handlers.DashboardFailing:
+    properties:
+      cluster_id:
+        type: string
+      error_message:
+        type: string
+      id:
+        type: string
+      name:
+        type: string
+      namespace:
+        type: string
+      status:
+        type: string
+      updated_at:
+        type: string
+    type: object
+  handlers.DashboardResponse:
+    properties:
+      clusters:
+        items:
+          $ref: '#/definitions/handlers.DashboardCluster'
+        type: array
+      expiring_soon:
+        items:
+          $ref: '#/definitions/handlers.DashboardExpiring'
+        type: array
+      failing_instances:
+        items:
+          $ref: '#/definitions/handlers.DashboardFailing'
+        type: array
+      recent_deployments:
+        items:
+          $ref: '#/definitions/handlers.DashboardDeployment'
+        type: array
+    type: object
   handlers.DefinitionExportBundle:
     properties:
       charts:
@@ -560,6 +655,8 @@ definitions:
     type: object
   handlers.updatePreferenceRequest:
     properties:
+      channel:
+        type: string
       enabled:
         type: boolean
       event_type:
@@ -1088,6 +1185,8 @@ definitions:
     type: object
   models.NotificationPreference:
     properties:
+      channel:
+        type: string
       enabled:
         type: boolean
       event_type:
@@ -1332,6 +1431,8 @@ definitions:
         type: string
       created_at:
         type: string
+      disabled:
+        type: boolean
       display_name:
         type: string
       email:
@@ -1384,6 +1485,8 @@ definitions:
       instance_name:
         type: string
       namespace:
+        type: string
+      owner_id:
         type: string
       status:
         description: '"success", "error", "dry_run"'
@@ -2801,6 +2904,30 @@ paths:
       summary: Get cluster-wide resource utilization
       tags:
       - clusters
+  /api/v1/dashboard:
+    get:
+      consumes:
+      - application/json
+      description: 'Returns aggregated dashboard data: cluster health, recent deployments,
+        expiring instances, and failing instances.'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handlers.DashboardResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get dashboard overview
+      tags:
+      - dashboard
   /api/v1/favorites:
     get:
       description: Returns all favorited entities for the current user
@@ -3424,6 +3551,10 @@ paths:
     get:
       description: List stack definitions with server-side pagination
       parameters:
+      - description: Filter by exact name
+        in: query
+        name: name
+        type: string
       - description: Page number (default 1)
         in: query
         minimum: 1
@@ -6079,6 +6210,105 @@ paths:
       summary: Delete an API key
       tags:
       - api-keys
+  /api/v1/users/{id}/disable:
+    put:
+      consumes:
+      - application/json
+      description: Disables a user account. All API keys for this user immediately
+        stop working. Admin only.
+      parameters:
+      - description: User ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Disable a user
+      tags:
+      - users
+  /api/v1/users/{id}/enable:
+    put:
+      consumes:
+      - application/json
+      description: Re-enables a previously disabled user account. Admin only.
+      parameters:
+      - description: User ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Enable a user
+      tags:
+      - users
   /health:
     get:
       description: Get API health status

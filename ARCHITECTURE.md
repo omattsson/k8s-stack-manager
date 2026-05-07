@@ -102,6 +102,8 @@ Kubeconfig data encrypted at rest with AES-256-GCM (`KUBECONFIG_ENCRYPTION_KEY`)
 - **OIDC**: Authorization Code Flow with PKCE → ID token → JIT user provisioning → local JWT
 - Role hierarchy: `admin` > `devops` > `user`
 - DevOps manages templates; admin manages clusters, users, cleanup policies
+- **SessionStore**: Persistent token blocklist and OIDC state (MySQL default, in-memory for tests). Survives restarts — revoked tokens stay blocked, in-flight OIDC logins survive backend redeploys.
+- **User.Disabled**: Admin can disable accounts. Blocks login, token refresh, OIDC login, and API key auth immediately.
 
 ## Design Decisions
 

@@ -26,6 +26,7 @@ backend/
 │   ├── k8s/                            # Cluster client + status monitoring
 │   ├── models/                         # Domain models + repository interfaces + validation
 │   ├── scheduler/                      # Cron-based cleanup policy execution
+│   ├── sessionstore/                   # Token blocklist + OIDC state persistence (MySQL/memory)
 │   ├── ttl/                            # TTL reaper for auto-expiring stack instances
 │   └── websocket/                      # Real-time event broadcasting (hub + clients)
 ├── pkg/
@@ -48,7 +49,7 @@ backend/
 | Branch Overrides | `/api/v1/stack-instances/:id/branches` | Yes | Per-chart branch overrides |
 | Git | `/api/v1/git` | Yes | Branch listing, validation, provider status |
 | Audit Logs | `/api/v1/audit-logs` | Yes | Filterable audit trail + CSV/JSON export |
-| Users | `/api/v1/users` | Admin | List and delete users |
+| Users | `/api/v1/users` | Admin | List, delete, disable/enable users |
 | API Keys | `/api/v1/users/:id/api-keys` | Yes | Per-user API key management |
 | Clusters | `/api/v1/clusters` | Admin | Multi-cluster registration, health, test-connection |
 | Shared Values | `/api/v1/clusters/:id/shared-values` | Admin | Per-cluster shared Helm values |
@@ -89,10 +90,11 @@ Key environment variables (see `docker-compose.yml` for full list):
 | `KUBECONFIG_ENCRYPTION_KEY` | | Passphrase for deriving AES-256 key (SHA-256) to encrypt kubeconfig data and registry passwords at rest |
 | `RATE_LIMIT` | `100` | Requests per minute per IP |
 | `CORS_ALLOWED_ORIGINS` | `*` | Allowed CORS origins |
+| `SESSION_STORE` | `mysql` | Session store backend (`mysql` or `memory`) for token blocklist and OIDC state |
 
 ## Data Storage
 
-- **MySQL** (GORM): All domain entities — Users, Templates, Definitions, Instances, Overrides, ChartConfigs, APIKeys, AuditLogs, Clusters, SharedValues, CleanupPolicies, Favorites, BranchOverrides
+- **MySQL** (GORM): All domain entities — Users, Templates, Definitions, Instances, Overrides, ChartConfigs, APIKeys, AuditLogs, Clusters, SharedValues, CleanupPolicies, Favorites, BranchOverrides, SessionEntries (token blocklist + OIDC state)
 
 ## Testing
 
