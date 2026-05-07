@@ -2,10 +2,12 @@ package models
 
 import (
 	"crypto/rand"
-	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"fmt"
 	"time"
+
+	"golang.org/x/crypto/argon2"
 )
 
 // APIKey represents a user-generated API key for programmatic access.
@@ -36,7 +38,7 @@ type APIKeyRepository interface {
 // GenerateAPIKey creates a cryptographically random 32-byte key and returns:
 //   - rawKey  — 64-char hex string, returned to the user once
 //   - prefix  — first 16 chars for display/lookup
-//   - hash    — SHA-256 hex of rawKey, stored in DB
+//   - hash    — Argon2id hash of rawKey, stored in DB (with salt and params)
 func GenerateAPIKey() (rawKey, prefix, hash string, err error) {
 	b := make([]byte, 32)
 	if _, err = rand.Read(b); err != nil {
@@ -44,13 +46,56 @@ func GenerateAPIKey() (rawKey, prefix, hash string, err error) {
 	}
 	rawKey = hex.EncodeToString(b)
 	prefix = rawKey[:16]
-	sum := sha256.Sum256([]byte(rawKey))
-	hash = hex.EncodeToString(sum[:])
+	hash, err = HashAPIKeyWithSalt(rawKey)
+	if err != nil {
+		return "", "", "", err
+	}
 	return rawKey, prefix, hash, nil
 }
 
-// HashAPIKey returns the SHA-256 hex hash of a raw API key string.
-func HashAPIKey(rawKey string) string {
-	sum := sha256.Sum256([]byte(rawKey))
-	return hex.EncodeToString(sum[:])
+// HashAPIKeyWithSalt hashes the API key using Argon2id with a random salt and returns the encoded hash string.
+func HashAPIKeyWithSalt(rawKey string) (string, error) {
+	salt := make([]byte, 16)
+	if _, err := rand.Read(salt); err != nil {
+		return "", fmt.Errorf("failed to generate salt: %w", err)
+	}
+	hash := argon2.IDKey([]byte(rawKey), salt, 1, 64*1024, 4, 32)
+	// Format: $argon2id$v=19$m=65536,t=1,p=4$<salt_b64>$<hash_b64>
+	encoded := "$argon2id$v=19$m=65536,t=1,p=4$" +
+		base64.RawStdEncoding.EncodeToString(salt) + "$" +
+		base64.RawStdEncoding.EncodeToString(hash)
+	return encoded, nil
+}
+
+// HashAPIKey verifies a raw API key against a stored Argon2id hash.
+// Returns true if the hash matches, false otherwise.
+func VerifyAPIKeyHash(rawKey, encodedHash string) bool {
+	// Parse encoded hash
+	var saltB64, hashB64 string
+	_, err := fmt.Sscanf(encodedHash, "$argon2id$v=19$m=65536,t=1,p=4$%s$%s", &saltB64, &hashB64)
+	if err != nil {
+		return false
+	}
+	salt, err := base64.RawStdEncoding.DecodeString(saltB64)
+	if err != nil {
+		return false
+	}
+	expectedHash, err := base64.RawStdEncoding.DecodeString(hashB64)
+	if err != nil {
+		return false
+	}
+	hash := argon2.IDKey([]byte(rawKey), salt, 1, 64*1024, 4, 32)
+	return subtleConstantTimeCompare(hash, expectedHash)
+}
+
+// subtleConstantTimeCompare compares two byte slices in constant time.
+func subtleConstantTimeCompare(a, b []byte) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	var result byte
+	for i := 0; i < len(a); i++ {
+		result |= a[i] ^ b[i]
+	}
+	return result == 0
 }

@@ -252,6 +252,7 @@ func TestRefresh(t *testing.T) {
 		setup      func(*testing.T, *MockUserRepository, *MockRefreshTokenRepository) string // returns raw cookie value
 		wantStatus int
 		wantToken  bool
+		verify     func(*testing.T, *httptest.ResponseRecorder, *MockRefreshTokenRepository)
 	}{
 		{
 			name: "valid refresh token returns new access token",
@@ -373,6 +374,22 @@ func TestRefresh(t *testing.T) {
 				return raw
 			},
 			wantStatus: http.StatusForbidden,
+			verify: func(t *testing.T, w *httptest.ResponseRecorder, rr *MockRefreshTokenRepository) {
+				// All refresh tokens for the disabled user must be revoked.
+				rr.mu.RLock()
+				for _, tok := range rr.tokens {
+					if tok.UserID == "uid-dis" {
+						assert.True(t, tok.Revoked, "refresh token for disabled user should be revoked")
+					}
+				}
+				rr.mu.RUnlock()
+				// Refresh cookie must be cleared (MaxAge < 0).
+				for _, c := range w.Result().Cookies() {
+					if c.Name == "refresh_token" {
+						assert.Less(t, c.MaxAge, 0, "refresh_token cookie should be cleared")
+					}
+				}
+			},
 		},
 	}
 
@@ -396,6 +413,9 @@ func TestRefresh(t *testing.T) {
 			router.ServeHTTP(w, req)
 
 			assert.Equal(t, tt.wantStatus, w.Code)
+			if tt.verify != nil {
+				tt.verify(t, w, refreshRepo)
+			}
 			if tt.wantToken {
 				var resp RefreshResponse
 				require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))

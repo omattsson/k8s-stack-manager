@@ -29,7 +29,7 @@ func setupMySQLSessionStore(t *testing.T) *MySQLStore {
 	require.NoError(t, err, "Failed to connect to MySQL — is the container running?")
 
 	require.NoError(t, db.AutoMigrate(&SessionEntry{}))
-	db.Exec("TRUNCATE TABLE session_entries")
+	require.NoError(t, db.Exec("TRUNCATE TABLE session_entries").Error)
 
 	s := NewMySQLStore(db)
 	t.Cleanup(func() { s.Stop() })

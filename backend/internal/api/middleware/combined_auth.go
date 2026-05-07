@@ -1,7 +1,6 @@
 package middleware
 
 import (
-	"crypto/subtle"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -62,7 +61,6 @@ func CombinedAuth(deps APIKeyAuthDeps) gin.HandlerFunc {
 		}
 
 		prefix := raw[:16]
-		hash := models.HashAPIKey(raw)
 
 		records, err := deps.APIKeyRepo.FindByPrefix(prefix)
 		if err != nil {
@@ -78,7 +76,7 @@ func CombinedAuth(deps APIKeyAuthDeps) gin.HandlerFunc {
 		// Find the record whose hash matches.
 		var record *models.APIKey
 		for _, r := range records {
-			if subtle.ConstantTimeCompare([]byte(hash), []byte(r.KeyHash)) == 1 {
+			if models.VerifyAPIKeyHash(raw, r.KeyHash) {
 				record = r
 				break
 			}
