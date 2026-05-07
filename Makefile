@@ -101,7 +101,7 @@ test-e2e: integration-infra-start
 		sleep 1; \
 	done
 	@echo "Backend is ready, running Playwright tests..."
-	cd frontend && npx playwright test 2>&1 | tee test-logs/playwright.log || \
+	cd frontend && bash -o pipefail -c 'npx playwright test 2>&1 | tee test-logs/playwright.log' || \
 		(kill $$(lsof -ti:8081) 2>/dev/null; $(MAKE) integration-infra-stop; exit 1)
 	@echo "Stopping backend..."
 	@kill $$(lsof -ti:8081) 2>/dev/null || true
