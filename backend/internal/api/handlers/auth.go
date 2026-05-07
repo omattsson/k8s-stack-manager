@@ -372,6 +372,13 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 		return
 	}
 
+	if user.Disabled {
+		_ = h.refreshTokenRepo.RevokeAllForUser(stored.UserID)
+		h.clearRefreshCookie(c)
+		c.JSON(http.StatusForbidden, gin.H{"error": "Account disabled"})
+		return
+	}
+
 	// Rotate atomically: create new token + revoke old in one transaction.
 	// If the old token was already consumed (replay), revoke everything.
 	var replayDetected bool

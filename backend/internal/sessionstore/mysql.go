@@ -17,7 +17,7 @@ const (
 
 type SessionEntry struct {
 	EntryKey  string `gorm:"column:entry_key;primaryKey;size:255"`
-	Kind      string `gorm:"column:kind;size:20;not null"`
+	Kind      string `gorm:"column:kind;primaryKey;size:20"`
 	Data      string `gorm:"column:data;type:text"`
 	ExpiresAt int64  `gorm:"column:expires_at;not null"`
 }
@@ -47,7 +47,7 @@ func (s *MySQLStore) BlockToken(ctx context.Context, jti string, expiresAt time.
 	}
 	return s.db.WithContext(ctx).
 		Clauses(clause.OnConflict{
-			Columns:   []clause.Column{{Name: "entry_key"}},
+			Columns:   []clause.Column{{Name: "entry_key"}, {Name: "kind"}},
 			DoUpdates: clause.AssignmentColumns([]string{"expires_at"}),
 		}).
 		Create(&entry).Error

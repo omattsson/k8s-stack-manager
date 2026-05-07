@@ -901,14 +901,21 @@ func (d *Database) AutoMigrate() error {
 		Description: "Create session_entries table for token blocklist and OIDC state persistence",
 		Up: func(tx *gorm.DB) error {
 			if err := tx.Exec(`CREATE TABLE IF NOT EXISTS session_entries (
-				entry_key  VARCHAR(255) NOT NULL PRIMARY KEY,
+				entry_key  VARCHAR(255) NOT NULL,
 				kind       VARCHAR(20)  NOT NULL,
 				data       TEXT,
-				expires_at BIGINT       NOT NULL
+				expires_at BIGINT       NOT NULL,
+				PRIMARY KEY (entry_key, kind)
 			)`).Error; err != nil {
 				return err
 			}
-			return tx.Exec(`CREATE INDEX IF NOT EXISTS idx_session_entries_kind_expires ON session_entries (kind, expires_at)`).Error
+			var count int64
+			tx.Raw("SELECT COUNT(1) FROM information_schema.statistics WHERE table_schema = DATABASE() AND table_name = ? AND index_name = ?",
+				"session_entries", "idx_session_entries_kind_expires").Scan(&count)
+			if count == 0 {
+				return tx.Exec("CREATE INDEX idx_session_entries_kind_expires ON session_entries (kind, expires_at)").Error
+			}
+			return nil
 		},
 		Down: func(tx *gorm.DB) error {
 			return tx.Exec("DROP TABLE IF EXISTS session_entries").Error

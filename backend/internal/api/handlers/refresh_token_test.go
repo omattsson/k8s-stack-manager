@@ -353,6 +353,27 @@ func TestRefresh(t *testing.T) {
 			},
 			wantStatus: http.StatusUnauthorized,
 		},
+		{
+			name: "disabled user gets 403 and all tokens revoked",
+			setup: func(t *testing.T, ur *MockUserRepository, rr *MockRefreshTokenRepository) string {
+				u := seedUser(t, ur, "uid-dis", "disabled-alice", "secret", "user")
+				u.Disabled = true
+				_ = ur.Update(u)
+				raw := "disabled0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+				hash := hashRefreshToken(raw)
+				now := time.Now()
+				_ = rr.Create(&models.RefreshToken{
+					ID:           "rt-disabled",
+					UserID:       "uid-dis",
+					TokenHash:    hash,
+					ExpiresAt:    now.Add(7 * 24 * time.Hour),
+					LastActivity: now,
+					CreatedAt:    now,
+				})
+				return raw
+			},
+			wantStatus: http.StatusForbidden,
+		},
 	}
 
 	for _, tt := range tests {
