@@ -45,8 +45,14 @@ const Login = () => {
     setLoading(true);
     try {
       await login(username, password);
-    } catch {
-      setError('Invalid username or password');
+    } catch (err: unknown) {
+      const status = (err as { response?: { status?: number } })?.response?.status;
+      const message = (err as { response?: { data?: { error?: string } } })?.response?.data?.error;
+      if (status === 403 && message) {
+        setError(message);
+      } else {
+        setError('Invalid username or password');
+      }
     } finally {
       setLoading(false);
     }
