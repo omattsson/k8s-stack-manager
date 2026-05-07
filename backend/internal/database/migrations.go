@@ -911,9 +911,9 @@ func (d *Database) AutoMigrate() error {
 			}
 			var count int64
 			tx.Raw("SELECT COUNT(1) FROM information_schema.statistics WHERE table_schema = DATABASE() AND table_name = ? AND index_name = ?",
-				"session_entries", "idx_session_entries_kind_expires").Scan(&count)
+				"session_entries", "idx_session_entries_expires_at").Scan(&count)
 			if count == 0 {
-				return tx.Exec("CREATE INDEX idx_session_entries_kind_expires ON session_entries (kind, expires_at)").Error
+				return tx.Exec("CREATE INDEX idx_session_entries_expires_at ON session_entries (expires_at)").Error
 			}
 			return nil
 		},

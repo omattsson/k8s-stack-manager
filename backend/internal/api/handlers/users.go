@@ -86,6 +86,8 @@ func (h *UserHandler) DeleteUser(c *gin.Context) {
 // @Param        id   path      string  true  "User ID"
 // @Success      200  {object}  map[string]string
 // @Failure      400  {object}  map[string]string
+// @Failure      401  {object}  map[string]string
+// @Failure      403  {object}  map[string]string
 // @Failure      404  {object}  map[string]string
 // @Router       /api/v1/users/{id}/disable [put]
 func (h *UserHandler) DisableUser(c *gin.Context) {
@@ -101,6 +103,8 @@ func (h *UserHandler) DisableUser(c *gin.Context) {
 // @Param        id   path      string  true  "User ID"
 // @Success      200  {object}  map[string]string
 // @Failure      400  {object}  map[string]string
+// @Failure      401  {object}  map[string]string
+// @Failure      403  {object}  map[string]string
 // @Failure      404  {object}  map[string]string
 // @Router       /api/v1/users/{id}/enable [put]
 func (h *UserHandler) EnableUser(c *gin.Context) {
@@ -116,7 +120,7 @@ func (h *UserHandler) setDisabled(c *gin.Context, disabled bool) {
 
 	callerID := middleware.GetUserIDFromContext(c)
 	if id == callerID {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Cannot disable your own account"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Cannot change your own account status"})
 		return
 	}
 
@@ -129,7 +133,8 @@ func (h *UserHandler) setDisabled(c *gin.Context, disabled bool) {
 
 	user.Disabled = disabled
 	if err := h.userRepo.Update(user); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
+		status, message := mapError(err, "User")
+		c.JSON(status, gin.H{"error": message})
 		return
 	}
 
