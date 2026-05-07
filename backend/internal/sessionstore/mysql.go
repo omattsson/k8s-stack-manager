@@ -3,6 +3,7 @@ package sessionstore
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"sync"
 	"time"
 
@@ -123,7 +124,7 @@ func (s *MySQLStore) ConsumeOIDCState(ctx context.Context, state string) (*OIDCS
 		return tx.Delete(&entry).Error
 	})
 	if err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, nil
 		}
 		return nil, err

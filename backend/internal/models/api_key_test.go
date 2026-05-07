@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestGenerateAPIKey(t *testing.T) {
@@ -22,8 +23,8 @@ func TestGenerateAPIKey(t *testing.T) {
 	assert.Equal(t, rawKey[:16], prefix)
 	assert.Len(t, prefix, 16)
 
-	// hash should be an Argon2id-encoded string (starts with $argon2id$)
-	assert.Contains(t, hash, "$argon2id$")
+	// hash should be a SHA-256 hex string (64 lowercase hex chars)
+	assert.Len(t, hash, 64)
 
 	// VerifyAPIKeyHash must confirm the raw key matches the generated hash
 	assert.True(t, VerifyAPIKeyHash(rawKey, hash), "VerifyAPIKeyHash should confirm the raw key")
@@ -94,4 +95,26 @@ func TestVerifyAPIKeyHash_InvalidEncoding(t *testing.T) {
 
 	assert.False(t, VerifyAPIKeyHash("any-key", "not-a-valid-hash"))
 	assert.False(t, VerifyAPIKeyHash("any-key", ""))
+}
+
+func TestVerifyAPIKeyHash_SHA256Format(t *testing.T) {
+	t.Parallel()
+	rawKey := "abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890"
+	hash := hashAPIKeySHA256(rawKey)
+	assert.True(t, VerifyAPIKeyHash(rawKey, hash))
+	assert.False(t, VerifyAPIKeyHash("wrongkey", hash))
+}
+
+func TestVerifyAPIKeyHash_ArgonAndSHA256Coexist(t *testing.T) {
+	t.Parallel()
+	rawKey := "abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890"
+
+	sha256Hash := hashAPIKeySHA256(rawKey)
+	argonHash, err := HashAPIKeyWithSalt(rawKey)
+	require.NoError(t, err)
+
+	assert.True(t, VerifyAPIKeyHash(rawKey, sha256Hash), "SHA-256 format should verify")
+	assert.True(t, VerifyAPIKeyHash(rawKey, argonHash), "Argon2id format should verify")
+	assert.False(t, VerifyAPIKeyHash("wrongkey", sha256Hash))
+	assert.False(t, VerifyAPIKeyHash("wrongkey", argonHash))
 }

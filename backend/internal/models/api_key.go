@@ -2,6 +2,7 @@ package models
 
 import (
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
@@ -39,7 +40,7 @@ type APIKeyRepository interface {
 // GenerateAPIKey creates a cryptographically random 32-byte key and returns:
 //   - rawKey  — 64-char hex string, returned to the user once
 //   - prefix  — first 16 chars for display/lookup
-//   - hash    — Argon2id hash of rawKey, stored in DB (with salt and params)
+//   - hash    — SHA-256 hex hash of rawKey, stored in DB
 func GenerateAPIKey() (rawKey, prefix, hash string, err error) {
 	b := make([]byte, 32)
 	if _, err = rand.Read(b); err != nil {
@@ -47,11 +48,15 @@ func GenerateAPIKey() (rawKey, prefix, hash string, err error) {
 	}
 	rawKey = hex.EncodeToString(b)
 	prefix = rawKey[:16]
-	hash, err = HashAPIKeyWithSalt(rawKey)
-	if err != nil {
-		return "", "", "", err
-	}
+	hash = hashAPIKeySHA256(rawKey)
 	return rawKey, prefix, hash, nil
+}
+
+// hashAPIKeySHA256 hashes a raw API key with SHA-256.
+// Suitable for high-entropy random keys (32 bytes) where KDF overhead is unnecessary.
+func hashAPIKeySHA256(rawKey string) string {
+	sum := sha256.Sum256([]byte(rawKey))
+	return hex.EncodeToString(sum[:])
 }
 
 // HashAPIKeyWithSalt hashes the API key using Argon2id with a random salt and returns the encoded hash string.
@@ -68,11 +73,15 @@ func HashAPIKeyWithSalt(rawKey string) (string, error) {
 	return encoded, nil
 }
 
-// VerifyAPIKeyHash verifies a raw API key against a stored Argon2id hash.
-// Returns true if the key matches, false otherwise.
+// VerifyAPIKeyHash verifies a raw API key against a stored hash.
+// Supports both SHA-256 hex (legacy/new format) and Argon2id encoded format.
 func VerifyAPIKeyHash(rawKey, encodedHash string) bool {
-	// Format: $argon2id$v=19$m=65536,t=1,p=4$<salt_b64>$<hash_b64>
-	// Split by "$" → ["", "argon2id", "v=19", "m=65536,t=1,p=4", saltB64, hashB64]
+	// SHA-256 hex format: 64 lowercase hex chars with no "$"
+	if len(encodedHash) == 64 && !strings.Contains(encodedHash, "$") {
+		expected := hashAPIKeySHA256(rawKey)
+		return subtleConstantTimeCompare([]byte(expected), []byte(encodedHash))
+	}
+	// Argon2id format: $argon2id$v=19$m=65536,t=1,p=4$<salt_b64>$<hash_b64>
 	parts := strings.Split(encodedHash, "$")
 	if len(parts) != 6 || parts[1] != "argon2id" {
 		return false
