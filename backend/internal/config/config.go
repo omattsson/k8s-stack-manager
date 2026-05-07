@@ -123,6 +123,12 @@ func (c *OIDCConfig) Validate() error {
 	return nil
 }
 
+// SessionStoreConfig holds configuration for the persistent session store
+// (token blocklist and OIDC state).
+type SessionStoreConfig struct {
+	Backend string // "mysql" (default), "memory"
+}
+
 // OtelConfig holds OpenTelemetry configuration for distributed tracing, metrics, and logging.
 type OtelConfig struct {
 	// 8-byte aligned fields first
@@ -145,12 +151,13 @@ type Config struct {
 	// Then string and simple field structs
 	OIDC OIDCConfig
 	// Then string and simple field structs
-	App         AppConfig
-	CORS        CORSConfig
-	Logging     LogConfig
-	GitProvider GitProviderConfig
-	Deployment  DeploymentConfig
-	Otel        OtelConfig
+	App          AppConfig
+	CORS         CORSConfig
+	Logging      LogConfig
+	GitProvider  GitProviderConfig
+	Deployment   DeploymentConfig
+	Otel         OtelConfig
+	SessionStore SessionStoreConfig
 }
 
 // AppConfig holds application-wide configuration
@@ -426,8 +433,9 @@ func LoadConfig() (*Config, error) {
 		Auth:        loadAuthConfig(),
 		GitProvider: loadGitProviderConfig(),
 		Deployment:  loadDeploymentConfig(),
-		OIDC:        loadOIDCConfig(),
-		Otel:        loadOtelConfig(),
+		OIDC:         loadOIDCConfig(),
+		Otel:         loadOtelConfig(),
+		SessionStore: SessionStoreConfig{Backend: getEnv("SESSION_STORE", "mysql")},
 	}
 
 	// Validate the configuration

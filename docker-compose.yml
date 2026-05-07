@@ -73,6 +73,8 @@ services:
       - LOGIN_RATE_LIMIT=${LOGIN_RATE_LIMIT:-10}
       # Swagger UI (enabled for dev)
       - ENABLE_SWAGGER=${ENABLE_SWAGGER:-true}
+      # Session store (token blocklist + OIDC state persistence)
+      - SESSION_STORE=${SESSION_STORE:-mysql}
       # Stack defaults
       - DEFAULT_BRANCH=${DEFAULT_BRANCH:-master}
     healthcheck:

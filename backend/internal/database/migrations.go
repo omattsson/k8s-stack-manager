@@ -895,6 +895,44 @@ func (d *Database) AutoMigrate() error {
 		},
 	})
 
+	migrator.AddMigration(schema.Migration{
+		Version:     "20260507000037",
+		Name:        "create_session_entries",
+		Description: "Create session_entries table for token blocklist and OIDC state persistence",
+		Up: func(tx *gorm.DB) error {
+			if err := tx.Exec(`CREATE TABLE IF NOT EXISTS session_entries (
+				entry_key  VARCHAR(255) NOT NULL PRIMARY KEY,
+				kind       VARCHAR(20)  NOT NULL,
+				data       TEXT,
+				expires_at BIGINT       NOT NULL
+			)`).Error; err != nil {
+				return err
+			}
+			return tx.Exec(`CREATE INDEX IF NOT EXISTS idx_session_entries_kind_expires ON session_entries (kind, expires_at)`).Error
+		},
+		Down: func(tx *gorm.DB) error {
+			return tx.Exec("DROP TABLE IF EXISTS session_entries").Error
+		},
+	})
+
+	migrator.AddMigration(schema.Migration{
+		Version:     "20260507000038",
+		Name:        "add_users_disabled",
+		Description: "Add disabled column to users table for account deactivation",
+		Up: func(tx *gorm.DB) error {
+			if tx.Migrator().HasColumn(&models.User{}, "disabled") {
+				return nil
+			}
+			return tx.Exec("ALTER TABLE users ADD COLUMN disabled TINYINT(1) NOT NULL DEFAULT 0").Error
+		},
+		Down: func(tx *gorm.DB) error {
+			if !tx.Migrator().HasColumn(&models.User{}, "disabled") {
+				return nil
+			}
+			return tx.Exec("ALTER TABLE users DROP COLUMN disabled").Error
+		},
+	})
+
 	// Run migrations
 	if err := migrator.MigrateUp(); err != nil {
 		return err

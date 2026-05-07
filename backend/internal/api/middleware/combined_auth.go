@@ -9,6 +9,7 @@ import (
 
 	"backend/internal/cache"
 	"backend/internal/models"
+	"backend/internal/sessionstore"
 
 	"github.com/gin-gonic/gin"
 )
@@ -20,10 +21,10 @@ var lastUsedCache = cache.New[time.Time](2*time.Minute, 1*time.Minute)
 
 // APIKeyAuthDeps holds the dependencies for combined JWT + API-key auth.
 type APIKeyAuthDeps struct {
-	JWTSecret  string
-	APIKeyRepo models.APIKeyRepository
-	UserRepo   models.UserRepository
-	Blocklist  *TokenBlocklist
+	JWTSecret    string
+	APIKeyRepo   models.APIKeyRepository
+	UserRepo     models.UserRepository
+	SessionStore sessionstore.SessionStore
 }
 
 // CombinedAuth returns middleware that accepts either:
@@ -33,10 +34,10 @@ type APIKeyAuthDeps struct {
 // When APIKeyRepo or UserRepo is nil the middleware falls back to JWT-only auth.
 func CombinedAuth(deps APIKeyAuthDeps) gin.HandlerFunc {
 	if deps.APIKeyRepo == nil || deps.UserRepo == nil {
-		return AuthRequiredWithBlocklist(deps.JWTSecret, deps.Blocklist)
+		return AuthRequiredWithSessionStore(deps.JWTSecret, deps.SessionStore)
 	}
 
-	jwtMW := AuthRequiredWithBlocklist(deps.JWTSecret, deps.Blocklist)
+	jwtMW := AuthRequiredWithSessionStore(deps.JWTSecret, deps.SessionStore)
 
 	return func(c *gin.Context) {
 		// Prefer JWT Bearer when present.
@@ -97,6 +98,11 @@ func CombinedAuth(deps APIKeyAuthDeps) gin.HandlerFunc {
 		user, err := deps.UserRepo.FindByID(record.UserID)
 		if err != nil {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Invalid API key"})
+			return
+		}
+
+		if user.Disabled {
+			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "Account disabled"})
 			return
 		}
 

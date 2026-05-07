@@ -15,6 +15,7 @@ import (
 	"backend/internal/cache"
 	"backend/internal/config"
 	"backend/internal/models"
+	"backend/internal/sessionstore"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -36,7 +37,7 @@ type AuthHandler struct {
 	userRepo         models.UserRepository
 	refreshTokenRepo models.RefreshTokenRepository
 	cfg              *config.AuthConfig
-	blocklist        *middleware.TokenBlocklist
+	sessionStore     sessionstore.SessionStore
 	loginCache       *cache.TTLCache[*models.User]
 }
 
@@ -54,9 +55,9 @@ func (h *AuthHandler) SetRefreshTokenRepo(repo models.RefreshTokenRepository) {
 	h.refreshTokenRepo = repo
 }
 
-// SetTokenBlocklist sets the token blocklist for immediate token revocation on logout.
-func (h *AuthHandler) SetTokenBlocklist(bl *middleware.TokenBlocklist) {
-	h.blocklist = bl
+// SetSessionStore sets the session store for token blocklist and OIDC state persistence.
+func (h *AuthHandler) SetSessionStore(store sessionstore.SessionStore) {
+	h.sessionStore = store
 }
 
 // loginCacheKey derives a cache key from the username, stored password hash,
@@ -109,6 +110,11 @@ func (h *AuthHandler) Login(c *gin.Context) {
 	user, err := h.userRepo.FindByUsername(req.Username)
 	if err != nil {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid username or password"})
+		return
+	}
+
+	if user.Disabled {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Account disabled"})
 		return
 	}
 
@@ -432,7 +438,7 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 func (h *AuthHandler) Logout(c *gin.Context) {
 	// Best-effort blocklist of the access token. The route is public (no auth
 	// middleware) so we parse the Authorization header ourselves.
-	if h.blocklist != nil {
+	if h.sessionStore != nil {
 		if authHeader := c.GetHeader("Authorization"); authHeader != "" {
 			if parts := strings.SplitN(authHeader, " ", 2); len(parts) == 2 && strings.EqualFold(parts[0], "Bearer") {
 				if claims, err := middleware.ValidateJWT(parts[1], h.cfg.JWTSecret); err == nil && claims.ID != "" {
@@ -440,7 +446,9 @@ func (h *AuthHandler) Logout(c *gin.Context) {
 					if claims.ExpiresAt != nil {
 						expiry = claims.ExpiresAt.Time
 					}
-					h.blocklist.Add(claims.ID, expiry)
+					if blockErr := h.sessionStore.BlockToken(c.Request.Context(), claims.ID, expiry); blockErr != nil {
+						slog.Error("Failed to blocklist token on logout", "jti", claims.ID, "error", blockErr)
+					}
 				}
 			}
 		}
@@ -478,14 +486,16 @@ func (h *AuthHandler) LogoutAll(c *gin.Context) {
 	}
 
 	// Blocklist the current access token.
-	if h.blocklist != nil {
+	if h.sessionStore != nil {
 		jti := middleware.GetJTIFromContext(c)
 		if jti != "" {
 			expiry, ok := middleware.GetTokenExpiryFromContext(c)
 			if !ok {
 				expiry = time.Now().Add(h.cfg.AccessTokenExpiration)
 			}
-			h.blocklist.Add(jti, expiry)
+			if blockErr := h.sessionStore.BlockToken(c.Request.Context(), jti, expiry); blockErr != nil {
+				slog.Error("Failed to blocklist token on logout-all", "jti", jti, "error", blockErr)
+			}
 		}
 	}
 

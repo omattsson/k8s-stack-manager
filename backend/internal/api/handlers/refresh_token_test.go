@@ -10,9 +10,9 @@ import (
 	"testing"
 	"time"
 
-	"backend/internal/api/middleware"
 	"backend/internal/config"
 	"backend/internal/models"
+	"backend/internal/sessionstore"
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
@@ -179,15 +179,15 @@ func testAuthConfigWithRefresh() *config.AuthConfig {
 }
 
 // setupRefreshAuthRouter creates a gin engine with auth + refresh routes.
-func setupRefreshAuthRouter(userRepo *MockUserRepository, refreshRepo *MockRefreshTokenRepository, blocklist *middleware.TokenBlocklist) *gin.Engine {
+func setupRefreshAuthRouter(userRepo *MockUserRepository, refreshRepo *MockRefreshTokenRepository, store sessionstore.SessionStore) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
 
 	cfg := testAuthConfigWithRefresh()
 	h := NewAuthHandler(userRepo, cfg)
 	h.SetRefreshTokenRepo(refreshRepo)
-	if blocklist != nil {
-		h.SetTokenBlocklist(blocklist)
+	if store != nil {
+		h.SetSessionStore(store)
 	}
 
 	auth := r.Group("/api/v1/auth")
@@ -411,8 +411,8 @@ func TestLogout(t *testing.T) {
 
 	userRepo := NewMockUserRepository()
 	refreshRepo := NewMockRefreshTokenRepository()
-	blocklist := middleware.NewTokenBlocklist(time.Minute)
-	defer blocklist.Stop()
+	store := sessionstore.NewMemoryStore()
+	defer store.Stop()
 
 	seedUser(t, userRepo, "uid-1", "alice", "secret", "user")
 
@@ -429,7 +429,7 @@ func TestLogout(t *testing.T) {
 		CreatedAt:    now,
 	})
 
-	router := setupRefreshAuthRouter(userRepo, refreshRepo, blocklist)
+	router := setupRefreshAuthRouter(userRepo, refreshRepo, store)
 	w := httptest.NewRecorder()
 	req, _ := http.NewRequest(http.MethodPost, "/api/v1/auth/logout", nil)
 	req.AddCookie(&http.Cookie{Name: "refresh_token", Value: raw})
@@ -462,8 +462,8 @@ func TestLogoutAll(t *testing.T) {
 
 	userRepo := NewMockUserRepository()
 	refreshRepo := NewMockRefreshTokenRepository()
-	blocklist := middleware.NewTokenBlocklist(time.Minute)
-	defer blocklist.Stop()
+	store := sessionstore.NewMemoryStore()
+	defer store.Stop()
 
 	seedUser(t, userRepo, "uid-1", "alice", "secret", "user")
 
@@ -483,7 +483,7 @@ func TestLogoutAll(t *testing.T) {
 		})
 	}
 
-	router := setupRefreshAuthRouter(userRepo, refreshRepo, blocklist)
+	router := setupRefreshAuthRouter(userRepo, refreshRepo, store)
 	w := httptest.NewRecorder()
 	req, _ := http.NewRequest(http.MethodPost, "/api/v1/auth/logout-all", nil)
 	router.ServeHTTP(w, req)
@@ -498,27 +498,6 @@ func TestLogoutAll(t *testing.T) {
 		}
 	}
 	refreshRepo.mu.RUnlock()
-}
-
-// ---- Token Blocklist Tests ----
-
-func TestTokenBlocklist(t *testing.T) {
-	t.Parallel()
-
-	bl := middleware.NewTokenBlocklist(100 * time.Millisecond)
-	defer bl.Stop()
-
-	assert.False(t, bl.IsBlocked("jti-1"))
-
-	bl.Add("jti-1", time.Now().Add(time.Hour))
-	assert.True(t, bl.IsBlocked("jti-1"))
-
-	// After expiry, the entry should be cleaned up.
-	bl.Add("jti-2", time.Now().Add(50*time.Millisecond))
-	assert.True(t, bl.IsBlocked("jti-2"))
-	assert.Eventually(t, func() bool {
-		return !bl.IsBlocked("jti-2")
-	}, 500*time.Millisecond, 25*time.Millisecond)
 }
 
 // ---- Refresh without repository configured returns 501 ----

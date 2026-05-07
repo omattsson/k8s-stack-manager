@@ -13,6 +13,7 @@ import (
 	"backend/internal/auth"
 	"backend/internal/config"
 	"backend/internal/models"
+	"backend/internal/sessionstore"
 	"backend/pkg/dberrors"
 
 	"github.com/gin-gonic/gin"
@@ -27,7 +28,7 @@ const (
 // OIDCHandler handles OpenID Connect authentication endpoints.
 type OIDCHandler struct {
 	provider         *auth.Provider
-	stateStore       *auth.StateStore
+	sessionStore     sessionstore.SessionStore
 	userRepo         models.UserRepository
 	refreshTokenRepo models.RefreshTokenRepository
 	cfg              *config.OIDCConfig
@@ -35,13 +36,13 @@ type OIDCHandler struct {
 }
 
 // NewOIDCHandler creates a new OIDCHandler.
-func NewOIDCHandler(provider *auth.Provider, stateStore *auth.StateStore, userRepo models.UserRepository, cfg *config.OIDCConfig, authCfg *config.AuthConfig) *OIDCHandler {
+func NewOIDCHandler(provider *auth.Provider, sessionStore sessionstore.SessionStore, userRepo models.UserRepository, cfg *config.OIDCConfig, authCfg *config.AuthConfig) *OIDCHandler {
 	return &OIDCHandler{
-		provider:   provider,
-		stateStore: stateStore,
-		userRepo:   userRepo,
-		cfg:        cfg,
-		authCfg:    authCfg,
+		provider:     provider,
+		sessionStore: sessionStore,
+		userRepo:     userRepo,
+		cfg:          cfg,
+		authCfg:      authCfg,
 	}
 }
 
@@ -101,12 +102,14 @@ func (h *OIDCHandler) Authorize(c *gin.Context) {
 		redirectURL = "/"
 	}
 
-	h.stateStore.Store(&auth.AuthState{
-		State:        state,
+	if err := h.sessionStore.SaveOIDCState(c.Request.Context(), state, sessionstore.OIDCStateData{
 		CodeVerifier: verifier,
 		RedirectURL:  redirectURL,
-		CreatedAt:    time.Now(),
-	})
+	}, h.cfg.StateTTL); err != nil {
+		slog.Error("Failed to save OIDC state", "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
+		return
+	}
 
 	authURL := h.provider.AuthorizationURL(state, challenge)
 	c.JSON(http.StatusOK, gin.H{"redirect_url": authURL})
@@ -127,15 +130,15 @@ func (h *OIDCHandler) Callback(c *gin.Context) {
 	code := c.Query("code")
 
 	// Validate state (one-time use — prevents CSRF and replay).
-	authState, ok := h.stateStore.Retrieve(stateParam)
-	if !ok {
+	stateData, stateErr := h.sessionStore.ConsumeOIDCState(c.Request.Context(), stateParam)
+	if stateErr != nil || stateData == nil {
 		slog.Warn("OIDC callback with invalid or expired state")
 		c.Redirect(http.StatusFound, "/login?error=invalid_state")
 		return
 	}
 
 	// Exchange authorization code for tokens.
-	oidcUser, err := h.provider.Exchange(c.Request.Context(), code, authState.CodeVerifier)
+	oidcUser, err := h.provider.Exchange(c.Request.Context(), code, stateData.CodeVerifier)
 	if err != nil {
 		slog.Error("OIDC token exchange failed", "error", err)
 		c.Redirect(http.StatusFound, "/login?error=auth_failed")
@@ -180,7 +183,7 @@ func (h *OIDCHandler) Callback(c *gin.Context) {
 	}
 
 	// Redirect to frontend with token.
-	redirectPath := authState.RedirectURL
+	redirectPath := stateData.RedirectURL
 	if redirectPath == "" {
 		redirectPath = "/"
 	}
@@ -215,6 +218,9 @@ func (h *OIDCHandler) provisionUser(oidcUser *auth.OIDCUser) (*models.User, erro
 // updateExistingOIDCUser syncs changed fields (email, display name, role) from the
 // IdP response into the local user record.
 func (h *OIDCHandler) updateExistingOIDCUser(user *models.User, oidcUser *auth.OIDCUser) (*models.User, error) {
+	if user.Disabled {
+		return nil, fmt.Errorf("account_disabled")
+	}
 	changed := false
 	if oidcUser.Email != "" && user.Email != oidcUser.Email {
 		user.Email = oidcUser.Email

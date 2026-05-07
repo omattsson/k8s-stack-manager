@@ -12,6 +12,7 @@ type User struct {
 	AuthProvider string    `json:"auth_provider" gorm:"size:50;default:local"`
 	ExternalID   *string   `json:"external_id" gorm:"size:255"`
 	Email        string    `json:"email" gorm:"size:255"`
+	Disabled     bool      `json:"disabled" gorm:"default:false"`
 	CreatedAt    time.Time `json:"created_at"`
 	UpdatedAt    time.Time `json:"updated_at"`
 }

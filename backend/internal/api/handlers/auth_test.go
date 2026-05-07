@@ -139,6 +139,16 @@ func TestLogin(t *testing.T) {
 			setup:      func(_ *MockUserRepository) {},
 			wantStatus: http.StatusBadRequest,
 		},
+		{
+			name: "disabled user gets 403",
+			body: `{"username":"alice","password":"secret"}`,
+			setup: func(repo *MockUserRepository) {
+				u := seedUser(t, repo, "uid-dis", "alice", "secret", "user")
+				u.Disabled = true
+				_ = repo.Update(u)
+			},
+			wantStatus: http.StatusForbidden,
+		},
 	}
 
 	for _, tt := range tests {
