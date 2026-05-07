@@ -6,12 +6,18 @@ import {
   TableHead,
   TableRow,
   Typography,
+  Chip,
   Link as MuiLink,
 } from '@mui/material';
 import { Link } from 'react-router-dom';
 import { timeAgo } from '../../../utils/timeAgo';
-import StatusBadge from '../../../components/StatusBadge';
 import type { DashboardDeployment } from '../../../types';
+
+const deployStatusColor: Record<string, 'default' | 'info' | 'success' | 'error'> = {
+  running: 'info',
+  success: 'success',
+  error: 'error',
+};
 
 interface Props {
   deployments: DashboardDeployment[];
@@ -47,10 +53,10 @@ const RecentDeploymentsWidget = ({ deployments }: Props) => {
                 </MuiLink>
               </TableCell>
               <TableCell>
-                <StatusBadge status={d.action} />
+                <Chip label={d.action} size="small" variant="outlined" />
               </TableCell>
               <TableCell>
-                <StatusBadge status={d.status} />
+                <Chip label={d.status} size="small" color={deployStatusColor[d.status] || 'default'} />
               </TableCell>
               <TableCell>
                 <Typography variant="body2" noWrap>{d.username || '-'}</Typography>

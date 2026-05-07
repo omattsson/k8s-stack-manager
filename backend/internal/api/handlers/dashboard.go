@@ -187,11 +187,14 @@ func (h *DashboardHandler) buildClusterData(ctx context.Context, privileged bool
 
 	result := make([]DashboardCluster, len(clusters))
 	for i, cl := range clusters {
-		result[i] = DashboardCluster{
-			ID:           cl.ID,
-			Name:         cl.Name,
-			HealthStatus: cl.HealthStatus,
+		dc := DashboardCluster{
+			ID:   cl.ID,
+			Name: cl.Name,
 		}
+		if privileged {
+			dc.HealthStatus = cl.HealthStatus
+		}
+		result[i] = dc
 	}
 
 	if !privileged || h.registry == nil {

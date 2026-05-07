@@ -145,7 +145,7 @@ func TestDashboard_BasicUserGetsNoK8sMetrics(t *testing.T) {
 
 	require.Len(t, resp.Clusters, 1)
 	assert.Equal(t, "dev", resp.Clusters[0].Name)
-	assert.Equal(t, "healthy", resp.Clusters[0].HealthStatus)
+	assert.Empty(t, resp.Clusters[0].HealthStatus, "basic user should not see health status")
 	assert.Nil(t, resp.Clusters[0].NodeCount, "basic user should not see node metrics")
 }
 
@@ -169,6 +169,7 @@ func TestDashboard_AdminGetsClusterData(t *testing.T) {
 
 	require.Len(t, resp.Clusters, 1)
 	assert.Equal(t, "prod", resp.Clusters[0].Name)
+	assert.Equal(t, "healthy", resp.Clusters[0].HealthStatus, "admin should see health status")
 }
 
 func TestDashboard_RecentDeployments(t *testing.T) {
@@ -185,7 +186,7 @@ func TestDashboard_RecentDeployments(t *testing.T) {
 				ID:              "d1",
 				StackInstanceID: "i1",
 				Action:          "deploy",
-				Status:          "completed",
+				Status:          models.DeployLogSuccess,
 				StartedAt:       now.Add(-5 * time.Minute),
 			},
 			InstanceName: "my-stack",
