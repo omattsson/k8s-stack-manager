@@ -875,6 +875,26 @@ func (d *Database) AutoMigrate() error {
 		},
 	})
 
+	// Migration 36: Add index on deployment_logs(started_at DESC) for dashboard global query
+	migrator.AddMigration(schema.Migration{
+		Version:     "20260507000036",
+		Name:        "add_deployment_logs_started_at_index",
+		Description: "Add index on deployment_logs(started_at DESC) for ListRecentGlobal dashboard query",
+		Up: func(tx *gorm.DB) error {
+			var count int64
+			tx.Raw("SELECT COUNT(1) FROM information_schema.statistics WHERE table_schema = DATABASE() AND table_name = ? AND index_name = ?",
+				"deployment_logs", "idx_deployment_logs_started_at").Scan(&count)
+			if count > 0 {
+				return nil
+			}
+			return tx.Exec("CREATE INDEX idx_deployment_logs_started_at ON deployment_logs(started_at DESC)").Error
+		},
+		Down: func(tx *gorm.DB) error {
+			_ = tx.Exec("DROP INDEX idx_deployment_logs_started_at ON deployment_logs").Error
+			return nil
+		},
+	})
+
 	// Run migrations
 	if err := migrator.MigrateUp(); err != nil {
 		return err

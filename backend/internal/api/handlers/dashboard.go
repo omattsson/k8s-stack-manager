@@ -13,6 +13,7 @@ import (
 	"backend/internal/models"
 
 	"github.com/gin-gonic/gin"
+	"golang.org/x/sync/singleflight"
 )
 
 const dashboardCacheTTL = 30 * time.Second
@@ -79,6 +80,7 @@ type DashboardHandler struct {
 	registry      *cluster.Registry
 	privCache     *cache.TTLCache[*DashboardResponse]
 	basicCache    *cache.TTLCache[*DashboardResponse]
+	sfGroup       singleflight.Group
 }
 
 func NewDashboardHandler(
@@ -95,6 +97,12 @@ func NewDashboardHandler(
 		privCache:     cache.New[*DashboardResponse](dashboardCacheTTL, dashboardCacheTTL),
 		basicCache:    cache.New[*DashboardResponse](dashboardCacheTTL, dashboardCacheTTL),
 	}
+}
+
+// Stop halts background cache cleanup goroutines.
+func (h *DashboardHandler) Stop() {
+	h.privCache.Stop()
+	h.basicCache.Stop()
 }
 
 // GetDashboard godoc
@@ -123,32 +131,41 @@ func (h *DashboardHandler) GetDashboard(c *gin.Context) {
 
 	ctx := c.Request.Context()
 
-	clusters, err := h.buildClusterData(ctx, privileged)
+	val, err, _ := h.sfGroup.Do(cacheKey, func() (interface{}, error) {
+		// Re-check cache inside singleflight to avoid redundant work.
+		if cached, ok := cacheStore.Get(cacheKey); ok {
+			return cached, nil
+		}
+		return h.buildDashboard(ctx, privileged, cacheStore, cacheKey)
+	})
 	if err != nil {
-		slog.Error("dashboard: failed to build cluster data", "error", err)
+		slog.Error("dashboard: failed to build dashboard", "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
 		return
+	}
+
+	c.JSON(http.StatusOK, val)
+}
+
+func (h *DashboardHandler) buildDashboard(ctx context.Context, privileged bool, cacheStore *cache.TTLCache[*DashboardResponse], cacheKey string) (*DashboardResponse, error) {
+	clusters, err := h.buildClusterData(ctx, privileged)
+	if err != nil {
+		return nil, err
 	}
 
 	recentDeploys, err := h.buildRecentDeployments(ctx)
 	if err != nil {
-		slog.Error("dashboard: failed to build recent deployments", "error", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
-		return
+		return nil, err
 	}
 
 	expiring, err := h.buildExpiringSoon()
 	if err != nil {
-		slog.Error("dashboard: failed to build expiring instances", "error", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
-		return
+		return nil, err
 	}
 
 	failing, err := h.buildFailingInstances()
 	if err != nil {
-		slog.Error("dashboard: failed to build failing instances", "error", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
-		return
+		return nil, err
 	}
 
 	resp := &DashboardResponse{
@@ -159,7 +176,7 @@ func (h *DashboardHandler) GetDashboard(c *gin.Context) {
 	}
 
 	cacheStore.Set(cacheKey, resp)
-	c.JSON(http.StatusOK, resp)
+	return resp, nil
 }
 
 func (h *DashboardHandler) buildClusterData(ctx context.Context, privileged bool) ([]DashboardCluster, error) {
@@ -267,17 +284,14 @@ func (h *DashboardHandler) buildExpiringSoon() ([]DashboardExpiring, error) {
 }
 
 func (h *DashboardHandler) buildFailingInstances() ([]DashboardFailing, error) {
-	all, err := h.instanceRepo.List()
+	failing, err := h.instanceRepo.ListByStatus(models.StackStatusError, 50)
 	if err != nil {
 		return nil, err
 	}
 
-	var result []DashboardFailing
-	for _, inst := range all {
-		if inst.Status != models.StackStatusError {
-			continue
-		}
-		result = append(result, DashboardFailing{
+	result := make([]DashboardFailing, len(failing))
+	for i, inst := range failing {
+		result[i] = DashboardFailing{
 			ID:           inst.ID,
 			Name:         inst.Name,
 			Namespace:    inst.Namespace,
@@ -285,10 +299,7 @@ func (h *DashboardHandler) buildFailingInstances() ([]DashboardFailing, error) {
 			ErrorMessage: inst.ErrorMessage,
 			ClusterID:    inst.ClusterID,
 			UpdatedAt:    inst.UpdatedAt,
-		})
-	}
-	if result == nil {
-		result = []DashboardFailing{}
+		}
 	}
 	return result, nil
 }

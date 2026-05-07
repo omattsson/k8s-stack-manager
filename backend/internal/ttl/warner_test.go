@@ -120,7 +120,8 @@ func (m *warnerMockInstanceRepo) ListIDsByOwnerIDs(_ []string) (map[string][]str
 func (m *warnerMockInstanceRepo) ExistsByDefinitionAndStatus(_, _ string) (bool, error) {
 	return false, nil
 }
-func (m *warnerMockInstanceRepo) ListExpired() ([]*models.StackInstance, error) { return nil, nil }
+func (m *warnerMockInstanceRepo) ListExpired() ([]*models.StackInstance, error)          { return nil, nil }
+func (m *warnerMockInstanceRepo) ListByStatus(_ string, _ int) ([]*models.StackInstance, error) { return nil, nil }
 
 // ---------------------------------------------------------------------------
 // Tests

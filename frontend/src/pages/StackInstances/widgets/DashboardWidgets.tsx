@@ -7,6 +7,7 @@ import {
   Box,
   CircularProgress,
   Chip,
+  Alert,
 } from '@mui/material';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import DnsIcon from '@mui/icons-material/Dns';
@@ -23,14 +24,19 @@ import FailingInstancesWidget from './FailingInstancesWidget';
 
 const STORAGE_KEY = 'dashboard_widget_collapsed';
 
+// Must match backend's buildExpiringSoon threshold (1 * time.Hour).
+const EXPIRING_THRESHOLD_MS = 60 * 60 * 1000;
+
 type WidgetKey = 'clusters' | 'deployments' | 'expiring' | 'failing';
+
+const defaultCollapsed: Record<WidgetKey, boolean> = { clusters: false, deployments: false, expiring: false, failing: false };
 
 function loadCollapsed(): Record<WidgetKey, boolean> {
   try {
     const stored = localStorage.getItem(STORAGE_KEY);
-    if (stored) return JSON.parse(stored);
+    if (stored) return { ...defaultCollapsed, ...JSON.parse(stored) };
   } catch { /* ignore */ }
-  return { clusters: false, deployments: false, expiring: false, failing: false };
+  return { ...defaultCollapsed };
 }
 
 function saveCollapsed(state: Record<WidgetKey, boolean>) {
@@ -40,6 +46,7 @@ function saveCollapsed(state: Record<WidgetKey, boolean>) {
 const DashboardWidgets = () => {
   const [data, setData] = useState<DashboardResponse | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
   const [collapsed, setCollapsed] = useState<Record<WidgetKey, boolean>>(loadCollapsed);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -47,8 +54,9 @@ const DashboardWidgets = () => {
     try {
       const resp = await dashboardService.getOverview();
       setData(resp);
+      setError(false);
     } catch {
-      // silently ignore — dashboard widgets are supplementary
+      setError(true);
     } finally {
       setLoading(false);
     }
@@ -56,6 +64,9 @@ const DashboardWidgets = () => {
 
   useEffect(() => {
     fetchData();
+    return () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+    };
   }, [fetchData]);
 
   const debouncedRefetch = useCallback(() => {
@@ -97,7 +108,7 @@ const DashboardWidgets = () => {
           .map((i) => (i.id === id ? { ...i, expires_at: newExpiresAt } : i))
           .filter((i) => {
             const ms = new Date(i.expires_at).getTime() - Date.now();
-            return ms > 0 && ms <= 60 * 60 * 1000;
+            return ms > 0 && ms <= EXPIRING_THRESHOLD_MS;
           }),
       };
     });
@@ -107,6 +118,16 @@ const DashboardWidgets = () => {
     return (
       <Box sx={{ display: 'flex', justifyContent: 'center', py: 3 }}>
         <CircularProgress size={24} />
+      </Box>
+    );
+  }
+
+  if (error && !data) {
+    return (
+      <Box sx={{ mb: 3 }}>
+        <Alert severity="warning" variant="outlined">
+          Failed to load dashboard data.
+        </Alert>
       </Box>
     );
   }

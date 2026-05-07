@@ -217,6 +217,20 @@ func (r *GORMStackInstanceRepository) ListExpiringSoon(threshold time.Duration) 
 	return instances, nil
 }
 
+// ListByStatus returns instances with the given status, up to limit rows.
+// A limit <= 0 returns all matching rows.
+func (r *GORMStackInstanceRepository) ListByStatus(status string, limit int) ([]*models.StackInstance, error) {
+	var instances []*models.StackInstance
+	q := r.db.Where("status = ?", status)
+	if limit > 0 {
+		q = q.Limit(limit)
+	}
+	if err := q.Find(&instances).Error; err != nil {
+		return nil, dberrors.NewDatabaseError("list_by_status", err)
+	}
+	return instances, nil
+}
+
 // CountByDefinitionIDs returns a map of definition ID to instance count for the
 // given definition IDs in a single GROUP BY query. IDs are processed in chunks
 // of 500 to stay within MySQL's IN clause limits.

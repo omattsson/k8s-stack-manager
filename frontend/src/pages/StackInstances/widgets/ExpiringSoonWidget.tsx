@@ -13,6 +13,7 @@ import {
 import { Link } from 'react-router-dom';
 import useCountdown from '../../../hooks/useCountdown';
 import { instanceService } from '../../../api/client';
+import { useNotification } from '../../../context/NotificationContext';
 import type { DashboardExpiring } from '../../../types';
 
 interface ExpiringRowProps {
@@ -23,6 +24,7 @@ interface ExpiringRowProps {
 const ExpiringRow = ({ item, onExtended }: ExpiringRowProps) => {
   const [extending, setExtending] = useState(false);
   const countdown = useCountdown(item.expires_at);
+  const { showError } = useNotification();
 
   const handleExtend = async () => {
     setExtending(true);
@@ -30,7 +32,7 @@ const ExpiringRow = ({ item, onExtended }: ExpiringRowProps) => {
       const updated = await instanceService.extend(item.id);
       onExtended(item.id, updated.expires_at ?? '');
     } catch {
-      // notification handled by caller
+      showError(`Failed to extend TTL for ${item.name}`);
     } finally {
       setExtending(false);
     }

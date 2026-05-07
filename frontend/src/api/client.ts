@@ -2072,8 +2072,13 @@ export const dashboardService = {
    * @see GET /api/v1/dashboard
    */
   getOverview: async (): Promise<DashboardResponse> => {
-    const response = await api.get('/api/v1/dashboard');
-    return response.data;
+    try {
+      const response = await api.get('/api/v1/dashboard');
+      return response.data;
+    } catch (error) {
+      console.error('Failed to fetch dashboard overview:', error);
+      throw error;
+    }
   },
 };
 

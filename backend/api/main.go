@@ -527,6 +527,7 @@ func main() {
 		clusterRegistry:  clusterRegistry,
 		watcherCancel:    watcherCancel,
 		oidcStateStore:   oidcStateStore,
+		dashboardHandler: dashboardHandler,
 		repo:             repo,
 	})
 }
@@ -547,6 +548,7 @@ type shutdownDeps struct {
 	clusterRegistry  *cluster.Registry
 	watcherCancel    context.CancelFunc
 	oidcStateStore   *auth.StateStore
+	dashboardHandler *handlers.DashboardHandler
 	repo             models.Repository
 }
 
@@ -589,6 +591,9 @@ func gracefulShutdown(srv *http.Server, timeout time.Duration, deps shutdownDeps
 	deps.watcherCancel()
 	if deps.oidcStateStore != nil {
 		deps.oidcStateStore.Stop()
+	}
+	if deps.dashboardHandler != nil {
+		deps.dashboardHandler.Stop()
 	}
 
 	// 5. Flush OTel spans/metrics/logs AFTER all services stop,

@@ -324,9 +324,9 @@ func (r *GORMDeploymentLogRepository) ListRecentGlobal(ctx context.Context, limi
 	var rows []row
 	err := r.db.WithContext(ctx).
 		Table("deployment_logs dl").
-		Select("dl.*, si.name AS instance_name, u.username AS username").
-		Joins("JOIN stack_instances si ON dl.stack_instance_id = si.id").
-		Joins("JOIN users u ON si.owner_id = u.id").
+		Select("dl.id, dl.stack_instance_id, dl.action, dl.status, dl.started_at, dl.completed_at, dl.error_message, COALESCE(si.name, '(deleted)') AS instance_name, COALESCE(u.username, '(unknown)') AS username").
+		Joins("LEFT JOIN stack_instances si ON dl.stack_instance_id = si.id").
+		Joins("LEFT JOIN users u ON si.owner_id = u.id").
 		Order("dl.started_at DESC").
 		Limit(limit).
 		Find(&rows).Error
