@@ -18,6 +18,7 @@ type memOIDCEntry struct {
 type MemoryStore struct {
 	mu         sync.Mutex
 	blocked    map[string]memBlockEntry
+	userBlocks map[string]memBlockEntry
 	oidcStates map[string]memOIDCEntry
 	done       chan struct{}
 	stopOnce   sync.Once
@@ -26,6 +27,7 @@ type MemoryStore struct {
 func NewMemoryStore() *MemoryStore {
 	s := &MemoryStore{
 		blocked:    make(map[string]memBlockEntry),
+		userBlocks: make(map[string]memBlockEntry),
 		oidcStates: make(map[string]memOIDCEntry),
 		done:       make(chan struct{}),
 	}
@@ -48,6 +50,30 @@ func (s *MemoryStore) IsTokenBlocked(_ context.Context, jti string) (bool, error
 		return false, nil
 	}
 	return time.Now().Before(entry.expiresAt), nil
+}
+
+func (s *MemoryStore) BlockUser(_ context.Context, userID string, until time.Time) error {
+	s.mu.Lock()
+	s.userBlocks[userID] = memBlockEntry{expiresAt: until}
+	s.mu.Unlock()
+	return nil
+}
+
+func (s *MemoryStore) IsUserBlocked(_ context.Context, userID string) (bool, error) {
+	s.mu.Lock()
+	entry, ok := s.userBlocks[userID]
+	s.mu.Unlock()
+	if !ok {
+		return false, nil
+	}
+	return time.Now().Before(entry.expiresAt), nil
+}
+
+func (s *MemoryStore) UnblockUser(_ context.Context, userID string) error {
+	s.mu.Lock()
+	delete(s.userBlocks, userID)
+	s.mu.Unlock()
+	return nil
 }
 
 func (s *MemoryStore) SaveOIDCState(_ context.Context, state string, data OIDCStateData, ttl time.Duration) error {
@@ -80,6 +106,11 @@ func (s *MemoryStore) Cleanup(_ context.Context) error {
 	for k, v := range s.blocked {
 		if now.After(v.expiresAt) {
 			delete(s.blocked, k)
+		}
+	}
+	for k, v := range s.userBlocks {
+		if now.After(v.expiresAt) {
+			delete(s.userBlocks, k)
 		}
 	}
 	for k, v := range s.oidcStates {

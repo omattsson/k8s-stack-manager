@@ -13,6 +13,7 @@ import (
 const (
 	kindTokenBlock = "token_block"
 	kindOIDCState  = "oidc_state"
+	kindUserBlock  = "user_block"
 )
 
 type SessionEntry struct {
@@ -63,6 +64,38 @@ func (s *MySQLStore) IsTokenBlocked(ctx context.Context, jti string) (bool, erro
 		return false, err
 	}
 	return count > 0, nil
+}
+
+func (s *MySQLStore) BlockUser(ctx context.Context, userID string, until time.Time) error {
+	entry := SessionEntry{
+		EntryKey:  userID,
+		Kind:      kindUserBlock,
+		ExpiresAt: until.Unix(),
+	}
+	return s.db.WithContext(ctx).
+		Clauses(clause.OnConflict{
+			Columns:   []clause.Column{{Name: "entry_key"}, {Name: "kind"}},
+			DoUpdates: clause.AssignmentColumns([]string{"expires_at"}),
+		}).
+		Create(&entry).Error
+}
+
+func (s *MySQLStore) IsUserBlocked(ctx context.Context, userID string) (bool, error) {
+	var count int64
+	err := s.db.WithContext(ctx).
+		Model(&SessionEntry{}).
+		Where("entry_key = ? AND kind = ? AND expires_at > ?", userID, kindUserBlock, time.Now().Unix()).
+		Count(&count).Error
+	if err != nil {
+		return false, err
+	}
+	return count > 0, nil
+}
+
+func (s *MySQLStore) UnblockUser(ctx context.Context, userID string) error {
+	return s.db.WithContext(ctx).
+		Where("entry_key = ? AND kind = ?", userID, kindUserBlock).
+		Delete(&SessionEntry{}).Error
 }
 
 func (s *MySQLStore) SaveOIDCState(ctx context.Context, state string, data OIDCStateData, ttl time.Duration) error {

@@ -88,6 +88,17 @@ func AuthRequiredWithSessionStore(jwtSecret string, store sessionstore.SessionSt
 			}
 		}
 
+		if store != nil && claims.UserID != "" {
+			userBlocked, userBlockErr := store.IsUserBlocked(c.Request.Context(), claims.UserID)
+			if userBlockErr != nil {
+				slog.Error("Failed to check user blocklist", "user_id", claims.UserID, "error", userBlockErr)
+				// Fail open — same policy as token blocklist check
+			} else if userBlocked {
+				c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "Account disabled"})
+				return
+			}
+		}
+
 		c.Set(contextKeyUserID, claims.UserID)
 		c.Set(contextKeyUsername, claims.Username)
 		c.Set(contextKeyRole, claims.Role)

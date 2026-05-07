@@ -334,6 +334,11 @@ func main() {
 	gitHandler := handlers.NewGitHandler(gitRegistry)
 	auditLogHandler := handlers.NewAuditLogHandler(auditRepo)
 	userHandler := handlers.NewUserHandler(userRepo)
+	userHandler.SetSessionStore(sessStore)
+	if refreshTokenRepo != nil {
+		userHandler.SetRefreshTokenRepo(refreshTokenRepo)
+	}
+	userHandler.SetAccessTokenExpiration(cfg.Auth.AccessTokenExpiration)
 	apiKeyHandler := handlers.NewAPIKeyHandler(apiKeyRepo, userRepo, &cfg.Auth)
 
 	adminHandler := handlers.NewAdminHandler(clusterRegistry, instanceRepo)

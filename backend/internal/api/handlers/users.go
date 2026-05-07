@@ -1,10 +1,13 @@
 package handlers
 
 import (
+	"log/slog"
 	"net/http"
+	"time"
 
 	"backend/internal/api/middleware"
 	"backend/internal/models"
+	"backend/internal/sessionstore"
 
 	"github.com/gin-gonic/gin"
 )
@@ -13,13 +16,22 @@ import (
 // For creating users, reuse the existing POST /api/v1/auth/register endpoint
 // (AuthHandler.Register), which already handles user creation with role assignment.
 type UserHandler struct {
-	userRepo models.UserRepository
+	userRepo              models.UserRepository
+	sessionStore          sessionstore.SessionStore
+	refreshTokenRepo      models.RefreshTokenRepository
+	accessTokenExpiration time.Duration
 }
 
 // NewUserHandler creates a new UserHandler.
 func NewUserHandler(userRepo models.UserRepository) *UserHandler {
 	return &UserHandler{userRepo: userRepo}
 }
+
+func (h *UserHandler) SetSessionStore(store sessionstore.SessionStore) { h.sessionStore = store }
+func (h *UserHandler) SetRefreshTokenRepo(repo models.RefreshTokenRepository) {
+	h.refreshTokenRepo = repo
+}
+func (h *UserHandler) SetAccessTokenExpiration(d time.Duration) { h.accessTokenExpiration = d }
 
 // ListUsers godoc
 // @Summary      List all users
@@ -138,6 +150,29 @@ func (h *UserHandler) setDisabled(c *gin.Context, disabled bool) {
 		status, message := mapError(err, "User")
 		c.JSON(status, gin.H{"error": message})
 		return
+	}
+
+	if disabled {
+		if h.refreshTokenRepo != nil {
+			if err := h.refreshTokenRepo.RevokeAllForUser(id); err != nil {
+				slog.Warn("Failed to revoke refresh tokens on disable", "user_id", id, "error", err)
+			}
+		}
+		if h.sessionStore != nil {
+			ttl := h.accessTokenExpiration
+			if ttl <= 0 {
+				ttl = 15 * time.Minute
+			}
+			if err := h.sessionStore.BlockUser(c.Request.Context(), id, time.Now().Add(ttl)); err != nil {
+				slog.Warn("Failed to block user in session store", "user_id", id, "error", err)
+			}
+		}
+	} else {
+		if h.sessionStore != nil {
+			if err := h.sessionStore.UnblockUser(c.Request.Context(), id); err != nil {
+				slog.Warn("Failed to unblock user in session store", "user_id", id, "error", err)
+			}
+		}
 	}
 
 	action := "enabled"

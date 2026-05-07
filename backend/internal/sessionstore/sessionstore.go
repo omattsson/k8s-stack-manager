@@ -13,6 +13,9 @@ type OIDCStateData struct {
 type SessionStore interface {
 	BlockToken(ctx context.Context, jti string, expiresAt time.Time) error
 	IsTokenBlocked(ctx context.Context, jti string) (bool, error)
+	BlockUser(ctx context.Context, userID string, until time.Time) error
+	IsUserBlocked(ctx context.Context, userID string) (bool, error)
+	UnblockUser(ctx context.Context, userID string) error
 	SaveOIDCState(ctx context.Context, state string, data OIDCStateData, ttl time.Duration) error
 	ConsumeOIDCState(ctx context.Context, state string) (*OIDCStateData, error)
 	Cleanup(ctx context.Context) error
