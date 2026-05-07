@@ -189,8 +189,8 @@ func TestDashboard_RecentDeployments(t *testing.T) {
 				Status:          models.DeployLogSuccess,
 				StartedAt:       now.Add(-5 * time.Minute),
 			},
-			InstanceName: "my-stack",
-			Username:     "alice",
+			InstanceName:  "my-stack",
+			OwnerUsername: "alice",
 		},
 	})
 
@@ -204,7 +204,7 @@ func TestDashboard_RecentDeployments(t *testing.T) {
 
 	require.Len(t, resp.RecentDeployments, 1)
 	assert.Equal(t, "my-stack", resp.RecentDeployments[0].InstanceName)
-	assert.Equal(t, "alice", resp.RecentDeployments[0].Username)
+	assert.Equal(t, "alice", resp.RecentDeployments[0].OwnerUsername)
 }
 
 func TestDashboard_ExpiringSoon(t *testing.T) {

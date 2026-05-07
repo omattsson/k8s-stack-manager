@@ -317,14 +317,14 @@ func (r *GORMDeploymentLogRepository) ListRecentGlobal(ctx context.Context, limi
 
 	type row struct {
 		models.DeploymentLog
-		InstanceName string `gorm:"column:instance_name"`
-		Username     string `gorm:"column:username"`
+		InstanceName  string `gorm:"column:instance_name"`
+		OwnerUsername string `gorm:"column:owner_username"`
 	}
 
 	var rows []row
 	err := r.db.WithContext(ctx).
 		Table("deployment_logs dl").
-		Select("dl.id, dl.stack_instance_id, dl.action, dl.status, dl.started_at, dl.completed_at, dl.error_message, COALESCE(si.name, '(deleted)') AS instance_name, COALESCE(u.username, '(unknown)') AS username").
+		Select("dl.id, dl.stack_instance_id, dl.action, dl.status, dl.started_at, dl.completed_at, dl.error_message, COALESCE(si.name, '(deleted)') AS instance_name, COALESCE(u.username, '(unknown)') AS owner_username").
 		Joins("LEFT JOIN stack_instances si ON dl.stack_instance_id = si.id").
 		Joins("LEFT JOIN users u ON si.owner_id = u.id").
 		Order("dl.started_at DESC").
@@ -339,7 +339,7 @@ func (r *GORMDeploymentLogRepository) ListRecentGlobal(ctx context.Context, limi
 		result[i] = models.DeploymentLogWithContext{
 			DeploymentLog: r.DeploymentLog,
 			InstanceName:  r.InstanceName,
-			Username:      r.Username,
+			OwnerUsername: r.OwnerUsername,
 		}
 	}
 	return result, nil

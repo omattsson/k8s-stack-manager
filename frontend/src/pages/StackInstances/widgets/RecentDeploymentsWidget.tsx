@@ -40,7 +40,7 @@ const RecentDeploymentsWidget = ({ deployments }: Props) => {
             <TableCell>Instance</TableCell>
             <TableCell>Action</TableCell>
             <TableCell>Status</TableCell>
-            <TableCell>User</TableCell>
+            <TableCell>Owner</TableCell>
             <TableCell>When</TableCell>
           </TableRow>
         </TableHead>
@@ -59,7 +59,7 @@ const RecentDeploymentsWidget = ({ deployments }: Props) => {
                 <Chip label={d.status} size="small" color={deployStatusColor[d.status] || 'default'} />
               </TableCell>
               <TableCell>
-                <Typography variant="body2" noWrap>{d.username || '-'}</Typography>
+                <Typography variant="body2" noWrap>{d.owner_username || '-'}</Typography>
               </TableCell>
               <TableCell>
                 <Typography variant="body2" color="text.secondary" noWrap>

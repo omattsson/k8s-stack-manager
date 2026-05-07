@@ -708,7 +708,7 @@ export interface DashboardDeployment {
   status: string;
   started_at: string;
   completed_at?: string;
-  username?: string;
+  owner_username?: string;
 }
 
 export interface DashboardExpiring {

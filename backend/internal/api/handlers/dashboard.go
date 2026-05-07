@@ -48,7 +48,7 @@ type DashboardDeployment struct {
 	Status          string     `json:"status"`
 	StartedAt       time.Time  `json:"started_at"`
 	CompletedAt     *time.Time `json:"completed_at,omitempty"`
-	Username        string     `json:"username,omitempty"`
+	OwnerUsername   string     `json:"owner_username,omitempty"`
 }
 
 type DashboardExpiring struct {
@@ -109,6 +109,7 @@ func (h *DashboardHandler) Stop() {
 // @Summary     Get dashboard overview
 // @Description Returns aggregated dashboard data: cluster health, recent deployments, expiring instances, and failing instances.
 // @Tags        dashboard
+// @Accept      json
 // @Produce     json
 // @Security    BearerAuth
 // @Success     200 {object} DashboardResponse
@@ -259,7 +260,7 @@ func (h *DashboardHandler) buildRecentDeployments(ctx context.Context) ([]Dashbo
 			Status:          l.Status,
 			StartedAt:       l.StartedAt,
 			CompletedAt:     l.CompletedAt,
-			Username:        l.Username,
+			OwnerUsername:   l.OwnerUsername,
 		}
 	}
 	return result, nil
@@ -269,6 +270,10 @@ func (h *DashboardHandler) buildExpiringSoon() ([]DashboardExpiring, error) {
 	instances, err := h.instanceRepo.ListExpiringSoon(1 * time.Hour)
 	if err != nil {
 		return nil, err
+	}
+
+	if len(instances) > 50 {
+		instances = instances[:50]
 	}
 
 	result := make([]DashboardExpiring, len(instances))

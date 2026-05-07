@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useRef } from 'react';
+import { useEffect, useState, useCallback, useRef, type ReactNode } from 'react';
 import {
   Accordion,
   AccordionSummary,
@@ -40,7 +40,9 @@ function loadCollapsed(): Record<WidgetKey, boolean> {
 }
 
 function saveCollapsed(state: Record<WidgetKey, boolean>) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  } catch { /* ignore */ }
 }
 
 const DashboardWidgets = () => {
@@ -134,7 +136,7 @@ const DashboardWidgets = () => {
 
   if (!data) return null;
 
-  const widgets: { key: WidgetKey; label: string; icon: React.ReactNode; count?: number; content: React.ReactNode }[] = [
+  const widgets: { key: WidgetKey; label: string; icon: ReactNode; count?: number; content: ReactNode }[] = [
     {
       key: 'clusters',
       label: 'Cluster Health',

@@ -64,8 +64,8 @@ type DeployLogSummary struct {
 // and user fields, populated via JOIN to avoid N+1 queries.
 type DeploymentLogWithContext struct {
 	DeploymentLog
-	InstanceName string `json:"instance_name"`
-	Username     string `json:"username"`
+	InstanceName  string `json:"instance_name"`
+	OwnerUsername string `json:"owner_username"`
 }
 
 // DeploymentLogRepository defines data access operations for deployment logs.
