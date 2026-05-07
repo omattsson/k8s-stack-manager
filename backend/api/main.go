@@ -359,6 +359,7 @@ func main() {
 	}
 
 	analyticsHandler := handlers.NewAnalyticsHandler(templateRepo, definitionRepo, instanceRepo, deployLogRepo, userRepo)
+	dashboardHandler := handlers.NewDashboardHandler(clusterRepo, instanceRepo, deployLogRepo, clusterRegistry)
 
 	// ------------------------------------------------------------------
 	// Phase 6.2: Cleanup policies
@@ -394,6 +395,7 @@ func main() {
 		FavoriteHandler:              favoriteHandler,
 		QuickDeployHandler:           quickDeployHandler,
 		AnalyticsHandler:             analyticsHandler,
+		DashboardHandler:             dashboardHandler,
 		CleanupPolicyHandler:         cleanupPolicyHandler,
 		CleanupScheduler:             cleanupScheduler,
 		ClusterHandler:               clusterHandler,

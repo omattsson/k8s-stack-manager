@@ -308,6 +308,43 @@ func (r *GORMDeploymentLogRepository) summarizeBatchChunk(
 	return nil
 }
 
+// ListRecentGlobal returns the most recent deployment log entries across all
+// instances, enriched with instance name and owner username via a 3-table JOIN.
+func (r *GORMDeploymentLogRepository) ListRecentGlobal(ctx context.Context, limit int) ([]models.DeploymentLogWithContext, error) {
+	if limit <= 0 {
+		limit = 10
+	}
+
+	type row struct {
+		models.DeploymentLog
+		InstanceName string `gorm:"column:instance_name"`
+		Username     string `gorm:"column:username"`
+	}
+
+	var rows []row
+	err := r.db.WithContext(ctx).
+		Table("deployment_logs dl").
+		Select("dl.*, si.name AS instance_name, u.username AS username").
+		Joins("JOIN stack_instances si ON dl.stack_instance_id = si.id").
+		Joins("JOIN users u ON si.owner_id = u.id").
+		Order("dl.started_at DESC").
+		Limit(limit).
+		Find(&rows).Error
+	if err != nil {
+		return nil, dberrors.NewDatabaseError("list_recent_global", err)
+	}
+
+	result := make([]models.DeploymentLogWithContext, len(rows))
+	for i, r := range rows {
+		result[i] = models.DeploymentLogWithContext{
+			DeploymentLog: r.DeploymentLog,
+			InstanceName:  r.InstanceName,
+			Username:      r.Username,
+		}
+	}
+	return result, nil
+}
+
 // CountByAction returns the total number of deployment log entries with the
 // given action within the last 90 days (matching the SummarizeByInstance cutoff).
 func (r *GORMDeploymentLogRepository) CountByAction(ctx context.Context, action string) (int, error) {

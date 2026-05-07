@@ -60,6 +60,14 @@ type DeployLogSummary struct {
 	ErrorCount   int
 }
 
+// DeploymentLogWithContext extends DeploymentLog with denormalized instance
+// and user fields, populated via JOIN to avoid N+1 queries.
+type DeploymentLogWithContext struct {
+	DeploymentLog
+	InstanceName string `json:"instance_name"`
+	Username     string `json:"username"`
+}
+
 // DeploymentLogRepository defines data access operations for deployment logs.
 type DeploymentLogRepository interface {
 	Create(ctx context.Context, log *DeploymentLog) error
@@ -71,4 +79,5 @@ type DeploymentLogRepository interface {
 	SummarizeByInstance(ctx context.Context, instanceID string) (*DeployLogSummary, error)
 	SummarizeBatch(ctx context.Context, instanceIDs []string) (map[string]*DeployLogSummary, error)
 	CountByAction(ctx context.Context, action string) (int, error)
+	ListRecentGlobal(ctx context.Context, limit int) ([]DeploymentLogWithContext, error)
 }

@@ -686,3 +686,54 @@ export interface DeployPreviewResponse {
   instance_name: string;
   charts: ChartDeployPreview[];
 }
+
+export interface DashboardCluster {
+  id: string;
+  name: string;
+  health_status: string;
+  node_count?: number;
+  ready_node_count?: number;
+  total_cpu?: string;
+  total_memory?: string;
+  allocatable_cpu?: string;
+  allocatable_memory?: string;
+  namespace_count?: number;
+}
+
+export interface DashboardDeployment {
+  id: string;
+  stack_instance_id: string;
+  instance_name: string;
+  action: string;
+  status: string;
+  started_at: string;
+  completed_at?: string;
+  username?: string;
+}
+
+export interface DashboardExpiring {
+  id: string;
+  name: string;
+  namespace: string;
+  status: string;
+  expires_at: string;
+  ttl_minutes: number;
+  cluster_id?: string;
+}
+
+export interface DashboardFailing {
+  id: string;
+  name: string;
+  namespace: string;
+  status: string;
+  error_message: string;
+  cluster_id?: string;
+  updated_at: string;
+}
+
+export interface DashboardResponse {
+  clusters: DashboardCluster[];
+  recent_deployments: DashboardDeployment[];
+  expiring_soon: DashboardExpiring[];
+  failing_instances: DashboardFailing[];
+}

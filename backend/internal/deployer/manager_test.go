@@ -294,6 +294,10 @@ func (m *mockDeployLogRepo) CountByAction(_ context.Context, _ string) (int, err
 	return 0, nil
 }
 
+func (m *mockDeployLogRepo) ListRecentGlobal(_ context.Context, _ int) ([]models.DeploymentLogWithContext, error) {
+	return nil, nil
+}
+
 // ---- txRunner mock ----
 
 // mockTxRunner implements database.TxRunner by calling fn with TxRepos

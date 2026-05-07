@@ -54,6 +54,7 @@ import type {
   UpgradeCheckResponse,
   InstanceQuotaOverride,
   DeployPreviewResponse,
+  DashboardResponse,
 } from '../types';
 
 // Extend Axios config to include our retry flag (avoids `any` cast).
@@ -1217,7 +1218,7 @@ export const gitService = {
   branches: async (repoUrl: string): Promise<string[]> => {
     try {
       const response = await api.get('/api/v1/git/branches', { params: { repo: repoUrl } });
-      return response.data;
+      return response.data.map((b: { name: string }) => b.name);
     } catch (error) {
       console.error('Failed to fetch branches:', error);
       throw error;
@@ -2060,6 +2061,13 @@ export const notificationService = {
       console.error('Failed to update notification preferences:', error);
       throw error;
     }
+  },
+};
+
+export const dashboardService = {
+  getOverview: async (): Promise<DashboardResponse> => {
+    const response = await api.get('/api/v1/dashboard');
+    return response.data;
   },
 };
 
