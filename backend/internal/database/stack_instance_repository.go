@@ -211,8 +211,23 @@ func (r *GORMStackInstanceRepository) ListExpiringSoon(threshold time.Duration) 
 	var instances []*models.StackInstance
 	if err := r.db.Where("status IN ? AND expires_at IS NOT NULL AND expires_at > ? AND expires_at <= ?",
 		[]string{models.StackStatusRunning, models.StackStatusPartial}, now, deadline).
+		Order("expires_at ASC").
 		Find(&instances).Error; err != nil {
 		return nil, dberrors.NewDatabaseError("list_expiring_soon", err)
+	}
+	return instances, nil
+}
+
+// ListByStatus returns instances with the given status, up to limit rows.
+// A limit <= 0 returns all matching rows.
+func (r *GORMStackInstanceRepository) ListByStatus(status string, limit int) ([]*models.StackInstance, error) {
+	var instances []*models.StackInstance
+	q := r.db.Where("status = ?", status).Order("updated_at DESC")
+	if limit > 0 {
+		q = q.Limit(limit)
+	}
+	if err := q.Find(&instances).Error; err != nil {
+		return nil, dberrors.NewDatabaseError("list_by_status", err)
 	}
 	return instances, nil
 }

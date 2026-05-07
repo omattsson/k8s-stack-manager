@@ -68,6 +68,9 @@ type Deps struct {
 	Registry            *cluster.Registry
 	InstanceRepo        models.StackInstanceRepository
 
+	// Dashboard handler.
+	DashboardHandler *handlers.DashboardHandler
+
 	// Template version handler.
 	TemplateVersionHandler *handlers.TemplateVersionHandler
 
@@ -480,6 +483,11 @@ func SetupRoutes(router *gin.Engine, deps Deps) *RateLimiters {
 				analytics.GET("/templates", deps.AnalyticsHandler.GetTemplateStats)
 				analytics.GET("/users", middleware.RequireAdmin(), deps.AnalyticsHandler.GetUserStats)
 			}
+		}
+
+		// Dashboard overview (all authenticated users)
+		if deps.DashboardHandler != nil {
+			authed.GET("/dashboard", deps.DashboardHandler.GetDashboard)
 		}
 
 		// Notifications

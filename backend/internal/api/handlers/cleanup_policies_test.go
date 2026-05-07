@@ -762,6 +762,9 @@ func (r *cleanupMockInstanceRepo) ListExpired() ([]*models.StackInstance, error)
 func (r *cleanupMockInstanceRepo) ListExpiringSoon(_ time.Duration) ([]*models.StackInstance, error) {
 	return nil, nil
 }
+func (r *cleanupMockInstanceRepo) ListByStatus(_ string, _ int) ([]*models.StackInstance, error) {
+	return nil, nil
+}
 
 // cleanupMockAuditRepo implements models.AuditLogRepository for handler tests.
 type cleanupMockAuditRepo struct {

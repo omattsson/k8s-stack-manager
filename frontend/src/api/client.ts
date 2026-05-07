@@ -54,6 +54,7 @@ import type {
   UpgradeCheckResponse,
   InstanceQuotaOverride,
   DeployPreviewResponse,
+  DashboardResponse,
 } from '../types';
 
 // Extend Axios config to include our retry flag (avoids `any` cast).
@@ -306,7 +307,7 @@ export const templateService = {
   get: async (id: string): Promise<StackTemplate> => {
     try {
       const response = await api.get(`/api/v1/templates/${id}`);
-      const { template, charts } = response.data;
+      const { charts, ...template } = response.data;
       return { ...template, charts: charts || [] };
     } catch (error) {
       console.error('Failed to fetch template:', error);
@@ -1217,7 +1218,7 @@ export const gitService = {
   branches: async (repoUrl: string): Promise<string[]> => {
     try {
       const response = await api.get('/api/v1/git/branches', { params: { repo: repoUrl } });
-      return response.data;
+      return response.data.map((b: { name: string }) => b.name);
     } catch (error) {
       console.error('Failed to fetch branches:', error);
       throw error;
@@ -2058,6 +2059,24 @@ export const notificationService = {
       await api.put('/api/v1/notifications/preferences', { preferences });
     } catch (error) {
       console.error('Failed to update notification preferences:', error);
+      throw error;
+    }
+  },
+};
+
+/** Dashboard overview service. Maps to `/api/v1/dashboard`. */
+export const dashboardService = {
+  /**
+   * Fetch aggregated dashboard overview data (cluster health, recent deploys, expiring/failing instances).
+   * @returns Dashboard overview with all widget data
+   * @see GET /api/v1/dashboard
+   */
+  getOverview: async (): Promise<DashboardResponse> => {
+    try {
+      const response = await api.get('/api/v1/dashboard');
+      return response.data;
+    } catch (error) {
+      console.error('Failed to fetch dashboard overview:', error);
       throw error;
     }
   },

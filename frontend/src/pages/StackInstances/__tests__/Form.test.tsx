@@ -24,6 +24,9 @@ vi.mock('../../../api/client', () => ({
   clusterService: {
     list: vi.fn().mockResolvedValue([]),
   },
+  gitService: {
+    branches: vi.fn().mockResolvedValue([]),
+  },
 }));
 
 import { instanceService, definitionService, clusterService } from '../../../api/client';
@@ -339,7 +342,7 @@ describe('StackInstances Form', () => {
     await user.click(screen.getByText(/API Stack/));
 
     // Branch field should update to the definition's default branch
-    const branchInput = screen.getByRole('textbox', { name: /branch/i });
+    const branchInput = screen.getByRole('combobox', { name: /branch/i });
     expect(branchInput).toHaveValue('develop');
   });
 

@@ -359,6 +359,7 @@ func main() {
 	}
 
 	analyticsHandler := handlers.NewAnalyticsHandler(templateRepo, definitionRepo, instanceRepo, deployLogRepo, userRepo)
+	dashboardHandler := handlers.NewDashboardHandler(clusterRepo, instanceRepo, deployLogRepo, clusterRegistry)
 
 	// ------------------------------------------------------------------
 	// Phase 6.2: Cleanup policies
@@ -394,6 +395,7 @@ func main() {
 		FavoriteHandler:              favoriteHandler,
 		QuickDeployHandler:           quickDeployHandler,
 		AnalyticsHandler:             analyticsHandler,
+		DashboardHandler:             dashboardHandler,
 		CleanupPolicyHandler:         cleanupPolicyHandler,
 		CleanupScheduler:             cleanupScheduler,
 		ClusterHandler:               clusterHandler,
@@ -525,6 +527,7 @@ func main() {
 		clusterRegistry:  clusterRegistry,
 		watcherCancel:    watcherCancel,
 		oidcStateStore:   oidcStateStore,
+		dashboardHandler: dashboardHandler,
 		repo:             repo,
 	})
 }
@@ -545,6 +548,7 @@ type shutdownDeps struct {
 	clusterRegistry  *cluster.Registry
 	watcherCancel    context.CancelFunc
 	oidcStateStore   *auth.StateStore
+	dashboardHandler *handlers.DashboardHandler
 	repo             models.Repository
 }
 
@@ -587,6 +591,9 @@ func gracefulShutdown(srv *http.Server, timeout time.Duration, deps shutdownDeps
 	deps.watcherCancel()
 	if deps.oidcStateStore != nil {
 		deps.oidcStateStore.Stop()
+	}
+	if deps.dashboardHandler != nil {
+		deps.dashboardHandler.Stop()
 	}
 
 	// 5. Flush OTel spans/metrics/logs AFTER all services stop,

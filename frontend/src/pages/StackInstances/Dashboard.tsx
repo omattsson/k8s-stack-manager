@@ -38,6 +38,7 @@ import CompareArrowsIcon from '@mui/icons-material/CompareArrows';
 import StatusBadge from '../../components/StatusBadge';
 import FavoriteButton from '../../components/FavoriteButton';
 import ExpiryChip from './ExpiryChip';
+import DashboardWidgets from './widgets/DashboardWidgets';
 import { instanceService, clusterService, favoriteService } from '../../api/client';
 import type { StackInstance, Cluster, NamespaceStatus, UserFavorite, BulkOperationResponse } from '../../types';
 import LoadingState from '../../components/LoadingState';
@@ -502,6 +503,8 @@ const Dashboard = () => {
         </Box>
       </Box>
 
+      <DashboardWidgets />
+
       <Box sx={{ display: 'flex', gap: 2, mb: 3, alignItems: 'center', flexWrap: 'wrap' }}>
         <TextField
           size="small"
@@ -676,28 +679,6 @@ const Dashboard = () => {
             ))}
           </Box>
         </Box>
-      )}
-
-      {clusters.length > 0 && (
-        <Paper variant="outlined" sx={{ p: 1.5, mb: 3, display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
-          <Typography variant="body2" color="text.secondary">
-            {clusters.length} cluster{clusters.length === 1 ? '' : 's'}:
-          </Typography>
-          {(['healthy', 'degraded', 'unreachable'] as const).map((status) => {
-            const count = clusters.filter((c) => c.health_status === status).length;
-            if (count === 0) return null;
-            const clusterStatusColor = status === 'healthy' ? 'success' : status === 'degraded' ? 'warning' : 'error';
-            return (
-              <Chip
-                key={status}
-                label={`${count} ${status}`}
-                size="small"
-                color={clusterStatusColor}
-                variant="outlined"
-              />
-            );
-          })}
-        </Paper>
       )}
 
       {filtered.length === 0 ? (

@@ -180,6 +180,10 @@ func (m *MockDeploymentLogRepository) CountByAction(_ context.Context, _ string)
 	return 0, nil
 }
 
+func (m *MockDeploymentLogRepository) ListRecentGlobal(_ context.Context, _ int) ([]models.DeploymentLogWithContext, error) {
+	return nil, nil
+}
+
 func (m *MockDeploymentLogRepository) SetError(err error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

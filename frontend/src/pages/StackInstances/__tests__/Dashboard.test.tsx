@@ -7,11 +7,15 @@ import { NotificationProvider } from '../../../context/NotificationContext';
 import type { WsMessage } from '../../../hooks/useWebSocket';
 
 type MessageHandler = (msg: WsMessage) => void;
-let capturedWsHandler: MessageHandler | null = null;
+const capturedWsHandlers: MessageHandler[] = [];
+
+function broadcastWs(msg: WsMessage) {
+  capturedWsHandlers.forEach((h) => h(msg));
+}
 
 vi.mock('../../../hooks/useWebSocket', () => ({
   useWebSocket: (handler: MessageHandler) => {
-    capturedWsHandler = handler;
+    capturedWsHandlers.push(handler);
     return { send: vi.fn() };
   },
 }));
@@ -39,6 +43,14 @@ vi.mock('../../../api/client', () => ({
     check: vi.fn().mockResolvedValue(false),
     add: vi.fn(),
     remove: vi.fn(),
+  },
+  dashboardService: {
+    getOverview: vi.fn().mockResolvedValue({
+      clusters: [],
+      recent_deployments: [],
+      expiring_soon: [],
+      failing_instances: [],
+    }),
   },
 }));
 
@@ -71,7 +83,7 @@ const mockInstance = (overrides: Record<string, unknown> = {}) => ({
 describe('Dashboard', () => {
   afterEach(() => {
     vi.clearAllMocks();
-    capturedWsHandler = null;
+    capturedWsHandlers.length = 0;
   });
 
   // Reset default mocks that survive clearAllMocks
@@ -158,7 +170,7 @@ describe('Dashboard', () => {
 
     // Simulate a WebSocket deployment.status message.
     act(() => {
-      capturedWsHandler?.({
+      broadcastWs({
         type: 'deployment.status',
         payload: { instance_id: 'inst-1', status: 'deploying', log_id: 'log-1' },
       });
@@ -192,7 +204,7 @@ describe('Dashboard', () => {
 
     // Send a message for a different instance.
     act(() => {
-      capturedWsHandler?.({
+      broadcastWs({
         type: 'deployment.status',
         payload: { instance_id: 'unknown-id', status: 'error', log_id: 'log-2' },
       });
@@ -669,15 +681,21 @@ describe('Dashboard', () => {
     });
   });
 
-  describe('Cluster Health Bar', () => {
-    it('renders cluster health summary when clusters are loaded', async () => {
+  describe('Dashboard Widgets', () => {
+    it('renders cluster health widget from dashboard API', async () => {
+      const { dashboardService } = await import('../../../api/client');
+      (dashboardService.getOverview as ReturnType<typeof vi.fn>).mockResolvedValue({
+        clusters: [
+          { id: 'c1', name: 'prod', health_status: 'healthy' },
+          { id: 'c2', name: 'staging', health_status: 'degraded' },
+          { id: 'c3', name: 'dev', health_status: 'unreachable' },
+        ],
+        recent_deployments: [],
+        expiring_soon: [],
+        failing_instances: [],
+      });
       (instanceService.list as ReturnType<typeof vi.fn>).mockResolvedValue([
         mockInstance(),
-      ]);
-      (clusterService.list as ReturnType<typeof vi.fn>).mockResolvedValue([
-        { id: 'c1', name: 'prod', health_status: 'healthy', is_default: true },
-        { id: 'c2', name: 'staging', health_status: 'degraded', is_default: false },
-        { id: 'c3', name: 'dev', health_status: 'unreachable', is_default: false },
       ]);
       render(
         <MemoryRouter>
@@ -687,18 +705,24 @@ describe('Dashboard', () => {
         </MemoryRouter>
       );
       await waitFor(() => {
-        expect(screen.getByText('3 clusters:')).toBeInTheDocument();
+        expect(screen.getByText('Cluster Health')).toBeInTheDocument();
       });
-      expect(screen.getByText('1 healthy')).toBeInTheDocument();
-      expect(screen.getByText('1 degraded')).toBeInTheDocument();
-      expect(screen.getByText('1 unreachable')).toBeInTheDocument();
+      expect(screen.getByText('prod')).toBeInTheDocument();
+      expect(screen.getByText('staging')).toBeInTheDocument();
+      expect(screen.getByText('dev')).toBeInTheDocument();
     });
 
-    it('does not render cluster bar when no clusters', async () => {
+    it('renders empty state when no clusters', async () => {
+      const { dashboardService } = await import('../../../api/client');
+      (dashboardService.getOverview as ReturnType<typeof vi.fn>).mockResolvedValue({
+        clusters: [],
+        recent_deployments: [],
+        expiring_soon: [],
+        failing_instances: [],
+      });
       (instanceService.list as ReturnType<typeof vi.fn>).mockResolvedValue([
         mockInstance(),
       ]);
-      (clusterService.list as ReturnType<typeof vi.fn>).mockResolvedValue([]);
       render(
         <MemoryRouter>
           <NotificationProvider>
@@ -707,9 +731,11 @@ describe('Dashboard', () => {
         </MemoryRouter>
       );
       await waitFor(() => {
-        expect(screen.getByText('Stack Instances')).toBeInTheDocument();
+        expect(screen.getByText('Cluster Health')).toBeInTheDocument();
       });
-      expect(screen.queryByText(/cluster/)).not.toBeInTheDocument();
+      await waitFor(() => {
+        expect(screen.getByText('No clusters registered.')).toBeInTheDocument();
+      });
     });
   });
 

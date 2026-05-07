@@ -159,6 +159,9 @@ func (m *mockInstanceRepo) ListExpired() ([]*models.StackInstance, error) {
 func (m *mockInstanceRepo) ListExpiringSoon(_ time.Duration) ([]*models.StackInstance, error) {
 	return nil, nil
 }
+func (m *mockInstanceRepo) ListByStatus(_ string, _ int) ([]*models.StackInstance, error) {
+	return nil, nil
+}
 
 func (m *mockInstanceRepo) setError(err error) {
 	m.mu.Lock()
@@ -292,6 +295,10 @@ func (m *mockDeployLogRepo) SummarizeBatch(ctx context.Context, instanceIDs []st
 
 func (m *mockDeployLogRepo) CountByAction(_ context.Context, _ string) (int, error) {
 	return 0, nil
+}
+
+func (m *mockDeployLogRepo) ListRecentGlobal(_ context.Context, _ int) ([]models.DeploymentLogWithContext, error) {
+	return nil, nil
 }
 
 // ---- txRunner mock ----

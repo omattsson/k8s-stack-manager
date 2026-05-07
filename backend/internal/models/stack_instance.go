@@ -57,4 +57,5 @@ type StackInstanceRepository interface {
 	ExistsByDefinitionAndStatus(definitionID, status string) (bool, error)
 	ListExpired() ([]*StackInstance, error)
 	ListExpiringSoon(threshold time.Duration) ([]*StackInstance, error)
+	ListByStatus(status string, limit int) ([]*StackInstance, error)
 }

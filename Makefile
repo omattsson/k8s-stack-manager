@@ -81,7 +81,9 @@ test-frontend:
 	cd frontend && npm test
 
 # Run frontend e2e tests (requires MySQL running, starts backend natively)
+# Logs are written to frontend/test-logs/ for post-mortem troubleshooting.
 test-e2e: integration-infra-start
+	@mkdir -p frontend/test-logs
 	@echo "Building and starting backend..."
 	@cd backend && go build -o tmp/main ./api/main.go
 	@cd backend && \
@@ -91,13 +93,16 @@ test-e2e: integration-infra-start
 		ADMIN_USERNAME=admin ADMIN_PASSWORD=admin SELF_REGISTRATION=true \
 		HELM_BINARY=$${HELM_BINARY:-helm} \
 		KUBECONFIG_PATH=$${KUBECONFIG_PATH:-$$HOME/.kube/config} \
-		RATE_LIMIT=10000 PORT=8081 ./tmp/main &
+		CORS_ALLOWED_ORIGINS=http://localhost:3000 \
+		RATE_LIMIT=10000 LOGIN_RATE_LIMIT=10000 PORT=8081 \
+		./tmp/main > ../frontend/test-logs/backend.log 2>&1 &
 	@echo "Waiting for backend to be healthy..."
 	@until curl -sf http://localhost:8081/health/live >/dev/null 2>&1; do \
 		sleep 1; \
 	done
 	@echo "Backend is ready, running Playwright tests..."
-	cd frontend && npx playwright test || (kill $$(lsof -ti:8081) 2>/dev/null; $(MAKE) integration-infra-stop; exit 1)
+	cd frontend && bash -o pipefail -c 'npx playwright test 2>&1 | tee test-logs/playwright.log' || \
+		(kill $$(lsof -ti:8081) 2>/dev/null; $(MAKE) integration-infra-stop; exit 1)
 	@echo "Stopping backend..."
 	@kill $$(lsof -ti:8081) 2>/dev/null || true
 	$(MAKE) integration-infra-stop

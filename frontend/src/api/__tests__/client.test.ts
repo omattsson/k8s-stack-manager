@@ -147,19 +147,18 @@ describe('templateService', () => {
 
   it('get merges template with charts from response', async () => {
     const api = mockApi;
-    const template = { id: '1', name: 'tmpl-1' };
     const charts = [{ id: 'c1', chart_name: 'nginx' }];
-    api.get.mockResolvedValueOnce(mockResponse({ template, charts }));
+    api.get.mockResolvedValueOnce(mockResponse({ id: '1', name: 'tmpl-1', charts }));
 
     const result = await templateService.get('1');
 
     expect(api.get).toHaveBeenCalledWith('/api/v1/templates/1');
-    expect(result).toEqual({ ...template, charts });
+    expect(result).toEqual({ id: '1', name: 'tmpl-1', charts });
   });
 
   it('get defaults charts to empty array when null', async () => {
     const api = mockApi;
-    api.get.mockResolvedValueOnce(mockResponse({ template: { id: '1' }, charts: null }));
+    api.get.mockResolvedValueOnce(mockResponse({ id: '1', charts: null }));
 
     const result = await templateService.get('1');
 
@@ -770,7 +769,7 @@ describe('clusterService', () => {
 describe('gitService', () => {
   it('branches sends GET with repo param', async () => {
     const api = mockApi;
-    const branches = ['main', 'develop', 'feature/x'];
+    const branches = [{ name: 'main' }, { name: 'develop' }, { name: 'feature/x' }];
     api.get.mockResolvedValueOnce(mockResponse(branches));
 
     const result = await gitService.branches('https://dev.azure.com/org/proj/_git/repo');
@@ -778,7 +777,7 @@ describe('gitService', () => {
     expect(api.get).toHaveBeenCalledWith('/api/v1/git/branches', {
       params: { repo: 'https://dev.azure.com/org/proj/_git/repo' },
     });
-    expect(result).toEqual(branches);
+    expect(result).toEqual(['main', 'develop', 'feature/x']);
   });
 
   it('branches throws on error', async () => {

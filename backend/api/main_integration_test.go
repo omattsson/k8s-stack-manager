@@ -23,8 +23,8 @@ func TestDatabaseInitialization(t *testing.T) {
 		Database: config.DatabaseConfig{
 			Host:            "localhost",
 			Port:            "3306",
-			User:            "appuser",
-			Password:        "apppass",
+			User:            "root",
+			Password:        "rootpassword",
 			DBName:          "app",
 			MaxOpenConns:    5,
 			MaxIdleConns:    2,

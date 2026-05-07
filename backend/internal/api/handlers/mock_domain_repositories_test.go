@@ -1042,6 +1042,27 @@ func (m *MockStackInstanceRepository) ListIDsByOwnerIDs(ownerIDs []string) (map[
 	return result, nil
 }
 
+func (m *MockStackInstanceRepository) ListByStatus(status string, limit int) ([]*models.StackInstance, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.err != nil {
+		return nil, m.err
+	}
+	var result []*models.StackInstance
+	for _, inst := range m.items {
+		if inst.Status == status {
+			result = append(result, inst)
+		}
+	}
+	sort.Slice(result, func(i, j int) bool {
+		return result[i].UpdatedAt.After(result[j].UpdatedAt)
+	})
+	if limit > 0 && len(result) > limit {
+		result = result[:limit]
+	}
+	return result, nil
+}
+
 func (m *MockStackInstanceRepository) SetError(err error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
