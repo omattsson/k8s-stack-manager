@@ -435,7 +435,7 @@ func LoadConfig() (*Config, error) {
 		Deployment:  loadDeploymentConfig(),
 		OIDC:         loadOIDCConfig(),
 		Otel:         loadOtelConfig(),
-		SessionStore: SessionStoreConfig{Backend: getEnv("SESSION_STORE", "mysql")},
+		SessionStore: SessionStoreConfig{Backend: strings.TrimSpace(strings.ToLower(getEnv("SESSION_STORE", "mysql")))},
 	}
 
 	// Validate the configuration

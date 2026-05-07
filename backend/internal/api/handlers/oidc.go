@@ -132,7 +132,11 @@ func (h *OIDCHandler) Callback(c *gin.Context) {
 	// Validate state (one-time use — prevents CSRF and replay).
 	stateData, stateErr := h.sessionStore.ConsumeOIDCState(c.Request.Context(), stateParam)
 	if stateErr != nil || stateData == nil {
-		slog.Warn("OIDC callback with invalid or expired state")
+		if stateErr != nil {
+			slog.Error("OIDC state lookup failed", "error", stateErr)
+		} else {
+			slog.Warn("OIDC callback with invalid or expired state")
+		}
 		c.Redirect(http.StatusFound, "/login?error=invalid_state")
 		return
 	}

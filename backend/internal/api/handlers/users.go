@@ -81,6 +81,7 @@ func (h *UserHandler) DeleteUser(c *gin.Context) {
 // @Summary      Disable a user
 // @Description  Disables a user account. All API keys for this user immediately stop working. Admin only.
 // @Tags         users
+// @Accept       json
 // @Produce      json
 // @Security     BearerAuth
 // @Param        id   path      string  true  "User ID"
@@ -98,6 +99,7 @@ func (h *UserHandler) DisableUser(c *gin.Context) {
 // @Summary      Enable a user
 // @Description  Re-enables a previously disabled user account. Admin only.
 // @Tags         users
+// @Accept       json
 // @Produce      json
 // @Security     BearerAuth
 // @Param        id   path      string  true  "User ID"
