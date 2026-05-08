@@ -1,5 +1,5 @@
-import { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useState, useEffect, useMemo } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Box,
   TextField,
@@ -21,6 +21,8 @@ const Login = () => {
   const [ssoLoading, setSsoLoading] = useState(false);
   const { login, isAuthenticated, oidcConfig, oidcLoading, loginWithOIDC } = useAuth();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const forceLocal = useMemo(() => searchParams.get('local') === 'true', [searchParams]);
 
   useEffect(() => {
     if (isAuthenticated) {
@@ -45,15 +47,21 @@ const Login = () => {
     setLoading(true);
     try {
       await login(username, password);
-    } catch {
-      setError('Invalid username or password');
+    } catch (err: unknown) {
+      const status = (err as { response?: { status?: number } })?.response?.status;
+      const message = (err as { response?: { data?: { error?: string } } })?.response?.data?.error;
+      if (status === 403 && message) {
+        setError(message);
+      } else {
+        setError('Invalid username or password');
+      }
     } finally {
       setLoading(false);
     }
   };
 
-  const showSso = oidcConfig?.enabled === true;
-  const showLocalAuth = !oidcConfig?.enabled || oidcConfig.local_auth_enabled !== false;
+  const showSso = oidcConfig?.enabled === true && !forceLocal;
+  const showLocalAuth = forceLocal || !oidcConfig?.enabled || oidcConfig.local_auth_enabled !== false;
 
   if (oidcLoading) {
     return (

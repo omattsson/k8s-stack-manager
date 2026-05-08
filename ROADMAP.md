@@ -14,7 +14,7 @@ The core platform is functional. This tracks what's left, sourced from [GitHub i
 
 - **Gate deploy-finalized on pod readiness**, not just Helm apply ([#186](../../issues/186))
 - **Reject deploy when namespace is terminating** ([#182](../../issues/182))
-- **SessionStore abstraction** for token blocklist and OIDC state, Redis-ready ([#148](../../issues/148))
+- ~~**SessionStore abstraction** for token blocklist and OIDC state, Redis-ready ([#148](../../issues/148))~~ ✓ shipped in PR #217
 
 ## Notifications
 

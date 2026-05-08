@@ -14,12 +14,6 @@ function createFakeJwt(payload: Record<string, unknown>): string {
 const OIDC_CONFIG_ENABLED = {
   enabled: true,
   provider_name: 'Microsoft',
-  local_auth_enabled: true,
-};
-
-const OIDC_CONFIG_SSO_ONLY = {
-  enabled: true,
-  provider_name: 'Microsoft',
   local_auth_enabled: false,
 };
 
@@ -30,7 +24,7 @@ const OIDC_CONFIG_DISABLED = {
 };
 
 test.describe('OIDC Authentication', () => {
-  test('shows SSO button when OIDC is enabled', async ({ page }) => {
+  test('shows only SSO button when OIDC is enabled', async ({ page }) => {
     await page.route('**/api/v1/auth/oidc/config', (route) => {
       route.fulfill({
         status: 200,
@@ -44,25 +38,7 @@ test.describe('OIDC Authentication', () => {
     await expect(
       page.getByRole('button', { name: /sign in with microsoft/i })
     ).toBeVisible({ timeout: 10_000 });
-    await expect(page.getByLabel('Username')).toBeVisible();
-    await expect(page.getByLabel('Password')).toBeVisible();
-    await expect(page.getByText(/or sign in with credentials/i)).toBeVisible();
-  });
-
-  test('shows only SSO button when local auth is disabled', async ({ page }) => {
-    await page.route('**/api/v1/auth/oidc/config', (route) => {
-      route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify(OIDC_CONFIG_SSO_ONLY),
-      });
-    });
-
-    await page.goto('/login');
-
-    await expect(
-      page.getByRole('button', { name: /sign in with microsoft/i })
-    ).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText(/sign in with your organization account/i)).toBeVisible();
     await expect(page.getByLabel('Username')).not.toBeVisible();
     await expect(page.getByLabel('Password')).not.toBeVisible();
   });
@@ -105,7 +81,6 @@ test.describe('OIDC Authentication', () => {
       });
     });
 
-    // Prevent actual navigation to the external IdP
     await page.route('https://idp.example.com/**', (route) => {
       route.fulfill({
         status: 200,
@@ -195,7 +170,7 @@ test.describe('OIDC Authentication', () => {
     await expect(page.getByText(/something went wrong/i)).toBeVisible();
   });
 
-  test('local login still works when OIDC is enabled', async ({ page }) => {
+  test('?local=true shows local login form even when OIDC is enabled', async ({ page }) => {
     await page.route('**/api/v1/auth/oidc/config', (route) => {
       route.fulfill({
         status: 200,
@@ -204,7 +179,26 @@ test.describe('OIDC Authentication', () => {
       });
     });
 
-    await page.goto('/login');
+    await page.goto('/login?local=true');
+
+    await expect(page.getByLabel('Username')).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByLabel('Password')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Sign In', exact: true })).toBeVisible();
+    await expect(
+      page.getByRole('button', { name: /sign in with/i })
+    ).not.toBeVisible();
+  });
+
+  test('service account login works via ?local=true', async ({ page }) => {
+    await page.route('**/api/v1/auth/oidc/config', (route) => {
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify(OIDC_CONFIG_ENABLED),
+      });
+    });
+
+    await page.goto('/login?local=true');
     await expect(page.getByLabel('Username')).toBeVisible({ timeout: 10_000 });
 
     await page.getByLabel('Username').fill('admin');

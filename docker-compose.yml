@@ -20,7 +20,7 @@ services:
       - LOG_FILE=${LOG_FILE:-}
       - API_VERSION=${API_VERSION:-v1}
       - API_PREFIX=${API_PREFIX:-/api}
-      - CORS_ALLOWED_ORIGINS=${CORS_ALLOWED_ORIGINS:-*}
+      - CORS_ALLOWED_ORIGINS=${CORS_ALLOWED_ORIGINS:-http://localhost:3000}
       - CORS_ALLOWED_METHODS=${CORS_ALLOWED_METHODS:-GET,POST,PUT,DELETE,OPTIONS}
       - CORS_ALLOWED_HEADERS=${CORS_ALLOWED_HEADERS:-Origin,Content-Type,Accept,Authorization}
       - CORS_MAX_AGE=${CORS_MAX_AGE:-300}
@@ -73,6 +73,8 @@ services:
       - LOGIN_RATE_LIMIT=${LOGIN_RATE_LIMIT:-10}
       # Swagger UI (enabled for dev)
       - ENABLE_SWAGGER=${ENABLE_SWAGGER:-true}
+      # Session store (token blocklist + OIDC state persistence)
+      - SESSION_STORE=${SESSION_STORE:-mysql}
       # Stack defaults
       - DEFAULT_BRANCH=${DEFAULT_BRANCH:-master}
     healthcheck:

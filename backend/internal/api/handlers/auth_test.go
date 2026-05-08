@@ -51,7 +51,7 @@ func setupAuthRouter(userRepo *MockUserRepository, selfReg bool, callerUserID, c
 	r := gin.New()
 	r.Use(injectAuthContext(callerUserID, callerRole))
 
-	h := NewAuthHandler(userRepo, testAuthConfig(selfReg))
+	h := NewAuthHandler(userRepo, testAuthConfig(selfReg), &config.OIDCConfig{})
 
 	auth := r.Group("/api/v1/auth")
 	{
@@ -138,6 +138,16 @@ func TestLogin(t *testing.T) {
 			body:       `{"username":"alice"}`,
 			setup:      func(_ *MockUserRepository) {},
 			wantStatus: http.StatusBadRequest,
+		},
+		{
+			name: "disabled user gets 403",
+			body: `{"username":"alice","password":"secret"}`,
+			setup: func(repo *MockUserRepository) {
+				u := seedUser(t, repo, "uid-dis", "alice", "secret", "user")
+				u.Disabled = true
+				_ = repo.Update(u)
+			},
+			wantStatus: http.StatusForbidden,
 		},
 	}
 

@@ -10,9 +10,9 @@ import (
 	"testing"
 	"time"
 
-	"backend/internal/api/middleware"
 	"backend/internal/config"
 	"backend/internal/models"
+	"backend/internal/sessionstore"
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
@@ -179,15 +179,15 @@ func testAuthConfigWithRefresh() *config.AuthConfig {
 }
 
 // setupRefreshAuthRouter creates a gin engine with auth + refresh routes.
-func setupRefreshAuthRouter(userRepo *MockUserRepository, refreshRepo *MockRefreshTokenRepository, blocklist *middleware.TokenBlocklist) *gin.Engine {
+func setupRefreshAuthRouter(userRepo *MockUserRepository, refreshRepo *MockRefreshTokenRepository, store sessionstore.SessionStore) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
 
 	cfg := testAuthConfigWithRefresh()
-	h := NewAuthHandler(userRepo, cfg)
+	h := NewAuthHandler(userRepo, cfg, &config.OIDCConfig{})
 	h.SetRefreshTokenRepo(refreshRepo)
-	if blocklist != nil {
-		h.SetTokenBlocklist(blocklist)
+	if store != nil {
+		h.SetSessionStore(store)
 	}
 
 	auth := r.Group("/api/v1/auth")
@@ -252,6 +252,7 @@ func TestRefresh(t *testing.T) {
 		setup      func(*testing.T, *MockUserRepository, *MockRefreshTokenRepository) string // returns raw cookie value
 		wantStatus int
 		wantToken  bool
+		verify     func(*testing.T, *httptest.ResponseRecorder, *MockRefreshTokenRepository)
 	}{
 		{
 			name: "valid refresh token returns new access token",
@@ -353,6 +354,43 @@ func TestRefresh(t *testing.T) {
 			},
 			wantStatus: http.StatusUnauthorized,
 		},
+		{
+			name: "disabled user gets 403 and all tokens revoked",
+			setup: func(t *testing.T, ur *MockUserRepository, rr *MockRefreshTokenRepository) string {
+				u := seedUser(t, ur, "uid-dis", "disabled-alice", "secret", "user")
+				u.Disabled = true
+				_ = ur.Update(u)
+				raw := "disabled0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+				hash := hashRefreshToken(raw)
+				now := time.Now()
+				_ = rr.Create(&models.RefreshToken{
+					ID:           "rt-disabled",
+					UserID:       "uid-dis",
+					TokenHash:    hash,
+					ExpiresAt:    now.Add(7 * 24 * time.Hour),
+					LastActivity: now,
+					CreatedAt:    now,
+				})
+				return raw
+			},
+			wantStatus: http.StatusForbidden,
+			verify: func(t *testing.T, w *httptest.ResponseRecorder, rr *MockRefreshTokenRepository) {
+				// All refresh tokens for the disabled user must be revoked.
+				rr.mu.RLock()
+				for _, tok := range rr.tokens {
+					if tok.UserID == "uid-dis" {
+						assert.True(t, tok.Revoked, "refresh token for disabled user should be revoked")
+					}
+				}
+				rr.mu.RUnlock()
+				// Refresh cookie must be cleared (MaxAge < 0).
+				for _, c := range w.Result().Cookies() {
+					if c.Name == "refresh_token" {
+						assert.Less(t, c.MaxAge, 0, "refresh_token cookie should be cleared")
+					}
+				}
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -375,6 +413,9 @@ func TestRefresh(t *testing.T) {
 			router.ServeHTTP(w, req)
 
 			assert.Equal(t, tt.wantStatus, w.Code)
+			if tt.verify != nil {
+				tt.verify(t, w, refreshRepo)
+			}
 			if tt.wantToken {
 				var resp RefreshResponse
 				require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
@@ -411,8 +452,8 @@ func TestLogout(t *testing.T) {
 
 	userRepo := NewMockUserRepository()
 	refreshRepo := NewMockRefreshTokenRepository()
-	blocklist := middleware.NewTokenBlocklist(time.Minute)
-	defer blocklist.Stop()
+	store := sessionstore.NewMemoryStore()
+	defer store.Stop()
 
 	seedUser(t, userRepo, "uid-1", "alice", "secret", "user")
 
@@ -429,7 +470,7 @@ func TestLogout(t *testing.T) {
 		CreatedAt:    now,
 	})
 
-	router := setupRefreshAuthRouter(userRepo, refreshRepo, blocklist)
+	router := setupRefreshAuthRouter(userRepo, refreshRepo, store)
 	w := httptest.NewRecorder()
 	req, _ := http.NewRequest(http.MethodPost, "/api/v1/auth/logout", nil)
 	req.AddCookie(&http.Cookie{Name: "refresh_token", Value: raw})
@@ -462,8 +503,8 @@ func TestLogoutAll(t *testing.T) {
 
 	userRepo := NewMockUserRepository()
 	refreshRepo := NewMockRefreshTokenRepository()
-	blocklist := middleware.NewTokenBlocklist(time.Minute)
-	defer blocklist.Stop()
+	store := sessionstore.NewMemoryStore()
+	defer store.Stop()
 
 	seedUser(t, userRepo, "uid-1", "alice", "secret", "user")
 
@@ -483,7 +524,7 @@ func TestLogoutAll(t *testing.T) {
 		})
 	}
 
-	router := setupRefreshAuthRouter(userRepo, refreshRepo, blocklist)
+	router := setupRefreshAuthRouter(userRepo, refreshRepo, store)
 	w := httptest.NewRecorder()
 	req, _ := http.NewRequest(http.MethodPost, "/api/v1/auth/logout-all", nil)
 	router.ServeHTTP(w, req)
@@ -500,27 +541,6 @@ func TestLogoutAll(t *testing.T) {
 	refreshRepo.mu.RUnlock()
 }
 
-// ---- Token Blocklist Tests ----
-
-func TestTokenBlocklist(t *testing.T) {
-	t.Parallel()
-
-	bl := middleware.NewTokenBlocklist(100 * time.Millisecond)
-	defer bl.Stop()
-
-	assert.False(t, bl.IsBlocked("jti-1"))
-
-	bl.Add("jti-1", time.Now().Add(time.Hour))
-	assert.True(t, bl.IsBlocked("jti-1"))
-
-	// After expiry, the entry should be cleaned up.
-	bl.Add("jti-2", time.Now().Add(50*time.Millisecond))
-	assert.True(t, bl.IsBlocked("jti-2"))
-	assert.Eventually(t, func() bool {
-		return !bl.IsBlocked("jti-2")
-	}, 500*time.Millisecond, 25*time.Millisecond)
-}
-
 // ---- Refresh without repository configured returns 501 ----
 
 func TestRefreshNotEnabled(t *testing.T) {
@@ -529,7 +549,7 @@ func TestRefreshNotEnabled(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
 	cfg := testAuthConfigWithRefresh()
-	h := NewAuthHandler(NewMockUserRepository(), cfg)
+	h := NewAuthHandler(NewMockUserRepository(), cfg, &config.OIDCConfig{})
 	// NOT setting refresh token repo
 
 	r.POST("/api/v1/auth/refresh", h.Refresh)

@@ -4,16 +4,18 @@ import "time"
 
 // User represents an authenticated user of the system.
 type User struct {
-	ID           string    `json:"id" gorm:"primaryKey;size:36"`
-	Username     string    `json:"username" gorm:"size:100;uniqueIndex"`
-	PasswordHash string    `json:"-" gorm:"size:255"`
-	DisplayName  string    `json:"display_name" gorm:"size:255"`
-	Role         string    `json:"role" gorm:"size:50"`
-	AuthProvider string    `json:"auth_provider" gorm:"size:50;default:local"`
-	ExternalID   *string   `json:"external_id" gorm:"size:255"`
-	Email        string    `json:"email" gorm:"size:255"`
-	CreatedAt    time.Time `json:"created_at"`
-	UpdatedAt    time.Time `json:"updated_at"`
+	ID             string    `json:"id" gorm:"primaryKey;size:36"`
+	Username       string    `json:"username" gorm:"size:100;uniqueIndex"`
+	PasswordHash   string    `json:"-" gorm:"size:255"`
+	DisplayName    string    `json:"display_name" gorm:"size:255"`
+	Role           string    `json:"role" gorm:"size:50"`
+	AuthProvider   string    `json:"auth_provider" gorm:"size:50;default:local"`
+	ExternalID     *string   `json:"external_id" gorm:"size:255"`
+	Email          string    `json:"email" gorm:"size:255"`
+	Disabled       bool      `json:"disabled" gorm:"default:false"`
+	ServiceAccount bool      `json:"service_account" gorm:"default:false"`
+	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
 }
 
 // UserRepository defines data access operations for users.

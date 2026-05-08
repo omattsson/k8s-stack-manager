@@ -895,6 +895,72 @@ func (d *Database) AutoMigrate() error {
 		},
 	})
 
+	migrator.AddMigration(schema.Migration{
+		Version:     "20260507000037",
+		Name:        "create_session_entries",
+		Description: "Create session_entries table for token blocklist and OIDC state persistence",
+		Up: func(tx *gorm.DB) error {
+			if err := tx.Exec(`CREATE TABLE IF NOT EXISTS session_entries (
+				entry_key  VARCHAR(255) NOT NULL,
+				kind       VARCHAR(20)  NOT NULL,
+				data       TEXT,
+				expires_at BIGINT       NOT NULL,
+				PRIMARY KEY (entry_key, kind)
+			)`).Error; err != nil {
+				return err
+			}
+			var count int64
+			tx.Raw("SELECT COUNT(1) FROM information_schema.statistics WHERE table_schema = DATABASE() AND table_name = ? AND index_name = ?",
+				"session_entries", "idx_session_entries_expires_at").Scan(&count)
+			if count == 0 {
+				return tx.Exec("CREATE INDEX idx_session_entries_expires_at ON session_entries (expires_at)").Error
+			}
+			return nil
+		},
+		Down: func(tx *gorm.DB) error {
+			return tx.Exec("DROP TABLE IF EXISTS session_entries").Error
+		},
+	})
+
+	migrator.AddMigration(schema.Migration{
+		Version:     "20260507000038",
+		Name:        "add_users_disabled",
+		Description: "Add disabled column to users table for account deactivation",
+		Up: func(tx *gorm.DB) error {
+			if tx.Migrator().HasColumn(&models.User{}, "disabled") {
+				return nil
+			}
+			return tx.Exec("ALTER TABLE users ADD COLUMN disabled TINYINT(1) NOT NULL DEFAULT 0").Error
+		},
+		Down: func(tx *gorm.DB) error {
+			if !tx.Migrator().HasColumn(&models.User{}, "disabled") {
+				return nil
+			}
+			return tx.Exec("ALTER TABLE users DROP COLUMN disabled").Error
+		},
+	})
+
+	migrator.AddMigration(schema.Migration{
+		Version:     "20260508000039",
+		Name:        "add_users_service_account",
+		Description: "Add service_account column to users table for break-glass local login when OIDC is enabled",
+		Up: func(tx *gorm.DB) error {
+			if tx.Migrator().HasColumn(&models.User{}, "service_account") {
+				return nil
+			}
+			if err := tx.Exec("ALTER TABLE users ADD COLUMN service_account TINYINT(1) NOT NULL DEFAULT 0").Error; err != nil {
+				return err
+			}
+			return tx.Exec("UPDATE users SET service_account = 1 WHERE auth_provider = 'local' AND role = 'admin'").Error
+		},
+		Down: func(tx *gorm.DB) error {
+			if !tx.Migrator().HasColumn(&models.User{}, "service_account") {
+				return nil
+			}
+			return tx.Exec("ALTER TABLE users DROP COLUMN service_account").Error
+		},
+	})
+
 	// Run migrations
 	if err := migrator.MigrateUp(); err != nil {
 		return err

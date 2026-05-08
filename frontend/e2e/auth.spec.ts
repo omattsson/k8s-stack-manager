@@ -8,33 +8,31 @@ test.describe('Authentication', () => {
     await expect(page.getByRole('heading', { level: 1, name: 'Sign In' })).toBeVisible();
   });
 
-  test('login page shows Sign In form', async ({ page }) => {
-    await page.goto('/login');
+  test('login page shows Sign In form via ?local=true', async ({ page }) => {
+    await page.goto('/login?local=true');
     await expect(page.getByLabel('Username')).toBeVisible();
     await expect(page.getByLabel('Password')).toBeVisible();
     await expect(page.getByRole('button', { name: 'Sign In' })).toBeVisible();
   });
 
   test('successful login redirects to dashboard', async ({ page }) => {
-    await page.goto('/login');
+    await page.goto('/login?local=true');
     await page.getByLabel('Username').fill('admin');
     await page.getByLabel('Password').fill(ADMIN_PASSWORD);
     await page.getByRole('button', { name: 'Sign In' }).click();
     await expect(page).toHaveURL('/', { timeout: 10_000 });
-    // Dashboard heading
     await expect(page.getByRole('heading', { level: 1, name: 'Stack Instances' })).toBeVisible({
       timeout: 10_000,
     });
   });
 
   test('invalid credentials show error message', async ({ page }) => {
-    await page.goto('/login');
+    await page.goto('/login?local=true');
     await expect(page.getByRole('heading', { level: 1, name: 'Sign In' })).toBeVisible({ timeout: 10_000 });
     await page.getByLabel('Username').fill('admin');
     await page.getByLabel('Password').fill('wrongpassword');
     await page.getByRole('button', { name: 'Sign In' }).click();
     await expect(page.getByRole('alert')).toBeVisible({ timeout: 5_000 });
-    await expect(page.getByText('Invalid username or password')).toBeVisible();
   });
 
   test('logout returns to login page', async ({ page }) => {

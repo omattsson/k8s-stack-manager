@@ -13,6 +13,7 @@ import (
 	"backend/internal/auth"
 	"backend/internal/config"
 	"backend/internal/models"
+	"backend/internal/sessionstore"
 	"backend/pkg/dberrors"
 
 	"github.com/gin-gonic/gin"
@@ -27,7 +28,7 @@ const (
 // OIDCHandler handles OpenID Connect authentication endpoints.
 type OIDCHandler struct {
 	provider         *auth.Provider
-	stateStore       *auth.StateStore
+	sessionStore     sessionstore.SessionStore
 	userRepo         models.UserRepository
 	refreshTokenRepo models.RefreshTokenRepository
 	cfg              *config.OIDCConfig
@@ -35,13 +36,13 @@ type OIDCHandler struct {
 }
 
 // NewOIDCHandler creates a new OIDCHandler.
-func NewOIDCHandler(provider *auth.Provider, stateStore *auth.StateStore, userRepo models.UserRepository, cfg *config.OIDCConfig, authCfg *config.AuthConfig) *OIDCHandler {
+func NewOIDCHandler(provider *auth.Provider, sessionStore sessionstore.SessionStore, userRepo models.UserRepository, cfg *config.OIDCConfig, authCfg *config.AuthConfig) *OIDCHandler {
 	return &OIDCHandler{
-		provider:   provider,
-		stateStore: stateStore,
-		userRepo:   userRepo,
-		cfg:        cfg,
-		authCfg:    authCfg,
+		provider:     provider,
+		sessionStore: sessionStore,
+		userRepo:     userRepo,
+		cfg:          cfg,
+		authCfg:      authCfg,
 	}
 }
 
@@ -61,7 +62,7 @@ func (h *OIDCHandler) GetConfig(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"enabled":            h.cfg.Enabled,
 		"provider_name":      deriveProviderName(h.cfg.ProviderURL),
-		"local_auth_enabled": h.cfg.LocalAuth,
+		"local_auth_enabled": !h.cfg.Enabled || h.cfg.LocalAuth,
 	})
 }
 
@@ -101,12 +102,14 @@ func (h *OIDCHandler) Authorize(c *gin.Context) {
 		redirectURL = "/"
 	}
 
-	h.stateStore.Store(&auth.AuthState{
-		State:        state,
+	if err := h.sessionStore.SaveOIDCState(c.Request.Context(), state, sessionstore.OIDCStateData{
 		CodeVerifier: verifier,
 		RedirectURL:  redirectURL,
-		CreatedAt:    time.Now(),
-	})
+	}, h.cfg.StateTTL); err != nil {
+		slog.Error("Failed to save OIDC state", "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
+		return
+	}
 
 	authURL := h.provider.AuthorizationURL(state, challenge)
 	c.JSON(http.StatusOK, gin.H{"redirect_url": authURL})
@@ -127,15 +130,19 @@ func (h *OIDCHandler) Callback(c *gin.Context) {
 	code := c.Query("code")
 
 	// Validate state (one-time use — prevents CSRF and replay).
-	authState, ok := h.stateStore.Retrieve(stateParam)
-	if !ok {
-		slog.Warn("OIDC callback with invalid or expired state")
+	stateData, stateErr := h.sessionStore.ConsumeOIDCState(c.Request.Context(), stateParam)
+	if stateErr != nil || stateData == nil {
+		if stateErr != nil {
+			slog.Error("OIDC state lookup failed", "error", stateErr)
+		} else {
+			slog.Warn("OIDC callback with invalid or expired state")
+		}
 		c.Redirect(http.StatusFound, "/login?error=invalid_state")
 		return
 	}
 
 	// Exchange authorization code for tokens.
-	oidcUser, err := h.provider.Exchange(c.Request.Context(), code, authState.CodeVerifier)
+	oidcUser, err := h.provider.Exchange(c.Request.Context(), code, stateData.CodeVerifier)
 	if err != nil {
 		slog.Error("OIDC token exchange failed", "error", err)
 		c.Redirect(http.StatusFound, "/login?error=auth_failed")
@@ -180,7 +187,7 @@ func (h *OIDCHandler) Callback(c *gin.Context) {
 	}
 
 	// Redirect to frontend with token.
-	redirectPath := authState.RedirectURL
+	redirectPath := stateData.RedirectURL
 	if redirectPath == "" {
 		redirectPath = "/"
 	}
@@ -204,6 +211,17 @@ func (h *OIDCHandler) provisionUser(oidcUser *auth.OIDCUser) (*models.User, erro
 		return nil, fmt.Errorf(errMsgAuthFailed)
 	}
 
+	// Check if a local user with the same username already exists — link it to OIDC.
+	username := deriveOIDCUsername(oidcUser)
+	existing, err := h.userRepo.FindByUsername(username)
+	if err == nil && existing != nil {
+		return h.linkLocalUserToOIDC(existing, oidcUser)
+	}
+	if err != nil && !isNotFoundError(err) {
+		slog.Error("Failed to look up user by username", "username", username, "error", err)
+		return nil, fmt.Errorf(errMsgAuthFailed)
+	}
+
 	// User not found — check auto-provisioning.
 	if !h.cfg.AutoProvision {
 		return nil, fmt.Errorf("no_account")
@@ -215,6 +233,9 @@ func (h *OIDCHandler) provisionUser(oidcUser *auth.OIDCUser) (*models.User, erro
 // updateExistingOIDCUser syncs changed fields (email, display name, role) from the
 // IdP response into the local user record.
 func (h *OIDCHandler) updateExistingOIDCUser(user *models.User, oidcUser *auth.OIDCUser) (*models.User, error) {
+	if user.Disabled {
+		return nil, fmt.Errorf("account_disabled")
+	}
 	changed := false
 	if oidcUser.Email != "" && user.Email != oidcUser.Email {
 		user.Email = oidcUser.Email
@@ -237,6 +258,30 @@ func (h *OIDCHandler) updateExistingOIDCUser(user *models.User, oidcUser *auth.O
 			return nil, fmt.Errorf(errMsgAuthFailed)
 		}
 	}
+	return user, nil
+}
+
+// linkLocalUserToOIDC converts a local user to an OIDC-linked user.
+func (h *OIDCHandler) linkLocalUserToOIDC(user *models.User, oidcUser *auth.OIDCUser) (*models.User, error) {
+	if user.Disabled {
+		return nil, fmt.Errorf("account_disabled")
+	}
+	user.AuthProvider = "oidc"
+	user.ExternalID = &oidcUser.Subject
+	if oidcUser.Email != "" {
+		user.Email = oidcUser.Email
+	}
+	if oidcUser.Name != "" {
+		user.DisplayName = oidcUser.Name
+	}
+	user.Role = h.provider.MapRole(oidcUser.Roles)
+	user.PasswordHash = ""
+
+	if err := h.userRepo.Update(user); err != nil {
+		slog.Error("Failed to link local user to OIDC", "user_id", user.ID, "error", err)
+		return nil, fmt.Errorf(errMsgAuthFailed)
+	}
+	slog.Info("Local user linked to OIDC", "user_id", user.ID, "username", user.Username)
 	return user, nil
 }
 

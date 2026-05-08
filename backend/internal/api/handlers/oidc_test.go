@@ -19,6 +19,7 @@ import (
 	"backend/internal/auth"
 	"backend/internal/config"
 	"backend/internal/models"
+	"backend/internal/sessionstore"
 	"backend/pkg/dberrors"
 
 	"github.com/gin-gonic/gin"
@@ -144,7 +145,7 @@ func newOIDCHandlerTestServer(t *testing.T, clientID string, failToken bool) *oi
 // to match production wiring (handler and provider share the same config pointer).
 // When failToken is true the mock token endpoint returns HTTP 500.
 // Optional funcs in cfgOverrides are applied to the OIDCConfig before provider creation.
-func newOIDCHandlerSetup(t *testing.T, failToken bool, cfgOverrides ...func(*config.OIDCConfig)) (*OIDCHandler, *auth.StateStore, *MockUserRepository) {
+func newOIDCHandlerSetup(t *testing.T, failToken bool, cfgOverrides ...func(*config.OIDCConfig)) (*OIDCHandler, sessionstore.SessionStore, *MockUserRepository) {
 	t.Helper()
 
 	const clientID = "oidc-test-client"
@@ -161,6 +162,7 @@ func newOIDCHandlerSetup(t *testing.T, failToken bool, cfgOverrides ...func(*con
 		AdminRoles:    []string{"k8s-stack-admin"},
 		DevOpsRoles:   []string{"k8s-stack-devops"},
 		AutoProvision: true,
+		StateTTL:      5 * time.Minute,
 	}
 	for _, fn := range cfgOverrides {
 		fn(cfg)
@@ -169,12 +171,12 @@ func newOIDCHandlerSetup(t *testing.T, failToken bool, cfgOverrides ...func(*con
 	provider, err := auth.NewProvider(context.Background(), cfg)
 	require.NoError(t, err, "newOIDCHandlerSetup: auth.NewProvider must not fail")
 
-	stateStore := auth.NewStateStore(5 * time.Minute)
-	t.Cleanup(stateStore.Stop)
+	store := sessionstore.NewMemoryStore()
+	t.Cleanup(store.Stop)
 
 	userRepo := NewMockUserRepository()
-	h := NewOIDCHandler(provider, stateStore, userRepo, cfg, testAuthConfig(false))
-	return h, stateStore, userRepo
+	h := NewOIDCHandler(provider, store, userRepo, cfg, testAuthConfig(false))
+	return h, store, userRepo
 }
 
 // setupOIDCRouter builds a gin.Engine with the provided handler method registered
@@ -199,76 +201,60 @@ func TestOIDCGetConfig(t *testing.T) {
 		wantLocalAuth    bool
 	}{
 		{
-			name:             "OIDC disabled returns enabled:false",
-			cfg:              &config.OIDCConfig{Enabled: false, LocalAuth: true},
+			name:             "OIDC disabled returns local_auth_enabled:true",
+			cfg:              &config.OIDCConfig{Enabled: false},
 			wantEnabled:      false,
 			wantProviderName: "SSO Provider",
 			wantLocalAuth:    true,
 		},
 		{
-			name: "OIDC enabled with Microsoft provider",
+			name: "OIDC enabled with Microsoft provider hides local auth",
 			cfg: &config.OIDCConfig{
 				Enabled:     true,
 				ProviderURL: "https://login.microsoftonline.com/tenant-id/v2.0",
-				LocalAuth:   true,
 			},
 			wantEnabled:      true,
 			wantProviderName: "Microsoft",
-			wantLocalAuth:    true,
+			wantLocalAuth:    false,
 		},
 		{
-			name: "OIDC enabled with Okta provider",
+			name: "OIDC enabled with Okta provider hides local auth",
 			cfg: &config.OIDCConfig{
 				Enabled:     true,
 				ProviderURL: "https://company.okta.com/oauth2/default",
-				LocalAuth:   false,
 			},
 			wantEnabled:      true,
 			wantProviderName: "Okta",
 			wantLocalAuth:    false,
 		},
 		{
-			name: "OIDC enabled with Google provider",
+			name: "OIDC enabled with Google provider hides local auth",
 			cfg: &config.OIDCConfig{
 				Enabled:     true,
 				ProviderURL: "https://accounts.google.com",
-				LocalAuth:   true,
 			},
 			wantEnabled:      true,
 			wantProviderName: "Google",
-			wantLocalAuth:    true,
+			wantLocalAuth:    false,
 		},
 		{
-			name: "OIDC enabled with Keycloak provider",
+			name: "OIDC enabled with Keycloak provider hides local auth",
 			cfg: &config.OIDCConfig{
 				Enabled:     true,
 				ProviderURL: "https://auth.example.com/keycloak/realms/myrealm",
-				LocalAuth:   true,
 			},
 			wantEnabled:      true,
 			wantProviderName: "Keycloak",
-			wantLocalAuth:    true,
+			wantLocalAuth:    false,
 		},
 		{
-			name: "OIDC enabled with unknown provider defaults to SSO Provider",
+			name: "OIDC enabled with unknown provider hides local auth",
 			cfg: &config.OIDCConfig{
 				Enabled:     true,
 				ProviderURL: "https://custom-sso.example.com",
-				LocalAuth:   true,
 			},
 			wantEnabled:      true,
 			wantProviderName: "SSO Provider",
-			wantLocalAuth:    true,
-		},
-		{
-			name: "local auth disabled is reflected in response",
-			cfg: &config.OIDCConfig{
-				Enabled:     true,
-				ProviderURL: "https://login.microsoftonline.com/tenant/v2.0",
-				LocalAuth:   false,
-			},
-			wantEnabled:      true,
-			wantProviderName: "Microsoft",
 			wantLocalAuth:    false,
 		},
 	}
@@ -359,9 +345,10 @@ func TestOIDCAuthorize(t *testing.T) {
 		stateVal := parsedURL.Query().Get("state")
 		require.NotEmpty(t, stateVal, "redirect_url must contain state param")
 
-		// Retrieve (one-time use) to verify the stored redirect path.
-		authState, ok := stateStore.Retrieve(stateVal)
-		require.True(t, ok, "state must be present in the state store")
+		// Consume (one-time use) to verify the stored redirect path.
+		authState, consumeErr := stateStore.ConsumeOIDCState(context.Background(), stateVal)
+		require.NoError(t, consumeErr)
+		require.NotNil(t, authState, "state must be present in the session store")
 		assert.Equal(t, "/dashboard", authState.RedirectURL)
 	})
 
@@ -385,8 +372,9 @@ func TestOIDCAuthorize(t *testing.T) {
 		stateVal := parsedURL.Query().Get("state")
 		require.NotEmpty(t, stateVal)
 
-		authState, ok := stateStore.Retrieve(stateVal)
-		require.True(t, ok)
+		authState, consumeErr := stateStore.ConsumeOIDCState(context.Background(), stateVal)
+		require.NoError(t, consumeErr)
+		require.NotNil(t, authState)
 		assert.Equal(t, "/", authState.RedirectURL, "default redirect must be /")
 	})
 }
@@ -399,7 +387,7 @@ func TestOIDCCallback(t *testing.T) {
 	t.Run("missing state redirects to login?error=invalid_state", func(t *testing.T) {
 		t.Parallel()
 
-		stateStore := auth.NewStateStore(5 * time.Minute)
+		stateStore := sessionstore.NewMemoryStore()
 		t.Cleanup(stateStore.Stop)
 
 		h := NewOIDCHandler(nil, stateStore, NewMockUserRepository(), &config.OIDCConfig{Enabled: true}, testAuthConfig(false))
@@ -417,7 +405,7 @@ func TestOIDCCallback(t *testing.T) {
 	t.Run("invalid state param redirects to login?error=invalid_state", func(t *testing.T) {
 		t.Parallel()
 
-		stateStore := auth.NewStateStore(5 * time.Minute)
+		stateStore := sessionstore.NewMemoryStore()
 		t.Cleanup(stateStore.Stop)
 
 		h := NewOIDCHandler(nil, stateStore, NewMockUserRepository(), &config.OIDCConfig{Enabled: true}, testAuthConfig(false))
@@ -435,16 +423,15 @@ func TestOIDCCallback(t *testing.T) {
 	t.Run("expired state redirects to login?error=invalid_state", func(t *testing.T) {
 		t.Parallel()
 
-		stateStore := auth.NewStateStore(time.Millisecond)
+		stateStore := sessionstore.NewMemoryStore()
 		t.Cleanup(stateStore.Stop)
 
-		// Store a state entry with a past CreatedAt so it is immediately expired.
-		stateStore.Store(&auth.AuthState{
-			State:        "expired-state",
+		// Store a state entry with a near-zero TTL so it is immediately expired.
+		_ = stateStore.SaveOIDCState(context.Background(), "expired-state", sessionstore.OIDCStateData{
 			CodeVerifier: "verifier",
 			RedirectURL:  "/",
-			CreatedAt:    time.Now().Add(-time.Second),
-		})
+		}, time.Millisecond)
+		time.Sleep(2 * time.Millisecond)
 
 		h := NewOIDCHandler(nil, stateStore, NewMockUserRepository(), &config.OIDCConfig{Enabled: true}, testAuthConfig(false))
 		r := setupOIDCRouter(h.Callback, http.MethodGet, "/api/v1/auth/oidc/callback")
@@ -463,12 +450,10 @@ func TestOIDCCallback(t *testing.T) {
 
 		h, stateStore, _ := newOIDCHandlerSetup(t, true /* failToken */)
 
-		stateStore.Store(&auth.AuthState{
-			State:        "valid-state-fail-exchange",
+		_ = stateStore.SaveOIDCState(context.Background(), "valid-state-fail-exchange", sessionstore.OIDCStateData{
 			CodeVerifier: "test-verifier",
 			RedirectURL:  "/",
-			CreatedAt:    time.Now(),
-		})
+		}, 5*time.Minute)
 
 		r := setupOIDCRouter(h.Callback, http.MethodGet, "/api/v1/auth/oidc/callback")
 
@@ -486,12 +471,10 @@ func TestOIDCCallback(t *testing.T) {
 
 		h, stateStore, userRepo := newOIDCHandlerSetup(t, false)
 
-		stateStore.Store(&auth.AuthState{
-			State:        "valid-state-happy",
+		_ = stateStore.SaveOIDCState(context.Background(), "valid-state-happy", sessionstore.OIDCStateData{
 			CodeVerifier: "test-verifier",
 			RedirectURL:  "/dashboard",
-			CreatedAt:    time.Now(),
-		})
+			}, 5*time.Minute)
 
 		r := setupOIDCRouter(h.Callback, http.MethodGet, "/api/v1/auth/oidc/callback")
 
@@ -520,12 +503,10 @@ func TestOIDCCallback(t *testing.T) {
 
 		h, stateStore, userRepo := newOIDCHandlerSetup(t, false)
 
-		stateStore.Store(&auth.AuthState{
-			State:        "valid-state-role",
+		_ = stateStore.SaveOIDCState(context.Background(), "valid-state-role", sessionstore.OIDCStateData{
 			CodeVerifier: "test-verifier",
 			RedirectURL:  "/",
-			CreatedAt:    time.Now(),
-		})
+			}, 5*time.Minute)
 
 		r := setupOIDCRouter(h.Callback, http.MethodGet, "/api/v1/auth/oidc/callback")
 
@@ -550,12 +531,10 @@ func TestOIDCCallback(t *testing.T) {
 			cfg.AutoProvision = false
 		})
 
-		stateStore.Store(&auth.AuthState{
-			State:        "valid-state-noprov",
+		_ = stateStore.SaveOIDCState(context.Background(), "valid-state-noprov", sessionstore.OIDCStateData{
 			CodeVerifier: "test-verifier",
 			RedirectURL:  "/",
-			CreatedAt:    time.Now(),
-		})
+			}, 5*time.Minute)
 
 		r := setupOIDCRouter(h.Callback, http.MethodGet, "/api/v1/auth/oidc/callback")
 
@@ -585,12 +564,10 @@ func TestOIDCCallback(t *testing.T) {
 		}
 		require.NoError(t, userRepo.Create(existingUser))
 
-		stateStore.Store(&auth.AuthState{
-			State:        "valid-state-existing",
+		_ = stateStore.SaveOIDCState(context.Background(), "valid-state-existing", sessionstore.OIDCStateData{
 			CodeVerifier: "test-verifier",
 			RedirectURL:  "/",
-			CreatedAt:    time.Now(),
-		})
+			}, 5*time.Minute)
 
 		r := setupOIDCRouter(h.Callback, http.MethodGet, "/api/v1/auth/oidc/callback")
 
@@ -615,12 +592,10 @@ func TestOIDCCallback(t *testing.T) {
 
 		h, stateStore, _ := newOIDCHandlerSetup(t, false)
 
-		stateStore.Store(&auth.AuthState{
-			State:        "valid-state-consumed",
+		_ = stateStore.SaveOIDCState(context.Background(), "valid-state-consumed", sessionstore.OIDCStateData{
 			CodeVerifier: "test-verifier",
 			RedirectURL:  "/",
-			CreatedAt:    time.Now(),
-		})
+			}, 5*time.Minute)
 
 		r := setupOIDCRouter(h.Callback, http.MethodGet, "/api/v1/auth/oidc/callback")
 
@@ -670,12 +645,10 @@ func TestCallback_DuplicateKeyRaceCondition(t *testing.T) {
 		return errors.New("duplicate key")
 	})
 
-	stateStore.Store(&auth.AuthState{
-		State:        "valid-state-race",
+	_ = stateStore.SaveOIDCState(context.Background(), "valid-state-race", sessionstore.OIDCStateData{
 		CodeVerifier: "test-verifier",
 		RedirectURL:  "/dashboard",
-		CreatedAt:    time.Now(),
-	})
+		}, 5*time.Minute)
 
 	r := setupOIDCRouter(h.Callback, http.MethodGet, "/api/v1/auth/oidc/callback")
 
@@ -705,12 +678,10 @@ func TestCallback_DuplicateKeyRetryFails(t *testing.T) {
 		return errors.New("duplicate key")
 	})
 
-	stateStore.Store(&auth.AuthState{
-		State:        "valid-state-retry-fail",
+	_ = stateStore.SaveOIDCState(context.Background(), "valid-state-retry-fail", sessionstore.OIDCStateData{
 		CodeVerifier: "test-verifier",
 		RedirectURL:  "/",
-		CreatedAt:    time.Now(),
-	})
+		}, 5*time.Minute)
 
 	r := setupOIDCRouter(h.Callback, http.MethodGet, "/api/v1/auth/oidc/callback")
 
@@ -814,8 +785,9 @@ func TestOIDCAuthorize_UnsafeRedirectFallsBackToRoot(t *testing.T) {
 	stateVal := parsedURL.Query().Get("state")
 	require.NotEmpty(t, stateVal)
 
-	authState, ok := stateStore.Retrieve(stateVal)
-	require.True(t, ok)
+	authState, consumeErr := stateStore.ConsumeOIDCState(context.Background(), stateVal)
+	require.NoError(t, consumeErr)
+	require.NotNil(t, authState)
 	assert.Equal(t, "/", authState.RedirectURL, "unsafe redirect must be sanitized to /")
 }
 
@@ -829,12 +801,10 @@ func TestCallback_FindByExternalIDReturnsUnexpectedError(t *testing.T) {
 	// Make FindByExternalID return a non-not-found error.
 	userRepo.findErr = errors.New("database connection lost")
 
-	stateStore.Store(&auth.AuthState{
-		State:        "valid-state-dberr",
+	_ = stateStore.SaveOIDCState(context.Background(), "valid-state-dberr", sessionstore.OIDCStateData{
 		CodeVerifier: "test-verifier",
 		RedirectURL:  "/",
-		CreatedAt:    time.Now(),
-	})
+		}, 5*time.Minute)
 
 	r := setupOIDCRouter(h.Callback, http.MethodGet, "/api/v1/auth/oidc/callback")
 
@@ -868,12 +838,10 @@ func TestCallback_UpdateExistingUserFails(t *testing.T) {
 	// Make Update fail.
 	userRepo.updateErr = errors.New("db write failed")
 
-	stateStore.Store(&auth.AuthState{
-		State:        "valid-state-update-fail",
+	_ = stateStore.SaveOIDCState(context.Background(), "valid-state-update-fail", sessionstore.OIDCStateData{
 		CodeVerifier: "test-verifier",
 		RedirectURL:  "/",
-		CreatedAt:    time.Now(),
-	})
+		}, 5*time.Minute)
 
 	r := setupOIDCRouter(h.Callback, http.MethodGet, "/api/v1/auth/oidc/callback")
 

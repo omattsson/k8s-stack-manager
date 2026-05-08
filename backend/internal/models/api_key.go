@@ -3,9 +3,14 @@ package models
 import (
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/subtle"
+	"encoding/base64"
 	"encoding/hex"
 	"fmt"
+	"strings"
 	"time"
+
+	"golang.org/x/crypto/argon2"
 )
 
 // APIKey represents a user-generated API key for programmatic access.
@@ -36,7 +41,7 @@ type APIKeyRepository interface {
 // GenerateAPIKey creates a cryptographically random 32-byte key and returns:
 //   - rawKey  — 64-char hex string, returned to the user once
 //   - prefix  — first 16 chars for display/lookup
-//   - hash    — SHA-256 hex of rawKey, stored in DB
+//   - hash    — SHA-256 hex hash of rawKey, stored in DB
 func GenerateAPIKey() (rawKey, prefix, hash string, err error) {
 	b := make([]byte, 32)
 	if _, err = rand.Read(b); err != nil {
@@ -44,13 +49,56 @@ func GenerateAPIKey() (rawKey, prefix, hash string, err error) {
 	}
 	rawKey = hex.EncodeToString(b)
 	prefix = rawKey[:16]
-	sum := sha256.Sum256([]byte(rawKey))
-	hash = hex.EncodeToString(sum[:])
+	hash = hashAPIKeySHA256(rawKey)
 	return rawKey, prefix, hash, nil
 }
 
-// HashAPIKey returns the SHA-256 hex hash of a raw API key string.
-func HashAPIKey(rawKey string) string {
+// hashAPIKeySHA256 hashes a raw API key with SHA-256.
+// Suitable for high-entropy random keys (32 bytes) where KDF overhead is unnecessary.
+func hashAPIKeySHA256(rawKey string) string {
 	sum := sha256.Sum256([]byte(rawKey))
 	return hex.EncodeToString(sum[:])
+}
+
+// HashAPIKeyWithSalt hashes the API key using Argon2id with a random salt and returns the encoded hash string.
+func HashAPIKeyWithSalt(rawKey string) (string, error) {
+	salt := make([]byte, 16)
+	if _, err := rand.Read(salt); err != nil {
+		return "", fmt.Errorf("failed to generate salt: %w", err)
+	}
+	hash := argon2.IDKey([]byte(rawKey), salt, 1, 64*1024, 4, 32)
+	// Format: $argon2id$v=19$m=65536,t=1,p=4$<salt_b64>$<hash_b64>
+	encoded := "$argon2id$v=19$m=65536,t=1,p=4$" +
+		base64.RawStdEncoding.EncodeToString(salt) + "$" +
+		base64.RawStdEncoding.EncodeToString(hash)
+	return encoded, nil
+}
+
+// VerifyAPIKeyHash verifies a raw API key against a stored hash.
+// Supports both SHA-256 hex (legacy/new format) and Argon2id encoded format.
+func VerifyAPIKeyHash(rawKey, encodedHash string) bool {
+	// SHA-256 hex format: 64 lowercase hex chars with no "$"
+	if len(encodedHash) == 64 && !strings.Contains(encodedHash, "$") {
+		expected := hashAPIKeySHA256(rawKey)
+		return constantTimeEqual([]byte(expected), []byte(encodedHash))
+	}
+	// Argon2id format: $argon2id$v=19$m=65536,t=1,p=4$<salt_b64>$<hash_b64>
+	parts := strings.Split(encodedHash, "$")
+	if len(parts) != 6 || parts[1] != "argon2id" {
+		return false
+	}
+	salt, err := base64.RawStdEncoding.DecodeString(parts[4])
+	if err != nil {
+		return false
+	}
+	expectedHash, err := base64.RawStdEncoding.DecodeString(parts[5])
+	if err != nil {
+		return false
+	}
+	hash := argon2.IDKey([]byte(rawKey), salt, 1, 64*1024, 4, 32)
+	return constantTimeEqual(hash, expectedHash)
+}
+
+func constantTimeEqual(a, b []byte) bool {
+	return subtle.ConstantTimeCompare(a, b) == 1
 }

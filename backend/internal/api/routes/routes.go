@@ -9,6 +9,7 @@ import (
 	"backend/internal/health"
 	"backend/internal/models"
 	"backend/internal/scheduler"
+	"backend/internal/sessionstore"
 	"backend/internal/websocket"
 	"net/http"
 	"time"
@@ -84,8 +85,8 @@ type Deps struct {
 	// OIDC handler — nil when OIDC is disabled.
 	OIDCHandler *handlers.OIDCHandler
 
-	// Token blocklist for immediate JWT revocation on logout.
-	TokenBlocklist *middleware.TokenBlocklist
+	// SessionStore for token blocklist and OIDC state persistence.
+	SessionStore sessionstore.SessionStore
 
 	// HealthVerbose enables verbose health check output.
 	HealthVerbose bool
@@ -178,10 +179,10 @@ func SetupRoutes(router *gin.Engine, deps Deps) *RateLimiters {
 	if deps.AuthHandler != nil {
 		jwtSecret := cfg.Auth.JWTSecret
 		authMW := middleware.CombinedAuth(middleware.APIKeyAuthDeps{
-			JWTSecret:  jwtSecret,
-			APIKeyRepo: deps.APIKeyRepo,
-			UserRepo:   deps.UserRepo,
-			Blocklist:  deps.TokenBlocklist,
+			JWTSecret:    jwtSecret,
+			APIKeyRepo:   deps.APIKeyRepo,
+			UserRepo:     deps.UserRepo,
+			SessionStore: deps.SessionStore,
 		})
 
 		// Auth — login and refresh are public; register requires auth.
@@ -389,6 +390,8 @@ func SetupRoutes(router *gin.Engine, deps Deps) *RateLimiters {
 			{
 				users.GET("", admin, deps.UserHandler.ListUsers)
 				users.DELETE("/:id", admin, deps.UserHandler.DeleteUser)
+				users.PUT("/:id/disable", admin, deps.UserHandler.DisableUser)
+				users.PUT("/:id/enable", admin, deps.UserHandler.EnableUser)
 			}
 		}
 

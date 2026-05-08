@@ -205,6 +205,7 @@ Key environment variables (see `docker-compose.yml` for full list):
 | `GITLAB_TOKEN` | No | GitLab access token |
 | `DEFAULT_BRANCH` | No | Default Git branch (default: `master`) |
 | `KUBECONFIG_ENCRYPTION_KEY` | No | Passphrase for deriving AES-256 key (SHA-256) to encrypt kubeconfig data at rest |
+| `SESSION_STORE` | No | Session store backend: `mysql` (default) or `memory` |
 
 ## Helm Chart (Kubernetes Deployment)
 

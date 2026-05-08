@@ -926,7 +926,7 @@ func TestGracefulShutdown(t *testing.T) {
 			hub:              hub,
 			clusterRegistry:  clusterRegistry,
 			watcherCancel:    watcherCancel,
-			oidcStateStore:   nil, // nil oidcStateStore should be handled gracefully
+			sessionStore:     nil, // nil oidcStateStore should be handled gracefully
 			repo:             mockRepo,
 		})
 		close(done)
@@ -985,7 +985,7 @@ func TestGracefulShutdown_RepoCloseError(t *testing.T) {
 			hub:              hub,
 			clusterRegistry:  clusterRegistry,
 			watcherCancel:    watcherCancel,
-			oidcStateStore:   nil,
+			sessionStore:     nil,
 			repo:             mockRepo,
 		})
 		close(done)

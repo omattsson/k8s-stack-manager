@@ -308,4 +308,33 @@ func TestCombinedAuth(t *testing.T) {
 		w := doGET(router, map[string]string{"X-API-Key": "sk_short0123456789"})
 		assert.Equal(t, http.StatusUnauthorized, w.Code)
 	})
+
+	t.Run("disabled user via API key returns 403", func(t *testing.T) {
+		t.Parallel()
+		apiKeyRepo := newTestAPIKeyRepo()
+		userRepo := newTestUserRepo()
+		rawKey, prefix, hash, err := models.GenerateAPIKey()
+		require.NoError(t, err)
+		apiKeyRepo.addKey(&models.APIKey{
+			ID:      "key-dis",
+			UserID:  "user-dis",
+			Prefix:  prefix,
+			KeyHash: hash,
+		})
+		userRepo.addUser(&models.User{
+			ID:       "user-dis",
+			Username: "disabled-user",
+			Role:     "user",
+			Disabled: true,
+		})
+		router := buildCombinedAuthRouter(APIKeyAuthDeps{
+			JWTSecret:  combinedTestSecret,
+			APIKeyRepo: apiKeyRepo,
+			UserRepo:   userRepo,
+		})
+
+		w := doGET(router, map[string]string{"X-API-Key": "sk_" + rawKey})
+		assert.Equal(t, http.StatusForbidden, w.Code)
+		assert.Contains(t, w.Body.String(), "Account disabled")
+	})
 }

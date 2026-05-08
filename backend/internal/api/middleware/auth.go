@@ -2,9 +2,12 @@ package middleware
 
 import (
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
+
+	"backend/internal/sessionstore"
 
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
@@ -49,12 +52,12 @@ func ValidateJWT(tokenStr string, jwtSecret string) (*Claims, error) {
 
 // AuthRequired returns middleware that validates JWT tokens from the Authorization header.
 func AuthRequired(jwtSecret string) gin.HandlerFunc {
-	return AuthRequiredWithBlocklist(jwtSecret, nil)
+	return AuthRequiredWithSessionStore(jwtSecret, nil)
 }
 
-// AuthRequiredWithBlocklist returns middleware that validates JWT tokens and checks
-// the provided blocklist. If blocklist is nil, no revocation check is performed.
-func AuthRequiredWithBlocklist(jwtSecret string, blocklist *TokenBlocklist) gin.HandlerFunc {
+// AuthRequiredWithSessionStore returns middleware that validates JWT tokens and checks
+// the provided session store for revoked tokens. If store is nil, no revocation check is performed.
+func AuthRequiredWithSessionStore(jwtSecret string, store sessionstore.SessionStore) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		authHeader := c.GetHeader("Authorization")
 		if authHeader == "" {
@@ -74,10 +77,26 @@ func AuthRequiredWithBlocklist(jwtSecret string, blocklist *TokenBlocklist) gin.
 			return
 		}
 
-		// Check blocklist if available.
-		if blocklist != nil && claims.ID != "" && blocklist.IsBlocked(claims.ID) {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Token has been revoked"})
-			return
+		if store != nil && claims.ID != "" {
+			blocked, blockErr := store.IsTokenBlocked(c.Request.Context(), claims.ID)
+			if blockErr != nil {
+				slog.Error("Failed to check token blocklist", "jti", claims.ID, "error", blockErr)
+				// Fail open — access tokens expire in ≤15 min, don't lock everyone out on DB blip.
+			} else if blocked {
+				c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Token has been revoked"})
+				return
+			}
+		}
+
+		if store != nil && claims.UserID != "" {
+			userBlocked, userBlockErr := store.IsUserBlocked(c.Request.Context(), claims.UserID)
+			if userBlockErr != nil {
+				slog.Error("Failed to check user blocklist", "user_id", claims.UserID, "error", userBlockErr)
+				// Fail open — same policy as token blocklist check
+			} else if userBlocked {
+				c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "Account disabled"})
+				return
+			}
 		}
 
 		c.Set(contextKeyUserID, claims.UserID)

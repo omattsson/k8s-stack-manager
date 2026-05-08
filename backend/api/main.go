@@ -4,7 +4,6 @@ package main
 
 import (
 	"backend/internal/api/handlers"
-	"backend/internal/api/middleware"
 	"backend/internal/api/routes"
 	"backend/internal/auth"
 	"backend/internal/cluster"
@@ -19,6 +18,7 @@ import (
 	"backend/internal/models"
 	"backend/internal/notifier"
 	"backend/internal/scheduler"
+	"backend/internal/sessionstore"
 	"backend/internal/telemetry"
 	"backend/internal/ttl"
 	"backend/internal/websocket"
@@ -275,14 +275,17 @@ func main() {
 	// ------------------------------------------------------------------
 	// Phase 1: Create handlers
 	// ------------------------------------------------------------------
-	authHandler := handlers.NewAuthHandler(userRepo, &cfg.Auth)
+	authHandler := handlers.NewAuthHandler(userRepo, &cfg.Auth, &cfg.OIDC)
 
-	// Create token blocklist for immediate JWT revocation on logout.
-	// NOTE: In-memory only — revocation won't propagate across replicas.
-	// Acceptable since access tokens expire in ≤15 minutes. For multi-replica
-	// deployments, consider switching to a shared store (Redis/DB).
-	tokenBlocklist := middleware.NewTokenBlocklist(time.Minute)
-	authHandler.SetTokenBlocklist(tokenBlocklist)
+	// Create session store for token blocklist and OIDC state persistence.
+	var sessStore sessionstore.SessionStore
+	switch cfg.SessionStore.Backend {
+	case "memory":
+		sessStore = sessionstore.NewMemoryStore()
+	default:
+		sessStore = sessionstore.NewMySQLStore(mysqlGormDB)
+	}
+	authHandler.SetSessionStore(sessStore)
 
 	// Set up refresh token support if repository is available.
 	refreshTokenRepo := repos.RefreshToken
@@ -292,15 +295,13 @@ func main() {
 
 	// OIDC authentication — conditionally initialize when enabled.
 	var oidcHandler *handlers.OIDCHandler
-	var oidcStateStore *auth.StateStore
 	if cfg.OIDC.Enabled {
 		oidcProvider, oidcErr := auth.NewProvider(context.Background(), &cfg.OIDC)
 		if oidcErr != nil {
 			slog.Error("Failed to initialize OIDC provider", "error", oidcErr)
 			os.Exit(1)
 		}
-		oidcStateStore = auth.NewStateStore(cfg.OIDC.StateTTL)
-		oidcHandler = handlers.NewOIDCHandler(oidcProvider, oidcStateStore, userRepo, &cfg.OIDC, &cfg.Auth)
+		oidcHandler = handlers.NewOIDCHandler(oidcProvider, sessStore, userRepo, &cfg.OIDC, &cfg.Auth)
 		if refreshTokenRepo != nil {
 			oidcHandler.SetRefreshTokenRepo(refreshTokenRepo)
 		}
@@ -333,6 +334,12 @@ func main() {
 	gitHandler := handlers.NewGitHandler(gitRegistry)
 	auditLogHandler := handlers.NewAuditLogHandler(auditRepo)
 	userHandler := handlers.NewUserHandler(userRepo)
+	userHandler.SetSessionStore(sessStore)
+	if refreshTokenRepo != nil {
+		userHandler.SetRefreshTokenRepo(refreshTokenRepo)
+	}
+	userHandler.SetAccessTokenExpiration(cfg.Auth.AccessTokenExpiration)
+	userHandler.SetJWTExpiration(cfg.Auth.JWTExpiration)
 	apiKeyHandler := handlers.NewAPIKeyHandler(apiKeyRepo, userRepo, &cfg.Auth)
 
 	adminHandler := handlers.NewAdminHandler(clusterRegistry, instanceRepo)
@@ -403,11 +410,10 @@ func main() {
 		UserRepo:                     userRepo,
 		APIKeyRepo:                   apiKeyRepo,
 		OIDCHandler:                  oidcHandler,
-		TokenBlocklist:               tokenBlocklist,
+		SessionStore:                 sessStore,
 		HealthVerbose:                cfg.Server.HealthVerbose,
 	})
 	defer rateLimiter.Stop()
-	defer tokenBlocklist.Stop()
 
 	// Start TTL reaper for auto-expiring stack instances.
 	expiryStopper := deployer.NewExpiryStopper(deployManager, definitionRepo, chartConfigRepo)
@@ -526,7 +532,7 @@ func main() {
 		hub:              hub,
 		clusterRegistry:  clusterRegistry,
 		watcherCancel:    watcherCancel,
-		oidcStateStore:   oidcStateStore,
+		sessionStore:     sessStore,
 		dashboardHandler: dashboardHandler,
 		repo:             repo,
 	})
@@ -547,7 +553,7 @@ type shutdownDeps struct {
 	hub              *websocket.Hub
 	clusterRegistry  *cluster.Registry
 	watcherCancel    context.CancelFunc
-	oidcStateStore   *auth.StateStore
+	sessionStore     sessionstore.SessionStore
 	dashboardHandler *handlers.DashboardHandler
 	repo             models.Repository
 }
@@ -589,8 +595,8 @@ func gracefulShutdown(srv *http.Server, timeout time.Duration, deps shutdownDeps
 	deps.hub.Shutdown()
 	deps.clusterRegistry.Close()
 	deps.watcherCancel()
-	if deps.oidcStateStore != nil {
-		deps.oidcStateStore.Stop()
+	if deps.sessionStore != nil {
+		deps.sessionStore.Stop()
 	}
 	if deps.dashboardHandler != nil {
 		deps.dashboardHandler.Stop()

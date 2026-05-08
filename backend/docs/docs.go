@@ -2151,6 +2151,43 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/dashboard": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns aggregated dashboard data: cluster health, recent deployments, expiring instances, and failing instances.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "dashboard"
+                ],
+                "summary": "Get dashboard overview",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.DashboardResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/favorites": {
             "get": {
                 "security": [
@@ -3114,6 +3151,12 @@ const docTemplate = `{
                 ],
                 "summary": "List stack definitions",
                 "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Filter by exact name",
+                        "name": "name",
+                        "in": "query"
+                    },
                     {
                         "minimum": 1,
                         "type": "integer",
@@ -7081,6 +7124,158 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/users/{id}/disable": {
+            "put": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Disables a user account. All API keys for this user immediately stop working. Admin only.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "users"
+                ],
+                "summary": "Disable a user",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "User ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/users/{id}/enable": {
+            "put": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Re-enables a previously disabled user account. Admin only.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "users"
+                ],
+                "summary": "Enable a user",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "User ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/health": {
             "get": {
                 "description": "Get API health status",
@@ -7553,6 +7748,151 @@ const docTemplate = `{
                 },
                 "use_in_cluster": {
                     "type": "boolean"
+                }
+            }
+        },
+        "handlers.DashboardCluster": {
+            "type": "object",
+            "properties": {
+                "allocatable_cpu": {
+                    "type": "string"
+                },
+                "allocatable_memory": {
+                    "type": "string"
+                },
+                "health_status": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "namespace_count": {
+                    "type": "integer"
+                },
+                "node_count": {
+                    "type": "integer"
+                },
+                "ready_node_count": {
+                    "type": "integer"
+                },
+                "total_cpu": {
+                    "type": "string"
+                },
+                "total_memory": {
+                    "type": "string"
+                }
+            }
+        },
+        "handlers.DashboardDeployment": {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string"
+                },
+                "completed_at": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "instance_name": {
+                    "type": "string"
+                },
+                "owner_username": {
+                    "type": "string"
+                },
+                "stack_instance_id": {
+                    "type": "string"
+                },
+                "started_at": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                }
+            }
+        },
+        "handlers.DashboardExpiring": {
+            "type": "object",
+            "properties": {
+                "cluster_id": {
+                    "type": "string"
+                },
+                "expires_at": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "namespace": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "ttl_minutes": {
+                    "type": "integer"
+                }
+            }
+        },
+        "handlers.DashboardFailing": {
+            "type": "object",
+            "properties": {
+                "cluster_id": {
+                    "type": "string"
+                },
+                "error_message": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "namespace": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "updated_at": {
+                    "type": "string"
+                }
+            }
+        },
+        "handlers.DashboardResponse": {
+            "type": "object",
+            "properties": {
+                "clusters": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/handlers.DashboardCluster"
+                    }
+                },
+                "expiring_soon": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/handlers.DashboardExpiring"
+                    }
+                },
+                "failing_instances": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/handlers.DashboardFailing"
+                    }
+                },
+                "recent_deployments": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/handlers.DashboardDeployment"
+                    }
                 }
             }
         },
@@ -8064,6 +8404,9 @@ const docTemplate = `{
         "handlers.updatePreferenceRequest": {
             "type": "object",
             "properties": {
+                "channel": {
+                    "type": "string"
+                },
                 "enabled": {
                     "type": "boolean"
                 },
@@ -8855,6 +9198,9 @@ const docTemplate = `{
         "models.NotificationPreference": {
             "type": "object",
             "properties": {
+                "channel": {
+                    "type": "string"
+                },
                 "enabled": {
                     "type": "boolean"
                 },
@@ -9226,6 +9572,9 @@ const docTemplate = `{
                 "created_at": {
                     "type": "string"
                 },
+                "disabled": {
+                    "type": "boolean"
+                },
                 "display_name": {
                     "type": "string"
                 },
@@ -9305,6 +9654,9 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "namespace": {
+                    "type": "string"
+                },
+                "owner_id": {
                     "type": "string"
                 },
                 "status": {
