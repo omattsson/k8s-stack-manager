@@ -13,7 +13,6 @@ import (
 	"backend/internal/websocket"
 	"context"
 	"log/slog"
-	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
@@ -135,7 +134,7 @@ func main() {
 	defer bgSvc.RefreshTokenCleanupCancel()
 
 	// HTTP server.
-	srv := startHTTPServer(router, cfg)
+	srvs := startHTTPServer(router, cfg)
 
 	// Wait for interrupt signal.
 	quit := make(chan os.Signal, 1)
@@ -148,7 +147,7 @@ func main() {
 		shutdownTimeout = defaultShutdownTimeout
 	}
 
-	gracefulShutdown(srv, shutdownTimeout, shutdownDeps{
+	gracefulShutdown(srvs, shutdownTimeout, shutdownDeps{
 		telemetry:        tel,
 		reaper:           bgSvc.Reaper,
 		expiryWarner:     bgSvc.ExpiryWarner,
@@ -189,13 +188,18 @@ type shutdownDeps struct {
 }
 
 // gracefulShutdown stops all services in the correct order.
-func gracefulShutdown(srv *http.Server, timeout time.Duration, deps shutdownDeps) {
+func gracefulShutdown(srvs *servers, timeout time.Duration, deps shutdownDeps) {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
-	// 1. Stop HTTP server — no new requests.
-	if err := srv.Shutdown(ctx); err != nil {
+	// 1. Stop HTTP servers — no new requests.
+	if err := srvs.Main.Shutdown(ctx); err != nil {
 		slog.Error("Server forced to shutdown", "error", err)
+	}
+	if srvs.Pprof != nil {
+		if err := srvs.Pprof.Shutdown(ctx); err != nil {
+			slog.Error("Pprof server forced to shutdown", "error", err)
+		}
 	}
 
 	// 2. Stop producers of deploy work.

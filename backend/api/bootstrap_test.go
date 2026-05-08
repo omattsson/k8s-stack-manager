@@ -47,33 +47,28 @@ func TestBuildSessionStore(t *testing.T) {
 	require.NoError(t, db.AutoMigrate(&sessionstore.SessionEntry{}))
 
 	tests := []struct {
-		name        string
-		backend     string
-		wantType    string
-		wantMemory  bool // true → expect *MemoryStore; false → expect *MySQLStore
+		name       string
+		backend    string
+		wantMemory bool // true → expect *MemoryStore; false → expect *MySQLStore
 	}{
 		{
 			name:       "memory backend returns MemoryStore",
 			backend:    "memory",
-			wantType:   "*sessionstore.MemoryStore",
 			wantMemory: true,
 		},
 		{
 			name:       "mysql backend returns MySQLStore",
 			backend:    "mysql",
-			wantType:   "*sessionstore.MySQLStore",
 			wantMemory: false,
 		},
 		{
 			name:       "empty string (default) returns MySQLStore",
 			backend:    "",
-			wantType:   "*sessionstore.MySQLStore",
 			wantMemory: false,
 		},
 		{
 			name:       "unrecognised backend falls through to MySQLStore",
 			backend:    "redis",
-			wantType:   "*sessionstore.MySQLStore",
 			wantMemory: false,
 		},
 	}
@@ -210,22 +205,49 @@ func TestBackgroundServicesFieldTypes(t *testing.T) {
 }
 
 // ---- startHTTPServer tests ----
+//
+// These tests are NOT parallel because startHTTPServer calls os.Exit(1) on
+// bind failure. Running them sequentially eliminates port-race risk.
+
+func freePort(t *testing.T) int {
+	t.Helper()
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	port := l.Addr().(*net.TCPAddr).Port
+	require.NoError(t, l.Close())
+	return port
+}
+
+func waitForServer(t *testing.T, addr string) {
+	t.Helper()
+	require.Eventually(t, func() bool {
+		conn, err := net.DialTimeout("tcp", addr, 50*time.Millisecond)
+		if err != nil {
+			return false
+		}
+		conn.Close()
+		return true
+	}, 2*time.Second, 10*time.Millisecond, "server at %s did not become ready", addr)
+}
+
+func shutdownServers(t *testing.T, s *servers) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	_ = s.Main.Shutdown(ctx)
+	if s.Pprof != nil {
+		_ = s.Pprof.Shutdown(ctx)
+	}
+}
 
 func TestStartHTTPServer_ListensOnConfiguredAddress(t *testing.T) {
-	t.Parallel()
-
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
 	router.GET("/ping", func(c *gin.Context) {
 		c.String(http.StatusOK, "pong")
 	})
 
-	// Pick a free port.
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	require.NoError(t, err)
-	port := listener.Addr().(*net.TCPAddr).Port
-	require.NoError(t, listener.Close())
-
+	port := freePort(t)
 	cfg := &config.Config{
 		Server: config.ServerConfig{
 			Host:         "127.0.0.1",
@@ -236,39 +258,24 @@ func TestStartHTTPServer_ListensOnConfiguredAddress(t *testing.T) {
 		},
 	}
 
-	srv := startHTTPServer(router, cfg)
-	t.Cleanup(func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		defer cancel()
-		_ = srv.Shutdown(ctx)
-	})
+	s := startHTTPServer(router, cfg)
+	t.Cleanup(func() { shutdownServers(t, s) })
 
-	// Give the server a moment to start listening.
-	time.Sleep(50 * time.Millisecond)
+	addr := fmt.Sprintf("127.0.0.1:%d", port)
+	waitForServer(t, addr)
 
-	// Verify the server is reachable and serves the expected response.
-	resp, err := http.Get(fmt.Sprintf("http://127.0.0.1:%d/ping", port))
+	resp, err := http.Get(fmt.Sprintf("http://%s/ping", addr))
 	require.NoError(t, err)
 	defer resp.Body.Close()
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 }
 
 func TestStartHTTPServer_PprofEnabled(t *testing.T) {
-	t.Parallel()
-
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
 
-	// Pick two free ports.
-	listener1, err := net.Listen("tcp", "127.0.0.1:0")
-	require.NoError(t, err)
-	mainPort := listener1.Addr().(*net.TCPAddr).Port
-	require.NoError(t, listener1.Close())
-
-	listener2, err := net.Listen("tcp", "127.0.0.1:0")
-	require.NoError(t, err)
-	pprofPort := listener2.Addr().(*net.TCPAddr).Port
-	require.NoError(t, listener2.Close())
+	mainPort := freePort(t)
+	pprofPort := freePort(t)
 
 	cfg := &config.Config{
 		Server: config.ServerConfig{
@@ -282,38 +289,25 @@ func TestStartHTTPServer_PprofEnabled(t *testing.T) {
 		},
 	}
 
-	srv := startHTTPServer(router, cfg)
-	t.Cleanup(func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		defer cancel()
-		_ = srv.Shutdown(ctx)
-	})
+	s := startHTTPServer(router, cfg)
+	t.Cleanup(func() { shutdownServers(t, s) })
 
-	time.Sleep(100 * time.Millisecond)
+	require.NotNil(t, s.Pprof, "pprof server should be set when enabled")
 
-	// Verify the pprof endpoint is reachable.
-	resp, err := http.Get(fmt.Sprintf("http://127.0.0.1:%d/debug/pprof/", pprofPort))
+	pprofAddr := fmt.Sprintf("127.0.0.1:%d", pprofPort)
+	waitForServer(t, pprofAddr)
+
+	resp, err := http.Get(fmt.Sprintf("http://%s/debug/pprof/", pprofAddr))
 	require.NoError(t, err)
 	defer resp.Body.Close()
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 }
 
 func TestStartHTTPServer_PprofDisabled(t *testing.T) {
-	t.Parallel()
-
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
 
-	// Pick two free ports — one for main server, one for pprof.
-	listener1, err := net.Listen("tcp", "127.0.0.1:0")
-	require.NoError(t, err)
-	mainPort := listener1.Addr().(*net.TCPAddr).Port
-	require.NoError(t, listener1.Close())
-
-	listener2, err := net.Listen("tcp", "127.0.0.1:0")
-	require.NoError(t, err)
-	pprofPort := listener2.Addr().(*net.TCPAddr).Port
-	require.NoError(t, listener2.Close())
+	mainPort := freePort(t)
 
 	cfg := &config.Config{
 		Server: config.ServerConfig{
@@ -323,36 +317,20 @@ func TestStartHTTPServer_PprofDisabled(t *testing.T) {
 			WriteTimeout: 5 * time.Second,
 			IdleTimeout:  30 * time.Second,
 			PprofEnabled: false,
-			PprofAddr:    fmt.Sprintf("127.0.0.1:%d", pprofPort),
 		},
 	}
 
-	srv := startHTTPServer(router, cfg)
-	t.Cleanup(func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		defer cancel()
-		_ = srv.Shutdown(ctx)
-	})
+	s := startHTTPServer(router, cfg)
+	t.Cleanup(func() { shutdownServers(t, s) })
 
-	time.Sleep(100 * time.Millisecond)
-
-	// The pprof endpoint should NOT be listening when disabled.
-	client := &http.Client{Timeout: 500 * time.Millisecond}
-	_, err = client.Get(fmt.Sprintf("http://127.0.0.1:%d/debug/pprof/", pprofPort))
-	assert.Error(t, err, "pprof server should not be running when PprofEnabled=false")
+	assert.Nil(t, s.Pprof, "pprof server should be nil when disabled")
 }
 
 func TestStartHTTPServer_ReturnsValidServer(t *testing.T) {
-	t.Parallel()
-
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
 
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	require.NoError(t, err)
-	port := listener.Addr().(*net.TCPAddr).Port
-	require.NoError(t, listener.Close())
-
+	port := freePort(t)
 	cfg := &config.Config{
 		Server: config.ServerConfig{
 			Host:         "127.0.0.1",
@@ -363,19 +341,14 @@ func TestStartHTTPServer_ReturnsValidServer(t *testing.T) {
 		},
 	}
 
-	srv := startHTTPServer(router, cfg)
-	t.Cleanup(func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		defer cancel()
-		_ = srv.Shutdown(ctx)
-	})
+	s := startHTTPServer(router, cfg)
+	t.Cleanup(func() { shutdownServers(t, s) })
 
-	// Verify the returned *http.Server has correct configuration.
-	assert.Equal(t, fmt.Sprintf("127.0.0.1:%d", port), srv.Addr)
-	assert.Equal(t, 15*time.Second, srv.ReadTimeout)
-	assert.Equal(t, 30*time.Second, srv.WriteTimeout)
-	assert.Equal(t, 60*time.Second, srv.IdleTimeout)
-	assert.Equal(t, router, srv.Handler)
+	assert.Equal(t, fmt.Sprintf("127.0.0.1:%d", port), s.Main.Addr)
+	assert.Equal(t, 15*time.Second, s.Main.ReadTimeout)
+	assert.Equal(t, 30*time.Second, s.Main.WriteTimeout)
+	assert.Equal(t, 60*time.Second, s.Main.IdleTimeout)
+	assert.Equal(t, router, s.Main.Handler)
 }
 
 // ---- initDatabase / initRepositories ----

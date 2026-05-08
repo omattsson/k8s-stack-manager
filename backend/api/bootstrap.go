@@ -162,25 +162,7 @@ func buildDomainServices(
 	})
 	healthChecker.AddCheck("helm", deployer.HelmHealthCheck(cfg.Deployment.HelmBinary))
 
-	// Cluster health poller.
-	healthPoller := cluster.NewHealthPoller(cluster.HealthPollerConfig{
-		ClusterRepo: repos.Cluster,
-		Registry:    clusterRegistry,
-		Interval:    cfg.Deployment.ClusterHealthPollInterval,
-		Hub:         hub,
-	})
-	healthPoller.Start()
-
-	// Image pull secret refresher.
-	secretRefresher := cluster.NewSecretRefresher(cluster.SecretRefresherConfig{
-		ClusterRepo:  repos.Cluster,
-		InstanceRepo: repos.StackInstance,
-		Registry:     clusterRegistry,
-	})
-	secretRefresher.Start()
-
-	// Webhook / action hooks — load before starting the watcher so errors
-	// don't leak the watcher's cancel context.
+	// Load hooks config before starting goroutines so errors don't leak them.
 	hookCfg, actionSpecs, hookErr := hooks.LoadConfigFile(cfg.Deployment.HooksConfigFile)
 	if hookErr != nil {
 		return nil, fmt.Errorf("load hooks config: %w", hookErr)
@@ -201,6 +183,23 @@ func buildDomainServices(
 			return nil, fmt.Errorf("build action registry: %w", hookErr)
 		}
 	}
+
+	// Cluster health poller.
+	healthPoller := cluster.NewHealthPoller(cluster.HealthPollerConfig{
+		ClusterRepo: repos.Cluster,
+		Registry:    clusterRegistry,
+		Interval:    cfg.Deployment.ClusterHealthPollInterval,
+		Hub:         hub,
+	})
+	healthPoller.Start()
+
+	// Image pull secret refresher.
+	secretRefresher := cluster.NewSecretRefresher(cluster.SecretRefresherConfig{
+		ClusterRepo:  repos.Cluster,
+		InstanceRepo: repos.StackInstance,
+		Registry:     clusterRegistry,
+	})
+	secretRefresher.Start()
 
 	// K8s watcher for multi-cluster monitoring.
 	k8sWatcher := k8s.NewWatcher(clusterRegistry, repos.StackInstance, hub, 30*time.Second)
@@ -529,9 +528,17 @@ func startBackgroundServices(
 	}, nil
 }
 
+// servers holds the HTTP servers started during bootstrap.
+type servers struct {
+	Main  *http.Server
+	Pprof *http.Server // nil when pprof is disabled
+}
+
 // startHTTPServer creates, configures, and starts the HTTP server (and
 // optionally a pprof server) in background goroutines.
-func startHTTPServer(router *gin.Engine, cfg *config.Config) *http.Server {
+func startHTTPServer(router *gin.Engine, cfg *config.Config) *servers {
+	s := &servers{}
+
 	// Start pprof server on a separate port when PPROF_ENABLED=true.
 	if cfg.Server.PprofEnabled {
 		pprofMux := http.NewServeMux()
@@ -540,7 +547,7 @@ func startHTTPServer(router *gin.Engine, cfg *config.Config) *http.Server {
 		pprofMux.HandleFunc("/debug/pprof/profile", pprof.Profile)
 		pprofMux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
 		pprofMux.HandleFunc("/debug/pprof/trace", pprof.Trace)
-		pprofSrv := &http.Server{
+		s.Pprof = &http.Server{
 			Addr:         cfg.Server.PprofAddr,
 			Handler:      pprofMux,
 			ReadTimeout:  30 * time.Second,
@@ -548,14 +555,14 @@ func startHTTPServer(router *gin.Engine, cfg *config.Config) *http.Server {
 			IdleTimeout:  60 * time.Second,
 		}
 		go func() {
-			slog.Info("pprof server starting", "addr", cfg.Server.PprofAddr)
-			if err := pprofSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			slog.Info("pprof server starting", "addr", s.Pprof.Addr)
+			if err := s.Pprof.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 				slog.Error("pprof server failed", "error", err)
 			}
 		}()
 	}
 
-	srv := &http.Server{
+	s.Main = &http.Server{
 		Addr:         fmt.Sprintf("%s:%s", cfg.Server.Host, cfg.Server.Port),
 		Handler:      router,
 		ReadTimeout:  cfg.Server.ReadTimeout,
@@ -564,12 +571,12 @@ func startHTTPServer(router *gin.Engine, cfg *config.Config) *http.Server {
 	}
 
 	go func() {
-		slog.Info("Server starting", "addr", srv.Addr)
-		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		slog.Info("Server starting", "addr", s.Main.Addr)
+		if err := s.Main.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			slog.Error("Failed to start server", "error", err)
 			os.Exit(1)
 		}
 	}()
 
-	return srv
+	return s
 }
