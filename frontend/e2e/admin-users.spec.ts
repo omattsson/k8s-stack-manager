@@ -213,7 +213,7 @@ test.describe('Admin User Management', () => {
     await apiDeleteUser(request, token, userId);
   });
 
-  test('reset password button is hidden for OIDC users', async ({ page, request }) => {
+  test('reset password button is visible for local users', async ({ page, request }) => {
     // Create a local user and verify button exists
     const token = await apiLogin(request);
     const localUser = uniqueName('local');

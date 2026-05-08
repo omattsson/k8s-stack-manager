@@ -198,7 +198,7 @@ func (h *UserHandler) setDisabled(c *gin.Context, disabled bool) {
 // @Produce      json
 // @Security     BearerAuth
 // @Param        id       path      string                 true  "User ID"
-// @Param        request  body      resetPasswordRequest   true  "New password"
+// @Param        request  body      ResetPasswordRequest   true  "New password"
 // @Success      200  {object}  map[string]string
 // @Failure      400  {object}  map[string]string
 // @Failure      401  {object}  map[string]string
@@ -213,7 +213,7 @@ func (h *UserHandler) ResetUserPassword(c *gin.Context) {
 		return
 	}
 
-	var req resetPasswordRequest
+	var req ResetPasswordRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": msgInvalidRequestFormat})
 		return
@@ -256,10 +256,23 @@ func (h *UserHandler) ResetUserPassword(c *gin.Context) {
 			slog.Warn("Failed to revoke refresh tokens after password reset", "user_id", id, "error", err)
 		}
 	}
+	if h.sessionStore != nil {
+		ttl := h.accessTokenExpiration
+		if h.jwtExpiration > ttl {
+			ttl = h.jwtExpiration
+		}
+		if ttl <= 0 {
+			ttl = 24 * time.Hour
+		}
+		if err := h.sessionStore.BlockUser(c.Request.Context(), id, time.Now().Add(ttl)); err != nil {
+			slog.Warn("Failed to block user in session store after password reset", "user_id", id, "error", err)
+		}
+	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "Password reset successfully"})
 }
 
-type resetPasswordRequest struct {
+// ResetPasswordRequest is the request body for password reset.
+type ResetPasswordRequest struct {
 	Password string `json:"password" binding:"required"`
 }
