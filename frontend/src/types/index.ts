@@ -3,9 +3,6 @@ export interface User {
   username: string;
   display_name: string;
   role: string;
-  auth_provider: string;
-  disabled: boolean;
-  service_account: boolean;
   created_at: string;
   updated_at: string;
 }

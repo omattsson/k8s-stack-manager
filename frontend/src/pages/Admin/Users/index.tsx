@@ -33,7 +33,6 @@ import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import ExpandLessIcon from '@mui/icons-material/ExpandLess';
 import CheckIcon from '@mui/icons-material/Check';
 import NavigateNextIcon from '@mui/icons-material/NavigateNext';
-import LockResetIcon from '@mui/icons-material/LockReset';
 import { userService, apiKeyService } from '../../../api/client';
 import { useAuth } from '../../../context/AuthContext';
 import type { User, APIKey, CreateUserRequest, CreateAPIKeyRequest, CreateAPIKeyResponse } from '../../../types';
@@ -84,12 +83,6 @@ const AdminUsers = () => {
   const [rawKeyData, setRawKeyData] = useState<CreateAPIKeyResponse | null>(null);
   const [keyCopied, setKeyCopied] = useState(false);
   const copyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  // Password reset dialog
-  const [resetPasswordTarget, setResetPasswordTarget] = useState<User | null>(null);
-  const [resetPasswordValue, setResetPasswordValue] = useState('');
-  const [resetPasswordError, setResetPasswordError] = useState<string | null>(null);
-  const [resetPasswordLoading, setResetPasswordLoading] = useState(false);
 
   // Revoke API key confirm
   const [revokeKeyTarget, setRevokeKeyTarget] = useState<{ userId: string; key: APIKey } | null>(null);
@@ -179,24 +172,6 @@ const AdminUsers = () => {
     } catch {
       setError('Failed to delete user');
       setDeleteUserTarget(null);
-    }
-  };
-
-  const handleResetPassword = async () => {
-    if (!resetPasswordTarget || resetPasswordValue.length < 8) {
-      setResetPasswordError('Password must be at least 8 characters');
-      return;
-    }
-    setResetPasswordLoading(true);
-    setResetPasswordError(null);
-    try {
-      await userService.resetPassword(resetPasswordTarget.id, resetPasswordValue);
-      setResetPasswordTarget(null);
-      setResetPasswordValue('');
-    } catch {
-      setResetPasswordError('Failed to reset password');
-    } finally {
-      setResetPasswordLoading(false);
     }
   };
 
@@ -319,21 +294,6 @@ const AdminUsers = () => {
                       </TableCell>
                       <TableCell sx={{ display: { xs: 'none', md: 'table-cell' } }}>{new Date(u.created_at).toLocaleDateString()}</TableCell>
                       <TableCell>
-                        {(!u.auth_provider || u.auth_provider === 'local') && (
-                          <Tooltip title="Reset password">
-                            <IconButton
-                              size="small"
-                              onClick={() => {
-                                setResetPasswordTarget(u);
-                                setResetPasswordValue('');
-                                setResetPasswordError(null);
-                              }}
-                              aria-label={`Reset password for ${u.username}`}
-                            >
-                              <LockResetIcon fontSize="small" />
-                            </IconButton>
-                          </Tooltip>
-                        )}
                         <Tooltip title={u.id === currentUser.id ? 'Cannot delete your own account' : 'Delete user'}>
                           <span>
                             <IconButton
@@ -598,46 +558,6 @@ const AdminUsers = () => {
             }}
           >
             Done
-          </Button>
-        </DialogActions>
-      </Dialog>
-
-      {/* ── Reset Password Dialog ────────────────────────────────── */}
-      <Dialog
-        open={Boolean(resetPasswordTarget)}
-        onClose={() => setResetPasswordTarget(null)}
-        maxWidth="xs"
-        fullWidth
-      >
-        <DialogTitle>Reset Password</DialogTitle>
-        <DialogContent>
-          {resetPasswordError && <Alert severity="error" sx={{ mb: 2, mt: 1 }}>{resetPasswordError}</Alert>}
-          <Typography variant="body2" color="text.secondary" sx={{ mb: 2, mt: 1 }}>
-            Set a new password for <strong>{resetPasswordTarget?.username}</strong>.
-            Existing sessions will be revoked.
-          </Typography>
-          <TextField
-            label="New Password"
-            type="password"
-            value={resetPasswordValue}
-            onChange={(e) => setResetPasswordValue(e.target.value)}
-            required
-            fullWidth
-            size="small"
-            autoFocus
-            helperText="Minimum 8 characters"
-            error={resetPasswordValue.length > 0 && resetPasswordValue.length < 8}
-          />
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setResetPasswordTarget(null)}>Cancel</Button>
-          <Button
-            variant="contained"
-            color="warning"
-            onClick={handleResetPassword}
-            disabled={resetPasswordLoading || resetPasswordValue.length < 8}
-          >
-            {resetPasswordLoading ? <CircularProgress size={20} /> : 'Reset Password'}
           </Button>
         </DialogActions>
       </Dialog>

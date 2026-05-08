@@ -48,9 +48,6 @@ function userFromPayload(payload: JwtPayload): User {
     username: payload.username,
     display_name: payload.username,
     role: payload.role,
-    auth_provider: payload.auth_provider ?? 'local',
-    disabled: false,
-    service_account: false,
     created_at: '',
     updated_at: '',
   };
