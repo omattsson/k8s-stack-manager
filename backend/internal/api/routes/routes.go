@@ -392,6 +392,7 @@ func SetupRoutes(router *gin.Engine, deps Deps) *RateLimiters {
 				users.DELETE("/:id", admin, deps.UserHandler.DeleteUser)
 				users.PUT("/:id/disable", admin, deps.UserHandler.DisableUser)
 				users.PUT("/:id/enable", admin, deps.UserHandler.EnableUser)
+				users.PUT("/:id/password", admin, deps.UserHandler.ResetUserPassword)
 			}
 		}
 

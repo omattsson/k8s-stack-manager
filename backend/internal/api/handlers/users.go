@@ -10,6 +10,7 @@ import (
 	"backend/internal/sessionstore"
 
 	"github.com/gin-gonic/gin"
+	"golang.org/x/crypto/bcrypt"
 )
 
 // UserHandler handles user management endpoints.
@@ -187,4 +188,78 @@ func (h *UserHandler) setDisabled(c *gin.Context, disabled bool) {
 		action = "disabled"
 	}
 	c.JSON(http.StatusOK, gin.H{"message": "User " + action + " successfully"})
+}
+
+// ResetUserPassword godoc
+// @Summary      Reset user password
+// @Description  Resets the password for a local/service account user. Admin only.
+// @Tags         users
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Param        id       path      string                 true  "User ID"
+// @Param        request  body      resetPasswordRequest   true  "New password"
+// @Success      200  {object}  map[string]string
+// @Failure      400  {object}  map[string]string
+// @Failure      401  {object}  map[string]string
+// @Failure      403  {object}  map[string]string
+// @Failure      404  {object}  map[string]string
+// @Failure      500  {object}  map[string]string
+// @Router       /api/v1/users/{id}/password [put]
+func (h *UserHandler) ResetUserPassword(c *gin.Context) {
+	id := c.Param("id")
+	if id == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "User ID is required"})
+		return
+	}
+
+	var req resetPasswordRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": msgInvalidRequestFormat})
+		return
+	}
+
+	if len(req.Password) < 8 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Password must be at least 8 characters"})
+		return
+	}
+
+	user, err := h.userRepo.FindByID(id)
+	if err != nil {
+		status, message := mapError(err, "User")
+		c.JSON(status, gin.H{"error": message})
+		return
+	}
+
+	if user.AuthProvider != "" && user.AuthProvider != "local" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Cannot reset password for non-local user"})
+		return
+	}
+
+	bcryptSem <- struct{}{}
+	hash, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
+	<-bcryptSem
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
+		return
+	}
+
+	user.PasswordHash = string(hash)
+	if err := h.userRepo.Update(user); err != nil {
+		status, message := mapError(err, "User")
+		c.JSON(status, gin.H{"error": message})
+		return
+	}
+
+	if h.refreshTokenRepo != nil {
+		if err := h.refreshTokenRepo.RevokeAllForUser(id); err != nil {
+			slog.Warn("Failed to revoke refresh tokens after password reset", "user_id", id, "error", err)
+		}
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "Password reset successfully"})
+}
+
+type resetPasswordRequest struct {
+	Password string `json:"password" binding:"required"`
 }

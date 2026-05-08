@@ -1369,6 +1369,9 @@ export const userService = {
       throw error;
     }
   },
+  resetPassword: async (id: string, password: string): Promise<void> => {
+    await api.put(`/api/v1/users/${id}/password`, { password });
+  },
 };
 
 /** API key management service for per-user key CRUD. Maps to `/api/v1/users/:id/api-keys`. */
