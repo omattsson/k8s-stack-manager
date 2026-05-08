@@ -62,7 +62,7 @@ func (h *OIDCHandler) GetConfig(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"enabled":            h.cfg.Enabled,
 		"provider_name":      deriveProviderName(h.cfg.ProviderURL),
-		"local_auth_enabled": h.cfg.LocalAuth,
+		"local_auth_enabled": !h.cfg.Enabled,
 	})
 }
 
@@ -211,6 +211,13 @@ func (h *OIDCHandler) provisionUser(oidcUser *auth.OIDCUser) (*models.User, erro
 		return nil, fmt.Errorf(errMsgAuthFailed)
 	}
 
+	// Check if a local user with the same username already exists — link it to OIDC.
+	username := deriveOIDCUsername(oidcUser)
+	existing, err := h.userRepo.FindByUsername(username)
+	if err == nil && existing != nil {
+		return h.linkLocalUserToOIDC(existing, oidcUser)
+	}
+
 	// User not found — check auto-provisioning.
 	if !h.cfg.AutoProvision {
 		return nil, fmt.Errorf("no_account")
@@ -247,6 +254,30 @@ func (h *OIDCHandler) updateExistingOIDCUser(user *models.User, oidcUser *auth.O
 			return nil, fmt.Errorf(errMsgAuthFailed)
 		}
 	}
+	return user, nil
+}
+
+// linkLocalUserToOIDC converts a local user to an OIDC-linked user.
+func (h *OIDCHandler) linkLocalUserToOIDC(user *models.User, oidcUser *auth.OIDCUser) (*models.User, error) {
+	if user.Disabled {
+		return nil, fmt.Errorf("account_disabled")
+	}
+	user.AuthProvider = "oidc"
+	user.ExternalID = &oidcUser.Subject
+	if oidcUser.Email != "" {
+		user.Email = oidcUser.Email
+	}
+	if oidcUser.Name != "" {
+		user.DisplayName = oidcUser.Name
+	}
+	user.Role = h.provider.MapRole(oidcUser.Roles)
+	user.PasswordHash = ""
+
+	if err := h.userRepo.Update(user); err != nil {
+		slog.Error("Failed to link local user to OIDC", "user_id", user.ID, "error", err)
+		return nil, fmt.Errorf(errMsgAuthFailed)
+	}
+	slog.Info("Local user linked to OIDC", "user_id", user.ID, "username", user.Username)
 	return user, nil
 }
 

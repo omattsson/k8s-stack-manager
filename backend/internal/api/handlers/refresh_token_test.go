@@ -184,7 +184,7 @@ func setupRefreshAuthRouter(userRepo *MockUserRepository, refreshRepo *MockRefre
 	r := gin.New()
 
 	cfg := testAuthConfigWithRefresh()
-	h := NewAuthHandler(userRepo, cfg)
+	h := NewAuthHandler(userRepo, cfg, &config.OIDCConfig{})
 	h.SetRefreshTokenRepo(refreshRepo)
 	if store != nil {
 		h.SetSessionStore(store)
@@ -549,7 +549,7 @@ func TestRefreshNotEnabled(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
 	cfg := testAuthConfigWithRefresh()
-	h := NewAuthHandler(NewMockUserRepository(), cfg)
+	h := NewAuthHandler(NewMockUserRepository(), cfg, &config.OIDCConfig{})
 	// NOT setting refresh token repo
 
 	r.POST("/api/v1/auth/refresh", h.Refresh)

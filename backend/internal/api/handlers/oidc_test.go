@@ -201,76 +201,60 @@ func TestOIDCGetConfig(t *testing.T) {
 		wantLocalAuth    bool
 	}{
 		{
-			name:             "OIDC disabled returns enabled:false",
-			cfg:              &config.OIDCConfig{Enabled: false, LocalAuth: true},
+			name:             "OIDC disabled returns local_auth_enabled:true",
+			cfg:              &config.OIDCConfig{Enabled: false},
 			wantEnabled:      false,
 			wantProviderName: "SSO Provider",
 			wantLocalAuth:    true,
 		},
 		{
-			name: "OIDC enabled with Microsoft provider",
+			name: "OIDC enabled with Microsoft provider hides local auth",
 			cfg: &config.OIDCConfig{
 				Enabled:     true,
 				ProviderURL: "https://login.microsoftonline.com/tenant-id/v2.0",
-				LocalAuth:   true,
 			},
 			wantEnabled:      true,
 			wantProviderName: "Microsoft",
-			wantLocalAuth:    true,
+			wantLocalAuth:    false,
 		},
 		{
-			name: "OIDC enabled with Okta provider",
+			name: "OIDC enabled with Okta provider hides local auth",
 			cfg: &config.OIDCConfig{
 				Enabled:     true,
 				ProviderURL: "https://company.okta.com/oauth2/default",
-				LocalAuth:   false,
 			},
 			wantEnabled:      true,
 			wantProviderName: "Okta",
 			wantLocalAuth:    false,
 		},
 		{
-			name: "OIDC enabled with Google provider",
+			name: "OIDC enabled with Google provider hides local auth",
 			cfg: &config.OIDCConfig{
 				Enabled:     true,
 				ProviderURL: "https://accounts.google.com",
-				LocalAuth:   true,
 			},
 			wantEnabled:      true,
 			wantProviderName: "Google",
-			wantLocalAuth:    true,
+			wantLocalAuth:    false,
 		},
 		{
-			name: "OIDC enabled with Keycloak provider",
+			name: "OIDC enabled with Keycloak provider hides local auth",
 			cfg: &config.OIDCConfig{
 				Enabled:     true,
 				ProviderURL: "https://auth.example.com/keycloak/realms/myrealm",
-				LocalAuth:   true,
 			},
 			wantEnabled:      true,
 			wantProviderName: "Keycloak",
-			wantLocalAuth:    true,
+			wantLocalAuth:    false,
 		},
 		{
-			name: "OIDC enabled with unknown provider defaults to SSO Provider",
+			name: "OIDC enabled with unknown provider hides local auth",
 			cfg: &config.OIDCConfig{
 				Enabled:     true,
 				ProviderURL: "https://custom-sso.example.com",
-				LocalAuth:   true,
 			},
 			wantEnabled:      true,
 			wantProviderName: "SSO Provider",
-			wantLocalAuth:    true,
-		},
-		{
-			name: "local auth disabled is reflected in response",
-			cfg: &config.OIDCConfig{
-				Enabled:     true,
-				ProviderURL: "https://login.microsoftonline.com/tenant/v2.0",
-				LocalAuth:   false,
-			},
-			wantEnabled:      true,
-			wantProviderName: "Microsoft",
 			wantLocalAuth:    false,
 		},
 	}

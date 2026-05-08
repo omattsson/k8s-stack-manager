@@ -275,7 +275,7 @@ func main() {
 	// ------------------------------------------------------------------
 	// Phase 1: Create handlers
 	// ------------------------------------------------------------------
-	authHandler := handlers.NewAuthHandler(userRepo, &cfg.Auth)
+	authHandler := handlers.NewAuthHandler(userRepo, &cfg.Auth, &cfg.OIDC)
 
 	// Create session store for token blocklist and OIDC state persistence.
 	var sessStore sessionstore.SessionStore

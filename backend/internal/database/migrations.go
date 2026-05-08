@@ -940,6 +940,27 @@ func (d *Database) AutoMigrate() error {
 		},
 	})
 
+	migrator.AddMigration(schema.Migration{
+		Version:     "20260508000039",
+		Name:        "add_users_service_account",
+		Description: "Add service_account column to users table for break-glass local login when OIDC is enabled",
+		Up: func(tx *gorm.DB) error {
+			if tx.Migrator().HasColumn(&models.User{}, "service_account") {
+				return nil
+			}
+			if err := tx.Exec("ALTER TABLE users ADD COLUMN service_account TINYINT(1) NOT NULL DEFAULT 0").Error; err != nil {
+				return err
+			}
+			return tx.Exec("UPDATE users SET service_account = 1 WHERE auth_provider = 'local' AND role = 'admin' AND username = ?", "admin").Error
+		},
+		Down: func(tx *gorm.DB) error {
+			if !tx.Migrator().HasColumn(&models.User{}, "service_account") {
+				return nil
+			}
+			return tx.Exec("ALTER TABLE users DROP COLUMN service_account").Error
+		},
+	})
+
 	// Run migrations
 	if err := migrator.MigrateUp(); err != nil {
 		return err

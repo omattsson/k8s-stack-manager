@@ -148,7 +148,7 @@ func TestEnsureAdminUser(t *testing.T) {
 				AdminUsername: tt.adminUsername,
 				AdminPassword: tt.adminPassword,
 			}
-			h := NewAuthHandler(repo, cfg)
+			h := NewAuthHandler(repo, cfg, &config.OIDCConfig{})
 			h.EnsureAdminUser()
 
 			users, err := repo.List()

@@ -230,7 +230,7 @@ func TestSetupRoutes_AllRouteGroupsRegistered(t *testing.T) {
 	cfg := testConfig()
 
 	// Create a minimal AuthHandler to trigger Phase 1 route registration.
-	authHandler := handlers.NewAuthHandler(&stubUserRepo{}, &cfg.Auth)
+	authHandler := handlers.NewAuthHandler(&stubUserRepo{}, &cfg.Auth, &cfg.OIDC)
 
 	rl := SetupRoutes(router, Deps{
 		Repository:    mockRepo,
@@ -291,7 +291,7 @@ func TestSetupRoutes_ProtectedRoutesReturn401(t *testing.T) {
 	t.Cleanup(func() { hub.Shutdown() })
 
 	cfg := testConfig()
-	authHandler := handlers.NewAuthHandler(&stubUserRepo{}, &cfg.Auth)
+	authHandler := handlers.NewAuthHandler(&stubUserRepo{}, &cfg.Auth, &cfg.OIDC)
 
 	rl := SetupRoutes(router, Deps{
 		Repository:    mockRepo,
@@ -336,7 +336,7 @@ func TestSetupRoutes_LoginIsPublic(t *testing.T) {
 	t.Cleanup(func() { hub.Shutdown() })
 
 	cfg := testConfig()
-	authHandler := handlers.NewAuthHandler(&stubUserRepo{}, &cfg.Auth)
+	authHandler := handlers.NewAuthHandler(&stubUserRepo{}, &cfg.Auth, &cfg.OIDC)
 
 	rl := SetupRoutes(router, Deps{
 		Repository:    mockRepo,
@@ -376,7 +376,7 @@ func TestSetupRoutes_OIDCDisabled(t *testing.T) {
 	t.Cleanup(func() { hub.Shutdown() })
 
 	cfg := testConfig()
-	authHandler := handlers.NewAuthHandler(&stubUserRepo{}, &cfg.Auth)
+	authHandler := handlers.NewAuthHandler(&stubUserRepo{}, &cfg.Auth, &cfg.OIDC)
 
 	// OIDCHandler is nil (OIDC disabled), so the fallback config endpoint should be registered.
 	rl := SetupRoutes(router, Deps{
@@ -489,7 +489,7 @@ func TestSetupRoutes_WithAllHandlersRegistersFullAPI(t *testing.T) {
 	t.Cleanup(func() { hub.Shutdown() })
 
 	cfg := testConfig()
-	authHandler := handlers.NewAuthHandler(&stubUserRepo{}, &cfg.Auth)
+	authHandler := handlers.NewAuthHandler(&stubUserRepo{}, &cfg.Auth, &cfg.OIDC)
 	userHandler := handlers.NewUserHandler(&stubUserRepo{})
 	apiKeyHandler := handlers.NewAPIKeyHandler(&stubAPIKeyRepo{}, &stubUserRepo{}, &cfg.Auth)
 	auditLogHandler := handlers.NewAuditLogHandler(nil)
@@ -543,7 +543,7 @@ func TestSetupRoutes_NilHandlersSkipRouteRegistration(t *testing.T) {
 	t.Cleanup(func() { hub.Shutdown() })
 
 	cfg := testConfig()
-	authHandler := handlers.NewAuthHandler(&stubUserRepo{}, &cfg.Auth)
+	authHandler := handlers.NewAuthHandler(&stubUserRepo{}, &cfg.Auth, &cfg.OIDC)
 
 	// All domain handlers are nil -- only auth/items/health should be registered.
 	rl := SetupRoutes(router, Deps{

@@ -1,6 +1,8 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react-swc';
 
+const backendTarget = process.env.VITE_BACKEND_URL || 'http://backend:8081';
+
 export default defineConfig({
   plugins: [react()],
   test: {
@@ -21,12 +23,11 @@ export default defineConfig({
     host: true,
     proxy: {
       '/api': {
-        target: 'http://backend:8081',
-        changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/api/, '')
+        target: backendTarget,
+        changeOrigin: true
       },
       '/ws': {
-        target: 'http://backend:8081',
+        target: backendTarget,
         ws: true
       }
     }

@@ -51,7 +51,7 @@ func setupAuthRouter(userRepo *MockUserRepository, selfReg bool, callerUserID, c
 	r := gin.New()
 	r.Use(injectAuthContext(callerUserID, callerRole))
 
-	h := NewAuthHandler(userRepo, testAuthConfig(selfReg))
+	h := NewAuthHandler(userRepo, testAuthConfig(selfReg), &config.OIDCConfig{})
 
 	auth := r.Group("/api/v1/auth")
 	{

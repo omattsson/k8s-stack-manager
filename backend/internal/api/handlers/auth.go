@@ -37,13 +37,14 @@ type AuthHandler struct {
 	userRepo         models.UserRepository
 	refreshTokenRepo models.RefreshTokenRepository
 	cfg              *config.AuthConfig
+	oidcCfg          *config.OIDCConfig
 	sessionStore     sessionstore.SessionStore
 	loginCache       *cache.TTLCache[*models.User]
 }
 
 // NewAuthHandler creates a new AuthHandler.
-func NewAuthHandler(userRepo models.UserRepository, cfg *config.AuthConfig) *AuthHandler {
-	h := &AuthHandler{userRepo: userRepo, cfg: cfg}
+func NewAuthHandler(userRepo models.UserRepository, cfg *config.AuthConfig, oidcCfg *config.OIDCConfig) *AuthHandler {
+	h := &AuthHandler{userRepo: userRepo, cfg: cfg, oidcCfg: oidcCfg}
 	if cfg.LoginCacheTTL > 0 {
 		h.loginCache = cache.New[*models.User](cfg.LoginCacheTTL, cfg.LoginCacheTTL)
 	}
@@ -83,10 +84,11 @@ type LoginResponse struct {
 
 // RegisterRequest represents the register request body.
 type RegisterRequest struct {
-	Username    string `json:"username" binding:"required"`
-	Password    string `json:"password" binding:"required"`
-	DisplayName string `json:"display_name"`
-	Role        string `json:"role"`
+	Username       string `json:"username" binding:"required"`
+	Password       string `json:"password" binding:"required"`
+	DisplayName    string `json:"display_name"`
+	Role           string `json:"role"`
+	ServiceAccount bool   `json:"service_account"`
 }
 
 // Login godoc
@@ -115,6 +117,12 @@ func (h *AuthHandler) Login(c *gin.Context) {
 
 	if user.Disabled {
 		c.JSON(http.StatusForbidden, gin.H{"error": "Account disabled"})
+		return
+	}
+
+	// When OIDC is enabled, only service accounts can use local login.
+	if h.oidcCfg != nil && h.oidcCfg.Enabled && !user.ServiceAccount {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Local login is restricted to service accounts. Please use SSO."})
 		return
 	}
 
@@ -214,15 +222,19 @@ func (h *AuthHandler) Register(c *gin.Context) {
 		return
 	}
 
+	// Only admins can create service accounts.
+	serviceAccount := req.ServiceAccount && callerRole == "admin"
+
 	user := &models.User{
-		ID:           uuid.New().String(),
-		Username:     req.Username,
-		PasswordHash: string(hash),
-		DisplayName:  req.DisplayName,
-		Role:         role,
-		AuthProvider: "local",
-		CreatedAt:    time.Now().UTC(),
-		UpdatedAt:    time.Now().UTC(),
+		ID:             uuid.New().String(),
+		Username:       req.Username,
+		PasswordHash:   string(hash),
+		DisplayName:    req.DisplayName,
+		Role:           role,
+		AuthProvider:   "local",
+		ServiceAccount: serviceAccount,
+		CreatedAt:      time.Now().UTC(),
+		UpdatedAt:      time.Now().UTC(),
 	}
 
 	if user.DisplayName == "" {
@@ -282,13 +294,14 @@ func (h *AuthHandler) EnsureAdminUser() {
 	}
 
 	admin := &models.User{
-		ID:           uuid.New().String(),
-		Username:     h.cfg.AdminUsername,
-		PasswordHash: string(hash),
-		DisplayName:  "Administrator",
-		Role:         "admin",
-		CreatedAt:    time.Now().UTC(),
-		UpdatedAt:    time.Now().UTC(),
+		ID:             uuid.New().String(),
+		Username:       h.cfg.AdminUsername,
+		PasswordHash:   string(hash),
+		DisplayName:    "Administrator",
+		Role:           "admin",
+		ServiceAccount: true,
+		CreatedAt:      time.Now().UTC(),
+		UpdatedAt:      time.Now().UTC(),
 	}
 
 	if err := h.userRepo.Create(admin); err != nil {
