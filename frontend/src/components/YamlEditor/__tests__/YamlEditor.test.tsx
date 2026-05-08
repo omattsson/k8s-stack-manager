@@ -2,6 +2,10 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import YamlEditor from '../index';
 
+vi.mock('../../../context/ThemeContext', () => ({
+  useThemeMode: () => ({ mode: 'dark', toggleMode: vi.fn() }),
+}));
+
 // Mock the Monaco Editor since it requires a browser environment
 vi.mock('@monaco-editor/react', () => ({
   default: ({

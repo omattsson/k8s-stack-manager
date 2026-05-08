@@ -1,8 +1,12 @@
-import { describe, it, expect, beforeAll } from 'vitest';
+import { describe, it, expect, vi, beforeAll } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import DeploymentLogViewer from '../index';
 import type { DeploymentLog } from '../../../types';
+
+vi.mock('../../../context/ThemeContext', () => ({
+  useThemeMode: () => ({ mode: 'dark', toggleMode: vi.fn() }),
+}));
 
 // jsdom doesn't implement scrollIntoView
 beforeAll(() => {

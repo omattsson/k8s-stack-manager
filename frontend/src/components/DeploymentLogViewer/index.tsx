@@ -9,6 +9,7 @@ import {
 } from '@mui/material';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import type { DeploymentLog } from '../../types';
+import { useThemeMode } from '../../context/ThemeContext';
 
 interface DeploymentLogViewerProps {
   logs: DeploymentLog[];
@@ -45,20 +46,22 @@ const formatDuration = (startedAt: string, completedAt: string): string => {
   return `${minutes}m ${remainingSeconds}s`;
 };
 
-const terminalSx = {
-  p: 2,
-  bgcolor: '#1e1e1e',
-  color: '#d4d4d4',
-  fontFamily: 'monospace',
-  fontSize: '0.8rem',
-  lineHeight: 1.6,
-  maxHeight: 300,
-  overflow: 'auto',
-  whiteSpace: 'pre-wrap',
-  wordBreak: 'break-all',
-} as const;
+const terminalSx = (mode: 'light' | 'dark') =>
+  ({
+    p: 2,
+    bgcolor: mode === 'dark' ? '#1e1e1e' : '#fafafa',
+    color: mode === 'dark' ? '#d4d4d4' : '#1e1e1e',
+    fontFamily: 'monospace',
+    fontSize: '0.8rem',
+    lineHeight: 1.6,
+    maxHeight: 300,
+    overflow: 'auto',
+    whiteSpace: 'pre-wrap',
+    wordBreak: 'break-all',
+  }) as const;
 
 const DeploymentLogViewer = ({ logs, loading, streamingLines }: DeploymentLogViewerProps) => {
+  const { mode } = useThemeMode();
   const bottomRef = useRef<HTMLDivElement>(null);
   const streamContainerRef = useRef<HTMLDivElement>(null);
   const [expanded, setExpanded] = useState<string | false>(false);
@@ -160,17 +163,17 @@ const DeploymentLogViewer = ({ logs, loading, streamingLines }: DeploymentLogVie
               {isStreaming ? (
                 <Box
                   ref={isExpanded ? streamContainerRef : undefined}
-                  sx={terminalSx}
+                  sx={terminalSx(mode)}
                 >
                   {lines.map((line, i) => (
                     <div key={`line-${i}`}>{line || '\u00A0'}</div>
                   ))}
                 </Box>
               ) : log.output ? (
-                <Box sx={terminalSx}>
+                <Box sx={terminalSx(mode)}>
                   {log.output}
                   {log.error_message && (
-                    <Box sx={{ color: '#f44336', mt: 1 }}>
+                    <Box sx={{ color: 'error.main', mt: 1 }}>
                       Error: {log.error_message}
                     </Box>
                   )}
