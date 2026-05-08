@@ -24,6 +24,11 @@ vi.mock('../../../hooks/useCountdown', () => ({
   default: vi.fn().mockReturnValue(null),
 }));
 
+vi.mock('../../../utils/setupWizard', () => ({
+  isSetupWizardDismissed: vi.fn().mockReturnValue(false),
+  dismissSetupWizard: vi.fn(),
+}));
+
 vi.mock('../../../api/client', () => ({
   instanceService: {
     list: vi.fn(),
@@ -36,6 +41,9 @@ vi.mock('../../../api/client', () => ({
     getPods: vi.fn().mockRejectedValue(new Error('no pods')),
   },
   clusterService: {
+    list: vi.fn().mockResolvedValue([]),
+  },
+  templateService: {
     list: vi.fn().mockResolvedValue([]),
   },
   favoriteService: {
@@ -88,8 +96,10 @@ describe('Dashboard', () => {
 
   // Reset default mocks that survive clearAllMocks
   beforeEach(() => {
+    localStorage.clear();
     (instanceService.recent as ReturnType<typeof vi.fn>).mockResolvedValue([]);
     (favoriteService.list as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    (clusterService.list as ReturnType<typeof vi.fn>).mockResolvedValue([{ id: 'c1', name: 'dev' }]);
   });
 
   it('shows loading spinner initially', () => {
@@ -135,7 +145,7 @@ describe('Dashboard', () => {
     });
   });
 
-  it('shows empty state when no instances', async () => {
+  it('shows empty state when no instances but clusters exist', async () => {
     (instanceService.list as ReturnType<typeof vi.fn>).mockResolvedValue([]);
     render(
       <MemoryRouter>
@@ -957,6 +967,93 @@ describe('Dashboard', () => {
         expect(screen.getByText('Stack Instances')).toBeInTheDocument();
       });
       expect(screen.getByRole('button', { name: /compare/i })).toBeInTheDocument();
+    });
+  });
+
+  describe('Setup Wizard', () => {
+    it('shows wizard when no clusters and no instances', async () => {
+      (instanceService.list as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+      (clusterService.list as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+      render(
+        <MemoryRouter>
+          <NotificationProvider>
+            <Dashboard />
+          </NotificationProvider>
+        </MemoryRouter>
+      );
+      await waitFor(() => {
+        expect(screen.getByText('Welcome to Stack Manager')).toBeInTheDocument();
+      });
+    });
+
+    it('does not show wizard when clusters exist', async () => {
+      (instanceService.list as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+      render(
+        <MemoryRouter>
+          <NotificationProvider>
+            <Dashboard />
+          </NotificationProvider>
+        </MemoryRouter>
+      );
+      await waitFor(() => {
+        expect(screen.getByText('Stack Instances')).toBeInTheDocument();
+      });
+      expect(screen.queryByText('Welcome to Stack Manager')).not.toBeInTheDocument();
+    });
+
+    it('does not show wizard when instances exist', async () => {
+      (instanceService.list as ReturnType<typeof vi.fn>).mockResolvedValue([mockInstance()]);
+      (clusterService.list as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+      render(
+        <MemoryRouter>
+          <NotificationProvider>
+            <Dashboard />
+          </NotificationProvider>
+        </MemoryRouter>
+      );
+      await waitFor(() => {
+        expect(screen.getByText('Test Instance')).toBeInTheDocument();
+      });
+      expect(screen.queryByText('Welcome to Stack Manager')).not.toBeInTheDocument();
+    });
+
+    it('does not show wizard when dismissed', async () => {
+      const { isSetupWizardDismissed } = await import('../../../utils/setupWizard');
+      (isSetupWizardDismissed as ReturnType<typeof vi.fn>).mockReturnValue(true);
+      (instanceService.list as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+      (clusterService.list as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+      render(
+        <MemoryRouter>
+          <NotificationProvider>
+            <Dashboard />
+          </NotificationProvider>
+        </MemoryRouter>
+      );
+      await waitFor(() => {
+        expect(screen.getByText(/no stack instances found/i)).toBeInTheDocument();
+      });
+      expect(screen.queryByText('Welcome to Stack Manager')).not.toBeInTheDocument();
+      (isSetupWizardDismissed as ReturnType<typeof vi.fn>).mockReturnValue(false);
+    });
+
+    it('hides wizard and shows dashboard when skip is clicked', async () => {
+      const user = userEvent.setup();
+      (instanceService.list as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+      (clusterService.list as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+      render(
+        <MemoryRouter>
+          <NotificationProvider>
+            <Dashboard />
+          </NotificationProvider>
+        </MemoryRouter>
+      );
+      await waitFor(() => {
+        expect(screen.getByText('Welcome to Stack Manager')).toBeInTheDocument();
+      });
+      await user.click(screen.getByText('Skip setup'));
+      await waitFor(() => {
+        expect(screen.queryByText('Welcome to Stack Manager')).not.toBeInTheDocument();
+      });
     });
   });
 });

@@ -343,7 +343,7 @@ describe('StackInstances Form', () => {
 
     // Branch field should update to the definition's default branch
     await waitFor(() => {
-      const branchInput = screen.getByRole('combobox', { name: /branch/i });
+      const branchInput = screen.getByRole('textbox', { name: /branch/i });
       expect(branchInput).toHaveValue('develop');
     });
   });
