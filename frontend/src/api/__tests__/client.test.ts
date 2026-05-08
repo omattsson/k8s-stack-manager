@@ -1633,7 +1633,7 @@ describe('notificationService', () => {
     api.put.mockResolvedValueOnce(mockResponse(undefined));
 
     await notificationService.updatePreferences(prefs);
-    expect(api.put).toHaveBeenCalledWith('/api/v1/notifications/preferences', { preferences: prefs });
+    expect(api.put).toHaveBeenCalledWith('/api/v1/notifications/preferences', prefs);
   });
 
   it('updatePreferences throws on error', async () => {

@@ -571,6 +571,11 @@ func TestNotificationHandler_UpdatePreferences(t *testing.T) {
 			body:           `[{"enabled":true}]`,
 			expectedStatus: http.StatusBadRequest,
 		},
+		{
+			name:           "wrapped in object rejects (regression: #218)",
+			body:           `{"preferences":[{"event_type":"deployment.success","enabled":true}]}`,
+			expectedStatus: http.StatusBadRequest,
+		},
 	}
 
 	for _, tt := range tests {
