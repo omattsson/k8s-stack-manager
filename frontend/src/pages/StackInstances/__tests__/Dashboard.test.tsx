@@ -72,7 +72,8 @@ vi.mock('../../../context/AuthContext', () => ({
   }),
 }));
 
-import { instanceService, favoriteService, clusterService } from '../../../api/client';
+import { instanceService, favoriteService, clusterService, templateService } from '../../../api/client';
+import { isSetupWizardDismissed } from '../../../utils/setupWizard';
 import useCountdown from '../../../hooks/useCountdown';
 
 const mockInstance = (overrides: Record<string, unknown> = {}) => ({
@@ -97,9 +98,11 @@ describe('Dashboard', () => {
   // Reset default mocks that survive clearAllMocks
   beforeEach(() => {
     localStorage.clear();
+    (isSetupWizardDismissed as ReturnType<typeof vi.fn>).mockReturnValue(true);
     (instanceService.recent as ReturnType<typeof vi.fn>).mockResolvedValue([]);
     (favoriteService.list as ReturnType<typeof vi.fn>).mockResolvedValue([]);
     (clusterService.list as ReturnType<typeof vi.fn>).mockResolvedValue([{ id: 'c1', name: 'dev' }]);
+    (templateService.list as ReturnType<typeof vi.fn>).mockResolvedValue([{ id: 't1', name: 'Web' }]);
   });
 
   it('shows loading spinner initially', () => {
@@ -145,7 +148,7 @@ describe('Dashboard', () => {
     });
   });
 
-  it('shows empty state when no instances but clusters exist', async () => {
+  it('shows empty state when no instances but wizard dismissed', async () => {
     (instanceService.list as ReturnType<typeof vi.fn>).mockResolvedValue([]);
     render(
       <MemoryRouter>
@@ -971,6 +974,10 @@ describe('Dashboard', () => {
   });
 
   describe('Setup Wizard', () => {
+    beforeEach(() => {
+      (isSetupWizardDismissed as ReturnType<typeof vi.fn>).mockReturnValue(false);
+    });
+
     it('shows wizard when no clusters and no instances', async () => {
       (instanceService.list as ReturnType<typeof vi.fn>).mockResolvedValue([]);
       (clusterService.list as ReturnType<typeof vi.fn>).mockResolvedValue([]);
@@ -986,8 +993,8 @@ describe('Dashboard', () => {
       });
     });
 
-    it('does not show wizard when clusters exist', async () => {
-      (instanceService.list as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    it('does not show wizard when all resources exist', async () => {
+      (instanceService.list as ReturnType<typeof vi.fn>).mockResolvedValue([mockInstance()]);
       render(
         <MemoryRouter>
           <NotificationProvider>
@@ -1001,9 +1008,9 @@ describe('Dashboard', () => {
       expect(screen.queryByText('Welcome to Stack Manager')).not.toBeInTheDocument();
     });
 
-    it('does not show wizard when instances exist', async () => {
-      (instanceService.list as ReturnType<typeof vi.fn>).mockResolvedValue([mockInstance()]);
-      (clusterService.list as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    it('shows wizard at step 2 when clusters exist but no templates', async () => {
+      (instanceService.list as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+      (templateService.list as ReturnType<typeof vi.fn>).mockResolvedValue([]);
       render(
         <MemoryRouter>
           <NotificationProvider>
@@ -1012,13 +1019,12 @@ describe('Dashboard', () => {
         </MemoryRouter>
       );
       await waitFor(() => {
-        expect(screen.getByText('Test Instance')).toBeInTheDocument();
+        expect(screen.getByText('Welcome to Stack Manager')).toBeInTheDocument();
       });
-      expect(screen.queryByText('Welcome to Stack Manager')).not.toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Create a Template' })).toBeInTheDocument();
     });
 
     it('does not show wizard when dismissed', async () => {
-      const { isSetupWizardDismissed } = await import('../../../utils/setupWizard');
       (isSetupWizardDismissed as ReturnType<typeof vi.fn>).mockReturnValue(true);
       (instanceService.list as ReturnType<typeof vi.fn>).mockResolvedValue([]);
       (clusterService.list as ReturnType<typeof vi.fn>).mockResolvedValue([]);
@@ -1033,7 +1039,6 @@ describe('Dashboard', () => {
         expect(screen.getByText(/no stack instances found/i)).toBeInTheDocument();
       });
       expect(screen.queryByText('Welcome to Stack Manager')).not.toBeInTheDocument();
-      (isSetupWizardDismissed as ReturnType<typeof vi.fn>).mockReturnValue(false);
     });
 
     it('hides wizard and shows dashboard when skip is clicked', async () => {

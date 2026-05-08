@@ -493,13 +493,13 @@ const Dashboard = () => {
     return <Alert severity="error">{error}</Alert>;
   }
 
-  if (!wizardDismissed && clusters.length === 0 && instances.length === 0) {
+  if (!wizardDismissed && (clusters.length === 0 || templates.length === 0 || instances.length === 0)) {
     return (
       <SetupWizard
         hasClusters={clusters.length > 0}
         hasTemplates={templates.length > 0}
         hasInstances={instances.length > 0}
-        isAdmin={user?.role === 'admin' || user?.role === 'devops'}
+        isAdmin={user?.role === 'admin'}
         onDismiss={handleDismissWizard}
       />
     );
