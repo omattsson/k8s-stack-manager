@@ -122,6 +122,9 @@ describe('AuthContext', () => {
         username: 'alice',
         display_name: 'alice',
         role: 'devops',
+        auth_provider: 'local',
+        disabled: false,
+        service_account: false,
         created_at: '',
         updated_at: '',
       });

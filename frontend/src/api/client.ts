@@ -1369,6 +1369,20 @@ export const userService = {
       throw error;
     }
   },
+  /**
+   * Reset a local user's password. Admin only. Revokes all active sessions.
+   * @param id - User ID
+   * @param password - New password (minimum 8 characters)
+   * @see PUT /api/v1/users/:id/password
+   */
+  resetPassword: async (id: string, password: string): Promise<void> => {
+    try {
+      await api.put(`/api/v1/users/${id}/password`, { password });
+    } catch (error) {
+      console.error('Failed to reset user password:', error);
+      throw error;
+    }
+  },
 };
 
 /** API key management service for per-user key CRUD. Maps to `/api/v1/users/:id/api-keys`. */

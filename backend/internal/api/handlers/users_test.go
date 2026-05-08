@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"backend/internal/api/middleware"
@@ -12,6 +13,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/crypto/bcrypt"
 )
 
 // setupUserRouter creates a gin engine wired to UserHandler routes, mirroring the production
@@ -28,6 +30,7 @@ func setupUserRouter(userRepo *MockUserRepository, callerID, callerRole string) 
 		users.DELETE("/:id", adminMW, h.DeleteUser)
 		users.PUT("/:id/disable", adminMW, h.DisableUser)
 		users.PUT("/:id/enable", adminMW, h.EnableUser)
+		users.PUT("/:id/password", adminMW, h.ResetUserPassword)
 	}
 	return r
 }
@@ -260,4 +263,158 @@ func TestEnableUser(t *testing.T) {
 	got, err := userRepo.FindByID("user-1")
 	require.NoError(t, err)
 	assert.False(t, got.Disabled, "user should be enabled after PUT /enable")
+}
+
+// ---- TestResetUserPassword ----
+
+func TestResetUserPassword(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name         string
+		callerID     string
+		callerRole   string
+		targetID     string
+		body         string
+		seedTarget   bool
+		authProvider string
+		wantStatus   int
+		wantChanged  bool
+	}{
+		{
+			name:        "admin resets local user password",
+			callerID:    "admin-1",
+			callerRole:  "admin",
+			targetID:    "user-1",
+			body:        `{"password":"newsecurepassword"}`,
+			seedTarget:  true,
+			wantStatus:  http.StatusOK,
+			wantChanged: true,
+		},
+		{
+			name:         "admin resets password for user with empty auth_provider (legacy local)",
+			callerID:     "admin-1",
+			callerRole:   "admin",
+			targetID:     "user-2",
+			body:         `{"password":"newsecurepassword"}`,
+			seedTarget:   true,
+			authProvider: "",
+			wantStatus:   http.StatusOK,
+			wantChanged:  true,
+		},
+		{
+			name:         "rejects OIDC user",
+			callerID:     "admin-1",
+			callerRole:   "admin",
+			targetID:     "oidc-user",
+			body:         `{"password":"newsecurepassword"}`,
+			seedTarget:   true,
+			authProvider: "oidc",
+			wantStatus:   http.StatusBadRequest,
+		},
+		{
+			name:       "rejects short password",
+			callerID:   "admin-1",
+			callerRole: "admin",
+			targetID:   "user-1",
+			body:       `{"password":"short"}`,
+			seedTarget: true,
+			wantStatus: http.StatusBadRequest,
+		},
+		{
+			name:       "rejects missing password field",
+			callerID:   "admin-1",
+			callerRole: "admin",
+			targetID:   "user-1",
+			body:       `{}`,
+			seedTarget: true,
+			wantStatus: http.StatusBadRequest,
+		},
+		{
+			name:       "non-admin gets 403",
+			callerID:   "user-1",
+			callerRole: "user",
+			targetID:   "user-2",
+			body:       `{"password":"newsecurepassword"}`,
+			seedTarget: true,
+			wantStatus: http.StatusForbidden,
+		},
+		{
+			name:       "target not found returns 404",
+			callerID:   "admin-1",
+			callerRole: "admin",
+			targetID:   "ghost",
+			body:       `{"password":"newsecurepassword"}`,
+			seedTarget: false,
+			wantStatus: http.StatusNotFound,
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			userRepo := NewMockUserRepository()
+			var oldHash string
+			if tt.seedTarget {
+				u := seedUser(t, userRepo, tt.targetID, tt.targetID+"-name", "oldpassword", "user")
+				if tt.authProvider != "" {
+					u.AuthProvider = tt.authProvider
+					require.NoError(t, userRepo.Update(u))
+				}
+				oldHash = u.PasswordHash
+			}
+
+			router := setupUserRouter(userRepo, tt.callerID, tt.callerRole)
+			w := httptest.NewRecorder()
+			req, _ := http.NewRequest(http.MethodPut, "/api/v1/users/"+tt.targetID+"/password", strings.NewReader(tt.body))
+			req.Header.Set("Content-Type", "application/json")
+			router.ServeHTTP(w, req)
+
+			assert.Equal(t, tt.wantStatus, w.Code)
+
+			if tt.wantChanged {
+				u, err := userRepo.FindByID(tt.targetID)
+				require.NoError(t, err)
+				assert.NotEqual(t, oldHash, u.PasswordHash, "password hash should have changed")
+				assert.NoError(t, bcrypt.CompareHashAndPassword([]byte(u.PasswordHash), []byte("newsecurepassword")))
+			}
+		})
+	}
+}
+
+func TestResetUserPassword_RevokesTokens(t *testing.T) {
+	t.Parallel()
+
+	userRepo := NewMockUserRepository()
+	refreshRepo := NewMockRefreshTokenRepository()
+	u := seedUser(t, userRepo, "user-1", "target", "oldpass", "user")
+	u.AuthProvider = "local"
+	require.NoError(t, userRepo.Update(u))
+
+	require.NoError(t, refreshRepo.Create(&models.RefreshToken{
+		ID:        "rt-1",
+		UserID:    "user-1",
+		TokenHash: "hash-1",
+		Revoked:   false,
+	}))
+
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.Use(injectAuthContext("admin-1", "admin"))
+	h := NewUserHandler(userRepo)
+	h.SetRefreshTokenRepo(refreshRepo)
+	adminMW := middleware.RequireAdmin()
+	r.PUT("/api/v1/users/:id/password", adminMW, h.ResetUserPassword)
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest(http.MethodPut, "/api/v1/users/user-1/password", strings.NewReader(`{"password":"newpass12345"}`))
+	req.Header.Set("Content-Type", "application/json")
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	rt, err := refreshRepo.FindByTokenHash("hash-1")
+	require.NoError(t, err)
+	assert.True(t, rt.Revoked, "refresh token should be revoked after password reset")
 }

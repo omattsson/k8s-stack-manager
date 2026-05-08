@@ -5,11 +5,16 @@ import { loginAsAdmin, uniqueName, API_BASE, ADMIN_PASSWORD } from './helpers';
  * Helper: login via API and return the JWT token.
  */
 async function apiLogin(request: import('@playwright/test').APIRequestContext): Promise<string> {
-  const res = await request.post(`${API_BASE}/api/v1/auth/login`, {
-    data: { username: 'admin', password: ADMIN_PASSWORD },
-  });
-  expect(res.ok()).toBe(true);
-  const body = await res.json();
+  let res;
+  for (let attempt = 0; attempt < 5; attempt++) {
+    res = await request.post(`${API_BASE}/api/v1/auth/login`, {
+      data: { username: 'admin', password: ADMIN_PASSWORD },
+    });
+    if (res.status() !== 429) break;
+    await new Promise((r) => setTimeout(r, 2000 * (attempt + 1)));
+  }
+  expect(res!.ok(), `Login API failed with status ${res!.status()}`).toBe(true);
+  const body = await res!.json();
   return body.token;
 }
 
@@ -162,6 +167,83 @@ test.describe('Admin User Management', () => {
 
     // Already deleted, try cleanup just in case
     await apiDeleteUser(request, token, userId).catch(() => {});
+  });
+
+  test('reset password for a local user and verify login', async ({ page, request }) => {
+    const token = await apiLogin(request);
+    const username = uniqueName('pw-reset');
+    const userId = await apiCreateUser(request, token, username);
+
+    await page.reload();
+    await expect(page.getByRole('heading', { level: 1, name: 'User Management' })).toBeVisible({
+      timeout: 10_000,
+    });
+    await expect(page.getByRole('cell', { name: username, exact: true })).toBeVisible({ timeout: 10_000 });
+
+    await page.getByRole('button', { name: `Reset password for ${username}` }).click();
+
+    const dialog = page.getByRole('dialog');
+    await expect(dialog.getByRole('heading', { name: 'Reset Password' })).toBeVisible();
+
+    const submitBtn = dialog.getByRole('button', { name: 'Reset Password' });
+    await expect(submitBtn).toBeDisabled();
+
+    await dialog.getByLabel('New Password').fill('newpass123');
+    await expect(submitBtn).toBeEnabled();
+    await submitBtn.click();
+
+    await expect(dialog).not.toBeVisible({ timeout: 10_000 });
+
+    const loginRes = await request.post(`${API_BASE}/api/v1/auth/login`, {
+      data: { username, password: 'newpass123' },
+    });
+    expect(loginRes.ok()).toBe(true);
+
+    const oldLoginRes = await request.post(`${API_BASE}/api/v1/auth/login`, {
+      data: { username, password: 'testpass123' },
+    });
+    expect(oldLoginRes.ok()).toBe(false);
+
+    await apiDeleteUser(request, token, userId);
+  });
+
+  test('reset password button is visible for local users', async ({ page, request }) => {
+    const token = await apiLogin(request);
+    const localUser = uniqueName('local');
+    const localId = await apiCreateUser(request, token, localUser);
+
+    await page.reload();
+    await expect(page.getByRole('cell', { name: localUser, exact: true })).toBeVisible({ timeout: 10_000 });
+
+    await expect(page.getByRole('button', { name: `Reset password for ${localUser}` })).toBeVisible();
+    await expect(page.getByRole('button', { name: /reset password for admin/i })).toBeVisible();
+
+    await apiDeleteUser(request, token, localId);
+  });
+
+  test('cancel password reset closes dialog without changes', async ({ page, request }) => {
+    const token = await apiLogin(request);
+    const username = uniqueName('pw-cancel');
+    const userId = await apiCreateUser(request, token, username);
+
+    await page.reload();
+    await expect(page.getByRole('cell', { name: username, exact: true })).toBeVisible({ timeout: 10_000 });
+
+    await page.getByRole('button', { name: `Reset password for ${username}` }).click();
+
+    const dialog = page.getByRole('dialog');
+    await expect(dialog.getByRole('heading', { name: 'Reset Password' })).toBeVisible();
+    await dialog.getByLabel('New Password').fill('shouldnotapply');
+    await dialog.getByRole('button', { name: 'Cancel' }).click();
+
+    await expect(dialog).not.toBeVisible({ timeout: 10_000 });
+
+    const loginRes = await request.post(`${API_BASE}/api/v1/auth/login`, {
+      data: { username, password: 'testpass123' },
+    });
+    expect(loginRes.ok()).toBe(true);
+
+    await apiDeleteUser(request, token, userId);
   });
 
   test('non-admin users cannot access user management', async ({ page, request }) => {
