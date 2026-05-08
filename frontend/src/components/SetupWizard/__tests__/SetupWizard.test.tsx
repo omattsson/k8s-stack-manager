@@ -12,6 +12,7 @@ const renderWizard = (props: Partial<React.ComponentProps<typeof SetupWizard>> =
         hasTemplates={false}
         hasInstances={false}
         isAdmin={true}
+        isDevOps={true}
         onDismiss={vi.fn()}
         {...props}
       />
@@ -59,10 +60,17 @@ describe('SetupWizard', () => {
   });
 
   it('calls onDismiss when skip button is clicked', async () => {
+    const user = userEvent.setup();
     const onDismiss = vi.fn();
     renderWizard({ onDismiss });
-    await userEvent.click(screen.getByText('Skip setup'));
+    await user.click(screen.getByText('Skip setup'));
     expect(onDismiss).toHaveBeenCalledOnce();
+  });
+
+  it('shows info alert for non-devops users on template step', () => {
+    renderWizard({ hasClusters: true, hasTemplates: false, isDevOps: false });
+    expect(screen.getByText(/Only DevOps users can create templates/)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Create a Template' })).not.toBeInTheDocument();
   });
 
   it('shows step progress text', () => {

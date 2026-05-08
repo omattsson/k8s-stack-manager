@@ -20,6 +20,7 @@ interface SetupWizardProps {
   hasTemplates: boolean;
   hasInstances: boolean;
   isAdmin: boolean;
+  isDevOps: boolean;
   onDismiss: () => void;
 }
 
@@ -44,7 +45,7 @@ const steps = [
   },
 ];
 
-const SetupWizard = ({ hasClusters, hasTemplates, hasInstances, isAdmin, onDismiss }: SetupWizardProps) => {
+const SetupWizard = ({ hasClusters, hasTemplates, hasInstances, isAdmin, isDevOps, onDismiss }: SetupWizardProps) => {
   const navigate = useNavigate();
 
   const activeStep = useMemo(() => {
@@ -103,6 +104,10 @@ const SetupWizard = ({ hasClusters, hasTemplates, hasInstances, isAdmin, onDismi
           {activeStep === 0 && !isAdmin ? (
             <Alert severity="info" sx={{ maxWidth: 480, mx: 'auto' }}>
               Only administrators can register clusters. Ask your admin to add one, then return here.
+            </Alert>
+          ) : activeStep === 1 && !isDevOps ? (
+            <Alert severity="info" sx={{ maxWidth: 480, mx: 'auto' }}>
+              Only DevOps users can create templates. Ask your team lead to create one, then return here.
             </Alert>
           ) : (
             <Button
