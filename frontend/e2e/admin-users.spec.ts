@@ -5,11 +5,16 @@ import { loginAsAdmin, uniqueName, API_BASE, ADMIN_PASSWORD } from './helpers';
  * Helper: login via API and return the JWT token.
  */
 async function apiLogin(request: import('@playwright/test').APIRequestContext): Promise<string> {
-  const res = await request.post(`${API_BASE}/api/v1/auth/login`, {
-    data: { username: 'admin', password: ADMIN_PASSWORD },
-  });
-  expect(res.ok()).toBe(true);
-  const body = await res.json();
+  let res;
+  for (let attempt = 0; attempt < 5; attempt++) {
+    res = await request.post(`${API_BASE}/api/v1/auth/login`, {
+      data: { username: 'admin', password: ADMIN_PASSWORD },
+    });
+    if (res.status() !== 429) break;
+    await new Promise((r) => setTimeout(r, 2000 * (attempt + 1)));
+  }
+  expect(res!.ok(), `Login API failed with status ${res!.status()}`).toBe(true);
+  const body = await res!.json();
   return body.token;
 }
 
