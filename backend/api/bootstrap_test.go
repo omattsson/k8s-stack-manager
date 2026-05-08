@@ -264,7 +264,8 @@ func TestStartHTTPServer_ListensOnConfiguredAddress(t *testing.T) {
 	addr := fmt.Sprintf("127.0.0.1:%d", port)
 	waitForServer(t, addr)
 
-	resp, err := http.Get(fmt.Sprintf("http://%s/ping", addr))
+	client := &http.Client{Timeout: 2 * time.Second}
+	resp, err := client.Get(fmt.Sprintf("http://%s/ping", addr))
 	require.NoError(t, err)
 	defer resp.Body.Close()
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
@@ -297,7 +298,8 @@ func TestStartHTTPServer_PprofEnabled(t *testing.T) {
 	pprofAddr := fmt.Sprintf("127.0.0.1:%d", pprofPort)
 	waitForServer(t, pprofAddr)
 
-	resp, err := http.Get(fmt.Sprintf("http://%s/debug/pprof/", pprofAddr))
+	client := &http.Client{Timeout: 2 * time.Second}
+	resp, err := client.Get(fmt.Sprintf("http://%s/debug/pprof/", pprofAddr))
 	require.NoError(t, err)
 	defer resp.Body.Close()
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
