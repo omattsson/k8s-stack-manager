@@ -1093,7 +1093,7 @@ func TestStartBackgroundServices_ReturnsAllFields(t *testing.T) {
 	hs, err := buildHandlers(cfg, repos, svc, sessStore, hub)
 	require.NoError(t, err)
 
-	bg, err := startBackgroundServices(svc, hs, repos, cfg, hub)
+	bg, err := startBackgroundServices(svc, hs, repos, hub)
 	require.NoError(t, err)
 	require.NotNil(t, bg)
 
@@ -1158,7 +1158,7 @@ func TestBootstrapFullPipeline(t *testing.T) {
 	t.Cleanup(func() { rateLimiters.Stop() })
 
 	// Step 4: Background services.
-	bg, err := startBackgroundServices(svc, hs, repos, cfg, hub)
+	bg, err := startBackgroundServices(svc, hs, repos, hub)
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		bg.RefreshTokenCleanupCancel()

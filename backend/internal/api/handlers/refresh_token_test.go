@@ -588,34 +588,29 @@ func TestCleanupExpiredTokens(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name           string
-		hasRepo        bool
-		seedExpired    int
-		deleteErr      error
-		wantDeleteCall bool
+		name        string
+		hasRepo     bool
+		seedExpired int
+		deleteErr   error
 	}{
 		{
-			name:           "no repo configured — no-op",
-			hasRepo:        false,
-			wantDeleteCall: false,
+			name:    "no repo configured — no-op",
+			hasRepo: false,
 		},
 		{
-			name:           "no expired tokens",
-			hasRepo:        true,
-			seedExpired:    0,
-			wantDeleteCall: true,
+			name:        "no expired tokens",
+			hasRepo:     true,
+			seedExpired: 0,
 		},
 		{
-			name:           "deletes expired tokens",
-			hasRepo:        true,
-			seedExpired:    3,
-			wantDeleteCall: true,
+			name:        "deletes expired tokens",
+			hasRepo:     true,
+			seedExpired: 3,
 		},
 		{
-			name:           "DeleteExpired returns error — logs and returns",
-			hasRepo:        true,
-			deleteErr:      errors.New("db failure"),
-			wantDeleteCall: true,
+			name:      "DeleteExpired returns error — logs and returns",
+			hasRepo:   true,
+			deleteErr: errors.New("db failure"),
 		},
 	}
 

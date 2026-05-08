@@ -129,7 +129,7 @@ func main() {
 	defer rateLimiters.Stop()
 
 	// Background services (TTL reaper, expiry warner, monitors, cleanup scheduler).
-	bgSvc, err := startBackgroundServices(svc, hs, repos, cfg, hub)
+	bgSvc, err := startBackgroundServices(svc, hs, repos, hub)
 	must("background services", err)
 	defer bgSvc.RefreshTokenCleanupCancel()
 

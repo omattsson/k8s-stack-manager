@@ -463,7 +463,6 @@ func startBackgroundServices(
 	svc *domainServices,
 	hs *handlerSet,
 	repos *database.RepositorySet,
-	cfg *config.Config,
 	hub *websocket.Hub,
 ) (*backgroundServices, error) {
 	// TTL reaper for auto-expiring stack instances.
