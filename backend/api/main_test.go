@@ -917,7 +917,7 @@ func TestGracefulShutdown(t *testing.T) {
 
 	done := make(chan struct{})
 	go func() {
-		gracefulShutdown(srv, 2*time.Second, shutdownDeps{
+		gracefulShutdown(&servers{Main: srv}, 2*time.Second, shutdownDeps{
 			reaper:           reaper,
 			cleanupScheduler: cleanupScheduler,
 			deployManager:    deployManager,
@@ -976,7 +976,7 @@ func TestGracefulShutdown_RepoCloseError(t *testing.T) {
 	// Should not panic even if repo.Close() errors.
 	done := make(chan struct{})
 	go func() {
-		gracefulShutdown(srv, 2*time.Second, shutdownDeps{
+		gracefulShutdown(&servers{Main: srv}, 2*time.Second, shutdownDeps{
 			reaper:           reaper,
 			cleanupScheduler: cleanupScheduler,
 			deployManager:    deployManager,

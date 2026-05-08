@@ -3,36 +3,26 @@
 package main
 
 import (
-	"backend/internal/api/handlers"
-	"backend/internal/api/routes"
-	"backend/internal/auth"
-	"backend/internal/cluster"
 	"backend/internal/config"
-	"backend/internal/database"
 	"backend/internal/deployer"
-	"backend/internal/gitprovider"
 	"backend/internal/health"
-	"backend/internal/helm"
-	"backend/internal/hooks"
-	"backend/internal/k8s"
 	"backend/internal/models"
-	"backend/internal/notifier"
 	"backend/internal/scheduler"
 	"backend/internal/sessionstore"
 	"backend/internal/telemetry"
-	"backend/internal/ttl"
 	"backend/internal/websocket"
 	"context"
-	"fmt"
 	"log/slog"
-	"net/http"
-	"net/http/pprof"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
 
-	"github.com/gin-gonic/gin"
+	"backend/internal/api/handlers"
+	"backend/internal/cluster"
+	"backend/internal/k8s"
+	"backend/internal/ttl"
+
 	"github.com/google/uuid"
 	"k8s.io/client-go/tools/clientcmd"
 )
@@ -69,7 +59,7 @@ func must(name string, err error) {
 // @name X-API-Key
 // @description API key (format: "sk_<key>")
 func main() {
-	// Load configuration
+	// Load configuration.
 	cfg, err := config.LoadConfig()
 	if err != nil {
 		slog.Error("Failed to load configuration", "error", err)
@@ -87,427 +77,66 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Initialize repository (MySQL via GORM)
-	repo, mysqlGormDB, err := database.NewRepositoryWithGormDB(cfg)
-	if err != nil {
-		slog.Error("Failed to initialize repository", "error", err)
-		os.Exit(1)
-	}
+	// Database + generic repository.
+	repo, mysqlGormDB, err := initDatabase(cfg)
+	must("database", err)
 
 	// Register database/sql pool metrics with OTel.
 	if cfg.Otel.Enabled {
-		sqlDB, err := mysqlGormDB.DB()
-		if err == nil {
-			if err := telemetry.StartDBMetrics(sqlDB); err != nil {
-				slog.Warn("Failed to register DB pool metrics", "error", err)
+		sqlDB, dbErr := mysqlGormDB.DB()
+		if dbErr == nil {
+			if metricsErr := telemetry.StartDBMetrics(sqlDB); metricsErr != nil {
+				slog.Warn("Failed to register DB pool metrics", "error", metricsErr)
 			}
 		}
 	}
 
-	// Initialize health checker with actual database dependency
+	// Health checker.
 	healthChecker := health.New()
 	healthChecker.AddCheck("database", func(ctx context.Context) error {
 		return repo.Ping(ctx)
 	})
 	healthChecker.SetReady(true)
 
-	// Create and start WebSocket hub
+	// WebSocket hub.
 	hub := websocket.NewHub()
 	go hub.Run()
 
-	// ------------------------------------------------------------------
-	// Create all domain-specific repositories via factory
-	// ------------------------------------------------------------------
-	repos, err := database.NewRepositorySet(cfg, mysqlGormDB)
-	if err != nil {
-		slog.Error("Failed to create domain repositories", "error", err)
-		os.Exit(1)
-	}
+	// Domain-specific repositories.
+	repos, err := initRepositories(cfg, mysqlGormDB)
+	must("domain repositories", err)
 
-	userRepo := repos.User
-	templateRepo := repos.StackTemplate
-	templateChartRepo := repos.TemplateChartConfig
-	definitionRepo := repos.StackDefinition
-	chartConfigRepo := repos.ChartConfig
-	instanceRepo := repos.StackInstance
-	overrideRepo := repos.ValueOverride
-	branchOverrideRepo := repos.ChartBranchOverride
-	auditRepo := repos.AuditLog
-	apiKeyRepo := repos.APIKey
-	deployLogRepo := repos.DeploymentLog
-	sharedValuesRepo := repos.SharedValues
-	quotaRepo := repos.ResourceQuota
-	quotaOverrideRepo := repos.InstanceQuotaOverride
-	templateVersionRepo := repos.TemplateVersion
-	notificationRepo := repos.Notification
-	favoriteRepo := repos.UserFavorite
-	cleanupPolicyRepo := repos.CleanupPolicy
-	clusterRepo := repos.Cluster
+	// Domain services (git, cluster, deployer, hooks, etc.).
+	svc, err := buildDomainServices(cfg, repos, hub, healthChecker)
+	must("domain services", err)
 
-	// ------------------------------------------------------------------
-	// Phase 1: Create domain services
-	// ------------------------------------------------------------------
-	gitRegistry := gitprovider.NewRegistry(gitprovider.Config{
-		AzureDevOps: gitprovider.AzureDevOpsConfig{
-			PAT:        cfg.GitProvider.AzureDevOpsPAT,
-			DefaultOrg: cfg.GitProvider.AzureDevOpsDefaultOrg,
-		},
-		GitLab: gitprovider.GitLabConfig{
-			Token:   cfg.GitProvider.GitLabToken,
-			BaseURL: cfg.GitProvider.GitLabBaseURL,
-		},
+	// Session store for token blocklist and OIDC state.
+	sessStore := buildSessionStore(cfg.SessionStore.Backend, mysqlGormDB)
+
+	// HTTP handlers.
+	hs, err := buildHandlers(cfg, repos, svc, sessStore, hub)
+	must("handlers", err)
+
+	// Router.
+	router, rateLimiters := buildRouter(cfg, hs, routerDeps{
+		Repo:          repo,
+		HealthChecker: healthChecker,
+		Hub:           hub,
+		SessionStore:  sessStore,
+		Repos:         repos,
+		Svc:           svc,
 	})
+	defer rateLimiters.Stop()
 
-	valuesGen := helm.NewValuesGenerator()
+	// Background services (TTL reaper, expiry warner, monitors, cleanup scheduler).
+	bgSvc, err := startBackgroundServices(svc, hs, repos, hub)
+	must("background services", err)
+	defer bgSvc.RefreshTokenCleanupCancel()
 
-	// ------------------------------------------------------------------
-	// Phase 3: Create deployment services
-	// ------------------------------------------------------------------
+	// HTTP server.
+	srvs := startHTTPServer(router, cfg)
 
-	// Auto-create default cluster from KUBECONFIG_PATH for single-cluster migration
-	ensureDefaultCluster(clusterRepo, instanceRepo, cfg)
-
-	// Create cluster registry for multi-cluster client management
-	clusterRegistry := cluster.NewRegistry(cluster.RegistryOptions{
-		ClusterRepo: clusterRepo,
-		HelmBinary:  cfg.Deployment.HelmBinary,
-		HelmTimeout: cfg.Deployment.DeploymentTimeout,
-	})
-
-	// Register extended health checks for cluster, git, and helm.
-	healthChecker.AddCheck("cluster_registry", func(ctx context.Context) error {
-		return clusterRegistry.HealthCheck(ctx)
-	})
-	healthChecker.AddCheck("git_provider", func(ctx context.Context) error {
-		return gitRegistry.HealthCheck(ctx)
-	})
-	healthChecker.AddCheck("helm", deployer.HelmHealthCheck(cfg.Deployment.HelmBinary))
-
-	// Start cluster health poller
-	healthPoller := cluster.NewHealthPoller(cluster.HealthPollerConfig{
-		ClusterRepo: clusterRepo,
-		Registry:    clusterRegistry,
-		Interval:    cfg.Deployment.ClusterHealthPollInterval,
-		Hub:         hub,
-	})
-	healthPoller.Start()
-
-	// Start image pull secret refresher for clusters with registry config
-	secretRefresher := cluster.NewSecretRefresher(cluster.SecretRefresherConfig{
-		ClusterRepo:  clusterRepo,
-		InstanceRepo: instanceRepo,
-		Registry:     clusterRegistry,
-	})
-	secretRefresher.Start()
-
-	// K8s watcher — uses registry for multi-cluster monitoring
-	k8sWatcher := k8s.NewWatcher(clusterRegistry, instanceRepo, hub, 30*time.Second)
-	watcherCtx, watcherCancel := context.WithCancel(context.Background())
-	k8sWatcher.Start(watcherCtx)
-
-	// Load webhook subscription + action configuration (optional). When
-	// HOOKS_CONFIG_FILE is unset — or sets no subscriptions and no actions —
-	// the server starts with NIL dispatcher and registry handles: lifecycle
-	// hook calls become no-ops, and the /actions/{name} route returns 503
-	// (matches the documented contract). A non-nil registry with zero
-	// actions would otherwise make that route return 404 (unknown action),
-	// which misleads operators into thinking the feature is enabled.
-	hookCfg, actionSpecs, hookErr := hooks.LoadConfigFile(cfg.Deployment.HooksConfigFile)
-	if hookErr != nil {
-		slog.Error("failed to load hooks config", "file", cfg.Deployment.HooksConfigFile, "error", hookErr)
-		os.Exit(1)
-	}
-
-	var hookDispatcher *hooks.Dispatcher
-	if len(hookCfg.Subscriptions) > 0 {
-		hookDispatcher, hookErr = hooks.NewDispatcher(hookCfg, http.DefaultClient)
-		if hookErr != nil {
-			slog.Error("failed to build hooks dispatcher", "error", hookErr)
-			os.Exit(1)
-		}
-	}
-
-	var actionRegistry *hooks.ActionRegistry
-	if len(actionSpecs) > 0 {
-		actionRegistry, hookErr = hooks.NewActionRegistry(actionSpecs, http.DefaultClient)
-		if hookErr != nil {
-			slog.Error("failed to build action registry", "error", hookErr)
-			os.Exit(1)
-		}
-	}
-
-	var subscribedEvents []string
-	if hookDispatcher != nil {
-		subscribedEvents = hookDispatcher.EventNames()
-	}
-	var actionNames []string
-	if actionRegistry != nil {
-		actionNames = actionRegistry.Names()
-	}
-	slog.Info("hooks configured",
-		"config_file", cfg.Deployment.HooksConfigFile,
-		"subscribed_events", subscribedEvents,
-		"actions", actionNames,
-	)
-
-	// Lifecycle notifier — creates in-app notifications for stack events
-	lifecycleNotifier := notifier.NewNotifier(notificationRepo, hub, userRepo)
-
-	// Deployment manager — uses registry for multi-cluster deploys
-	deployManager := deployer.NewManager(deployer.ManagerConfig{
-		Registry:                   clusterRegistry,
-		InstanceRepo:               instanceRepo,
-		DeployLogRepo:              deployLogRepo,
-		Hub:                        hub,
-		TxRunner:                   repos.TxRunner,
-		MaxConcurrent:              int(cfg.Deployment.MaxConcurrentDeploys),
-		QuotaRepo:                  quotaRepo,
-		QuotaOverrideRepo:          quotaOverrideRepo,
-		WildcardTLSSourceNamespace: cfg.Deployment.WildcardTLSSourceNamespace,
-		WildcardTLSSourceSecret:    cfg.Deployment.WildcardTLSSourceSecret,
-		WildcardTLSTargetSecret:    cfg.Deployment.WildcardTLSTargetSecret,
-		StabilizeTimeout:           cfg.Deployment.StabilizeTimeout,
-		StabilizePollInterval:      cfg.Deployment.StabilizePollInterval,
-		Hooks:                      hookDispatcher,
-		Notifier:                   lifecycleNotifier,
-	})
-
-	// ------------------------------------------------------------------
-	// Phase 1: Create handlers
-	// ------------------------------------------------------------------
-	authHandler := handlers.NewAuthHandler(userRepo, &cfg.Auth, &cfg.OIDC)
-
-	// Create session store for token blocklist and OIDC state persistence.
-	var sessStore sessionstore.SessionStore
-	switch cfg.SessionStore.Backend {
-	case "memory":
-		sessStore = sessionstore.NewMemoryStore()
-	default:
-		sessStore = sessionstore.NewMySQLStore(mysqlGormDB)
-	}
-	authHandler.SetSessionStore(sessStore)
-
-	// Set up refresh token support if repository is available.
-	refreshTokenRepo := repos.RefreshToken
-	if refreshTokenRepo != nil {
-		authHandler.SetRefreshTokenRepo(refreshTokenRepo)
-	}
-
-	// OIDC authentication — conditionally initialize when enabled.
-	var oidcHandler *handlers.OIDCHandler
-	if cfg.OIDC.Enabled {
-		oidcProvider, oidcErr := auth.NewProvider(context.Background(), &cfg.OIDC)
-		if oidcErr != nil {
-			slog.Error("Failed to initialize OIDC provider", "error", oidcErr)
-			os.Exit(1)
-		}
-		oidcHandler = handlers.NewOIDCHandler(oidcProvider, sessStore, userRepo, &cfg.OIDC, &cfg.Auth)
-		if refreshTokenRepo != nil {
-			oidcHandler.SetRefreshTokenRepo(refreshTokenRepo)
-		}
-		slog.Info("OIDC authentication enabled", "provider_url", cfg.OIDC.ProviderURL)
-	}
-
-	templateHandler, err := handlers.NewTemplateHandlerWithVersions(templateRepo, templateChartRepo, definitionRepo, chartConfigRepo, templateVersionRepo, repos.TxRunner)
-	if err != nil {
-		slog.Error("failed to create template handler", "error", err)
-		os.Exit(1)
-	}
-	definitionHandler, err := handlers.NewDefinitionHandlerWithVersions(definitionRepo, chartConfigRepo, instanceRepo, templateRepo, templateChartRepo, templateVersionRepo, repos.TxRunner)
-	if err != nil {
-		slog.Error("failed to create definition handler", "error", err)
-		os.Exit(1)
-	}
-	templateVersionHandler := handlers.NewTemplateVersionHandler(templateVersionRepo, templateRepo)
-	instanceHandler, err := handlers.NewInstanceHandlerWithDeployer(
-		instanceRepo, overrideRepo, branchOverrideRepo, definitionRepo, chartConfigRepo,
-		templateRepo, templateChartRepo, valuesGen, userRepo,
-		deployManager, k8sWatcher, clusterRegistry, deployLogRepo, clusterRepo,
-		cfg.App.DefaultInstanceTTLMinutes,
-		repos.TxRunner,
-	)
-	if err != nil {
-		slog.Error("failed to create instance handler", "error", err)
-		os.Exit(1)
-	}
-	instanceHandler.WithHooks(hookDispatcher).WithActions(actionRegistry).WithNotifier(lifecycleNotifier)
-	gitHandler := handlers.NewGitHandler(gitRegistry)
-	auditLogHandler := handlers.NewAuditLogHandler(auditRepo)
-	userHandler := handlers.NewUserHandler(userRepo)
-	userHandler.SetSessionStore(sessStore)
-	if refreshTokenRepo != nil {
-		userHandler.SetRefreshTokenRepo(refreshTokenRepo)
-	}
-	userHandler.SetAccessTokenExpiration(cfg.Auth.AccessTokenExpiration)
-	userHandler.SetJWTExpiration(cfg.Auth.JWTExpiration)
-	apiKeyHandler := handlers.NewAPIKeyHandler(apiKeyRepo, userRepo, &cfg.Auth)
-
-	adminHandler := handlers.NewAdminHandler(clusterRegistry, instanceRepo)
-	clusterHandler := handlers.NewClusterHandlerWithQuotas(clusterRepo, clusterRegistry, instanceRepo, quotaRepo)
-	branchOverrideHandler := handlers.NewBranchOverrideHandler(branchOverrideRepo, instanceRepo)
-	instanceQuotaOverrideHandler := handlers.NewInstanceQuotaOverrideHandler(quotaOverrideRepo, instanceRepo)
-	sharedValuesHandler := handlers.NewSharedValuesHandler(sharedValuesRepo, clusterRepo)
-
-	notificationHandler := handlers.NewNotificationHandler(notificationRepo)
-
-	favoriteHandler := handlers.NewFavoriteHandler(favoriteRepo)
-
-	quickDeployHandler, err := handlers.NewQuickDeployHandler(
-		templateRepo, templateChartRepo, definitionRepo, chartConfigRepo,
-		instanceRepo, branchOverrideRepo, overrideRepo, valuesGen,
-		deployManager, userRepo, deployLogRepo, auditRepo,
-		hub, clusterRegistry, k8sWatcher,
-		cfg.App.DefaultInstanceTTLMinutes,
-		repos.TxRunner,
-	)
-	if err != nil {
-		slog.Error("failed to create quick deploy handler", "error", err)
-		os.Exit(1)
-	}
-
-	analyticsHandler := handlers.NewAnalyticsHandler(templateRepo, definitionRepo, instanceRepo, deployLogRepo, userRepo)
-	dashboardHandler := handlers.NewDashboardHandler(clusterRepo, instanceRepo, deployLogRepo, clusterRegistry)
-
-	// ------------------------------------------------------------------
-	// Phase 6.2: Cleanup policies
-	// ------------------------------------------------------------------
-	cleanupExecutor := deployer.NewCleanupExecutor(deployManager, definitionRepo, chartConfigRepo, instanceRepo)
-	cleanupScheduler := scheduler.NewScheduler(cleanupPolicyRepo, instanceRepo, auditRepo, cleanupExecutor, lifecycleNotifier)
-	cleanupPolicyHandler := handlers.NewCleanupPolicyHandler(cleanupPolicyRepo, cleanupScheduler)
-
-	// Auto-create admin user on startup if ADMIN_PASSWORD is set.
-	authHandler.EnsureAdminUser()
-
-	// Setup router — use gin.New() since SetupRoutes registers its own Logger and Recovery middleware.
-	router := gin.New()
-	rateLimiter := routes.SetupRoutes(router, routes.Deps{
-		Repository:                   repo,
-		HealthChecker:                healthChecker,
-		Config:                       cfg,
-		Hub:                          hub,
-		AuthHandler:                  authHandler,
-		TemplateHandler:              templateHandler,
-		DefinitionHandler:            definitionHandler,
-		InstanceHandler:              instanceHandler,
-		GitHandler:                   gitHandler,
-		AuditLogHandler:              auditLogHandler,
-		AuditLogger:                  auditRepo,
-		UserHandler:                  userHandler,
-		APIKeyHandler:                apiKeyHandler,
-		AdminHandler:                 adminHandler,
-		BranchOverrideHandler:        branchOverrideHandler,
-		InstanceQuotaOverrideHandler: instanceQuotaOverrideHandler,
-		TemplateVersionHandler:       templateVersionHandler,
-		NotificationHandler:          notificationHandler,
-		FavoriteHandler:              favoriteHandler,
-		QuickDeployHandler:           quickDeployHandler,
-		AnalyticsHandler:             analyticsHandler,
-		DashboardHandler:             dashboardHandler,
-		CleanupPolicyHandler:         cleanupPolicyHandler,
-		CleanupScheduler:             cleanupScheduler,
-		ClusterHandler:               clusterHandler,
-		SharedValuesHandler:          sharedValuesHandler,
-		UserRepo:                     userRepo,
-		APIKeyRepo:                   apiKeyRepo,
-		OIDCHandler:                  oidcHandler,
-		SessionStore:                 sessStore,
-		HealthVerbose:                cfg.Server.HealthVerbose,
-	})
-	defer rateLimiter.Stop()
-
-	// Start TTL reaper for auto-expiring stack instances.
-	expiryStopper := deployer.NewExpiryStopper(deployManager, definitionRepo, chartConfigRepo)
-	reaper := ttl.NewReaper(instanceRepo, auditRepo, hub, expiryStopper, 60*time.Second)
-	go reaper.Start()
-
-	// Start TTL expiry warner — warns users before their stack expires (#189).
-	expiryWarner := ttl.NewWarner(instanceRepo, lifecycleNotifier, 30*time.Minute, 60*time.Second)
-	go expiryWarner.Start()
-
-	// Start quota monitor — alerts admins when cluster resource usage is high (#190).
-	quotaMonitor := cluster.NewQuotaMonitor(cluster.QuotaMonitorConfig{
-		ClusterRepo:  clusterRepo,
-		InstanceRepo: instanceRepo,
-		QuotaRepo:    quotaRepo,
-		Registry:     clusterRegistry,
-		Notifier:     lifecycleNotifier,
-	})
-	quotaMonitor.Start()
-
-	// Start secret expiry monitor — alerts admins before secrets expire (#191).
-	secretMonitor := cluster.NewSecretMonitor(cluster.SecretMonitorConfig{
-		ClusterRepo:  clusterRepo,
-		InstanceRepo: instanceRepo,
-		Registry:     clusterRegistry,
-		Notifier:     lifecycleNotifier,
-	})
-	secretMonitor.Start()
-
-	// Periodically clean up expired refresh tokens (every hour).
-	refreshTokenCleanupCtx, refreshTokenCleanupCancel := context.WithCancel(context.Background())
-	defer refreshTokenCleanupCancel()
-	go func(ctx context.Context) {
-		ticker := time.NewTicker(time.Hour)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-				authHandler.CleanupExpiredTokens()
-			}
-		}
-	}(refreshTokenCleanupCtx)
-
-	// Start cleanup scheduler.
-	if err := cleanupScheduler.Start(); err != nil {
-		slog.Error("Failed to start cleanup scheduler", "error", err)
-		os.Exit(1)
-	}
-
-	// Start pprof server on a separate port when PPROF_ENABLED=true.
-	// Access at http://localhost:6060/debug/pprof/
-	if cfg.Server.PprofEnabled {
-		pprofMux := http.NewServeMux()
-		pprofMux.HandleFunc("/debug/pprof/", pprof.Index)
-		pprofMux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
-		pprofMux.HandleFunc("/debug/pprof/profile", pprof.Profile)
-		pprofMux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
-		pprofMux.HandleFunc("/debug/pprof/trace", pprof.Trace)
-		pprofSrv := &http.Server{
-			Addr:         cfg.Server.PprofAddr,
-			Handler:      pprofMux,
-			ReadTimeout:  30 * time.Second,
-			WriteTimeout: 30 * time.Second,
-			IdleTimeout:  60 * time.Second,
-		}
-		go func() {
-			slog.Info("pprof server starting", "addr", cfg.Server.PprofAddr)
-			if err := pprofSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-				slog.Error("pprof server failed", "error", err)
-			}
-		}()
-	}
-
-	// Create server with timeouts
-	srv := &http.Server{
-		Addr:         fmt.Sprintf("%s:%s", cfg.Server.Host, cfg.Server.Port),
-		Handler:      router,
-		ReadTimeout:  cfg.Server.ReadTimeout,
-		WriteTimeout: cfg.Server.WriteTimeout,
-		IdleTimeout:  cfg.Server.IdleTimeout,
-	}
-
-	// Start server in a goroutine
-	go func() {
-		slog.Info("Server starting", "addr", srv.Addr)
-		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			slog.Error("Failed to start server", "error", err)
-			os.Exit(1)
-		}
-	}()
-
-	// Wait for interrupt signal
+	// Wait for interrupt signal.
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
@@ -518,22 +147,22 @@ func main() {
 		shutdownTimeout = defaultShutdownTimeout
 	}
 
-	gracefulShutdown(srv, shutdownTimeout, shutdownDeps{
+	gracefulShutdown(srvs, shutdownTimeout, shutdownDeps{
 		telemetry:        tel,
-		reaper:           reaper,
-		expiryWarner:     expiryWarner,
-		cleanupScheduler: cleanupScheduler,
-		deployManager:    deployManager,
-		healthPoller:     healthPoller,
-		secretRefresher:  secretRefresher,
-		quotaMonitor:     quotaMonitor,
-		secretMonitor:    secretMonitor,
-		k8sWatcher:       k8sWatcher,
+		reaper:           bgSvc.Reaper,
+		expiryWarner:     bgSvc.ExpiryWarner,
+		cleanupScheduler: svc.CleanupScheduler,
+		deployManager:    svc.DeployManager,
+		healthPoller:     svc.HealthPoller,
+		secretRefresher:  svc.SecretRefresher,
+		quotaMonitor:     bgSvc.QuotaMonitor,
+		secretMonitor:    bgSvc.SecretMonitor,
+		k8sWatcher:       svc.K8sWatcher,
 		hub:              hub,
-		clusterRegistry:  clusterRegistry,
-		watcherCancel:    watcherCancel,
+		clusterRegistry:  svc.ClusterRegistry,
+		watcherCancel:    svc.WatcherCancel,
 		sessionStore:     sessStore,
-		dashboardHandler: dashboardHandler,
+		dashboardHandler: hs.Dashboard,
 		repo:             repo,
 	})
 }
@@ -559,13 +188,18 @@ type shutdownDeps struct {
 }
 
 // gracefulShutdown stops all services in the correct order.
-func gracefulShutdown(srv *http.Server, timeout time.Duration, deps shutdownDeps) {
+func gracefulShutdown(srvs *servers, timeout time.Duration, deps shutdownDeps) {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
-	// 1. Stop HTTP server — no new requests.
-	if err := srv.Shutdown(ctx); err != nil {
+	// 1. Stop HTTP servers — no new requests.
+	if err := srvs.Main.Shutdown(ctx); err != nil {
 		slog.Error("Server forced to shutdown", "error", err)
+	}
+	if srvs.Pprof != nil {
+		if err := srvs.Pprof.Shutdown(ctx); err != nil {
+			slog.Error("Pprof server forced to shutdown", "error", err)
+		}
 	}
 
 	// 2. Stop producers of deploy work.
