@@ -3,6 +3,7 @@ package models
 import (
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
@@ -79,7 +80,7 @@ func VerifyAPIKeyHash(rawKey, encodedHash string) bool {
 	// SHA-256 hex format: 64 lowercase hex chars with no "$"
 	if len(encodedHash) == 64 && !strings.Contains(encodedHash, "$") {
 		expected := hashAPIKeySHA256(rawKey)
-		return subtleConstantTimeCompare([]byte(expected), []byte(encodedHash))
+		return constantTimeEqual([]byte(expected), []byte(encodedHash))
 	}
 	// Argon2id format: $argon2id$v=19$m=65536,t=1,p=4$<salt_b64>$<hash_b64>
 	parts := strings.Split(encodedHash, "$")
@@ -95,17 +96,9 @@ func VerifyAPIKeyHash(rawKey, encodedHash string) bool {
 		return false
 	}
 	hash := argon2.IDKey([]byte(rawKey), salt, 1, 64*1024, 4, 32)
-	return subtleConstantTimeCompare(hash, expectedHash)
+	return constantTimeEqual(hash, expectedHash)
 }
 
-// subtleConstantTimeCompare compares two byte slices in constant time.
-func subtleConstantTimeCompare(a, b []byte) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	var result byte
-	for i := 0; i < len(a); i++ {
-		result |= a[i] ^ b[i]
-	}
-	return result == 0
+func constantTimeEqual(a, b []byte) bool {
+	return subtle.ConstantTimeCompare(a, b) == 1
 }

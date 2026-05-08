@@ -20,6 +20,7 @@ type UserHandler struct {
 	sessionStore          sessionstore.SessionStore
 	refreshTokenRepo      models.RefreshTokenRepository
 	accessTokenExpiration time.Duration
+	jwtExpiration         time.Duration
 }
 
 // NewUserHandler creates a new UserHandler.
@@ -32,6 +33,7 @@ func (h *UserHandler) SetRefreshTokenRepo(repo models.RefreshTokenRepository) {
 	h.refreshTokenRepo = repo
 }
 func (h *UserHandler) SetAccessTokenExpiration(d time.Duration) { h.accessTokenExpiration = d }
+func (h *UserHandler) SetJWTExpiration(d time.Duration)         { h.jwtExpiration = d }
 
 // ListUsers godoc
 // @Summary      List all users
@@ -102,6 +104,7 @@ func (h *UserHandler) DeleteUser(c *gin.Context) {
 // @Failure      401  {object}  map[string]string
 // @Failure      403  {object}  map[string]string
 // @Failure      404  {object}  map[string]string
+// @Failure      500  {object}  map[string]string
 // @Router       /api/v1/users/{id}/disable [put]
 func (h *UserHandler) DisableUser(c *gin.Context) {
 	h.setDisabled(c, true)
@@ -120,6 +123,7 @@ func (h *UserHandler) DisableUser(c *gin.Context) {
 // @Failure      401  {object}  map[string]string
 // @Failure      403  {object}  map[string]string
 // @Failure      404  {object}  map[string]string
+// @Failure      500  {object}  map[string]string
 // @Router       /api/v1/users/{id}/enable [put]
 func (h *UserHandler) EnableUser(c *gin.Context) {
 	h.setDisabled(c, false)
@@ -160,8 +164,11 @@ func (h *UserHandler) setDisabled(c *gin.Context, disabled bool) {
 		}
 		if h.sessionStore != nil {
 			ttl := h.accessTokenExpiration
+			if h.jwtExpiration > ttl {
+				ttl = h.jwtExpiration
+			}
 			if ttl <= 0 {
-				ttl = 15 * time.Minute
+				ttl = 24 * time.Hour
 			}
 			if err := h.sessionStore.BlockUser(c.Request.Context(), id, time.Now().Add(ttl)); err != nil {
 				slog.Warn("Failed to block user in session store", "user_id", id, "error", err)

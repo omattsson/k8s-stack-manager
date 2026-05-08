@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -154,7 +155,16 @@ func (s *MySQLStore) cleanupLoop() {
 		case <-s.done:
 			return
 		case <-ticker.C:
-			_ = s.Cleanup(context.Background())
+			select {
+			case <-s.done:
+				return
+			default:
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			if err := s.Cleanup(ctx); err != nil {
+				slog.Warn("Session store cleanup failed", "error", err)
+			}
+			cancel()
 		}
 	}
 }

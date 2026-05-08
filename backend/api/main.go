@@ -339,6 +339,7 @@ func main() {
 		userHandler.SetRefreshTokenRepo(refreshTokenRepo)
 	}
 	userHandler.SetAccessTokenExpiration(cfg.Auth.AccessTokenExpiration)
+	userHandler.SetJWTExpiration(cfg.Auth.JWTExpiration)
 	apiKeyHandler := handlers.NewAPIKeyHandler(apiKeyRepo, userRepo, &cfg.Auth)
 
 	adminHandler := handlers.NewAdminHandler(clusterRegistry, instanceRepo)

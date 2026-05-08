@@ -120,8 +120,8 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		return
 	}
 
-	// When OIDC is enabled, only service accounts can use local login.
-	if h.oidcCfg != nil && h.oidcCfg.Enabled && !user.ServiceAccount {
+	// When OIDC is enabled and local auth is not explicitly allowed, only service accounts can use local login.
+	if h.oidcCfg != nil && h.oidcCfg.Enabled && !h.oidcCfg.LocalAuth && !user.ServiceAccount {
 		c.JSON(http.StatusForbidden, gin.H{"error": "Local login is restricted to service accounts. Please use SSO."})
 		return
 	}

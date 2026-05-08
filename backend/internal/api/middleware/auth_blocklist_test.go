@@ -21,6 +21,7 @@ type mockSessionStore struct {
 	blockedUsers  map[string]bool
 	blockedTokens map[string]bool
 	userBlockErr  error
+	tokenBlockErr error
 }
 
 func newMockSessionStore() *mockSessionStore {
@@ -36,6 +37,9 @@ func (m *mockSessionStore) BlockToken(_ context.Context, jti string, _ time.Time
 }
 
 func (m *mockSessionStore) IsTokenBlocked(_ context.Context, jti string) (bool, error) {
+	if m.tokenBlockErr != nil {
+		return false, m.tokenBlockErr
+	}
 	return m.blockedTokens[jti], nil
 }
 
@@ -66,6 +70,30 @@ func (m *mockSessionStore) ConsumeOIDCState(_ context.Context, _ string) (*sessi
 
 func (m *mockSessionStore) Cleanup(_ context.Context) error { return nil }
 func (m *mockSessionStore) Stop()                           {}
+
+func TestAuthRequired_IsTokenBlocked_Error_FailOpen(t *testing.T) {
+	t.Parallel()
+
+	token, err := GenerateToken("user-tok-err", "alice", "user", testSecret, time.Hour)
+	require.NoError(t, err)
+
+	store := newMockSessionStore()
+	store.tokenBlockErr = errors.New("db unavailable")
+
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.Use(AuthRequiredWithSessionStore(testSecret, store))
+	r.GET("/protected", func(c *gin.Context) {
+		c.Status(http.StatusOK)
+	})
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest(http.MethodGet, "/protected", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code, "should fail open when IsTokenBlocked errors")
+}
 
 func TestAuthRequired_UserBlocked(t *testing.T) {
 	t.Parallel()

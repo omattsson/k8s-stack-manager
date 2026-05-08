@@ -62,7 +62,7 @@ func (h *OIDCHandler) GetConfig(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"enabled":            h.cfg.Enabled,
 		"provider_name":      deriveProviderName(h.cfg.ProviderURL),
-		"local_auth_enabled": !h.cfg.Enabled,
+		"local_auth_enabled": !h.cfg.Enabled || h.cfg.LocalAuth,
 	})
 }
 
