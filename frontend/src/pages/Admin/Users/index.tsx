@@ -624,7 +624,6 @@ const AdminUsers = () => {
             required
             fullWidth
             size="small"
-            autoFocus
             helperText="Minimum 8 characters"
             error={resetPasswordValue.length > 0 && resetPasswordValue.length < 8}
           />
