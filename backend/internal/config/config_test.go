@@ -572,12 +572,12 @@ func TestOIDCConfigLoad(t *testing.T) {
 		assert.True(t, cfg.OIDC.AutoProvision)
 	})
 
-	t.Run("local auth defaults to true", func(t *testing.T) {
+	t.Run("local auth defaults to false", func(t *testing.T) {
 		t.Setenv("OIDC_ENABLED", "")
 		t.Setenv("OIDC_LOCAL_AUTH", "")
 		cfg, err := config.LoadConfig()
 		require.NoError(t, err)
-		assert.True(t, cfg.OIDC.LocalAuth)
+		assert.False(t, cfg.OIDC.LocalAuth)
 	})
 }
 

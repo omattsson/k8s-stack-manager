@@ -565,7 +565,7 @@ func loadOIDCConfig() OIDCConfig {
 		AdminRoles:    parseCSV(getEnv("OIDC_ADMIN_ROLES", "")),
 		DevOpsRoles:   parseCSV(getEnv("OIDC_DEVOPS_ROLES", "")),
 		AutoProvision: getEnvBool("OIDC_AUTO_PROVISION", true),
-		LocalAuth:     getEnvBool("OIDC_LOCAL_AUTH", true),
+		LocalAuth:     getEnvBool("OIDC_LOCAL_AUTH", false),
 		StateTTL:      getEnvDuration("OIDC_STATE_TTL", 5*time.Minute),
 	}
 }

@@ -951,7 +951,7 @@ func (d *Database) AutoMigrate() error {
 			if err := tx.Exec("ALTER TABLE users ADD COLUMN service_account TINYINT(1) NOT NULL DEFAULT 0").Error; err != nil {
 				return err
 			}
-			return tx.Exec("UPDATE users SET service_account = 1 WHERE auth_provider = 'local' AND role = 'admin' AND username = ?", "admin").Error
+			return tx.Exec("UPDATE users SET service_account = 1 WHERE auth_provider = 'local' AND role = 'admin'").Error
 		},
 		Down: func(tx *gorm.DB) error {
 			if !tx.Migrator().HasColumn(&models.User{}, "service_account") {

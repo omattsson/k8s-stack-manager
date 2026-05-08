@@ -217,6 +217,10 @@ func (h *OIDCHandler) provisionUser(oidcUser *auth.OIDCUser) (*models.User, erro
 	if err == nil && existing != nil {
 		return h.linkLocalUserToOIDC(existing, oidcUser)
 	}
+	if err != nil && !isNotFoundError(err) {
+		slog.Error("Failed to look up user by username", "username", username, "error", err)
+		return nil, fmt.Errorf(errMsgAuthFailed)
+	}
 
 	// User not found — check auto-provisioning.
 	if !h.cfg.AutoProvision {
