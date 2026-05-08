@@ -1280,6 +1280,7 @@ func TestSetupRoutes_AllHandlers_RegistersCompleteAPI(t *testing.T) {
 		{"DELETE", "/api/v1/users/:id"},
 		{"PUT", "/api/v1/users/:id/disable"},
 		{"PUT", "/api/v1/users/:id/enable"},
+		{"PUT", "/api/v1/users/:id/password"},
 
 		// API keys
 		{"GET", "/api/v1/users/:id/api-keys"},
