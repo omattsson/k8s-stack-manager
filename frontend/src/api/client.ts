@@ -2056,7 +2056,7 @@ export const notificationService = {
    */
   updatePreferences: async (preferences: { event_type: string; enabled: boolean }[]): Promise<void> => {
     try {
-      await api.put('/api/v1/notifications/preferences', { preferences });
+      await api.put('/api/v1/notifications/preferences', preferences);
     } catch (error) {
       console.error('Failed to update notification preferences:', error);
       throw error;
