@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -880,6 +881,189 @@ func TestIsDuplicateError(t *testing.T) {
 			assert.Equal(t, tt.want, isDuplicateError(tt.err))
 		})
 	}
+}
+
+// ---- CLIAuth ----
+
+func TestOIDCCLIAuth_Disabled(t *testing.T) {
+	t.Parallel()
+
+	h := NewOIDCHandler(nil, nil, nil, &config.OIDCConfig{Enabled: false}, testAuthConfig(false))
+	r := setupOIDCRouter(h.CLIAuth, http.MethodPost, "/api/v1/auth/oidc/cli-auth")
+
+	w := httptest.NewRecorder()
+	req, err := http.NewRequest(http.MethodPost, "/api/v1/auth/oidc/cli-auth", nil)
+	require.NoError(t, err)
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusNotFound, w.Code)
+}
+
+func TestOIDCCLIAuth_ReturnsSessionAndURL(t *testing.T) {
+	t.Parallel()
+
+	h, _, _ := newOIDCHandlerSetup(t, false)
+	r := setupOIDCRouter(h.CLIAuth, http.MethodPost, "/api/v1/auth/oidc/cli-auth")
+
+	w := httptest.NewRecorder()
+	req, err := http.NewRequest(http.MethodPost, "/api/v1/auth/oidc/cli-auth", nil)
+	require.NoError(t, err)
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var resp map[string]any
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+
+	assert.NotEmpty(t, resp["session_id"], "session_id must be non-empty")
+	assert.NotEmpty(t, resp["login_url"], "login_url must be non-empty")
+	assert.Equal(t, float64(600), resp["expires_in"])
+
+	loginURL, ok := resp["login_url"].(string)
+	require.True(t, ok)
+	assert.Contains(t, loginURL, "state=")
+	assert.Contains(t, loginURL, "code_challenge=")
+}
+
+// ---- CLIToken ----
+
+func TestOIDCCLIToken_Pending(t *testing.T) {
+	t.Parallel()
+
+	store := sessionstore.NewMemoryStore()
+	t.Cleanup(store.Stop)
+
+	_ = store.SaveCLIAuth(context.Background(), "sess-pending", sessionstore.CLIAuthData{Status: "pending"}, 5*time.Minute)
+
+	h := NewOIDCHandler(nil, store, nil, &config.OIDCConfig{Enabled: true}, testAuthConfig(false))
+	r := setupOIDCRouter(h.CLIToken, http.MethodPost, "/api/v1/auth/oidc/cli-token")
+
+	w := httptest.NewRecorder()
+	body := `{"session_id":"sess-pending"}`
+	req, err := http.NewRequest(http.MethodPost, "/api/v1/auth/oidc/cli-token", strings.NewReader(body))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var resp map[string]any
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+	assert.Equal(t, "pending", resp["status"])
+	assert.Nil(t, resp["token"], "token must not be present when pending")
+}
+
+func TestOIDCCLIToken_Completed(t *testing.T) {
+	t.Parallel()
+
+	store := sessionstore.NewMemoryStore()
+	t.Cleanup(store.Stop)
+
+	_ = store.SaveCLIAuth(context.Background(), "sess-done", sessionstore.CLIAuthData{
+		Token:    "jwt-abc",
+		UserID:   "uid-1",
+		Username: "alice",
+		Status:   "completed",
+	}, 5*time.Minute)
+
+	h := NewOIDCHandler(nil, store, nil, &config.OIDCConfig{Enabled: true}, testAuthConfig(false))
+	r := setupOIDCRouter(h.CLIToken, http.MethodPost, "/api/v1/auth/oidc/cli-token")
+
+	w := httptest.NewRecorder()
+	body := `{"session_id":"sess-done"}`
+	req, err := http.NewRequest(http.MethodPost, "/api/v1/auth/oidc/cli-token", strings.NewReader(body))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var resp map[string]any
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+	assert.Equal(t, "completed", resp["status"])
+	assert.Equal(t, "jwt-abc", resp["token"])
+	assert.Equal(t, "alice", resp["username"])
+	assert.Equal(t, "uid-1", resp["user_id"])
+}
+
+func TestOIDCCLIToken_NotFound(t *testing.T) {
+	t.Parallel()
+
+	store := sessionstore.NewMemoryStore()
+	t.Cleanup(store.Stop)
+
+	h := NewOIDCHandler(nil, store, nil, &config.OIDCConfig{Enabled: true}, testAuthConfig(false))
+	r := setupOIDCRouter(h.CLIToken, http.MethodPost, "/api/v1/auth/oidc/cli-token")
+
+	w := httptest.NewRecorder()
+	body := `{"session_id":"no-such-session"}`
+	req, err := http.NewRequest(http.MethodPost, "/api/v1/auth/oidc/cli-token", strings.NewReader(body))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusGone, w.Code)
+	var resp map[string]any
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+	assert.Equal(t, "session expired or not found", resp["error"])
+}
+
+func TestOIDCCLIToken_MissingSessionID(t *testing.T) {
+	t.Parallel()
+
+	store := sessionstore.NewMemoryStore()
+	t.Cleanup(store.Stop)
+
+	h := NewOIDCHandler(nil, store, nil, &config.OIDCConfig{Enabled: true}, testAuthConfig(false))
+	r := setupOIDCRouter(h.CLIToken, http.MethodPost, "/api/v1/auth/oidc/cli-token")
+
+	w := httptest.NewRecorder()
+	body := `{}`
+	req, err := http.NewRequest(http.MethodPost, "/api/v1/auth/oidc/cli-token", strings.NewReader(body))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+// ---- Callback CLI auth integration ----
+
+func TestOIDCCallback_CLIAuthSession(t *testing.T) {
+	t.Parallel()
+
+	h, stateStore, _ := newOIDCHandlerSetup(t, false)
+
+	sessionID := "cli-session-001"
+
+	// Save OIDC state with CLI redirect prefix.
+	_ = stateStore.SaveOIDCState(context.Background(), "valid-state-cli", sessionstore.OIDCStateData{
+		CodeVerifier: "test-verifier",
+		RedirectURL:  "cli:" + sessionID,
+	}, 5*time.Minute)
+
+	// Save pending CLI auth session.
+	_ = stateStore.SaveCLIAuth(context.Background(), sessionID, sessionstore.CLIAuthData{
+		Status: "pending",
+	}, 10*time.Minute)
+
+	r := setupOIDCRouter(h.Callback, http.MethodGet, "/api/v1/auth/oidc/callback")
+
+	w := httptest.NewRecorder()
+	req, err := http.NewRequest(http.MethodGet, "/api/v1/auth/oidc/callback?code=test-code&state=valid-state-cli", nil)
+	require.NoError(t, err)
+	r.ServeHTTP(w, req)
+
+	// CLI callback should return 200 with HTML, not a redirect.
+	require.Equal(t, http.StatusOK, w.Code)
+	assert.Contains(t, w.Header().Get("Content-Type"), "text/html")
+	assert.Contains(t, w.Body.String(), "Authentication successful")
+
+	// Verify CLI auth session was updated to completed.
+	data, err := stateStore.GetCLIAuth(context.Background(), sessionID)
+	require.NoError(t, err)
+	require.NotNil(t, data)
+	assert.Equal(t, "completed", data.Status)
+	assert.NotEmpty(t, data.Token, "token must be set after callback")
+	assert.NotEmpty(t, data.UserID, "user_id must be set after callback")
+	assert.NotEmpty(t, data.Username, "username must be set after callback")
 }
 
 func TestIsNotFoundError(t *testing.T) {

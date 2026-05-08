@@ -16,6 +16,7 @@ const (
 	kindTokenBlock = "token_block"
 	kindOIDCState  = "oidc_state"
 	kindUserBlock  = "user_block"
+	kindCLIAuth    = "cli_auth"
 )
 
 type SessionEntry struct {
@@ -135,6 +136,49 @@ func (s *MySQLStore) ConsumeOIDCState(ctx context.Context, state string) (*OIDCS
 		return nil, err
 	}
 	return &data, nil
+}
+
+func (s *MySQLStore) SaveCLIAuth(ctx context.Context, sessionID string, data CLIAuthData, ttl time.Duration) error {
+	raw, err := json.Marshal(data)
+	if err != nil {
+		return err
+	}
+	entry := SessionEntry{
+		EntryKey:  sessionID,
+		Kind:      kindCLIAuth,
+		Data:      string(raw),
+		ExpiresAt: time.Now().Add(ttl).Unix(),
+	}
+	return s.db.WithContext(ctx).Create(&entry).Error
+}
+
+func (s *MySQLStore) GetCLIAuth(ctx context.Context, sessionID string) (*CLIAuthData, error) {
+	var entry SessionEntry
+	err := s.db.WithContext(ctx).
+		Where("entry_key = ? AND kind = ? AND expires_at > ?", sessionID, kindCLIAuth, time.Now().Unix()).
+		First(&entry).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	var data CLIAuthData
+	if err := json.Unmarshal([]byte(entry.Data), &data); err != nil {
+		return nil, err
+	}
+	return &data, nil
+}
+
+func (s *MySQLStore) UpdateCLIAuth(ctx context.Context, sessionID string, data CLIAuthData) error {
+	raw, err := json.Marshal(data)
+	if err != nil {
+		return err
+	}
+	return s.db.WithContext(ctx).
+		Model(&SessionEntry{}).
+		Where("entry_key = ? AND kind = ?", sessionID, kindCLIAuth).
+		Update("data", string(raw)).Error
 }
 
 func (s *MySQLStore) Cleanup(ctx context.Context) error {

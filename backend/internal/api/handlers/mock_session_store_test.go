@@ -71,6 +71,18 @@ func (m *mockSessionStore) ConsumeOIDCState(_ context.Context, _ string) (*sessi
 	return nil, nil
 }
 
+func (m *mockSessionStore) SaveCLIAuth(_ context.Context, _ string, _ sessionstore.CLIAuthData, _ time.Duration) error {
+	return nil
+}
+
+func (m *mockSessionStore) GetCLIAuth(_ context.Context, _ string) (*sessionstore.CLIAuthData, error) {
+	return nil, nil
+}
+
+func (m *mockSessionStore) UpdateCLIAuth(_ context.Context, _ string, _ sessionstore.CLIAuthData) error {
+	return nil
+}
+
 func (m *mockSessionStore) Cleanup(_ context.Context) error { return nil }
 func (m *mockSessionStore) Stop()                           {}
 

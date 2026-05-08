@@ -25,6 +25,13 @@ const (
 	errMsgAuthFailed = "auth_failed"
 )
 
+var cliAuthSuccessPage = []byte(`<!DOCTYPE html>
+<html><head><title>Authentication Successful</title></head>
+<body style="font-family:system-ui,sans-serif;text-align:center;padding:60px">
+<h1>Authentication successful</h1>
+<p>You can close this tab and return to your terminal.</p>
+</body></html>`)
+
 // OIDCHandler handles OpenID Connect authentication endpoints.
 type OIDCHandler struct {
 	provider         *auth.Provider
@@ -186,6 +193,19 @@ func (h *OIDCHandler) Callback(c *gin.Context) {
 		}
 	}
 
+	// Check if this is a CLI auth session.
+	if strings.HasPrefix(stateData.RedirectURL, "cli:") {
+		sessionID := strings.TrimPrefix(stateData.RedirectURL, "cli:")
+		h.sessionStore.UpdateCLIAuth(c.Request.Context(), sessionID, sessionstore.CLIAuthData{
+			Token:    token,
+			UserID:   user.ID,
+			Username: user.Username,
+			Status:   "completed",
+		})
+		c.Data(http.StatusOK, "text/html; charset=utf-8", cliAuthSuccessPage)
+		return
+	}
+
 	// Redirect to frontend with token.
 	redirectPath := stateData.RedirectURL
 	if redirectPath == "" {
@@ -195,6 +215,106 @@ func (h *OIDCHandler) Callback(c *gin.Context) {
 	params.Set("token", token)
 	params.Set("redirect", redirectPath)
 	c.Redirect(http.StatusFound, "/auth/callback#"+params.Encode())
+}
+
+// CLIAuth godoc
+// @Summary      Start CLI SSO authentication flow
+// @Description  Generates a session ID and OIDC authorization URL for CLI-based SSO login. The CLI opens the returned login_url in a browser and polls cli-token until authentication completes.
+// @Tags         auth
+// @Produce      json
+// @Success      200 {object} map[string]interface{} "session_id, login_url, expires_in"
+// @Failure      404 {object} map[string]string
+// @Failure      500 {object} map[string]string
+// @Router       /api/v1/auth/oidc/cli-auth [post]
+func (h *OIDCHandler) CLIAuth(c *gin.Context) {
+	if !h.cfg.Enabled {
+		c.JSON(http.StatusNotFound, gin.H{"error": "OIDC is not enabled"})
+		return
+	}
+
+	sessionID := uuid.New().String()
+
+	state, err := auth.GenerateState()
+	if err != nil {
+		slog.Error("Failed to generate OIDC state for CLI auth", "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
+		return
+	}
+
+	verifier, challenge, err := auth.GenerateCodeVerifier()
+	if err != nil {
+		slog.Error("Failed to generate PKCE code verifier for CLI auth", "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
+		return
+	}
+
+	if err := h.sessionStore.SaveOIDCState(c.Request.Context(), state, sessionstore.OIDCStateData{
+		CodeVerifier: verifier,
+		RedirectURL:  "cli:" + sessionID,
+	}, h.cfg.StateTTL); err != nil {
+		slog.Error("Failed to save OIDC state for CLI auth", "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
+		return
+	}
+
+	if err := h.sessionStore.SaveCLIAuth(c.Request.Context(), sessionID, sessionstore.CLIAuthData{
+		Status: "pending",
+	}, 10*time.Minute); err != nil {
+		slog.Error("Failed to save CLI auth session", "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
+		return
+	}
+
+	authURL := h.provider.AuthorizationURL(state, challenge)
+	c.JSON(http.StatusOK, gin.H{
+		"session_id": sessionID,
+		"login_url":  authURL,
+		"expires_in": 600,
+	})
+}
+
+// CLIToken godoc
+// @Summary      Poll CLI SSO authentication status
+// @Description  Returns the current status of a CLI auth session. Returns pending while waiting for the user to complete browser authentication, or completed with a JWT token once done.
+// @Tags         auth
+// @Accept       json
+// @Produce      json
+// @Param        body body object true "session_id"
+// @Success      200 {object} map[string]interface{} "status, token (when completed), username, user_id"
+// @Failure      400 {object} map[string]string
+// @Failure      410 {object} map[string]string "session expired or not found"
+// @Router       /api/v1/auth/oidc/cli-token [post]
+func (h *OIDCHandler) CLIToken(c *gin.Context) {
+	var req struct {
+		SessionID string `json:"session_id"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil || req.SessionID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "session_id is required"})
+		return
+	}
+
+	data, err := h.sessionStore.GetCLIAuth(c.Request.Context(), req.SessionID)
+	if err != nil {
+		slog.Error("Failed to look up CLI auth session", "session_id", req.SessionID, "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
+		return
+	}
+	if data == nil {
+		c.JSON(http.StatusGone, gin.H{"error": "session expired or not found"})
+		return
+	}
+
+	if data.Status == "pending" {
+		c.JSON(http.StatusOK, gin.H{"status": "pending"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"status":   "completed",
+		"token":    data.Token,
+		"username": data.Username,
+		"user_id":  data.UserID,
+	})
 }
 
 func (h *OIDCHandler) provisionUser(oidcUser *auth.OIDCUser) (*models.User, error) {

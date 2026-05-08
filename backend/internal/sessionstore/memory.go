@@ -15,11 +15,17 @@ type memOIDCEntry struct {
 	expiresAt time.Time
 }
 
+type memCLIAuthEntry struct {
+	data      CLIAuthData
+	expiresAt time.Time
+}
+
 type MemoryStore struct {
 	mu         sync.Mutex
 	blocked    map[string]memBlockEntry
 	userBlocks map[string]memBlockEntry
 	oidcStates map[string]memOIDCEntry
+	cliAuths   map[string]memCLIAuthEntry
 	done       chan struct{}
 	stopOnce   sync.Once
 }
@@ -29,6 +35,7 @@ func NewMemoryStore() *MemoryStore {
 		blocked:    make(map[string]memBlockEntry),
 		userBlocks: make(map[string]memBlockEntry),
 		oidcStates: make(map[string]memOIDCEntry),
+		cliAuths:   make(map[string]memCLIAuthEntry),
 		done:       make(chan struct{}),
 	}
 	go s.cleanupLoop()
@@ -100,6 +107,37 @@ func (s *MemoryStore) ConsumeOIDCState(_ context.Context, state string) (*OIDCSt
 	return &entry.data, nil
 }
 
+func (s *MemoryStore) SaveCLIAuth(_ context.Context, sessionID string, data CLIAuthData, ttl time.Duration) error {
+	s.mu.Lock()
+	s.cliAuths[sessionID] = memCLIAuthEntry{
+		data:      data,
+		expiresAt: time.Now().Add(ttl),
+	}
+	s.mu.Unlock()
+	return nil
+}
+
+func (s *MemoryStore) GetCLIAuth(_ context.Context, sessionID string) (*CLIAuthData, error) {
+	s.mu.Lock()
+	entry, ok := s.cliAuths[sessionID]
+	s.mu.Unlock()
+
+	if !ok || time.Now().After(entry.expiresAt) {
+		return nil, nil
+	}
+	return &entry.data, nil
+}
+
+func (s *MemoryStore) UpdateCLIAuth(_ context.Context, sessionID string, data CLIAuthData) error {
+	s.mu.Lock()
+	if entry, ok := s.cliAuths[sessionID]; ok {
+		entry.data = data
+		s.cliAuths[sessionID] = entry
+	}
+	s.mu.Unlock()
+	return nil
+}
+
 func (s *MemoryStore) Cleanup(_ context.Context) error {
 	now := time.Now()
 	s.mu.Lock()
@@ -116,6 +154,11 @@ func (s *MemoryStore) Cleanup(_ context.Context) error {
 	for k, v := range s.oidcStates {
 		if now.After(v.expiresAt) {
 			delete(s.oidcStates, k)
+		}
+	}
+	for k, v := range s.cliAuths {
+		if now.After(v.expiresAt) {
+			delete(s.cliAuths, k)
 		}
 	}
 	s.mu.Unlock()
