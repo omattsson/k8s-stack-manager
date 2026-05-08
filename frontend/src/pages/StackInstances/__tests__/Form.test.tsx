@@ -342,8 +342,10 @@ describe('StackInstances Form', () => {
     await user.click(screen.getByText(/API Stack/));
 
     // Branch field should update to the definition's default branch
-    const branchInput = screen.getByRole('combobox', { name: /branch/i });
-    expect(branchInput).toHaveValue('develop');
+    await waitFor(() => {
+      const branchInput = screen.getByRole('combobox', { name: /branch/i });
+      expect(branchInput).toHaveValue('develop');
+    });
   });
 
   it('displays cluster selector when clusters are available', async () => {
