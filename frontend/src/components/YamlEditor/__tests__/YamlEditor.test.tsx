@@ -2,7 +2,9 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import YamlEditor from '../index';
 
-const mockUseThemeMode = vi.fn().mockReturnValue({ mode: 'dark', toggleMode: vi.fn() });
+const { mockUseThemeMode } = vi.hoisted(() => ({
+  mockUseThemeMode: vi.fn().mockReturnValue({ mode: 'dark', toggleMode: vi.fn() }),
+}));
 
 vi.mock('../../../context/ThemeContext', () => ({
   useThemeMode: () => mockUseThemeMode(),
