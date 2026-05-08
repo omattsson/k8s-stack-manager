@@ -164,6 +164,96 @@ test.describe('Admin User Management', () => {
     await apiDeleteUser(request, token, userId).catch(() => {});
   });
 
+  test('reset password for a local user and verify login', async ({ page, request }) => {
+    const token = await apiLogin(request);
+    const username = uniqueName('pw-reset');
+    const userId = await apiCreateUser(request, token, username);
+
+    await page.reload();
+    await expect(page.getByRole('heading', { level: 1, name: 'User Management' })).toBeVisible({
+      timeout: 10_000,
+    });
+    await expect(page.getByRole('cell', { name: username, exact: true })).toBeVisible({ timeout: 10_000 });
+
+    // Click reset password button
+    await page.getByRole('button', { name: `Reset password for ${username}` }).click();
+
+    const dialog = page.getByRole('dialog');
+    await expect(dialog.getByRole('heading', { name: 'Reset Password' })).toBeVisible();
+
+    // Submit button should be disabled until password meets minimum length
+    const submitBtn = dialog.getByRole('button', { name: 'Reset Password' });
+    await expect(submitBtn).toBeDisabled();
+
+    await dialog.getByLabel('New Password').fill('newpass123');
+    await expect(submitBtn).toBeEnabled();
+    await submitBtn.click();
+
+    // Dialog should close
+    await expect(dialog).not.toBeVisible({ timeout: 10_000 });
+
+    // Verify login with new password works
+    const loginRes = await request.post(`${API_BASE}/api/v1/auth/login`, {
+      data: { username, password: 'newpass123' },
+    });
+    expect(loginRes.ok()).toBe(true);
+
+    // Old password should no longer work
+    const oldLoginRes = await request.post(`${API_BASE}/api/v1/auth/login`, {
+      data: { username, password: 'testpass123' },
+    });
+    expect(oldLoginRes.ok()).toBe(false);
+
+    // Cleanup
+    await apiDeleteUser(request, token, userId);
+  });
+
+  test('reset password button is hidden for OIDC users', async ({ page, request }) => {
+    // Create a local user and verify button exists
+    const token = await apiLogin(request);
+    const localUser = uniqueName('local');
+    const localId = await apiCreateUser(request, token, localUser);
+
+    await page.reload();
+    await expect(page.getByRole('cell', { name: localUser, exact: true })).toBeVisible({ timeout: 10_000 });
+
+    // Local user should have the reset button
+    await expect(page.getByRole('button', { name: `Reset password for ${localUser}` })).toBeVisible();
+
+    // The admin user (also local) should have the reset button
+    await expect(page.getByRole('button', { name: /reset password for admin/i })).toBeVisible();
+
+    // Cleanup
+    await apiDeleteUser(request, token, localId);
+  });
+
+  test('cancel password reset closes dialog without changes', async ({ page, request }) => {
+    const token = await apiLogin(request);
+    const username = uniqueName('pw-cancel');
+    const userId = await apiCreateUser(request, token, username);
+
+    await page.reload();
+    await expect(page.getByRole('cell', { name: username, exact: true })).toBeVisible({ timeout: 10_000 });
+
+    await page.getByRole('button', { name: `Reset password for ${username}` }).click();
+
+    const dialog = page.getByRole('dialog');
+    await expect(dialog.getByRole('heading', { name: 'Reset Password' })).toBeVisible();
+    await dialog.getByLabel('New Password').fill('shouldnotapply');
+    await dialog.getByRole('button', { name: 'Cancel' }).click();
+
+    await expect(dialog).not.toBeVisible({ timeout: 10_000 });
+
+    // Original password should still work
+    const loginRes = await request.post(`${API_BASE}/api/v1/auth/login`, {
+      data: { username, password: 'testpass123' },
+    });
+    expect(loginRes.ok()).toBe(true);
+
+    // Cleanup
+    await apiDeleteUser(request, token, userId);
+  });
+
   test('non-admin users cannot access user management', async ({ page, request }) => {
     // Create a regular user
     const token = await apiLogin(request);
