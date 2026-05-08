@@ -39,11 +39,14 @@ import StatusBadge from '../../components/StatusBadge';
 import FavoriteButton from '../../components/FavoriteButton';
 import ExpiryChip from './ExpiryChip';
 import DashboardWidgets from './widgets/DashboardWidgets';
-import { instanceService, clusterService, favoriteService } from '../../api/client';
-import type { StackInstance, Cluster, NamespaceStatus, UserFavorite, BulkOperationResponse } from '../../types';
+import { instanceService, clusterService, favoriteService, templateService } from '../../api/client';
+import type { StackInstance, Cluster, StackTemplate, NamespaceStatus, UserFavorite, BulkOperationResponse } from '../../types';
 import LoadingState from '../../components/LoadingState';
 import EmptyState from '../../components/EmptyState';
+import SetupWizard from '../../components/SetupWizard';
 import { useNotification } from '../../context/NotificationContext';
+import { useAuth } from '../../context/AuthContext';
+import { isSetupWizardDismissed, dismissSetupWizard } from '../../utils/setupWizard';
 
 const STATUSES = ['All', 'draft', 'deploying', 'stabilizing', 'running', 'partial', 'stopped', 'error'];
 
@@ -189,11 +192,14 @@ const InstanceCard = ({ instance, isSelected, isFavorite, clusterName, url, k8sH
 const Dashboard = () => {
   const [instances, setInstances] = useState<StackInstance[]>([]);
   const [clusters, setClusters] = useState<Cluster[]>([]);
+  const [templates, setTemplates] = useState<StackTemplate[]>([]);
   const [favorites, setFavorites] = useState<UserFavorite[]>([]);
   const [recentInstances, setRecentInstances] = useState<StackInstance[]>([]);
   const [loading, setLoading] = useState(true);
   const searchRef = useRef<HTMLInputElement>(null);
   const [error, setError] = useState<string | null>(null);
+  const [wizardDismissed, setWizardDismissed] = useState(() => isSetupWizardDismissed());
+  const { user } = useAuth();
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('All');
   const [instanceUrls, setInstanceUrls] = useState<Record<string, string>>({});
@@ -225,14 +231,16 @@ const Dashboard = () => {
   useEffect(() => {
     const fetchData = async () => {
       try {
-        const [instData, clsData, favData, recentData] = await Promise.all([
+        const [instData, clsData, tmplData, favData, recentData] = await Promise.all([
           instanceService.list(),
           clusterService.list().catch(() => [] as Cluster[]),
+          templateService.list().catch(() => [] as StackTemplate[]),
           favoriteService.list().catch(() => [] as UserFavorite[]),
           instanceService.recent().catch(() => [] as StackInstance[]),
         ]);
         setInstances(instData || []);
         setClusters(clsData || []);
+        setTemplates(tmplData || []);
         setFavorites(favData || []);
         setRecentInstances(recentData || []);
       } catch {
@@ -472,12 +480,30 @@ const Dashboard = () => {
     setBulkAction(null);
   }, []);
 
+  const handleDismissWizard = useCallback(() => {
+    dismissSetupWizard();
+    setWizardDismissed(true);
+  }, []);
+
   if (loading) {
     return <LoadingState label="Loading instances..." />;
   }
 
   if (error) {
     return <Alert severity="error">{error}</Alert>;
+  }
+
+  if (!wizardDismissed && instances.length === 0 && (clusters.length === 0 || templates.length === 0)) {
+    return (
+      <SetupWizard
+        hasClusters={clusters.length > 0}
+        hasTemplates={templates.length > 0}
+        hasInstances={false}
+        isAdmin={user?.role === 'admin'}
+        isDevOps={user?.role === 'admin' || user?.role === 'devops'}
+        onDismiss={handleDismissWizard}
+      />
+    );
   }
 
   const allFilteredSelected = filtered.length > 0 && selectedIds.size === filtered.length;
