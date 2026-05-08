@@ -2,6 +2,7 @@ import Editor, { type OnMount } from '@monaco-editor/react';
 import { Box, Typography } from '@mui/material';
 import { useState, useCallback, useRef } from 'react';
 import yaml from 'js-yaml';
+import { useThemeMode } from '../../context/ThemeContext';
 
 type EditorInstance = Parameters<OnMount>[0];
 
@@ -15,6 +16,7 @@ interface YamlEditorProps {
 }
 
 const YamlEditor = ({ value, onChange, label, height = '300px', readOnly = false, error }: YamlEditorProps) => {
+  const { mode } = useThemeMode();
   const [validationError, setValidationError] = useState<string | null>(null);
   const editorRef = useRef<EditorInstance | null>(null);
 
@@ -60,6 +62,7 @@ const YamlEditor = ({ value, onChange, label, height = '300px', readOnly = false
           value={value}
           onChange={handleChange}
           onMount={handleEditorMount}
+          theme={mode === 'dark' ? 'vs-dark' : 'vs'}
           options={{
             readOnly,
             minimap: { enabled: false },

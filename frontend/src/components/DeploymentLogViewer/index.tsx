@@ -47,8 +47,8 @@ const formatDuration = (startedAt: string, completedAt: string): string => {
 
 const terminalSx = {
   p: 2,
-  bgcolor: '#1e1e1e',
-  color: '#d4d4d4',
+  bgcolor: 'background.paper',
+  color: 'text.primary',
   fontFamily: 'monospace',
   fontSize: '0.8rem',
   lineHeight: 1.6,
@@ -170,7 +170,7 @@ const DeploymentLogViewer = ({ logs, loading, streamingLines }: DeploymentLogVie
                 <Box sx={terminalSx}>
                   {log.output}
                   {log.error_message && (
-                    <Box sx={{ color: '#f44336', mt: 1 }}>
+                    <Box sx={{ color: 'error.main', mt: 1 }}>
                       Error: {log.error_message}
                     </Box>
                   )}
