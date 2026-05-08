@@ -175,10 +175,17 @@ func (s *MySQLStore) UpdateCLIAuth(ctx context.Context, sessionID string, data C
 	if err != nil {
 		return err
 	}
-	return s.db.WithContext(ctx).
+	result := s.db.WithContext(ctx).
 		Model(&SessionEntry{}).
-		Where("entry_key = ? AND kind = ?", sessionID, kindCLIAuth).
-		Update("data", string(raw)).Error
+		Where("entry_key = ? AND kind = ? AND expires_at > ?", sessionID, kindCLIAuth, time.Now().Unix()).
+		Update("data", string(raw))
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return ErrSessionNotFound
+	}
+	return nil
 }
 
 func (s *MySQLStore) Cleanup(ctx context.Context) error {

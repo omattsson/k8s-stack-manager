@@ -196,12 +196,16 @@ func (h *OIDCHandler) Callback(c *gin.Context) {
 	// Check if this is a CLI auth session.
 	if strings.HasPrefix(stateData.RedirectURL, "cli:") {
 		sessionID := strings.TrimPrefix(stateData.RedirectURL, "cli:")
-		h.sessionStore.UpdateCLIAuth(c.Request.Context(), sessionID, sessionstore.CLIAuthData{
+		if err := h.sessionStore.UpdateCLIAuth(c.Request.Context(), sessionID, sessionstore.CLIAuthData{
 			Token:    token,
 			UserID:   user.ID,
 			Username: user.Username,
 			Status:   "completed",
-		})
+		}); err != nil {
+			slog.Error("CLI auth session expired or not found", "session_id", sessionID, "error", err)
+			c.Data(http.StatusGone, "text/html; charset=utf-8", []byte(`<html><body><h1>Session Expired</h1><p>The CLI login session has expired. Please run the login command again.</p></body></html>`))
+			return
+		}
 		c.Data(http.StatusOK, "text/html; charset=utf-8", cliAuthSuccessPage)
 		return
 	}
@@ -257,9 +261,14 @@ func (h *OIDCHandler) CLIAuth(c *gin.Context) {
 		return
 	}
 
+	cliTTL := h.cfg.StateTTL
+	if cliTTL <= 0 {
+		cliTTL = 5 * time.Minute
+	}
+
 	if err := h.sessionStore.SaveCLIAuth(c.Request.Context(), sessionID, sessionstore.CLIAuthData{
 		Status: "pending",
-	}, 10*time.Minute); err != nil {
+	}, cliTTL); err != nil {
 		slog.Error("Failed to save CLI auth session", "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
 		return
@@ -269,7 +278,7 @@ func (h *OIDCHandler) CLIAuth(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"session_id": sessionID,
 		"login_url":  authURL,
-		"expires_in": 600,
+		"expires_in": int(cliTTL.Seconds()),
 	})
 }
 

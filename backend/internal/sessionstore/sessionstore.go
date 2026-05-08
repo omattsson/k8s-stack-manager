@@ -2,8 +2,11 @@ package sessionstore
 
 import (
 	"context"
+	"errors"
 	"time"
 )
+
+var ErrSessionNotFound = errors.New("session not found or expired")
 
 type OIDCStateData struct {
 	CodeVerifier string `json:"code_verifier"`

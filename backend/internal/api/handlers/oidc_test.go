@@ -916,7 +916,7 @@ func TestOIDCCLIAuth_ReturnsSessionAndURL(t *testing.T) {
 
 	assert.NotEmpty(t, resp["session_id"], "session_id must be non-empty")
 	assert.NotEmpty(t, resp["login_url"], "login_url must be non-empty")
-	assert.Equal(t, float64(600), resp["expires_in"])
+	assert.Equal(t, float64(300), resp["expires_in"])
 
 	loginURL, ok := resp["login_url"].(string)
 	require.True(t, ok)

@@ -130,11 +130,17 @@ func (s *MemoryStore) GetCLIAuth(_ context.Context, sessionID string) (*CLIAuthD
 
 func (s *MemoryStore) UpdateCLIAuth(_ context.Context, sessionID string, data CLIAuthData) error {
 	s.mu.Lock()
-	if entry, ok := s.cliAuths[sessionID]; ok {
-		entry.data = data
-		s.cliAuths[sessionID] = entry
+	defer s.mu.Unlock()
+	entry, ok := s.cliAuths[sessionID]
+	if !ok {
+		return ErrSessionNotFound
 	}
-	s.mu.Unlock()
+	if time.Now().After(entry.expiresAt) {
+		delete(s.cliAuths, sessionID)
+		return ErrSessionNotFound
+	}
+	entry.data = data
+	s.cliAuths[sessionID] = entry
 	return nil
 }
 
