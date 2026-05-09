@@ -25,6 +25,11 @@ const (
 	errMsgAuthFailed = "auth_failed"
 )
 
+// CLITokenRequest is the request body for polling CLI auth status.
+type CLITokenRequest struct {
+	SessionID string `json:"session_id" binding:"required"`
+}
+
 var cliAuthSuccessPage = []byte(`<!DOCTYPE html>
 <html><head><title>Authentication Successful</title></head>
 <body style="font-family:system-ui,sans-serif;text-align:center;padding:60px">
@@ -206,10 +211,10 @@ func (h *OIDCHandler) Callback(c *gin.Context) {
 			Status:   "completed",
 		}); err != nil {
 			if errors.Is(err, sessionstore.ErrSessionNotFound) {
-				slog.Warn("CLI auth session expired or not found", "session_id", sessionID)
+				slog.Warn("CLI auth session expired or not found", "session_id", sessionID[:8]+"...")
 				c.Data(http.StatusGone, "text/html; charset=utf-8", []byte(`<html><body><h1>Session Expired</h1><p>The CLI login session has expired. Please run the login command again.</p></body></html>`))
 			} else {
-				slog.Error("Failed to update CLI auth session", "session_id", sessionID, "error", err)
+				slog.Error("Failed to update CLI auth session", "session_id", sessionID[:8]+"...", "error", err)
 				c.Data(http.StatusInternalServerError, "text/html; charset=utf-8", []byte(`<html><body><h1>Error</h1><p>Something went wrong. Please try again.</p></body></html>`))
 			}
 			return
@@ -260,18 +265,18 @@ func (h *OIDCHandler) CLIAuth(c *gin.Context) {
 		return
 	}
 
-	if err := h.sessionStore.SaveOIDCState(c.Request.Context(), state, sessionstore.OIDCStateData{
-		CodeVerifier: verifier,
-		RedirectURL:  "cli:" + sessionID,
-	}, h.cfg.StateTTL); err != nil {
-		slog.Error("Failed to save OIDC state for CLI auth", "error", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
-		return
-	}
-
 	cliTTL := h.cfg.StateTTL
 	if cliTTL <= 0 {
 		cliTTL = 5 * time.Minute
+	}
+
+	if err := h.sessionStore.SaveOIDCState(c.Request.Context(), state, sessionstore.OIDCStateData{
+		CodeVerifier: verifier,
+		RedirectURL:  "cli:" + sessionID,
+	}, cliTTL); err != nil {
+		slog.Error("Failed to save OIDC state for CLI auth", "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
+		return
 	}
 
 	if err := h.sessionStore.SaveCLIAuth(c.Request.Context(), sessionID, sessionstore.CLIAuthData{
@@ -296,16 +301,14 @@ func (h *OIDCHandler) CLIAuth(c *gin.Context) {
 // @Tags         auth
 // @Accept       json
 // @Produce      json
-// @Param        body body object true "session_id"
+// @Param        request body CLITokenRequest true "CLI token poll request"
 // @Success      200 {object} map[string]interface{} "status, token (when completed), username, user_id"
 // @Failure      400 {object} map[string]string
 // @Failure      410 {object} map[string]string "session expired or not found"
 // @Failure      500 {object} map[string]string
 // @Router       /api/v1/auth/oidc/cli-token [post]
 func (h *OIDCHandler) CLIToken(c *gin.Context) {
-	var req struct {
-		SessionID string `json:"session_id" binding:"required"`
-	}
+	var req CLITokenRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "session_id is required"})
 		return
