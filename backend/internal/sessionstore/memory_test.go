@@ -73,9 +73,9 @@ func TestMemoryStore_OIDCState_Expired(t *testing.T) {
 	require.NoError(t, s.SaveOIDCState(ctx, "state-exp", OIDCStateData{
 		CodeVerifier: "v",
 		RedirectURL:  "/",
-	}, time.Millisecond))
+	}, 50*time.Millisecond))
 
-	time.Sleep(2 * time.Millisecond)
+	time.Sleep(80 * time.Millisecond)
 
 	got, err := s.ConsumeOIDCState(ctx, "state-exp")
 	require.NoError(t, err)
@@ -89,8 +89,8 @@ func TestMemoryStore_Cleanup(t *testing.T) {
 	ctx := context.Background()
 
 	require.NoError(t, s.BlockToken(ctx, "jti-clean", time.Now().Add(-time.Second)))
-	require.NoError(t, s.SaveOIDCState(ctx, "state-clean", OIDCStateData{}, time.Millisecond))
-	time.Sleep(2 * time.Millisecond)
+	require.NoError(t, s.SaveOIDCState(ctx, "state-clean", OIDCStateData{}, 50*time.Millisecond))
+	time.Sleep(80 * time.Millisecond)
 
 	require.NoError(t, s.Cleanup(ctx))
 
@@ -235,8 +235,8 @@ func TestMemoryStore_CLIAuth_Expired(t *testing.T) {
 	defer s.Stop()
 	ctx := context.Background()
 
-	require.NoError(t, s.SaveCLIAuth(ctx, "cli-exp", CLIAuthData{Status: "pending"}, time.Millisecond))
-	time.Sleep(2 * time.Millisecond)
+	require.NoError(t, s.SaveCLIAuth(ctx, "cli-exp", CLIAuthData{Status: "pending"}, 50*time.Millisecond))
+	time.Sleep(80 * time.Millisecond)
 
 	got, err := s.GetCLIAuth(ctx, "cli-exp")
 	require.NoError(t, err)
@@ -249,8 +249,8 @@ func TestMemoryStore_CLIAuth_Cleanup(t *testing.T) {
 	defer s.Stop()
 	ctx := context.Background()
 
-	require.NoError(t, s.SaveCLIAuth(ctx, "cli-clean", CLIAuthData{Status: "pending"}, time.Millisecond))
-	time.Sleep(2 * time.Millisecond)
+	require.NoError(t, s.SaveCLIAuth(ctx, "cli-clean", CLIAuthData{Status: "pending"}, 50*time.Millisecond))
+	time.Sleep(80 * time.Millisecond)
 
 	require.NoError(t, s.Cleanup(ctx))
 

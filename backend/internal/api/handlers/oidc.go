@@ -129,8 +129,11 @@ func (h *OIDCHandler) Authorize(c *gin.Context) {
 // @Produce      html
 // @Param        code  query string true  "Authorization code from IdP"
 // @Param        state query string true  "State parameter for CSRF validation"
+// @Success      200   {string} string "CLI auth success page (HTML)"
 // @Success      302   {string} string "Redirect to frontend with JWT"
 // @Failure      302   {string} string "Redirect to login with error"
+// @Failure      410   {string} string "CLI session expired (HTML)"
+// @Failure      500   {string} string "Internal error (HTML, CLI flow only)"
 // @Router       /api/v1/auth/oidc/callback [get]
 func (h *OIDCHandler) Callback(c *gin.Context) {
 	stateParam := c.Query("state")
@@ -202,8 +205,13 @@ func (h *OIDCHandler) Callback(c *gin.Context) {
 			Username: user.Username,
 			Status:   "completed",
 		}); err != nil {
-			slog.Error("CLI auth session expired or not found", "session_id", sessionID, "error", err)
-			c.Data(http.StatusGone, "text/html; charset=utf-8", []byte(`<html><body><h1>Session Expired</h1><p>The CLI login session has expired. Please run the login command again.</p></body></html>`))
+			if errors.Is(err, sessionstore.ErrSessionNotFound) {
+				slog.Warn("CLI auth session expired or not found", "session_id", sessionID)
+				c.Data(http.StatusGone, "text/html; charset=utf-8", []byte(`<html><body><h1>Session Expired</h1><p>The CLI login session has expired. Please run the login command again.</p></body></html>`))
+			} else {
+				slog.Error("Failed to update CLI auth session", "session_id", sessionID, "error", err)
+				c.Data(http.StatusInternalServerError, "text/html; charset=utf-8", []byte(`<html><body><h1>Error</h1><p>Something went wrong. Please try again.</p></body></html>`))
+			}
 			return
 		}
 		c.Data(http.StatusOK, "text/html; charset=utf-8", cliAuthSuccessPage)
@@ -292,12 +300,13 @@ func (h *OIDCHandler) CLIAuth(c *gin.Context) {
 // @Success      200 {object} map[string]interface{} "status, token (when completed), username, user_id"
 // @Failure      400 {object} map[string]string
 // @Failure      410 {object} map[string]string "session expired or not found"
+// @Failure      500 {object} map[string]string
 // @Router       /api/v1/auth/oidc/cli-token [post]
 func (h *OIDCHandler) CLIToken(c *gin.Context) {
 	var req struct {
-		SessionID string `json:"session_id"`
+		SessionID string `json:"session_id" binding:"required"`
 	}
-	if err := c.ShouldBindJSON(&req); err != nil || req.SessionID == "" {
+	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "session_id is required"})
 		return
 	}

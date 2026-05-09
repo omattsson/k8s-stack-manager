@@ -119,10 +119,13 @@ func (s *MemoryStore) SaveCLIAuth(_ context.Context, sessionID string, data CLIA
 
 func (s *MemoryStore) GetCLIAuth(_ context.Context, sessionID string) (*CLIAuthData, error) {
 	s.mu.Lock()
+	defer s.mu.Unlock()
 	entry, ok := s.cliAuths[sessionID]
-	s.mu.Unlock()
-
-	if !ok || time.Now().After(entry.expiresAt) {
+	if !ok {
+		return nil, nil
+	}
+	if time.Now().After(entry.expiresAt) {
+		delete(s.cliAuths, sessionID)
 		return nil, nil
 	}
 	return &entry.data, nil
