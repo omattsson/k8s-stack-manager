@@ -25,6 +25,13 @@ const (
 	errMsgAuthFailed = "auth_failed"
 )
 
+func redactSessionID(id string) string {
+	if len(id) >= 8 {
+		return id[:8] + "..."
+	}
+	return "***"
+}
+
 // CLITokenRequest is the request body for polling CLI auth status.
 type CLITokenRequest struct {
 	SessionID string `json:"session_id" binding:"required"`
@@ -211,10 +218,10 @@ func (h *OIDCHandler) Callback(c *gin.Context) {
 			Status:   "completed",
 		}); err != nil {
 			if errors.Is(err, sessionstore.ErrSessionNotFound) {
-				slog.Warn("CLI auth session expired or not found", "session_id", sessionID[:8]+"...")
+				slog.Warn("CLI auth session expired or not found", "session_id", redactSessionID(sessionID))
 				c.Data(http.StatusGone, "text/html; charset=utf-8", []byte(`<html><body><h1>Session Expired</h1><p>The CLI login session has expired. Please run the login command again.</p></body></html>`))
 			} else {
-				slog.Error("Failed to update CLI auth session", "session_id", sessionID[:8]+"...", "error", err)
+				slog.Error("Failed to update CLI auth session", "session_id", redactSessionID(sessionID), "error", err)
 				c.Data(http.StatusInternalServerError, "text/html; charset=utf-8", []byte(`<html><body><h1>Error</h1><p>Something went wrong. Please try again.</p></body></html>`))
 			}
 			return
@@ -316,7 +323,7 @@ func (h *OIDCHandler) CLIToken(c *gin.Context) {
 
 	data, err := h.sessionStore.GetCLIAuth(c.Request.Context(), req.SessionID)
 	if err != nil {
-		slog.Error("Failed to look up CLI auth session", "session_id", req.SessionID, "error", err)
+		slog.Error("Failed to look up CLI auth session", "session_id", redactSessionID(req.SessionID), "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
 		return
 	}
