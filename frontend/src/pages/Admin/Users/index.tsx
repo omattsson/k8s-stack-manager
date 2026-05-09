@@ -40,6 +40,12 @@ import type { User, APIKey, CreateUserRequest, CreateAPIKeyRequest, CreateAPIKey
 import LoadingState from '../../../components/LoadingState';
 import { Link } from 'react-router-dom';
 
+const defaultExpiryDate = () => {
+  const d = new Date();
+  d.setDate(d.getDate() + 90);
+  return d.toISOString().split('T')[0];
+};
+
 const getRoleChipColor = (role: string): 'error' | 'warning' | 'default' => {
   if (role === 'admin') return 'error';
   if (role === 'devops') return 'warning';
@@ -76,7 +82,7 @@ const AdminUsers = () => {
 
   // Generate API key dialog
   const [generateKeyUserId, setGenerateKeyUserId] = useState<string | null>(null);
-  const [generateKeyForm, setGenerateKeyForm] = useState<CreateAPIKeyRequest>({ name: '' });
+  const [generateKeyForm, setGenerateKeyForm] = useState<CreateAPIKeyRequest>({ name: '', expires_at: defaultExpiryDate() });
   const [generateKeyError, setGenerateKeyError] = useState<string | null>(null);
   const [generateKeyLoading, setGenerateKeyLoading] = useState(false);
 
@@ -211,7 +217,7 @@ const AdminUsers = () => {
     try {
       const result = await apiKeyService.create(targetUserId, generateKeyForm);
       setGenerateKeyUserId(null);
-      setGenerateKeyForm({ name: '' });
+      setGenerateKeyForm({ name: '', expires_at: defaultExpiryDate() });
       setRawKeyData(result);
       await loadApiKeys(targetUserId);
     } catch {
@@ -364,7 +370,7 @@ const AdminUsers = () => {
                                 startIcon={<KeyIcon />}
                                 onClick={() => {
                                   setGenerateKeyUserId(u.id);
-                                  setGenerateKeyForm({ name: '' });
+                                  setGenerateKeyForm({ name: '', expires_at: defaultExpiryDate() });
                                   setGenerateKeyError(null);
                                 }}
                               >
@@ -536,14 +542,16 @@ const AdminUsers = () => {
               autoFocus
             />
             <TextField
-              label="Expires At (optional)"
+              label="Expires At"
               type="date"
               value={generateKeyForm.expires_at ?? ''}
               onChange={(e) =>
-                setGenerateKeyForm((prev) => ({ ...prev, expires_at: e.target.value || undefined }))
+                setGenerateKeyForm((prev) => ({ ...prev, expires_at: e.target.value || defaultExpiryDate() }))
               }
+              required
               fullWidth
               size="small"
+              helperText="Default: 90 days"
               slotProps={{ inputLabel: { shrink: true } }}
             />
           </Box>
