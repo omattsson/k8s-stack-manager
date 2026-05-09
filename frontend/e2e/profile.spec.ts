@@ -66,6 +66,66 @@ test.describe('Profile Page', () => {
     }
   });
 
+  test('API key dialog defaults to preset 90-day expiry and has no no-expiry option', async ({ page }) => {
+    await page.getByRole('button', { name: 'Generate API Key' }).click();
+
+    const dialog = page.getByRole('dialog');
+    await expect(dialog.getByText('Generate API Key')).toBeVisible();
+
+    // "Preset duration" should be selected by default
+    await expect(dialog.getByLabelText('Preset duration')).toBeChecked();
+
+    // Expiry date preview should be visible
+    await expect(dialog.getByText(/expires:/i)).toBeVisible();
+
+    // "No expiry" radio should not exist
+    await expect(dialog.getByText('No expiry')).not.toBeVisible().catch(() => {
+      // Element doesn't exist at all — expected
+    });
+    expect(await dialog.locator('text=No expiry').count()).toBe(0);
+
+    // Close without creating
+    await dialog.getByRole('button', { name: 'Cancel' }).click();
+  });
+
+  test('created API key shows expiry date in table', async ({ page }) => {
+    const keyName = uniqueName('e2e-expiry');
+
+    await page.getByRole('button', { name: 'Generate API Key' }).click();
+    const dialog = page.getByRole('dialog');
+    await dialog.getByLabel('Key Name').fill(keyName);
+
+    // Default is 90-day preset — just submit
+    await dialog.getByRole('button', { name: 'Generate' }).click();
+
+    await expect(page.getByText('This key will not be shown again. Copy it now.')).toBeVisible({
+      timeout: 10_000,
+    });
+    await page.getByRole('button', { name: 'Done' }).click();
+
+    // Key should appear with an expiry date (not "Never")
+    const row = page.getByRole('row').filter({ hasText: keyName });
+    await expect(row).toBeVisible({ timeout: 10_000 });
+    await expect(row.getByText('Never')).not.toBeVisible().catch(() => {});
+
+    // Cleanup
+    const token = await page.evaluate(() => localStorage.getItem('token'));
+    const meResp = await page.request.get(`${API_BASE}/api/v1/auth/me`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const me = await meResp.json();
+    const keysResp = await page.request.get(`${API_BASE}/api/v1/users/${me.id}/api-keys`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const keys = await keysResp.json();
+    const created = keys.find((k: { name: string }) => k.name === keyName);
+    if (created) {
+      await page.request.delete(`${API_BASE}/api/v1/users/${me.id}/api-keys/${created.id}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+    }
+  });
+
   test('API key prefix is masked in table', async ({ page }) => {
     const keyName = uniqueName('e2e-masked');
 

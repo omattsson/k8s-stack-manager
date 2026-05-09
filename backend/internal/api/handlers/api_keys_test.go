@@ -394,10 +394,11 @@ func TestCreateAPIKeyExpiration(t *testing.T) {
 			wantErrSubstr: "maximum allowed lifetime of 365 days",
 		},
 		{
-			name:       "no expiry with max 365 - rejected",
-			maxDays:    365,
-			body:       `{"name":"ci-key"}`,
-			wantStatus: http.StatusBadRequest,
+			name:          "no expiry with max 365 - rejected",
+			maxDays:       365,
+			body:          `{"name":"ci-key"}`,
+			wantStatus:    http.StatusBadRequest,
+			wantErrSubstr: "Expiration is required",
 		},
 		{
 			name:       "expires_at within max - success",
@@ -413,10 +414,11 @@ func TestCreateAPIKeyExpiration(t *testing.T) {
 			wantErrSubstr: "maximum allowed lifetime of 365 days",
 		},
 		{
-			name:       "no expiry without max limit - rejected",
-			maxDays:    0,
-			body:       `{"name":"ci-key"}`,
-			wantStatus: http.StatusBadRequest,
+			name:          "no expiry without max limit - rejected",
+			maxDays:       0,
+			body:          `{"name":"ci-key"}`,
+			wantStatus:    http.StatusBadRequest,
+			wantErrSubstr: "Expiration is required",
 		},
 		{
 			name:           "expires_in_days exactly at max - success",

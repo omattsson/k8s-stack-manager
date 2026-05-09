@@ -83,6 +83,13 @@ definitions:
       template_name:
         type: string
     type: object
+  handlers.CLITokenRequest:
+    properties:
+      session_id:
+        type: string
+    required:
+    - session_id
+    type: object
   handlers.ChartConfigExportData:
     properties:
       build_pipeline_id:
@@ -467,11 +474,20 @@ definitions:
         type: string
       role:
         type: string
+      service_account:
+        type: boolean
       username:
         type: string
     required:
     - password
     - username
+    type: object
+  handlers.ResetPasswordRequest:
+    properties:
+      password:
+        type: string
+    required:
+    - password
     type: object
   handlers.TemplateDetailResponse:
     properties:
@@ -1443,6 +1459,8 @@ definitions:
         type: string
       role:
         type: string
+      service_account:
+        type: boolean
       updated_at:
         type: string
       username:
@@ -2110,11 +2128,94 @@ paths:
       produces:
       - text/html
       responses:
+        "200":
+          description: CLI auth success page (HTML)
+          schema:
+            type: string
         "302":
           description: Redirect to login with error
           schema:
             type: string
+        "410":
+          description: CLI session expired (HTML)
+          schema:
+            type: string
+        "500":
+          description: Internal error (HTML, CLI flow only)
+          schema:
+            type: string
       summary: OIDC callback
+      tags:
+      - auth
+  /api/v1/auth/oidc/cli-auth:
+    post:
+      description: Generates a session ID and OIDC authorization URL for CLI-based
+        SSO login. The CLI opens the returned login_url in a browser and polls cli-token
+        until authentication completes.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: session_id, login_url, expires_in
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Start CLI SSO authentication flow
+      tags:
+      - auth
+  /api/v1/auth/oidc/cli-token:
+    post:
+      consumes:
+      - application/json
+      description: Returns the current status of a CLI auth session. Returns pending
+        while waiting for the user to complete browser authentication, or completed
+        with a JWT token once done.
+      parameters:
+      - description: CLI token poll request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/handlers.CLITokenRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: status, token (when completed), username, user_id
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "410":
+          description: session expired or not found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Poll CLI SSO authentication status
       tags:
       - auth
   /api/v1/auth/oidc/config:
@@ -6110,10 +6211,10 @@ paths:
     post:
       consumes:
       - application/json
-      description: Generates a new API key. Optionally set expires_at (YYYY-MM-DD
-        or RFC3339) or expires_in_days (positive int), but not both. If API_KEY_MAX_LIFETIME_DAYS
-        is configured, keys without explicit expiry are auto-capped. The raw key is
-        returned once in raw_key and cannot be retrieved again.
+      description: 'Generates a new API key. An expiration is required: set expires_at
+        (YYYY-MM-DD or RFC3339) or expires_in_days (positive int), but not both. If
+        API_KEY_MAX_LIFETIME_DAYS is configured, the expiry must not exceed the limit.
+        The raw key is returned once in raw_key and cannot be retrieved again.'
       parameters:
       - description: User ID
         in: path
@@ -6255,6 +6356,12 @@ paths:
             additionalProperties:
               type: string
             type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
       security:
       - BearerAuth: []
       summary: Disable a user
@@ -6304,9 +6411,76 @@ paths:
             additionalProperties:
               type: string
             type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
       security:
       - BearerAuth: []
       summary: Enable a user
+      tags:
+      - users
+  /api/v1/users/{id}/password:
+    put:
+      consumes:
+      - application/json
+      description: Resets the password for a local/service account user. Admin only.
+      parameters:
+      - description: User ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: New password
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/handlers.ResetPasswordRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Reset user password
       tags:
       - users
   /health:
