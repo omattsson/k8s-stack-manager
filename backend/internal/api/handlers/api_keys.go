@@ -53,7 +53,7 @@ type CreateAPIKeyResponse struct {
 
 // CreateAPIKey godoc
 // @Summary      Create an API key for a user
-// @Description  Generates a new API key. An expiration is required: set expires_at (YYYY-MM-DD or RFC3339) or expires_in_days (positive int), but not both. If API_KEY_MAX_LIFETIME_DAYS is configured, the expiry is capped. The raw key is returned once in raw_key and cannot be retrieved again.
+// @Description  Generates a new API key. An expiration is required: set expires_at (YYYY-MM-DD or RFC3339) or expires_in_days (positive int), but not both. If API_KEY_MAX_LIFETIME_DAYS is configured, the expiry must not exceed the limit. The raw key is returned once in raw_key and cannot be retrieved again.
 // @Tags         api-keys
 // @Accept       json
 // @Produce      json
