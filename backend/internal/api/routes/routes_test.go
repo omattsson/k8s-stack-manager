@@ -1023,6 +1023,9 @@ func (s *stubSessionStore) GetCLIAuth(_ context.Context, _ string) (*sessionstor
 func (s *stubSessionStore) UpdateCLIAuth(_ context.Context, _ string, _ sessionstore.CLIAuthData) error {
 	return nil
 }
+func (s *stubSessionStore) ConsumeCLIAuth(_ context.Context, _ string) (*sessionstore.CLIAuthData, error) {
+	return nil, nil
+}
 func (s *stubSessionStore) Cleanup(_ context.Context) error { return nil }
 func (s *stubSessionStore) Stop()                           {}
 

@@ -79,6 +79,9 @@ func (m *mockSessionStore) GetCLIAuth(_ context.Context, _ string) (*sessionstor
 func (m *mockSessionStore) UpdateCLIAuth(_ context.Context, _ string, _ sessionstore.CLIAuthData) error {
 	return nil
 }
+func (m *mockSessionStore) ConsumeCLIAuth(_ context.Context, _ string) (*sessionstore.CLIAuthData, error) {
+	return nil, nil
+}
 
 func (m *mockSessionStore) Cleanup(_ context.Context) error { return nil }
 func (m *mockSessionStore) Stop()                           {}
