@@ -1014,6 +1014,18 @@ func (s *stubSessionStore) SaveOIDCState(_ context.Context, _ string, _ sessions
 func (s *stubSessionStore) ConsumeOIDCState(_ context.Context, _ string) (*sessionstore.OIDCStateData, error) {
 	return nil, nil
 }
+func (s *stubSessionStore) SaveCLIAuth(_ context.Context, _ string, _ sessionstore.CLIAuthData, _ time.Duration) error {
+	return nil
+}
+func (s *stubSessionStore) GetCLIAuth(_ context.Context, _ string) (*sessionstore.CLIAuthData, error) {
+	return nil, nil
+}
+func (s *stubSessionStore) UpdateCLIAuth(_ context.Context, _ string, _ sessionstore.CLIAuthData) error {
+	return nil
+}
+func (s *stubSessionStore) ConsumeCLIAuth(_ context.Context, _ string) (*sessionstore.CLIAuthData, error) {
+	return nil, nil
+}
 func (s *stubSessionStore) Cleanup(_ context.Context) error { return nil }
 func (s *stubSessionStore) Stop()                           {}
 
@@ -1181,6 +1193,8 @@ func TestSetupRoutes_AllHandlers_RegistersCompleteAPI(t *testing.T) {
 		{"GET", "/api/v1/auth/oidc/config"},
 		{"GET", "/api/v1/auth/oidc/authorize"},
 		{"GET", "/api/v1/auth/oidc/callback"},
+		{"POST", "/api/v1/auth/oidc/cli-auth"},
+		{"POST", "/api/v1/auth/oidc/cli-token"},
 
 		// Templates
 		{"GET", "/api/v1/templates"},
@@ -1368,6 +1382,8 @@ func TestSetupRoutes_OIDCEnabled_RegistersOIDCRoutes(t *testing.T) {
 		"GET /api/v1/auth/oidc/config",
 		"GET /api/v1/auth/oidc/authorize",
 		"GET /api/v1/auth/oidc/callback",
+		"POST /api/v1/auth/oidc/cli-auth",
+		"POST /api/v1/auth/oidc/cli-token",
 	}
 	for _, route := range oidcRoutes {
 		assert.True(t, registered[route], "OIDC route missing when OIDCHandler is set: %s", route)
@@ -1414,6 +1430,10 @@ func TestSetupRoutes_OIDCDisabled_FallbackConfigOnly(t *testing.T) {
 		"OIDC authorize should NOT be registered when OIDC is disabled")
 	assert.False(t, registered["GET /api/v1/auth/oidc/callback"],
 		"OIDC callback should NOT be registered when OIDC is disabled")
+	assert.False(t, registered["POST /api/v1/auth/oidc/cli-auth"],
+		"OIDC cli-auth should NOT be registered when OIDC is disabled")
+	assert.False(t, registered["POST /api/v1/auth/oidc/cli-token"],
+		"OIDC cli-token should NOT be registered when OIDC is disabled")
 }
 
 func TestSetupRoutes_LoginRateLimiterBranching(t *testing.T) {

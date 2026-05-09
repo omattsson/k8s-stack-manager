@@ -15,11 +15,17 @@ type memOIDCEntry struct {
 	expiresAt time.Time
 }
 
+type memCLIAuthEntry struct {
+	data      CLIAuthData
+	expiresAt time.Time
+}
+
 type MemoryStore struct {
 	mu         sync.Mutex
 	blocked    map[string]memBlockEntry
 	userBlocks map[string]memBlockEntry
 	oidcStates map[string]memOIDCEntry
+	cliAuths   map[string]memCLIAuthEntry
 	done       chan struct{}
 	stopOnce   sync.Once
 }
@@ -29,6 +35,7 @@ func NewMemoryStore() *MemoryStore {
 		blocked:    make(map[string]memBlockEntry),
 		userBlocks: make(map[string]memBlockEntry),
 		oidcStates: make(map[string]memOIDCEntry),
+		cliAuths:   make(map[string]memCLIAuthEntry),
 		done:       make(chan struct{}),
 	}
 	go s.cleanupLoop()
@@ -100,6 +107,63 @@ func (s *MemoryStore) ConsumeOIDCState(_ context.Context, state string) (*OIDCSt
 	return &entry.data, nil
 }
 
+func (s *MemoryStore) SaveCLIAuth(_ context.Context, sessionID string, data CLIAuthData, ttl time.Duration) error {
+	s.mu.Lock()
+	s.cliAuths[sessionID] = memCLIAuthEntry{
+		data:      data,
+		expiresAt: time.Now().Add(ttl),
+	}
+	s.mu.Unlock()
+	return nil
+}
+
+func (s *MemoryStore) GetCLIAuth(_ context.Context, sessionID string) (*CLIAuthData, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	entry, ok := s.cliAuths[sessionID]
+	if !ok {
+		return nil, nil
+	}
+	if time.Now().After(entry.expiresAt) {
+		delete(s.cliAuths, sessionID)
+		return nil, nil
+	}
+	return &entry.data, nil
+}
+
+func (s *MemoryStore) UpdateCLIAuth(_ context.Context, sessionID string, data CLIAuthData) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	entry, ok := s.cliAuths[sessionID]
+	if !ok {
+		return ErrSessionNotFound
+	}
+	if time.Now().After(entry.expiresAt) {
+		delete(s.cliAuths, sessionID)
+		return ErrSessionNotFound
+	}
+	entry.data = data
+	s.cliAuths[sessionID] = entry
+	return nil
+}
+
+func (s *MemoryStore) ConsumeCLIAuth(_ context.Context, sessionID string) (*CLIAuthData, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	entry, ok := s.cliAuths[sessionID]
+	if !ok {
+		return nil, nil
+	}
+	delete(s.cliAuths, sessionID)
+	if time.Now().After(entry.expiresAt) {
+		return nil, nil
+	}
+	if entry.data.Status != "completed" {
+		return &entry.data, nil
+	}
+	return &entry.data, nil
+}
+
 func (s *MemoryStore) Cleanup(_ context.Context) error {
 	now := time.Now()
 	s.mu.Lock()
@@ -116,6 +180,11 @@ func (s *MemoryStore) Cleanup(_ context.Context) error {
 	for k, v := range s.oidcStates {
 		if now.After(v.expiresAt) {
 			delete(s.oidcStates, k)
+		}
+	}
+	for k, v := range s.cliAuths {
+		if now.After(v.expiresAt) {
+			delete(s.cliAuths, k)
 		}
 	}
 	s.mu.Unlock()

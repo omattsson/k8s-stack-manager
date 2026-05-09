@@ -16,6 +16,7 @@ const (
 	kindTokenBlock = "token_block"
 	kindOIDCState  = "oidc_state"
 	kindUserBlock  = "user_block"
+	kindCLIAuth    = "cli_auth"
 )
 
 type SessionEntry struct {
@@ -131,6 +132,79 @@ func (s *MySQLStore) ConsumeOIDCState(ctx context.Context, state string) (*OIDCS
 		return nil, err
 	}
 	var data OIDCStateData
+	if err := json.Unmarshal([]byte(entry.Data), &data); err != nil {
+		return nil, err
+	}
+	return &data, nil
+}
+
+func (s *MySQLStore) SaveCLIAuth(ctx context.Context, sessionID string, data CLIAuthData, ttl time.Duration) error {
+	raw, err := json.Marshal(data)
+	if err != nil {
+		return err
+	}
+	entry := SessionEntry{
+		EntryKey:  sessionID,
+		Kind:      kindCLIAuth,
+		Data:      string(raw),
+		ExpiresAt: time.Now().Add(ttl).Unix(),
+	}
+	return s.db.WithContext(ctx).Create(&entry).Error
+}
+
+func (s *MySQLStore) GetCLIAuth(ctx context.Context, sessionID string) (*CLIAuthData, error) {
+	var entry SessionEntry
+	err := s.db.WithContext(ctx).
+		Where("entry_key = ? AND kind = ? AND expires_at > ?", sessionID, kindCLIAuth, time.Now().Unix()).
+		First(&entry).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	var data CLIAuthData
+	if err := json.Unmarshal([]byte(entry.Data), &data); err != nil {
+		return nil, err
+	}
+	return &data, nil
+}
+
+func (s *MySQLStore) UpdateCLIAuth(ctx context.Context, sessionID string, data CLIAuthData) error {
+	raw, err := json.Marshal(data)
+	if err != nil {
+		return err
+	}
+	result := s.db.WithContext(ctx).
+		Model(&SessionEntry{}).
+		Where("entry_key = ? AND kind = ? AND expires_at > ?", sessionID, kindCLIAuth, time.Now().Unix()).
+		Update("data", string(raw))
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return ErrSessionNotFound
+	}
+	return nil
+}
+
+func (s *MySQLStore) ConsumeCLIAuth(ctx context.Context, sessionID string) (*CLIAuthData, error) {
+	var entry SessionEntry
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("entry_key = ? AND kind = ? AND expires_at > ?", sessionID, kindCLIAuth, time.Now().Unix()).
+			First(&entry).Error; err != nil {
+			return err
+		}
+		return tx.Delete(&entry).Error
+	})
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	var data CLIAuthData
 	if err := json.Unmarshal([]byte(entry.Data), &data); err != nil {
 		return nil, err
 	}

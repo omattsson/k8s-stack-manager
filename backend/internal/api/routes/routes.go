@@ -221,6 +221,8 @@ func SetupRoutes(router *gin.Engine, deps Deps) *RateLimiters {
 					oidcGroup.GET("/config", deps.OIDCHandler.GetConfig)
 					oidcGroup.GET("/authorize", deps.OIDCHandler.Authorize)
 					oidcGroup.GET("/callback", deps.OIDCHandler.Callback)
+					oidcGroup.POST("/cli-auth", deps.OIDCHandler.CLIAuth)
+					oidcGroup.POST("/cli-token", deps.OIDCHandler.CLIToken)
 				}
 			} else {
 				// Return disabled config when OIDC is not configured.
