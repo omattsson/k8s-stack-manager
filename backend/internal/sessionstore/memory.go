@@ -147,6 +147,23 @@ func (s *MemoryStore) UpdateCLIAuth(_ context.Context, sessionID string, data CL
 	return nil
 }
 
+func (s *MemoryStore) ConsumeCLIAuth(_ context.Context, sessionID string) (*CLIAuthData, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	entry, ok := s.cliAuths[sessionID]
+	if !ok {
+		return nil, nil
+	}
+	delete(s.cliAuths, sessionID)
+	if time.Now().After(entry.expiresAt) {
+		return nil, nil
+	}
+	if entry.data.Status != "completed" {
+		return &entry.data, nil
+	}
+	return &entry.data, nil
+}
+
 func (s *MemoryStore) Cleanup(_ context.Context) error {
 	now := time.Now()
 	s.mu.Lock()

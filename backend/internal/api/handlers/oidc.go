@@ -341,6 +341,7 @@ func (h *OIDCHandler) CLIToken(c *gin.Context) {
 		return
 	}
 
+	// Peek first to check for pending status without consuming.
 	data, err := h.sessionStore.GetCLIAuth(c.Request.Context(), req.SessionID)
 	if err != nil {
 		slog.Error("Failed to look up CLI auth session", "session_id", redactSessionID(req.SessionID), "error", err)
@@ -351,27 +352,28 @@ func (h *OIDCHandler) CLIToken(c *gin.Context) {
 		c.JSON(http.StatusGone, gin.H{"error": "session expired or not found"})
 		return
 	}
-
 	if data.Status == "pending" {
 		c.JSON(http.StatusOK, gin.H{"status": "pending"})
 		return
 	}
 
-	if data.Status != "completed" || data.Token == "" {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "session is in an unexpected state"})
+	// Atomically consume the completed session — only one poll gets the token.
+	consumed, err := h.sessionStore.ConsumeCLIAuth(c.Request.Context(), req.SessionID)
+	if err != nil {
+		slog.Error("Failed to consume CLI auth session", "session_id", redactSessionID(req.SessionID), "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
+		return
+	}
+	if consumed == nil || consumed.Token == "" {
+		c.JSON(http.StatusGone, gin.H{"error": "session expired or already consumed"})
 		return
 	}
 
-	// Consume the session to prevent replay.
-	_ = h.sessionStore.UpdateCLIAuth(c.Request.Context(), req.SessionID, sessionstore.CLIAuthData{
-		Status: "consumed",
-	})
-
 	c.JSON(http.StatusOK, gin.H{
 		"status":   "completed",
-		"token":    data.Token,
-		"username": data.Username,
-		"user_id":  data.UserID,
+		"token":    consumed.Token,
+		"username": consumed.Username,
+		"user_id":  consumed.UserID,
 	})
 }
 

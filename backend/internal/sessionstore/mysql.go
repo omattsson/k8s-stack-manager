@@ -188,6 +188,29 @@ func (s *MySQLStore) UpdateCLIAuth(ctx context.Context, sessionID string, data C
 	return nil
 }
 
+func (s *MySQLStore) ConsumeCLIAuth(ctx context.Context, sessionID string) (*CLIAuthData, error) {
+	var entry SessionEntry
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("entry_key = ? AND kind = ? AND expires_at > ?", sessionID, kindCLIAuth, time.Now().Unix()).
+			First(&entry).Error; err != nil {
+			return err
+		}
+		return tx.Delete(&entry).Error
+	})
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	var data CLIAuthData
+	if err := json.Unmarshal([]byte(entry.Data), &data); err != nil {
+		return nil, err
+	}
+	return &data, nil
+}
+
 func (s *MySQLStore) Cleanup(ctx context.Context) error {
 	return s.db.WithContext(ctx).
 		Where("expires_at < ?", time.Now().Unix()).

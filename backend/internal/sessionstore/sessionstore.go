@@ -17,7 +17,7 @@ type CLIAuthData struct {
 	Token    string `json:"token,omitempty"`
 	UserID   string `json:"user_id,omitempty"`
 	Username string `json:"username,omitempty"`
-	Status   string `json:"status"` // "pending", "completed"
+	Status   string `json:"status"` // "pending", "completed", "consumed"
 }
 
 type SessionStore interface {
@@ -31,6 +31,7 @@ type SessionStore interface {
 	SaveCLIAuth(ctx context.Context, sessionID string, data CLIAuthData, ttl time.Duration) error
 	GetCLIAuth(ctx context.Context, sessionID string) (*CLIAuthData, error)
 	UpdateCLIAuth(ctx context.Context, sessionID string, data CLIAuthData) error
+	ConsumeCLIAuth(ctx context.Context, sessionID string) (*CLIAuthData, error)
 	Cleanup(ctx context.Context) error
 	Stop()
 }
