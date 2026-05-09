@@ -932,7 +932,7 @@ func TestOIDCCLIToken_Pending(t *testing.T) {
 	store := sessionstore.NewMemoryStore()
 	t.Cleanup(store.Stop)
 
-	_ = store.SaveCLIAuth(context.Background(), "sess-pending", sessionstore.CLIAuthData{Status: "pending"}, 5*time.Minute)
+	require.NoError(t, store.SaveCLIAuth(context.Background(), "sess-pending", sessionstore.CLIAuthData{Status: "pending"}, 5*time.Minute))
 
 	h := NewOIDCHandler(nil, store, nil, &config.OIDCConfig{Enabled: true}, testAuthConfig(false))
 	r := setupOIDCRouter(h.CLIToken, http.MethodPost, "/api/v1/auth/oidc/cli-token")
@@ -1034,15 +1034,15 @@ func TestOIDCCallback_CLIAuthSession(t *testing.T) {
 	sessionID := "cli-session-001"
 
 	// Save OIDC state with CLI redirect prefix.
-	_ = stateStore.SaveOIDCState(context.Background(), "valid-state-cli", sessionstore.OIDCStateData{
+	require.NoError(t, stateStore.SaveOIDCState(context.Background(), "valid-state-cli", sessionstore.OIDCStateData{
 		CodeVerifier: "test-verifier",
 		RedirectURL:  "cli:" + sessionID,
-	}, 5*time.Minute)
+	}, 5*time.Minute))
 
 	// Save pending CLI auth session.
-	_ = stateStore.SaveCLIAuth(context.Background(), sessionID, sessionstore.CLIAuthData{
+	require.NoError(t, stateStore.SaveCLIAuth(context.Background(), sessionID, sessionstore.CLIAuthData{
 		Status: "pending",
-	}, 10*time.Minute)
+	}, 10*time.Minute))
 
 	r := setupOIDCRouter(h.Callback, http.MethodGet, "/api/v1/auth/oidc/callback")
 

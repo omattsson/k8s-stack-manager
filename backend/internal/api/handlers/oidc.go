@@ -211,8 +211,28 @@ func (h *OIDCHandler) Callback(c *gin.Context) {
 	// Check if this is a CLI auth session.
 	if strings.HasPrefix(stateData.RedirectURL, "cli:") {
 		sessionID := strings.TrimPrefix(stateData.RedirectURL, "cli:")
+
+		// CLI can't use refresh token cookies, so issue a long-lived JWT.
+		cliToken := token
+		if h.refreshTokenRepo != nil {
+			longLived, err := middleware.GenerateTokenWithOpts(middleware.GenerateTokenOptions{
+				UserID:       user.ID,
+				Username:     user.Username,
+				Role:         user.Role,
+				Secret:       h.authCfg.JWTSecret,
+				Expiration:   h.authCfg.JWTExpiration,
+				AuthProvider: "oidc",
+				Email:        user.Email,
+			})
+			if err == nil {
+				cliToken = longLived
+			} else {
+				slog.Warn("Failed to generate long-lived CLI token, using short-lived", "error", err)
+			}
+		}
+
 		if err := h.sessionStore.UpdateCLIAuth(c.Request.Context(), sessionID, sessionstore.CLIAuthData{
-			Token:    token,
+			Token:    cliToken,
 			UserID:   user.ID,
 			Username: user.Username,
 			Status:   "completed",
@@ -336,6 +356,16 @@ func (h *OIDCHandler) CLIToken(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "pending"})
 		return
 	}
+
+	if data.Status != "completed" || data.Token == "" {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "session is in an unexpected state"})
+		return
+	}
+
+	// Consume the session to prevent replay.
+	_ = h.sessionStore.UpdateCLIAuth(c.Request.Context(), req.SessionID, sessionstore.CLIAuthData{
+		Status: "consumed",
+	})
 
 	c.JSON(http.StatusOK, gin.H{
 		"status":   "completed",
