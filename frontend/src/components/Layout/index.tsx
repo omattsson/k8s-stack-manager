@@ -39,6 +39,7 @@ import DeleteSweepOutlined from '@mui/icons-material/DeleteSweepOutlined';
 import CloudOutlined from '@mui/icons-material/CloudOutlined';
 import TuneOutlined from '@mui/icons-material/TuneOutlined';
 import CleaningServicesOutlined from '@mui/icons-material/CleaningServicesOutlined';
+import NotificationsActiveOutlined from '@mui/icons-material/NotificationsActiveOutlined';
 import AccountCircleOutlined from '@mui/icons-material/AccountCircleOutlined';
 import LogoutIcon from '@mui/icons-material/Logout';
 import HubOutlined from '@mui/icons-material/HubOutlined';
@@ -75,6 +76,7 @@ const adminNav: NavItem[] = [
   { label: 'Clusters', path: '/admin/clusters', icon: <CloudOutlined /> },
   { label: 'Shared Values', path: '/admin/shared-values', icon: <TuneOutlined /> },
   { label: 'Cleanup Policies', path: '/admin/cleanup-policies', icon: <CleaningServicesOutlined /> },
+  { label: 'Notification Channels', path: '/admin/notification-channels', icon: <NotificationsActiveOutlined /> },
 ];
 
 const isRouteActive = (pathname: string, itemPath: string): boolean => {
