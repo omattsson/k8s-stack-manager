@@ -4,6 +4,28 @@ A web application for configuring, storing, and managing multi-service Helm-base
 
 Developers create **stack definitions** (collections of Helm charts with configuration), launch **stack instances** (per-developer copies with branch and value overrides), and manage everything through an audit-logged UI with Git provider integration.
 
+## Getting Started
+
+Deploy to your cluster and create your first stack in under 10 minutes:
+
+```bash
+# Install the CLI
+brew install omattsson/tap/stackctl
+
+# Add the Helm repo
+helm repo add k8s-stack-manager https://omattsson.github.io/k8s-stack-manager
+helm repo update
+
+# Deploy to your cluster
+helm install stack-manager k8s-stack-manager/k8s-stack-manager \
+  --namespace stack-manager --create-namespace \
+  --set backend.secrets.JWT_SECRET="$(openssl rand -base64 32)" \
+  --set backend.secrets.ADMIN_PASSWORD="changeme" \
+  --set mysql.auth.rootPassword="changeme-db"
+```
+
+See the full [Getting Started Guide](docs/getting-started.md) for next steps (configure stackctl, register a cluster, import [starter templates](examples/starter-templates/), and deploy your first stack).
+
 ## Features
 
 ### Dashboard — Stack Instance Management
