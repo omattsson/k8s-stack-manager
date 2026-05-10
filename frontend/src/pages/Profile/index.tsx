@@ -192,12 +192,7 @@ const Profile = () => {
     setGenerateKeyError(null);
     try {
       const request: CreateAPIKeyRequest = { name: generateKeyForm.name.trim() };
-      if (expiryMode === 'custom') {
-        if (!generateKeyForm.expires_at) {
-          setGenerateKeyError('Please select an expiry date or switch to preset duration');
-          setGenerateKeyLoading(false);
-          return;
-        }
+      if (expiryMode === 'custom' && generateKeyForm.expires_at) {
         request.expires_at = generateKeyForm.expires_at;
       } else {
         request.expires_in_days = presetDays;
@@ -488,9 +483,15 @@ const Profile = () => {
                 label="Expires At"
                 type="date"
                 value={generateKeyForm.expires_at ?? ''}
-                onChange={(e) =>
-                  setGenerateKeyForm((prev) => ({ ...prev, expires_at: e.target.value || undefined }))
-                }
+                onChange={(e) => {
+                  if (e.target.value) {
+                    setGenerateKeyForm((prev) => ({ ...prev, expires_at: e.target.value }));
+                  } else {
+                    setGenerateKeyForm((prev) => ({ ...prev, expires_at: undefined }));
+                    setExpiryMode('preset');
+                    setPresetDays(90);
+                  }
+                }}
                 fullWidth
                 size="small"
                 slotProps={{ inputLabel: { shrink: true } }}

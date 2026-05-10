@@ -103,7 +103,7 @@ test.describe('Profile Page', () => {
     // Key should appear with an expiry date (not "Never")
     const row = page.getByRole('row').filter({ hasText: keyName });
     await expect(row).toBeVisible({ timeout: 10_000 });
-    await expect(row.getByText('Never')).not.toBeVisible().catch(() => {});
+    await expect(row.locator('text=Never')).toHaveCount(0);
 
     // Cleanup
     const token = await page.evaluate(() => localStorage.getItem('token'));
