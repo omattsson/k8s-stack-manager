@@ -15,12 +15,19 @@ import (
 	"github.com/google/uuid"
 )
 
+const dispatchQueueSize = 100
+
 // Notifier creates notification records and broadcasts them in real time.
 type Notifier struct {
 	repo              models.NotificationRepository
 	hub               *websocket.Hub
 	userRepo          models.UserRepository
 	channelDispatcher *channel.Dispatcher
+	dispatchQueue     chan dispatchWork
+}
+
+type dispatchWork struct {
+	payload channel.EventPayload
 }
 
 // NewNotifier creates a new Notifier. hub and userRepo may be nil if real-time
@@ -33,10 +40,27 @@ func NewNotifier(repo models.NotificationRepository, hub *websocket.Hub, userRep
 	}
 }
 
-// WithChannelDispatcher sets the external channel dispatcher for webhook delivery.
+// WithChannelDispatcher sets the external channel dispatcher for webhook delivery
+// and starts a bounded worker pool for processing dispatches.
 func (n *Notifier) WithChannelDispatcher(d *channel.Dispatcher) *Notifier {
 	n.channelDispatcher = d
+	n.dispatchQueue = make(chan dispatchWork, dispatchQueueSize)
+	go n.dispatchWorker()
 	return n
+}
+
+func (n *Notifier) dispatchWorker() {
+	for w := range n.dispatchQueue {
+		n.channelDispatcher.Dispatch(context.Background(), w.payload)
+	}
+}
+
+func (n *Notifier) enqueueDispatch(payload channel.EventPayload) {
+	select {
+	case n.dispatchQueue <- dispatchWork{payload: payload}:
+	default:
+		slog.Warn("notification channel dispatch queue full, dropping event", "event", payload.EventType)
+	}
 }
 
 // Notify creates a notification for the given user and optionally broadcasts it
@@ -85,7 +109,7 @@ func (n *Notifier) notify(ctx context.Context, userID, notifType, title, message
 				displayName = user.DisplayName
 			}
 		}
-		go n.channelDispatcher.Dispatch(context.Background(), channel.EventPayload{
+		n.enqueueDispatch(channel.EventPayload{
 			EventType:       notifType,
 			Timestamp:       notification.CreatedAt,
 			Title:           title,
@@ -120,7 +144,7 @@ func (n *Notifier) NotifySystem(ctx context.Context, notifType, title, message, 
 
 	// Dispatch once to external channels for system events.
 	if n.channelDispatcher != nil {
-		go n.channelDispatcher.Dispatch(context.Background(), channel.EventPayload{
+		n.enqueueDispatch(channel.EventPayload{
 			EventType:       notifType,
 			Timestamp:       time.Now().UTC(),
 			Title:           title,

@@ -2,9 +2,11 @@ package database
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 
 	"backend/internal/models"
+	"backend/pkg/crypto"
 	"backend/pkg/dberrors"
 
 	"github.com/google/uuid"
@@ -16,16 +18,54 @@ var _ models.NotificationChannelRepository = (*GORMNotificationChannelRepository
 
 // GORMNotificationChannelRepository implements NotificationChannelRepository using GORM.
 type GORMNotificationChannelRepository struct {
-	db *gorm.DB
+	db            *gorm.DB
+	encryptionKey []byte
 }
 
 // NewGORMNotificationChannelRepository creates a new GORM-backed notification channel repository.
-func NewGORMNotificationChannelRepository(db *gorm.DB) *GORMNotificationChannelRepository {
-	return &GORMNotificationChannelRepository{db: db}
+func NewGORMNotificationChannelRepository(db *gorm.DB, encryptionKey string) *GORMNotificationChannelRepository {
+	repo := &GORMNotificationChannelRepository{db: db}
+	if encryptionKey != "" {
+		repo.encryptionKey = crypto.DeriveKey(encryptionKey)
+	}
+	return repo
+}
+
+func (r *GORMNotificationChannelRepository) encryptSecret(ch *models.NotificationChannel) (string, error) {
+	original := ch.Secret
+	if original == "" || len(r.encryptionKey) == 0 {
+		return original, nil
+	}
+	encrypted, err := crypto.Encrypt([]byte(original), r.encryptionKey)
+	if err != nil {
+		return "", dberrors.NewDatabaseError("encrypt_secret", err)
+	}
+	ch.Secret = base64.StdEncoding.EncodeToString(encrypted)
+	return original, nil
+}
+
+func (r *GORMNotificationChannelRepository) decryptSecret(ch *models.NotificationChannel) {
+	if ch.Secret == "" || len(r.encryptionKey) == 0 {
+		return
+	}
+	decoded, err := base64.StdEncoding.DecodeString(ch.Secret)
+	if err != nil {
+		return
+	}
+	decrypted, err := crypto.Decrypt(decoded, r.encryptionKey)
+	if err != nil {
+		return
+	}
+	ch.Secret = string(decrypted)
 }
 
 // CreateChannel inserts a new notification channel.
 func (r *GORMNotificationChannelRepository) CreateChannel(ctx context.Context, channel *models.NotificationChannel) error {
+	original, err := r.encryptSecret(channel)
+	if err != nil {
+		return err
+	}
+	defer func() { channel.Secret = original }()
 	if err := r.db.WithContext(ctx).Create(channel).Error; err != nil {
 		return dberrors.NewDatabaseError("create_channel", err)
 	}
@@ -38,11 +78,17 @@ func (r *GORMNotificationChannelRepository) GetChannel(ctx context.Context, id s
 	if err := r.db.WithContext(ctx).Where("id = ?", id).First(&channel).Error; err != nil {
 		return nil, dberrors.NewDatabaseError("get_channel", err)
 	}
+	r.decryptSecret(&channel)
 	return &channel, nil
 }
 
 // UpdateChannel updates an existing notification channel.
 func (r *GORMNotificationChannelRepository) UpdateChannel(ctx context.Context, channel *models.NotificationChannel) error {
+	original, err := r.encryptSecret(channel)
+	if err != nil {
+		return err
+	}
+	defer func() { channel.Secret = original }()
 	result := r.db.WithContext(ctx).Save(channel)
 	if result.Error != nil {
 		return dberrors.NewDatabaseError("update_channel", result.Error)
@@ -79,6 +125,9 @@ func (r *GORMNotificationChannelRepository) ListChannels(ctx context.Context) ([
 	var channels []models.NotificationChannel
 	if err := r.db.WithContext(ctx).Order("name ASC").Find(&channels).Error; err != nil {
 		return nil, dberrors.NewDatabaseError("list_channels", err)
+	}
+	for i := range channels {
+		r.decryptSecret(&channels[i])
 	}
 	return channels, nil
 }
@@ -135,6 +184,9 @@ func (r *GORMNotificationChannelRepository) FindChannelsByEvent(ctx context.Cont
 		Find(&channels).Error
 	if err != nil {
 		return nil, dberrors.NewDatabaseError("find_channels_by_event", err)
+	}
+	for i := range channels {
+		r.decryptSecret(&channels[i])
 	}
 	return channels, nil
 }

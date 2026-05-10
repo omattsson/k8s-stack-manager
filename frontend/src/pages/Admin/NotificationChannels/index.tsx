@@ -128,18 +128,10 @@ const NotificationChannels = () => {
       const data = await notificationChannelService.list();
       setChannels(data);
 
-      // Fetch subscription counts for each channel
       const counts: Record<string, number> = {};
-      await Promise.all(
-        data.map(async (ch) => {
-          try {
-            const subs = await notificationChannelService.getSubscriptions(ch.id);
-            counts[ch.id] = subs.length;
-          } catch {
-            counts[ch.id] = 0;
-          }
-        }),
-      );
+      for (const ch of data) {
+        counts[ch.id] = (ch as unknown as { subscription_count?: number }).subscription_count ?? 0;
+      }
       setSubsCounts(counts);
     } catch {
       setError('Failed to load notification channels');

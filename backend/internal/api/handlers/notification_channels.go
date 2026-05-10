@@ -70,7 +70,20 @@ func (h *NotificationChannelHandler) ListChannels(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
 		return
 	}
-	c.JSON(http.StatusOK, channels)
+
+	type channelWithCount struct {
+		models.NotificationChannel
+		SubscriptionCount int `json:"subscription_count"`
+	}
+	result := make([]channelWithCount, len(channels))
+	for i, ch := range channels {
+		result[i].NotificationChannel = ch
+		subs, err := h.repo.GetSubscriptions(c.Request.Context(), ch.ID)
+		if err == nil {
+			result[i].SubscriptionCount = len(subs)
+		}
+	}
+	c.JSON(http.StatusOK, result)
 }
 
 // CreateChannel godoc
