@@ -6,8 +6,8 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"io"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -296,25 +296,38 @@ func (h *NotificationChannelHandler) UpdateSubscriptions(c *gin.Context) {
 		return
 	}
 
+	// Verify channel exists.
+	if _, err := h.repo.GetChannel(c.Request.Context(), id); err != nil {
+		status, msg := mapError(err, entityNotificationChannel)
+		c.JSON(status, gin.H{"error": msg})
+		return
+	}
+
 	var req updateSubscriptionsRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": msgInvalidRequestFormat})
 		return
 	}
 
-	// Validate event types against known list.
+	// Deduplicate and validate event types.
 	known := make(map[string]bool)
 	for _, et := range notifier.AllEventTypes() {
 		known[et] = true
 	}
+	seen := make(map[string]bool)
+	unique := make([]string, 0, len(req.EventTypes))
 	for _, et := range req.EventTypes {
 		if !known[et] {
 			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("unknown event type: %s", et)})
 			return
 		}
+		if !seen[et] {
+			seen[et] = true
+			unique = append(unique, et)
+		}
 	}
 
-	if err := h.repo.SetSubscriptions(c.Request.Context(), id, req.EventTypes); err != nil {
+	if err := h.repo.SetSubscriptions(c.Request.Context(), id, unique); err != nil {
 		status, msg := mapError(err, entityNotificationChannel)
 		c.JSON(status, gin.H{"error": msg})
 		return
@@ -380,16 +393,21 @@ func (h *NotificationChannelHandler) TestChannel(c *gin.Context) {
 	if err != nil {
 		c.JSON(http.StatusOK, gin.H{
 			"success": false,
-			"error":   "Connection failed",
+			"message": "Connection failed",
 		})
 		return
 	}
 	io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
 	resp.Body.Close()
 
+	success := resp.StatusCode >= 200 && resp.StatusCode < 300
+	msg := fmt.Sprintf("HTTP %d", resp.StatusCode)
+	if success {
+		msg = "Test notification sent successfully"
+	}
 	c.JSON(http.StatusOK, gin.H{
-		"success":     resp.StatusCode >= 200 && resp.StatusCode < 300,
-		"status_code": resp.StatusCode,
+		"success": success,
+		"message": msg,
 	})
 }
 

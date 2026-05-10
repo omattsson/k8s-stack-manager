@@ -396,8 +396,11 @@ func buildHandlers(
 	// Cleanup policy handler.
 	cleanupPolicyHandler := handlers.NewCleanupPolicyHandler(repos.CleanupPolicy, svc.CleanupScheduler)
 
-	// Notification channel handler.
-	notificationChannelHandler := handlers.NewNotificationChannelHandler(repos.NotificationChannel)
+	// Notification channel handler (only when repo is available).
+	var notificationChannelHandler *handlers.NotificationChannelHandler
+	if repos.NotificationChannel != nil {
+		notificationChannelHandler = handlers.NewNotificationChannelHandler(repos.NotificationChannel)
+	}
 
 	// Auto-create admin user on startup.
 	authHandler.EnsureAdminUser()

@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import {
   Box,
   Typography,
@@ -39,9 +39,9 @@ import NotificationsActiveOutlined from '@mui/icons-material/NotificationsActive
 import NavigateNextIcon from '@mui/icons-material/NavigateNext';
 import { Link } from 'react-router-dom';
 import { notificationChannelService } from '../../../api/client';
+import { timeAgo } from '../../../utils/timeAgo';
 import type {
   NotificationChannel,
-  NotificationChannelSubscription,
   NotificationDeliveryLog,
 } from '../../../types';
 import LoadingState from '../../../components/LoadingState';
@@ -65,17 +65,6 @@ const EVENT_TYPE_CATEGORIES: Record<string, string[]> = {
 function truncateUrl(url: string, maxLen = 50): string {
   if (url.length <= maxLen) return url;
   return url.slice(0, maxLen) + '...';
-}
-
-function timeAgo(dateStr: string): string {
-  const diff = Date.now() - new Date(dateStr).getTime();
-  const mins = Math.floor(diff / 60000);
-  if (mins < 1) return 'just now';
-  if (mins < 60) return `${mins}m ago`;
-  const hours = Math.floor(mins / 60);
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.floor(hours / 24);
-  return `${days}d ago`;
 }
 
 interface ChannelFormState {
@@ -281,8 +270,8 @@ const NotificationChannels = () => {
       const result = await notificationChannelService.test(channel.id);
       setTestSnackbar({
         open: true,
-        message: result.message || 'Test notification sent successfully',
-        severity: result.status === 'ok' || result.status === 'success' ? 'success' : 'error',
+        message: result.message || 'Test completed',
+        severity: result.success ? 'success' : 'error',
       });
     } catch {
       setTestSnackbar({
@@ -305,7 +294,7 @@ const NotificationChannels = () => {
         notificationChannelService.getSubscriptions(channel.id),
       ]);
       setAllEventTypes(eventTypes);
-      setSelectedEventTypes(subs.map((s: NotificationChannelSubscription) => s.event_type));
+      setSelectedEventTypes(subs);
     } catch {
       showError('Failed to load subscriptions');
       setSubsTarget(null);
@@ -416,8 +405,8 @@ const NotificationChannels = () => {
             </TableHead>
             <TableBody>
               {channels.map((channel) => (
-                <>
-                  <TableRow key={channel.id}>
+                <React.Fragment key={channel.id}>
+                  <TableRow>
                     <TableCell padding="checkbox">
                       <IconButton
                         size="small"
@@ -539,7 +528,7 @@ const NotificationChannels = () => {
                       </Collapse>
                     </TableCell>
                   </TableRow>
-                </>
+                </React.Fragment>
               ))}
             </TableBody>
           </Table>

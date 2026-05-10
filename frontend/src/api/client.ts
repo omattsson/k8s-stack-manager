@@ -56,7 +56,6 @@ import type {
   DeployPreviewResponse,
   DashboardResponse,
   NotificationChannel,
-  NotificationChannelSubscription,
   NotificationDeliveryLog,
 } from '../types';
 
@@ -2209,7 +2208,7 @@ export const notificationChannelService = {
    * @returns Test result with status and message
    * @see POST /api/v1/admin/notification-channels/:id/test
    */
-  test: async (id: string): Promise<{ status: string; message: string }> => {
+  test: async (id: string): Promise<{ success: boolean; message: string }> => {
     try {
       const response = await api.post(`/api/v1/admin/notification-channels/${id}/test`);
       return response.data;

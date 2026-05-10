@@ -56,7 +56,10 @@ func (r *GORMNotificationChannelRepository) UpdateChannel(ctx context.Context, c
 // DeleteChannel removes a notification channel and its subscriptions by ID.
 func (r *GORMNotificationChannelRepository) DeleteChannel(ctx context.Context, id string) error {
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		// Delete subscriptions first.
+		// Delete delivery logs, subscriptions, then channel.
+		if err := tx.Where("channel_id = ?", id).Delete(&models.NotificationDeliveryLog{}).Error; err != nil {
+			return dberrors.NewDatabaseError("delete_channel_logs", err)
+		}
 		if err := tx.Where("channel_id = ?", id).Delete(&models.NotificationChannelSubscription{}).Error; err != nil {
 			return dberrors.NewDatabaseError("delete_channel_subscriptions", err)
 		}
