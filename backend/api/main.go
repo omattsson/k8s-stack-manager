@@ -7,6 +7,7 @@ import (
 	"backend/internal/deployer"
 	"backend/internal/health"
 	"backend/internal/models"
+	"backend/internal/notifier"
 	"backend/internal/scheduler"
 	"backend/internal/sessionstore"
 	"backend/internal/telemetry"
@@ -163,6 +164,7 @@ func main() {
 		watcherCancel:    svc.WatcherCancel,
 		sessionStore:     sessStore,
 		dashboardHandler: hs.Dashboard,
+		notifier:         svc.LifecycleNotifier,
 		repo:             repo,
 	})
 }
@@ -184,6 +186,7 @@ type shutdownDeps struct {
 	watcherCancel    context.CancelFunc
 	sessionStore     sessionstore.SessionStore
 	dashboardHandler *handlers.DashboardHandler
+	notifier         *notifier.Notifier
 	repo             models.Repository
 }
 
@@ -229,6 +232,9 @@ func gracefulShutdown(srvs *servers, timeout time.Duration, deps shutdownDeps) {
 	deps.hub.Shutdown()
 	deps.clusterRegistry.Close()
 	deps.watcherCancel()
+	if deps.notifier != nil {
+		deps.notifier.Stop()
+	}
 	if deps.sessionStore != nil {
 		deps.sessionStore.Stop()
 	}

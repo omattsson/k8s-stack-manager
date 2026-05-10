@@ -42,6 +42,7 @@ import { notificationChannelService } from '../../../api/client';
 import { timeAgo } from '../../../utils/timeAgo';
 import type {
   NotificationChannel,
+  NotificationChannelWithCount,
   NotificationDeliveryLog,
 } from '../../../types';
 import LoadingState from '../../../components/LoadingState';
@@ -82,7 +83,7 @@ const emptyForm: ChannelFormState = {
 };
 
 const NotificationChannels = () => {
-  const [channels, setChannels] = useState<NotificationChannel[]>([]);
+  const [channels, setChannels] = useState<NotificationChannelWithCount[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const { showSuccess, showError } = useNotification();

@@ -65,6 +65,13 @@ func (n *Notifier) dispatchWorker() {
 	}
 }
 
+// Stop shuts down the dispatch worker. Safe to call when no dispatcher is configured.
+func (n *Notifier) Stop() {
+	if n.dispatchQueue != nil {
+		close(n.dispatchQueue)
+	}
+}
+
 func (n *Notifier) enqueueDispatch(payload channel.EventPayload) {
 	select {
 	case n.dispatchQueue <- dispatchWork{payload: payload}:

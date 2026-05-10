@@ -68,6 +68,7 @@ const mainNav: NavItem[] = [
 const operationsNav: NavItem[] = [
   { label: 'Cluster Health', path: '/admin/cluster-health', icon: <MonitorHeartOutlined /> },
   { label: 'Analytics', path: '/admin/analytics', icon: <BarChartOutlined /> },
+  { label: 'Notification Channels', path: '/admin/notification-channels', icon: <NotificationsActiveOutlined /> },
 ];
 
 const adminNav: NavItem[] = [
@@ -76,7 +77,6 @@ const adminNav: NavItem[] = [
   { label: 'Clusters', path: '/admin/clusters', icon: <CloudOutlined /> },
   { label: 'Shared Values', path: '/admin/shared-values', icon: <TuneOutlined /> },
   { label: 'Cleanup Policies', path: '/admin/cleanup-policies', icon: <CleaningServicesOutlined /> },
-  { label: 'Notification Channels', path: '/admin/notification-channels', icon: <NotificationsActiveOutlined /> },
 ];
 
 const isRouteActive = (pathname: string, itemPath: string): boolean => {
