@@ -42,12 +42,14 @@ kubectl -n stack-manager rollout status deployment/stack-manager-k8s-stack-manag
 kubectl -n stack-manager rollout status deployment/stack-manager-k8s-stack-manager-frontend
 ```
 
+> If you enabled Argo Rollouts (`argoRollouts.enabled: true`), replace `deployment/` with `rollout/` in the commands above.
+
 ## 3. Access the UI
 
 If your cluster has Traefik installed (the chart creates IngressRoutes automatically), access the UI via the Traefik load balancer IP. Otherwise, port-forward:
 
 ```bash
-kubectl -n stack-manager port-forward svc/stack-manager-k8s-stack-manager-frontend 3000:80
+kubectl -n stack-manager port-forward svc/stack-manager-k8s-stack-manager-frontend 3000:8080
 ```
 
 Open http://localhost:3000 and log in with `admin` / the password you set above.
