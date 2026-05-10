@@ -12,7 +12,7 @@ type NotificationChannel struct {
 	ID         string    `json:"id" gorm:"primaryKey;size:36"`
 	Name       string    `json:"name" gorm:"size:255;uniqueIndex;not null"`
 	WebhookURL string    `json:"webhook_url" gorm:"size:2048;not null"`
-	Secret     string    `json:"-" gorm:"size:255"`
+	Secret     string    `json:"-" gorm:"type:text"`
 	Enabled    bool      `json:"enabled" gorm:"default:true"`
 }
 

@@ -50,7 +50,7 @@ const AppRoutes = () => {
       <Route path="/admin/analytics" element={<ProtectedRoute requiredRole="devops"><Analytics /></ProtectedRoute>} />
       <Route path="/admin/shared-values" element={<ProtectedRoute requiredRole="admin"><SharedValues /></ProtectedRoute>} />
       <Route path="/admin/cleanup-policies" element={<ProtectedRoute requiredRole="admin"><CleanupPolicies /></ProtectedRoute>} />
-      <Route path="/admin/notification-channels" element={<ProtectedRoute requiredRole="admin"><NotificationChannels /></ProtectedRoute>} />
+      <Route path="/admin/notification-channels" element={<ProtectedRoute requiredRole="devops"><NotificationChannels /></ProtectedRoute>} />
       <Route path="/profile" element={<ProtectedRoute><Profile /></ProtectedRoute>} />
       <Route path="/notifications" element={<ProtectedRoute><Notifications /></ProtectedRoute>} />
       <Route path="*" element={<NotFound />} />

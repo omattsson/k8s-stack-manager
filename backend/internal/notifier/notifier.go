@@ -59,7 +59,9 @@ func (n *Notifier) WithChannelDispatcher(d *channel.Dispatcher) *Notifier {
 
 func (n *Notifier) dispatchWorker() {
 	for w := range n.dispatchQueue {
-		n.channelDispatcher.Dispatch(context.Background(), w.payload)
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		n.channelDispatcher.Dispatch(ctx, w.payload)
+		cancel()
 	}
 }
 

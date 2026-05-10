@@ -972,7 +972,7 @@ func (d *Database) AutoMigrate() error {
 					id          VARCHAR(36)   NOT NULL PRIMARY KEY,
 					name        VARCHAR(255)  NOT NULL UNIQUE,
 					webhook_url VARCHAR(2048) NOT NULL,
-					secret      VARCHAR(255)  NOT NULL DEFAULT '',
+					secret      TEXT,
 					enabled     TINYINT(1)    NOT NULL DEFAULT 1,
 					created_at  DATETIME      NULL,
 					updated_at  DATETIME      NULL

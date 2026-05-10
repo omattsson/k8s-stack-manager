@@ -437,9 +437,10 @@ func SetupRoutes(router *gin.Engine, deps Deps) *RateLimiters {
 				}
 			}
 
-			// Notification channels — nested in admin group
+			// Notification channels — admin + devops access
 			if deps.NotificationChannelHandler != nil {
-				notifChannels := adminGroup.Group("/notification-channels")
+				notifChannels := authed.Group("/admin/notification-channels")
+				notifChannels.Use(devops)
 				{
 					notifChannels.GET("", deps.NotificationChannelHandler.ListChannels)
 					notifChannels.POST("", deps.NotificationChannelHandler.CreateChannel)

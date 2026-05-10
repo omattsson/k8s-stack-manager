@@ -54,12 +54,18 @@ type updateSubscriptionsRequest struct {
 	EventTypes []string `json:"event_types"`
 }
 
+// notificationChannelWithCount is the list response DTO.
+type notificationChannelWithCount struct {
+	models.NotificationChannel
+	SubscriptionCount int `json:"subscription_count"`
+}
+
 // ListChannels godoc
 // @Summary     List all notification channels
-// @Description Returns all notification channels
+// @Description Returns all notification channels with subscription counts
 // @Tags        notification-channels
 // @Produce     json
-// @Success     200 {array}  object "Channel with subscription_count"
+// @Success     200 {array}  notificationChannelWithCount
 // @Failure     500 {object} map[string]string
 // @Router      /api/v1/admin/notification-channels [get]
 // @Security    BearerAuth
@@ -77,11 +83,7 @@ func (h *NotificationChannelHandler) ListChannels(c *gin.Context) {
 		counts = make(map[string]int)
 	}
 
-	type channelWithCount struct {
-		models.NotificationChannel
-		SubscriptionCount int `json:"subscription_count"`
-	}
-	result := make([]channelWithCount, len(channels))
+	result := make([]notificationChannelWithCount, len(channels))
 	for i, ch := range channels {
 		result[i].NotificationChannel = ch
 		result[i].SubscriptionCount = counts[ch.ID]
