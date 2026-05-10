@@ -192,7 +192,12 @@ const Profile = () => {
     setGenerateKeyError(null);
     try {
       const request: CreateAPIKeyRequest = { name: generateKeyForm.name.trim() };
-      if (expiryMode === 'custom' && generateKeyForm.expires_at) {
+      if (expiryMode === 'custom') {
+        if (!generateKeyForm.expires_at) {
+          setGenerateKeyError('Please select an expiry date or switch to preset duration');
+          setGenerateKeyLoading(false);
+          return;
+        }
         request.expires_at = generateKeyForm.expires_at;
       } else {
         request.expires_in_days = presetDays;

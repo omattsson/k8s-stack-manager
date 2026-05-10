@@ -79,10 +79,7 @@ test.describe('Profile Page', () => {
     await expect(dialog.getByText(/expires:/i)).toBeVisible();
 
     // "No expiry" radio should not exist
-    await expect(dialog.getByText('No expiry')).not.toBeVisible().catch(() => {
-      // Element doesn't exist at all — expected
-    });
-    expect(await dialog.locator('text=No expiry').count()).toBe(0);
+    await expect(dialog.locator('text=No expiry')).toHaveCount(0);
 
     // Close without creating
     await dialog.getByRole('button', { name: 'Cancel' }).click();

@@ -542,8 +542,8 @@ const AdminUsers = () => {
               type="number"
               value={generateKeyForm.expires_in_days ?? 90}
               onChange={(e) => {
-                const parsed = parseInt(e.target.value, 10);
-                const days = Number.isFinite(parsed) ? Math.max(1, parsed) : 90;
+                const parsed = Math.floor(Number(e.target.value));
+                const days = Number.isFinite(parsed) && parsed >= 1 ? parsed : 90;
                 setGenerateKeyForm((prev) => ({ ...prev, expires_in_days: days, expires_at: undefined }));
               }}
               required

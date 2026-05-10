@@ -486,8 +486,8 @@ func TestCreateAPIKeyExpiration(t *testing.T) {
 					require.NoError(t, err)
 					now := time.Now().UTC()
 					expectedDate := now.AddDate(0, 0, tt.wantExpiryDays)
-					// Auto-cap uses end-of-day; expires_in_days uses exact offset.
-					// Allow up to 24h + 60s tolerance to cover both cases.
+					// expires_in_days uses exact offset; date-only expires_at uses end-of-day.
+					// Allow up to 24h + 60s tolerance to cover both formats.
 					diff := parsed.Sub(expectedDate)
 					assert.InDelta(t, 0, diff.Seconds(), 86460, "expires_at should be ~%d days from now", tt.wantExpiryDays)
 				}
