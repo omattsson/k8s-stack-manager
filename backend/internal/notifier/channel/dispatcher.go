@@ -63,7 +63,7 @@ func (d *Dispatcher) Dispatch(ctx context.Context, payload EventPayload) {
 	for i := range channels {
 		ch := &channels[i]
 		status, statusCode, errMsg := d.deliver(ctx, ch, payload.EventType, body)
-		_ = d.repo.CreateDeliveryLog(ctx, &models.NotificationDeliveryLog{
+		if logErr := d.repo.CreateDeliveryLog(ctx, &models.NotificationDeliveryLog{
 			ID:           uuid.New().String(),
 			ChannelID:    ch.ID,
 			ChannelName:  ch.Name,
@@ -72,7 +72,10 @@ func (d *Dispatcher) Dispatch(ctx context.Context, payload EventPayload) {
 			StatusCode:   statusCode,
 			ErrorMessage: errMsg,
 			CreatedAt:    time.Now().UTC(),
-		})
+		}); logErr != nil {
+			slog.Error("notification channel: failed to create delivery log",
+				"channel", ch.Name, "event", payload.EventType, "error", logErr)
+		}
 	}
 }
 

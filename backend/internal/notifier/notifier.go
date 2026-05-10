@@ -46,6 +46,9 @@ func NewNotifier(repo models.NotificationRepository, hub *websocket.Hub, userRep
 // and starts a bounded worker pool for processing dispatches. Safe to call once;
 // subsequent calls are no-ops.
 func (n *Notifier) WithChannelDispatcher(d *channel.Dispatcher) *Notifier {
+	if d == nil {
+		return n
+	}
 	n.dispatchOnce.Do(func() {
 		n.channelDispatcher = d
 		n.dispatchQueue = make(chan dispatchWork, dispatchQueueSize)

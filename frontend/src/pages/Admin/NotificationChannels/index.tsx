@@ -331,10 +331,17 @@ const NotificationChannels = () => {
       return;
     }
     setExpandedChannelId(channelId);
+    setDeliveryLogs([]);
     setLogsLoading(true);
     try {
       const result = await notificationChannelService.deliveryLogs(channelId, 20, 0);
-      setDeliveryLogs(result.logs);
+      // Guard against stale response if user expanded a different channel
+      setExpandedChannelId((current) => {
+        if (current === channelId) {
+          setDeliveryLogs(result.logs ?? []);
+        }
+        return current;
+      });
     } catch {
       setDeliveryLogs([]);
     } finally {

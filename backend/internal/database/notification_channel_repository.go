@@ -3,7 +3,9 @@ package database
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
+	"log/slog"
 
 	"backend/internal/models"
 	"backend/pkg/crypto"
@@ -54,6 +56,7 @@ func (r *GORMNotificationChannelRepository) decryptSecret(ch *models.Notificatio
 	}
 	decrypted, err := crypto.Decrypt(decoded, r.encryptionKey)
 	if err != nil {
+		slog.Warn("failed to decrypt channel secret", "channel_id", ch.ID, "error", err)
 		return
 	}
 	ch.Secret = string(decrypted)
@@ -67,6 +70,9 @@ func (r *GORMNotificationChannelRepository) CreateChannel(ctx context.Context, c
 	}
 	defer func() { channel.Secret = original }()
 	if err := r.db.WithContext(ctx).Create(channel).Error; err != nil {
+		if isDuplicateKeyError(err) {
+			return dberrors.NewDatabaseError("create_channel", fmt.Errorf("%w", dberrors.ErrDuplicateKey))
+		}
 		return dberrors.NewDatabaseError("create_channel", err)
 	}
 	return nil
@@ -76,6 +82,9 @@ func (r *GORMNotificationChannelRepository) CreateChannel(ctx context.Context, c
 func (r *GORMNotificationChannelRepository) GetChannel(ctx context.Context, id string) (*models.NotificationChannel, error) {
 	var channel models.NotificationChannel
 	if err := r.db.WithContext(ctx).Where("id = ?", id).First(&channel).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, dberrors.NewDatabaseError("get_channel", fmt.Errorf("%w", dberrors.ErrNotFound))
+		}
 		return nil, dberrors.NewDatabaseError("get_channel", err)
 	}
 	r.decryptSecret(&channel)
@@ -89,8 +98,17 @@ func (r *GORMNotificationChannelRepository) UpdateChannel(ctx context.Context, c
 		return err
 	}
 	defer func() { channel.Secret = original }()
-	result := r.db.WithContext(ctx).Save(channel)
+	result := r.db.WithContext(ctx).Model(&models.NotificationChannel{}).Where("id = ?", channel.ID).Updates(map[string]interface{}{
+		"name":        channel.Name,
+		"webhook_url": channel.WebhookURL,
+		"secret":      channel.Secret,
+		"enabled":     channel.Enabled,
+		"updated_at":  channel.UpdatedAt,
+	})
 	if result.Error != nil {
+		if isDuplicateKeyError(result.Error) {
+			return dberrors.NewDatabaseError("update_channel", fmt.Errorf("%w", dberrors.ErrDuplicateKey))
+		}
 		return dberrors.NewDatabaseError("update_channel", result.Error)
 	}
 	if result.RowsAffected == 0 {
