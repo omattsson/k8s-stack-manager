@@ -71,6 +71,7 @@ type handlerSet struct {
 	Analytics             *handlers.AnalyticsHandler
 	Dashboard             *handlers.DashboardHandler
 	CleanupPolicy         *handlers.CleanupPolicyHandler
+	NotificationChannel   *handlers.NotificationChannelHandler
 }
 
 // routerDeps holds non-handler dependencies required to wire the router.
@@ -388,6 +389,9 @@ func buildHandlers(
 	// Cleanup policy handler.
 	cleanupPolicyHandler := handlers.NewCleanupPolicyHandler(repos.CleanupPolicy, svc.CleanupScheduler)
 
+	// Notification channel handler.
+	notificationChannelHandler := handlers.NewNotificationChannelHandler(repos.NotificationChannel)
+
 	// Auto-create admin user on startup.
 	authHandler.EnsureAdminUser()
 
@@ -413,6 +417,7 @@ func buildHandlers(
 		Analytics:             analyticsHandler,
 		Dashboard:             dashboardHandler,
 		CleanupPolicy:         cleanupPolicyHandler,
+		NotificationChannel:   notificationChannelHandler,
 	}, nil
 }
 
@@ -444,6 +449,7 @@ func buildRouter(cfg *config.Config, hs *handlerSet, deps routerDeps) (*gin.Engi
 		AnalyticsHandler:             hs.Analytics,
 		DashboardHandler:             hs.Dashboard,
 		CleanupPolicyHandler:         hs.CleanupPolicy,
+		NotificationChannelHandler:   hs.NotificationChannel,
 		CleanupScheduler:             deps.Svc.CleanupScheduler,
 		ClusterHandler:               hs.Cluster,
 		SharedValuesHandler:          hs.SharedValues,

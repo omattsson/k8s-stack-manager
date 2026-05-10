@@ -1,5 +1,5 @@
 // Package notifier provides a service for creating user notifications
-// and optionally broadcasting them via WebSocket.
+// and optionally broadcasting them via WebSocket and external channels.
 package notifier
 
 import (
@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"backend/internal/models"
+	"backend/internal/notifier/channel"
 	"backend/internal/websocket"
 
 	"github.com/google/uuid"
@@ -16,9 +17,10 @@ import (
 
 // Notifier creates notification records and broadcasts them in real time.
 type Notifier struct {
-	repo     models.NotificationRepository
-	hub      *websocket.Hub
-	userRepo models.UserRepository
+	repo              models.NotificationRepository
+	hub               *websocket.Hub
+	userRepo          models.UserRepository
+	channelDispatcher *channel.Dispatcher
 }
 
 // NewNotifier creates a new Notifier. hub and userRepo may be nil if real-time
@@ -31,9 +33,19 @@ func NewNotifier(repo models.NotificationRepository, hub *websocket.Hub, userRep
 	}
 }
 
+// WithChannelDispatcher sets the external channel dispatcher for webhook delivery.
+func (n *Notifier) WithChannelDispatcher(d *channel.Dispatcher) *Notifier {
+	n.channelDispatcher = d
+	return n
+}
+
 // Notify creates a notification for the given user and optionally broadcasts it
 // via WebSocket. It returns an error only if the database insert fails.
 func (n *Notifier) Notify(ctx context.Context, userID, notifType, title, message, entityType, entityID string) error {
+	return n.notify(ctx, userID, notifType, title, message, entityType, entityID, true)
+}
+
+func (n *Notifier) notify(ctx context.Context, userID, notifType, title, message, entityType, entityID string, dispatchExternal bool) error {
 	notification := &models.Notification{
 		ID:         uuid.New().String(),
 		UserID:     userID,
@@ -65,6 +77,25 @@ func (n *Notifier) Notify(ctx context.Context, userID, notifType, title, message
 		n.hub.Broadcast(data)
 	}
 
+	// Dispatch to external channels (Teams, Slack, etc.) in background.
+	if dispatchExternal && n.channelDispatcher != nil {
+		displayName := ""
+		if n.userRepo != nil {
+			if user, err := n.userRepo.FindByID(userID); err == nil && user != nil {
+				displayName = user.DisplayName
+			}
+		}
+		go n.channelDispatcher.Dispatch(context.Background(), channel.EventPayload{
+			EventType:       notifType,
+			Timestamp:       notification.CreatedAt,
+			Title:           title,
+			Message:         message,
+			UserDisplayName: displayName,
+			EntityType:      entityType,
+			EntityID:        entityID,
+		})
+	}
+
 	return nil
 }
 
@@ -82,10 +113,24 @@ func (n *Notifier) NotifySystem(ctx context.Context, notifType, title, message, 
 	}
 
 	for _, u := range admins {
-		if err := n.Notify(ctx, u.ID, notifType, title, message, entityType, entityID); err != nil {
+		if err := n.notify(ctx, u.ID, notifType, title, message, entityType, entityID, false); err != nil {
 			slog.Error("failed to create system notification for user", "user_id", u.ID, "type", notifType, "error", err)
 		}
 	}
+
+	// Dispatch once to external channels for system events.
+	if n.channelDispatcher != nil {
+		go n.channelDispatcher.Dispatch(context.Background(), channel.EventPayload{
+			EventType:       notifType,
+			Timestamp:       time.Now().UTC(),
+			Title:           title,
+			Message:         message,
+			UserDisplayName: "System",
+			EntityType:      entityType,
+			EntityID:        entityID,
+		})
+	}
+
 	return nil
 }
 

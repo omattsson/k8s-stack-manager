@@ -71,3 +71,4 @@ sonar-project.properties
 # MemPalace
 mempalace.yaml
 entities.json
+backend/test-results/
