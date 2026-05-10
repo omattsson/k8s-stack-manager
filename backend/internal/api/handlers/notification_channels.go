@@ -2,8 +2,11 @@ package handlers
 
 import (
 	"bytes"
-	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"io"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -23,26 +26,14 @@ const (
 	msgChannelIDRequired      = "Channel ID is required"
 )
 
-// channelDispatcher is an interface for dispatching test payloads to a channel.
-// It allows test injection without importing the full notifier/channel package.
-type channelDispatcher interface {
-	DispatchTo(ctx context.Context, channel models.NotificationChannel, payload interface{}) error
-}
-
 // NotificationChannelHandler handles CRUD operations for notification channels.
 type NotificationChannelHandler struct {
-	repo       models.NotificationChannelRepository
-	dispatcher channelDispatcher
+	repo models.NotificationChannelRepository
 }
 
 // NewNotificationChannelHandler creates a new NotificationChannelHandler.
 func NewNotificationChannelHandler(repo models.NotificationChannelRepository) *NotificationChannelHandler {
 	return &NotificationChannelHandler{repo: repo}
-}
-
-// SetDispatcher sets the channel dispatcher for test delivery.
-func (h *NotificationChannelHandler) SetDispatcher(d channelDispatcher) {
-	h.dispatcher = d
 }
 
 type createChannelRequest struct {
@@ -54,7 +45,7 @@ type createChannelRequest struct {
 
 type updateChannelRequest struct {
 	Name       string `json:"name,omitempty"`
-	WebhookURL string `json:"webhook_url,omitempty"`
+	WebhookURL string `json:"webhook_url,omitempty" binding:"omitempty,url"`
 	Secret     string `json:"secret,omitempty"`
 	Enabled    *bool  `json:"enabled,omitempty"`
 }
@@ -378,22 +369,27 @@ func (h *NotificationChannelHandler) TestChannel(c *gin.Context) {
 		return
 	}
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-StackManager-Event", "test")
+	if channel.Secret != "" {
+		mac := hmac.New(sha256.New, []byte(channel.Secret))
+		mac.Write(body)
+		req.Header.Set("X-StackManager-Signature", "sha256="+hex.EncodeToString(mac.Sum(nil)))
+	}
 
 	resp, err := client.Do(req)
 	if err != nil {
 		c.JSON(http.StatusOK, gin.H{
-			"success":    false,
-			"error":      err.Error(),
-			"webhook_url": channel.WebhookURL,
+			"success": false,
+			"error":   "Connection failed",
 		})
 		return
 	}
-	defer resp.Body.Close()
+	io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
+	resp.Body.Close()
 
 	c.JSON(http.StatusOK, gin.H{
 		"success":     resp.StatusCode >= 200 && resp.StatusCode < 300,
 		"status_code": resp.StatusCode,
-		"webhook_url": channel.WebhookURL,
 	})
 }
 
@@ -423,6 +419,9 @@ func (h *NotificationChannelHandler) ListDeliveryLogs(c *gin.Context) {
 		if v, err := strconv.Atoi(l); err == nil && v > 0 {
 			limit = v
 		}
+	}
+	if limit > 100 {
+		limit = 100
 	}
 	if o := c.Query("offset"); o != "" {
 		if v, err := strconv.Atoi(o); err == nil && v >= 0 {

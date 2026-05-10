@@ -15,6 +15,7 @@ import (
 	"backend/internal/k8s"
 	"backend/internal/models"
 	"backend/internal/notifier"
+	"backend/internal/notifier/channel"
 	"backend/internal/scheduler"
 	"backend/internal/sessionstore"
 	"backend/internal/ttl"
@@ -223,6 +224,12 @@ func buildDomainServices(
 
 	// Lifecycle notifier — in-app notifications for stack events.
 	lifecycleNotifier := notifier.NewNotifier(repos.Notification, hub, repos.User)
+
+	// Wire external channel dispatcher for webhook-based notifications.
+	if repos.NotificationChannel != nil {
+		channelDispatcher := channel.NewDispatcher(repos.NotificationChannel)
+		lifecycleNotifier.WithChannelDispatcher(channelDispatcher)
+	}
 
 	// Deployment manager — multi-cluster deploys.
 	deployManager := deployer.NewManager(deployer.ManagerConfig{

@@ -2180,10 +2180,10 @@ export const notificationChannelService = {
    * @returns Array of channel subscriptions
    * @see GET /api/v1/admin/notification-channels/:id/subscriptions
    */
-  getSubscriptions: async (id: string): Promise<NotificationChannelSubscription[]> => {
+  getSubscriptions: async (id: string): Promise<string[]> => {
     try {
       const response = await api.get(`/api/v1/admin/notification-channels/${id}/subscriptions`);
-      return response.data;
+      return response.data.event_types ?? [];
     } catch (error) {
       console.error('Failed to fetch channel subscriptions:', error);
       throw error;
@@ -2243,7 +2243,7 @@ export const notificationChannelService = {
   eventTypes: async (): Promise<string[]> => {
     try {
       const response = await api.get('/api/v1/admin/notification-channels/event-types');
-      return response.data;
+      return response.data.event_types ?? [];
     } catch (error) {
       console.error('Failed to fetch event types:', error);
       throw error;

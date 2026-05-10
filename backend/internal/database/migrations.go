@@ -989,7 +989,9 @@ func (d *Database) AutoMigrate() error {
 				)`).Error; err != nil {
 					return err
 				}
-				tx.Exec("CREATE INDEX idx_ncs_event_type ON notification_channel_subscriptions (event_type)")
+				if err := tx.Exec("CREATE INDEX idx_ncs_event_type ON notification_channel_subscriptions (event_type)").Error; err != nil {
+					return err
+				}
 			}
 			if !tx.Migrator().HasTable("notification_delivery_logs") {
 				if err := tx.Exec(`CREATE TABLE notification_delivery_logs (
@@ -1004,8 +1006,12 @@ func (d *Database) AutoMigrate() error {
 				)`).Error; err != nil {
 					return err
 				}
-				tx.Exec("CREATE INDEX idx_ndl_channel_id ON notification_delivery_logs (channel_id)")
-				tx.Exec("CREATE INDEX idx_ndl_created_at ON notification_delivery_logs (created_at)")
+				if err := tx.Exec("CREATE INDEX idx_ndl_channel_id ON notification_delivery_logs (channel_id)").Error; err != nil {
+					return err
+				}
+				if err := tx.Exec("CREATE INDEX idx_ndl_created_at ON notification_delivery_logs (created_at)").Error; err != nil {
+					return err
+				}
 			}
 			return nil
 		},
