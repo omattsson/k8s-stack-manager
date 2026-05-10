@@ -130,7 +130,7 @@ const NotificationChannels = () => {
 
       const counts: Record<string, number> = {};
       for (const ch of data) {
-        counts[ch.id] = (ch as unknown as { subscription_count?: number }).subscription_count ?? 0;
+        counts[ch.id] = ch.subscription_count ?? 0;
       }
       setSubsCounts(counts);
     } catch {

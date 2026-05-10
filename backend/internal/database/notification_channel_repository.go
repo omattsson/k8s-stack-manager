@@ -120,14 +120,12 @@ func (r *GORMNotificationChannelRepository) DeleteChannel(ctx context.Context, i
 	})
 }
 
-// ListChannels returns all notification channels.
+// ListChannels returns all notification channels. Secrets are not decrypted
+// since they are json:"-" and never sent to API clients.
 func (r *GORMNotificationChannelRepository) ListChannels(ctx context.Context) ([]models.NotificationChannel, error) {
 	var channels []models.NotificationChannel
 	if err := r.db.WithContext(ctx).Order("name ASC").Find(&channels).Error; err != nil {
 		return nil, dberrors.NewDatabaseError("list_channels", err)
-	}
-	for i := range channels {
-		r.decryptSecret(&channels[i])
 	}
 	return channels, nil
 }
@@ -173,6 +171,27 @@ func (r *GORMNotificationChannelRepository) GetSubscriptions(ctx context.Context
 		return nil, dberrors.NewDatabaseError("get_subscriptions", err)
 	}
 	return subs, nil
+}
+
+// CountSubscriptionsByChannel returns subscription counts for all channels in one query.
+func (r *GORMNotificationChannelRepository) CountSubscriptionsByChannel(ctx context.Context) (map[string]int, error) {
+	type result struct {
+		ChannelID string
+		Count     int
+	}
+	var rows []result
+	if err := r.db.WithContext(ctx).
+		Model(&models.NotificationChannelSubscription{}).
+		Select("channel_id, COUNT(*) as count").
+		Group("channel_id").
+		Scan(&rows).Error; err != nil {
+		return nil, dberrors.NewDatabaseError("count_subscriptions", err)
+	}
+	counts := make(map[string]int, len(rows))
+	for _, row := range rows {
+		counts[row.ChannelID] = row.Count
+	}
+	return counts, nil
 }
 
 // FindChannelsByEvent returns all enabled channels subscribed to the given event type.

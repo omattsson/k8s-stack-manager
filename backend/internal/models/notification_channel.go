@@ -45,6 +45,7 @@ type NotificationChannelRepository interface {
 	ListEnabledChannels(ctx context.Context) ([]NotificationChannel, error)
 	SetSubscriptions(ctx context.Context, channelID string, eventTypes []string) error
 	GetSubscriptions(ctx context.Context, channelID string) ([]NotificationChannelSubscription, error)
+	CountSubscriptionsByChannel(ctx context.Context) (map[string]int, error)
 	FindChannelsByEvent(ctx context.Context, eventType string) ([]NotificationChannel, error)
 	CreateDeliveryLog(ctx context.Context, log *NotificationDeliveryLog) error
 	ListDeliveryLogs(ctx context.Context, channelID string, limit, offset int) ([]NotificationDeliveryLog, int64, error)

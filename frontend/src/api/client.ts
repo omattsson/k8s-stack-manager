@@ -56,6 +56,7 @@ import type {
   DeployPreviewResponse,
   DashboardResponse,
   NotificationChannel,
+  NotificationChannelWithCount,
   NotificationDeliveryLog,
 } from '../types';
 
@@ -2105,7 +2106,7 @@ export const notificationChannelService = {
    * @returns Array of notification channels
    * @see GET /api/v1/admin/notification-channels
    */
-  list: async (): Promise<NotificationChannel[]> => {
+  list: async (): Promise<NotificationChannelWithCount[]> => {
     try {
       const response = await api.get('/api/v1/admin/notification-channels');
       return response.data;

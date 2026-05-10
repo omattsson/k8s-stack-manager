@@ -45,7 +45,7 @@ type createChannelRequest struct {
 
 type updateChannelRequest struct {
 	Name       string `json:"name,omitempty"`
-	WebhookURL string `json:"webhook_url,omitempty" binding:"omitempty,url"`
+	WebhookURL string `json:"webhook_url,omitempty" binding:"omitempty,url,startswith=https://"`
 	Secret     string `json:"secret,omitempty"`
 	Enabled    *bool  `json:"enabled,omitempty"`
 }
@@ -71,6 +71,8 @@ func (h *NotificationChannelHandler) ListChannels(c *gin.Context) {
 		return
 	}
 
+	counts, _ := h.repo.CountSubscriptionsByChannel(c.Request.Context())
+
 	type channelWithCount struct {
 		models.NotificationChannel
 		SubscriptionCount int `json:"subscription_count"`
@@ -78,10 +80,7 @@ func (h *NotificationChannelHandler) ListChannels(c *gin.Context) {
 	result := make([]channelWithCount, len(channels))
 	for i, ch := range channels {
 		result[i].NotificationChannel = ch
-		subs, err := h.repo.GetSubscriptions(c.Request.Context(), ch.ID)
-		if err == nil {
-			result[i].SubscriptionCount = len(subs)
-		}
+		result[i].SubscriptionCount = counts[ch.ID]
 	}
 	c.JSON(http.StatusOK, result)
 }
@@ -131,7 +130,7 @@ func (h *NotificationChannelHandler) CreateChannel(c *gin.Context) {
 
 // GetChannel godoc
 // @Summary     Get a notification channel
-// @Description Returns a notification channel with its subscriptions
+// @Description Returns a notification channel by ID
 // @Tags        notification-channels
 // @Produce     json
 // @Param       id path string true "Channel ID"

@@ -157,6 +157,19 @@ func (m *MockNotificationChannelRepository) GetSubscriptions(_ context.Context, 
 	return m.subscriptions[channelID], nil
 }
 
+func (m *MockNotificationChannelRepository) CountSubscriptionsByChannel(_ context.Context) (map[string]int, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.err != nil {
+		return nil, m.err
+	}
+	counts := make(map[string]int)
+	for chID, subs := range m.subscriptions {
+		counts[chID] = len(subs)
+	}
+	return counts, nil
+}
+
 func (m *MockNotificationChannelRepository) FindChannelsByEvent(_ context.Context, eventType string) ([]models.NotificationChannel, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()

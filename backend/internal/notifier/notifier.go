@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"sync"
 	"time"
 
 	"backend/internal/models"
@@ -24,6 +25,7 @@ type Notifier struct {
 	userRepo          models.UserRepository
 	channelDispatcher *channel.Dispatcher
 	dispatchQueue     chan dispatchWork
+	dispatchOnce      sync.Once
 }
 
 type dispatchWork struct {
@@ -41,11 +43,14 @@ func NewNotifier(repo models.NotificationRepository, hub *websocket.Hub, userRep
 }
 
 // WithChannelDispatcher sets the external channel dispatcher for webhook delivery
-// and starts a bounded worker pool for processing dispatches.
+// and starts a bounded worker pool for processing dispatches. Safe to call once;
+// subsequent calls are no-ops.
 func (n *Notifier) WithChannelDispatcher(d *channel.Dispatcher) *Notifier {
-	n.channelDispatcher = d
-	n.dispatchQueue = make(chan dispatchWork, dispatchQueueSize)
-	go n.dispatchWorker()
+	n.dispatchOnce.Do(func() {
+		n.channelDispatcher = d
+		n.dispatchQueue = make(chan dispatchWork, dispatchQueueSize)
+		go n.dispatchWorker()
+	})
 	return n
 }
 

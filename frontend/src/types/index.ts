@@ -750,6 +750,10 @@ export interface NotificationChannel {
   updated_at: string;
 }
 
+export interface NotificationChannelWithCount extends NotificationChannel {
+  subscription_count: number;
+}
+
 export interface NotificationChannelSubscription {
   id: string;
   channel_id: string;

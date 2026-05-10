@@ -44,6 +44,9 @@ func (m *mockChannelRepo) SetSubscriptions(_ context.Context, _ string, _ []stri
 func (m *mockChannelRepo) GetSubscriptions(_ context.Context, _ string) ([]models.NotificationChannelSubscription, error) {
 	return nil, nil
 }
+func (m *mockChannelRepo) CountSubscriptionsByChannel(_ context.Context) (map[string]int, error) {
+	return nil, nil
+}
 func (m *mockChannelRepo) FindChannelsByEvent(_ context.Context, _ string) ([]models.NotificationChannel, error) {
 	if m.findErr != nil {
 		return nil, m.findErr
