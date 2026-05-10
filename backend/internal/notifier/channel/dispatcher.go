@@ -62,7 +62,7 @@ func (d *Dispatcher) Dispatch(ctx context.Context, payload EventPayload) {
 
 	for i := range channels {
 		ch := &channels[i]
-		status, statusCode, errMsg := d.deliver(ch, payload.EventType, body)
+		status, statusCode, errMsg := d.deliver(ctx, ch, payload.EventType, body)
 		_ = d.repo.CreateDeliveryLog(ctx, &models.NotificationDeliveryLog{
 			ID:           uuid.New().String(),
 			ChannelID:    ch.ID,
@@ -82,18 +82,22 @@ func (d *Dispatcher) DispatchTo(ctx context.Context, ch models.NotificationChann
 	if err != nil {
 		return "failed", 0, fmt.Sprintf("marshal error: %v", err)
 	}
-	return d.deliver(&ch, payload.EventType, body)
+	return d.deliver(ctx, &ch, payload.EventType, body)
 }
 
-func (d *Dispatcher) deliver(ch *models.NotificationChannel, eventType string, body []byte) (status string, statusCode int, errMsg string) {
-	statusCode, err := d.post(ch, eventType, body)
+func (d *Dispatcher) deliver(ctx context.Context, ch *models.NotificationChannel, eventType string, body []byte) (status string, statusCode int, errMsg string) {
+	statusCode, err := d.post(ctx, ch, eventType, body)
 	if err == nil {
 		return "success", statusCode, ""
 	}
 
 	if isRetryable(statusCode) {
-		time.Sleep(retryDelay)
-		statusCode, err = d.post(ch, eventType, body)
+		select {
+		case <-ctx.Done():
+			return "failed", 0, "context cancelled"
+		case <-time.After(retryDelay):
+		}
+		statusCode, err = d.post(ctx, ch, eventType, body)
 		if err == nil {
 			return "success", statusCode, ""
 		}
@@ -105,8 +109,8 @@ func (d *Dispatcher) deliver(ch *models.NotificationChannel, eventType string, b
 	return "failed", statusCode, err.Error()
 }
 
-func (d *Dispatcher) post(ch *models.NotificationChannel, eventType string, body []byte) (int, error) {
-	req, err := http.NewRequest(http.MethodPost, ch.WebhookURL, bytes.NewReader(body))
+func (d *Dispatcher) post(ctx context.Context, ch *models.NotificationChannel, eventType string, body []byte) (int, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, ch.WebhookURL, bytes.NewReader(body))
 	if err != nil {
 		return 0, fmt.Errorf("creating request: %w", err)
 	}

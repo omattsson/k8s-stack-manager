@@ -38,7 +38,7 @@ func NewNotificationChannelHandler(repo models.NotificationChannelRepository) *N
 
 type createChannelRequest struct {
 	Name       string `json:"name" binding:"required"`
-	WebhookURL string `json:"webhook_url" binding:"required,url"`
+	WebhookURL string `json:"webhook_url" binding:"required,url,startswith=https://"`
 	Secret     string `json:"secret,omitempty"`
 	Enabled    *bool  `json:"enabled"`
 }
@@ -51,7 +51,7 @@ type updateChannelRequest struct {
 }
 
 type updateSubscriptionsRequest struct {
-	EventTypes []string `json:"event_types" binding:"required"`
+	EventTypes []string `json:"event_types"`
 }
 
 // ListChannels godoc
@@ -142,22 +142,7 @@ func (h *NotificationChannelHandler) GetChannel(c *gin.Context) {
 		return
 	}
 
-	subs, err := h.repo.GetSubscriptions(c.Request.Context(), id)
-	if err != nil {
-		slog.Error("Failed to get channel subscriptions", "error", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
-		return
-	}
-
-	eventTypes := make([]string, len(subs))
-	for i, s := range subs {
-		eventTypes[i] = s.EventType
-	}
-
-	c.JSON(http.StatusOK, gin.H{
-		"channel":     channel,
-		"event_types": eventTypes,
-	})
+	c.JSON(http.StatusOK, channel)
 }
 
 // UpdateChannel godoc
@@ -333,7 +318,7 @@ func (h *NotificationChannelHandler) UpdateSubscriptions(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"event_types": req.EventTypes})
+	c.JSON(http.StatusOK, gin.H{"event_types": unique})
 }
 
 // TestChannel godoc
