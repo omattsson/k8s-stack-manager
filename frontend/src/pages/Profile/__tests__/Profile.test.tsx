@@ -185,7 +185,7 @@ describe('Profile Page', () => {
     await user.click(screen.getByRole('button', { name: /^generate$/i }));
 
     await waitFor(() => {
-      expect(apiKeyService.create).toHaveBeenCalledWith('u1', { name: 'Test Key' });
+      expect(apiKeyService.create).toHaveBeenCalledWith('u1', { name: 'Test Key', expires_in_days: 90 });
     });
   });
 
@@ -487,13 +487,13 @@ describe('Profile Page', () => {
     });
   });
 
-  it('sends neither expires_at nor expires_in_days when no expiry is selected', async () => {
+  it('defaults to 90-day preset expiry when submitting without changing mode', async () => {
     (apiKeyService.list as ReturnType<typeof vi.fn>).mockResolvedValue([]);
     (apiKeyService.create as ReturnType<typeof vi.fn>).mockResolvedValue({
-      id: 'k-none',
-      name: 'No Expiry Key',
-      prefix: 'sk_none11',
-      raw_key: 'sk_none11xyz',
+      id: 'k-default',
+      name: 'Default Key',
+      prefix: 'sk_def123',
+      raw_key: 'sk_def123xyz',
       created_at: '2026-03-18T00:00:00Z',
     });
 
@@ -509,13 +509,13 @@ describe('Profile Page', () => {
     });
 
     await user.click(screen.getByRole('button', { name: /generate api key/i }));
-    await user.type(screen.getByLabelText(/key name/i), 'No Expiry Key');
+    await user.type(screen.getByLabelText(/key name/i), 'Default Key');
 
-    // "No expiry" is default — just submit
+    // "Preset duration" is the default mode — just submit
     await user.click(screen.getByRole('button', { name: /^generate$/i }));
 
     await waitFor(() => {
-      expect(apiKeyService.create).toHaveBeenCalledWith('u1', { name: 'No Expiry Key' });
+      expect(apiKeyService.create).toHaveBeenCalledWith('u1', { name: 'Default Key', expires_in_days: 90 });
     });
   });
 

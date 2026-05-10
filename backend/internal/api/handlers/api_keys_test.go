@@ -88,7 +88,7 @@ func TestCreateAPIKey(t *testing.T) {
 			callerID:     "user-1",
 			callerRole:   "user",
 			targetUserID: "user-1",
-			body:         `{"name":"ci-token"}`,
+			body:         `{"name":"ci-token","expires_in_days":90}`,
 			setupRepos: func(u *MockUserRepository, a *MockAPIKeyRepository) {
 				seedUser(t, u, "user-1", "alice", "testpass", "user")
 			},
@@ -100,7 +100,7 @@ func TestCreateAPIKey(t *testing.T) {
 			callerID:     "admin-1",
 			callerRole:   "admin",
 			targetUserID: "user-2",
-			body:         `{"name":"deploy-key"}`,
+			body:         `{"name":"deploy-key","expires_in_days":90}`,
 			setupRepos: func(u *MockUserRepository, a *MockAPIKeyRepository) {
 				seedUser(t, u, "user-2", "bob", "testpass", "user")
 			},
@@ -141,7 +141,7 @@ func TestCreateAPIKey(t *testing.T) {
 			callerID:     "admin-1",
 			callerRole:   "admin",
 			targetUserID: "user-1",
-			body:         `{"name":"my-key"}`,
+			body:         `{"name":"my-key","expires_in_days":90}`,
 			setupRepos: func(u *MockUserRepository, a *MockAPIKeyRepository) {
 				seedUser(t, u, "user-1", "alice", "testpass", "user")
 				a.SetCreateError(errors.New("db failure"))
@@ -394,11 +394,11 @@ func TestCreateAPIKeyExpiration(t *testing.T) {
 			wantErrSubstr: "maximum allowed lifetime of 365 days",
 		},
 		{
-			name:           "no expiry with max 365 - auto-capped",
-			maxDays:        365,
-			body:           `{"name":"ci-key"}`,
-			wantStatus:     http.StatusCreated,
-			wantExpiryDays: 365,
+			name:          "no expiry with max 365 - rejected",
+			maxDays:       365,
+			body:          `{"name":"ci-key"}`,
+			wantStatus:    http.StatusBadRequest,
+			wantErrSubstr: "Expiration is required",
 		},
 		{
 			name:       "expires_at within max - success",
@@ -414,10 +414,11 @@ func TestCreateAPIKeyExpiration(t *testing.T) {
 			wantErrSubstr: "maximum allowed lifetime of 365 days",
 		},
 		{
-			name:       "no expiry with max 0 (no limit) - no expiry set",
-			maxDays:    0,
-			body:       `{"name":"ci-key"}`,
-			wantStatus: http.StatusCreated,
+			name:          "no expiry without max limit - rejected",
+			maxDays:       0,
+			body:          `{"name":"ci-key"}`,
+			wantStatus:    http.StatusBadRequest,
+			wantErrSubstr: "Expiration is required",
 		},
 		{
 			name:           "expires_in_days exactly at max - success",
@@ -485,16 +486,12 @@ func TestCreateAPIKeyExpiration(t *testing.T) {
 					require.NoError(t, err)
 					now := time.Now().UTC()
 					expectedDate := now.AddDate(0, 0, tt.wantExpiryDays)
-					// Auto-cap uses end-of-day; expires_in_days uses exact offset.
-					// Allow up to 24h + 60s tolerance to cover both cases.
+					// expires_in_days uses exact offset; date-only expires_at uses end-of-day.
+					// Allow up to 24h + 60s tolerance to cover both formats.
 					diff := parsed.Sub(expectedDate)
 					assert.InDelta(t, 0, diff.Seconds(), 86460, "expires_at should be ~%d days from now", tt.wantExpiryDays)
 				}
 
-				if tt.name == "no expiry with max 0 (no limit) - no expiry set" {
-					_, hasExpiry := resp["expires_at"]
-					assert.False(t, hasExpiry, "expires_at should not be set when no limit and no expiry requested")
-				}
 			}
 		})
 	}

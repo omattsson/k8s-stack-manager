@@ -56,7 +56,7 @@ const EVENT_TYPE_LABELS: Record<string, string> = {
 
 const DEFAULT_EVENT_TYPES = Object.keys(EVENT_TYPE_LABELS);
 
-type ExpiryMode = 'none' | 'preset' | 'custom';
+type ExpiryMode = 'preset' | 'custom';
 
 const PRESET_DURATIONS = [
   { value: 30, label: '30 days' },
@@ -100,7 +100,7 @@ const Profile = () => {
   const [generateKeyForm, setGenerateKeyForm] = useState<CreateAPIKeyRequest>({ name: '' });
   const [generateKeyError, setGenerateKeyError] = useState<string | null>(null);
   const [generateKeyLoading, setGenerateKeyLoading] = useState(false);
-  const [expiryMode, setExpiryMode] = useState<ExpiryMode>('none');
+  const [expiryMode, setExpiryMode] = useState<ExpiryMode>('preset');
   const [presetDays, setPresetDays] = useState<number>(90);
 
   // Raw key modal
@@ -192,15 +192,15 @@ const Profile = () => {
     setGenerateKeyError(null);
     try {
       const request: CreateAPIKeyRequest = { name: generateKeyForm.name.trim() };
-      if (expiryMode === 'preset') {
-        request.expires_in_days = presetDays;
-      } else if (expiryMode === 'custom' && generateKeyForm.expires_at) {
+      if (expiryMode === 'custom' && generateKeyForm.expires_at) {
         request.expires_at = generateKeyForm.expires_at;
+      } else {
+        request.expires_in_days = presetDays;
       }
       const result = await apiKeyService.create(currentUser.id, request);
       setGenerateKeyOpen(false);
       setGenerateKeyForm({ name: '' });
-      setExpiryMode('none');
+      setExpiryMode('preset');
       setPresetDays(90);
       setRawKeyData(result);
       await fetchApiKeys();
@@ -292,7 +292,7 @@ const Profile = () => {
           onClick={() => {
             setGenerateKeyOpen(true);
             setGenerateKeyForm({ name: '' });
-            setExpiryMode('none');
+            setExpiryMode('preset');
             setPresetDays(90);
             setGenerateKeyError(null);
           }}
@@ -453,7 +453,6 @@ const Profile = () => {
                 value={expiryMode}
                 onChange={(e) => setExpiryMode(e.target.value as ExpiryMode)}
               >
-                <FormControlLabel value="none" control={<Radio />} label="No expiry" />
                 <FormControlLabel value="preset" control={<Radio />} label="Preset duration" />
                 <FormControlLabel value="custom" control={<Radio />} label="Custom date" />
               </RadioGroup>
@@ -484,9 +483,15 @@ const Profile = () => {
                 label="Expires At"
                 type="date"
                 value={generateKeyForm.expires_at ?? ''}
-                onChange={(e) =>
-                  setGenerateKeyForm((prev) => ({ ...prev, expires_at: e.target.value || undefined }))
-                }
+                onChange={(e) => {
+                  if (e.target.value) {
+                    setGenerateKeyForm((prev) => ({ ...prev, expires_at: e.target.value }));
+                  } else {
+                    setGenerateKeyForm((prev) => ({ ...prev, expires_at: undefined }));
+                    setExpiryMode('preset');
+                    setPresetDays(90);
+                  }
+                }}
                 fullWidth
                 size="small"
                 slotProps={{ inputLabel: { shrink: true } }}

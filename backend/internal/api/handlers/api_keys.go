@@ -53,7 +53,7 @@ type CreateAPIKeyResponse struct {
 
 // CreateAPIKey godoc
 // @Summary      Create an API key for a user
-// @Description  Generates a new API key. Optionally set expires_at (YYYY-MM-DD or RFC3339) or expires_in_days (positive int), but not both. If API_KEY_MAX_LIFETIME_DAYS is configured, keys without explicit expiry are auto-capped. The raw key is returned once in raw_key and cannot be retrieved again.
+// @Description  Generates a new API key. An expiration is required: set expires_at (YYYY-MM-DD or RFC3339) or expires_in_days (positive int), but not both. If API_KEY_MAX_LIFETIME_DAYS is configured, the expiry must not exceed the limit. The raw key is returned once in raw_key and cannot be retrieved again.
 // @Tags         api-keys
 // @Accept       json
 // @Produce      json
@@ -65,6 +65,7 @@ type CreateAPIKeyResponse struct {
 // @Failure      401  {object}  map[string]string
 // @Failure      403  {object}  map[string]string
 // @Failure      404  {object}  map[string]string
+// @Failure      500  {object}  map[string]string
 // @Router       /api/v1/users/{id}/api-keys [post]
 func (h *APIKeyHandler) CreateAPIKey(c *gin.Context) {
 	userID := c.Param("id")
@@ -132,19 +133,18 @@ func (h *APIKeyHandler) CreateAPIKey(c *gin.Context) {
 		return
 	}
 
+	if expiresAt == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Expiration is required; set expires_at or expires_in_days"})
+		return
+	}
+
 	// Enforce max lifetime policy.
 	if h.apiKeyMaxLifetimeDays > 0 {
-		// Compute maxExpiry as end-of-day so date-only boundary values aren't rejected.
 		maxDate := now.AddDate(0, 0, h.apiKeyMaxLifetimeDays)
 		maxExpiry := time.Date(maxDate.Year(), maxDate.Month(), maxDate.Day(), 23, 59, 59, 999999999, time.UTC)
-		if expiresAt != nil {
-			if expiresAt.After(maxExpiry) {
-				c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("Expiry exceeds maximum allowed lifetime of %d days", h.apiKeyMaxLifetimeDays)})
-				return
-			}
-		} else {
-			// Auto-cap: no expiry requested but max lifetime is configured.
-			expiresAt = &maxExpiry
+		if expiresAt.After(maxExpiry) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("Expiry exceeds maximum allowed lifetime of %d days", h.apiKeyMaxLifetimeDays)})
+			return
 		}
 	}
 
