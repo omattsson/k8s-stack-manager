@@ -14,11 +14,7 @@ Deploy K8s Stack Manager to your cluster and create your first stack in under 10
 brew install omattsson/tap/stackctl
 ```
 
-Or use the install script:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/omattsson/stackctl/main/install.sh | sudo bash
-```
+Or download from [releases](https://github.com/omattsson/stackctl/releases) and install manually.
 
 ## 2. Deploy K8s Stack Manager
 
@@ -35,33 +31,33 @@ Install with minimal configuration:
 helm install stack-manager k8s-stack-manager/k8s-stack-manager \
   --namespace stack-manager --create-namespace \
   --set backend.secrets.JWT_SECRET="$(openssl rand -base64 32)" \
-  --set backend.secrets.ADMIN_PASSWORD="your-admin-password" \
-  --set mysql.auth.rootPassword="your-db-password"
+  --set backend.secrets.ADMIN_PASSWORD="CHANGE-ME-set-a-secure-password" \
+  --set mysql.auth.rootPassword="CHANGE-ME-set-a-secure-password"
 ```
 
 Wait for all pods to be ready:
 
 ```bash
-kubectl -n stack-manager rollout status deployment/stack-manager-backend
-kubectl -n stack-manager rollout status deployment/stack-manager-frontend
+kubectl -n stack-manager rollout status deployment/stack-manager-k8s-stack-manager-backend
+kubectl -n stack-manager rollout status deployment/stack-manager-k8s-stack-manager-frontend
 ```
 
 ## 3. Access the UI
 
-Port-forward the frontend:
+If your cluster has Traefik installed (the chart creates IngressRoutes automatically), access the UI via the Traefik load balancer IP. Otherwise, port-forward:
 
 ```bash
-kubectl -n stack-manager port-forward svc/stack-manager-frontend 3000:80
+kubectl -n stack-manager port-forward svc/stack-manager-k8s-stack-manager-frontend 3000:80
 ```
 
 Open http://localhost:3000 and log in with `admin` / the password you set above.
 
 ## 4. Configure stackctl
 
-Start port-forwarding the backend API:
+If using port-forward for the backend API:
 
 ```bash
-kubectl -n stack-manager port-forward svc/stack-manager-backend 8081:8081 &
+kubectl -n stack-manager port-forward svc/stack-manager-k8s-stack-manager-backend 8081:8081 &
 ```
 
 Point stackctl at your deployment and authenticate:
@@ -80,20 +76,7 @@ stackctl whoami
 stackctl version
 ```
 
-## 5. Grant deploy permissions
-
-The backend needs cluster-wide permissions to install Helm charts (many charts create ClusterRoles, CRDs, etc.). Grant the backend service account cluster-admin:
-
-```bash
-kubectl create clusterrolebinding stack-manager-admin \
-  --clusterrole=cluster-admin \
-  --serviceaccount=stack-manager:stack-manager-k8s-stack-manager-backend
-```
-
-> For production, scope this down to the specific resources your charts need.
-
-## 6. Register a cluster
-
+## 5. Register a cluster
 
 The backend needs a registered Kubernetes cluster to deploy stacks to. The simplest option is to register the cluster it's running on using in-cluster configuration.
 
@@ -111,7 +94,9 @@ Verify with stackctl:
 stackctl cluster list
 ```
 
-## 7. Import starter templates
+> **Note:** The Helm chart creates a ClusterRole with permissions for namespaces, pods, deployments, and services. If your charts require additional cluster-scoped resources (ClusterRoles, CRDs, IngressClasses), you may need to extend the ClusterRole or grant broader permissions to the backend service account.
+
+## 6. Import starter templates
 
 The repo ships with 4 ready-to-use definition bundles. Import them with the bootstrap script:
 
@@ -143,7 +128,7 @@ stackctl definition list
 | API Backend | cache + api | API with cache tier and resource limits |
 | Full Stack | cache + api + frontend | Production-like 3-chart stack |
 
-## 8. Deploy your first stack
+## 7. Deploy your first stack
 
 Pick the **Web App** definition (backend + frontend — two charts with deploy ordering) and create a stack:
 
@@ -171,7 +156,7 @@ stackctl stack logs my-first-stack
 stackctl stack list --mine
 ```
 
-## 9. Clean up
+## 8. Clean up
 
 When you're done experimenting:
 
@@ -179,8 +164,10 @@ When you're done experimenting:
 # Stop the stack (keeps namespace)
 stackctl stack stop my-first-stack
 
-# Or fully remove it (undeploys and deletes namespace)
+# Remove Helm releases and delete the namespace
 stackctl stack clean my-first-stack
+
+# Delete the stack record from the platform
 stackctl stack delete my-first-stack
 ```
 

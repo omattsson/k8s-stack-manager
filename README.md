@@ -20,8 +20,8 @@ helm repo update
 helm install stack-manager k8s-stack-manager/k8s-stack-manager \
   --namespace stack-manager --create-namespace \
   --set backend.secrets.JWT_SECRET="$(openssl rand -base64 32)" \
-  --set backend.secrets.ADMIN_PASSWORD="changeme" \
-  --set mysql.auth.rootPassword="changeme-db"
+  --set backend.secrets.ADMIN_PASSWORD="CHANGE-ME-set-a-secure-password" \
+  --set mysql.auth.rootPassword="CHANGE-ME-set-a-secure-password"
 ```
 
 See the full [Getting Started Guide](docs/getting-started.md) for next steps (configure stackctl, register a cluster, import [starter templates](examples/starter-templates/), and deploy your first stack).
