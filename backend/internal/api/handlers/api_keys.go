@@ -65,6 +65,7 @@ type CreateAPIKeyResponse struct {
 // @Failure      401  {object}  map[string]string
 // @Failure      403  {object}  map[string]string
 // @Failure      404  {object}  map[string]string
+// @Failure      500  {object}  map[string]string
 // @Router       /api/v1/users/{id}/api-keys [post]
 func (h *APIKeyHandler) CreateAPIKey(c *gin.Context) {
 	userID := c.Param("id")

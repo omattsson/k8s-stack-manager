@@ -138,7 +138,7 @@ test.describe('Profile Page', () => {
 
     await page.request.post(`${API_BASE}/api/v1/users/${me.id}/api-keys`, {
       headers: { Authorization: `Bearer ${token}` },
-      data: { name: keyName },
+      data: { name: keyName, expires_in_days: 90 },
     });
 
     // Reload to see the key
@@ -174,7 +174,7 @@ test.describe('Profile Page', () => {
 
     await page.request.post(`${API_BASE}/api/v1/users/${me.id}/api-keys`, {
       headers: { Authorization: `Bearer ${token}` },
-      data: { name: keyName },
+      data: { name: keyName, expires_in_days: 90 },
     });
 
     // Reload to see the key

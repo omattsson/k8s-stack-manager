@@ -192,10 +192,10 @@ const Profile = () => {
     setGenerateKeyError(null);
     try {
       const request: CreateAPIKeyRequest = { name: generateKeyForm.name.trim() };
-      if (expiryMode === 'preset') {
-        request.expires_in_days = presetDays;
-      } else if (expiryMode === 'custom' && generateKeyForm.expires_at) {
+      if (expiryMode === 'custom' && generateKeyForm.expires_at) {
         request.expires_at = generateKeyForm.expires_at;
+      } else {
+        request.expires_in_days = presetDays;
       }
       const result = await apiKeyService.create(currentUser.id, request);
       setGenerateKeyOpen(false);
