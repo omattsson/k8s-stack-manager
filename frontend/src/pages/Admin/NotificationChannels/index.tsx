@@ -121,6 +121,7 @@ const NotificationChannels = () => {
   const [expandedChannelId, setExpandedChannelId] = useState<string | null>(null);
   const [deliveryLogs, setDeliveryLogs] = useState<NotificationDeliveryLog[]>([]);
   const [logsLoading, setLogsLoading] = useState(false);
+  const activeLogRequest = React.useRef<string | null>(null);
 
   const fetchChannels = useCallback(async () => {
     setError(null);
@@ -328,22 +329,22 @@ const NotificationChannels = () => {
   const handleToggleExpand = useCallback(async (channelId: string) => {
     if (expandedChannelId === channelId) {
       setExpandedChannelId(null);
+      activeLogRequest.current = null;
       return;
     }
     setExpandedChannelId(channelId);
     setDeliveryLogs([]);
     setLogsLoading(true);
+    activeLogRequest.current = channelId;
     try {
       const result = await notificationChannelService.deliveryLogs(channelId, 20, 0);
-      // Guard against stale response if user expanded a different channel
-      setExpandedChannelId((current) => {
-        if (current === channelId) {
-          setDeliveryLogs(result.logs ?? []);
-        }
-        return current;
-      });
+      if (activeLogRequest.current === channelId) {
+        setDeliveryLogs(result.logs ?? []);
+      }
     } catch {
-      setDeliveryLogs([]);
+      if (activeLogRequest.current === channelId) {
+        setDeliveryLogs([]);
+      }
     } finally {
       setLogsLoading(false);
     }

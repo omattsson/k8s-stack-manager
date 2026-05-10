@@ -43,8 +43,8 @@ func NewNotifier(repo models.NotificationRepository, hub *websocket.Hub, userRep
 }
 
 // WithChannelDispatcher sets the external channel dispatcher for webhook delivery
-// and starts a bounded worker pool for processing dispatches. Safe to call once;
-// subsequent calls are no-ops.
+// and starts a single background worker for processing dispatches sequentially.
+// Safe to call once; subsequent calls are no-ops.
 func (n *Notifier) WithChannelDispatcher(d *channel.Dispatcher) *Notifier {
 	if d == nil {
 		return n

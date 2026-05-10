@@ -59,7 +59,7 @@ type updateSubscriptionsRequest struct {
 // @Description Returns all notification channels
 // @Tags        notification-channels
 // @Produce     json
-// @Success     200 {array}  models.NotificationChannel
+// @Success     200 {array}  object "Channel with subscription_count"
 // @Failure     500 {object} map[string]string
 // @Router      /api/v1/admin/notification-channels [get]
 // @Security    BearerAuth
@@ -71,7 +71,11 @@ func (h *NotificationChannelHandler) ListChannels(c *gin.Context) {
 		return
 	}
 
-	counts, _ := h.repo.CountSubscriptionsByChannel(c.Request.Context())
+	counts, err := h.repo.CountSubscriptionsByChannel(c.Request.Context())
+	if err != nil {
+		slog.Error("Failed to count subscriptions", "error", err)
+		counts = make(map[string]int)
+	}
 
 	type channelWithCount struct {
 		models.NotificationChannel
@@ -134,7 +138,7 @@ func (h *NotificationChannelHandler) CreateChannel(c *gin.Context) {
 // @Tags        notification-channels
 // @Produce     json
 // @Param       id path string true "Channel ID"
-// @Success     200 {object} map[string]interface{}
+// @Success     200 {object} models.NotificationChannel
 // @Failure     400 {object} map[string]string
 // @Failure     404 {object} map[string]string
 // @Failure     500 {object} map[string]string

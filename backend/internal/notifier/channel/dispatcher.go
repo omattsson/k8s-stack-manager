@@ -146,5 +146,5 @@ func sign(body []byte, secret string) string {
 }
 
 func isRetryable(statusCode int) bool {
-	return statusCode == 429 || statusCode == 502 || statusCode == 503 || statusCode == 504
+	return statusCode == 0 || statusCode == 429 || statusCode == 502 || statusCode == 503 || statusCode == 504
 }
