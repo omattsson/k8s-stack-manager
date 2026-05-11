@@ -223,6 +223,50 @@ func TestGenerateTokenWithOpts_IncludesAuthProvider(t *testing.T) {
 	assert.Equal(t, "admin", claims.Role)
 }
 
+func TestGenerateTokenWithOpts_IncludesDisplayName(t *testing.T) {
+	t.Parallel()
+
+	token, err := GenerateTokenWithOpts(GenerateTokenOptions{
+		UserID:      "uid-3",
+		Username:    "carol",
+		DisplayName: "Carol Smith",
+		Role:        "user",
+		Secret:      testSecret,
+		Expiration:  time.Hour,
+	})
+	require.NoError(t, err)
+
+	claims := &Claims{}
+	parsed, err := jwt.ParseWithClaims(token, claims, func(t *jwt.Token) (interface{}, error) {
+		return []byte(testSecret), nil
+	})
+	require.NoError(t, err)
+	assert.True(t, parsed.Valid)
+	assert.Equal(t, "Carol Smith", claims.DisplayName)
+}
+
+func TestGenerateTokenWithOpts_OmitsEmptyDisplayName(t *testing.T) {
+	t.Parallel()
+
+	token, err := GenerateTokenWithOpts(GenerateTokenOptions{
+		UserID:     "uid-4",
+		Username:   "dave",
+		Role:       "user",
+		Secret:     testSecret,
+		Expiration: time.Hour,
+	})
+	require.NoError(t, err)
+
+	parts := strings.SplitN(token, ".", 3)
+	require.Len(t, parts, 3)
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	require.NoError(t, err)
+
+	var raw map[string]any
+	require.NoError(t, json.Unmarshal(payload, &raw))
+	assert.NotContains(t, raw, "display_name", "display_name must be omitted when empty")
+}
+
 func TestGenerateTokenWithOpts_OmitsEmptyFields(t *testing.T) {
 	t.Parallel()
 
@@ -247,6 +291,7 @@ func TestGenerateTokenWithOpts_OmitsEmptyFields(t *testing.T) {
 
 	assert.NotContains(t, raw, "auth_provider", "auth_provider must be omitted when empty")
 	assert.NotContains(t, raw, "email", "email must be omitted when empty")
+	assert.NotContains(t, raw, "display_name", "display_name must be omitted when empty")
 
 	// Standard claims should still be present.
 	assert.Equal(t, "uid-2", raw["user_id"])

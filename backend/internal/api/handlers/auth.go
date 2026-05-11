@@ -157,11 +157,12 @@ func (h *AuthHandler) Login(c *gin.Context) {
 	}
 
 	token, err := middleware.GenerateTokenWithOpts(middleware.GenerateTokenOptions{
-		UserID:     user.ID,
-		Username:   user.Username,
-		Role:       user.Role,
-		Secret:     h.cfg.JWTSecret,
-		Expiration: expiration,
+		UserID:      user.ID,
+		Username:    user.Username,
+		DisplayName: user.DisplayName,
+		Role:        user.Role,
+		Secret:      h.cfg.JWTSecret,
+		Expiration:  expiration,
 	})
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
@@ -431,11 +432,12 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 	h.setRefreshCookie(c, newRawToken)
 
 	accessToken, err := middleware.GenerateTokenWithOpts(middleware.GenerateTokenOptions{
-		UserID:     user.ID,
-		Username:   user.Username,
-		Role:       user.Role,
-		Secret:     h.cfg.JWTSecret,
-		Expiration: h.cfg.AccessTokenExpiration,
+		UserID:      user.ID,
+		Username:    user.Username,
+		DisplayName: user.DisplayName,
+		Role:        user.Role,
+		Secret:      h.cfg.JWTSecret,
+		Expiration:  h.cfg.AccessTokenExpiration,
 	})
 	if err != nil {
 		slog.Error("Failed to generate access token during refresh", "error", err)
