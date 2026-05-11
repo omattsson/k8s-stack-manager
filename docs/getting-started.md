@@ -25,14 +25,26 @@ helm repo add k8s-stack-manager https://omattsson.github.io/k8s-stack-manager
 helm repo update
 ```
 
-Install with minimal configuration:
+Create a values file with your secrets (avoid passing secrets via `--set` — they leak through shell history):
+
+```bash
+cat > stack-manager-values.yaml <<EOF
+backend:
+  secrets:
+    JWT_SECRET: "$(openssl rand -base64 32)"
+    ADMIN_PASSWORD: "your-admin-password"
+mysql:
+  auth:
+    rootPassword: "your-db-password"
+EOF
+```
+
+Install:
 
 ```bash
 helm install stack-manager k8s-stack-manager/k8s-stack-manager \
   --namespace stack-manager --create-namespace \
-  --set backend.secrets.JWT_SECRET="$(openssl rand -base64 32)" \
-  --set backend.secrets.ADMIN_PASSWORD="CHANGE-ME-set-a-secure-password" \
-  --set mysql.auth.rootPassword="CHANGE-ME-set-a-secure-password"
+  --values stack-manager-values.yaml
 ```
 
 Wait for all pods to be ready:

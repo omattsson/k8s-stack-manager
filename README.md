@@ -16,12 +16,10 @@ brew install omattsson/tap/stackctl
 helm repo add k8s-stack-manager https://omattsson.github.io/k8s-stack-manager
 helm repo update
 
-# Deploy to your cluster
+# Deploy to your cluster (see docs/getting-started.md for secrets setup)
 helm install stack-manager k8s-stack-manager/k8s-stack-manager \
   --namespace stack-manager --create-namespace \
-  --set backend.secrets.JWT_SECRET="$(openssl rand -base64 32)" \
-  --set backend.secrets.ADMIN_PASSWORD="CHANGE-ME-set-a-secure-password" \
-  --set mysql.auth.rootPassword="CHANGE-ME-set-a-secure-password"
+  --values stack-manager-values.yaml
 ```
 
 See the full [Getting Started Guide](docs/getting-started.md) for next steps (configure stackctl, register a cluster, import [starter templates](examples/starter-templates/), and deploy your first stack).

@@ -44,13 +44,14 @@ sys.exit(0 if any(d['name'] == os.environ['N'] for d in defs) else 1)
     continue
   fi
 
-  if stackctl definition import --file "${file}" -q >/dev/null 2>&1; then
+  output=$(stackctl definition import --file "${file}" -q 2>&1) && {
     echo "  OK:   ${name}"
     imported=$((imported + 1))
-  else
+  } || {
     echo "  FAIL: ${name}"
+    echo "        ${output}" | head -3
     failed=$((failed + 1))
-  fi
+  }
 done
 
 echo
