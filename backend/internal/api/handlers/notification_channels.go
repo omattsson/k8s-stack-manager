@@ -275,6 +275,12 @@ func (h *NotificationChannelHandler) GetSubscriptions(c *gin.Context) {
 		return
 	}
 
+	if _, err := h.repo.GetChannel(c.Request.Context(), id); err != nil {
+		status, msg := mapError(err, entityNotificationChannel)
+		c.JSON(status, gin.H{"error": msg})
+		return
+	}
+
 	subs, err := h.repo.GetSubscriptions(c.Request.Context(), id)
 	if err != nil {
 		slog.Error("Failed to get subscriptions", "error", err)
@@ -438,6 +444,7 @@ func (h *NotificationChannelHandler) TestChannel(c *gin.Context) {
 // @Param       offset query int    false "Offset (default 0)"
 // @Success     200 {object} map[string]interface{}
 // @Failure     400 {object} map[string]string
+// @Failure     404 {object} map[string]string
 // @Failure     500 {object} map[string]string
 // @Router      /api/v1/admin/notification-channels/{id}/delivery-logs [get]
 // @Security    BearerAuth
@@ -445,6 +452,12 @@ func (h *NotificationChannelHandler) ListDeliveryLogs(c *gin.Context) {
 	id := c.Param("id")
 	if id == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": msgChannelIDRequired})
+		return
+	}
+
+	if _, err := h.repo.GetChannel(c.Request.Context(), id); err != nil {
+		status, msg := mapError(err, entityNotificationChannel)
+		c.JSON(status, gin.H{"error": msg})
 		return
 	}
 

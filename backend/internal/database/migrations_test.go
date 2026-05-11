@@ -89,6 +89,9 @@ func TestAutoMigrate(t *testing.T) {
 			"resource_quota_configs",
 			"template_versions",
 			"instance_quota_overrides",
+			"notification_channels",
+			"notification_channel_subscriptions",
+			"notification_delivery_logs",
 			"schema_versions",
 		}
 		for _, table := range expectedTables {

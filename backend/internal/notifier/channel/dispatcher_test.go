@@ -73,7 +73,7 @@ func TestDispatch_SendsToSubscribedChannels(t *testing.T) {
 		var payload EventPayload
 		require.NoError(t, json.NewDecoder(r.Body).Decode(&payload))
 		assert.Equal(t, "deployment.success", payload.EventType)
-		assert.Equal(t, "Olof Mattsson", payload.UserDisplayName)
+		assert.Equal(t, "Test User", payload.UserDisplayName)
 
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -92,7 +92,7 @@ func TestDispatch_SendsToSubscribedChannels(t *testing.T) {
 		Timestamp:       time.Now(),
 		Title:           "Deploy succeeded",
 		Message:         "my-stack deployed",
-		UserDisplayName: "Olof Mattsson",
+		UserDisplayName: "Test User",
 		EntityType:      "stack_instance",
 		EntityID:        "inst-1",
 	})
