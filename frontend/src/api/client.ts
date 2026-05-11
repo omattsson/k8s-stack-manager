@@ -55,6 +55,9 @@ import type {
   InstanceQuotaOverride,
   DeployPreviewResponse,
   DashboardResponse,
+  NotificationChannel,
+  NotificationChannelWithCount,
+  NotificationDeliveryLog,
 } from '../types';
 
 // Extend Axios config to include our retry flag (avoids `any` cast).
@@ -2091,6 +2094,158 @@ export const dashboardService = {
       return response.data;
     } catch (error) {
       console.error('Failed to fetch dashboard overview:', error);
+      throw error;
+    }
+  },
+};
+
+/** Notification channel service for webhook-based event routing. Maps to `/api/v1/admin/notification-channels`. */
+export const notificationChannelService = {
+  /**
+   * List all notification channels.
+   * @returns Array of notification channels
+   * @see GET /api/v1/admin/notification-channels
+   */
+  list: async (): Promise<NotificationChannelWithCount[]> => {
+    try {
+      const response = await api.get('/api/v1/admin/notification-channels');
+      return response.data;
+    } catch (error) {
+      console.error('Failed to fetch notification channels:', error);
+      throw error;
+    }
+  },
+  /**
+   * Create a new notification channel.
+   * @param channel - Channel fields (name, webhook_url, optional secret and enabled)
+   * @returns The created channel
+   * @see POST /api/v1/admin/notification-channels
+   */
+  create: async (channel: { name: string; webhook_url: string; secret?: string; enabled?: boolean }): Promise<NotificationChannel> => {
+    try {
+      const response = await api.post('/api/v1/admin/notification-channels', channel);
+      return response.data;
+    } catch (error) {
+      console.error('Failed to create notification channel:', error);
+      throw error;
+    }
+  },
+  /**
+   * Fetch a single notification channel.
+   * @param id - Channel ID
+   * @returns The notification channel
+   * @see GET /api/v1/admin/notification-channels/:id
+   */
+  get: async (id: string): Promise<NotificationChannel> => {
+    try {
+      const response = await api.get(`/api/v1/admin/notification-channels/${id}`);
+      return response.data;
+    } catch (error) {
+      console.error('Failed to fetch notification channel:', error);
+      throw error;
+    }
+  },
+  /**
+   * Update a notification channel.
+   * @param id - Channel ID
+   * @param data - Fields to update
+   * @returns The updated channel
+   * @see PUT /api/v1/admin/notification-channels/:id
+   */
+  update: async (id: string, data: Partial<NotificationChannel> & { secret?: string }): Promise<NotificationChannel> => {
+    try {
+      const response = await api.put(`/api/v1/admin/notification-channels/${id}`, data);
+      return response.data;
+    } catch (error) {
+      console.error('Failed to update notification channel:', error);
+      throw error;
+    }
+  },
+  /**
+   * Delete a notification channel.
+   * @param id - Channel ID
+   * @see DELETE /api/v1/admin/notification-channels/:id
+   */
+  delete: async (id: string): Promise<void> => {
+    try {
+      await api.delete(`/api/v1/admin/notification-channels/${id}`);
+    } catch (error) {
+      console.error('Failed to delete notification channel:', error);
+      throw error;
+    }
+  },
+  /**
+   * Fetch subscriptions for a notification channel.
+   * @param id - Channel ID
+   * @returns Array of channel subscriptions
+   * @see GET /api/v1/admin/notification-channels/:id/subscriptions
+   */
+  getSubscriptions: async (id: string): Promise<string[]> => {
+    try {
+      const response = await api.get(`/api/v1/admin/notification-channels/${id}/subscriptions`);
+      return response.data.event_types ?? [];
+    } catch (error) {
+      console.error('Failed to fetch channel subscriptions:', error);
+      throw error;
+    }
+  },
+  /**
+   * Update subscriptions for a notification channel.
+   * @param id - Channel ID
+   * @param eventTypes - Array of event type strings to subscribe to
+   * @see PUT /api/v1/admin/notification-channels/:id/subscriptions
+   */
+  updateSubscriptions: async (id: string, eventTypes: string[]): Promise<void> => {
+    try {
+      await api.put(`/api/v1/admin/notification-channels/${id}/subscriptions`, { event_types: eventTypes });
+    } catch (error) {
+      console.error('Failed to update channel subscriptions:', error);
+      throw error;
+    }
+  },
+  /**
+   * Send a test notification to a channel.
+   * @param id - Channel ID
+   * @returns Test result with status and message
+   * @see POST /api/v1/admin/notification-channels/:id/test
+   */
+  test: async (id: string): Promise<{ success: boolean; message: string }> => {
+    try {
+      const response = await api.post(`/api/v1/admin/notification-channels/${id}/test`);
+      return response.data;
+    } catch (error) {
+      console.error('Failed to test notification channel:', error);
+      throw error;
+    }
+  },
+  /**
+   * Fetch delivery logs for a notification channel.
+   * @param id - Channel ID
+   * @param limit - Maximum number of logs to return (default 20)
+   * @param offset - Number of logs to skip (default 0)
+   * @returns Paginated delivery logs with total count
+   * @see GET /api/v1/admin/notification-channels/:id/delivery-logs
+   */
+  deliveryLogs: async (id: string, limit = 20, offset = 0): Promise<{ logs: NotificationDeliveryLog[]; total: number }> => {
+    try {
+      const response = await api.get(`/api/v1/admin/notification-channels/${id}/delivery-logs`, { params: { limit, offset } });
+      return response.data;
+    } catch (error) {
+      console.error('Failed to fetch delivery logs:', error);
+      throw error;
+    }
+  },
+  /**
+   * Fetch all available event types for notification subscriptions.
+   * @returns Array of event type strings
+   * @see GET /api/v1/admin/notification-channels/event-types
+   */
+  eventTypes: async (): Promise<string[]> => {
+    try {
+      const response = await api.get('/api/v1/admin/notification-channels/event-types');
+      return response.data.event_types ?? [];
+    } catch (error) {
+      console.error('Failed to fetch event types:', error);
       throw error;
     }
   },

@@ -961,6 +961,68 @@ func (d *Database) AutoMigrate() error {
 		},
 	})
 
+	// Migration 40: Create notification channel tables for webhook-based notifications
+	migrator.AddMigration(schema.Migration{
+		Version:     "20260510000040",
+		Name:        "create_notification_channel_tables",
+		Description: "Create notification_channels, notification_channel_subscriptions, and notification_delivery_logs tables",
+		Up: func(tx *gorm.DB) error {
+			if !tx.Migrator().HasTable("notification_channels") {
+				if err := tx.Exec(`CREATE TABLE notification_channels (
+					id          VARCHAR(36)   NOT NULL PRIMARY KEY,
+					name        VARCHAR(255)  NOT NULL UNIQUE,
+					webhook_url VARCHAR(2048) NOT NULL,
+					secret      TEXT,
+					enabled     TINYINT(1)    NOT NULL DEFAULT 1,
+					created_at  DATETIME      NULL,
+					updated_at  DATETIME      NULL
+				)`).Error; err != nil {
+					return err
+				}
+			}
+			if !tx.Migrator().HasTable("notification_channel_subscriptions") {
+				if err := tx.Exec(`CREATE TABLE notification_channel_subscriptions (
+					id         VARCHAR(36) NOT NULL PRIMARY KEY,
+					channel_id VARCHAR(36) NOT NULL,
+					event_type VARCHAR(50) NOT NULL,
+					UNIQUE (channel_id, event_type)
+				)`).Error; err != nil {
+					return err
+				}
+				if err := tx.Exec("CREATE INDEX idx_ncs_event_type ON notification_channel_subscriptions (event_type)").Error; err != nil {
+					return err
+				}
+			}
+			if !tx.Migrator().HasTable("notification_delivery_logs") {
+				if err := tx.Exec(`CREATE TABLE notification_delivery_logs (
+					id            VARCHAR(36)  NOT NULL PRIMARY KEY,
+					channel_id    VARCHAR(36)  NOT NULL,
+					channel_name  VARCHAR(255) NOT NULL DEFAULT '',
+					event_type    VARCHAR(50)  NOT NULL DEFAULT '',
+					status        VARCHAR(20)  NOT NULL,
+					status_code   INT          NOT NULL DEFAULT 0,
+					error_message TEXT,
+					created_at    DATETIME     NULL
+				)`).Error; err != nil {
+					return err
+				}
+				if err := tx.Exec("CREATE INDEX idx_ndl_channel_id ON notification_delivery_logs (channel_id)").Error; err != nil {
+					return err
+				}
+				if err := tx.Exec("CREATE INDEX idx_ndl_created_at ON notification_delivery_logs (created_at)").Error; err != nil {
+					return err
+				}
+			}
+			return nil
+		},
+		Down: func(tx *gorm.DB) error {
+			_ = tx.Exec("DROP TABLE IF EXISTS notification_delivery_logs").Error
+			_ = tx.Exec("DROP TABLE IF EXISTS notification_channel_subscriptions").Error
+			_ = tx.Exec("DROP TABLE IF EXISTS notification_channels").Error
+			return nil
+		},
+	})
+
 	// Run migrations
 	if err := migrator.MigrateUp(); err != nil {
 		return err

@@ -740,3 +740,33 @@ export interface DashboardResponse {
   expiring_soon: DashboardExpiring[];
   failing_instances: DashboardFailing[];
 }
+
+export interface NotificationChannel {
+  id: string;
+  name: string;
+  webhook_url: string;
+  enabled: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface NotificationChannelWithCount extends NotificationChannel {
+  subscription_count: number;
+}
+
+export interface NotificationChannelSubscription {
+  id: string;
+  channel_id: string;
+  event_type: string;
+}
+
+export interface NotificationDeliveryLog {
+  id: string;
+  channel_id: string;
+  channel_name: string;
+  event_type: string;
+  status: string;
+  status_code: number;
+  error_message?: string;
+  created_at: string;
+}

@@ -39,6 +39,7 @@ import DeleteSweepOutlined from '@mui/icons-material/DeleteSweepOutlined';
 import CloudOutlined from '@mui/icons-material/CloudOutlined';
 import TuneOutlined from '@mui/icons-material/TuneOutlined';
 import CleaningServicesOutlined from '@mui/icons-material/CleaningServicesOutlined';
+import NotificationsActiveOutlined from '@mui/icons-material/NotificationsActiveOutlined';
 import AccountCircleOutlined from '@mui/icons-material/AccountCircleOutlined';
 import LogoutIcon from '@mui/icons-material/Logout';
 import HubOutlined from '@mui/icons-material/HubOutlined';
@@ -67,6 +68,7 @@ const mainNav: NavItem[] = [
 const operationsNav: NavItem[] = [
   { label: 'Cluster Health', path: '/admin/cluster-health', icon: <MonitorHeartOutlined /> },
   { label: 'Analytics', path: '/admin/analytics', icon: <BarChartOutlined /> },
+  { label: 'Notification Channels', path: '/admin/notification-channels', icon: <NotificationsActiveOutlined /> },
 ];
 
 const adminNav: NavItem[] = [

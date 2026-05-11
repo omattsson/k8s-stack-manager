@@ -33,6 +33,7 @@ type RepositorySet struct {
 	CleanupPolicy         models.CleanupPolicyRepository
 	Cluster               models.ClusterRepository
 	RefreshToken          models.RefreshTokenRepository
+	NotificationChannel   models.NotificationChannelRepository
 	TxRunner              TxRunner
 }
 
@@ -67,6 +68,7 @@ func newGORMRepositorySet(cfg *config.Config, db *gorm.DB) (*RepositorySet, erro
 	userFavoriteRepo := NewGORMUserFavoriteRepository(db)
 	cleanupPolicyRepo := NewGORMCleanupPolicyRepository(db)
 	refreshTokenRepo := NewGORMRefreshTokenRepository(db)
+	notificationChannelRepo := NewGORMNotificationChannelRepository(db, cfg.Deployment.KubeconfigEncryptionKey)
 
 	slog.Info("Using GORM repositories for all domain entities")
 
@@ -91,6 +93,7 @@ func newGORMRepositorySet(cfg *config.Config, db *gorm.DB) (*RepositorySet, erro
 		UserFavorite:          userFavoriteRepo,
 		CleanupPolicy:         cleanupPolicyRepo,
 		RefreshToken:          refreshTokenRepo,
+		NotificationChannel:   notificationChannelRepo,
 		TxRunner:              NewGORMTxRunner(db),
 	}, nil
 }

@@ -62,6 +62,9 @@ type Deps struct {
 	CleanupPolicyHandler *handlers.CleanupPolicyHandler
 	CleanupScheduler     *scheduler.Scheduler
 
+	// Notification channel handler.
+	NotificationChannelHandler *handlers.NotificationChannelHandler
+
 	// Cluster management.
 	ClusterHandler      *handlers.ClusterHandler
 	SharedValuesHandler *handlers.SharedValuesHandler
@@ -431,6 +434,24 @@ func SetupRoutes(router *gin.Engine, deps Deps) *RateLimiters {
 					cleanupPolicies.PUT("/:id", deps.CleanupPolicyHandler.UpdateCleanupPolicy)
 					cleanupPolicies.DELETE("/:id", deps.CleanupPolicyHandler.DeleteCleanupPolicy)
 					cleanupPolicies.POST("/:id/run", deps.CleanupPolicyHandler.RunCleanupPolicy)
+				}
+			}
+
+			// Notification channels — admin + devops access
+			if deps.NotificationChannelHandler != nil {
+				notifChannels := authed.Group("/admin/notification-channels")
+				notifChannels.Use(devops)
+				{
+					notifChannels.GET("", deps.NotificationChannelHandler.ListChannels)
+					notifChannels.POST("", deps.NotificationChannelHandler.CreateChannel)
+					notifChannels.GET("/event-types", deps.NotificationChannelHandler.ListEventTypes)
+					notifChannels.GET("/:id", deps.NotificationChannelHandler.GetChannel)
+					notifChannels.PUT("/:id", deps.NotificationChannelHandler.UpdateChannel)
+					notifChannels.DELETE("/:id", deps.NotificationChannelHandler.DeleteChannel)
+					notifChannels.GET("/:id/subscriptions", deps.NotificationChannelHandler.GetSubscriptions)
+					notifChannels.PUT("/:id/subscriptions", deps.NotificationChannelHandler.UpdateSubscriptions)
+					notifChannels.POST("/:id/test", deps.NotificationChannelHandler.TestChannel)
+					notifChannels.GET("/:id/delivery-logs", deps.NotificationChannelHandler.ListDeliveryLogs)
 				}
 			}
 		}

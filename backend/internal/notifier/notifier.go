@@ -1,24 +1,33 @@
 // Package notifier provides a service for creating user notifications
-// and optionally broadcasting them via WebSocket.
+// and optionally broadcasting them via WebSocket and external channels.
 package notifier
 
 import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"sync"
 	"time"
 
 	"backend/internal/models"
+	"backend/internal/notifier/channel"
 	"backend/internal/websocket"
 
 	"github.com/google/uuid"
 )
 
+const dispatchQueueSize = 100
+
 // Notifier creates notification records and broadcasts them in real time.
 type Notifier struct {
-	repo     models.NotificationRepository
-	hub      *websocket.Hub
-	userRepo models.UserRepository
+	repo              models.NotificationRepository
+	hub               *websocket.Hub
+	userRepo          models.UserRepository
+	channelDispatcher *channel.Dispatcher
+	dispatchQueue     chan channel.EventPayload
+	done              chan struct{}
+	initOnce          sync.Once
+	stopOnce          sync.Once
 }
 
 // NewNotifier creates a new Notifier. hub and userRepo may be nil if real-time
@@ -31,9 +40,62 @@ func NewNotifier(repo models.NotificationRepository, hub *websocket.Hub, userRep
 	}
 }
 
+// WithChannelDispatcher sets the external channel dispatcher for webhook delivery
+// and starts a single background worker for processing dispatches sequentially.
+// Safe to call once; subsequent calls are no-ops.
+func (n *Notifier) WithChannelDispatcher(d *channel.Dispatcher) *Notifier {
+	if d == nil {
+		return n
+	}
+	n.initOnce.Do(func() {
+		n.channelDispatcher = d
+		n.dispatchQueue = make(chan channel.EventPayload, dispatchQueueSize)
+		n.done = make(chan struct{})
+		go n.dispatchWorker()
+	})
+	return n
+}
+
+func (n *Notifier) dispatchWorker() {
+	for {
+		select {
+		case <-n.done:
+			return
+		case payload := <-n.dispatchQueue:
+			n.channelDispatcher.Dispatch(context.Background(), payload)
+		}
+	}
+}
+
+// Stop shuts down the dispatch worker. Safe to call multiple times and
+// when no dispatcher is configured.
+func (n *Notifier) Stop() {
+	n.stopOnce.Do(func() {
+		if n.done != nil {
+			close(n.done)
+		}
+	})
+}
+
+func (n *Notifier) enqueueDispatch(payload channel.EventPayload) {
+	if n.dispatchQueue == nil {
+		return
+	}
+	select {
+	case n.dispatchQueue <- payload:
+	case <-n.done:
+	default:
+		slog.Warn("notification channel dispatch queue full, dropping event", "event", payload.EventType)
+	}
+}
+
 // Notify creates a notification for the given user and optionally broadcasts it
 // via WebSocket. It returns an error only if the database insert fails.
 func (n *Notifier) Notify(ctx context.Context, userID, notifType, title, message, entityType, entityID string) error {
+	return n.notify(ctx, userID, notifType, title, message, entityType, entityID, true)
+}
+
+func (n *Notifier) notify(ctx context.Context, userID, notifType, title, message, entityType, entityID string, dispatchExternal bool) error {
 	notification := &models.Notification{
 		ID:         uuid.New().String(),
 		UserID:     userID,
@@ -65,6 +127,25 @@ func (n *Notifier) Notify(ctx context.Context, userID, notifType, title, message
 		n.hub.Broadcast(data)
 	}
 
+	// Dispatch to external channels (Teams, Slack, etc.) in background.
+	if dispatchExternal && n.channelDispatcher != nil {
+		displayName := ""
+		if n.userRepo != nil {
+			if user, err := n.userRepo.FindByID(userID); err == nil && user != nil {
+				displayName = user.DisplayName
+			}
+		}
+		n.enqueueDispatch(channel.EventPayload{
+			EventType:       notifType,
+			Timestamp:       notification.CreatedAt,
+			Title:           title,
+			Message:         message,
+			UserDisplayName: displayName,
+			EntityType:      entityType,
+			EntityID:        entityID,
+		})
+	}
+
 	return nil
 }
 
@@ -82,10 +163,24 @@ func (n *Notifier) NotifySystem(ctx context.Context, notifType, title, message, 
 	}
 
 	for _, u := range admins {
-		if err := n.Notify(ctx, u.ID, notifType, title, message, entityType, entityID); err != nil {
+		if err := n.notify(ctx, u.ID, notifType, title, message, entityType, entityID, false); err != nil {
 			slog.Error("failed to create system notification for user", "user_id", u.ID, "type", notifType, "error", err)
 		}
 	}
+
+	// Dispatch once to external channels for system events.
+	if n.channelDispatcher != nil {
+		n.enqueueDispatch(channel.EventPayload{
+			EventType:       notifType,
+			Timestamp:       time.Now().UTC(),
+			Title:           title,
+			Message:         message,
+			UserDisplayName: "System",
+			EntityType:      entityType,
+			EntityID:        entityID,
+		})
+	}
+
 	return nil
 }
 

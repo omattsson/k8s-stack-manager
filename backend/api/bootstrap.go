@@ -15,6 +15,7 @@ import (
 	"backend/internal/k8s"
 	"backend/internal/models"
 	"backend/internal/notifier"
+	"backend/internal/notifier/channel"
 	"backend/internal/scheduler"
 	"backend/internal/sessionstore"
 	"backend/internal/ttl"
@@ -71,6 +72,7 @@ type handlerSet struct {
 	Analytics             *handlers.AnalyticsHandler
 	Dashboard             *handlers.DashboardHandler
 	CleanupPolicy         *handlers.CleanupPolicyHandler
+	NotificationChannel   *handlers.NotificationChannelHandler
 }
 
 // routerDeps holds non-handler dependencies required to wire the router.
@@ -222,6 +224,12 @@ func buildDomainServices(
 
 	// Lifecycle notifier — in-app notifications for stack events.
 	lifecycleNotifier := notifier.NewNotifier(repos.Notification, hub, repos.User)
+
+	// Wire external channel dispatcher for webhook-based notifications.
+	if repos.NotificationChannel != nil {
+		channelDispatcher := channel.NewDispatcher(repos.NotificationChannel)
+		lifecycleNotifier.WithChannelDispatcher(channelDispatcher)
+	}
 
 	// Deployment manager — multi-cluster deploys.
 	deployManager := deployer.NewManager(deployer.ManagerConfig{
@@ -388,6 +396,12 @@ func buildHandlers(
 	// Cleanup policy handler.
 	cleanupPolicyHandler := handlers.NewCleanupPolicyHandler(repos.CleanupPolicy, svc.CleanupScheduler)
 
+	// Notification channel handler (only when repo is available).
+	var notificationChannelHandler *handlers.NotificationChannelHandler
+	if repos.NotificationChannel != nil {
+		notificationChannelHandler = handlers.NewNotificationChannelHandler(repos.NotificationChannel)
+	}
+
 	// Auto-create admin user on startup.
 	authHandler.EnsureAdminUser()
 
@@ -413,6 +427,7 @@ func buildHandlers(
 		Analytics:             analyticsHandler,
 		Dashboard:             dashboardHandler,
 		CleanupPolicy:         cleanupPolicyHandler,
+		NotificationChannel:   notificationChannelHandler,
 	}, nil
 }
 
@@ -444,6 +459,7 @@ func buildRouter(cfg *config.Config, hs *handlerSet, deps routerDeps) (*gin.Engi
 		AnalyticsHandler:             hs.Analytics,
 		DashboardHandler:             hs.Dashboard,
 		CleanupPolicyHandler:         hs.CleanupPolicy,
+		NotificationChannelHandler:   hs.NotificationChannel,
 		CleanupScheduler:             deps.Svc.CleanupScheduler,
 		ClusterHandler:               hs.Cluster,
 		SharedValuesHandler:          hs.SharedValues,

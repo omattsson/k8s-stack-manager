@@ -20,6 +20,7 @@ import ClusterHealth from './pages/ClusterHealth';
 import Analytics from './pages/Analytics';
 import SharedValues from './pages/SharedValues';
 import CleanupPolicies from './pages/CleanupPolicies';
+import NotificationChannels from './pages/Admin/NotificationChannels';
 import Profile from './pages/Profile';
 import Notifications from './pages/Notifications';
 import NotFound from './pages/NotFound';
@@ -49,6 +50,7 @@ const AppRoutes = () => {
       <Route path="/admin/analytics" element={<ProtectedRoute requiredRole="devops"><Analytics /></ProtectedRoute>} />
       <Route path="/admin/shared-values" element={<ProtectedRoute requiredRole="admin"><SharedValues /></ProtectedRoute>} />
       <Route path="/admin/cleanup-policies" element={<ProtectedRoute requiredRole="admin"><CleanupPolicies /></ProtectedRoute>} />
+      <Route path="/admin/notification-channels" element={<ProtectedRoute requiredRole="devops"><NotificationChannels /></ProtectedRoute>} />
       <Route path="/profile" element={<ProtectedRoute><Profile /></ProtectedRoute>} />
       <Route path="/notifications" element={<ProtectedRoute><Notifications /></ProtectedRoute>} />
       <Route path="*" element={<NotFound />} />

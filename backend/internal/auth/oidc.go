@@ -89,12 +89,12 @@ func (p *Provider) Exchange(ctx context.Context, code, codeVerifier string) (*OI
 	user := &OIDCUser{
 		Subject: idToken.Subject,
 		Email:   claimString(claims, "email"),
-		Name:    claimString(claims, "preferred_username"),
+		Name:    claimString(claims, "name"),
 		Roles:   p.extractRoles(claims),
 	}
 
 	if user.Name == "" {
-		user.Name = claimString(claims, "name")
+		user.Name = claimString(claims, "preferred_username")
 	}
 
 	return user, nil
