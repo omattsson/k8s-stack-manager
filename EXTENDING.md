@@ -271,7 +271,7 @@ Any non-2xx response is treated as failure. Empty 200 bodies are interpreted as 
 
 For hooks that take a long time (e.g. triggering CI builds and waiting for completion), subscribers can stream progress lines before the final JSON response. The deployment log viewer shows these lines in real-time with the LIVE indicator.
 
-**Protocol:** Write ``LOG: <message>\n`` lines to the response body, flushing after each line. The final line must be the JSON `HookResponse`. Lines without the ``LOG: `` prefix are treated as the JSON response.
+**Protocol:** Write `LOG:` `<message>\n` lines to the response body, flushing after each line. The final line must be the JSON `HookResponse`. Lines without the `LOG:` prefix are treated as the JSON response.
 
 ```
 HTTP/1.1 200 OK
