@@ -49,7 +49,7 @@ sys.exit(0 if any(d['name'] == os.environ['N'] for d in defs) else 1)
     imported=$((imported + 1))
   } || {
     echo "  FAIL: ${name}"
-    echo "        ${output}" | head -3
+    while IFS= read -r line; do echo "        ${line}"; done <<< "${output:0:300}"
     failed=$((failed + 1))
   }
 done
