@@ -62,9 +62,7 @@ func (n *Notifier) dispatchWorker() {
 		case <-n.done:
 			return
 		case payload := <-n.dispatchQueue:
-			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			n.channelDispatcher.Dispatch(ctx, payload)
-			cancel()
+			n.channelDispatcher.Dispatch(context.Background(), payload)
 		}
 	}
 }

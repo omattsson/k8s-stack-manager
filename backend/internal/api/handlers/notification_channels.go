@@ -40,14 +40,14 @@ func NewNotificationChannelHandler(repo models.NotificationChannelRepository) *N
 
 type createChannelRequest struct {
 	Name       string `json:"name" binding:"required"`
-	WebhookURL string `json:"webhook_url" binding:"required,url,startswith=https://"`
+	WebhookURL string `json:"webhook_url" binding:"required"`
 	Secret     string `json:"secret,omitempty"`
 	Enabled    *bool  `json:"enabled"`
 }
 
 type updateChannelRequest struct {
 	Name       string `json:"name,omitempty"`
-	WebhookURL string  `json:"webhook_url,omitempty" binding:"omitempty,url,startswith=https://"`
+	WebhookURL string `json:"webhook_url,omitempty"`
 	Secret     *string `json:"secret,omitempty"`
 	Enabled    *bool   `json:"enabled,omitempty"`
 }
@@ -116,6 +116,10 @@ func (h *NotificationChannelHandler) CreateChannel(c *gin.Context) {
 	req.WebhookURL = strings.TrimSpace(req.WebhookURL)
 	if req.Name == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Channel name is required"})
+		return
+	}
+	if !strings.HasPrefix(req.WebhookURL, "https://") {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Webhook URL must start with https://"})
 		return
 	}
 
@@ -212,6 +216,10 @@ func (h *NotificationChannelHandler) UpdateChannel(c *gin.Context) {
 		existing.Name = req.Name
 	}
 	if req.WebhookURL != "" {
+		if !strings.HasPrefix(req.WebhookURL, "https://") {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Webhook URL must start with https://"})
+			return
+		}
 		existing.WebhookURL = req.WebhookURL
 	}
 	secretChanged := false
