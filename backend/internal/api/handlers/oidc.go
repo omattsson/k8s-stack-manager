@@ -504,7 +504,10 @@ func deriveOIDCUsername(oidcUser *auth.OIDCUser) string {
 	if oidcUser.Email != "" {
 		return oidcUser.Email
 	}
-	if oidcUser.Name != "" {
+	// Only use Name as username if it looks like an identifier (no spaces).
+	// Display names like "Jane Doe" from given_name/family_name are not
+	// suitable as stable usernames.
+	if oidcUser.Name != "" && !strings.Contains(oidcUser.Name, " ") {
 		return oidcUser.Name
 	}
 	return oidcUser.Subject
