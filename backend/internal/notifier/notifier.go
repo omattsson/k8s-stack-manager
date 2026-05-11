@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"log/slog"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"backend/internal/models"
@@ -25,14 +24,10 @@ type Notifier struct {
 	hub               *websocket.Hub
 	userRepo          models.UserRepository
 	channelDispatcher *channel.Dispatcher
-	dispatchQueue     chan dispatchWork
-	dispatchOnce      sync.Once
+	dispatchQueue     chan channel.EventPayload
+	done              chan struct{}
+	initOnce          sync.Once
 	stopOnce          sync.Once
-	stopped           atomic.Bool
-}
-
-type dispatchWork struct {
-	payload channel.EventPayload
 }
 
 // NewNotifier creates a new Notifier. hub and userRepo may be nil if real-time
@@ -52,19 +47,25 @@ func (n *Notifier) WithChannelDispatcher(d *channel.Dispatcher) *Notifier {
 	if d == nil {
 		return n
 	}
-	n.dispatchOnce.Do(func() {
+	n.initOnce.Do(func() {
 		n.channelDispatcher = d
-		n.dispatchQueue = make(chan dispatchWork, dispatchQueueSize)
+		n.dispatchQueue = make(chan channel.EventPayload, dispatchQueueSize)
+		n.done = make(chan struct{})
 		go n.dispatchWorker()
 	})
 	return n
 }
 
 func (n *Notifier) dispatchWorker() {
-	for w := range n.dispatchQueue {
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		n.channelDispatcher.Dispatch(ctx, w.payload)
-		cancel()
+	for {
+		select {
+		case <-n.done:
+			return
+		case payload := <-n.dispatchQueue:
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			n.channelDispatcher.Dispatch(ctx, payload)
+			cancel()
+		}
 	}
 }
 
@@ -72,19 +73,19 @@ func (n *Notifier) dispatchWorker() {
 // when no dispatcher is configured.
 func (n *Notifier) Stop() {
 	n.stopOnce.Do(func() {
-		n.stopped.Store(true)
-		if n.dispatchQueue != nil {
-			close(n.dispatchQueue)
+		if n.done != nil {
+			close(n.done)
 		}
 	})
 }
 
 func (n *Notifier) enqueueDispatch(payload channel.EventPayload) {
-	if n.stopped.Load() {
+	if n.dispatchQueue == nil {
 		return
 	}
 	select {
-	case n.dispatchQueue <- dispatchWork{payload: payload}:
+	case n.dispatchQueue <- payload:
+	case <-n.done:
 	default:
 		slog.Warn("notification channel dispatch queue full, dropping event", "event", payload.EventType)
 	}

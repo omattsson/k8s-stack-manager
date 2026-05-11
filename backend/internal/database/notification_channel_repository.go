@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"backend/internal/models"
 	"backend/pkg/crypto"
@@ -103,7 +104,7 @@ func (r *GORMNotificationChannelRepository) UpdateChannel(ctx context.Context, c
 		"webhook_url": channel.WebhookURL,
 		"secret":      channel.Secret,
 		"enabled":     channel.Enabled,
-		"updated_at":  channel.UpdatedAt,
+		"updated_at":  time.Now().UTC(),
 	})
 	if result.Error != nil {
 		if isDuplicateKeyError(result.Error) {

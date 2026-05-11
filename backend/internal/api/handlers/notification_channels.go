@@ -16,6 +16,7 @@ import (
 
 	"backend/internal/models"
 	"backend/internal/notifier"
+	notifChannel "backend/internal/notifier/channel"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -46,9 +47,9 @@ type createChannelRequest struct {
 
 type updateChannelRequest struct {
 	Name       string `json:"name,omitempty"`
-	WebhookURL string `json:"webhook_url,omitempty" binding:"omitempty,url,startswith=https://"`
-	Secret     string `json:"secret,omitempty"`
-	Enabled    *bool  `json:"enabled,omitempty"`
+	WebhookURL string  `json:"webhook_url,omitempty" binding:"omitempty,url,startswith=https://"`
+	Secret     *string `json:"secret,omitempty"`
+	Enabled    *bool   `json:"enabled,omitempty"`
 }
 
 type updateSubscriptionsRequest struct {
@@ -213,8 +214,8 @@ func (h *NotificationChannelHandler) UpdateChannel(c *gin.Context) {
 	if req.WebhookURL != "" {
 		existing.WebhookURL = req.WebhookURL
 	}
-	if req.Secret != "" {
-		existing.Secret = req.Secret
+	if req.Secret != nil {
+		existing.Secret = *req.Secret
 	}
 	if req.Enabled != nil {
 		existing.Enabled = *req.Enabled
@@ -375,11 +376,14 @@ func (h *NotificationChannelHandler) TestChannel(c *gin.Context) {
 		return
 	}
 
-	testPayload := map[string]interface{}{
-		"event_type": "test",
-		"channel":    channel.Name,
-		"message":    "This is a test notification from k8s-stack-manager.",
-		"timestamp":  time.Now().UTC().Format(time.RFC3339),
+	testPayload := notifChannel.EventPayload{
+		EventType:       "test",
+		Timestamp:       time.Now().UTC(),
+		Title:           "Test notification",
+		Message:         "This is a test notification from k8s-stack-manager.",
+		UserDisplayName: "System",
+		EntityType:      "notification_channel",
+		EntityID:        channel.ID,
 	}
 
 	body, err := json.Marshal(testPayload)
