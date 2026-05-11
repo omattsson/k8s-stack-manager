@@ -498,8 +498,9 @@ func (h *OIDCHandler) createOIDCUser(oidcUser *auth.OIDCUser) (*models.User, err
 	return newUser, nil
 }
 
-// deriveOIDCUsername picks a username from the OIDC user info, preferring
-// email, then name, then subject as a fallback.
+// deriveOIDCUsername picks a stable username from the OIDC user info, preferring
+// email, then preferred_username, then subject as a fallback. Display name
+// (Name field) is never used as a username since it can contain spaces and change.
 func deriveOIDCUsername(oidcUser *auth.OIDCUser) string {
 	if oidcUser.Email != "" {
 		return oidcUser.Email

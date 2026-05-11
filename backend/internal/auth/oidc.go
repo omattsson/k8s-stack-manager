@@ -17,11 +17,11 @@ import (
 
 // OIDCUser represents the user information extracted from an OIDC ID token.
 type OIDCUser struct {
-	Subject           string
-	Email             string
-	Name              string // Display name (from name, given_name+family_name, or preferred_username)
-	PreferredUsername  string // Stable identifier (from preferred_username claim)
-	Roles             []string
+	Subject          string
+	Email            string
+	Name             string // Display name (from name, given_name+family_name, or preferred_username)
+	PreferredUsername string // Stable identifier (from preferred_username claim)
+	Roles            []string
 }
 
 // Provider handles OIDC operations: authorization URL generation, code exchange, and token validation.
