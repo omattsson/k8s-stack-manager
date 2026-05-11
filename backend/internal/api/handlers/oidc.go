@@ -188,6 +188,7 @@ func (h *OIDCHandler) Callback(c *gin.Context) {
 	token, err := middleware.GenerateTokenWithOpts(middleware.GenerateTokenOptions{
 		UserID:       user.ID,
 		Username:     user.Username,
+		DisplayName:  user.DisplayName,
 		Role:         user.Role,
 		Secret:       h.authCfg.JWTSecret,
 		Expiration:   expiration,
@@ -218,6 +219,7 @@ func (h *OIDCHandler) Callback(c *gin.Context) {
 			longLived, err := middleware.GenerateTokenWithOpts(middleware.GenerateTokenOptions{
 				UserID:       user.ID,
 				Username:     user.Username,
+				DisplayName:  user.DisplayName,
 				Role:         user.Role,
 				Secret:       h.authCfg.JWTSecret,
 				Expiration:   h.authCfg.JWTExpiration,

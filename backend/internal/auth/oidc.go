@@ -94,6 +94,13 @@ func (p *Provider) Exchange(ctx context.Context, code, codeVerifier string) (*OI
 	}
 
 	if user.Name == "" {
+		given := claimString(claims, "given_name")
+		family := claimString(claims, "family_name")
+		if given != "" || family != "" {
+			user.Name = strings.TrimSpace(given + " " + family)
+		}
+	}
+	if user.Name == "" {
 		user.Name = claimString(claims, "preferred_username")
 	}
 

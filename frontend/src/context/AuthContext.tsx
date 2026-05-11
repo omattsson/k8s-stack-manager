@@ -46,7 +46,7 @@ function userFromPayload(payload: JwtPayload): User {
   return {
     id: payload.user_id,
     username: payload.username,
-    display_name: payload.username,
+    display_name: payload.display_name || payload.username,
     role: payload.role,
     auth_provider: payload.auth_provider ?? 'local',
     disabled: false,

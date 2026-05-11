@@ -13,6 +13,7 @@ export interface User {
 export interface JwtPayload {
   user_id: string;
   username: string;
+  display_name?: string;
   role: string;
   exp: number;
   auth_provider?: string;

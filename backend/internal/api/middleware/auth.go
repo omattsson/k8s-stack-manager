@@ -26,6 +26,7 @@ const (
 type Claims struct {
 	UserID       string `json:"user_id"`
 	Username     string `json:"username"`
+	DisplayName  string `json:"display_name,omitempty"`
 	Role         string `json:"role"`
 	AuthProvider string `json:"auth_provider,omitempty"`
 	Email        string `json:"email,omitempty"`
@@ -116,6 +117,7 @@ func AuthRequiredWithSessionStore(jwtSecret string, store sessionstore.SessionSt
 type GenerateTokenOptions struct {
 	UserID       string
 	Username     string
+	DisplayName  string
 	Role         string
 	Secret       string
 	Expiration   time.Duration
@@ -129,6 +131,7 @@ func GenerateTokenWithOpts(opts GenerateTokenOptions) (string, error) {
 	claims := Claims{
 		UserID:       opts.UserID,
 		Username:     opts.Username,
+		DisplayName:  opts.DisplayName,
 		Role:         opts.Role,
 		AuthProvider: opts.AuthProvider,
 		Email:        opts.Email,
