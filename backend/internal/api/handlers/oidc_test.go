@@ -708,18 +708,23 @@ func TestDeriveOIDCUsername(t *testing.T) {
 	}{
 		{
 			name:     "prefers email when present",
-			user:     &auth.OIDCUser{Email: "alice@example.com", Name: "Alice", Subject: "sub-001"},
+			user:     &auth.OIDCUser{Email: "alice@example.com", PreferredUsername: "alice", Name: "Alice Smith", Subject: "sub-001"},
 			expected: "alice@example.com",
 		},
 		{
-			name:     "falls back to name when email is empty",
-			user:     &auth.OIDCUser{Email: "", Name: "Alice", Subject: "sub-001"},
-			expected: "Alice",
+			name:     "falls back to preferred_username when email is empty",
+			user:     &auth.OIDCUser{Email: "", PreferredUsername: "alice", Name: "Alice Smith", Subject: "sub-001"},
+			expected: "alice",
 		},
 		{
-			name:     "falls back to subject when email and name are empty",
-			user:     &auth.OIDCUser{Email: "", Name: "", Subject: "sub-001"},
+			name:     "falls back to subject when email and preferred_username are empty",
+			user:     &auth.OIDCUser{Email: "", PreferredUsername: "", Name: "Alice Smith", Subject: "sub-001"},
 			expected: "sub-001",
+		},
+		{
+			name:     "never uses display name as username",
+			user:     &auth.OIDCUser{Email: "", PreferredUsername: "", Name: "Jane Doe", Subject: "sub-002"},
+			expected: "sub-002",
 		},
 	}
 

@@ -417,7 +417,8 @@ func TestExchange(t *testing.T) {
 
 	assert.Equal(t, "oidc-user-001", user.Subject)
 	assert.Equal(t, "oidcuser@example.com", user.Email)
-	assert.Equal(t, "OIDC User", user.Name, "name claim takes priority over preferred_username")
+	assert.Equal(t, "OIDC User", user.Name, "name claim takes priority for display name")
+	assert.Equal(t, "oidcuser", user.PreferredUsername, "preferred_username carried separately")
 	assert.Equal(t, []string{"k8s-stack-admin"}, user.Roles)
 }
 
