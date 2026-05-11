@@ -347,7 +347,9 @@ const NotificationChannels = () => {
         setDeliveryLogs([]);
       }
     } finally {
-      setLogsLoading(false);
+      if (activeLogRequest.current === channelId) {
+        setLogsLoading(false);
+      }
     }
   }, [expandedChannelId]);
 

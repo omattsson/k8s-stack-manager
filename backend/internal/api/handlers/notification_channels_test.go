@@ -74,7 +74,7 @@ func (m *MockNotificationChannelRepository) GetChannel(_ context.Context, id str
 	return ch, nil
 }
 
-func (m *MockNotificationChannelRepository) UpdateChannel(_ context.Context, ch *models.NotificationChannel) error {
+func (m *MockNotificationChannelRepository) UpdateChannel(_ context.Context, ch *models.NotificationChannel, _ bool) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.err != nil {

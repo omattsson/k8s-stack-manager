@@ -39,7 +39,7 @@ type NotificationDeliveryLog struct {
 type NotificationChannelRepository interface {
 	CreateChannel(ctx context.Context, channel *NotificationChannel) error
 	GetChannel(ctx context.Context, id string) (*NotificationChannel, error)
-	UpdateChannel(ctx context.Context, channel *NotificationChannel) error
+	UpdateChannel(ctx context.Context, channel *NotificationChannel, secretChanged bool) error
 	DeleteChannel(ctx context.Context, id string) error
 	ListChannels(ctx context.Context) ([]NotificationChannel, error)
 	ListEnabledChannels(ctx context.Context) ([]NotificationChannel, error)

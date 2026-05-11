@@ -214,15 +214,16 @@ func (h *NotificationChannelHandler) UpdateChannel(c *gin.Context) {
 	if req.WebhookURL != "" {
 		existing.WebhookURL = req.WebhookURL
 	}
+	secretChanged := false
 	if req.Secret != nil {
 		existing.Secret = *req.Secret
+		secretChanged = true
 	}
 	if req.Enabled != nil {
 		existing.Enabled = *req.Enabled
 	}
-	existing.UpdatedAt = time.Now().UTC()
 
-	if err := h.repo.UpdateChannel(c.Request.Context(), existing); err != nil {
+	if err := h.repo.UpdateChannel(c.Request.Context(), existing, secretChanged); err != nil {
 		status, msg := mapError(err, entityNotificationChannel)
 		c.JSON(status, gin.H{"error": msg})
 		return

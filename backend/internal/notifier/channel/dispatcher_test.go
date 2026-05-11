@@ -28,7 +28,7 @@ func (m *mockChannelRepo) CreateChannel(_ context.Context, _ *models.Notificatio
 func (m *mockChannelRepo) GetChannel(_ context.Context, _ string) (*models.NotificationChannel, error) {
 	return nil, nil
 }
-func (m *mockChannelRepo) UpdateChannel(_ context.Context, _ *models.NotificationChannel) error {
+func (m *mockChannelRepo) UpdateChannel(_ context.Context, _ *models.NotificationChannel, _ bool) error {
 	return nil
 }
 func (m *mockChannelRepo) DeleteChannel(_ context.Context, _ string) error { return nil }

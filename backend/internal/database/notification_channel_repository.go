@@ -92,20 +92,25 @@ func (r *GORMNotificationChannelRepository) GetChannel(ctx context.Context, id s
 	return &channel, nil
 }
 
-// UpdateChannel updates an existing notification channel.
-func (r *GORMNotificationChannelRepository) UpdateChannel(ctx context.Context, channel *models.NotificationChannel) error {
-	original, err := r.encryptSecret(channel)
-	if err != nil {
-		return err
-	}
-	defer func() { channel.Secret = original }()
-	result := r.db.WithContext(ctx).Model(&models.NotificationChannel{}).Where("id = ?", channel.ID).Updates(map[string]interface{}{
+// UpdateChannel updates an existing notification channel. If secretChanged is
+// true, the secret field is encrypted and persisted; otherwise it is left untouched
+// to avoid double-encryption when re-saving a decrypted record.
+func (r *GORMNotificationChannelRepository) UpdateChannel(ctx context.Context, channel *models.NotificationChannel, secretChanged bool) error {
+	updates := map[string]interface{}{
 		"name":        channel.Name,
 		"webhook_url": channel.WebhookURL,
-		"secret":      channel.Secret,
 		"enabled":     channel.Enabled,
 		"updated_at":  time.Now().UTC(),
-	})
+	}
+	if secretChanged {
+		original, err := r.encryptSecret(channel)
+		if err != nil {
+			return err
+		}
+		updates["secret"] = channel.Secret
+		channel.Secret = original
+	}
+	result := r.db.WithContext(ctx).Model(&models.NotificationChannel{}).Where("id = ?", channel.ID).Updates(updates)
 	if result.Error != nil {
 		if isDuplicateKeyError(result.Error) {
 			return dberrors.NewDatabaseError("update_channel", fmt.Errorf("%w", dberrors.ErrDuplicateKey))
