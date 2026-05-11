@@ -586,8 +586,9 @@ func startHTTPServer(router *gin.Engine, cfg *config.Config, tel *telemetry.Tele
 		s.Metrics = &http.Server{
 			Addr:         cfg.Otel.MetricsAddr,
 			Handler:      metricsMux,
-			ReadTimeout:  5 * time.Second,
-			WriteTimeout: 10 * time.Second,
+			ReadTimeout:  cfg.Server.ReadTimeout,
+			WriteTimeout: cfg.Server.WriteTimeout,
+			IdleTimeout:  cfg.Server.IdleTimeout,
 		}
 		go func() {
 			slog.Info("metrics server starting", "addr", s.Metrics.Addr)

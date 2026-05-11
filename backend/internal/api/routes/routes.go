@@ -123,7 +123,11 @@ func SetupRoutes(router *gin.Engine, deps Deps) *RateLimiters {
 
 	// Add middleware
 	router.Use(middleware.RequestID())
-	router.Use(middleware.HTTPMetrics())
+	// Only attach HTTP metrics middleware when a metric exporter is enabled,
+	// to avoid per-request timing/attribute overhead in the no-op case.
+	if cfg.Otel.Enabled || cfg.Otel.MetricsEnabled {
+		router.Use(middleware.HTTPMetrics())
+	}
 	if cfg.Otel.Enabled {
 		router.Use(otelgin.Middleware(cfg.Otel.ServiceName))
 	}

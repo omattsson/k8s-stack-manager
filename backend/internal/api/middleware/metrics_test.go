@@ -95,7 +95,7 @@ func TestHTTPMetrics(t *testing.T) {
 
 		assert.Equal(t, "GET", method.AsString())
 		assert.Equal(t, "/items/:id", route.AsString())
-		assert.Equal(t, "200", status.AsString())
+		assert.EqualValues(t, 200, status.AsInt64())
 	})
 
 	t.Run("uses <unmatched> for unregistered routes", func(t *testing.T) {

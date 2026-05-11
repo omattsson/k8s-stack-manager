@@ -1,13 +1,13 @@
 package middleware
 
 import (
-	"strconv"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
+	noopmetric "go.opentelemetry.io/otel/metric/noop"
 )
 
 // HTTPMetrics returns a Gin middleware that records HTTP request metrics.
@@ -18,9 +18,16 @@ import (
 //
 // Labels: http.request.method, http.route, http.response.status_code
 // Uses c.FullPath() for route label; unmatched routes use "<unmatched>".
-// Is a no-op when the global MeterProvider is a no-op provider.
+// Returns a fast-path pass-through middleware when the global MeterProvider
+// is the no-op provider, so there is zero per-request overhead when metrics
+// are disabled.
 func HTTPMetrics() gin.HandlerFunc {
-	meter := otel.GetMeterProvider().Meter("http")
+	mp := otel.GetMeterProvider()
+	if _, ok := mp.(noopmetric.MeterProvider); ok {
+		return func(c *gin.Context) { c.Next() }
+	}
+
+	meter := mp.Meter("http")
 
 	duration, _ := meter.Float64Histogram(
 		"http.server.request.duration",
@@ -46,7 +53,7 @@ func HTTPMetrics() gin.HandlerFunc {
 		attrs := metric.WithAttributes(
 			attribute.String("http.request.method", c.Request.Method),
 			attribute.String("http.route", route),
-			attribute.String("http.response.status_code", strconv.Itoa(c.Writer.Status())),
+			attribute.Int("http.response.status_code", c.Writer.Status()),
 		)
 
 		elapsed := time.Since(start).Seconds()
