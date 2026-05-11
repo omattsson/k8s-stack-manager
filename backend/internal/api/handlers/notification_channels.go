@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"backend/internal/models"
@@ -110,6 +111,12 @@ func (h *NotificationChannelHandler) CreateChannel(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": msgInvalidRequestFormat})
 		return
 	}
+	req.Name = strings.TrimSpace(req.Name)
+	req.WebhookURL = strings.TrimSpace(req.WebhookURL)
+	if req.Name == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Channel name is required"})
+		return
+	}
 
 	now := time.Now().UTC()
 	channel := models.NotificationChannel{
@@ -174,6 +181,7 @@ func (h *NotificationChannelHandler) GetChannel(c *gin.Context) {
 // @Success     200     {object} models.NotificationChannel
 // @Failure     400     {object} map[string]string
 // @Failure     404     {object} map[string]string
+// @Failure     409     {object} map[string]string
 // @Failure     500     {object} map[string]string
 // @Router      /api/v1/admin/notification-channels/{id} [put]
 // @Security    BearerAuth
@@ -197,6 +205,8 @@ func (h *NotificationChannelHandler) UpdateChannel(c *gin.Context) {
 		return
 	}
 
+	req.Name = strings.TrimSpace(req.Name)
+	req.WebhookURL = strings.TrimSpace(req.WebhookURL)
 	if req.Name != "" {
 		existing.Name = req.Name
 	}

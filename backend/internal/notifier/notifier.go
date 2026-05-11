@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"backend/internal/models"
@@ -26,6 +27,8 @@ type Notifier struct {
 	channelDispatcher *channel.Dispatcher
 	dispatchQueue     chan dispatchWork
 	dispatchOnce      sync.Once
+	stopOnce          sync.Once
+	stopped           atomic.Bool
 }
 
 type dispatchWork struct {
@@ -65,14 +68,21 @@ func (n *Notifier) dispatchWorker() {
 	}
 }
 
-// Stop shuts down the dispatch worker. Safe to call when no dispatcher is configured.
+// Stop shuts down the dispatch worker. Safe to call multiple times and
+// when no dispatcher is configured.
 func (n *Notifier) Stop() {
-	if n.dispatchQueue != nil {
-		close(n.dispatchQueue)
-	}
+	n.stopOnce.Do(func() {
+		n.stopped.Store(true)
+		if n.dispatchQueue != nil {
+			close(n.dispatchQueue)
+		}
+	})
 }
 
 func (n *Notifier) enqueueDispatch(payload channel.EventPayload) {
+	if n.stopped.Load() {
+		return
+	}
 	select {
 	case n.dispatchQueue <- dispatchWork{payload: payload}:
 	default:
