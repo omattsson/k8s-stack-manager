@@ -3,7 +3,7 @@ name: k8s-stack-manager
 description: Helm-based stack manager with Go backend, React frontend, and MySQL
 type: application
 version: 0.2.0
-appVersion: "latest"
+appVersion: "0.2.0"
 keywords:
   - kubernetes
   - helm

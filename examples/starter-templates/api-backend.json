@@ -1,0 +1,28 @@
+{
+  "schema_version": "1.0",
+  "definition": {
+    "name": "API Backend",
+    "description": "API service with cache tier — demonstrates resource limits and deploy ordering.",
+    "default_branch": "main"
+  },
+  "charts": [
+    {
+      "chart_name": "cache",
+      "repository_url": "https://stefanprodan.github.io/podinfo",
+      "source_repo_url": "https://github.com/stefanprodan/podinfo",
+      "chart_path": "podinfo",
+      "chart_version": "6.11.2",
+      "default_values": "replicaCount: 1\nresources:\n  requests:\n    cpu: 10m\n    memory: 16Mi\n  limits:\n    cpu: 100m\n    memory: 64Mi\nservice:\n  type: ClusterIP\n  port: 9898\ncache: memory\nui:\n  message: Cache Layer",
+      "deploy_order": 1
+    },
+    {
+      "chart_name": "api",
+      "repository_url": "https://stefanprodan.github.io/podinfo",
+      "source_repo_url": "https://github.com/stefanprodan/podinfo",
+      "chart_path": "podinfo",
+      "chart_version": "6.11.2",
+      "default_values": "replicaCount: 2\nresources:\n  requests:\n    cpu: 20m\n    memory: 32Mi\n  limits:\n    cpu: 200m\n    memory: 128Mi\nservice:\n  type: ClusterIP\n  port: 9898\ncacheServer: tcp://cache-podinfo:9898\nui:\n  message: API Service",
+      "deploy_order": 2
+    }
+  ]
+}

@@ -22,7 +22,7 @@ COPY go.mod go.sum ./
 RUN go mod download
 
 COPY . .
-RUN CGO_ENABLED=0 GOOS=linux go build -o main ./api/main.go
+RUN CGO_ENABLED=0 GOOS=linux go build -o main ./api/
 
 # Final production image — Alpine-based so helm can execute
 FROM alpine:3.23 AS production

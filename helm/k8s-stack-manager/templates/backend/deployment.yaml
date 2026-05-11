@@ -63,6 +63,13 @@ spec:
                 sleep 2
               done
               echo "MySQL is ready!"
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              cpu: 50m
+              memory: 32Mi
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true

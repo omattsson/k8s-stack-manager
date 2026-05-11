@@ -1,0 +1,19 @@
+{
+  "schema_version": "1.0",
+  "definition": {
+    "name": "Hello World",
+    "description": "Single podinfo service — the simplest stack to verify the platform works.",
+    "default_branch": "main"
+  },
+  "charts": [
+    {
+      "chart_name": "podinfo",
+      "repository_url": "https://stefanprodan.github.io/podinfo",
+      "source_repo_url": "https://github.com/stefanprodan/podinfo",
+      "chart_path": "podinfo",
+      "chart_version": "6.11.2",
+      "default_values": "replicaCount: 1\nresources:\n  requests:\n    cpu: 10m\n    memory: 16Mi\n  limits:\n    cpu: 100m\n    memory: 64Mi\nservice:\n  type: ClusterIP\n  port: 9898",
+      "deploy_order": 1
+    }
+  ]
+}
