@@ -83,7 +83,7 @@ func main() {
 	must("database", err)
 
 	// Register database/sql pool metrics with OTel.
-	if cfg.Otel.Enabled {
+	if cfg.Otel.Enabled || cfg.Otel.MetricsEnabled {
 		sqlDB, dbErr := mysqlGormDB.DB()
 		if dbErr == nil {
 			if metricsErr := telemetry.StartDBMetrics(sqlDB); metricsErr != nil {
@@ -135,7 +135,7 @@ func main() {
 	defer bgSvc.RefreshTokenCleanupCancel()
 
 	// HTTP server.
-	srvs := startHTTPServer(router, cfg)
+	srvs := startHTTPServer(router, cfg, tel)
 
 	// Wait for interrupt signal.
 	quit := make(chan os.Signal, 1)
@@ -202,6 +202,11 @@ func gracefulShutdown(srvs *servers, timeout time.Duration, deps shutdownDeps) {
 	if srvs.Pprof != nil {
 		if err := srvs.Pprof.Shutdown(ctx); err != nil {
 			slog.Error("Pprof server forced to shutdown", "error", err)
+		}
+	}
+	if srvs.Metrics != nil {
+		if err := srvs.Metrics.Shutdown(ctx); err != nil {
+			slog.Error("Metrics server forced to shutdown", "error", err)
 		}
 	}
 

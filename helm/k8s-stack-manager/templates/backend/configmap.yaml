@@ -22,6 +22,10 @@ data:
   {{- if .Values.hooks.enabled }}
   HOOKS_CONFIG_FILE: "/etc/hooks/hooks.json"
   {{- end }}
+  {{- if .Values.metrics.enabled }}
+  METRICS_ENABLED: "true"
+  METRICS_ADDR: ":{{ .Values.metrics.port }}"
+  {{- end }}
   {{- if .Values.otel.enabled }}
   OTEL_ENABLED: "true"
   OTEL_EXPORTER_OTLP_ENDPOINT: "{{ include "k8s-stack-manager.otel.serviceName" . }}:4317"

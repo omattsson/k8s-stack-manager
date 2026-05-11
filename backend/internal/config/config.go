@@ -136,8 +136,10 @@ type OtelConfig struct {
 	// String fields
 	Endpoint    string
 	ServiceName string
+	MetricsAddr string // env: METRICS_ADDR (default: ":9090")
 	// Bool fields
-	Enabled bool
+	Enabled        bool
+	MetricsEnabled bool // env: METRICS_ENABLED (default: false)
 }
 
 // Config holds all configuration for the application
@@ -430,9 +432,9 @@ func LoadConfig() (*Config, error) {
 			Level: getEnv("LOG_LEVEL", "info"),
 			File:  getEnv("LOG_FILE", ""),
 		},
-		Auth:        loadAuthConfig(),
-		GitProvider: loadGitProviderConfig(),
-		Deployment:  loadDeploymentConfig(),
+		Auth:         loadAuthConfig(),
+		GitProvider:  loadGitProviderConfig(),
+		Deployment:   loadDeploymentConfig(),
 		OIDC:         loadOIDCConfig(),
 		Otel:         loadOtelConfig(),
 		SessionStore: SessionStoreConfig{Backend: strings.TrimSpace(strings.ToLower(getEnv("SESSION_STORE", "mysql")))},
@@ -538,10 +540,10 @@ func loadDeploymentConfig() DeploymentConfig {
 	// lives in out-of-process extension subscribers — see internal/hooks and
 	// EXTENDING.md. HOOKS_CONFIG_FILE points at the JSON file describing them.
 	return DeploymentConfig{
-		HelmBinary:                getEnv("HELM_BINARY", "helm"),
-		KubeconfigPath:            getEnv("KUBECONFIG_PATH", getEnv("KUBECONFIG", "")),
-		KubeconfigEncryptionKey:   getEnv("KUBECONFIG_ENCRYPTION_KEY", ""),
-		DeploymentTimeout:         getEnvDuration("DEPLOYMENT_TIMEOUT", 10*time.Minute),
+		HelmBinary:                 getEnv("HELM_BINARY", "helm"),
+		KubeconfigPath:             getEnv("KUBECONFIG_PATH", getEnv("KUBECONFIG", "")),
+		KubeconfigEncryptionKey:    getEnv("KUBECONFIG_ENCRYPTION_KEY", ""),
+		DeploymentTimeout:          getEnvDuration("DEPLOYMENT_TIMEOUT", 10*time.Minute),
 		ClusterHealthPollInterval:  getEnvDuration("CLUSTER_HEALTH_POLL_INTERVAL", 60*time.Second),
 		StabilizeTimeout:           getEnvDuration("DEPLOY_STABILIZE_TIMEOUT", 5*time.Minute),
 		StabilizePollInterval:      getEnvDuration("DEPLOY_STABILIZE_POLL_INTERVAL", 5*time.Second),
@@ -572,10 +574,12 @@ func loadOIDCConfig() OIDCConfig {
 
 func loadOtelConfig() OtelConfig {
 	return OtelConfig{
-		Enabled:     getEnvBool("OTEL_ENABLED", false),
-		Endpoint:    getEnv("OTEL_EXPORTER_OTLP_ENDPOINT", "localhost:4317"),
-		ServiceName: getEnv("OTEL_SERVICE_NAME", "k8s-stack-manager"),
-		SampleRate:  getEnvFloat64("OTEL_TRACE_SAMPLE_RATE", 1.0),
+		Enabled:        getEnvBool("OTEL_ENABLED", false),
+		Endpoint:       getEnv("OTEL_EXPORTER_OTLP_ENDPOINT", "localhost:4317"),
+		ServiceName:    getEnv("OTEL_SERVICE_NAME", "k8s-stack-manager"),
+		SampleRate:     getEnvFloat64("OTEL_TRACE_SAMPLE_RATE", 1.0),
+		MetricsEnabled: getEnvBool("METRICS_ENABLED", false),
+		MetricsAddr:    getEnv("METRICS_ADDR", ":9090"),
 	}
 }
 

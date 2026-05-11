@@ -123,6 +123,7 @@ func SetupRoutes(router *gin.Engine, deps Deps) *RateLimiters {
 
 	// Add middleware
 	router.Use(middleware.RequestID())
+	router.Use(middleware.HTTPMetrics())
 	if cfg.Otel.Enabled {
 		router.Use(otelgin.Middleware(cfg.Otel.ServiceName))
 	}
