@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"net/http"
 	"time"
 
 	"backend/internal/config"
@@ -17,11 +18,16 @@ import (
 	"go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc"
 	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
+	"go.opentelemetry.io/otel/exporters/prometheus"
+	noopmetric "go.opentelemetry.io/otel/metric/noop"
 	"go.opentelemetry.io/otel/propagation"
 	sdklog "go.opentelemetry.io/otel/sdk/log"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/trace"
+
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 // Telemetry holds the initialised OTel SDK providers.
@@ -30,15 +36,23 @@ type Telemetry struct {
 	TracerProvider *sdktrace.TracerProvider
 	MeterProvider  *sdkmetric.MeterProvider
 	LoggerProvider *sdklog.LoggerProvider
+	// MetricsHandler is non-nil when METRICS_ENABLED=true.
+	// It serves the Prometheus /metrics endpoint on a dedicated port.
+	MetricsHandler http.Handler
 }
 
 // Init bootstraps OpenTelemetry SDK providers according to cfg.
-// When cfg.Enabled is false it registers global no-op providers and returns
-// immediately, guaranteeing zero allocation overhead in the hot path.
+// When neither cfg.Enabled nor cfg.MetricsEnabled is true it returns
+// immediately with no-op providers, guaranteeing zero allocation overhead.
 func Init(cfg config.OtelConfig) (*Telemetry, error) {
-	if !cfg.Enabled {
+	tel := &Telemetry{}
+
+	anyActive := cfg.Enabled || cfg.MetricsEnabled
+	if !anyActive {
 		slog.Info("OpenTelemetry disabled, using no-op providers")
-		return &Telemetry{}, nil
+		otel.SetTracerProvider(trace.NewNoopTracerProvider())
+		otel.SetMeterProvider(noopmetric.NewMeterProvider())
+		return tel, nil
 	}
 
 	ctx := context.Background()
@@ -50,73 +64,95 @@ func Init(cfg config.OtelConfig) (*Telemetry, error) {
 		attribute.String("service.name", cfg.ServiceName),
 	)
 
-	// --- Trace ---
-	traceExporter, err := otlptracegrpc.New(ctx,
-		otlptracegrpc.WithEndpoint(cfg.Endpoint),
-		otlptracegrpc.WithInsecure(),
-	)
-	if err != nil {
-		return nil, err
+	var readers []sdkmetric.Reader
+	var tp *sdktrace.TracerProvider
+	var lp *sdklog.LoggerProvider
+
+	if cfg.Enabled {
+		// --- Trace ---
+		traceExporter, err := otlptracegrpc.New(ctx,
+			otlptracegrpc.WithEndpoint(cfg.Endpoint),
+			otlptracegrpc.WithInsecure(),
+		)
+		if err != nil {
+			return nil, err
+		}
+
+		tp = sdktrace.NewTracerProvider(
+			sdktrace.WithBatcher(traceExporter),
+			sdktrace.WithResource(res),
+			sdktrace.WithSampler(sdktrace.TraceIDRatioBased(cfg.SampleRate)),
+		)
+
+		// --- OTLP Metrics ---
+		metricExporter, err := otlpmetricgrpc.New(ctx,
+			otlpmetricgrpc.WithEndpoint(cfg.Endpoint),
+			otlpmetricgrpc.WithInsecure(),
+		)
+		if err != nil {
+			return nil, err
+		}
+		readers = append(readers, sdkmetric.NewPeriodicReader(metricExporter))
+
+		// --- Logs ---
+		logExporter, err := otlploggrpc.New(ctx,
+			otlploggrpc.WithEndpoint(cfg.Endpoint),
+			otlploggrpc.WithInsecure(),
+		)
+		if err != nil {
+			return nil, err
+		}
+
+		lp = sdklog.NewLoggerProvider(
+			sdklog.WithProcessor(sdklog.NewBatchProcessor(logExporter)),
+			sdklog.WithResource(res),
+		)
+
+		// Register global trace provider and propagator.
+		otel.SetTracerProvider(tp)
+		otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(
+			propagation.TraceContext{},
+			propagation.Baggage{},
+		))
+
+		slog.Info("OpenTelemetry enabled",
+			"endpoint", cfg.Endpoint,
+			"service", cfg.ServiceName,
+			"sample_rate", cfg.SampleRate,
+		)
 	}
 
-	tp := sdktrace.NewTracerProvider(
-		sdktrace.WithBatcher(traceExporter),
-		sdktrace.WithResource(res),
-		sdktrace.WithSampler(sdktrace.TraceIDRatioBased(cfg.SampleRate)),
-	)
-
-	// --- Metrics ---
-	metricExporter, err := otlpmetricgrpc.New(ctx,
-		otlpmetricgrpc.WithEndpoint(cfg.Endpoint),
-		otlpmetricgrpc.WithInsecure(),
-	)
-	if err != nil {
-		return nil, err
+	// --- Prometheus metrics ---
+	if cfg.MetricsEnabled {
+		promExporter, err := prometheus.New()
+		if err != nil {
+			return nil, err
+		}
+		// The OTel Prometheus exporter registers metrics with the default
+		// prometheus registry; promhttp.Handler() serves that registry.
+		tel.MetricsHandler = promhttp.Handler()
+		readers = append(readers, promExporter)
+		slog.Info("Prometheus metrics enabled", "addr", cfg.MetricsAddr)
 	}
 
-	mp := sdkmetric.NewMeterProvider(
-		sdkmetric.WithReader(sdkmetric.NewPeriodicReader(metricExporter)),
-		sdkmetric.WithResource(res),
-	)
-
-	// --- Logs ---
-	logExporter, err := otlploggrpc.New(ctx,
-		otlploggrpc.WithEndpoint(cfg.Endpoint),
-		otlploggrpc.WithInsecure(),
-	)
-	if err != nil {
-		return nil, err
+	// Build meter provider with all active readers.
+	mpOpts := []sdkmetric.Option{sdkmetric.WithResource(res)}
+	for _, r := range readers {
+		mpOpts = append(mpOpts, sdkmetric.WithReader(r))
 	}
+	mp := sdkmetric.NewMeterProvider(mpOpts...)
 
-	lp := sdklog.NewLoggerProvider(
-		sdklog.WithProcessor(sdklog.NewBatchProcessor(logExporter)),
-		sdklog.WithResource(res),
-	)
-
-	// Register global providers and propagator.
-	otel.SetTracerProvider(tp)
+	// Register global meter provider and start runtime instrumentation.
 	otel.SetMeterProvider(mp)
-
 	if err := otelruntime.Start(otelruntime.WithMinimumReadMemStatsInterval(time.Second)); err != nil {
 		return nil, err
 	}
 
-	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(
-		propagation.TraceContext{},
-		propagation.Baggage{},
-	))
+	tel.TracerProvider = tp
+	tel.MeterProvider = mp
+	tel.LoggerProvider = lp
 
-	slog.Info("OpenTelemetry enabled",
-		"endpoint", cfg.Endpoint,
-		"service", cfg.ServiceName,
-		"sample_rate", cfg.SampleRate,
-	)
-
-	return &Telemetry{
-		TracerProvider: tp,
-		MeterProvider:  mp,
-		LoggerProvider: lp,
-	}, nil
+	return tel, nil
 }
 
 // Shutdown flushes and shuts down all SDK providers.

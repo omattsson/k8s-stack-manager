@@ -105,7 +105,8 @@ func TestLoadConfig(t *testing.T) {
 		assert.Empty(t, config.Server.Host)
 		assert.Equal(t, "8081", config.Server.Port)
 		assert.Equal(t, 10*time.Second, config.Server.ReadTimeout)
-		assert.Equal(t, time.Duration(0), config.Server.WriteTimeout) // disabled; per-write deadlines enforced in WebSocket write pump				assert.Equal(t, 30*time.Second, config.Server.IdleTimeout)
+		assert.Equal(t, time.Duration(0), config.Server.WriteTimeout) // disabled; per-write deadlines enforced in WebSocket write pump
+		assert.Equal(t, 30*time.Second, config.Server.IdleTimeout)
 		assert.Equal(t, 30*time.Second, config.Server.ShutdownTimeout)
 		// Check default logging config
 		assert.Equal(t, "info", config.Logging.Level)
@@ -615,6 +616,34 @@ func TestOtelConfigLoad(t *testing.T) {
 		assert.Equal(t, "collector:4317", cfg.Otel.Endpoint)
 		assert.Equal(t, "my-service", cfg.Otel.ServiceName)
 		assert.Equal(t, 0.25, cfg.Otel.SampleRate)
+	})
+
+	t.Run("MetricsEnabled defaults to false", func(t *testing.T) {
+		t.Setenv("METRICS_ENABLED", "")
+		cfg, err := config.LoadConfig()
+		require.NoError(t, err)
+		assert.False(t, cfg.Otel.MetricsEnabled)
+	})
+
+	t.Run("MetricsAddr defaults to :9090", func(t *testing.T) {
+		t.Setenv("METRICS_ADDR", "")
+		cfg, err := config.LoadConfig()
+		require.NoError(t, err)
+		assert.Equal(t, ":9090", cfg.Otel.MetricsAddr)
+	})
+
+	t.Run("METRICS_ENABLED=true sets MetricsEnabled", func(t *testing.T) {
+		t.Setenv("METRICS_ENABLED", "true")
+		cfg, err := config.LoadConfig()
+		require.NoError(t, err)
+		assert.True(t, cfg.Otel.MetricsEnabled)
+	})
+
+	t.Run("METRICS_ADDR=:8888 sets MetricsAddr", func(t *testing.T) {
+		t.Setenv("METRICS_ADDR", ":8888")
+		cfg, err := config.LoadConfig()
+		require.NoError(t, err)
+		assert.Equal(t, ":8888", cfg.Otel.MetricsAddr)
 	})
 }
 

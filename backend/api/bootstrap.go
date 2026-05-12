@@ -18,6 +18,7 @@ import (
 	"backend/internal/notifier/channel"
 	"backend/internal/scheduler"
 	"backend/internal/sessionstore"
+	"backend/internal/telemetry"
 	"backend/internal/ttl"
 	"backend/internal/websocket"
 	"context"
@@ -545,13 +546,14 @@ func startBackgroundServices(
 
 // servers holds the HTTP servers started during bootstrap.
 type servers struct {
-	Main  *http.Server
-	Pprof *http.Server // nil when pprof is disabled
+	Main    *http.Server
+	Pprof   *http.Server // nil when pprof is disabled
+	Metrics *http.Server // nil when METRICS_ENABLED=false
 }
 
 // startHTTPServer creates, configures, and starts the HTTP server (and
-// optionally a pprof server) in background goroutines.
-func startHTTPServer(router *gin.Engine, cfg *config.Config) *servers {
+// optionally a pprof server and a Prometheus metrics server) in background goroutines.
+func startHTTPServer(router *gin.Engine, cfg *config.Config, tel *telemetry.Telemetry) *servers {
 	s := &servers{}
 
 	// Start pprof server on a separate port when PPROF_ENABLED=true.
@@ -573,6 +575,25 @@ func startHTTPServer(router *gin.Engine, cfg *config.Config) *servers {
 			slog.Info("pprof server starting", "addr", s.Pprof.Addr)
 			if err := s.Pprof.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 				slog.Error("pprof server failed", "error", err)
+			}
+		}()
+	}
+
+	// Start Prometheus metrics server when enabled.
+	if tel != nil && tel.MetricsHandler != nil {
+		metricsMux := http.NewServeMux()
+		metricsMux.Handle("/metrics", tel.MetricsHandler)
+		s.Metrics = &http.Server{
+			Addr:         cfg.Otel.MetricsAddr,
+			Handler:      metricsMux,
+			ReadTimeout:  5 * time.Second,
+			WriteTimeout: 10 * time.Second,
+			IdleTimeout:  30 * time.Second,
+		}
+		go func() {
+			slog.Info("metrics server starting", "addr", s.Metrics.Addr)
+			if err := s.Metrics.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+				slog.Error("metrics server error", "error", err)
 			}
 		}()
 	}

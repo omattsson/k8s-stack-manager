@@ -15,6 +15,7 @@ import (
 	"backend/internal/notifier"
 	"backend/internal/scheduler"
 	"backend/internal/sessionstore"
+	"backend/internal/telemetry"
 	"backend/internal/ttl"
 	"backend/internal/websocket"
 	"context"
@@ -238,6 +239,9 @@ func shutdownServers(t *testing.T, s *servers) {
 	if s.Pprof != nil {
 		_ = s.Pprof.Shutdown(ctx)
 	}
+	if s.Metrics != nil {
+		_ = s.Metrics.Shutdown(ctx)
+	}
 }
 
 func TestStartHTTPServer_ListensOnConfiguredAddress(t *testing.T) {
@@ -258,7 +262,7 @@ func TestStartHTTPServer_ListensOnConfiguredAddress(t *testing.T) {
 		},
 	}
 
-	s := startHTTPServer(router, cfg)
+	s := startHTTPServer(router, cfg, &telemetry.Telemetry{})
 	t.Cleanup(func() { shutdownServers(t, s) })
 
 	addr := fmt.Sprintf("127.0.0.1:%d", port)
@@ -290,7 +294,7 @@ func TestStartHTTPServer_PprofEnabled(t *testing.T) {
 		},
 	}
 
-	s := startHTTPServer(router, cfg)
+	s := startHTTPServer(router, cfg, &telemetry.Telemetry{})
 	t.Cleanup(func() { shutdownServers(t, s) })
 
 	require.NotNil(t, s.Pprof, "pprof server should be set when enabled")
@@ -322,7 +326,7 @@ func TestStartHTTPServer_PprofDisabled(t *testing.T) {
 		},
 	}
 
-	s := startHTTPServer(router, cfg)
+	s := startHTTPServer(router, cfg, &telemetry.Telemetry{})
 	t.Cleanup(func() { shutdownServers(t, s) })
 
 	assert.Nil(t, s.Pprof, "pprof server should be nil when disabled")
@@ -343,7 +347,7 @@ func TestStartHTTPServer_ReturnsValidServer(t *testing.T) {
 		},
 	}
 
-	s := startHTTPServer(router, cfg)
+	s := startHTTPServer(router, cfg, &telemetry.Telemetry{})
 	t.Cleanup(func() { shutdownServers(t, s) })
 
 	assert.Equal(t, fmt.Sprintf("127.0.0.1:%d", port), s.Main.Addr)
@@ -351,6 +355,50 @@ func TestStartHTTPServer_ReturnsValidServer(t *testing.T) {
 	assert.Equal(t, 30*time.Second, s.Main.WriteTimeout)
 	assert.Equal(t, 60*time.Second, s.Main.IdleTimeout)
 	assert.Equal(t, router, s.Main.Handler)
+}
+
+func TestStartHTTPServer_MetricsEnabled(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+
+	mainPort := freePort(t)
+	metricsPort := freePort(t)
+
+	cfg := &config.Config{
+		Server: config.ServerConfig{
+			Host:         "127.0.0.1",
+			Port:         fmt.Sprintf("%d", mainPort),
+			ReadTimeout:  5 * time.Second,
+			WriteTimeout: 5 * time.Second,
+			IdleTimeout:  30 * time.Second,
+		},
+		Otel: config.OtelConfig{
+			MetricsEnabled: true,
+			MetricsAddr:    fmt.Sprintf("127.0.0.1:%d", metricsPort),
+		},
+	}
+
+	tel, err := telemetry.Init(cfg.Otel)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		if tel != nil {
+			_ = tel.Shutdown(context.Background())
+		}
+	})
+
+	s := startHTTPServer(router, cfg, tel)
+	t.Cleanup(func() { shutdownServers(t, s) })
+
+	require.NotNil(t, s.Metrics, "metrics server should be set when enabled")
+
+	metricsAddr := fmt.Sprintf("127.0.0.1:%d", metricsPort)
+	waitForServer(t, metricsAddr)
+
+	client := &http.Client{Timeout: 2 * time.Second}
+	resp, err := client.Get(fmt.Sprintf("http://%s/metrics", metricsAddr))
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
 }
 
 // ---- initDatabase / initRepositories ----
@@ -394,14 +442,14 @@ func (s *stubClusterRepo) SetDefault(_ string) error                  { return n
 
 type stubStackInstanceRepo struct{}
 
-func (s *stubStackInstanceRepo) Create(_ *models.StackInstance) error              { return nil }
-func (s *stubStackInstanceRepo) FindByID(_ string) (*models.StackInstance, error)  { return nil, nil }
+func (s *stubStackInstanceRepo) Create(_ *models.StackInstance) error             { return nil }
+func (s *stubStackInstanceRepo) FindByID(_ string) (*models.StackInstance, error) { return nil, nil }
 func (s *stubStackInstanceRepo) FindByNamespace(_ string) (*models.StackInstance, error) {
 	return nil, nil
 }
-func (s *stubStackInstanceRepo) Update(_ *models.StackInstance) error               { return nil }
-func (s *stubStackInstanceRepo) Delete(_ string) error                              { return nil }
-func (s *stubStackInstanceRepo) List() ([]models.StackInstance, error)              { return nil, nil }
+func (s *stubStackInstanceRepo) Update(_ *models.StackInstance) error  { return nil }
+func (s *stubStackInstanceRepo) Delete(_ string) error                 { return nil }
+func (s *stubStackInstanceRepo) List() ([]models.StackInstance, error) { return nil, nil }
 func (s *stubStackInstanceRepo) ListPaged(_, _ int) ([]models.StackInstance, int, error) {
 	return nil, 0, nil
 }
@@ -432,7 +480,7 @@ func (s *stubStackInstanceRepo) ListIDsByOwnerIDs(_ []string) (map[string][]stri
 func (s *stubStackInstanceRepo) ExistsByDefinitionAndStatus(_, _ string) (bool, error) {
 	return false, nil
 }
-func (s *stubStackInstanceRepo) ListExpired() ([]*models.StackInstance, error)   { return nil, nil }
+func (s *stubStackInstanceRepo) ListExpired() ([]*models.StackInstance, error) { return nil, nil }
 func (s *stubStackInstanceRepo) ListExpiringSoon(_ time.Duration) ([]*models.StackInstance, error) {
 	return nil, nil
 }
@@ -444,14 +492,16 @@ func (s *stubStackInstanceRepo) ListByStatus(_ string, _ int) ([]*models.StackIn
 
 type stubStackDefinitionRepo struct{}
 
-func (s *stubStackDefinitionRepo) Create(_ *models.StackDefinition) error             { return nil }
-func (s *stubStackDefinitionRepo) FindByID(_ string) (*models.StackDefinition, error) { return nil, nil }
+func (s *stubStackDefinitionRepo) Create(_ *models.StackDefinition) error { return nil }
+func (s *stubStackDefinitionRepo) FindByID(_ string) (*models.StackDefinition, error) {
+	return nil, nil
+}
 func (s *stubStackDefinitionRepo) FindByName(_ string) ([]models.StackDefinition, error) {
 	return nil, nil
 }
-func (s *stubStackDefinitionRepo) Update(_ *models.StackDefinition) error               { return nil }
-func (s *stubStackDefinitionRepo) Delete(_ string) error                                { return nil }
-func (s *stubStackDefinitionRepo) List() ([]models.StackDefinition, error)              { return nil, nil }
+func (s *stubStackDefinitionRepo) Update(_ *models.StackDefinition) error  { return nil }
+func (s *stubStackDefinitionRepo) Delete(_ string) error                   { return nil }
+func (s *stubStackDefinitionRepo) List() ([]models.StackDefinition, error) { return nil, nil }
 func (s *stubStackDefinitionRepo) ListPaged(_, _ int) ([]models.StackDefinition, int64, error) {
 	return nil, 0, nil
 }
@@ -516,8 +566,10 @@ func (s *stubDeploymentLogRepo) ListRecentGlobal(_ context.Context, _ int) ([]mo
 
 type stubAuditLogRepo struct{}
 
-func (s *stubAuditLogRepo) Create(_ *models.AuditLog) error                          { return nil }
-func (s *stubAuditLogRepo) List(_ models.AuditLogFilters) (*models.AuditLogResult, error) { return nil, nil }
+func (s *stubAuditLogRepo) Create(_ *models.AuditLog) error { return nil }
+func (s *stubAuditLogRepo) List(_ models.AuditLogFilters) (*models.AuditLogResult, error) {
+	return nil, nil
+}
 
 // ---- stubResourceQuotaRepo ----
 
@@ -591,18 +643,22 @@ func (s *stubUserRepo) ListByRoles(_ []string) ([]models.User, error)         { 
 
 type stubStackTemplateRepo struct{}
 
-func (s *stubStackTemplateRepo) Create(_ *models.StackTemplate) error                       { return nil }
-func (s *stubStackTemplateRepo) FindByID(_ string) (*models.StackTemplate, error)           { return nil, nil }
-func (s *stubStackTemplateRepo) Update(_ *models.StackTemplate) error                       { return nil }
-func (s *stubStackTemplateRepo) Delete(_ string) error                                      { return nil }
-func (s *stubStackTemplateRepo) List() ([]models.StackTemplate, error)                      { return nil, nil }
-func (s *stubStackTemplateRepo) ListPaged(_, _ int) ([]models.StackTemplate, int64, error)  { return nil, 0, nil }
-func (s *stubStackTemplateRepo) ListPublished() ([]models.StackTemplate, error)             { return nil, nil }
+func (s *stubStackTemplateRepo) Create(_ *models.StackTemplate) error             { return nil }
+func (s *stubStackTemplateRepo) FindByID(_ string) (*models.StackTemplate, error) { return nil, nil }
+func (s *stubStackTemplateRepo) Update(_ *models.StackTemplate) error             { return nil }
+func (s *stubStackTemplateRepo) Delete(_ string) error                            { return nil }
+func (s *stubStackTemplateRepo) List() ([]models.StackTemplate, error)            { return nil, nil }
+func (s *stubStackTemplateRepo) ListPaged(_, _ int) ([]models.StackTemplate, int64, error) {
+	return nil, 0, nil
+}
+func (s *stubStackTemplateRepo) ListPublished() ([]models.StackTemplate, error) { return nil, nil }
 func (s *stubStackTemplateRepo) ListPublishedPaged(_, _ int) ([]models.StackTemplate, int64, error) {
 	return nil, 0, nil
 }
-func (s *stubStackTemplateRepo) ListByOwner(_ string) ([]models.StackTemplate, error) { return nil, nil }
-func (s *stubStackTemplateRepo) Count() (int64, error)                                { return 0, nil }
+func (s *stubStackTemplateRepo) ListByOwner(_ string) ([]models.StackTemplate, error) {
+	return nil, nil
+}
+func (s *stubStackTemplateRepo) Count() (int64, error) { return 0, nil }
 
 // ---- stubTemplateChartConfigRepo ----
 
@@ -667,9 +723,11 @@ func (s *stubSharedValuesRepo) FindByID(_ string) (*models.SharedValues, error) 
 func (s *stubSharedValuesRepo) FindByClusterAndID(_, _ string) (*models.SharedValues, error) {
 	return nil, nil
 }
-func (s *stubSharedValuesRepo) Update(_ *models.SharedValues) error                   { return nil }
-func (s *stubSharedValuesRepo) Delete(_ string) error                                 { return nil }
-func (s *stubSharedValuesRepo) ListByCluster(_ string) ([]models.SharedValues, error) { return nil, nil }
+func (s *stubSharedValuesRepo) Update(_ *models.SharedValues) error { return nil }
+func (s *stubSharedValuesRepo) Delete(_ string) error               { return nil }
+func (s *stubSharedValuesRepo) ListByCluster(_ string) ([]models.SharedValues, error) {
+	return nil, nil
+}
 
 // ---- stubTemplateVersionRepo ----
 
@@ -701,14 +759,16 @@ func (s *stubUserFavoriteRepo) IsFavorite(_, _, _ string) (bool, error)       { 
 
 type stubRefreshTokenRepo struct{}
 
-func (s *stubRefreshTokenRepo) Create(_ *models.RefreshToken) error                      { return nil }
-func (s *stubRefreshTokenRepo) FindByTokenHash(_ string) (*models.RefreshToken, error)   { return nil, nil }
-func (s *stubRefreshTokenRepo) RevokeByID(_ string) error                                { return nil }
-func (s *stubRefreshTokenRepo) RevokeByIDIfActive(_ string) (int64, error)               { return 0, nil }
-func (s *stubRefreshTokenRepo) RevokeAllForUser(_ string) error                          { return nil }
-func (s *stubRefreshTokenRepo) RevokeAllForUserExcept(_, _ string) error                 { return nil }
-func (s *stubRefreshTokenRepo) DeleteExpired() (int64, error)                            { return 0, nil }
-func (s *stubRefreshTokenRepo) CountActiveForUser(_ string) (int64, error)               { return 0, nil }
+func (s *stubRefreshTokenRepo) Create(_ *models.RefreshToken) error { return nil }
+func (s *stubRefreshTokenRepo) FindByTokenHash(_ string) (*models.RefreshToken, error) {
+	return nil, nil
+}
+func (s *stubRefreshTokenRepo) RevokeByID(_ string) error                  { return nil }
+func (s *stubRefreshTokenRepo) RevokeByIDIfActive(_ string) (int64, error) { return 0, nil }
+func (s *stubRefreshTokenRepo) RevokeAllForUser(_ string) error            { return nil }
+func (s *stubRefreshTokenRepo) RevokeAllForUserExcept(_, _ string) error   { return nil }
+func (s *stubRefreshTokenRepo) DeleteExpired() (int64, error)              { return 0, nil }
+func (s *stubRefreshTokenRepo) CountActiveForUser(_ string) (int64, error) { return 0, nil }
 func (s *stubRefreshTokenRepo) WithTx(fn func(txRepo models.RefreshTokenRepository) error) error {
 	return fn(s)
 }
@@ -725,13 +785,13 @@ func (s *stubTxRunner) RunInTx(fn func(repos database.TxRepos) error) error {
 
 type stubGenericRepo struct{}
 
-func (s *stubGenericRepo) Create(_ context.Context, _ interface{}) error              { return nil }
-func (s *stubGenericRepo) FindByID(_ context.Context, _ uint, _ interface{}) error    { return nil }
-func (s *stubGenericRepo) Update(_ context.Context, _ interface{}) error              { return nil }
-func (s *stubGenericRepo) Delete(_ context.Context, _ interface{}) error              { return nil }
+func (s *stubGenericRepo) Create(_ context.Context, _ interface{}) error                 { return nil }
+func (s *stubGenericRepo) FindByID(_ context.Context, _ uint, _ interface{}) error       { return nil }
+func (s *stubGenericRepo) Update(_ context.Context, _ interface{}) error                 { return nil }
+func (s *stubGenericRepo) Delete(_ context.Context, _ interface{}) error                 { return nil }
 func (s *stubGenericRepo) List(_ context.Context, _ interface{}, _ ...interface{}) error { return nil }
-func (s *stubGenericRepo) Ping(_ context.Context) error                               { return nil }
-func (s *stubGenericRepo) Close() error                                               { return nil }
+func (s *stubGenericRepo) Ping(_ context.Context) error                                  { return nil }
+func (s *stubGenericRepo) Close() error                                                  { return nil }
 
 // ============================================================================
 // Test helpers

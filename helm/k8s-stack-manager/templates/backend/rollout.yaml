@@ -44,6 +44,11 @@ spec:
         {{- if .Values.hooks.enabled }}
         checksum/hooks: {{ include (print $.Template.BasePath "/backend/hooks-configmap.yaml") . | sha256sum }}
         {{- end }}
+        {{- if and .Values.metrics.enabled (not .Values.metrics.serviceMonitor.enabled) }}
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "{{ .Values.metrics.port }}"
+        prometheus.io/path: "/metrics"
+        {{- end }}
         {{- if and .Values.global.appArmor.enabled (semverCompare "<1.30-0" .Capabilities.KubeVersion.Version) }}
         container.apparmor.security.beta.kubernetes.io/backend: runtime/default
         {{- end }}
@@ -96,6 +101,11 @@ spec:
             - name: http
               containerPort: {{ .Values.backend.port }}
               protocol: TCP
+            {{- if .Values.metrics.enabled }}
+            - name: metrics
+              containerPort: {{ .Values.metrics.port }}
+              protocol: TCP
+            {{- end }}
           envFrom:
             - configMapRef:
                 name: {{ include "k8s-stack-manager.fullname" . }}-backend

@@ -10,5 +10,12 @@ spec:
     - name: http
       port: {{ .Values.backend.port }}
       targetPort: http
+      protocol: TCP
+    {{- if .Values.metrics.enabled }}
+    - name: metrics
+      port: {{ .Values.metrics.port }}
+      targetPort: metrics
+      protocol: TCP
+    {{- end }}
   selector:
     {{- include "k8s-stack-manager.backend.selectorLabels" . | nindent 4 }}
