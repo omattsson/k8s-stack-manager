@@ -354,6 +354,50 @@ func TestStartHTTPServer_ReturnsValidServer(t *testing.T) {
 	assert.Equal(t, router, s.Main.Handler)
 }
 
+func TestStartHTTPServer_MetricsEnabled(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+
+	mainPort := freePort(t)
+	metricsPort := freePort(t)
+
+	cfg := &config.Config{
+		Server: config.ServerConfig{
+			Host:         "127.0.0.1",
+			Port:         fmt.Sprintf("%d", mainPort),
+			ReadTimeout:  5 * time.Second,
+			WriteTimeout: 5 * time.Second,
+			IdleTimeout:  30 * time.Second,
+		},
+		Otel: config.OtelConfig{
+			MetricsEnabled: true,
+			MetricsAddr:    fmt.Sprintf("127.0.0.1:%d", metricsPort),
+		},
+	}
+
+	tel, err := telemetry.Init(cfg.Otel)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		if tel != nil {
+			_ = tel.Shutdown(context.Background())
+		}
+	})
+
+	s := startHTTPServer(router, cfg, tel)
+	t.Cleanup(func() { shutdownServers(t, s) })
+
+	require.NotNil(t, s.Metrics, "metrics server should be set when enabled")
+
+	metricsAddr := fmt.Sprintf("127.0.0.1:%d", metricsPort)
+	waitForServer(t, metricsAddr)
+
+	client := &http.Client{Timeout: 2 * time.Second}
+	resp, err := client.Get(fmt.Sprintf("http://%s/metrics", metricsAddr))
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+}
+
 // ---- initDatabase / initRepositories ----
 //
 // These functions require a real MySQL connection, so we skip them in short
