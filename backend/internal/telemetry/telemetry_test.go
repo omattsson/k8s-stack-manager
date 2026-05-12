@@ -15,10 +15,7 @@ import (
 )
 
 func TestInit(t *testing.T) {
-
-
 	t.Run("disabled returns no-op telemetry without error", func(t *testing.T) {
-	
 		tel, err := telemetry.Init(config.OtelConfig{Enabled: false})
 		require.NoError(t, err)
 		require.NotNil(t, tel)
@@ -30,7 +27,6 @@ func TestInit(t *testing.T) {
 	})
 
 	t.Run("disabled does not set SDK tracer provider as global", func(t *testing.T) {
-	
 		_, err := telemetry.Init(config.OtelConfig{Enabled: false})
 		require.NoError(t, err)
 
@@ -42,7 +38,6 @@ func TestInit(t *testing.T) {
 	})
 
 	t.Run("disabled config returns non-nil Telemetry", func(t *testing.T) {
-	
 		tel, err := telemetry.Init(config.OtelConfig{
 			Enabled:     false,
 			Endpoint:    "localhost:4317",
@@ -55,17 +50,13 @@ func TestInit(t *testing.T) {
 }
 
 func TestTelemetry_Shutdown(t *testing.T) {
-
-
 	t.Run("shutdown on disabled telemetry does not panic", func(t *testing.T) {
-	
 		tel := &telemetry.Telemetry{}
 		err := tel.Shutdown(context.Background())
 		assert.NoError(t, err)
 	})
 
 	t.Run("shutdown on nil providers returns no error", func(t *testing.T) {
-	
 		tel, err := telemetry.Init(config.OtelConfig{Enabled: false})
 		require.NoError(t, err)
 
