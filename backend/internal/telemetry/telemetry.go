@@ -24,6 +24,8 @@ import (
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/trace"
+	noopmetric "go.opentelemetry.io/otel/metric/noop"
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
@@ -48,6 +50,8 @@ func Init(cfg config.OtelConfig) (*Telemetry, error) {
 	anyActive := cfg.Enabled || cfg.MetricsEnabled
 	if !anyActive {
 		slog.Info("OpenTelemetry disabled, using no-op providers")
+		otel.SetTracerProvider(trace.NewNoopTracerProvider())
+		otel.SetMeterProvider(noopmetric.NewMeterProvider())
 		return tel, nil
 	}
 
