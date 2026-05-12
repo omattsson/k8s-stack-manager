@@ -239,6 +239,9 @@ func shutdownServers(t *testing.T, s *servers) {
 	if s.Pprof != nil {
 		_ = s.Pprof.Shutdown(ctx)
 	}
+	if s.Metrics != nil {
+		_ = s.Metrics.Shutdown(ctx)
+	}
 }
 
 func TestStartHTTPServer_ListensOnConfiguredAddress(t *testing.T) {
