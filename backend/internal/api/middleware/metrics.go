@@ -29,17 +29,23 @@ func HTTPMetrics() gin.HandlerFunc {
 
 	meter := mp.Meter("http")
 
-	duration, _ := meter.Float64Histogram(
+	duration, err := meter.Float64Histogram(
 		"http.server.request.duration",
 		metric.WithUnit("s"),
 		metric.WithDescription("Duration of HTTP server requests."),
 	)
+	if err != nil {
+		otel.Handle(err)
+	}
 
-	total, _ := meter.Int64Counter(
+	total, err := meter.Int64Counter(
 		"http.server.request.total",
 		metric.WithUnit("{request}"),
 		metric.WithDescription("Total number of HTTP server requests."),
 	)
+	if err != nil {
+		otel.Handle(err)
+	}
 
 	return func(c *gin.Context) {
 		start := time.Now()

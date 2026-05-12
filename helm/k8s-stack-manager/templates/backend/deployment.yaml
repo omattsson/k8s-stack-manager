@@ -31,7 +31,7 @@ spec:
         {{- if and .Values.global.appArmor.enabled (semverCompare "<1.30-0" .Capabilities.KubeVersion.Version) }}
         container.apparmor.security.beta.kubernetes.io/backend: runtime/default
         {{- end }}
-        {{- if .Values.metrics.enabled }}
+        {{- if and .Values.metrics.enabled (not .Values.metrics.serviceMonitor.enabled) }}
         prometheus.io/scrape: "true"
         prometheus.io/port: "{{ .Values.metrics.port }}"
         prometheus.io/path: "/metrics"
