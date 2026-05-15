@@ -1,3 +1,4 @@
+{{- if .Values.frontend.enabled }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -16,3 +17,4 @@ data:
             try_files $uri $uri/ /index.html;
         }
     }
+{{- end }}

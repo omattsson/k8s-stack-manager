@@ -60,6 +60,7 @@ spec:
           kind: Service
           port: {{ .Values.backend.port }}
           {{- end }}
+    {{- if .Values.frontend.enabled }}
     # Everything else → frontend
     - match: {{ if .Values.ingress.host }}Host(`{{ .Values.ingress.host }}`) && {{ end }}PathPrefix(`/`)
       kind: Rule
@@ -75,6 +76,7 @@ spec:
       middlewares:
         - name: {{ include "k8s-stack-manager.fullname" . }}-secure-headers
       {{- end }}
+    {{- end }}
   {{- if .Values.ingress.traefik.tls.secretName }}
   tls:
     secretName: {{ .Values.ingress.traefik.tls.secretName }}

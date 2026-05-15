@@ -133,6 +133,11 @@ backend:
 # Frontend
 # ---------------------------------------------------------------------------
 frontend:
+  # Set to false for headless / API-only deployments — skips all frontend resources
+  # (Deployment/Rollout, Service, ConfigMap, HPA, PDB, ServiceAccount) and the
+  # ingress rule routing `/` to the frontend. The backend (/api, /ws, /health,
+  # /swagger) is unaffected.
+  enabled: true
   image:
     repository: k8s-stack-manager/frontend
     tag: ""  # Empty = uses Chart.AppVersion

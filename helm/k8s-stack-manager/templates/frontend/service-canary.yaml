@@ -1,4 +1,4 @@
-{{- if .Values.argoRollouts.enabled }}
+{{- if and .Values.frontend.enabled .Values.argoRollouts.enabled }}
 apiVersion: v1
 kind: Service
 metadata:
