@@ -3,9 +3,12 @@ package handlers
 import (
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -35,6 +38,54 @@ func redactSessionID(id string) string {
 // CLITokenRequest is the request body for polling CLI auth status.
 type CLITokenRequest struct {
 	SessionID string `json:"session_id" binding:"required"`
+}
+
+// CLIAuthRequest is the optional body for starting CLI SSO authentication.
+// When RedirectURI is a loopback URL — any IP for which net.IP.IsLoopback()
+// is true (e.g. 127.0.0.1, [::1]) or the literal hostname "localhost", with
+// http scheme and an explicit port in 1..65535 — the callback handler
+// 302-redirects the browser directly to it with tokens in the query string
+// (RFC 8252 loopback flow) instead of the HTML success page. Polling
+// cli-token still works either way.
+type CLIAuthRequest struct {
+	RedirectURI string `json:"redirect_uri,omitempty"`
+}
+
+// isLoopbackRedirect reports whether s is a syntactically valid loopback HTTP
+// URL: http://127.0.0.1:<port>, http://[::1]:<port>, or http://localhost:<port>,
+// optional path and query. Port must be 1..65535. Only http (not https) — RFC
+// 8252 §7.3 recommends http for native-app loopback. Userinfo and fragment are
+// rejected to close two smuggling vectors.
+func isLoopbackRedirect(s string) bool {
+	u, err := url.Parse(s)
+	if err != nil {
+		return false
+	}
+	if u.Scheme != "http" {
+		return false
+	}
+	if u.User != nil || u.Fragment != "" {
+		return false
+	}
+	host := u.Hostname()
+	if host == "" {
+		return false
+	}
+	if host != "localhost" {
+		ip := net.ParseIP(host)
+		if ip == nil || !ip.IsLoopback() {
+			return false
+		}
+	}
+	portStr := u.Port()
+	if portStr == "" {
+		return false
+	}
+	port, err := strconv.Atoi(portStr)
+	if err != nil || port < 1 || port > 65535 {
+		return false
+	}
+	return true
 }
 
 var cliAuthSuccessPage = []byte(`<!DOCTYPE html>
@@ -248,6 +299,29 @@ func (h *OIDCHandler) Callback(c *gin.Context) {
 			}
 			return
 		}
+
+		// RFC 8252 loopback flow: redirect to the CLI's local server with tokens
+		// as query params. The CLI's listener reads them and closes the browser
+		// tab. Polling cli-token still works as a fallback for the same session
+		// (UpdateCLIAuth above runs before this branch on purpose).
+		if stateData.LoopbackURL != "" {
+			// Merge into any existing query the CLI supplied (e.g. cli_state).
+			// LoopbackURL was validated by isLoopbackRedirect at issuance time.
+			loopURL, perr := url.Parse(stateData.LoopbackURL)
+			if perr != nil {
+				slog.Error("Stored loopback URL failed to parse", "error", perr)
+				c.Data(http.StatusInternalServerError, "text/html; charset=utf-8", []byte(`<html><body><h1>Error</h1><p>Something went wrong. Please try again.</p></body></html>`))
+				return
+			}
+			q := loopURL.Query()
+			q.Set("access_token", cliToken)
+			q.Set("token_type", "Bearer")
+			q.Set("expires_in", strconv.Itoa(int(h.authCfg.JWTExpiration.Seconds())))
+			loopURL.RawQuery = q.Encode()
+			c.Redirect(http.StatusFound, loopURL.String())
+			return
+		}
+
 		c.Data(http.StatusOK, "text/html; charset=utf-8", cliAuthSuccessPage)
 		return
 	}
@@ -265,16 +339,35 @@ func (h *OIDCHandler) Callback(c *gin.Context) {
 
 // CLIAuth godoc
 // @Summary      Start CLI SSO authentication flow
-// @Description  Generates a session ID and OIDC authorization URL for CLI-based SSO login. The CLI opens the returned login_url in a browser and polls cli-token until authentication completes.
+// @Description  Generates a session ID and OIDC authorization URL for CLI-based SSO login. The CLI opens the returned login_url in a browser and polls cli-token until authentication completes. Optionally accepts a loopback `redirect_uri` (http scheme, any loopback IP such as 127.0.0.1 or [::1], or hostname "localhost", with an explicit port) for the RFC 8252 native-app flow — the callback then 302-redirects the browser directly to that URL with tokens in the query string, no polling needed.
 // @Tags         auth
+// @Accept       json
 // @Produce      json
+// @Param        request body CLIAuthRequest false "Optional loopback redirect_uri"
 // @Success      200 {object} map[string]interface{} "session_id, login_url, expires_in"
+// @Failure      400 {object} map[string]string "invalid redirect_uri"
 // @Failure      404 {object} map[string]string
 // @Failure      500 {object} map[string]string
 // @Router       /api/v1/auth/oidc/cli-auth [post]
 func (h *OIDCHandler) CLIAuth(c *gin.Context) {
 	if !h.cfg.Enabled {
 		c.JSON(http.StatusNotFound, gin.H{"error": "OIDC is not enabled"})
+		return
+	}
+
+	// Optional body — accept empty / chunked / unknown-length bodies for
+	// backward compatibility. Body==nil (from raw http.NewRequest with nil
+	// body) is skipped; io.EOF (empty http.NoBody) is tolerated; any other
+	// JSON error is a real malformed request.
+	var req CLIAuthRequest
+	if c.Request.Body != nil {
+		if err := c.ShouldBindJSON(&req); err != nil && !errors.Is(err, io.EOF) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
+			return
+		}
+	}
+	if req.RedirectURI != "" && !isLoopbackRedirect(req.RedirectURI) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "redirect_uri must be a loopback http URL (e.g. http://127.0.0.1:<port>, http://[::1]:<port>, or http://localhost:<port>) with port 1..65535"})
 		return
 	}
 
@@ -302,6 +395,7 @@ func (h *OIDCHandler) CLIAuth(c *gin.Context) {
 	if err := h.sessionStore.SaveOIDCState(c.Request.Context(), state, sessionstore.OIDCStateData{
 		CodeVerifier: verifier,
 		RedirectURL:  "cli:" + sessionID,
+		LoopbackURL:  req.RedirectURI,
 	}, cliTTL); err != nil {
 		slog.Error("Failed to save OIDC state for CLI auth", "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})

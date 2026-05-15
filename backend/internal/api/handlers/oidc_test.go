@@ -1095,3 +1095,221 @@ func TestIsNotFoundError(t *testing.T) {
 		})
 	}
 }
+
+// ---- Loopback redirect (RFC 8252 CLI flow) ----
+
+func TestIsLoopbackRedirect(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		in   string
+		want bool
+	}{
+		{name: "127.0.0.1 with port", in: "http://127.0.0.1:54321", want: true},
+		{name: "127.0.0.1 with port and path", in: "http://127.0.0.1:54321/callback", want: true},
+		{name: "localhost with port", in: "http://localhost:54321", want: true},
+		{name: "ipv6 loopback [::1] with port", in: "http://[::1]:54321", want: true},
+		{name: "loopback with caller query", in: "http://127.0.0.1:54321/?cli_state=xyz", want: true},
+		{name: "missing port", in: "http://127.0.0.1", want: false},
+		{name: "https rejected", in: "https://127.0.0.1:54321", want: false},
+		{name: "non-loopback host", in: "http://example.com:54321", want: false},
+		{name: "192.168 not loopback", in: "http://192.168.1.1:54321", want: false},
+		{name: "userinfo rejected", in: "http://user:pass@127.0.0.1:54321", want: false},
+		{name: "fragment rejected", in: "http://127.0.0.1:54321/#x", want: false},
+		{name: "non-numeric port rejected", in: "http://127.0.0.1:abc", want: false},
+		{name: "port 0 rejected", in: "http://127.0.0.1:0", want: false},
+		{name: "port above 65535 rejected", in: "http://127.0.0.1:99999", want: false},
+		{name: "empty string", in: "", want: false},
+		{name: "garbage", in: "not a url", want: false},
+		{name: "javascript scheme", in: "javascript:alert(1)", want: false},
+		{name: "ipv4 non-loopback in IsLoopback range still rejected", in: "http://10.0.0.1:54321", want: false},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tt.want, isLoopbackRedirect(tt.in))
+		})
+	}
+}
+
+func TestOIDCCLIAuth_AcceptsLoopbackRedirect(t *testing.T) {
+	t.Parallel()
+
+	h, store, _ := newOIDCHandlerSetup(t, false)
+	r := setupOIDCRouter(h.CLIAuth, http.MethodPost, "/api/v1/auth/oidc/cli-auth")
+
+	w := httptest.NewRecorder()
+	body := `{"redirect_uri":"http://127.0.0.1:54321"}`
+	req, err := http.NewRequest(http.MethodPost, "/api/v1/auth/oidc/cli-auth", strings.NewReader(body))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var resp map[string]any
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+	assert.NotEmpty(t, resp["session_id"])
+
+	// Extract state from login_url and verify the loopback URL was persisted.
+	loginURL, _ := resp["login_url"].(string)
+	parsed, err := url.Parse(loginURL)
+	require.NoError(t, err)
+	state := parsed.Query().Get("state")
+	require.NotEmpty(t, state)
+
+	stateData, err := store.ConsumeOIDCState(context.Background(), state)
+	require.NoError(t, err)
+	require.NotNil(t, stateData)
+	assert.Equal(t, "http://127.0.0.1:54321", stateData.LoopbackURL)
+}
+
+func TestOIDCCLIAuth_RejectsNonLoopbackRedirect(t *testing.T) {
+	t.Parallel()
+
+	h, _, _ := newOIDCHandlerSetup(t, false)
+	r := setupOIDCRouter(h.CLIAuth, http.MethodPost, "/api/v1/auth/oidc/cli-auth")
+
+	w := httptest.NewRecorder()
+	body := `{"redirect_uri":"https://evil.example.com/steal"}`
+	req, err := http.NewRequest(http.MethodPost, "/api/v1/auth/oidc/cli-auth", strings.NewReader(body))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusBadRequest, w.Code)
+	var resp map[string]string
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+	assert.Contains(t, resp["error"], "loopback")
+}
+
+func TestOIDCCLIAuth_NoBodyStillWorks(t *testing.T) {
+	t.Parallel()
+
+	h, _, _ := newOIDCHandlerSetup(t, false)
+	r := setupOIDCRouter(h.CLIAuth, http.MethodPost, "/api/v1/auth/oidc/cli-auth")
+
+	w := httptest.NewRecorder()
+	req, err := http.NewRequest(http.MethodPost, "/api/v1/auth/oidc/cli-auth", nil)
+	require.NoError(t, err)
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code, "empty body must remain backward-compatible")
+}
+
+// Chunked / unknown-length bodies have ContentLength == -1. The earlier
+// implementation gated body parsing on `ContentLength > 0` which silently
+// dropped these requests; this test guards against the regression.
+func TestOIDCCLIAuth_AcceptsChunkedBody(t *testing.T) {
+	t.Parallel()
+
+	h, store, _ := newOIDCHandlerSetup(t, false)
+	r := setupOIDCRouter(h.CLIAuth, http.MethodPost, "/api/v1/auth/oidc/cli-auth")
+
+	body := `{"redirect_uri":"http://127.0.0.1:54321"}`
+	req, err := http.NewRequest(http.MethodPost, "/api/v1/auth/oidc/cli-auth", strings.NewReader(body))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+	// Force chunked-transfer semantics — Go's http server reports ContentLength=-1 here.
+	req.ContentLength = -1
+	req.TransferEncoding = []string{"chunked"}
+
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var resp map[string]any
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+	loginURL, _ := resp["login_url"].(string)
+	parsed, err := url.Parse(loginURL)
+	require.NoError(t, err)
+	state := parsed.Query().Get("state")
+	stateData, err := store.ConsumeOIDCState(context.Background(), state)
+	require.NoError(t, err)
+	require.NotNil(t, stateData)
+	assert.Equal(t, "http://127.0.0.1:54321", stateData.LoopbackURL, "chunked body must be parsed, not skipped")
+}
+
+func TestOIDCCallback_LoopbackRedirect(t *testing.T) {
+	t.Parallel()
+
+	h, stateStore, _ := newOIDCHandlerSetup(t, false)
+
+	sessionID := "cli-session-loopback"
+	loopback := "http://127.0.0.1:54321"
+
+	require.NoError(t, stateStore.SaveOIDCState(context.Background(), "valid-state-loop", sessionstore.OIDCStateData{
+		CodeVerifier: "test-verifier",
+		RedirectURL:  "cli:" + sessionID,
+		LoopbackURL:  loopback,
+	}, 5*time.Minute))
+	require.NoError(t, stateStore.SaveCLIAuth(context.Background(), sessionID, sessionstore.CLIAuthData{
+		Status: "pending",
+	}, 10*time.Minute))
+
+	r := setupOIDCRouter(h.Callback, http.MethodGet, "/api/v1/auth/oidc/callback")
+	w := httptest.NewRecorder()
+	req, err := http.NewRequest(http.MethodGet, "/api/v1/auth/oidc/callback?code=test-code&state=valid-state-loop", nil)
+	require.NoError(t, err)
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusFound, w.Code, "loopback flow must 302")
+	location := w.Header().Get("Location")
+	require.NotEmpty(t, location)
+
+	parsed, err := url.Parse(location)
+	require.NoError(t, err)
+	assert.Equal(t, "http", parsed.Scheme)
+	assert.Equal(t, "127.0.0.1:54321", parsed.Host)
+	q := parsed.Query()
+	assert.NotEmpty(t, q.Get("access_token"), "access_token must be in query")
+	assert.Equal(t, "Bearer", q.Get("token_type"))
+	assert.NotEmpty(t, q.Get("expires_in"))
+
+	// Polling fallback should still see the completed session.
+	data, err := stateStore.GetCLIAuth(context.Background(), sessionID)
+	require.NoError(t, err)
+	require.NotNil(t, data)
+	assert.Equal(t, "completed", data.Status)
+	assert.NotEmpty(t, data.Token)
+}
+
+func TestOIDCCallback_LoopbackRedirect_PreservesCallerQuery(t *testing.T) {
+	t.Parallel()
+
+	h, stateStore, _ := newOIDCHandlerSetup(t, false)
+
+	sessionID := "cli-session-loopback-q"
+	loopback := "http://127.0.0.1:54321/cb?cli_state=xyz"
+
+	require.NoError(t, stateStore.SaveOIDCState(context.Background(), "valid-state-loopq", sessionstore.OIDCStateData{
+		CodeVerifier: "test-verifier",
+		RedirectURL:  "cli:" + sessionID,
+		LoopbackURL:  loopback,
+	}, 5*time.Minute))
+	require.NoError(t, stateStore.SaveCLIAuth(context.Background(), sessionID, sessionstore.CLIAuthData{
+		Status: "pending",
+	}, 10*time.Minute))
+
+	r := setupOIDCRouter(h.Callback, http.MethodGet, "/api/v1/auth/oidc/callback")
+	w := httptest.NewRecorder()
+	req, err := http.NewRequest(http.MethodGet, "/api/v1/auth/oidc/callback?code=test-code&state=valid-state-loopq", nil)
+	require.NoError(t, err)
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusFound, w.Code)
+	parsed, err := url.Parse(w.Header().Get("Location"))
+	require.NoError(t, err)
+	assert.Equal(t, "/cb", parsed.Path)
+
+	q := parsed.Query()
+	assert.Equal(t, "xyz", q.Get("cli_state"), "caller-supplied query param must be preserved")
+	assert.NotEmpty(t, q.Get("access_token"))
+	assert.Equal(t, "Bearer", q.Get("token_type"))
+	assert.NotEmpty(t, q.Get("expires_in"))
+	// Each key must appear exactly once — no `?` smuggling.
+	assert.Len(t, q["cli_state"], 1)
+	assert.Len(t, q["access_token"], 1)
+}

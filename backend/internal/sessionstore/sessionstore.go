@@ -11,6 +11,16 @@ var ErrSessionNotFound = errors.New("session not found or expired")
 type OIDCStateData struct {
 	CodeVerifier string `json:"code_verifier"`
 	RedirectURL  string `json:"redirect_url"`
+	// LoopbackURL, when set, is a validated loopback http URL supplied by a
+	// CLI client running a local HTTP listener (RFC 8252 native-app loopback
+	// flow). Accepted forms: any IP for which net.IP.IsLoopback() is true
+	// (e.g. http://127.0.0.1:<port>, http://[::1]:<port>) or the literal
+	// hostname http://localhost:<port>, with port in 1..65535. See
+	// handlers.isLoopbackRedirect for the authoritative validator. When set
+	// on a CLI session, the callback handler 302-redirects the browser to
+	// this URL with tokens as query params instead of the usual HTML
+	// success page.
+	LoopbackURL string `json:"loopback_url,omitempty"`
 }
 
 type CLIAuthData struct {
