@@ -1,16 +1,26 @@
-.PHONY: dev dev-otel seed dev-backend dev-frontend dev-local dev-local-backend dev-local-frontend prod prod-backend prod-frontend build clean prune test test-backend test-backend-integration test-backend-all test-frontend test-e2e integration-infra-start integration-infra-stop install docs fmt lint loadtest loadtest-start loadtest-start-backend loadtest-start-frontend loadtest-stop loadtest-stop-backend loadtest-stop-frontend loadtest-backend loadtest-backend-run loadtest-stress loadtest-stress-run loadtest-frontend loadtest-frontend-run
+.PHONY: dev dev-otel dev-api-only compose-api-only seed dev-backend dev-frontend dev-local dev-local-backend dev-local-frontend prod prod-backend prod-frontend build clean prune test test-backend test-backend-integration test-backend-all test-frontend test-e2e integration-infra-start integration-infra-stop install docs fmt lint loadtest loadtest-start loadtest-start-backend loadtest-start-frontend loadtest-stop loadtest-stop-backend loadtest-stop-frontend loadtest-backend loadtest-backend-run loadtest-stress loadtest-stress-run loadtest-frontend loadtest-frontend-run
 
 # Development mode for both services
 dev:
-	NODE_ENV=development GO_ENV=development PORT=3000 BACKEND_PORT=8081 GIN_MODE=debug docker compose up --build --remove-orphans
+	NODE_ENV=development GO_ENV=development PORT=3000 BACKEND_PORT=8081 GIN_MODE=debug docker compose --profile full up --build --remove-orphans
 
 # Development mode with local K8s cluster access (rancher-desktop, Docker Desktop K8s, etc.)
 dev-k8s:
-	NODE_ENV=development GO_ENV=development PORT=3000 BACKEND_PORT=8081 GIN_MODE=debug docker compose -f docker-compose.yml -f docker-compose.k8s.yml up --build --remove-orphans
+	NODE_ENV=development GO_ENV=development PORT=3000 BACKEND_PORT=8081 GIN_MODE=debug docker compose --profile full -f docker-compose.yml -f docker-compose.k8s.yml up --build --remove-orphans
 
 # Development mode with OpenTelemetry observability stack (Jaeger + Prometheus)
 dev-otel: ## Start full stack with OpenTelemetry (Jaeger UI: :16686, Prometheus: :9090)
-	NODE_ENV=development GO_ENV=development PORT=3000 BACKEND_PORT=8081 GIN_MODE=debug docker compose --profile otel -f docker-compose.yml -f docker-compose.otel.yml up --build --remove-orphans
+	NODE_ENV=development GO_ENV=development PORT=3000 BACKEND_PORT=8081 GIN_MODE=debug docker compose --profile full --profile otel -f docker-compose.yml -f docker-compose.otel.yml up --build --remove-orphans
+
+# Headless / API-only mode (no frontend container) — pair with stackctl as the client.
+# COMPOSE_PROFILES=api-only on the recipe line so an existing .env with
+# COMPOSE_PROFILES=full cannot accidentally pull in the frontend.
+dev-api-only: ## Start backend + mysql only, no frontend (for stackctl-driven workflows)
+	COMPOSE_PROFILES=api-only GO_ENV=development BACKEND_PORT=8081 GIN_MODE=debug docker compose up --build --remove-orphans
+
+# Same as dev-api-only without the dev-mode env vars — exact API-only baseline
+compose-api-only: ## Start backend + mysql only with default env (matches Helm frontend.enabled=false)
+	COMPOSE_PROFILES=api-only docker compose up --build --remove-orphans
 
 seed: ## Seed dev environment with sample data (requires running dev stack)
 	@./scripts/seed-dev-data.sh
@@ -25,7 +35,7 @@ dev-frontend:
 
 # Production mode for both services
 prod:
-	NODE_ENV=production GO_ENV=production PORT=80 BACKEND_PORT=8080 GIN_MODE=release docker compose up --build --remove-orphans
+	NODE_ENV=production GO_ENV=production PORT=80 BACKEND_PORT=8080 GIN_MODE=release docker compose --profile full up --build --remove-orphans
 
 # Production mode for backend only
 prod-backend:

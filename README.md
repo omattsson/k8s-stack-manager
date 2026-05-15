@@ -114,6 +114,7 @@ Backend (Go + Gin)
 ### Start with Docker Compose
 
 ```bash
+cp .env.example .env   # first time only — sets COMPOSE_PROFILES=full
 make dev
 ```
 
@@ -123,6 +124,31 @@ This starts all services:
 - **Swagger docs**: http://localhost:8081/swagger/index.html
 
 Default admin credentials: `admin` / `admin` (configured in docker-compose.yml).
+
+### Headless / API-only
+
+For workflows driven by [stackctl](https://github.com/omattsson/stackctl), you can
+skip the frontend container entirely:
+
+```bash
+make compose-api-only
+```
+
+`docker-compose.yml` tags the frontend service with `profiles: [full]`, so it
+only runs when that profile is active. `.env.example` sets
+`COMPOSE_PROFILES=full` by default — drop or override it to go headless:
+
+```bash
+COMPOSE_PROFILES=api-only docker compose up
+```
+
+> **Upgrading from a previous checkout?** If you have an existing `.env` from
+> before this change, add `COMPOSE_PROFILES=full` to it (or `cp .env.example
+> .env` afresh) — otherwise `docker compose up` will now start the headless
+> stack. `make dev` / `make prod` force `--profile full` and are unaffected.
+
+The matching Helm toggle is `frontend.enabled=false` (see the chart's
+`values.yaml`).
 
 ### Start Locally (without Docker)
 
@@ -139,6 +165,7 @@ cd frontend && npm install && npm run dev
 | Command | Description |
 |---|---|
 | `make dev` | Start full stack via Docker Compose |
+| `make compose-api-only` | Start backend + mysql only (headless, no frontend) |
 | `make dev-local` | Run backend + frontend locally |
 | `make test` | Run all tests (backend + frontend) |
 | `make test-backend` | Backend unit tests |
