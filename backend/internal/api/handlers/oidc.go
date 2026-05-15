@@ -3,6 +3,7 @@ package handlers
 import (
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -40,10 +41,12 @@ type CLITokenRequest struct {
 }
 
 // CLIAuthRequest is the optional body for starting CLI SSO authentication.
-// When RedirectURI is a loopback URL (http://127.0.0.1:<port> or
-// http://localhost:<port>), the callback handler 302-redirects the browser
-// directly to it with tokens in the query string (RFC 8252 loopback flow)
-// instead of the HTML success page. Polling cli-token still works either way.
+// When RedirectURI is a loopback URL — any IP for which net.IP.IsLoopback()
+// is true (e.g. 127.0.0.1, [::1]) or the literal hostname "localhost", with
+// http scheme and an explicit port in 1..65535 — the callback handler
+// 302-redirects the browser directly to it with tokens in the query string
+// (RFC 8252 loopback flow) instead of the HTML success page. Polling
+// cli-token still works either way.
 type CLIAuthRequest struct {
 	RedirectURI string `json:"redirect_uri,omitempty"`
 }
@@ -336,7 +339,7 @@ func (h *OIDCHandler) Callback(c *gin.Context) {
 
 // CLIAuth godoc
 // @Summary      Start CLI SSO authentication flow
-// @Description  Generates a session ID and OIDC authorization URL for CLI-based SSO login. The CLI opens the returned login_url in a browser and polls cli-token until authentication completes. Optionally accepts a loopback `redirect_uri` (http://127.0.0.1:<port>) for the RFC 8252 native-app flow — the callback then 302-redirects the browser directly to that URL with tokens in the query string, no polling needed.
+// @Description  Generates a session ID and OIDC authorization URL for CLI-based SSO login. The CLI opens the returned login_url in a browser and polls cli-token until authentication completes. Optionally accepts a loopback `redirect_uri` (http scheme, any loopback IP such as 127.0.0.1 or [::1], or hostname "localhost", with an explicit port) for the RFC 8252 native-app flow — the callback then 302-redirects the browser directly to that URL with tokens in the query string, no polling needed.
 // @Tags         auth
 // @Accept       json
 // @Produce      json
@@ -352,16 +355,19 @@ func (h *OIDCHandler) CLIAuth(c *gin.Context) {
 		return
 	}
 
-	// Optional body — empty body is supported for backward compatibility.
+	// Optional body — accept empty / chunked / unknown-length bodies for
+	// backward compatibility. Body==nil (from raw http.NewRequest with nil
+	// body) is skipped; io.EOF (empty http.NoBody) is tolerated; any other
+	// JSON error is a real malformed request.
 	var req CLIAuthRequest
-	if c.Request.ContentLength > 0 {
-		if err := c.ShouldBindJSON(&req); err != nil {
+	if c.Request.Body != nil {
+		if err := c.ShouldBindJSON(&req); err != nil && !errors.Is(err, io.EOF) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
 			return
 		}
 	}
 	if req.RedirectURI != "" && !isLoopbackRedirect(req.RedirectURI) {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "redirect_uri must be a loopback URL (http://127.0.0.1:<port> or http://localhost:<port>)"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "redirect_uri must be a loopback http URL (e.g. http://127.0.0.1:<port>, http://[::1]:<port>, or http://localhost:<port>) with port 1..65535"})
 		return
 	}
 

@@ -1199,6 +1199,39 @@ func TestOIDCCLIAuth_NoBodyStillWorks(t *testing.T) {
 	require.Equal(t, http.StatusOK, w.Code, "empty body must remain backward-compatible")
 }
 
+// Chunked / unknown-length bodies have ContentLength == -1. The earlier
+// implementation gated body parsing on `ContentLength > 0` which silently
+// dropped these requests; this test guards against the regression.
+func TestOIDCCLIAuth_AcceptsChunkedBody(t *testing.T) {
+	t.Parallel()
+
+	h, store, _ := newOIDCHandlerSetup(t, false)
+	r := setupOIDCRouter(h.CLIAuth, http.MethodPost, "/api/v1/auth/oidc/cli-auth")
+
+	body := `{"redirect_uri":"http://127.0.0.1:54321"}`
+	req, err := http.NewRequest(http.MethodPost, "/api/v1/auth/oidc/cli-auth", strings.NewReader(body))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+	// Force chunked-transfer semantics — Go's http server reports ContentLength=-1 here.
+	req.ContentLength = -1
+	req.TransferEncoding = []string{"chunked"}
+
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var resp map[string]any
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+	loginURL, _ := resp["login_url"].(string)
+	parsed, err := url.Parse(loginURL)
+	require.NoError(t, err)
+	state := parsed.Query().Get("state")
+	stateData, err := store.ConsumeOIDCState(context.Background(), state)
+	require.NoError(t, err)
+	require.NotNil(t, stateData)
+	assert.Equal(t, "http://127.0.0.1:54321", stateData.LoopbackURL, "chunked body must be parsed, not skipped")
+}
+
 func TestOIDCCallback_LoopbackRedirect(t *testing.T) {
 	t.Parallel()
 
