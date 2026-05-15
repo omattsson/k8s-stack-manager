@@ -83,6 +83,11 @@ definitions:
       template_name:
         type: string
     type: object
+  handlers.CLIAuthRequest:
+    properties:
+      redirect_uri:
+        type: string
+    type: object
   handlers.CLITokenRequest:
     properties:
       session_id:
@@ -605,6 +610,20 @@ definitions:
       entity_type:
         type: string
     type: object
+  handlers.createChannelRequest:
+    properties:
+      enabled:
+        type: boolean
+      name:
+        type: string
+      secret:
+        type: string
+      webhook_url:
+        type: string
+    required:
+    - name
+    - webhook_url
+    type: object
   handlers.extendTTLRequest:
     properties:
       ttl_minutes:
@@ -615,6 +634,23 @@ definitions:
       parameters:
         additionalProperties: {}
         type: object
+    type: object
+  handlers.notificationChannelWithCount:
+    properties:
+      created_at:
+        type: string
+      enabled:
+        type: boolean
+      id:
+        type: string
+      name:
+        type: string
+      subscription_count:
+        type: integer
+      updated_at:
+        type: string
+      webhook_url:
+        type: string
     type: object
   handlers.quickDeployRequest:
     properties:
@@ -669,6 +705,17 @@ definitions:
         example: 10Gi
         type: string
     type: object
+  handlers.updateChannelRequest:
+    properties:
+      enabled:
+        type: boolean
+      name:
+        type: string
+      secret:
+        type: string
+      webhook_url:
+        type: string
+    type: object
   handlers.updatePreferenceRequest:
     properties:
       channel:
@@ -677,6 +724,13 @@ definitions:
         type: boolean
       event_type:
         type: string
+    type: object
+  handlers.updateSubscriptionsRequest:
+    properties:
+      event_types:
+        items:
+          type: string
+        type: array
     type: object
   handlers.versionDetailResponse:
     properties:
@@ -1199,6 +1253,21 @@ definitions:
       user_id:
         type: string
     type: object
+  models.NotificationChannel:
+    properties:
+      created_at:
+        type: string
+      enabled:
+        type: boolean
+      id:
+        type: string
+      name:
+        type: string
+      updated_at:
+        type: string
+      webhook_url:
+        type: string
+    type: object
   models.NotificationPreference:
     properties:
       channel:
@@ -1696,6 +1765,368 @@ paths:
       summary: Run a cleanup policy manually
       tags:
       - cleanup-policies
+  /api/v1/admin/notification-channels:
+    get:
+      description: Returns all notification channels with subscription counts
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/handlers.notificationChannelWithCount'
+            type: array
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List all notification channels
+      tags:
+      - notification-channels
+    post:
+      consumes:
+      - application/json
+      description: Creates a new notification channel
+      parameters:
+      - description: Channel
+        in: body
+        name: channel
+        required: true
+        schema:
+          $ref: '#/definitions/handlers.createChannelRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/models.NotificationChannel'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "409":
+          description: Conflict
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Create a notification channel
+      tags:
+      - notification-channels
+  /api/v1/admin/notification-channels/{id}:
+    delete:
+      description: Deletes a notification channel and its subscriptions
+      parameters:
+      - description: Channel ID
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "204":
+          description: No Content
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Delete a notification channel
+      tags:
+      - notification-channels
+    get:
+      description: Returns a notification channel by ID
+      parameters:
+      - description: Channel ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.NotificationChannel'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get a notification channel
+      tags:
+      - notification-channels
+    put:
+      consumes:
+      - application/json
+      description: Updates an existing notification channel
+      parameters:
+      - description: Channel ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Channel updates
+        in: body
+        name: channel
+        required: true
+        schema:
+          $ref: '#/definitions/handlers.updateChannelRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.NotificationChannel'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "409":
+          description: Conflict
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Update a notification channel
+      tags:
+      - notification-channels
+  /api/v1/admin/notification-channels/{id}/delivery-logs:
+    get:
+      description: Returns paginated delivery logs for a notification channel
+      parameters:
+      - description: Channel ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Page size (default 20)
+        in: query
+        name: limit
+        type: integer
+      - description: Offset (default 0)
+        in: query
+        name: offset
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List delivery logs for a channel
+      tags:
+      - notification-channels
+  /api/v1/admin/notification-channels/{id}/subscriptions:
+    get:
+      description: Returns event type subscriptions for a channel
+      parameters:
+      - description: Channel ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get channel subscriptions
+      tags:
+      - notification-channels
+    put:
+      consumes:
+      - application/json
+      description: Replaces all event type subscriptions for a channel
+      parameters:
+      - description: Channel ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Event types
+        in: body
+        name: subscriptions
+        required: true
+        schema:
+          $ref: '#/definitions/handlers.updateSubscriptionsRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Update channel subscriptions
+      tags:
+      - notification-channels
+  /api/v1/admin/notification-channels/{id}/test:
+    post:
+      description: Sends a test payload to the channel's webhook URL
+      parameters:
+      - description: Channel ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Test a notification channel
+      tags:
+      - notification-channels
+  /api/v1/admin/notification-channels/event-types:
+    get:
+      description: Returns all known event types that channels can subscribe to
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List all event types
+      tags:
+      - notification-channels
   /api/v1/admin/orphaned-namespaces:
     get:
       description: Lists all Kubernetes namespaces matching the stack-* pattern that
@@ -2149,9 +2580,21 @@ paths:
       - auth
   /api/v1/auth/oidc/cli-auth:
     post:
+      consumes:
+      - application/json
       description: Generates a session ID and OIDC authorization URL for CLI-based
         SSO login. The CLI opens the returned login_url in a browser and polls cli-token
-        until authentication completes.
+        until authentication completes. Optionally accepts a loopback `redirect_uri`
+        (http scheme, any loopback IP such as 127.0.0.1 or [::1], or hostname "localhost",
+        with an explicit port) for the RFC 8252 native-app flow — the callback then
+        302-redirects the browser directly to that URL with tokens in the query string,
+        no polling needed.
+      parameters:
+      - description: Optional loopback redirect_uri
+        in: body
+        name: request
+        schema:
+          $ref: '#/definitions/handlers.CLIAuthRequest'
       produces:
       - application/json
       responses:
@@ -2159,6 +2602,12 @@ paths:
           description: session_id, login_url, expires_in
           schema:
             additionalProperties: true
+            type: object
+        "400":
+          description: invalid redirect_uri
+          schema:
+            additionalProperties:
+              type: string
             type: object
         "404":
           description: Not Found
@@ -3509,7 +3958,6 @@ paths:
           description: OK
           schema:
             additionalProperties:
-              format: int64
               type: integer
             type: object
         "401":
