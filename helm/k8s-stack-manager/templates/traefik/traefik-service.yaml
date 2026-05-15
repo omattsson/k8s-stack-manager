@@ -15,6 +15,7 @@ spec:
       - name: {{ include "k8s-stack-manager.backend.canaryService" . }}
         port: {{ .Values.backend.port }}
         weight: 0
+{{- if .Values.frontend.enabled }}
 ---
 # TraefikService for frontend: Argo Rollouts manages the weights during canary rollouts.
 apiVersion: traefik.io/v1alpha1
@@ -32,4 +33,5 @@ spec:
       - name: {{ include "k8s-stack-manager.frontend.canaryService" . }}
         port: {{ .Values.frontend.port }}
         weight: 0
+{{- end }}
 {{- end }}

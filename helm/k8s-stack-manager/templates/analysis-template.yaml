@@ -22,10 +22,10 @@ spec:
           url: "http://{{ "{{" }}args.service-name{{ "}}" }}:{{ "{{" }}args.port{{ "}}" }}/health/ready"
           jsonPath: "{$.status}"
 {{- end }}
-{{- if and .Values.backend.rollout.analysis.enabled .Values.frontend.rollout.analysis.enabled }}
+{{- if and .Values.backend.rollout.analysis.enabled .Values.frontend.enabled .Values.frontend.rollout.analysis.enabled }}
 ---
 {{- end }}
-{{- if .Values.frontend.rollout.analysis.enabled }}
+{{- if and .Values.frontend.enabled .Values.frontend.rollout.analysis.enabled }}
 apiVersion: argoproj.io/v1alpha1
 kind: AnalysisTemplate
 metadata:

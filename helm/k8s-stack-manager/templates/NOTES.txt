@@ -25,6 +25,7 @@ Ingress: Standard Kubernetes Ingress
 Ingress: Disabled (type: none)
 
   Access via port-forward:
+    {{- if .Values.frontend.enabled }}
     # Frontend + API (full app):
     kubectl port-forward svc/{{ include "k8s-stack-manager.frontend.serviceName" . }} 3000:{{ .Values.frontend.port }}
     kubectl port-forward svc/{{ include "k8s-stack-manager.backend.serviceName" . }} 8081:{{ .Values.backend.port }}
@@ -34,6 +35,14 @@ Ingress: Disabled (type: none)
 
   NOTE: Port-forwarding runs two separate origins. For full-app testing,
         use an ingress type or configure CORS_ALLOWED_ORIGINS accordingly.
+    {{- else }}
+    # API only (frontend.enabled=false):
+    kubectl port-forward svc/{{ include "k8s-stack-manager.backend.serviceName" . }} 8081:{{ .Values.backend.port }}
+
+    Backend API: http://localhost:8081
+
+  NOTE: Headless / API-only mode — use stackctl as the client.
+    {{- end }}
 
 {{- end }}
 
@@ -41,12 +50,16 @@ Ingress: Disabled (type: none)
 
 Watch rollout status:
   kubectl argo rollouts get rollout {{ include "k8s-stack-manager.fullname" . }}-backend --watch
+{{- if .Values.frontend.enabled }}
   kubectl argo rollouts get rollout {{ include "k8s-stack-manager.fullname" . }}-frontend --watch
+{{- end }}
 {{- else }}
 
 Watch deployment status:
   kubectl rollout status deployment/{{ include "k8s-stack-manager.fullname" . }}-backend
+{{- if .Values.frontend.enabled }}
   kubectl rollout status deployment/{{ include "k8s-stack-manager.fullname" . }}-frontend
+{{- end }}
 {{- end }}
 
 {{- if eq .Values.backend.secrets.JWT_SECRET "CHANGE-ME-generate-a-random-secret" }}
