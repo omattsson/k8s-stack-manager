@@ -94,6 +94,11 @@ services:
       - backend_go_mod:/go/pkg/mod
 
   frontend:
+    # In the `full` profile so the stack can run headless (api-only) when this
+    # profile is not active. The shipped .env.example sets COMPOSE_PROFILES=full
+    # so users who copy it keep the default full-stack behavior; for headless
+    # dev use `COMPOSE_PROFILES=api-only docker compose up` or `make compose-api-only`.
+    profiles: [full]
     build:
       context: ./frontend
       dockerfile: Dockerfile
