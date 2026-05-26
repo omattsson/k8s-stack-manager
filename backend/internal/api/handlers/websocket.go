@@ -61,6 +61,15 @@ func (h *WebSocketHandler) HandleWebSocket(c *gin.Context) {
 	// fallback exists so handler unit tests don't need to register
 	// the middleware to exercise the query path.
 	tokenStr, viaSubprotocol := extractSubprotocolToken(c.GetHeader("Sec-WebSocket-Protocol"))
+	// If the client explicitly chose subprotocol auth but the JWT half
+	// is missing, 401 immediately. Falling through to Authorization /
+	// query would silently switch the credential source — the caller's
+	// intent (and audit trail) is "auth via subprotocol", not whatever
+	// other header happens to be set.
+	if viaSubprotocol && tokenStr == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Authentication required"})
+		return
+	}
 	if tokenStr == "" {
 		if authHeader := c.GetHeader("Authorization"); authHeader != "" {
 			parts := strings.SplitN(authHeader, " ", 2)
@@ -125,42 +134,64 @@ func (h *WebSocketHandler) HandleWebSocket(c *gin.Context) {
 // blank — so the upgrade can still 401 cleanly rather than silently
 // falling through to other auth methods).
 //
-// The header is a comma-separated list per RFC 6455 §11.3.4. We accept
-// any ordering and any number of additional subprotocols; the only
-// requirement is that both "bearer" (case-insensitive) AND a non-empty
-// second token appear. Whitespace around each entry is trimmed.
+// The header is a comma-separated list per RFC 6455 §11.3.4. The
+// credential is the subprotocol IMMEDIATELY adjacent to the bearer
+// marker — preferring the one AFTER (`bearer, <jwt>`) over the one
+// BEFORE (`<jwt>, bearer`). Non-adjacent subprotocols (e.g. a
+// `graphql-ws` declared earlier in the header) are tolerated but
+// ignored — they MUST NOT be picked as the credential, otherwise an
+// arbitrary non-JWT string ends up validated as a JWT (auth fails
+// noisily, but the parser was wrong).
 //
-// Returns ("", false) when the header is empty or does not contain a
-// bearer marker — the handler then falls back to the next auth method.
+// Returns ("", false) when the header is empty or contains no bearer
+// marker — the handler then falls back to the next auth method.
+// Returns ("", true) when the bearer marker is present but no usable
+// adjacent token exists — the handler MUST 401 rather than fall through
+// to other auth methods (the client explicitly chose subprotocol auth,
+// so silently switching credentials would be wrong).
 func extractSubprotocolToken(header string) (token string, viaSubprotocol bool) {
 	if header == "" {
 		return "", false
 	}
-	parts := strings.Split(header, ",")
-	var (
-		seenBearer bool
-		candidate  string
-	)
-	for _, raw := range parts {
-		p := strings.TrimSpace(raw)
-		if p == "" {
+	// Pre-clean: trim and drop empty entries so adjacency works on the
+	// caller-meaningful subprotocols only.
+	rawParts := strings.Split(header, ",")
+	parts := make([]string, 0, len(rawParts))
+	for _, raw := range rawParts {
+		if p := strings.TrimSpace(raw); p != "" {
+			parts = append(parts, p)
+		}
+	}
+
+	isBearer := func(s string) bool { return strings.EqualFold(s, wsSubprotocolBearer) }
+
+	// Pass 1: prefer the canonical `bearer, <jwt>` form. The first
+	// non-bearer subprotocol immediately after a bearer marker wins.
+	seenBearer := false
+	for i, p := range parts {
+		if !isBearer(p) {
 			continue
 		}
-		if strings.EqualFold(p, wsSubprotocolBearer) {
-			seenBearer = true
+		seenBearer = true
+		if i+1 < len(parts) && !isBearer(parts[i+1]) {
+			return parts[i+1], true
+		}
+	}
+	// Pass 2: tolerate the reversed `<jwt>, bearer` form. The spec puts
+	// the most-preferred subprotocol first; some clients put their
+	// credential before the marker.
+	for i, p := range parts {
+		if !isBearer(p) {
 			continue
 		}
-		// First non-bearer subprotocol is the credential candidate. We
-		// don't try to be clever about ordering — if the client puts
-		// the token first and the marker second, that's still valid.
-		if candidate == "" {
-			candidate = p
+		if i > 0 && !isBearer(parts[i-1]) {
+			return parts[i-1], true
 		}
 	}
 	if !seenBearer {
 		return "", false
 	}
-	return candidate, true
+	return "", true
 }
 
 // checkOrigin validates the request origin against the configured allowed origins.

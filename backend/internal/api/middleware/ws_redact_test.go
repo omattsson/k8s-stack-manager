@@ -101,6 +101,41 @@ func TestRedactWSToken_NoTokenIsNoOp(t *testing.T) {
 	assert.Empty(t, stashed, "no token in URL → empty stash")
 }
 
+// TestRedactWSToken_EmptyTokenValueStillScrubbed locks the contract
+// "the key `token` is stripped regardless of its value". A request like
+// `/ws?token=` would leak the `token=` literal in RawQuery if the
+// middleware early-returned on `q.Get("token") == ""` — a real failure
+// mode if a browser's token-injection script half-fires.
+func TestRedactWSToken_EmptyTokenValueStillScrubbed(t *testing.T) {
+	t.Parallel()
+	gin.SetMode(gin.TestMode)
+
+	var (
+		seenRawQuery string
+		stashed      string
+	)
+	router := gin.New()
+	router.Use(RedactWSToken())
+	router.Use(func(c *gin.Context) {
+		seenRawQuery = c.Request.URL.RawQuery
+		c.Next()
+	})
+	router.GET("/ws", func(c *gin.Context) {
+		stashed = WSTokenFromContext(c)
+		c.Status(http.StatusOK)
+	})
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/ws?token=&keep=this", nil)
+	req.RequestURI = req.URL.RequestURI()
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.NotContains(t, seenRawQuery, "token", "empty `?token=` key must still be stripped from RawQuery")
+	assert.Contains(t, seenRawQuery, "keep=this", "non-sensitive query params must survive")
+	assert.Empty(t, stashed, "empty value must not be stashed — the handler treats this as 'no credential'")
+}
+
 func TestRedactWSToken_MatchesDescendantPathsButNotLookalikes(t *testing.T) {
 	t.Parallel()
 	gin.SetMode(gin.TestMode)

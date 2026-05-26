@@ -42,13 +42,19 @@ func RedactWSToken() gin.HandlerFunc {
 			return
 		}
 		q := c.Request.URL.Query()
-		token := q.Get("token")
-		if token == "" {
+		// Check key presence (not value!) so `/ws?token=` is scrubbed
+		// just like `/ws?token=<jwt>` is. Leaving `token=` in the URL
+		// would still leak the param name in access logs and confuse
+		// log-scanning tools looking for "this request had token=…".
+		if _, hasToken := q["token"]; !hasToken {
 			c.Next()
 			return
 		}
-		// Stash for the handler.
-		c.Set(wsContextKey, token)
+		// Stash for the handler only when a non-empty value was sent —
+		// `?token=` (empty) is treated as "no credential" by the handler.
+		if token := q.Get("token"); token != "" {
+			c.Set(wsContextKey, token)
+		}
 		// Scrub from the request URL so downstream middleware (otelgin
 		// `http.target`, any access logger that reads RawQuery /
 		// RequestURI) does not capture the token. RequestURI is what

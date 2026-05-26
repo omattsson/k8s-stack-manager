@@ -673,6 +673,17 @@ func TestExtractSubprotocolToken(t *testing.T) {
 		{"no bearer marker", "graphql-ws, jwt", "", false},
 		{"bearer with extra subprotocols", "bearer, jwt, mqtt", "jwt", true},
 		{"multiple bearer markers", "bearer, bearer", "", true},
+		// Adjacency contract: a non-auth subprotocol declared BEFORE
+		// bearer must NOT be picked as the credential — only the entry
+		// immediately adjacent to the marker counts. Locks the
+		// graphql-ws-leaks-as-jwt regression CodeRabbit flagged.
+		{"non-auth before bearer", "graphql-ws, bearer, jwt-here", "jwt-here", true},
+		// Adjacency, not first-match: non-bearer entries sandwiching
+		// the bearer pair must be ignored.
+		{"non-bearer entries before bearer pair", "graphql-ws, mqtt, bearer, jwt-here", "jwt-here", true},
+		// Reversed adjacency: <jwt>, bearer with leading non-auth
+		// protocol — only the one right before `bearer` counts.
+		{"non-auth before reversed pair", "graphql-ws, jwt-here, bearer", "jwt-here", true},
 	}
 	for _, tc := range cases {
 		tc := tc
@@ -683,6 +694,44 @@ func TestExtractSubprotocolToken(t *testing.T) {
 			assert.Equal(t, tc.wantViaSp, gotViaSp)
 		})
 	}
+}
+
+// TestHandleWebSocket_SubprotocolBearer_MissingTokenIgnoresOtherAuth
+// locks the documented fall-through prevention: when the client
+// explicitly chose subprotocol auth (offered `bearer` in
+// Sec-WebSocket-Protocol) but the JWT half is missing, the handler
+// MUST 401 immediately even when a perfectly valid Authorization
+// header is set on the same request. Silently switching credential
+// sources behind the user's back would be a security regression —
+// the audit trail must reflect the auth method the caller actually
+// asked for.
+func TestHandleWebSocket_SubprotocolBearer_MissingTokenIgnoresOtherAuth(t *testing.T) {
+	t.Parallel()
+	gin.SetMode(gin.TestMode)
+
+	hub := websocket.NewHub()
+	go hub.Run()
+	defer hub.Shutdown()
+
+	handler := NewWebSocketHandler(hub, "*", wsTestJWTSecret)
+	router := gin.New()
+	router.GET("/ws", handler.HandleWebSocket)
+	server := httptest.NewServer(router)
+	defer server.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(server.URL, "http") + "/ws"
+
+	dialer := *gorilla.DefaultDialer
+	// Client offers `bearer` but no JWT half. Without the guard, the
+	// handler would happily accept the Authorization header below.
+	dialer.Subprotocols = []string{"bearer"}
+	header := http.Header{}
+	header.Set("Authorization", "Bearer "+generateTestToken(t))
+
+	_, resp, err := dialer.Dial(wsURL, header)
+	require.Error(t, err, "subprotocol-with-no-token MUST 401 even when Authorization is valid")
+	require.NotNil(t, resp)
+	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
 }
 
 // TestHandleWebSocket_SubprotocolBearer_DoesNotLeakInQuery is a
