@@ -30,19 +30,37 @@ func NewWebSocketHandler(hub *websocket.Hub, allowedOrigins string, jwtSecret st
 	}
 }
 
+// wsSubprotocolBearer is the subprotocol marker for the
+// `Sec-WebSocket-Protocol: bearer, <jwt>` auth scheme. The client offers
+// it as the first subprotocol; the server selects it on the upgrade
+// response so browsers that require subprotocol negotiation complete
+// the handshake cleanly.
+const wsSubprotocolBearer = "bearer"
+
 // HandleWebSocket godoc
 // @Summary Open a WebSocket connection
-// @Description Upgrades the HTTP connection to a WebSocket for real-time events. Requires a valid JWT token via ?token= query parameter or Authorization: Bearer header.
+// @Description Upgrades the HTTP connection to a WebSocket for real-time events. Authenticate via one of: `Sec-WebSocket-Protocol: bearer, <jwt>` subprotocol header, `Authorization: Bearer <jwt>` header, or `?token=<jwt>` query parameter (the query token is redacted from access logs and traces by middleware before the handler runs).
 // @Tags websocket
-// @Param token query string false "JWT authentication token"
+// @Param token query string false "JWT authentication token (also accepted via Authorization header or Sec-WebSocket-Protocol subprotocol)"
 // @Success 101 "Switching Protocols"
 // @Failure 400 {object} map[string]string
 // @Failure 401 {object} map[string]string
 // @Failure 403 {object} map[string]string
 // @Router /ws [get]
 func (h *WebSocketHandler) HandleWebSocket(c *gin.Context) {
-	// Extract JWT token: query param first, then Authorization header
-	tokenStr := c.Query("token")
+	// Auth precedence (most-secure first):
+	//   1. Sec-WebSocket-Protocol: bearer, <jwt>     (no URL exposure)
+	//   2. Authorization: Bearer <jwt>               (standard header)
+	//   3. ?token=<jwt> query param                  (browser fallback)
+	//
+	// For the query-param path we read first from gin.Context (set by
+	// the RedactWSToken middleware after it scrubs the URL) and only
+	// fall back to c.Query when the middleware was not wired. The
+	// production route stack always wires the middleware so the raw
+	// URL is scrubbed before any logging or tracing sees it; the
+	// fallback exists so handler unit tests don't need to register
+	// the middleware to exercise the query path.
+	tokenStr, viaSubprotocol := extractSubprotocolToken(c.GetHeader("Sec-WebSocket-Protocol"))
 	if tokenStr == "" {
 		if authHeader := c.GetHeader("Authorization"); authHeader != "" {
 			parts := strings.SplitN(authHeader, " ", 2)
@@ -50,6 +68,17 @@ func (h *WebSocketHandler) HandleWebSocket(c *gin.Context) {
 				tokenStr = parts[1]
 			}
 		}
+	}
+	if tokenStr == "" {
+		tokenStr = middleware.WSTokenFromContext(c)
+	}
+	if tokenStr == "" {
+		// Unreachable in production: RedactWSToken has already moved
+		// the value into the gin.Context AND scrubbed it from
+		// c.Request.URL.RawQuery, so c.Query returns "". This branch
+		// exists only for handler unit tests that mount the route
+		// without the redact middleware.
+		tokenStr = c.Query("token")
 	}
 
 	if tokenStr == "" {
@@ -68,6 +97,15 @@ func (h *WebSocketHandler) HandleWebSocket(c *gin.Context) {
 		WriteBufferSize: 1024,
 		CheckOrigin:     h.checkOrigin,
 	}
+	// Advertise the "bearer" subprotocol so gorilla acks it in the
+	// handshake response when the client offered it. Strict browser
+	// clients reject the upgrade if Sec-WebSocket-Protocol was set on
+	// the request but not echoed back. Setting this unconditionally is
+	// safe — gorilla only echoes a subprotocol the client actually
+	// requested.
+	if viaSubprotocol {
+		upgrader.Subprotocols = []string{wsSubprotocolBearer}
+	}
 
 	conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
 	if err != nil {
@@ -79,6 +117,50 @@ func (h *WebSocketHandler) HandleWebSocket(c *gin.Context) {
 		slog.Error("WebSocket client creation failed", "error", err)
 		return
 	}
+}
+
+// extractSubprotocolToken parses a Sec-WebSocket-Protocol header value
+// and returns the JWT half of a `bearer, <jwt>` pair (along with a flag
+// saying that the bearer marker was present, even if the token was
+// blank — so the upgrade can still 401 cleanly rather than silently
+// falling through to other auth methods).
+//
+// The header is a comma-separated list per RFC 6455 §11.3.4. We accept
+// any ordering and any number of additional subprotocols; the only
+// requirement is that both "bearer" (case-insensitive) AND a non-empty
+// second token appear. Whitespace around each entry is trimmed.
+//
+// Returns ("", false) when the header is empty or does not contain a
+// bearer marker — the handler then falls back to the next auth method.
+func extractSubprotocolToken(header string) (token string, viaSubprotocol bool) {
+	if header == "" {
+		return "", false
+	}
+	parts := strings.Split(header, ",")
+	var (
+		seenBearer bool
+		candidate  string
+	)
+	for _, raw := range parts {
+		p := strings.TrimSpace(raw)
+		if p == "" {
+			continue
+		}
+		if strings.EqualFold(p, wsSubprotocolBearer) {
+			seenBearer = true
+			continue
+		}
+		// First non-bearer subprotocol is the credential candidate. We
+		// don't try to be clever about ordering — if the client puts
+		// the token first and the marker second, that's still valid.
+		if candidate == "" {
+			candidate = p
+		}
+	}
+	if !seenBearer {
+		return "", false
+	}
+	return candidate, true
 }
 
 // checkOrigin validates the request origin against the configured allowed origins.

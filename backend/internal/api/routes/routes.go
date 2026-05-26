@@ -123,6 +123,11 @@ func SetupRoutes(router *gin.Engine, deps Deps) *RateLimiters {
 
 	// Add middleware
 	router.Use(middleware.RequestID())
+	// RedactWSToken MUST run before HTTPMetrics / otelgin / Logger so it
+	// can strip the ?token=<jwt> query param from /ws requests before
+	// those middlewares persist the raw URL in span attributes, metrics
+	// labels, or access logs.
+	router.Use(middleware.RedactWSToken())
 	// Only attach HTTP metrics middleware when a metric exporter is enabled,
 	// to avoid per-request timing/attribute overhead in the no-op case.
 	if cfg.Otel.Enabled || cfg.Otel.MetricsEnabled {
