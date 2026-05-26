@@ -132,6 +132,10 @@ Default admin credentials: `admin` / `admin` (configured in docker-compose.yml).
 ### Start Locally (without Docker)
 
 ```bash
+# Start MySQL (dev-local-backend does NOT do this on its own; the
+# combined dev-local target does).
+make mysql-start
+
 # Run backend only — `make dev-local` already starts both backend AND
 # frontend in one terminal; use `dev-local-backend` if you'd rather run
 # them in separate terminals (e.g. to tail logs per service).
@@ -146,7 +150,7 @@ cd frontend && npm install && npm run dev
 k8s-stack-manager runs perfectly well without the React UI — every workflow
 the dashboard exposes is also driven by the REST API, and
 [stackctl](https://github.com/omattsson/stackctl) is the supported headless
-client. The pieces below are independent; pick whichever match your runtime.
+client. The pieces below are independent; pick whichever matches your runtime.
 
 ### Why go headless?
 
@@ -185,8 +189,11 @@ The chart's `frontend.enabled` toggle skips every frontend resource
 are unaffected.
 
 ```bash
-helm install k8s-stack-manager helm/k8s-stack-manager \
-  --namespace k8s-stack-manager --create-namespace \
+# Install from the published Helm repo (matches the "Getting Started"
+# example above). Use the local chart path `helm/k8s-stack-manager` only
+# when you have a repo checkout — typically for chart development.
+helm install stack-manager k8s-stack-manager/k8s-stack-manager \
+  --namespace stack-manager --create-namespace \
   --set backend.secrets.JWT_SECRET=my-secret-at-least-16-chars \
   --set frontend.enabled=false \
   --set ingress.host=stacks.example.com
@@ -207,10 +214,12 @@ stackctl login            # username/password
 stackctl login --sso      # opens a browser, RFC 8252 loopback flow
 ```
 
-`stackctl login --sso` uses the OIDC loopback flow — the backend opens the
-upstream IdP login page in a browser, then 302-redirects to a local server
-the CLI runs on `127.0.0.1:<random-port>` with the tokens in the query
-string. No copy/paste, no polling, no frontend involved.
+`stackctl login --sso` uses the OIDC loopback flow — the CLI calls the
+backend's `cli-auth` endpoint, opens the returned `login_url` in your
+default browser, and starts a local HTTP server on `127.0.0.1:<random-port>`.
+After you authenticate with the upstream IdP, the backend 302-redirects the
+browser to the CLI's local server with the tokens in the query string. No
+copy/paste, no polling, no frontend involved.
 
 Once authenticated, every API operation has a first-class CLI surface:
 
