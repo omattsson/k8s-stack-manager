@@ -132,8 +132,10 @@ Default admin credentials: `admin` / `admin` (configured in docker-compose.yml).
 ### Start Locally (without Docker)
 
 ```bash
-# Run backend
-make dev-local
+# Run backend only — `make dev-local` already starts both backend AND
+# frontend in one terminal; use `dev-local-backend` if you'd rather run
+# them in separate terminals (e.g. to tail logs per service).
+make dev-local-backend
 
 # In another terminal — run frontend
 cd frontend && npm install && npm run dev
