@@ -394,8 +394,10 @@ describe('Profile Page', () => {
       expect(screen.getByText('Notification Preferences')).toBeInTheDocument();
     });
 
-    // Toggle the first preference
-    const toggles = screen.getAllByRole('checkbox');
+    // MUI Switch's input exposes role="switch" (overrides the implicit
+    // checkbox role of <input type="checkbox">). Wait for the prefs
+    // table to render before clicking.
+    const toggles = await screen.findAllByRole('switch');
     expect(toggles.length).toBeGreaterThanOrEqual(1);
     await user.click(toggles[0]);
 
