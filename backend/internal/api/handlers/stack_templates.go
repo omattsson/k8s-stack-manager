@@ -194,41 +194,110 @@ func (h *TemplateHandler) ListTemplates(c *gin.Context) {
 	})
 }
 
+// createTemplateRequest mirrors models.StackTemplate's writable fields and
+// adds an optional Charts array so the entire template + its initial chart
+// set can be created in a single request. Existing callers that only send
+// template fields (no "charts" key) keep their current behaviour — the
+// charts slice is just nil and the legacy single-step create path runs.
+type createTemplateRequest struct {
+	Name          string                        `json:"name"`
+	Description   string                        `json:"description"`
+	Category      string                        `json:"category"`
+	Version       string                        `json:"version"`
+	DefaultBranch string                        `json:"default_branch"`
+	IsPublished   bool                          `json:"is_published"`
+	Charts        []models.TemplateChartConfig `json:"charts"`
+}
+
 // CreateTemplate godoc
 // @Summary     Create a stack template
-// @Description Create a new stack template (devops/admin only)
+// @Description Create a new stack template (devops/admin only). May include a `charts` array to register the initial chart set in the same transaction.
 // @Tags        templates
 // @Accept      json
 // @Produce     json
-// @Param       template body     models.StackTemplate true "Template object"
-// @Success     201      {object} models.StackTemplate
+// @Param       template body     createTemplateRequest true "Template object (may include charts[])"
+// @Success     201      {object} TemplateDetailResponse
 // @Failure     400      {object} map[string]string
 // @Router      /api/v1/templates [post]
 func (h *TemplateHandler) CreateTemplate(c *gin.Context) {
-	var tmpl models.StackTemplate
-	if err := c.ShouldBindJSON(&tmpl); err != nil {
+	var req createTemplateRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": msgInvalidRequestFormat})
 		return
 	}
 
-	tmpl.ID = uuid.New().String()
-	tmpl.OwnerID = middleware.GetUserIDFromContext(c)
 	now := time.Now().UTC()
-	tmpl.CreatedAt = now
-	tmpl.UpdatedAt = now
+	tmpl := models.StackTemplate{
+		ID:            uuid.New().String(),
+		Name:          req.Name,
+		Description:   req.Description,
+		Category:      req.Category,
+		Version:       req.Version,
+		DefaultBranch: req.DefaultBranch,
+		IsPublished:   req.IsPublished,
+		OwnerID:       middleware.GetUserIDFromContext(c),
+		CreatedAt:     now,
+		UpdatedAt:     now,
+	}
 
 	if err := tmpl.Validate(); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
-	if err := h.templateRepo.Create(&tmpl); err != nil {
-		status, message := mapError(err, entityTemplate)
+	// Stamp + validate every chart up-front so we surface a 400 before
+	// touching the DB. Backend-controlled fields (ID, StackTemplateID,
+	// CreatedAt) are overwritten from any value the caller sent.
+	chartModels := make([]models.TemplateChartConfig, len(req.Charts))
+	for i, ch := range req.Charts {
+		ch.ID = uuid.New().String()
+		ch.StackTemplateID = tmpl.ID
+		ch.CreatedAt = now
+		if err := ch.Validate(); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("charts[%d]: %s", i, err.Error())})
+			return
+		}
+		chartModels[i] = ch
+	}
+
+	// Legacy path: no charts, no need for a transaction.
+	if len(chartModels) == 0 {
+		if err := h.templateRepo.Create(&tmpl); err != nil {
+			status, message := mapError(err, entityTemplate)
+			c.JSON(status, gin.H{"error": message})
+			return
+		}
+		c.JSON(http.StatusCreated, TemplateDetailResponse{StackTemplate: tmpl, Charts: []models.TemplateChartConfig{}})
+		return
+	}
+
+	// Transactional path: template + every chart commit together, or
+	// nothing does. Prevents the partial-state surprise seed scripts saw
+	// before this fix (template created, charts silently dropped).
+	if h.txRunner == nil {
+		slog.Error("CreateTemplate with charts requires a transaction runner but none is configured")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
+		return
+	}
+
+	txErr := h.txRunner.RunInTx(func(repos database.TxRepos) error {
+		if err := repos.StackTemplate.Create(&tmpl); err != nil {
+			return err
+		}
+		for i := range chartModels {
+			if err := repos.TemplateChart.Create(&chartModels[i]); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if txErr != nil {
+		status, message := mapError(txErr, entityTemplate)
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
 
-	c.JSON(http.StatusCreated, tmpl)
+	c.JSON(http.StatusCreated, TemplateDetailResponse{StackTemplate: tmpl, Charts: chartModels})
 }
 
 // GetTemplate godoc
