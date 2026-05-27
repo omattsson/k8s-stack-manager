@@ -249,11 +249,13 @@ describe('CleanupPolicies Page', () => {
       expect(screen.getByText('Idle Cleanup')).toBeInTheDocument();
     });
 
-    // Find the enabled toggle for Idle Cleanup (first switch)
-    const switches = screen.getAllByRole('checkbox');
-    const idleSwitch = switches.find((_s, i) => i === 0);
+    // MUI Switch's input exposes role="switch" (overrides the implicit
+    // checkbox role of <input type="checkbox">). Wait for the row's
+    // switch to render before clicking.
+    const switches = await screen.findAllByRole('switch');
+    const idleSwitch = switches[0];
     expect(idleSwitch).toBeDefined();
-    await user.click(idleSwitch!);
+    await user.click(idleSwitch);
 
     await waitFor(() => {
       expect(cleanupPolicyService.update).toHaveBeenCalledWith('p1', expect.objectContaining({
