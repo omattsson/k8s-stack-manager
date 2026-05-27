@@ -24,6 +24,10 @@ helm install stack-manager k8s-stack-manager/k8s-stack-manager \
 
 See the full [Getting Started Guide](docs/getting-started.md) for next steps (configure stackctl, register a cluster, import [starter templates](examples/starter-templates/), and deploy your first stack).
 
+> Don't need the UI? Skip straight to the [Headless / API-only
+> deployment](#headless--api-only-deployment) section — stackctl drives every
+> workflow.
+
 ## Features
 
 ### Dashboard — Stack Instance Management
@@ -125,40 +129,109 @@ This starts all services:
 
 Default admin credentials: `admin` / `admin` (configured in docker-compose.yml).
 
-### Headless / API-only
-
-For workflows driven by [stackctl](https://github.com/omattsson/stackctl), you can
-skip the frontend container entirely:
+### Start Locally (without Docker)
 
 ```bash
+# Start MySQL (dev-local-backend does NOT do this on its own; the
+# combined dev-local target does).
+make mysql-start
+
+# Run backend only — `make dev-local` already starts both backend AND
+# frontend in one terminal; use `dev-local-backend` if you'd rather run
+# them in separate terminals (e.g. to tail logs per service).
+make dev-local-backend
+
+# In another terminal — run frontend
+cd frontend && npm install && npm run dev
+```
+
+## Headless / API-only deployment
+
+k8s-stack-manager runs perfectly well without the React UI — every workflow
+the dashboard exposes is also driven by the REST API, and
+[stackctl](https://github.com/omattsson/stackctl) is the supported headless
+client. The pieces below are independent; pick whichever matches your runtime.
+
+### Why go headless?
+
+- CI/CD pipelines that drive deploys/stops/rollbacks with `stackctl`
+- Air-gapped environments where shipping a SPA isn't worth the surface area
+- Reduced resource footprint (one less Deployment, no nginx)
+- Faster cold starts in ephemeral preview environments
+
+The frontend never authenticates against the backend differently from the
+CLI, so dropping it costs you nothing operationally.
+
+### Docker Compose
+
+```bash
+# One-shot — Makefile target sets the profile for you
 make compose-api-only
+
+# Or explicitly via env var (works with any compose subcommand)
+COMPOSE_PROFILES=api-only docker compose up
 ```
 
 `docker-compose.yml` tags the frontend service with `profiles: [full]`, so it
 only runs when that profile is active. `.env.example` sets
-`COMPOSE_PROFILES=full` by default — drop or override it to go headless:
-
-```bash
-COMPOSE_PROFILES=api-only docker compose up
-```
+`COMPOSE_PROFILES=full` by default; drop or override it to go headless.
 
 > **Upgrading from a previous checkout?** If you have an existing `.env` from
 > before this change, add `COMPOSE_PROFILES=full` to it (or `cp .env.example
 > .env` afresh) — otherwise `docker compose up` will now start the headless
 > stack. `make dev` / `make prod` force `--profile full` and are unaffected.
 
-The matching Helm toggle is `frontend.enabled=false` (see the chart's
-`values.yaml`).
+### Helm chart
 
-### Start Locally (without Docker)
+The chart's `frontend.enabled` toggle skips every frontend resource
+(Deployment/Rollout, Service, ConfigMap, HPA, PDB, ServiceAccount) and the
+`/` ingress rule. The backend routes (`/api`, `/ws`, `/health`, `/swagger`)
+are unaffected.
 
 ```bash
-# Run backend
-make dev-local
-
-# In another terminal — run frontend
-cd frontend && npm install && npm run dev
+# Install from the published Helm repo (matches the "Getting Started"
+# example above). Use the local chart path `helm/k8s-stack-manager` only
+# when you have a repo checkout — typically for chart development.
+helm install stack-manager k8s-stack-manager/k8s-stack-manager \
+  --namespace stack-manager --create-namespace \
+  --set backend.secrets.JWT_SECRET=my-secret-at-least-16-chars \
+  --set frontend.enabled=false \
+  --set ingress.host=stacks.example.com
 ```
+
+### stackctl CLI
+
+Once the API is reachable, install stackctl and point it at the cluster:
+
+```bash
+# Install
+brew install omattsson/tap/stackctl
+
+# Point at the backend (admin credentials from your install)
+stackctl config set api-url https://stacks.example.com
+stackctl login            # username/password
+# …or, if your install has OIDC configured:
+stackctl login --sso      # opens a browser, RFC 8252 loopback flow
+```
+
+`stackctl login --sso` uses the OIDC loopback flow — the CLI calls the
+backend's `cli-auth` endpoint, opens the returned `login_url` in your
+default browser, and starts a local HTTP server on `127.0.0.1:<random-port>`.
+After you authenticate with the upstream IdP, the backend 302-redirects the
+browser to the CLI's local server with the tokens in the query string. No
+copy/paste, no polling, no frontend involved.
+
+Once authenticated, every API operation has a first-class CLI surface:
+
+```bash
+stackctl template list
+stackctl stack deploy my-app
+stackctl stack watch --id <instance-id>    # real-time WS events
+stackctl audit log export --format csv --output-file audit.csv
+```
+
+See the [stackctl README](https://github.com/omattsson/stackctl) for the
+full command surface.
 
 ## Commands
 
