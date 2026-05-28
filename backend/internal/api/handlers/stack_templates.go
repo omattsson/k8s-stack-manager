@@ -200,12 +200,12 @@ func (h *TemplateHandler) ListTemplates(c *gin.Context) {
 // template fields (no "charts" key) keep their current behaviour — the
 // charts slice is just nil and the legacy single-step create path runs.
 type createTemplateRequest struct {
-	Name          string                        `json:"name"`
-	Description   string                        `json:"description"`
-	Category      string                        `json:"category"`
-	Version       string                        `json:"version"`
-	DefaultBranch string                        `json:"default_branch"`
-	IsPublished   bool                          `json:"is_published"`
+	Name          string                       `json:"name" binding:"required"`
+	Description   string                       `json:"description"`
+	Category      string                       `json:"category"`
+	Version       string                       `json:"version"`
+	DefaultBranch string                       `json:"default_branch"`
+	IsPublished   bool                         `json:"is_published"`
 	Charts        []models.TemplateChartConfig `json:"charts"`
 }
 
