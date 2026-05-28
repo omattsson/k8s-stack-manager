@@ -258,6 +258,92 @@ func TestCreateTemplate(t *testing.T) {
 	}
 }
 
+// TestCreateTemplate_WithInlineCharts locks the contract that POST
+// /api/v1/templates accepts a `charts: [...]` array and persists every
+// entry as a TemplateChartConfig in the same transaction. This is the
+// behaviour stackctl's CreateTemplateRequest assumes and the kvk-k8s-dev
+// seed-templates.sh script relies on — without this the array was being
+// silently dropped by gin's bind, leaving a chartless template behind.
+func TestCreateTemplate_WithInlineCharts(t *testing.T) {
+	t.Parallel()
+
+	body := `{
+	  "name": "Inline Stack",
+	  "category": "Full Stack",
+	  "version": "1.0.0",
+	  "default_branch": "main",
+	  "charts": [
+	    {"chart_name": "kvk-mysql", "chart_path": "/charts/mysql", "chart_version": "0.1.0", "deploy_order": 1, "required": true},
+	    {"chart_name": "kvk-redis", "chart_path": "/charts/redis", "chart_version": "0.1.0", "deploy_order": 2, "required": true}
+	  ]
+	}`
+
+	tmplRepo := NewMockStackTemplateRepository()
+	chartRepo := NewMockTemplateChartConfigRepository()
+	router := setupTemplateRouter(tmplRepo, chartRepo, NewMockStackDefinitionRepository(), NewMockChartConfigRepository(), "owner-1", "devops")
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest(http.MethodPost, "/api/v1/templates", bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusCreated, w.Code, "body=%s", w.Body.String())
+
+	var resp TemplateDetailResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, "Inline Stack", resp.Name)
+	assert.NotEmpty(t, resp.ID)
+
+	// Response body echoes the persisted charts back.
+	require.Len(t, resp.Charts, 2)
+	assert.Equal(t, "kvk-mysql", resp.Charts[0].ChartName)
+	assert.Equal(t, resp.ID, resp.Charts[0].StackTemplateID, "chart must be stamped with new template ID")
+	assert.NotEmpty(t, resp.Charts[0].ID, "chart ID must be assigned server-side")
+	assert.Equal(t, "kvk-redis", resp.Charts[1].ChartName)
+
+	// And the chart repo actually contains them — guards against future
+	// refactors that satisfy the response but skip persistence.
+	persisted, err := chartRepo.ListByTemplate(resp.ID)
+	require.NoError(t, err)
+	require.Len(t, persisted, 2, "both charts must be persisted under the new template ID")
+}
+
+// TestCreateTemplate_InvalidChartRollsBack ensures a bad chart in the
+// payload fails the whole create — we don't leave a chartless template
+// orphaned in the DB after rejecting the request.
+func TestCreateTemplate_InvalidChartRollsBack(t *testing.T) {
+	t.Parallel()
+
+	// Second chart has chart_name="" which trips TemplateChartConfig.Validate.
+	body := `{
+	  "name": "Half-baked",
+	  "category": "Full Stack",
+	  "version": "1.0.0",
+	  "charts": [
+	    {"chart_name": "kvk-mysql", "chart_path": "/charts/mysql", "chart_version": "0.1.0", "deploy_order": 1},
+	    {"chart_name": "", "chart_path": "/charts/bad", "chart_version": "0.1.0", "deploy_order": 2}
+	  ]
+	}`
+
+	tmplRepo := NewMockStackTemplateRepository()
+	chartRepo := NewMockTemplateChartConfigRepository()
+	router := setupTemplateRouter(tmplRepo, chartRepo, NewMockStackDefinitionRepository(), NewMockChartConfigRepository(), "owner-1", "devops")
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest(http.MethodPost, "/api/v1/templates", bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Contains(t, w.Body.String(), "charts[1]")
+
+	// No template should have been written — we validate every chart before
+	// opening the transaction.
+	templates, err := tmplRepo.List()
+	require.NoError(t, err)
+	assert.Empty(t, templates, "no template must be persisted when a chart fails validation")
+}
+
 // ---- GetTemplate ----
 
 func TestGetTemplate(t *testing.T) {

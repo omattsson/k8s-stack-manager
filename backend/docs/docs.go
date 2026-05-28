@@ -3561,7 +3561,8 @@ const docTemplate = `{
                         "schema": {
                             "type": "object",
                             "additionalProperties": {
-                                "type": "integer"
+                                "type": "integer",
+                                "format": "int64"
                             }
                         }
                     },
@@ -6532,7 +6533,7 @@ const docTemplate = `{
                 }
             },
             "post": {
-                "description": "Create a new stack template (devops/admin only)",
+                "description": "Create a new stack template (devops/admin only). May include a ` + "`" + `charts` + "`" + ` array to register the initial chart set in the same transaction.",
                 "consumes": [
                     "application/json"
                 ],
@@ -6545,12 +6546,12 @@ const docTemplate = `{
                 "summary": "Create a stack template",
                 "parameters": [
                     {
-                        "description": "Template object",
+                        "description": "Template object (may include charts[])",
                         "name": "template",
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/models.StackTemplate"
+                            "$ref": "#/definitions/handlers.createTemplateRequest"
                         }
                     }
                 ],
@@ -6558,7 +6559,7 @@ const docTemplate = `{
                     "201": {
                         "description": "Created",
                         "schema": {
-                            "$ref": "#/definitions/models.StackTemplate"
+                            "$ref": "#/definitions/handlers.TemplateDetailResponse"
                         }
                     },
                     "400": {
@@ -8180,7 +8181,7 @@ const docTemplate = `{
         },
         "/ws": {
             "get": {
-                "description": "Upgrades the HTTP connection to a WebSocket for real-time events. Requires a valid JWT token via ?token= query parameter or Authorization: Bearer header.",
+                "description": "Upgrades the HTTP connection to a WebSocket for real-time events. Authenticate via one of: ` + "`" + `Sec-WebSocket-Protocol: bearer, \u003cjwt\u003e` + "`" + ` subprotocol header, ` + "`" + `Authorization: Bearer \u003cjwt\u003e` + "`" + ` header, or ` + "`" + `?token=\u003cjwt\u003e` + "`" + ` query parameter (the query token is redacted from access logs and traces by middleware before the handler runs).",
                 "tags": [
                     "websocket"
                 ],
@@ -8188,7 +8189,7 @@ const docTemplate = `{
                 "parameters": [
                     {
                         "type": "string",
-                        "description": "JWT authentication token",
+                        "description": "JWT authentication token (also accepted via Authorization header or Sec-WebSocket-Protocol subprotocol)",
                         "name": "token",
                         "in": "query"
                     }
@@ -9181,6 +9182,38 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "webhook_url": {
+                    "type": "string"
+                }
+            }
+        },
+        "handlers.createTemplateRequest": {
+            "type": "object",
+            "required": [
+                "name"
+            ],
+            "properties": {
+                "category": {
+                    "type": "string"
+                },
+                "charts": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/models.TemplateChartConfig"
+                    }
+                },
+                "default_branch": {
+                    "type": "string"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "is_published": {
+                    "type": "boolean"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "version": {
                     "type": "string"
                 }
             }

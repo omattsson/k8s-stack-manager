@@ -624,6 +624,27 @@ definitions:
     - name
     - webhook_url
     type: object
+  handlers.createTemplateRequest:
+    properties:
+      category:
+        type: string
+      charts:
+        items:
+          $ref: '#/definitions/models.TemplateChartConfig'
+        type: array
+      default_branch:
+        type: string
+      description:
+        type: string
+      is_published:
+        type: boolean
+      name:
+        type: string
+      version:
+        type: string
+    required:
+    - name
+    type: object
   handlers.extendTTLRequest:
     properties:
       ttl_minutes:
@@ -3958,6 +3979,7 @@ paths:
           description: OK
           schema:
             additionalProperties:
+              format: int64
               type: integer
             type: object
         "401":
@@ -5900,21 +5922,22 @@ paths:
     post:
       consumes:
       - application/json
-      description: Create a new stack template (devops/admin only)
+      description: Create a new stack template (devops/admin only). May include a
+        `charts` array to register the initial chart set in the same transaction.
       parameters:
-      - description: Template object
+      - description: Template object (may include charts[])
         in: body
         name: template
         required: true
         schema:
-          $ref: '#/definitions/models.StackTemplate'
+          $ref: '#/definitions/handlers.createTemplateRequest'
       produces:
       - application/json
       responses:
         "201":
           description: Created
           schema:
-            $ref: '#/definitions/models.StackTemplate'
+            $ref: '#/definitions/handlers.TemplateDetailResponse'
         "400":
           description: Bad Request
           schema:
@@ -6990,10 +7013,13 @@ paths:
   /ws:
     get:
       description: 'Upgrades the HTTP connection to a WebSocket for real-time events.
-        Requires a valid JWT token via ?token= query parameter or Authorization: Bearer
-        header.'
+        Authenticate via one of: `Sec-WebSocket-Protocol: bearer, <jwt>` subprotocol
+        header, `Authorization: Bearer <jwt>` header, or `?token=<jwt>` query parameter
+        (the query token is redacted from access logs and traces by middleware before
+        the handler runs).'
       parameters:
-      - description: JWT authentication token
+      - description: JWT authentication token (also accepted via Authorization header
+          or Sec-WebSocket-Protocol subprotocol)
         in: query
         name: token
         type: string
