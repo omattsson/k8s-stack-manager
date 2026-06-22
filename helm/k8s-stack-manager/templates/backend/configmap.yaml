@@ -22,6 +22,16 @@ data:
   {{- if .Values.hooks.enabled }}
   HOOKS_CONFIG_FILE: "/etc/hooks/hooks.json"
   {{- end }}
+  {{- if .Values.backend.namespaceRoleBindings }}
+  # NAMESPACE_ROLE_BINDINGS_JSON — list of RoleBinding specs the deployer
+  # applies to every stack namespace at pre-install time. Lets a centrally
+  # deployed add-on (e.g. a refresh-db service in its own namespace) do work
+  # inside each stack namespace without needing cluster-wide RBAC. Schema:
+  # backend/internal/deployer/manager.go NamespaceRoleBindingSpec
+  # (clusterRole, serviceAccountName, serviceAccountNamespace, optional
+  # roleBindingName).
+  NAMESPACE_ROLE_BINDINGS_JSON: {{ .Values.backend.namespaceRoleBindings | toJson | quote }}
+  {{- end }}
   {{- if .Values.metrics.enabled }}
   METRICS_ENABLED: "true"
   METRICS_ADDR: ":{{ .Values.metrics.port }}"

@@ -15,6 +15,7 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	rbacv1 "k8s.io/api/rbac/v1"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
@@ -270,6 +271,173 @@ func (c *Client) EnsureServiceAccountPullSecret(ctx context.Context, namespace, 
 
 	slog.Info("Patched default SA with imagePullSecret", "namespace", namespace, "secret", secretName)
 	return nil
+}
+
+// EnsureRoleBinding creates or updates a RoleBinding in the target namespace
+// that binds an existing ClusterRole to a ServiceAccount living in another
+// namespace. This is the standard pattern for granting a centrally-deployed
+// add-on (e.g. a refresh-db service in its own namespace) per-stack-namespace
+// permissions without granting them cluster-wide.
+//
+// rbName is the RoleBinding's metadata.name in the target namespace; defaults
+// to the ClusterRole name when empty. namespace, clusterRoleName, saName, and
+// saNamespace are required.
+//
+// The RoleBinding's Subjects are treated as authoritative — any subjects added
+// externally to a RoleBinding by this name are dropped on the next reconcile.
+// Don't share the RoleBinding name with externally-managed bindings.
+func (c *Client) EnsureRoleBinding(
+	ctx context.Context,
+	namespace, rbName, clusterRoleName, saName, saNamespace string,
+) error {
+	if namespace == "" || clusterRoleName == "" || saName == "" || saNamespace == "" {
+		return fmt.Errorf("EnsureRoleBinding: namespace, clusterRoleName, saName, and saNamespace are required (got namespace=%q clusterRole=%q sa=%q/%q)",
+			namespace, clusterRoleName, saNamespace, saName)
+	}
+	if rbName == "" {
+		rbName = clusterRoleName
+	}
+
+	desiredLabels := map[string]string{
+		"managed-by":                        "k8s-stack-manager",
+		"k8s-stack-manager.io/role-binding": "namespace-provision",
+	}
+	desiredAnnotations := map[string]string{
+		"k8s-stack-manager.io/cluster-role": clusterRoleName,
+	}
+	desiredSubjects := []rbacv1.Subject{
+		{
+			Kind:      rbacv1.ServiceAccountKind,
+			Name:      saName,
+			Namespace: saNamespace,
+		},
+	}
+	desiredRoleRef := rbacv1.RoleRef{
+		APIGroup: rbacv1.GroupName,
+		Kind:     "ClusterRole",
+		Name:     clusterRoleName,
+	}
+
+	newRB := &rbacv1.RoleBinding{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:        rbName,
+			Namespace:   namespace,
+			Labels:      copyStringMap(desiredLabels),
+			Annotations: copyStringMap(desiredAnnotations),
+		},
+		Subjects: desiredSubjects,
+		RoleRef:  desiredRoleRef,
+	}
+	newRB.Annotations["k8s-stack-manager.io/refreshed-at"] = time.Now().UTC().Format(time.RFC3339)
+
+	existing, err := c.clientset.RbacV1().RoleBindings(namespace).Get(ctx, rbName, metav1.GetOptions{})
+	if err != nil {
+		if !k8serrors.IsNotFound(err) {
+			return fmt.Errorf("get existing RoleBinding %s/%s: %w", namespace, rbName, err)
+		}
+		// Doesn't exist — create.
+		if _, err := c.clientset.RbacV1().RoleBindings(namespace).Create(ctx, newRB, metav1.CreateOptions{}); err != nil {
+			if !k8serrors.IsAlreadyExists(err) {
+				return fmt.Errorf("create RoleBinding %s/%s: %w", namespace, rbName, err)
+			}
+			// Race — fall through to update.
+			existing, err = c.clientset.RbacV1().RoleBindings(namespace).Get(ctx, rbName, metav1.GetOptions{})
+			if err != nil {
+				return fmt.Errorf("get RoleBinding after create race %s/%s: %w", namespace, rbName, err)
+			}
+		} else {
+			slog.Info("Created namespace RoleBinding",
+				"namespace", namespace, "name", rbName, "cluster_role", clusterRoleName,
+				"sa", fmt.Sprintf("%s/%s", saNamespace, saName),
+			)
+			return nil
+		}
+	}
+
+	// RoleBinding.RoleRef is immutable after creation. Any roleRef drift —
+	// including APIGroup or Kind — requires delete + recreate.
+	if existing.RoleRef.APIGroup != desiredRoleRef.APIGroup ||
+		existing.RoleRef.Kind != desiredRoleRef.Kind ||
+		existing.RoleRef.Name != desiredRoleRef.Name {
+		if err := c.clientset.RbacV1().RoleBindings(namespace).Delete(ctx, rbName, metav1.DeleteOptions{}); err != nil {
+			return fmt.Errorf("delete stale RoleBinding %s/%s: %w", namespace, rbName, err)
+		}
+		if _, err := c.clientset.RbacV1().RoleBindings(namespace).Create(ctx, newRB, metav1.CreateOptions{}); err != nil {
+			return fmt.Errorf("recreate RoleBinding %s/%s: %w", namespace, rbName, err)
+		}
+		slog.Info("Recreated namespace RoleBinding (roleRef changed)",
+			"namespace", namespace, "name", rbName, "cluster_role", clusterRoleName,
+		)
+		return nil
+	}
+
+	// roleRef matches — patch subjects + metadata in place only when something
+	// actually drifted. Otherwise repeated reconciles would write a fresh
+	// `refreshed-at` annotation each call and churn the API server.
+	updated := existing.DeepCopy()
+	changed := false
+
+	if !subjectsEqual(updated.Subjects, desiredSubjects) {
+		updated.Subjects = desiredSubjects
+		changed = true
+	}
+	if updated.Labels == nil {
+		updated.Labels = map[string]string{}
+	}
+	for k, v := range desiredLabels {
+		if updated.Labels[k] != v {
+			updated.Labels[k] = v
+			changed = true
+		}
+	}
+	if updated.Annotations == nil {
+		updated.Annotations = map[string]string{}
+	}
+	for k, v := range desiredAnnotations {
+		if updated.Annotations[k] != v {
+			updated.Annotations[k] = v
+			changed = true
+		}
+	}
+
+	if !changed {
+		slog.Debug("Namespace RoleBinding already in desired state",
+			"namespace", namespace, "name", rbName, "cluster_role", clusterRoleName,
+		)
+		return nil
+	}
+
+	updated.Annotations["k8s-stack-manager.io/refreshed-at"] = time.Now().UTC().Format(time.RFC3339)
+	if _, err := c.clientset.RbacV1().RoleBindings(namespace).Update(ctx, updated, metav1.UpdateOptions{}); err != nil {
+		return fmt.Errorf("update RoleBinding %s/%s: %w", namespace, rbName, err)
+	}
+	slog.Debug("Updated namespace RoleBinding subjects",
+		"namespace", namespace, "name", rbName, "cluster_role", clusterRoleName,
+	)
+	return nil
+}
+
+func copyStringMap(in map[string]string) map[string]string {
+	out := make(map[string]string, len(in))
+	for k, v := range in {
+		out[k] = v
+	}
+	return out
+}
+
+func subjectsEqual(a, b []rbacv1.Subject) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i].APIGroup != b[i].APIGroup ||
+			a[i].Kind != b[i].Kind ||
+			a[i].Name != b[i].Name ||
+			a[i].Namespace != b[i].Namespace {
+			return false
+		}
+	}
+	return true
 }
 
 // CopySecret copies a secret from a source namespace to a target namespace.

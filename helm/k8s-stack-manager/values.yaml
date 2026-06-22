@@ -83,6 +83,37 @@ backend:
     SESSION_STORE: "mysql"
     ENABLE_SWAGGER: "false"
 
+  # Per-stack-namespace RoleBindings (NAMESPACE_ROLE_BINDINGS_JSON).
+  #
+  # When set, the deployer applies one RoleBinding per entry to every stack
+  # namespace at pre-install time, binding the named ServiceAccount (typically
+  # in a centrally-deployed add-on namespace like `refresh-db`) to a
+  # pre-existing ClusterRole. This is the standard pattern for granting
+  # cross-namespace add-ons per-stack permissions without a cluster-wide
+  # binding.
+  #
+  # Prerequisites the deployer does NOT create on your behalf:
+  #   * The ClusterRole named by `clusterRole` must already exist.
+  #   * The ServiceAccount named by `serviceAccountName` must already exist
+  #     in `serviceAccountNamespace`, and the consuming pod must have a way
+  #     to mount its token (Kubernetes ≥ 1.24 no longer auto-generates SA
+  #     token secrets — projected tokens or an explicit token Secret are
+  #     required).
+  # The deployer treats each RoleBinding's Subjects as authoritative — any
+  # additional subjects added externally to a RoleBinding by the configured
+  # name will be dropped on the next reconcile.
+  #
+  # Disabled when the list is empty. The configmap-renderer serialises this
+  # list to JSON and puts it on the NAMESPACE_ROLE_BINDINGS_JSON env var.
+  #
+  # Example:
+  # namespaceRoleBindings:
+  #   - clusterRole: refresh-db-snap-manager
+  #     serviceAccountName: refresh-db
+  #     serviceAccountNamespace: refresh-db
+  #     # roleBindingName: refresh-db-snap-manager   # optional; defaults to clusterRole
+  namespaceRoleBindings: []
+
   # Secret environment variables (stored in Secret).
   secrets:
     JWT_SECRET: "CHANGE-ME-generate-a-random-secret"               # MUST be provided — minimum 16 chars

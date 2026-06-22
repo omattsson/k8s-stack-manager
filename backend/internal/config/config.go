@@ -3,6 +3,7 @@
 package config
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -60,6 +61,24 @@ type GitProviderConfig struct {
 	GitLabBaseURL         string
 }
 
+// NamespaceRoleBindingSpec describes a RoleBinding that the deployer applies
+// to every stack namespace, binding an out-of-namespace ServiceAccount to a
+// pre-existing ClusterRole. Used to grant centrally-deployed add-ons
+// (refresh-db, backup operators, etc.) per-namespace permissions without
+// requiring a cluster-wide binding.
+//
+// Mirrors deployer.NamespaceRoleBindingSpec (same shape, decoupled because
+// deployer doesn't import config); main.go translates between the two when
+// constructing the deploy manager.
+type NamespaceRoleBindingSpec struct {
+	ClusterRoleName         string `json:"clusterRole"`
+	ServiceAccountName      string `json:"serviceAccountName"`
+	ServiceAccountNamespace string `json:"serviceAccountNamespace"`
+	// RoleBindingName is the metadata.name in the target stack namespace.
+	// Optional — defaults to ClusterRoleName when empty.
+	RoleBindingName string `json:"roleBindingName,omitempty"`
+}
+
 // DeploymentConfig holds deployment-related configuration for Helm operations.
 type DeploymentConfig struct {
 	DeploymentTimeout         time.Duration
@@ -75,6 +94,16 @@ type DeploymentConfig struct {
 	WildcardTLSSourceNamespace string
 	WildcardTLSSourceSecret    string
 	WildcardTLSTargetSecret    string
+
+	// NamespaceRoleBindings is a list of RoleBinding specifications applied
+	// to every stack namespace at pre-install time. Each entry binds a
+	// (presumably out-of-namespace) ServiceAccount to a ClusterRole that
+	// must already exist on the cluster. Standard pattern for letting a
+	// centrally-deployed add-on (refresh-db, a backup operator, etc.) do
+	// work inside stack namespaces with least-privilege RBAC. Sourced from
+	// the NAMESPACE_ROLE_BINDINGS_JSON env var as a JSON array; empty
+	// disables the feature.
+	NamespaceRoleBindings []NamespaceRoleBindingSpec
 
 	// HooksConfigFile points at a JSON file describing outbound webhook
 	// subscriptions (for lifecycle events) and registered named actions. When
@@ -551,8 +580,38 @@ func loadDeploymentConfig() DeploymentConfig {
 		WildcardTLSSourceNamespace: getEnv("WILDCARD_TLS_SOURCE_NAMESPACE", ""),
 		WildcardTLSSourceSecret:    getEnv("WILDCARD_TLS_SOURCE_SECRET", ""),
 		WildcardTLSTargetSecret:    getEnv("WILDCARD_TLS_TARGET_SECRET", ""),
+		NamespaceRoleBindings:      parseNamespaceRoleBindings(getEnv("NAMESPACE_ROLE_BINDINGS_JSON", "")),
 		HooksConfigFile:            getEnv("HOOKS_CONFIG_FILE", ""),
 	}
+}
+
+// parseNamespaceRoleBindings decodes the NAMESPACE_ROLE_BINDINGS_JSON env var
+// into a list of specs. Empty value disables the feature; malformed JSON or
+// entries missing required fields are logged and skipped (the deployer will
+// log + skip incomplete specs at apply time too — defense in depth).
+func parseNamespaceRoleBindings(raw string) []NamespaceRoleBindingSpec {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+	var specs []NamespaceRoleBindingSpec
+	if err := json.Unmarshal([]byte(raw), &specs); err != nil {
+		slog.Warn("NAMESPACE_ROLE_BINDINGS_JSON is not valid JSON — disabling feature", "error", err)
+		return nil
+	}
+	out := make([]NamespaceRoleBindingSpec, 0, len(specs))
+	for i, s := range specs {
+		if s.ClusterRoleName == "" || s.ServiceAccountName == "" || s.ServiceAccountNamespace == "" {
+			slog.Warn(
+				"NAMESPACE_ROLE_BINDINGS_JSON entry missing required field — skipping",
+				"index", i,
+				"required", "clusterRole + serviceAccountName + serviceAccountNamespace",
+			)
+			continue
+		}
+		out = append(out, s)
+	}
+	return out
 }
 
 func loadOIDCConfig() OIDCConfig {

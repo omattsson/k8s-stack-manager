@@ -232,6 +232,20 @@ func buildDomainServices(
 		lifecycleNotifier.WithChannelDispatcher(channelDispatcher)
 	}
 
+	// Translate config.NamespaceRoleBindingSpec → deployer.NamespaceRoleBindingSpec.
+	// They have the same shape but live in independent packages (deployer
+	// doesn't import config) so we walk the slice rather than expose the
+	// type across the boundary.
+	rbs := make([]deployer.NamespaceRoleBindingSpec, 0, len(cfg.Deployment.NamespaceRoleBindings))
+	for _, s := range cfg.Deployment.NamespaceRoleBindings {
+		rbs = append(rbs, deployer.NamespaceRoleBindingSpec{
+			ClusterRoleName:         s.ClusterRoleName,
+			ServiceAccountName:      s.ServiceAccountName,
+			ServiceAccountNamespace: s.ServiceAccountNamespace,
+			RoleBindingName:         s.RoleBindingName,
+		})
+	}
+
 	// Deployment manager — multi-cluster deploys.
 	deployManager := deployer.NewManager(deployer.ManagerConfig{
 		Registry:                   clusterRegistry,
@@ -245,6 +259,7 @@ func buildDomainServices(
 		WildcardTLSSourceNamespace: cfg.Deployment.WildcardTLSSourceNamespace,
 		WildcardTLSSourceSecret:    cfg.Deployment.WildcardTLSSourceSecret,
 		WildcardTLSTargetSecret:    cfg.Deployment.WildcardTLSTargetSecret,
+		NamespaceRoleBindings:      rbs,
 		StabilizeTimeout:           cfg.Deployment.StabilizeTimeout,
 		StabilizePollInterval:      cfg.Deployment.StabilizePollInterval,
 		Hooks:                      hookDispatcher,
