@@ -71,6 +71,11 @@ type Manager struct {
 	wildcardTLSSourceSecret string
 	wildcardTLSTargetSecret string
 
+	// Cross-namespace RoleBindings: bind a centrally-deployed ServiceAccount
+	// (e.g. a refresh-db service in its own namespace) to a ClusterRole inside
+	// each stack namespace via a per-namespace RoleBinding. Empty list disables.
+	namespaceRoleBindings []NamespaceRoleBindingSpec
+
 	stabilizeTimeout      time.Duration
 	stabilizePollInterval time.Duration
 
@@ -85,6 +90,26 @@ type Manager struct {
 	// pendingDeletes tracks instances that should be deleted from the database
 	// after their async clean operation completes successfully.
 	pendingDeletes sync.Map
+}
+
+// NamespaceRoleBindingSpec describes a RoleBinding that should be applied to
+// every stack namespace, binding a (presumably out-of-namespace) ServiceAccount
+// to an existing ClusterRole. The standard pattern for letting a centrally
+// deployed add-on (refresh-db, a backup operator, etc.) do work inside stack
+// namespaces with least-privilege RBAC instead of a cluster-wide binding.
+type NamespaceRoleBindingSpec struct {
+	// ClusterRoleName is the name of the (cluster-scoped) ClusterRole that
+	// already exists on the cluster. Must be pre-applied — this manager does
+	// not create ClusterRoles.
+	ClusterRoleName string `json:"clusterRole"`
+	// ServiceAccountName + ServiceAccountNamespace identify the subject to
+	// bind. Cross-namespace ServiceAccount subjects are the standard
+	// mechanism for centrally-deployed add-ons.
+	ServiceAccountName      string `json:"serviceAccountName"`
+	ServiceAccountNamespace string `json:"serviceAccountNamespace"`
+	// RoleBindingName is the RoleBinding's metadata.name in the stack
+	// namespace. Optional — defaults to ClusterRoleName when empty.
+	RoleBindingName string `json:"roleBindingName,omitempty"`
 }
 
 // ManagerConfig holds the dependencies for creating a Manager.
@@ -104,6 +129,10 @@ type ManagerConfig struct {
 	WildcardTLSSourceNamespace string
 	WildcardTLSSourceSecret    string
 	WildcardTLSTargetSecret    string // optional — defaults to WildcardTLSSourceSecret
+
+	// NamespaceRoleBindings, if non-empty, applies a RoleBinding to each
+	// stack namespace at pre-install time. See NamespaceRoleBindingSpec.
+	NamespaceRoleBindings []NamespaceRoleBindingSpec
 
 	// Hooks dispatches lifecycle events (pre-deploy, post-deploy, deploy-finalized)
 	// to configured outbound webhooks. Optional — nil disables all hook dispatch.
@@ -163,6 +192,7 @@ func NewManager(cfg ManagerConfig) *Manager {
 		"wildcard_tls_source_ns", cfg.WildcardTLSSourceNamespace,
 		"wildcard_tls_source_secret", cfg.WildcardTLSSourceSecret,
 		"wildcard_tls_target_secret", wildcardTarget,
+		"namespace_role_bindings", len(cfg.NamespaceRoleBindings),
 		"stabilize_timeout", cfg.StabilizeTimeout,
 	)
 
@@ -180,6 +210,7 @@ func NewManager(cfg ManagerConfig) *Manager {
 		wildcardTLSSourceNS:     cfg.WildcardTLSSourceNamespace,
 		wildcardTLSSourceSecret: cfg.WildcardTLSSourceSecret,
 		wildcardTLSTargetSecret: wildcardTarget,
+		namespaceRoleBindings:   cfg.NamespaceRoleBindings,
 
 		stabilizeTimeout:      cfg.StabilizeTimeout,
 		stabilizePollInterval: stabilizePoll,
@@ -476,9 +507,12 @@ func (m *Manager) executeDeploy(helm HelmExecutor, k8sClient *k8s.Client, regCfg
 	defer cancel()
 
 	// Ensure the target namespace exists before any pre-install resource
-	// provisioning (wildcard TLS, pull secrets). Called once here so that
-	// the individual feature blocks don't each need their own EnsureNamespace.
-	needsNS := (m.wildcardTLSSourceSecret != "" && m.wildcardTLSSourceNS != "") || regCfg != nil
+	// provisioning (wildcard TLS, pull secrets, RoleBindings). Called once
+	// here so that the individual feature blocks don't each need their own
+	// EnsureNamespace.
+	needsNS := (m.wildcardTLSSourceSecret != "" && m.wildcardTLSSourceNS != "") ||
+		regCfg != nil ||
+		len(m.namespaceRoleBindings) > 0
 	nsReady := false
 	if needsNS && k8sClient != nil {
 		if err := k8sClient.EnsureNamespace(ctx, namespace); err != nil {
@@ -538,6 +572,42 @@ func (m *Manager) executeDeploy(helm HelmExecutor, k8sClient *k8s.Client, regCfg
 					"error", saErr,
 				)
 				allOutput += fmt.Sprintf("WARNING: failed to patch default SA with imagePullSecret: %s\n", saErr.Error())
+			}
+		}
+	}
+
+	// Apply per-stack RoleBindings so centrally-deployed add-ons (e.g. a
+	// refresh-db service in its own namespace) can do work inside this
+	// stack namespace without a cluster-wide binding. Non-fatal: log and
+	// continue — the add-on will fail closed when it actually tries to
+	// touch the namespace, which is preferable to aborting the install.
+	if nsReady && len(m.namespaceRoleBindings) > 0 {
+		for _, spec := range m.namespaceRoleBindings {
+			if spec.ClusterRoleName == "" || spec.ServiceAccountName == "" || spec.ServiceAccountNamespace == "" {
+				slog.Warn("skipping incomplete NamespaceRoleBindingSpec",
+					"instance_id", instanceID,
+					"namespace", namespace,
+					"spec", spec,
+				)
+				continue
+			}
+			if rbErr := k8sClient.EnsureRoleBinding(
+				ctx, namespace, spec.RoleBindingName,
+				spec.ClusterRoleName, spec.ServiceAccountName, spec.ServiceAccountNamespace,
+			); rbErr != nil {
+				slog.Warn("failed to apply per-stack RoleBinding",
+					"instance_id", instanceID,
+					"namespace", namespace,
+					"cluster_role", spec.ClusterRoleName,
+					"sa", fmt.Sprintf("%s/%s", spec.ServiceAccountNamespace, spec.ServiceAccountName),
+					"error", rbErr,
+				)
+				allOutput += fmt.Sprintf("WARNING: failed to apply RoleBinding %q: %s\n", spec.ClusterRoleName, rbErr.Error())
+			} else {
+				allOutput += fmt.Sprintf(
+					"RoleBinding for ClusterRole %q (SA %s/%s) applied to %s\n",
+					spec.ClusterRoleName, spec.ServiceAccountNamespace, spec.ServiceAccountName, namespace,
+				)
 			}
 		}
 	}

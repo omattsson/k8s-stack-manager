@@ -15,6 +15,7 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	rbacv1 "k8s.io/api/rbac/v1"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
@@ -269,6 +270,112 @@ func (c *Client) EnsureServiceAccountPullSecret(ctx context.Context, namespace, 
 	}
 
 	slog.Info("Patched default SA with imagePullSecret", "namespace", namespace, "secret", secretName)
+	return nil
+}
+
+// EnsureRoleBinding creates or updates a RoleBinding in the target namespace
+// that binds an existing ClusterRole to a ServiceAccount living in another
+// namespace. This is the standard pattern for granting a centrally-deployed
+// add-on (e.g. a refresh-db service in its own namespace) per-stack-namespace
+// permissions without granting them cluster-wide.
+//
+// rbName is the RoleBinding's metadata.name in the target namespace; defaults
+// to the ClusterRole name when empty. Idempotent — re-applies subjects + roleRef
+// if a RoleBinding by that name already exists.
+func (c *Client) EnsureRoleBinding(
+	ctx context.Context,
+	namespace, rbName, clusterRoleName, saName, saNamespace string,
+) error {
+	if rbName == "" {
+		rbName = clusterRoleName
+	}
+
+	rb := &rbacv1.RoleBinding{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      rbName,
+			Namespace: namespace,
+			Labels: map[string]string{
+				"managed-by":                          "k8s-stack-manager",
+				"k8s-stack-manager.io/role-binding":   "namespace-provision",
+			},
+			Annotations: map[string]string{
+				"k8s-stack-manager.io/cluster-role":   clusterRoleName,
+				"k8s-stack-manager.io/refreshed-at":   time.Now().UTC().Format(time.RFC3339),
+			},
+		},
+		Subjects: []rbacv1.Subject{
+			{
+				Kind:      rbacv1.ServiceAccountKind,
+				Name:      saName,
+				Namespace: saNamespace,
+			},
+		},
+		RoleRef: rbacv1.RoleRef{
+			APIGroup: rbacv1.GroupName,
+			Kind:     "ClusterRole",
+			Name:     clusterRoleName,
+		},
+	}
+
+	existing, err := c.clientset.RbacV1().RoleBindings(namespace).Get(ctx, rbName, metav1.GetOptions{})
+	if err != nil {
+		if !k8serrors.IsNotFound(err) {
+			return fmt.Errorf("get existing RoleBinding %s/%s: %w", namespace, rbName, err)
+		}
+		// Doesn't exist — create.
+		if _, err := c.clientset.RbacV1().RoleBindings(namespace).Create(ctx, rb, metav1.CreateOptions{}); err != nil {
+			if !k8serrors.IsAlreadyExists(err) {
+				return fmt.Errorf("create RoleBinding %s/%s: %w", namespace, rbName, err)
+			}
+			// Race — fall through to update.
+			existing, err = c.clientset.RbacV1().RoleBindings(namespace).Get(ctx, rbName, metav1.GetOptions{})
+			if err != nil {
+				return fmt.Errorf("get RoleBinding after create race %s/%s: %w", namespace, rbName, err)
+			}
+		} else {
+			slog.Info("Created namespace RoleBinding",
+				"namespace", namespace, "name", rbName, "cluster_role", clusterRoleName,
+				"sa", fmt.Sprintf("%s/%s", saNamespace, saName),
+			)
+			return nil
+		}
+	}
+
+	// RoleBinding.RoleRef is immutable after creation. If the existing
+	// binding points at a different ClusterRole, we delete + recreate.
+	if existing.RoleRef.Name != clusterRoleName || existing.RoleRef.Kind != "ClusterRole" {
+		if err := c.clientset.RbacV1().RoleBindings(namespace).Delete(ctx, rbName, metav1.DeleteOptions{}); err != nil {
+			return fmt.Errorf("delete stale RoleBinding %s/%s: %w", namespace, rbName, err)
+		}
+		if _, err := c.clientset.RbacV1().RoleBindings(namespace).Create(ctx, rb, metav1.CreateOptions{}); err != nil {
+			return fmt.Errorf("recreate RoleBinding %s/%s: %w", namespace, rbName, err)
+		}
+		slog.Info("Recreated namespace RoleBinding (roleRef changed)",
+			"namespace", namespace, "name", rbName, "cluster_role", clusterRoleName,
+		)
+		return nil
+	}
+
+	// roleRef matches — patch subjects + metadata in place.
+	existing.Subjects = rb.Subjects
+	if existing.Labels == nil {
+		existing.Labels = map[string]string{}
+	}
+	for k, v := range rb.Labels {
+		existing.Labels[k] = v
+	}
+	if existing.Annotations == nil {
+		existing.Annotations = map[string]string{}
+	}
+	for k, v := range rb.Annotations {
+		existing.Annotations[k] = v
+	}
+	if _, err := c.clientset.RbacV1().RoleBindings(namespace).Update(ctx, existing, metav1.UpdateOptions{}); err != nil {
+		return fmt.Errorf("update RoleBinding %s/%s: %w", namespace, rbName, err)
+	}
+	slog.Debug("Updated namespace RoleBinding subjects",
+		"namespace", namespace, "name", rbName, "cluster_role", clusterRoleName,
+	)
 	return nil
 }
 

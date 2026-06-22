@@ -664,3 +664,64 @@ func TestAPIKeyMaxLifetimeDaysConfig(t *testing.T) {
 		assert.Equal(t, 0, cfg.Auth.APIKeyMaxLifetimeDays)
 	})
 }
+
+func TestNamespaceRoleBindingsConfig(t *testing.T) {
+	// Not parallel: uses t.Setenv.
+
+	t.Run("empty env disables feature", func(t *testing.T) {
+		t.Setenv("NAMESPACE_ROLE_BINDINGS_JSON", "")
+		cfg, err := config.LoadConfig()
+		require.NoError(t, err)
+		assert.Nil(t, cfg.Deployment.NamespaceRoleBindings)
+	})
+
+	t.Run("valid JSON parses to specs", func(t *testing.T) {
+		t.Setenv("NAMESPACE_ROLE_BINDINGS_JSON", `[
+			{
+				"clusterRole": "refresh-db-snap-manager",
+				"serviceAccountName": "refresh-db",
+				"serviceAccountNamespace": "refresh-db"
+			}
+		]`)
+		cfg, err := config.LoadConfig()
+		require.NoError(t, err)
+		require.Len(t, cfg.Deployment.NamespaceRoleBindings, 1)
+		spec := cfg.Deployment.NamespaceRoleBindings[0]
+		assert.Equal(t, "refresh-db-snap-manager", spec.ClusterRoleName)
+		assert.Equal(t, "refresh-db", spec.ServiceAccountName)
+		assert.Equal(t, "refresh-db", spec.ServiceAccountNamespace)
+	})
+
+	t.Run("multiple specs parse independently", func(t *testing.T) {
+		t.Setenv("NAMESPACE_ROLE_BINDINGS_JSON", `[
+			{"clusterRole": "cr-a", "serviceAccountName": "sa-a", "serviceAccountNamespace": "addons"},
+			{"clusterRole": "cr-b", "serviceAccountName": "sa-b", "serviceAccountNamespace": "addons", "roleBindingName": "rb-custom"}
+		]`)
+		cfg, err := config.LoadConfig()
+		require.NoError(t, err)
+		require.Len(t, cfg.Deployment.NamespaceRoleBindings, 2)
+		assert.Equal(t, "cr-a", cfg.Deployment.NamespaceRoleBindings[0].ClusterRoleName)
+		assert.Equal(t, "", cfg.Deployment.NamespaceRoleBindings[0].RoleBindingName)
+		assert.Equal(t, "rb-custom", cfg.Deployment.NamespaceRoleBindings[1].RoleBindingName)
+	})
+
+	t.Run("malformed JSON disables feature with warning", func(t *testing.T) {
+		t.Setenv("NAMESPACE_ROLE_BINDINGS_JSON", "{not json")
+		cfg, err := config.LoadConfig()
+		require.NoError(t, err)
+		assert.Nil(t, cfg.Deployment.NamespaceRoleBindings)
+	})
+
+	t.Run("incomplete entries skipped", func(t *testing.T) {
+		t.Setenv("NAMESPACE_ROLE_BINDINGS_JSON", `[
+			{"clusterRole": "cr-valid", "serviceAccountName": "sa", "serviceAccountNamespace": "addons"},
+			{"clusterRole": "cr-no-sa"},
+			{"serviceAccountName": "no-cr", "serviceAccountNamespace": "addons"}
+		]`)
+		cfg, err := config.LoadConfig()
+		require.NoError(t, err)
+		// Only the first entry is valid; the incomplete ones are dropped.
+		require.Len(t, cfg.Deployment.NamespaceRoleBindings, 1)
+		assert.Equal(t, "cr-valid", cfg.Deployment.NamespaceRoleBindings[0].ClusterRoleName)
+	})
+}

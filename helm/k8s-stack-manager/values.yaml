@@ -83,6 +83,28 @@ backend:
     SESSION_STORE: "mysql"
     ENABLE_SWAGGER: "false"
 
+  # Per-stack-namespace RoleBindings (NAMESPACE_ROLE_BINDINGS_JSON).
+  #
+  # When set, the deployer applies one RoleBinding per entry to every stack
+  # namespace at pre-install time, binding the named ServiceAccount (typically
+  # in a centrally-deployed add-on namespace like `refresh-db`) to a
+  # pre-existing ClusterRole. This is the standard pattern for granting
+  # cross-namespace add-ons per-stack permissions without a cluster-wide
+  # binding.
+  #
+  # The ClusterRole must already exist — the deployer does not create it.
+  #
+  # Disabled when the list is empty. The configmap-renderer serialises this
+  # list to JSON and puts it on the NAMESPACE_ROLE_BINDINGS_JSON env var.
+  #
+  # Example:
+  # namespaceRoleBindings:
+  #   - clusterRole: refresh-db-snap-manager
+  #     serviceAccountName: refresh-db
+  #     serviceAccountNamespace: refresh-db
+  #     # roleBindingName: refresh-db-snap-manager   # optional; defaults to clusterRole
+  namespaceRoleBindings: []
+
   # Secret environment variables (stored in Secret).
   secrets:
     JWT_SECRET: "CHANGE-ME-generate-a-random-secret"               # MUST be provided — minimum 16 chars

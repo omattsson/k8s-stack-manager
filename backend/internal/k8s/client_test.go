@@ -7,6 +7,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	corev1 "k8s.io/api/core/v1"
+	rbacv1 "k8s.io/api/rbac/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
 )
@@ -346,4 +347,146 @@ func TestCopySecret_SourceNotFound(t *testing.T) {
 	// Nothing should have been created in the target namespace.
 	_, getErr := cs.CoreV1().Secrets("target-ns").Get(context.Background(), "target-secret", metav1.GetOptions{})
 	assert.Error(t, getErr)
+}
+
+// ── EnsureRoleBinding ────────────────────────────────────────────────────────
+
+
+func TestEnsureRoleBinding_CreatesWhenAbsent(t *testing.T) {
+	t.Parallel()
+
+	cs := fake.NewSimpleClientset(nsObj("stack-test"))
+	c := NewClientFromInterface(cs)
+
+	err := c.EnsureRoleBinding(
+		context.Background(), "stack-test", "refresh-db-snap-manager",
+		"refresh-db-snap-manager", "refresh-db", "refresh-db",
+	)
+	assert.NoError(t, err)
+
+	got, err := cs.RbacV1().RoleBindings("stack-test").Get(
+		context.Background(), "refresh-db-snap-manager", metav1.GetOptions{},
+	)
+	assert.NoError(t, err)
+	assert.Equal(t, "ClusterRole", got.RoleRef.Kind)
+	assert.Equal(t, "refresh-db-snap-manager", got.RoleRef.Name)
+	assert.Len(t, got.Subjects, 1)
+	assert.Equal(t, "ServiceAccount", got.Subjects[0].Kind)
+	assert.Equal(t, "refresh-db", got.Subjects[0].Name)
+	assert.Equal(t, "refresh-db", got.Subjects[0].Namespace)
+	assert.Equal(t, "k8s-stack-manager", got.Labels["managed-by"])
+	assert.Equal(t, "refresh-db-snap-manager", got.Annotations["k8s-stack-manager.io/cluster-role"])
+}
+
+func TestEnsureRoleBinding_DefaultsNameToClusterRole(t *testing.T) {
+	t.Parallel()
+
+	cs := fake.NewSimpleClientset(nsObj("stack-test"))
+	c := NewClientFromInterface(cs)
+
+	// rbName empty → should default to the ClusterRole name.
+	err := c.EnsureRoleBinding(
+		context.Background(), "stack-test", "",
+		"my-cluster-role", "the-sa", "addons",
+	)
+	assert.NoError(t, err)
+
+	got, err := cs.RbacV1().RoleBindings("stack-test").Get(
+		context.Background(), "my-cluster-role", metav1.GetOptions{},
+	)
+	assert.NoError(t, err)
+	assert.Equal(t, "my-cluster-role", got.Name)
+}
+
+func TestEnsureRoleBinding_UpdatesSubjectsWhenRoleRefMatches(t *testing.T) {
+	t.Parallel()
+
+	existing := &rbacv1.RoleBinding{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "rb", Namespace: "stack-test",
+			Labels: map[string]string{"keep-me": "yes"},
+		},
+		Subjects: []rbacv1.Subject{
+			{Kind: rbacv1.ServiceAccountKind, Name: "old-sa", Namespace: "old-ns"},
+		},
+		RoleRef: rbacv1.RoleRef{
+			APIGroup: rbacv1.GroupName,
+			Kind:     "ClusterRole",
+			Name:     "shared-cr",
+		},
+	}
+	cs := fake.NewSimpleClientset(nsObj("stack-test"), existing)
+	c := NewClientFromInterface(cs)
+
+	err := c.EnsureRoleBinding(
+		context.Background(), "stack-test", "rb",
+		"shared-cr", "new-sa", "new-ns",
+	)
+	assert.NoError(t, err)
+
+	got, _ := cs.RbacV1().RoleBindings("stack-test").Get(
+		context.Background(), "rb", metav1.GetOptions{},
+	)
+	// Subjects updated; old labels preserved
+	assert.Len(t, got.Subjects, 1)
+	assert.Equal(t, "new-sa", got.Subjects[0].Name)
+	assert.Equal(t, "new-ns", got.Subjects[0].Namespace)
+	assert.Equal(t, "yes", got.Labels["keep-me"])
+	// Our managed-by label was added too
+	assert.Equal(t, "k8s-stack-manager", got.Labels["managed-by"])
+}
+
+func TestEnsureRoleBinding_RecreatesWhenRoleRefChanges(t *testing.T) {
+	t.Parallel()
+
+	// RoleBinding.RoleRef is immutable on update — the helper must delete +
+	// recreate when the ClusterRole name changes.
+	existing := &rbacv1.RoleBinding{
+		ObjectMeta: metav1.ObjectMeta{Name: "rb", Namespace: "stack-test"},
+		Subjects: []rbacv1.Subject{
+			{Kind: rbacv1.ServiceAccountKind, Name: "sa", Namespace: "addons"},
+		},
+		RoleRef: rbacv1.RoleRef{
+			APIGroup: rbacv1.GroupName, Kind: "ClusterRole", Name: "old-cr",
+		},
+	}
+	cs := fake.NewSimpleClientset(nsObj("stack-test"), existing)
+	c := NewClientFromInterface(cs)
+
+	err := c.EnsureRoleBinding(
+		context.Background(), "stack-test", "rb",
+		"new-cr", "sa", "addons",
+	)
+	assert.NoError(t, err)
+
+	got, _ := cs.RbacV1().RoleBindings("stack-test").Get(
+		context.Background(), "rb", metav1.GetOptions{},
+	)
+	assert.Equal(t, "new-cr", got.RoleRef.Name)
+}
+
+func TestEnsureRoleBinding_IdempotentSecondCallNoOp(t *testing.T) {
+	t.Parallel()
+
+	cs := fake.NewSimpleClientset(nsObj("stack-test"))
+	c := NewClientFromInterface(cs)
+
+	err1 := c.EnsureRoleBinding(
+		context.Background(), "stack-test", "rb",
+		"cr", "sa", "addons",
+	)
+	assert.NoError(t, err1)
+
+	err2 := c.EnsureRoleBinding(
+		context.Background(), "stack-test", "rb",
+		"cr", "sa", "addons",
+	)
+	assert.NoError(t, err2)
+
+	// Still only one RoleBinding.
+	list, err := cs.RbacV1().RoleBindings("stack-test").List(
+		context.Background(), metav1.ListOptions{},
+	)
+	assert.NoError(t, err)
+	assert.Len(t, list.Items, 1)
 }
