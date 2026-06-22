@@ -582,12 +582,19 @@ func (m *Manager) executeDeploy(helm HelmExecutor, k8sClient *k8s.Client, regCfg
 	// continue — the add-on will fail closed when it actually tries to
 	// touch the namespace, which is preferable to aborting the install.
 	if nsReady && len(m.namespaceRoleBindings) > 0 {
-		for _, spec := range m.namespaceRoleBindings {
+		for i, spec := range m.namespaceRoleBindings {
 			if spec.ClusterRoleName == "" || spec.ServiceAccountName == "" || spec.ServiceAccountNamespace == "" {
 				slog.Warn("skipping incomplete NamespaceRoleBindingSpec",
 					"instance_id", instanceID,
 					"namespace", namespace,
-					"spec", spec,
+					"index", i,
+					"cluster_role", spec.ClusterRoleName,
+					"sa_namespace", spec.ServiceAccountNamespace,
+					"sa_name", spec.ServiceAccountName,
+				)
+				allOutput += fmt.Sprintf(
+					"WARNING: skipped incomplete NamespaceRoleBindingSpec at index %d (clusterRole=%q sa=%q/%q)\n",
+					i, spec.ClusterRoleName, spec.ServiceAccountNamespace, spec.ServiceAccountName,
 				)
 				continue
 			}

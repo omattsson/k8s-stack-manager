@@ -92,7 +92,16 @@ backend:
   # cross-namespace add-ons per-stack permissions without a cluster-wide
   # binding.
   #
-  # The ClusterRole must already exist — the deployer does not create it.
+  # Prerequisites the deployer does NOT create on your behalf:
+  #   * The ClusterRole named by `clusterRole` must already exist.
+  #   * The ServiceAccount named by `serviceAccountName` must already exist
+  #     in `serviceAccountNamespace`, and the consuming pod must have a way
+  #     to mount its token (Kubernetes ≥ 1.24 no longer auto-generates SA
+  #     token secrets — projected tokens or an explicit token Secret are
+  #     required).
+  # The deployer treats each RoleBinding's Subjects as authoritative — any
+  # additional subjects added externally to a RoleBinding by the configured
+  # name will be dropped on the next reconcile.
   #
   # Disabled when the list is empty. The configmap-renderer serialises this
   # list to JSON and puts it on the NAMESPACE_ROLE_BINDINGS_JSON env var.
