@@ -1,7 +1,7 @@
 import Editor, { type OnMount } from '@monaco-editor/react';
 import { Box, Typography } from '@mui/material';
 import { useState, useCallback, useRef } from 'react';
-import yaml from 'js-yaml';
+import { load as loadYaml } from 'js-yaml';
 import { useThemeMode } from '../../context/ThemeContext';
 
 type EditorInstance = Parameters<OnMount>[0];
@@ -29,7 +29,7 @@ const YamlEditor = ({ value, onChange, label, height = '300px', readOnly = false
       // Validate YAML
       try {
         if (newValue.trim()) {
-          yaml.load(newValue);
+          loadYaml(newValue);
         }
         setValidationError(null);
       } catch (e: unknown) {
