@@ -1236,6 +1236,7 @@ func TestSetupRoutes_AllHandlers_RegistersCompleteAPI(t *testing.T) {
 		{"GET", "/api/v1/stack-definitions/:id/check-upgrade"},
 		{"POST", "/api/v1/stack-definitions/:id/upgrade"},
 		{"POST", "/api/v1/stack-definitions/:id/charts"},
+		{"GET", "/api/v1/stack-definitions/:id/charts/:chartId"},
 		{"PUT", "/api/v1/stack-definitions/:id/charts/:chartId"},
 		{"DELETE", "/api/v1/stack-definitions/:id/charts/:chartId"},
 

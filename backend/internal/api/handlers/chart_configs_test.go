@@ -32,6 +32,7 @@ func setupChartConfigRouter(
 	defs := r.Group("/api/v1/stack-definitions")
 	{
 		defs.POST("/:id/charts", h.AddChartConfig)
+		defs.GET("/:id/charts/:chartId", h.GetChartConfig)
 		defs.PUT("/:id/charts/:chartId", h.UpdateChartConfig)
 		defs.DELETE("/:id/charts/:chartId", h.DeleteChartConfig)
 	}
@@ -141,6 +142,43 @@ func TestAddChartConfig(t *testing.T) {
 			}
 		})
 	}
+}
+
+// ---- GetChartConfig ----
+
+func TestGetChartConfig(t *testing.T) {
+	t.Parallel()
+
+	t.Run("returns existing chart", func(t *testing.T) {
+		defRepo := NewMockStackDefinitionRepository()
+		chartRepo := NewMockChartConfigRepository()
+		templateChartRepo := NewMockTemplateChartConfigRepository()
+		seedChartConfig(t, chartRepo, "c-1", "def-1", "nginx")
+
+		router := setupChartConfigRouter(defRepo, chartRepo, templateChartRepo, "uid-1", "admin")
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/stack-definitions/def-1/charts/c-1", nil)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		require.Equal(t, http.StatusOK, w.Code)
+		var got models.ChartConfig
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &got))
+		assert.Equal(t, "c-1", got.ID)
+		assert.Equal(t, "nginx", got.ChartName)
+	})
+
+	t.Run("returns 404 when chart absent", func(t *testing.T) {
+		defRepo := NewMockStackDefinitionRepository()
+		chartRepo := NewMockChartConfigRepository()
+		templateChartRepo := NewMockTemplateChartConfigRepository()
+
+		router := setupChartConfigRouter(defRepo, chartRepo, templateChartRepo, "uid-1", "admin")
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/stack-definitions/def-1/charts/does-not-exist", nil)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusNotFound, w.Code)
+	})
 }
 
 // ---- UpdateChartConfig ----

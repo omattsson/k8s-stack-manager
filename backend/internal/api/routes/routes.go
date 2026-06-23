@@ -320,6 +320,7 @@ func SetupRoutes(router *gin.Engine, deps Deps) *RateLimiters {
 				definitions.GET("/:id/check-upgrade", deps.DefinitionHandler.CheckUpgrade)
 				definitions.POST("/:id/upgrade", deps.DefinitionHandler.ApplyUpgrade)
 				definitions.POST("/:id/charts", deps.DefinitionHandler.AddChartConfig)
+				definitions.GET("/:id/charts/:chartId", deps.DefinitionHandler.GetChartConfig)
 				definitions.PUT("/:id/charts/:chartId", deps.DefinitionHandler.UpdateChartConfig)
 				definitions.DELETE("/:id/charts/:chartId", deps.DefinitionHandler.DeleteChartConfig)
 			}
