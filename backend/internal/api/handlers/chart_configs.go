@@ -56,43 +56,129 @@ func (h *DefinitionHandler) AddChartConfig(c *gin.Context) {
 	c.JSON(http.StatusCreated, chart)
 }
 
-// UpdateChartConfig godoc
-// @Summary     Update a chart config
-// @Description Update a chart configuration within a stack definition
+// GetChartConfig godoc
+// @Summary     Get a chart config
+// @Description Fetch a single chart configuration within a stack definition
 // @Tags        chart-configs
-// @Accept      json
 // @Produce     json
-// @Param       id      path     string            true "Definition ID"
-// @Param       chartId path     string            true "Chart config ID"
-// @Param       chart   body     models.ChartConfig true "Updated chart config"
+// @Param       id      path     string             true "Definition ID"
+// @Param       chartId path     string             true "Chart config ID"
 // @Success     200     {object} models.ChartConfig
-// @Failure     400     {object} map[string]string
 // @Failure     404     {object} map[string]string
-// @Router      /api/v1/stack-definitions/{id}/charts/{chartId} [put]
-func (h *DefinitionHandler) UpdateChartConfig(c *gin.Context) {
+// @Failure     500     {object} map[string]string
+// @Router      /api/v1/stack-definitions/{id}/charts/{chartId} [get]
+func (h *DefinitionHandler) GetChartConfig(c *gin.Context) {
+	chart, ok := h.requireChartInDefinition(c)
+	if !ok {
+		return
+	}
+	c.JSON(http.StatusOK, chart)
+}
+
+// requireChartInDefinition loads the chart by chartId and verifies it belongs
+// to the stack definition identified by the `id` path param. On any failure
+// it writes an error response and returns (nil, false); callers should return
+// immediately when ok is false. The cross-definition mismatch always yields
+// 404; repository errors are translated by mapError, which can produce 400,
+// 404, 409, 500, or 501 depending on the underlying error.
+//
+// The cross-definition mismatch is reported as a generic "Chart config not
+// found" — exposing whether a given chart ID exists under a different
+// definition would leak the existence of unrelated records.
+func (h *DefinitionHandler) requireChartInDefinition(c *gin.Context) (*models.ChartConfig, bool) {
+	defID := c.Param("id")
 	chartID := c.Param("chartId")
 
-	existing, err := h.chartRepo.FindByID(chartID)
+	chart, err := h.chartRepo.FindByID(chartID)
 	if err != nil {
 		status, message := mapError(err, entityChartConfig)
 		c.JSON(status, gin.H{"error": message})
+		return nil, false
+	}
+	if chart.StackDefinitionID != defID {
+		c.JSON(http.StatusNotFound, gin.H{"error": entityChartConfig + " not found"})
+		return nil, false
+	}
+	return chart, true
+}
+
+// chartConfigUpdateRequest is the body type for PUT /charts/{chartId}.
+//
+// Fields are pointers so a JSON document with the key absent leaves the
+// existing value untouched, while an explicitly present value replaces it.
+// The contract is PATCH-like semantics for any client that sends a subset
+// of fields: unmentioned fields (repository_url, chart_path,
+// build_pipeline_id, deploy_order, ...) are preserved rather than wiped to
+// the zero value on every PUT.
+//
+// Caveat: setting a string field to "" is treated as "replace with empty
+// string", which then runs through models.ChartConfig.Validate(). Fields
+// with non-empty validation (notably ChartName) will cause the request to
+// fail with HTTP 400 — callers wanting to clear such fields cannot do so
+// via this endpoint.
+type chartConfigUpdateRequest struct {
+	ChartName       *string `json:"chart_name,omitempty"`
+	RepositoryURL   *string `json:"repository_url,omitempty"`
+	SourceRepoURL   *string `json:"source_repo_url,omitempty"`
+	BuildPipelineID *string `json:"build_pipeline_id,omitempty"`
+	ChartPath       *string `json:"chart_path,omitempty"`
+	ChartVersion    *string `json:"chart_version,omitempty"`
+	DefaultValues   *string `json:"default_values,omitempty"`
+	DeployOrder     *int    `json:"deploy_order,omitempty"`
+}
+
+// UpdateChartConfig godoc
+// @Summary     Update a chart config
+// @Description Partial-update a chart configuration within a stack definition.
+// @Description Only fields present in the request body are modified; absent
+// @Description fields are preserved from the existing record.
+// @Tags        chart-configs
+// @Accept      json
+// @Produce     json
+// @Param       id      path     string                   true "Definition ID"
+// @Param       chartId path     string                   true "Chart config ID"
+// @Param       chart   body     chartConfigUpdateRequest true "Updated chart config"
+// @Success     200     {object} models.ChartConfig
+// @Failure     400     {object} map[string]string
+// @Failure     404     {object} map[string]string
+// @Failure     500     {object} map[string]string
+// @Router      /api/v1/stack-definitions/{id}/charts/{chartId} [put]
+func (h *DefinitionHandler) UpdateChartConfig(c *gin.Context) {
+	existing, ok := h.requireChartInDefinition(c)
+	if !ok {
 		return
 	}
 
-	var update models.ChartConfig
+	var update chartConfigUpdateRequest
 	if err := c.ShouldBindJSON(&update); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": msgInvalidRequestFormat})
 		return
 	}
 
-	existing.ChartName = update.ChartName
-	existing.RepositoryURL = update.RepositoryURL
-	existing.SourceRepoURL = update.SourceRepoURL
-	existing.BuildPipelineID = update.BuildPipelineID
-	existing.ChartPath = update.ChartPath
-	existing.ChartVersion = update.ChartVersion
-	existing.DefaultValues = update.DefaultValues
-	existing.DeployOrder = update.DeployOrder
+	if update.ChartName != nil {
+		existing.ChartName = *update.ChartName
+	}
+	if update.RepositoryURL != nil {
+		existing.RepositoryURL = *update.RepositoryURL
+	}
+	if update.SourceRepoURL != nil {
+		existing.SourceRepoURL = *update.SourceRepoURL
+	}
+	if update.BuildPipelineID != nil {
+		existing.BuildPipelineID = *update.BuildPipelineID
+	}
+	if update.ChartPath != nil {
+		existing.ChartPath = *update.ChartPath
+	}
+	if update.ChartVersion != nil {
+		existing.ChartVersion = *update.ChartVersion
+	}
+	if update.DefaultValues != nil {
+		existing.DefaultValues = *update.DefaultValues
+	}
+	if update.DeployOrder != nil {
+		existing.DeployOrder = *update.DeployOrder
+	}
 
 	if err := existing.Validate(); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -119,16 +205,12 @@ func (h *DefinitionHandler) UpdateChartConfig(c *gin.Context) {
 // @Failure     404     {object} map[string]string
 // @Router      /api/v1/stack-definitions/{id}/charts/{chartId} [delete]
 func (h *DefinitionHandler) DeleteChartConfig(c *gin.Context) {
-	defID := c.Param("id")
-	chartID := c.Param("chartId")
-
-	// Look up the chart config to get its ChartName.
-	chart, err := h.chartRepo.FindByID(chartID)
-	if err != nil {
-		status, message := mapError(err, entityChartConfig)
-		c.JSON(status, gin.H{"error": message})
+	chart, ok := h.requireChartInDefinition(c)
+	if !ok {
 		return
 	}
+	defID := c.Param("id")
+	chartID := c.Param("chartId")
 
 	// Check if the definition was created from a template with a required chart.
 	if defID != "" && h.templateChartRepo != nil {

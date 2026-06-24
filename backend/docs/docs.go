@@ -4203,8 +4203,60 @@ const docTemplate = `{
             }
         },
         "/api/v1/stack-definitions/{id}/charts/{chartId}": {
+            "get": {
+                "description": "Fetch a single chart configuration within a stack definition",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "chart-configs"
+                ],
+                "summary": "Get a chart config",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Definition ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Chart config ID",
+                        "name": "chartId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/models.ChartConfig"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            },
             "put": {
-                "description": "Update a chart configuration within a stack definition",
+                "description": "Partial-update a chart configuration within a stack definition.\nOnly fields present in the request body are modified; absent\nfields are preserved from the existing record.",
                 "consumes": [
                     "application/json"
                 ],
@@ -4236,7 +4288,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/models.ChartConfig"
+                            "$ref": "#/definitions/handlers.chartConfigUpdateRequest"
                         }
                     }
                 ],
@@ -4258,6 +4310,15 @@ const docTemplate = `{
                     },
                     "404": {
                         "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {
@@ -9161,6 +9222,35 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "entity_type": {
+                    "type": "string"
+                }
+            }
+        },
+        "handlers.chartConfigUpdateRequest": {
+            "type": "object",
+            "properties": {
+                "build_pipeline_id": {
+                    "type": "string"
+                },
+                "chart_name": {
+                    "type": "string"
+                },
+                "chart_path": {
+                    "type": "string"
+                },
+                "chart_version": {
+                    "type": "string"
+                },
+                "default_values": {
+                    "type": "string"
+                },
+                "deploy_order": {
+                    "type": "integer"
+                },
+                "repository_url": {
+                    "type": "string"
+                },
+                "source_repo_url": {
                     "type": "string"
                 }
             }
