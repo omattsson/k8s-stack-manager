@@ -65,6 +65,7 @@ func (h *DefinitionHandler) AddChartConfig(c *gin.Context) {
 // @Param       chartId path     string             true "Chart config ID"
 // @Success     200     {object} models.ChartConfig
 // @Failure     404     {object} map[string]string
+// @Failure     500     {object} map[string]string
 // @Router      /api/v1/stack-definitions/{id}/charts/{chartId} [get]
 func (h *DefinitionHandler) GetChartConfig(c *gin.Context) {
 	chart, ok := h.requireChartInDefinition(c)
@@ -75,9 +76,11 @@ func (h *DefinitionHandler) GetChartConfig(c *gin.Context) {
 }
 
 // requireChartInDefinition loads the chart by chartId and verifies it belongs
-// to the stack definition identified by the `id` path param. If the chart is
-// missing, or belongs to a different definition, it writes a 404 response and
-// returns (nil, false). Callers should return immediately when ok is false.
+// to the stack definition identified by the `id` path param. On any failure it
+// writes the appropriate error response (404 when the chart is missing or
+// belongs to a different definition; 500 on repository errors via mapError)
+// and returns (nil, false). Callers should return immediately when ok is
+// false.
 //
 // The cross-definition mismatch is reported as a generic "Chart config not
 // found" — exposing whether a given chart ID exists under a different
@@ -138,6 +141,7 @@ type chartConfigUpdateRequest struct {
 // @Success     200     {object} models.ChartConfig
 // @Failure     400     {object} map[string]string
 // @Failure     404     {object} map[string]string
+// @Failure     500     {object} map[string]string
 // @Router      /api/v1/stack-definitions/{id}/charts/{chartId} [put]
 func (h *DefinitionHandler) UpdateChartConfig(c *gin.Context) {
 	existing, ok := h.requireChartInDefinition(c)

@@ -150,6 +150,7 @@ func TestGetChartConfig(t *testing.T) {
 	t.Parallel()
 
 	t.Run("returns existing chart", func(t *testing.T) {
+		t.Parallel()
 		defRepo := NewMockStackDefinitionRepository()
 		chartRepo := NewMockChartConfigRepository()
 		templateChartRepo := NewMockTemplateChartConfigRepository()
@@ -168,6 +169,7 @@ func TestGetChartConfig(t *testing.T) {
 	})
 
 	t.Run("returns 404 when chart absent", func(t *testing.T) {
+		t.Parallel()
 		defRepo := NewMockStackDefinitionRepository()
 		chartRepo := NewMockChartConfigRepository()
 		templateChartRepo := NewMockTemplateChartConfigRepository()
@@ -181,6 +183,7 @@ func TestGetChartConfig(t *testing.T) {
 	})
 
 	t.Run("cross-definition returns 404", func(t *testing.T) {
+		t.Parallel()
 		defRepo := NewMockStackDefinitionRepository()
 		chartRepo := NewMockChartConfigRepository()
 		templateChartRepo := NewMockTemplateChartConfigRepository()
