@@ -76,11 +76,11 @@ func (h *DefinitionHandler) GetChartConfig(c *gin.Context) {
 }
 
 // requireChartInDefinition loads the chart by chartId and verifies it belongs
-// to the stack definition identified by the `id` path param. On any failure it
-// writes the appropriate error response (404 when the chart is missing or
-// belongs to a different definition; 500 on repository errors via mapError)
-// and returns (nil, false). Callers should return immediately when ok is
-// false.
+// to the stack definition identified by the `id` path param. On any failure
+// it writes an error response and returns (nil, false); callers should return
+// immediately when ok is false. The cross-definition mismatch always yields
+// 404; repository errors are translated by mapError, which can produce 400,
+// 404, 409, 500, or 501 depending on the underlying error.
 //
 // The cross-definition mismatch is reported as a generic "Chart config not
 // found" — exposing whether a given chart ID exists under a different
