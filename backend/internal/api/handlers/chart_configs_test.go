@@ -179,6 +179,24 @@ func TestGetChartConfig(t *testing.T) {
 
 		assert.Equal(t, http.StatusNotFound, w.Code)
 	})
+
+	t.Run("cross-definition returns 404", func(t *testing.T) {
+		defRepo := NewMockStackDefinitionRepository()
+		chartRepo := NewMockChartConfigRepository()
+		templateChartRepo := NewMockTemplateChartConfigRepository()
+		// Chart belongs to def-A; we look it up under def-B.
+		seedChartConfig(t, chartRepo, "c-1", "def-A", "nginx")
+
+		router := setupChartConfigRouter(defRepo, chartRepo, templateChartRepo, "uid-1", "admin")
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/stack-definitions/def-B/charts/c-1", nil)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		require.Equal(t, http.StatusNotFound, w.Code)
+		var resp map[string]string
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+		assert.Equal(t, "Chart config not found", resp["error"])
+	})
 }
 
 // ---- UpdateChartConfig ----
@@ -284,6 +302,103 @@ func TestUpdateChartConfig(t *testing.T) {
 			}
 		})
 	}
+
+	// preserves unspecified fields — regression for the PATCH-semantics fix.
+	// A PUT body that mentions only chart_name MUST NOT wipe the other fields
+	// to their zero values. The seed sets every field to a non-zero sentinel
+	// so the assertions below would all fail under the previous buggy code
+	// that bound the request straight into models.ChartConfig.
+	t.Run("preserves unspecified fields", func(t *testing.T) {
+		t.Parallel()
+
+		defRepo := NewMockStackDefinitionRepository()
+		chartRepo := NewMockChartConfigRepository()
+		seeded := &models.ChartConfig{
+			ID:                "chart-1",
+			StackDefinitionID: "def-1",
+			ChartName:         "nginx",
+			RepositoryURL:     "https://charts.example.com",
+			SourceRepoURL:     "https://git.example.com/nginx",
+			BuildPipelineID:   "pipeline-42",
+			ChartPath:         "charts/nginx",
+			ChartVersion:      "1.2.3",
+			DefaultValues:     "image:\n  tag: stable\n",
+			DeployOrder:       7,
+			CreatedAt:         time.Now().UTC().Truncate(time.Second),
+		}
+		require.NoError(t, chartRepo.Create(seeded))
+
+		router := setupChartConfigRouter(defRepo, chartRepo, NewMockTemplateChartConfigRepository(), "uid-1", "admin")
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest(http.MethodPut,
+			"/api/v1/stack-definitions/def-1/charts/chart-1",
+			bytes.NewBufferString(`{"chart_name":"renamed"}`))
+		req.Header.Set("Content-Type", "application/json")
+		router.ServeHTTP(w, req)
+
+		require.Equal(t, http.StatusOK, w.Code)
+
+		var got models.ChartConfig
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &got))
+
+		// New value applied.
+		assert.Equal(t, "renamed", got.ChartName)
+
+		// Every other field must survive the partial update.
+		assert.Equal(t, seeded.ID, got.ID)
+		assert.Equal(t, seeded.StackDefinitionID, got.StackDefinitionID)
+		assert.Equal(t, seeded.RepositoryURL, got.RepositoryURL)
+		assert.Equal(t, seeded.SourceRepoURL, got.SourceRepoURL)
+		assert.Equal(t, seeded.BuildPipelineID, got.BuildPipelineID)
+		assert.Equal(t, seeded.ChartPath, got.ChartPath)
+		assert.Equal(t, seeded.ChartVersion, got.ChartVersion)
+		assert.Equal(t, seeded.DefaultValues, got.DefaultValues)
+		assert.Equal(t, seeded.DeployOrder, got.DeployOrder)
+		assert.True(t, seeded.CreatedAt.Equal(got.CreatedAt),
+			"CreatedAt should be preserved: want %v, got %v", seeded.CreatedAt, got.CreatedAt)
+
+		// And the persisted record matches what we returned.
+		stored, err := chartRepo.FindByID("chart-1")
+		require.NoError(t, err)
+		assert.Equal(t, "renamed", stored.ChartName)
+		assert.Equal(t, seeded.RepositoryURL, stored.RepositoryURL)
+		assert.Equal(t, seeded.SourceRepoURL, stored.SourceRepoURL)
+		assert.Equal(t, seeded.BuildPipelineID, stored.BuildPipelineID)
+		assert.Equal(t, seeded.ChartPath, stored.ChartPath)
+		assert.Equal(t, seeded.ChartVersion, stored.ChartVersion)
+		assert.Equal(t, seeded.DefaultValues, stored.DefaultValues)
+		assert.Equal(t, seeded.DeployOrder, stored.DeployOrder)
+	})
+
+	// cross-definition returns 404 — regression for the membership-check fix.
+	// Chart belongs to def-A; PUT under def-B must 404 without mutating it,
+	// and must not leak existence by returning a different error.
+	t.Run("cross-definition returns 404", func(t *testing.T) {
+		t.Parallel()
+
+		defRepo := NewMockStackDefinitionRepository()
+		chartRepo := NewMockChartConfigRepository()
+		seedChartConfig(t, chartRepo, "c-1", "def-A", "nginx")
+
+		router := setupChartConfigRouter(defRepo, chartRepo, NewMockTemplateChartConfigRepository(), "uid-1", "admin")
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest(http.MethodPut,
+			"/api/v1/stack-definitions/def-B/charts/c-1",
+			bytes.NewBufferString(`{"chart_name":"renamed"}`))
+		req.Header.Set("Content-Type", "application/json")
+		router.ServeHTTP(w, req)
+
+		require.Equal(t, http.StatusNotFound, w.Code)
+		var resp map[string]string
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+		assert.Equal(t, "Chart config not found", resp["error"])
+
+		// Ensure the chart was not mutated under the wrong definition.
+		stored, err := chartRepo.FindByID("c-1")
+		require.NoError(t, err)
+		assert.Equal(t, "nginx", stored.ChartName)
+		assert.Equal(t, "def-A", stored.StackDefinitionID)
+	})
 }
 
 // ---- DeleteChartConfig ----
@@ -354,6 +469,32 @@ func TestDeleteChartConfig(t *testing.T) {
 		var resp map[string]string
 		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 		assert.Contains(t, resp["error"], "nginx")
+	})
+
+	// cross-definition returns 404 — regression for the membership-check fix.
+	// Chart belongs to def-A; DELETE under def-B must 404 and the row must
+	// remain in the store.
+	t.Run("cross-definition returns 404", func(t *testing.T) {
+		t.Parallel()
+
+		defRepo := NewMockStackDefinitionRepository()
+		chartRepo := NewMockChartConfigRepository()
+		seedChartConfig(t, chartRepo, "c-1", "def-A", "nginx")
+
+		router := setupChartConfigRouter(defRepo, chartRepo, NewMockTemplateChartConfigRepository(), "uid-1", "admin")
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest(http.MethodDelete, "/api/v1/stack-definitions/def-B/charts/c-1", nil)
+		router.ServeHTTP(w, req)
+
+		require.Equal(t, http.StatusNotFound, w.Code)
+		var resp map[string]string
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+		assert.Equal(t, "Chart config not found", resp["error"])
+
+		// Chart must still be present under its real definition.
+		stored, err := chartRepo.FindByID("c-1")
+		require.NoError(t, err)
+		assert.Equal(t, "def-A", stored.StackDefinitionID)
 	})
 
 	t.Run("non-required chart in template can be deleted", func(t *testing.T) {

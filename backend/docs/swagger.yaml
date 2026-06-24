@@ -610,6 +610,25 @@ definitions:
       entity_type:
         type: string
     type: object
+  handlers.chartConfigUpdateRequest:
+    properties:
+      build_pipeline_id:
+        type: string
+      chart_name:
+        type: string
+      chart_path:
+        type: string
+      chart_version:
+        type: string
+      default_values:
+        type: string
+      deploy_order:
+        type: integer
+      repository_url:
+        type: string
+      source_repo_url:
+        type: string
+    type: object
   handlers.createChannelRequest:
     properties:
       enabled:
@@ -4350,10 +4369,42 @@ paths:
       summary: Delete a chart config
       tags:
       - chart-configs
+    get:
+      description: Fetch a single chart configuration within a stack definition
+      parameters:
+      - description: Definition ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Chart config ID
+        in: path
+        name: chartId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.ChartConfig'
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Get a chart config
+      tags:
+      - chart-configs
     put:
       consumes:
       - application/json
-      description: Update a chart configuration within a stack definition
+      description: |-
+        Partial-update a chart configuration within a stack definition.
+        Only fields present in the request body are modified; absent
+        fields are preserved from the existing record.
       parameters:
       - description: Definition ID
         in: path
@@ -4370,7 +4421,7 @@ paths:
         name: chart
         required: true
         schema:
-          $ref: '#/definitions/models.ChartConfig'
+          $ref: '#/definitions/handlers.chartConfigUpdateRequest'
       produces:
       - application/json
       responses:

@@ -67,25 +67,52 @@ func (h *DefinitionHandler) AddChartConfig(c *gin.Context) {
 // @Failure     404     {object} map[string]string
 // @Router      /api/v1/stack-definitions/{id}/charts/{chartId} [get]
 func (h *DefinitionHandler) GetChartConfig(c *gin.Context) {
-	chartID := c.Param("chartId")
-	chart, err := h.chartRepo.FindByID(chartID)
-	if err != nil {
-		status, message := mapError(err, entityChartConfig)
-		c.JSON(status, gin.H{"error": message})
+	chart, ok := h.requireChartInDefinition(c)
+	if !ok {
 		return
 	}
 	c.JSON(http.StatusOK, chart)
 }
 
+// requireChartInDefinition loads the chart by chartId and verifies it belongs
+// to the stack definition identified by the `id` path param. If the chart is
+// missing, or belongs to a different definition, it writes a 404 response and
+// returns (nil, false). Callers should return immediately when ok is false.
+//
+// The cross-definition mismatch is reported as a generic "Chart config not
+// found" — exposing whether a given chart ID exists under a different
+// definition would leak the existence of unrelated records.
+func (h *DefinitionHandler) requireChartInDefinition(c *gin.Context) (*models.ChartConfig, bool) {
+	defID := c.Param("id")
+	chartID := c.Param("chartId")
+
+	chart, err := h.chartRepo.FindByID(chartID)
+	if err != nil {
+		status, message := mapError(err, entityChartConfig)
+		c.JSON(status, gin.H{"error": message})
+		return nil, false
+	}
+	if chart.StackDefinitionID != defID {
+		c.JSON(http.StatusNotFound, gin.H{"error": entityChartConfig + " not found"})
+		return nil, false
+	}
+	return chart, true
+}
+
 // chartConfigUpdateRequest is the body type for PUT /charts/{chartId}.
 //
 // Fields are pointers so a JSON document with the key absent leaves the
-// existing value untouched, while an explicitly empty string ("") replaces
-// it. This matters because the canonical CLI client (stackctl 0.3.0) sends
-// a body containing only a subset of fields when calling `update-chart` —
-// without the absent-vs-empty distinction here, the unmentioned fields
-// (repository_url, chart_path, build_pipeline_id, deploy_order) were
-// being silently wiped to the zero value on every PUT.
+// existing value untouched, while an explicitly present value replaces it.
+// The contract is PATCH-like semantics for any client that sends a subset
+// of fields: unmentioned fields (repository_url, chart_path,
+// build_pipeline_id, deploy_order, ...) are preserved rather than wiped to
+// the zero value on every PUT.
+//
+// Caveat: setting a string field to "" is treated as "replace with empty
+// string", which then runs through models.ChartConfig.Validate(). Fields
+// with non-empty validation (notably ChartName) will cause the request to
+// fail with HTTP 400 — callers wanting to clear such fields cannot do so
+// via this endpoint.
 type chartConfigUpdateRequest struct {
 	ChartName       *string `json:"chart_name,omitempty"`
 	RepositoryURL   *string `json:"repository_url,omitempty"`
@@ -113,12 +140,8 @@ type chartConfigUpdateRequest struct {
 // @Failure     404     {object} map[string]string
 // @Router      /api/v1/stack-definitions/{id}/charts/{chartId} [put]
 func (h *DefinitionHandler) UpdateChartConfig(c *gin.Context) {
-	chartID := c.Param("chartId")
-
-	existing, err := h.chartRepo.FindByID(chartID)
-	if err != nil {
-		status, message := mapError(err, entityChartConfig)
-		c.JSON(status, gin.H{"error": message})
+	existing, ok := h.requireChartInDefinition(c)
+	if !ok {
 		return
 	}
 
@@ -178,16 +201,12 @@ func (h *DefinitionHandler) UpdateChartConfig(c *gin.Context) {
 // @Failure     404     {object} map[string]string
 // @Router      /api/v1/stack-definitions/{id}/charts/{chartId} [delete]
 func (h *DefinitionHandler) DeleteChartConfig(c *gin.Context) {
-	defID := c.Param("id")
-	chartID := c.Param("chartId")
-
-	// Look up the chart config to get its ChartName.
-	chart, err := h.chartRepo.FindByID(chartID)
-	if err != nil {
-		status, message := mapError(err, entityChartConfig)
-		c.JSON(status, gin.H{"error": message})
+	chart, ok := h.requireChartInDefinition(c)
+	if !ok {
 		return
 	}
+	defID := c.Param("id")
+	chartID := c.Param("chartId")
 
 	// Check if the definition was created from a template with a required chart.
 	if defID != "" && h.templateChartRepo != nil {
