@@ -33,7 +33,7 @@
     "js-yaml": "^5.0.0",
     "react": "19.2.7",
     "react-diff-viewer-continued": "^4.2.0",
-    "react-dom": "19.2.7",
+    "react-dom": "19.2.8",
     "react-router-dom": "^7.14.0",
     "reconnecting-websocket": "^4.4.0",
     "typescript": "^6.0.2"
