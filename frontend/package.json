@@ -36,7 +36,7 @@
     "react-dom": "19.2.7",
     "react-router-dom": "^7.14.0",
     "reconnecting-websocket": "^4.4.0",
-    "typescript": "^6.0.2"
+    "typescript": "^7.0.2"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
