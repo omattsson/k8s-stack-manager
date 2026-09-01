@@ -95,7 +95,7 @@ test-frontend:
 test-e2e: integration-infra-start
 	@mkdir -p frontend/test-logs
 	@echo "Building and starting backend..."
-	@cd backend && go build -o tmp/main ./api/main.go
+	@cd backend && mkdir -p tmp && go build -o tmp/main ./api
 	@cd backend && \
 		DB_HOST=$${DB_HOST:-127.0.0.1} DB_PORT=$${DB_PORT:-3306} \
 		DB_USER=$${DB_USER:-root} DB_PASSWORD=$${DB_PASSWORD:-rootpassword} DB_NAME=$${DB_NAME:-app} \
@@ -158,7 +158,7 @@ dev-local-backend:
 		cd backend && $(DEV_LOCAL_ENV) $(GO_AIR); \
 	else \
 		echo "air not found — using go run (no hot reload). Install: go install github.com/air-verse/air@latest"; \
-		cd backend && $(DEV_LOCAL_ENV) go run ./api/main.go; \
+		cd backend && $(DEV_LOCAL_ENV) go run ./api; \
 	fi
 
 # Run frontend dev server locally with HMR (port 3000)
@@ -210,7 +210,7 @@ loadtest-start-backend: ## Build and start backend in release mode for load test
 	@docker compose stop backend 2>/dev/null || true
 	@echo "Building backend (release mode)..."
 	@cd backend && mkdir -p tmp
-	@cd backend && go build -o tmp/main ./api/main.go
+	@cd backend && mkdir -p tmp && go build -o tmp/main ./api
 	@echo "Starting backend (GIN_MODE=release, RATE_LIMIT=1000000)..."
 	@cd backend && ( $(LOADTEST_ENV) ./tmp/main > tmp/loadtest.log 2>&1 & echo $$! > tmp/loadtest-backend.pid )
 	@n=0; while ! curl -sf http://localhost:8081/health/live >/dev/null 2>&1; do \
@@ -333,7 +333,7 @@ loadtest-mysql-start: ## Start MySQL + OTel + mysqld-exporter for load testing
 	done
 	@echo "Building backend (release mode)..."
 	@cd backend && mkdir -p tmp
-	@cd backend && go build -o tmp/main ./api/main.go
+	@cd backend && mkdir -p tmp && go build -o tmp/main ./api
 	@echo "Starting backend (MySQL + OTel, GIN_MODE=release, RATE_LIMIT=1000000)..."
 	@cd backend && ( $(LOADTEST_MYSQL_ENV) ./tmp/main > tmp/loadtest-mysql.log 2>&1 & echo $$! > tmp/loadtest-mysql.pid )
 	@n=0; while ! curl -sf http://localhost:8081/health/live >/dev/null 2>&1; do \

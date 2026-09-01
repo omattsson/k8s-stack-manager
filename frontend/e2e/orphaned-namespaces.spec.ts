@@ -102,7 +102,9 @@ test.describe('Orphaned Namespaces', () => {
     await expect(emptyMessage.or(table).or(errorAlert).first()).toBeVisible({ timeout: 10_000 });
 
     // Intercept the API call to verify refresh triggers a new request.
-    // Do not filter on status — the endpoint may return 503 when no K8s cluster is available.
+    // Do not filter on status — the endpoint may return 503 (no K8s cluster
+    // registered) or 500 (a cluster is registered but unreachable, so listing
+    // namespaces errors) in a test env without a live cluster.
     const responsePromise = page.waitForResponse(
       (resp) => resp.url().includes('/api/v1/admin/orphaned-namespaces'),
       { timeout: 10_000 },
@@ -111,7 +113,7 @@ test.describe('Orphaned Namespaces', () => {
     await page.getByRole('button', { name: 'Refresh' }).click();
 
     const response = await responsePromise;
-    expect([200, 503]).toContain(response.status());
+    expect([200, 500, 503]).toContain(response.status());
 
     // After refresh, page should still show either empty state, table, or error.
     await expect(emptyMessage.or(table).or(errorAlert).first()).toBeVisible({ timeout: 10_000 });
