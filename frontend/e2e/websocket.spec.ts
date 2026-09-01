@@ -46,6 +46,15 @@ test.describe('WebSocket real-time updates', () => {
       timeout: 20_000,
     });
 
+    // Attach the error listener the instant the socket is created, so an
+    // immediate handshake error is not missed (attaching after the await
+    // below would race and yield a false-positive pass).
+    void wsPromise.then((ws) => {
+      ws.on('socketerror', () => {
+        socketErrored = true;
+      });
+    });
+
     await loginAsDevops(page);
     await page.goto('/');
     await expect(page.getByRole('button', { name: 'Open notifications' })).toBeVisible({
@@ -53,9 +62,6 @@ test.describe('WebSocket real-time updates', () => {
     });
 
     const ws = await wsPromise;
-    ws.on('socketerror', () => {
-      socketErrored = true;
-    });
 
     // Connection targets the /ws endpoint and carries the auth token.
     expect(ws.url()).toContain('/ws');
