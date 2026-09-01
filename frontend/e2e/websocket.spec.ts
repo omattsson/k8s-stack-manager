@@ -48,12 +48,16 @@ test.describe('WebSocket real-time updates', () => {
 
     // Attach the error listener the instant the socket is created, so an
     // immediate handshake error is not missed (attaching after the await
-    // below would race and yield a false-positive pass).
-    void wsPromise.then((ws) => {
-      ws.on('socketerror', () => {
-        socketErrored = true;
-      });
-    });
+    // below would race and yield a false-positive pass). The .catch keeps a
+    // wsPromise rejection (socket never opens) from becoming an unhandled
+    // rejection; the main `await wsPromise` below still reports that failure.
+    void wsPromise
+      .then((ws) => {
+        ws.on('socketerror', () => {
+          socketErrored = true;
+        });
+      })
+      .catch(() => {});
 
     await loginAsDevops(page);
     await page.goto('/');
