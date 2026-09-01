@@ -73,7 +73,7 @@ test.describe('Profile Page', () => {
     await expect(dialog.getByText('Generate API Key')).toBeVisible();
 
     // "Preset duration" should be selected by default
-    await expect(dialog.getByLabelText('Preset duration')).toBeChecked();
+    await expect(dialog.getByLabel('Preset duration')).toBeChecked();
 
     // Expiry date preview should be visible
     await expect(dialog.getByText(/expires:/i)).toBeVisible();

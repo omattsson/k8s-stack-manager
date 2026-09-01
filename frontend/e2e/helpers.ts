@@ -167,6 +167,107 @@ export function uniqueName(prefix: string): string {
 }
 
 /**
+ * Log in via the API and return the JWT token. Retries on rate-limit (429).
+ * Defaults to the admin user. Accepts a Playwright APIRequestContext (the
+ * `request` fixture or `page.request`).
+ */
+export async function apiLogin(
+  request: APIRequestContext,
+  username: string = 'admin',
+  password: string = ADMIN_PASSWORD,
+): Promise<string> {
+  let res;
+  for (let attempt = 0; attempt < 5; attempt++) {
+    res = await request.post(`${API_BASE}/api/v1/auth/login`, {
+      data: { username, password },
+    });
+    if (res.status() !== 429) break;
+    await new Promise((r) => setTimeout(r, 2000 * (attempt + 1)));
+  }
+  expect(res!.ok(), `Login API failed for ${username} with status ${res!.status()}`).toBe(true);
+  const { token } = await res!.json();
+  return token;
+}
+
+/**
+ * Read the JWT token that a loginAs* helper injected into browser localStorage.
+ * The caller must navigate first (e.g. `await page.goto('/')`) so the init
+ * script has run.
+ */
+export async function tokenFromPage(page: Page): Promise<string> {
+  const token = await page.evaluate(() => localStorage.getItem('token'));
+  expect(token, 'No token in localStorage — call a loginAs* helper and navigate first').toBeTruthy();
+  return token as string;
+}
+
+/**
+ * Create a stack definition via the API. Returns the definition ID.
+ */
+export async function apiCreateDefinition(
+  request: APIRequestContext,
+  token: string,
+  name: string,
+  defaultBranch: string = 'main',
+): Promise<string> {
+  const res = await request.post(`${API_BASE}/api/v1/stack-definitions`, {
+    headers: { Authorization: `Bearer ${token}` },
+    data: { name, description: `E2E override test definition ${name}`, default_branch: defaultBranch },
+  });
+  const body = await res.json();
+  expect(res.ok(), `apiCreateDefinition failed: ${res.status()} ${JSON.stringify(body)}`).toBe(true);
+  return body.id;
+}
+
+/**
+ * Add a chart config to a definition via the API. Returns the chart config ID.
+ * `default_values` may contain Helm template vars such as `{{.Branch}}`.
+ */
+export async function apiAddChart(
+  request: APIRequestContext,
+  token: string,
+  definitionId: string,
+  chart: {
+    chart_name: string;
+    repository_url?: string;
+    chart_version?: string;
+    default_values?: string;
+  },
+): Promise<string> {
+  const res = await request.post(`${API_BASE}/api/v1/stack-definitions/${definitionId}/charts`, {
+    headers: { Authorization: `Bearer ${token}` },
+    data: {
+      repository_url: 'https://charts.example.com',
+      chart_version: '1.0.0',
+      ...chart,
+    },
+  });
+  const body = await res.json();
+  expect(res.ok(), `apiAddChart failed: ${res.status()} ${JSON.stringify(body)}`).toBe(true);
+  return body.id;
+}
+
+/**
+ * Create a stack instance via the API. Returns the instance ID.
+ * The instance owner is the user identified by the token, so pass the same
+ * token the browser uses when the UI must later mutate the instance.
+ */
+export async function apiCreateInstance(
+  request: APIRequestContext,
+  token: string,
+  definitionId: string,
+  name: string,
+  branch: string = 'main',
+): Promise<string> {
+  const res = await request.post(`${API_BASE}/api/v1/stack-instances`, {
+    headers: { Authorization: `Bearer ${token}` },
+    data: { stack_definition_id: definitionId, name, branch },
+  });
+  const body = await res.json();
+  expect(res.ok(), `apiCreateInstance failed: ${res.status()} ${JSON.stringify(body)}`).toBe(true);
+  return body.id;
+}
+
+/**
  * Create a template via the UI and return its name.
  * Navigates to /templates/new, fills the form, saves, and waits for the preview page.
  */
