@@ -191,7 +191,9 @@ externalSecrets:
   # Each entry maps a Key Vault secret name to a key in an ESO-managed Secret.
   # JWT_SECRET is required. With mysql.enabled=true, MYSQL_ROOT_PASSWORD is
   # required; MYSQL_PASSWORD is also required when mysql.auth.user is non-empty.
-  # Backend DB_PASSWORD derives from the selected MySQL credential mapping.
+  # With mysql.enabled=true, backend DB_PASSWORD derives from the selected MySQL
+  # credential mapping. With mysql.enabled=false, a provided DB_PASSWORD mapping
+  # is passed through to the backend ExternalSecret for an external database.
   data: []
   # - secretKey: JWT_SECRET
   #   remoteRef:

@@ -393,6 +393,20 @@ externalSecrets:
         key: k8s-stack-manager-mysql-password
 ```
 
+The mapping above applies when `mysql.enabled=true`. In that case, do not add an
+independent `DB_PASSWORD` entry: the backend Secret derives `DB_PASSWORD` from
+the selected `MYSQL_PASSWORD` or `MYSQL_ROOT_PASSWORD` mapping. When
+`mysql.enabled=false`, map the external database password explicitly, including
+its Key Vault `remoteRef`:
+
+```yaml
+externalSecrets:
+  data:
+    - secretKey: DB_PASSWORD
+      remoteRef:
+        key: k8s-stack-manager-external-db-password
+```
+
 ```bash
 helm upgrade --install k8s-stack-manager helm/k8s-stack-manager \
   --namespace k8s-stack-manager --create-namespace \
@@ -400,6 +414,8 @@ helm upgrade --install k8s-stack-manager helm/k8s-stack-manager \
 ```
 
 `externalSecrets.data` explicitly maps every Key Vault secret to an environment key. Include every non-empty key required by `backend.secrets`, plus `MYSQL_ROOT_PASSWORD` when `mysql.enabled=true`; also include `MYSQL_PASSWORD` when `mysql.auth.user` is non-empty. Do not map `DB_PASSWORD` independently: the backend Secret derives it from `MYSQL_PASSWORD` when `mysql.auth.user` is set, otherwise from `MYSQL_ROOT_PASSWORD`. The MySQL password mappings target the MySQL Secret, not the backend Secret. Do not place Key Vault values or Azure credentials in the values file.
+
+This MySQL password guidance applies only when `mysql.enabled=true`. When `mysql.enabled=false`, include a `DB_PASSWORD` mapping with the `remoteRef` for the external database password.
 
 For a centrally managed store, set `externalSecrets.secretStore.create=false`, `externalSecrets.secretStore.kind=ClusterSecretStore`, and `externalSecrets.secretStore.name` to its name. The chart then creates only the `ExternalSecret`; it does not configure Azure authentication. To use `ServicePrincipal` for a chart-created store, set `authType: ServicePrincipal` and point `externalSecrets.azureKeyVault.servicePrincipal.secretName` at an existing Kubernetes Secret containing the configured `client-id` and `client-secret` keys.
 
