@@ -404,18 +404,17 @@ helm-test: ## Verify default and External Secrets Helm renders
 		--values $(HELM_CHART)/tests/external-secrets-values.yaml > "$$template_file"; \
 	! grep -q 'Source: k8s-stack-manager/templates/mysql/secret.yaml' "$$template_file"; \
 	grep -q 'key: k8s-stack-manager-mysql-root-password' "$$template_file"; \
+	    awk '/^kind: ExternalSecret$$/{backend=0} /^  name: .*backend$$/{backend=1} backend && /secretKey: ADMIN_PASSWORD/{admin=1} END{exit !admin}' "$$template_file"; \
 	awk '/^kind: ExternalSecret$$/{mysql=0} /^  name: .*mysql$$/{mysql=1} mysql && /secretKey: MYSQL_PASSWORD/{password=1} mysql && /key: k8s-stack-manager-mysql-password/{remote=1} END{exit !(password && remote)}' "$$template_file"; \
+			awk '/^kind: ExternalSecret$$/{backend=0} /^  name: .*backend$$/{backend=1} backend && /secretKey: DB_PASSWORD/{password=1} backend && password && /key: k8s-stack-manager-mysql-password$$/{key=1} backend && password && /property: application-password$$/{property=1} backend && password && /version: user-v2$$/{version=1} END{exit !(password && key && property && version)}' "$$template_file"; \
 	helm template $(HELM_RELEASE) $(HELM_CHART) --show-only templates/external-secrets/external-secret.yaml \
 		--values $(HELM_CHART)/tests/external-secrets-values.yaml --set mysql.auth.user= > "$$template_file"; \
 	! grep -q 'secretKey: MYSQL_PASSWORD' "$$template_file"; \
+			awk '/^kind: ExternalSecret$$/{backend=0} /^  name: .*backend$$/{backend=1} backend && /secretKey: DB_PASSWORD/{password=1} backend && password && /key: k8s-stack-manager-mysql-root-password$$/{key=1} backend && password && /property: root-password$$/{property=1} backend && password && /version: root-v1$$/{version=1} END{exit !(password && key && property && version)}' "$$template_file"; \
 	if helm template $(HELM_RELEASE) $(HELM_CHART) --values $(HELM_CHART)/tests/external-secrets-values.yaml \
 		--set externalSecrets.data[0].secretKey=UNUSED >/dev/null 2>&1; then exit 1; fi; \
 	helm template $(HELM_RELEASE) $(HELM_CHART) --values $(HELM_CHART)/tests/external-secrets-values.yaml \
 		--set externalSecrets.data[0].secretKey=UNUSED 2>&1 | grep -q 'must include a JWT_SECRET mapping'; \
-	if helm template $(HELM_RELEASE) $(HELM_CHART) --values $(HELM_CHART)/tests/external-secrets-values.yaml \
-		--set externalSecrets.data[1].secretKey=UNUSED >/dev/null 2>&1; then exit 1; fi; \
-	helm template $(HELM_RELEASE) $(HELM_CHART) --values $(HELM_CHART)/tests/external-secrets-values.yaml \
-		--set externalSecrets.data[1].secretKey=UNUSED 2>&1 | grep -q 'must include a DB_PASSWORD mapping'; \
 	if helm template $(HELM_RELEASE) $(HELM_CHART) --values $(HELM_CHART)/tests/external-secrets-values.yaml \
 		--set externalSecrets.data[2].secretKey=UNUSED >/dev/null 2>&1; then exit 1; fi; \
 	helm template $(HELM_RELEASE) $(HELM_CHART) --values $(HELM_CHART)/tests/external-secrets-values.yaml \

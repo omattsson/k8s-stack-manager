@@ -189,12 +189,16 @@ externalSecrets:
       clientIdKey: client-id
       clientSecretKey: client-secret
   # Each entry maps a Key Vault secret name to a key in an ESO-managed Secret.
-  # JWT_SECRET is required. With mysql.enabled=true, DB_PASSWORD and
-  # MYSQL_ROOT_PASSWORD are also required; the latter populates the MySQL Secret.
+  # JWT_SECRET is required. With mysql.enabled=true, MYSQL_ROOT_PASSWORD is
+  # required; MYSQL_PASSWORD is also required when mysql.auth.user is non-empty.
+  # Backend DB_PASSWORD derives from the selected MySQL credential mapping.
   data: []
   # - secretKey: JWT_SECRET
   #   remoteRef:
   #     key: k8s-stack-manager-jwt-secret
+  # - secretKey: ADMIN_PASSWORD
+  #   remoteRef:
+  #     key: k8s-stack-manager-admin-password
 
 # ---------------------------------------------------------------------------
 # Frontend
