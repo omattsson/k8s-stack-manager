@@ -364,9 +364,9 @@ make helm-uninstall
 
 ### External Secrets Operator with Azure Key Vault
 
-Set `externalSecrets.enabled=true` to have [External Secrets Operator (ESO)](https://external-secrets.io/) create the backend Secret from Azure Key Vault. In this mode the chart does not render its inline backend Secret; ESO creates the same `<release>-backend` Secret consumed by the backend workload.
+Set `externalSecrets.enabled=true` to have [External Secrets Operator (ESO)](https://external-secrets.io/) create the backend Secret from Azure Key Vault. In this mode the chart does not render its inline backend Secret; ESO creates the same `<release>-k8s-stack-manager-backend` Secret consumed by the backend workload. When bundled MySQL is enabled, ESO also creates the MySQL Secret with `MYSQL_ROOT_PASSWORD`. If `mysql.auth.user` is non-empty, it also requires `MYSQL_PASSWORD`; both keys are mapped only to the MySQL Secret.
 
-Before installation, install ESO with its `external-secrets.io/v1` CRDs, grant the Azure identity read access to Key Vault secrets, and configure AKS workload identity. For the chart-created `SecretStore`, create a federated identity credential for the managed identity using subject `system:serviceaccount:<namespace>:<release>-backend`. The chart annotates that ServiceAccount with `azure.workload.identity/client-id`.
+Before installation, install ESO with its `external-secrets.io/v1` CRDs, grant the Azure identity read access to Key Vault secrets, and configure AKS workload identity. For the chart-created `SecretStore`, create a federated identity credential for the managed identity using subject `system:serviceaccount:<namespace>:<fullname>-backend`, where `<fullname>` is the chart's rendered fullname. For a normal `stack-manager` release this is `stack-manager-k8s-stack-manager-backend`; when the release name already contains `k8s-stack-manager`, the chart uses the release name directly. `fullnameOverride` sets `<fullname>` to that override. The chart annotates that ServiceAccount with `azure.workload.identity/client-id`.
 
 ```yaml
 # external-secrets-values.yaml
@@ -385,6 +385,12 @@ externalSecrets:
     - secretKey: DB_PASSWORD
       remoteRef:
         key: k8s-stack-manager-db-password
+    - secretKey: MYSQL_ROOT_PASSWORD
+      remoteRef:
+        key: k8s-stack-manager-mysql-root-password
+    - secretKey: MYSQL_PASSWORD
+      remoteRef:
+        key: k8s-stack-manager-mysql-password
 ```
 
 ```bash
@@ -393,7 +399,7 @@ helm upgrade --install k8s-stack-manager helm/k8s-stack-manager \
   --values external-secrets-values.yaml
 ```
 
-`externalSecrets.data` explicitly maps every Key Vault secret to an environment key. Include every non-empty key required by `backend.secrets`, plus `DB_PASSWORD` when `mysql.enabled=true`. Do not place Key Vault values or Azure credentials in the values file.
+`externalSecrets.data` explicitly maps every Key Vault secret to an environment key. Include every non-empty key required by `backend.secrets`, plus `DB_PASSWORD` and `MYSQL_ROOT_PASSWORD` when `mysql.enabled=true`; also include `MYSQL_PASSWORD` when `mysql.auth.user` is non-empty. The MySQL password mappings target the MySQL Secret, not the backend Secret. Do not place Key Vault values or Azure credentials in the values file.
 
 For a centrally managed store, set `externalSecrets.secretStore.create=false`, `externalSecrets.secretStore.kind=ClusterSecretStore`, and `externalSecrets.secretStore.name` to its name. The chart then creates only the `ExternalSecret`; it does not configure Azure authentication. To use `ServicePrincipal` for a chart-created store, set `authType: ServicePrincipal` and point `externalSecrets.azureKeyVault.servicePrincipal.secretName` at an existing Kubernetes Secret containing the configured `client-id` and `client-secret` keys.
 

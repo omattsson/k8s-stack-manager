@@ -123,6 +123,10 @@ jobs:
           helm lint helm/k8s-stack-manager \
             --values helm/k8s-stack-manager/tests/external-secrets-values.yaml
 
+      - name: Helm Render Tests
+        if: steps.files.outputs.helm == 'true'
+        run: make helm-test
+
       - name: Markdown Lint
         if: steps.files.outputs.docs == 'true'
         uses: avto-dev/markdown-lint@v1

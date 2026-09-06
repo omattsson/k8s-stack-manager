@@ -188,9 +188,9 @@ externalSecrets:
       secretName: ""
       clientIdKey: client-id
       clientSecretKey: client-secret
-  # Each entry maps a Key Vault secret name to a key in the backend Secret.
-  # Include DB_PASSWORD when mysql.enabled=true and the database password is
-  # also managed in Key Vault.
+  # Each entry maps a Key Vault secret name to a key in an ESO-managed Secret.
+  # JWT_SECRET is required. With mysql.enabled=true, DB_PASSWORD and
+  # MYSQL_ROOT_PASSWORD are also required; the latter populates the MySQL Secret.
   data: []
   # - secretKey: JWT_SECRET
   #   remoteRef:

@@ -371,6 +371,60 @@ helm-lint: ## Lint the Helm chart
 	helm lint $(HELM_CHART) \
 		--values $(HELM_CHART)/tests/external-secrets-values.yaml
 
+helm-test: ## Verify default and External Secrets Helm renders
+	@set -e; \
+	template_file=$$(mktemp); \
+	trap 'rm -f "$$template_file"' EXIT; \
+	helm template $(HELM_RELEASE) $(HELM_CHART) --namespace $(HELM_NAMESPACE) \
+		--set backend.secrets.JWT_SECRET=dummy-jwt-secret-for-template > "$$template_file"; \
+	grep -q 'Source: k8s-stack-manager/templates/mysql/secret.yaml' "$$template_file"; \
+	helm template $(HELM_RELEASE) $(HELM_CHART) --show-only templates/mysql/secret.yaml \
+		--set backend.secrets.JWT_SECRET=dummy-jwt-secret-for-template \
+		--set mysql.auth.password=inline-user-password > "$$template_file"; \
+	! grep -q 'MYSQL_PASSWORD:' "$$template_file"; \
+	helm template $(HELM_RELEASE) $(HELM_CHART) --show-only templates/mysql/secret.yaml \
+		--set backend.secrets.JWT_SECRET=dummy-jwt-secret-for-template \
+		--set mysql.auth.user=app-user --set mysql.auth.password=inline-user-password > "$$template_file"; \
+	grep -q 'MYSQL_PASSWORD:' "$$template_file"; \
+	helm template $(HELM_RELEASE) $(HELM_CHART) --show-only templates/backend/secret.yaml \
+		--set backend.secrets.JWT_SECRET=dummy-jwt-secret-for-template \
+		--set mysql.auth.rootPassword=inline-root-password > "$$template_file"; \
+	grep -q 'DB_PASSWORD: "aW5saW5lLXJvb3QtcGFzc3dvcmQ="' "$$template_file"; \
+	helm template $(HELM_RELEASE) $(HELM_CHART) --show-only templates/backend/secret.yaml \
+		--set backend.secrets.JWT_SECRET=dummy-jwt-secret-for-template \
+		--set mysql.auth.rootPassword=inline-root-password --set mysql.auth.user=app-user \
+		--set mysql.auth.password=inline-user-password > "$$template_file"; \
+	grep -q 'DB_PASSWORD: "aW5saW5lLXVzZXItcGFzc3dvcmQ="' "$$template_file"; \
+	helm template $(HELM_RELEASE) $(HELM_CHART) --show-only templates/backend/secret.yaml \
+		--set backend.secrets.JWT_SECRET=dummy-jwt-secret-for-template \
+		--set backend.secrets.DB_PASSWORD=explicit-backend-password \
+		--set mysql.auth.user=app-user --set mysql.auth.password=inline-user-password > "$$template_file"; \
+	grep -q 'DB_PASSWORD: "ZXhwbGljaXQtYmFja2VuZC1wYXNzd29yZA=="' "$$template_file"; \
+	helm template $(HELM_RELEASE) $(HELM_CHART) --namespace $(HELM_NAMESPACE) \
+		--values $(HELM_CHART)/tests/external-secrets-values.yaml > "$$template_file"; \
+	! grep -q 'Source: k8s-stack-manager/templates/mysql/secret.yaml' "$$template_file"; \
+	grep -q 'key: k8s-stack-manager-mysql-root-password' "$$template_file"; \
+	awk '/^kind: ExternalSecret$$/{mysql=0} /^  name: .*mysql$$/{mysql=1} mysql && /secretKey: MYSQL_PASSWORD/{password=1} mysql && /key: k8s-stack-manager-mysql-password/{remote=1} END{exit !(password && remote)}' "$$template_file"; \
+	helm template $(HELM_RELEASE) $(HELM_CHART) --show-only templates/external-secrets/external-secret.yaml \
+		--values $(HELM_CHART)/tests/external-secrets-values.yaml --set mysql.auth.user= > "$$template_file"; \
+	! grep -q 'secretKey: MYSQL_PASSWORD' "$$template_file"; \
+	if helm template $(HELM_RELEASE) $(HELM_CHART) --values $(HELM_CHART)/tests/external-secrets-values.yaml \
+		--set externalSecrets.data[0].secretKey=UNUSED >/dev/null 2>&1; then exit 1; fi; \
+	helm template $(HELM_RELEASE) $(HELM_CHART) --values $(HELM_CHART)/tests/external-secrets-values.yaml \
+		--set externalSecrets.data[0].secretKey=UNUSED 2>&1 | grep -q 'must include a JWT_SECRET mapping'; \
+	if helm template $(HELM_RELEASE) $(HELM_CHART) --values $(HELM_CHART)/tests/external-secrets-values.yaml \
+		--set externalSecrets.data[1].secretKey=UNUSED >/dev/null 2>&1; then exit 1; fi; \
+	helm template $(HELM_RELEASE) $(HELM_CHART) --values $(HELM_CHART)/tests/external-secrets-values.yaml \
+		--set externalSecrets.data[1].secretKey=UNUSED 2>&1 | grep -q 'must include a DB_PASSWORD mapping'; \
+	if helm template $(HELM_RELEASE) $(HELM_CHART) --values $(HELM_CHART)/tests/external-secrets-values.yaml \
+		--set externalSecrets.data[2].secretKey=UNUSED >/dev/null 2>&1; then exit 1; fi; \
+	helm template $(HELM_RELEASE) $(HELM_CHART) --values $(HELM_CHART)/tests/external-secrets-values.yaml \
+		--set externalSecrets.data[2].secretKey=UNUSED 2>&1 | grep -q 'must include a MYSQL_ROOT_PASSWORD mapping'
+	if helm template $(HELM_RELEASE) $(HELM_CHART) --values $(HELM_CHART)/tests/external-secrets-values.yaml \
+		--set externalSecrets.data[3].secretKey=UNUSED >/dev/null 2>&1; then exit 1; fi; \
+	helm template $(HELM_RELEASE) $(HELM_CHART) --values $(HELM_CHART)/tests/external-secrets-values.yaml \
+		--set externalSecrets.data[3].secretKey=UNUSED 2>&1 | grep -q 'must include a MYSQL_PASSWORD mapping'
+
 helm-template: ## Render templates locally (dry-run)
 	helm template $(HELM_RELEASE) $(HELM_CHART) --namespace $(HELM_NAMESPACE) \
 		--set backend.secrets.JWT_SECRET=dummy-jwt-secret-for-template
