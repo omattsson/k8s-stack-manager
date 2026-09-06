@@ -423,7 +423,11 @@ helm-test: ## Verify default and External Secrets Helm renders
 	if helm template $(HELM_RELEASE) $(HELM_CHART) --values $(HELM_CHART)/tests/external-secrets-values.yaml \
 		--set externalSecrets.data[3].secretKey=UNUSED >/dev/null 2>&1; then exit 1; fi; \
 	helm template $(HELM_RELEASE) $(HELM_CHART) --values $(HELM_CHART)/tests/external-secrets-values.yaml \
-		--set externalSecrets.data[3].secretKey=UNUSED 2>&1 | grep -q 'must include a MYSQL_PASSWORD mapping'
+		--set externalSecrets.data[3].secretKey=UNUSED 2>&1 | grep -q 'must include a MYSQL_PASSWORD mapping'; \
+	if helm template $(HELM_RELEASE) $(HELM_CHART) --values $(HELM_CHART)/tests/external-secrets-values.yaml \
+		--set externalSecrets.secretStore.create=false --set-string externalSecrets.secretStore.name= >/dev/null 2>&1; then exit 1; fi; \
+	helm template $(HELM_RELEASE) $(HELM_CHART) --values $(HELM_CHART)/tests/external-secrets-values.yaml \
+		--set externalSecrets.secretStore.create=false --set-string externalSecrets.secretStore.name= 2>&1 | grep -q 'externalSecrets.secretStore.name must be set'
 
 helm-template: ## Render templates locally (dry-run)
 	helm template $(HELM_RELEASE) $(HELM_CHART) --namespace $(HELM_NAMESPACE) \
