@@ -40,7 +40,7 @@ spec:
         {{- include "k8s-stack-manager.backend.selectorLabels" . | nindent 8 }}
       annotations:
         checksum/config: {{ include (print $.Template.BasePath "/backend/configmap.yaml") . | sha256sum }}
-        checksum/secret: {{ include (print $.Template.BasePath "/backend/secret.yaml") . | sha256sum }}
+        checksum/secret: {{- if .Values.externalSecrets.enabled }} {{ include (print $.Template.BasePath "/external-secrets/external-secret.yaml") . | sha256sum }}{{- else }} {{ include (print $.Template.BasePath "/backend/secret.yaml") . | sha256sum }}{{- end }}
         {{- if .Values.hooks.enabled }}
         checksum/hooks: {{ include (print $.Template.BasePath "/backend/hooks-configmap.yaml") . | sha256sum }}
         {{- end }}

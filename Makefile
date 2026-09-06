@@ -368,6 +368,8 @@ HELM_NAMESPACE := k8s-stack-manager
 helm-lint: ## Lint the Helm chart
 	helm lint $(HELM_CHART) \
 		--set backend.secrets.JWT_SECRET=dummy-jwt-secret-for-lint
+	helm lint $(HELM_CHART) \
+		--values $(HELM_CHART)/tests/external-secrets-values.yaml
 
 helm-template: ## Render templates locally (dry-run)
 	helm template $(HELM_RELEASE) $(HELM_CHART) --namespace $(HELM_NAMESPACE) \
