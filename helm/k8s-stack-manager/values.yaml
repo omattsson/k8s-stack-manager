@@ -161,6 +161,48 @@ backend:
     annotations: {}
 
 # ---------------------------------------------------------------------------
+# External Secrets Operator
+# ---------------------------------------------------------------------------
+# When enabled, ESO synchronizes the backend Secret from Azure Key Vault and
+# the inline backend Secret is not rendered. Install ESO and configure the
+# selected SecretStore authentication method before installing this chart.
+externalSecrets:
+  enabled: false
+  refreshInterval: 1h
+  secretStore:
+    # Set create=false and name to use a pre-existing SecretStore or
+    # ClusterSecretStore. ClusterSecretStore resources are cluster-scoped.
+    create: true
+    kind: SecretStore
+    name: ""
+  azureKeyVault:
+    vaultUrl: "" # e.g. https://my-vault.vault.azure.net
+    tenantId: ""
+    # WorkloadIdentity uses the backend ServiceAccount, which this chart
+    # annotates with workloadIdentity.clientId. ServicePrincipal credentials
+    # must exist in the referenced Secret; they are never stored in values.
+    authType: WorkloadIdentity
+    workloadIdentity:
+      clientId: ""
+    servicePrincipal:
+      secretName: ""
+      clientIdKey: client-id
+      clientSecretKey: client-secret
+  # Each entry maps a Key Vault secret name to a key in an ESO-managed Secret.
+  # JWT_SECRET is required. With mysql.enabled=true, MYSQL_ROOT_PASSWORD is
+  # required; MYSQL_PASSWORD is also required when mysql.auth.user is non-empty.
+  # With mysql.enabled=true, backend DB_PASSWORD derives from the selected MySQL
+  # credential mapping. With mysql.enabled=false, a provided DB_PASSWORD mapping
+  # is passed through to the backend ExternalSecret for an external database.
+  data: []
+  # - secretKey: JWT_SECRET
+  #   remoteRef:
+  #     key: k8s-stack-manager-jwt-secret
+  # - secretKey: ADMIN_PASSWORD
+  #   remoteRef:
+  #     key: k8s-stack-manager-admin-password
+
+# ---------------------------------------------------------------------------
 # Frontend
 # ---------------------------------------------------------------------------
 frontend:

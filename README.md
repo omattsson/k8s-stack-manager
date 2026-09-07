@@ -339,7 +339,7 @@ The Helm chart in `helm/k8s-stack-manager/` deploys the full stack to Kubernetes
 
 ### Install
 
-> **Note:** The Helm chart requires `backend.secrets.JWT_SECRET` at render time.
+> **Note:** The default chart configuration requires `backend.secrets.JWT_SECRET` at render time.
 > You must provide this value via `--set` or the `JWT_SECRET` env var before running lint/install.
 
 ```bash
@@ -361,6 +361,63 @@ JWT_SECRET=my-secret-at-least-16-chars make helm-upgrade
 # Uninstall
 make helm-uninstall
 ```
+
+### External Secrets Operator with Azure Key Vault
+
+Set `externalSecrets.enabled=true` to have [External Secrets Operator (ESO)](https://external-secrets.io/) create the backend Secret from Azure Key Vault. In this mode the chart does not render its inline backend Secret; ESO creates the same `<fullname>-backend` Secret consumed by the backend workload. When bundled MySQL is enabled, ESO also creates the MySQL Secret with `MYSQL_ROOT_PASSWORD`. If `mysql.auth.user` is non-empty, it also requires `MYSQL_PASSWORD`; both keys are mapped only to the MySQL Secret. The backend `DB_PASSWORD` is derived from the selected MySQL credential mapping.
+
+Before installation, install ESO with its `external-secrets.io/v1` CRDs, grant the Azure identity read access to Key Vault secrets, and configure AKS workload identity. For the chart-created `SecretStore`, create a federated identity credential for the managed identity using subject `system:serviceaccount:<namespace>:<fullname>-backend`, where `<fullname>` is the chart's rendered fullname. For a normal `stack-manager` release this is `stack-manager-k8s-stack-manager-backend`; when the release name already contains `k8s-stack-manager`, the chart uses the release name directly. `fullnameOverride` sets `<fullname>` to that override. The chart annotates that ServiceAccount with `azure.workload.identity/client-id`.
+
+```yaml
+# external-secrets-values.yaml
+externalSecrets:
+  enabled: true
+  azureKeyVault:
+    vaultUrl: https://my-vault.vault.azure.net
+    tenantId: 00000000-0000-0000-0000-000000000000
+    authType: WorkloadIdentity
+    workloadIdentity:
+      clientId: 00000000-0000-0000-0000-000000000000
+  data:
+    - secretKey: JWT_SECRET
+      remoteRef:
+        key: k8s-stack-manager-jwt-secret
+    - secretKey: ADMIN_PASSWORD
+      remoteRef:
+        key: k8s-stack-manager-admin-password
+    - secretKey: MYSQL_ROOT_PASSWORD
+      remoteRef:
+        key: k8s-stack-manager-mysql-root-password
+    - secretKey: MYSQL_PASSWORD
+      remoteRef:
+        key: k8s-stack-manager-mysql-password
+```
+
+The mapping above applies when `mysql.enabled=true`. In that case, do not add an
+independent `DB_PASSWORD` entry: the backend Secret derives `DB_PASSWORD` from
+the selected `MYSQL_PASSWORD` or `MYSQL_ROOT_PASSWORD` mapping. When
+`mysql.enabled=false`, map the external database password explicitly, including
+its Key Vault `remoteRef`:
+
+```yaml
+externalSecrets:
+  data:
+    - secretKey: DB_PASSWORD
+      remoteRef:
+        key: k8s-stack-manager-external-db-password
+```
+
+```bash
+helm upgrade --install k8s-stack-manager helm/k8s-stack-manager \
+  --namespace k8s-stack-manager --create-namespace \
+  --values external-secrets-values.yaml
+```
+
+`externalSecrets.data` explicitly maps every Key Vault secret to an environment key. Include every non-empty key required by `backend.secrets`, plus `MYSQL_ROOT_PASSWORD` when `mysql.enabled=true`; also include `MYSQL_PASSWORD` when `mysql.auth.user` is non-empty. Do not map `DB_PASSWORD` independently: the backend Secret derives it from `MYSQL_PASSWORD` when `mysql.auth.user` is set, otherwise from `MYSQL_ROOT_PASSWORD`. The MySQL password mappings target the MySQL Secret, not the backend Secret. Do not place Key Vault values or Azure credentials in the values file.
+
+This MySQL password guidance applies only when `mysql.enabled=true`. When `mysql.enabled=false`, include a `DB_PASSWORD` mapping with the `remoteRef` for the external database password.
+
+For a centrally managed store, set `externalSecrets.secretStore.create=false`, `externalSecrets.secretStore.kind=ClusterSecretStore`, and `externalSecrets.secretStore.name` to its name. The chart then creates only the `ExternalSecret`; it does not configure Azure authentication. To use `ServicePrincipal` for a chart-created store, set `authType: ServicePrincipal` and point `externalSecrets.azureKeyVault.servicePrincipal.secretName` at an existing Kubernetes Secret containing the configured `client-id` and `client-secret` keys.
 
 ### What Gets Deployed
 - **Backend** — Argo Rollout (canary 20%→50%→80%) with stable + canary services
