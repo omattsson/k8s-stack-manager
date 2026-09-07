@@ -103,7 +103,9 @@ func (p *HealthPoller) poll() {
 
 	for i := range clusters {
 		cl := &clusters[i]
+		started := time.Now()
 		newStatus := p.checkCluster(cl)
+		recordClusterHealthCheck(cl.Name, newStatus, time.Since(started))
 
 		slog.Debug("health poller: checked cluster",
 			"cluster_id", cl.ID,
@@ -115,6 +117,7 @@ func (p *HealthPoller) poll() {
 			continue
 		}
 
+		recordClusterTransition(cl.Name, cl.HealthStatus, newStatus)
 		slog.Info("health poller: cluster status changed",
 			"cluster_id", cl.ID,
 			"cluster_name", cl.Name,

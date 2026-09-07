@@ -93,9 +93,11 @@ func (r *SecretRefresher) refresh() {
 		return
 	}
 
+	start := time.Now()
 	clusters, err := r.clusterRepo.List()
 	if err != nil {
 		slog.Error("secret refresher: failed to list clusters", "error", err)
+		recordSecretRefreshResult("failure", time.Since(start))
 		return
 	}
 
@@ -108,6 +110,7 @@ func (r *SecretRefresher) refresh() {
 
 		r.refreshClusterSecrets(cl, regCfg)
 	}
+	recordSecretRefreshResult("success", time.Since(start))
 }
 
 const secretRefreshTimeout = 30 * time.Second

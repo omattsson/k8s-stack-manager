@@ -87,8 +87,10 @@ func (r *Registry) detectProvider(repoURL string) (GitProvider, error) {
 
 // ListBranches detects the provider, checks the cache, and returns branches.
 func (r *Registry) ListBranches(ctx context.Context, repoURL string) ([]Branch, error) {
+	start := time.Now()
 	provider, err := r.detectProvider(repoURL)
 	if err != nil {
+		recordBranchListResult("unknown", "failure", time.Since(start))
 		return nil, err
 	}
 
@@ -99,11 +101,13 @@ func (r *Registry) ListBranches(ctx context.Context, repoURL string) ([]Branch, 
 	r.mu.RUnlock()
 
 	if found && r.nowFunc().Before(entry.expiresAt) {
+		recordBranchListResult(providerTypeName(provider), "success", time.Since(start))
 		return entry.branches, nil
 	}
 
 	branches, err := provider.ListBranches(ctx, repoURL)
 	if err != nil {
+		recordBranchListResult(providerTypeName(provider), "failure", time.Since(start))
 		return nil, err
 	}
 
@@ -114,7 +118,19 @@ func (r *Registry) ListBranches(ctx context.Context, repoURL string) ([]Branch, 
 	}
 	r.mu.Unlock()
 
+	recordBranchListResult(providerTypeName(provider), "success", time.Since(start))
 	return branches, nil
+}
+
+func providerTypeName(p GitProvider) string {
+	switch p.(type) {
+	case *azureDevOpsProvider:
+		return "azure_devops"
+	case *gitlabProvider:
+		return "gitlab"
+	default:
+		return "unknown"
+	}
 }
 
 // GetDefaultBranch detects the provider and returns the default branch.
