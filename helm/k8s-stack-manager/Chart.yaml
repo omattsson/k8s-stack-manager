@@ -2,7 +2,7 @@ apiVersion: v2
 name: k8s-stack-manager
 description: Helm-based stack manager with Go backend, React frontend, and MySQL
 type: application
-version: 0.4.0
+version: 0.4.1
 appVersion: "0.4.0"
 keywords:
   - kubernetes
