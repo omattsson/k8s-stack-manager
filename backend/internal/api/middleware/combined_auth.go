@@ -49,6 +49,7 @@ func CombinedAuth(deps APIKeyAuthDeps) gin.HandlerFunc {
 		// Fall back to X-API-Key header.
 		apiKeyHeader := c.GetHeader("X-API-Key")
 		if apiKeyHeader == "" {
+			RecordAPIKeyAuth("disabled")
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Authorization required"})
 			return
 		}
@@ -56,6 +57,7 @@ func CombinedAuth(deps APIKeyAuthDeps) gin.HandlerFunc {
 		// Strip the sk_ prefix.
 		raw := strings.TrimPrefix(apiKeyHeader, "sk_")
 		if len(raw) < 16 {
+			RecordAPIKeyAuth("invalid")
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Invalid API key"})
 			return
 		}
@@ -65,10 +67,12 @@ func CombinedAuth(deps APIKeyAuthDeps) gin.HandlerFunc {
 		records, err := deps.APIKeyRepo.FindByPrefix(prefix)
 		if err != nil {
 			slog.Error("API key lookup failed", "error", err)
+			RecordAPIKeyAuth("invalid")
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Invalid API key"})
 			return
 		}
 		if len(records) == 0 {
+			RecordAPIKeyAuth("invalid")
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Invalid API key"})
 			return
 		}
@@ -82,12 +86,14 @@ func CombinedAuth(deps APIKeyAuthDeps) gin.HandlerFunc {
 			}
 		}
 		if record == nil {
+			RecordAPIKeyAuth("invalid")
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Invalid API key"})
 			return
 		}
 
 		// Reject expired keys.
 		if record.ExpiresAt != nil && record.ExpiresAt.Before(time.Now()) {
+			RecordAPIKeyAuth("expired")
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "API key expired"})
 			return
 		}
@@ -95,11 +101,13 @@ func CombinedAuth(deps APIKeyAuthDeps) gin.HandlerFunc {
 		// Load the associated user to get role and current username.
 		user, err := deps.UserRepo.FindByID(record.UserID)
 		if err != nil {
+			RecordAPIKeyAuth("invalid")
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Invalid API key"})
 			return
 		}
 
 		if user.Disabled {
+			RecordAPIKeyAuth("disabled")
 			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "Account disabled"})
 			return
 		}
@@ -120,5 +128,6 @@ func CombinedAuth(deps APIKeyAuthDeps) gin.HandlerFunc {
 				_ = deps.APIKeyRepo.UpdateLastUsed(userID, keyID, ts)
 			}(record.UserID, record.ID, now)
 		}
+		RecordAPIKeyAuth("success")
 	}
 }

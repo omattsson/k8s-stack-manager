@@ -111,11 +111,13 @@ func (h *AuthHandler) Login(c *gin.Context) {
 
 	user, err := h.userRepo.FindByUsername(req.Username)
 	if err != nil {
+		middleware.RecordLogin("local", "failure")
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid username or password"})
 		return
 	}
 
 	if user.Disabled {
+		middleware.RecordLogin("local", "disabled")
 		c.JSON(http.StatusForbidden, gin.H{"error": "Account disabled"})
 		return
 	}
@@ -143,6 +145,7 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		<-bcryptSem
 
 		if bcryptErr != nil {
+			middleware.RecordLogin("local", "failure")
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid username or password"})
 			return
 		}
@@ -165,9 +168,12 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		Expiration:  expiration,
 	})
 	if err != nil {
+		middleware.RecordLogin("local", "failure")
 		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
 		return
 	}
+
+	middleware.RecordLogin("local", "success")
 
 	// Issue refresh token if repository is configured.
 	if h.refreshTokenRepo != nil {
@@ -331,12 +337,14 @@ type RefreshResponse struct {
 // @Router      /api/v1/auth/refresh [post]
 func (h *AuthHandler) Refresh(c *gin.Context) {
 	if h.refreshTokenRepo == nil {
+		middleware.RecordRefresh("disabled")
 		c.JSON(http.StatusNotImplemented, gin.H{"error": "Refresh tokens are not enabled"})
 		return
 	}
 
 	rawToken, err := c.Cookie(refreshTokenCookieName)
 	if err != nil || rawToken == "" {
+		middleware.RecordRefresh("expired")
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Refresh token required"})
 		return
 	}
@@ -346,9 +354,11 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 	if err != nil {
 		if isNotFoundError(err) {
 			h.clearRefreshCookie(c)
+			middleware.RecordRefresh("revoked")
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid refresh token"})
 		} else {
 			slog.Error("Failed to look up refresh token", "error", err)
+			middleware.RecordRefresh("expired")
 			c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
 		}
 		return
@@ -359,6 +369,7 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 		slog.Warn("Revoked refresh token reuse detected", "user_id", stored.UserID, "token_id", stored.ID)
 		_ = h.refreshTokenRepo.RevokeAllForUser(stored.UserID)
 		h.clearRefreshCookie(c)
+		middleware.RecordRefresh("revoked")
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid refresh token"})
 		return
 	}
@@ -366,6 +377,7 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 	now := time.Now().UTC()
 	if now.After(stored.ExpiresAt) {
 		h.clearRefreshCookie(c)
+		middleware.RecordRefresh("expired")
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Refresh token expired"})
 		return
 	}
@@ -374,6 +386,7 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 	if now.Sub(stored.LastActivity) > h.cfg.SessionIdleTimeout {
 		_ = h.refreshTokenRepo.RevokeByID(stored.ID)
 		h.clearRefreshCookie(c)
+		middleware.RecordRefresh("expired")
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Session idle timeout exceeded"})
 		return
 	}
@@ -382,6 +395,7 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 	user, err := h.userRepo.FindByID(stored.UserID)
 	if err != nil {
 		slog.Error("Failed to find user for refresh", "user_id", stored.UserID, "error", err)
+		middleware.RecordRefresh("revoked")
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid refresh token"})
 		return
 	}
@@ -389,6 +403,7 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 	if user.Disabled {
 		_ = h.refreshTokenRepo.RevokeAllForUser(stored.UserID)
 		h.clearRefreshCookie(c)
+		middleware.RecordRefresh("disabled")
 		c.JSON(http.StatusForbidden, gin.H{"error": "Account disabled"})
 		return
 	}
@@ -417,6 +432,7 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 		return nil
 	}); err != nil {
 		slog.Error("Failed to rotate refresh token", "user_id", user.ID, "error", err)
+		middleware.RecordRefresh("expired")
 		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
 		return
 	}
@@ -424,9 +440,12 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 	if replayDetected {
 		slog.Warn("Concurrent refresh token consumption detected", "user_id", stored.UserID, "token_id", stored.ID)
 		h.clearRefreshCookie(c)
+		middleware.RecordRefresh("revoked")
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid refresh token"})
 		return
 	}
+
+	middleware.RecordRefresh("success")
 
 	// Set cookie only after the transaction committed successfully.
 	h.setRefreshCookie(c, newRawToken)

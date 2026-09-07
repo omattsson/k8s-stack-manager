@@ -218,6 +218,7 @@ func (h *OIDCHandler) Callback(c *gin.Context) {
 	oidcUser, err := h.provider.Exchange(c.Request.Context(), code, stateData.CodeVerifier)
 	if err != nil {
 		slog.Error("OIDC token exchange failed", "error", err)
+		middleware.RecordLogin("oidc", "failure")
 		c.Redirect(http.StatusFound, "/login?error=auth_failed")
 		return
 	}
@@ -226,9 +227,11 @@ func (h *OIDCHandler) Callback(c *gin.Context) {
 	user, err := h.provisionUser(oidcUser)
 	if err != nil {
 		slog.Error("OIDC user provisioning failed", "error", err)
+		middleware.RecordLogin("oidc", "failure")
 		c.Redirect(http.StatusFound, "/login?error="+err.Error())
 		return
 	}
+	middleware.RecordLogin("oidc", "success")
 
 	// Generate local JWT with OIDC-specific claims.
 	expiration := h.authCfg.AccessTokenExpiration

@@ -1,0 +1,46 @@
+package cluster
+
+import (
+	"context"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/otel"
+	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
+	"go.opentelemetry.io/otel/sdk/metric/metricdata"
+)
+
+func TestClusterMetrics_RecordHealthTransitionAndRefresh(t *testing.T) {
+	reader := sdkmetric.NewManualReader()
+	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
+	prev := otel.GetMeterProvider()
+	otel.SetMeterProvider(mp)
+	t.Cleanup(func() {
+		otel.SetMeterProvider(prev)
+		_ = mp.Shutdown(context.Background())
+	})
+
+	prevClusterMeter := clusterMeter
+	clusterMeter = mp.Meter("cluster")
+	initClusterMetrics()
+	t.Cleanup(func() { clusterMeter = prevClusterMeter })
+
+	recordClusterTransition("prod", "unreachable", "healthy")
+	recordSecretRefreshResult("success", 500*time.Millisecond)
+
+	var rm metricdata.ResourceMetrics
+	require.NoError(t, reader.Collect(context.Background(), &rm))
+
+	found := map[string]bool{}
+	for _, sm := range rm.ScopeMetrics {
+		for _, m := range sm.Metrics {
+			if m.Name == "cluster.health.transitions.total" || m.Name == "cluster.secret.refresh.total" {
+				found[m.Name] = true
+			}
+		}
+	}
+	assert.True(t, found["cluster.health.transitions.total"])
+	assert.True(t, found["cluster.secret.refresh.total"])
+}
