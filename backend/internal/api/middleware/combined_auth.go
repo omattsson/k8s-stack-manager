@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"errors"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -9,9 +10,21 @@ import (
 	"backend/internal/cache"
 	"backend/internal/models"
 	"backend/internal/sessionstore"
+	"backend/pkg/dberrors"
 
 	"github.com/gin-gonic/gin"
 )
+
+// apiKeyLookupOutcome classifies a repository lookup error for metrics: a
+// not-found error is a bad client credential ("invalid"), while any other
+// error is an operational/dependency failure ("failure") that must be
+// alertable separately.
+func apiKeyLookupOutcome(err error) string {
+	if errors.Is(err, dberrors.ErrNotFound) {
+		return "invalid"
+	}
+	return "failure"
+}
 
 // lastUsedCache prevents UpdateLastUsed from firing more than once per
 // API key per minute, reducing connection pool pressure under high load.
@@ -49,6 +62,7 @@ func CombinedAuth(deps APIKeyAuthDeps) gin.HandlerFunc {
 		// Fall back to X-API-Key header.
 		apiKeyHeader := c.GetHeader("X-API-Key")
 		if apiKeyHeader == "" {
+			RecordAPIKeyAuth("missing")
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Authorization required"})
 			return
 		}
@@ -56,6 +70,7 @@ func CombinedAuth(deps APIKeyAuthDeps) gin.HandlerFunc {
 		// Strip the sk_ prefix.
 		raw := strings.TrimPrefix(apiKeyHeader, "sk_")
 		if len(raw) < 16 {
+			RecordAPIKeyAuth("invalid")
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Invalid API key"})
 			return
 		}
@@ -64,11 +79,16 @@ func CombinedAuth(deps APIKeyAuthDeps) gin.HandlerFunc {
 
 		records, err := deps.APIKeyRepo.FindByPrefix(prefix)
 		if err != nil {
-			slog.Error("API key lookup failed", "error", err)
+			outcome := apiKeyLookupOutcome(err)
+			if outcome == "failure" {
+				slog.Error("API key lookup failed", "error", err)
+			}
+			RecordAPIKeyAuth(outcome)
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Invalid API key"})
 			return
 		}
 		if len(records) == 0 {
+			RecordAPIKeyAuth("invalid")
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Invalid API key"})
 			return
 		}
@@ -82,12 +102,14 @@ func CombinedAuth(deps APIKeyAuthDeps) gin.HandlerFunc {
 			}
 		}
 		if record == nil {
+			RecordAPIKeyAuth("invalid")
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Invalid API key"})
 			return
 		}
 
 		// Reject expired keys.
 		if record.ExpiresAt != nil && record.ExpiresAt.Before(time.Now()) {
+			RecordAPIKeyAuth("expired")
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "API key expired"})
 			return
 		}
@@ -95,11 +117,17 @@ func CombinedAuth(deps APIKeyAuthDeps) gin.HandlerFunc {
 		// Load the associated user to get role and current username.
 		user, err := deps.UserRepo.FindByID(record.UserID)
 		if err != nil {
+			outcome := apiKeyLookupOutcome(err)
+			if outcome == "failure" {
+				slog.Error("API key user lookup failed", "user_id", record.UserID, "error", err)
+			}
+			RecordAPIKeyAuth(outcome)
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Invalid API key"})
 			return
 		}
 
 		if user.Disabled {
+			RecordAPIKeyAuth("disabled")
 			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "Account disabled"})
 			return
 		}
@@ -120,5 +148,6 @@ func CombinedAuth(deps APIKeyAuthDeps) gin.HandlerFunc {
 				_ = deps.APIKeyRepo.UpdateLastUsed(userID, keyID, ts)
 			}(record.UserID, record.ID, now)
 		}
+		RecordAPIKeyAuth("success")
 	}
 }

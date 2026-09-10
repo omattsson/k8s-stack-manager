@@ -137,3 +137,38 @@ func TestGORMClusterRepository_SetDefault_NotFound(t *testing.T) {
 	err := repo.SetDefault("nonexistent")
 	assert.Error(t, err)
 }
+
+func TestGORMClusterRepository_CountAllAndByHealthStatus(t *testing.T) {
+	t.Parallel()
+
+	repo := setupClusterRepo(t)
+	seed := []struct{ name, health string }{
+		{"ca-h1", models.ClusterHealthy},
+		{"ca-h2", models.ClusterHealthy},
+		{"ca-d1", models.ClusterDegraded},
+		{"ca-u1", models.ClusterUnreachable},
+	}
+	for _, s := range seed {
+		require.NoError(t, repo.Create(&models.Cluster{
+			Name:         s.name,
+			APIServerURL: "https://" + s.name + ".example.com",
+			HealthStatus: s.health,
+		}))
+	}
+
+	total, err := repo.CountAll()
+	require.NoError(t, err)
+	assert.Equal(t, 4, total)
+
+	healthy, err := repo.CountByHealthStatus(models.ClusterHealthy)
+	require.NoError(t, err)
+	assert.Equal(t, 2, healthy, "CountByHealthStatus must exclude non-healthy clusters")
+
+	degraded, err := repo.CountByHealthStatus(models.ClusterDegraded)
+	require.NoError(t, err)
+	assert.Equal(t, 1, degraded)
+
+	none, err := repo.CountByHealthStatus("nonexistent")
+	require.NoError(t, err)
+	assert.Equal(t, 0, none)
+}

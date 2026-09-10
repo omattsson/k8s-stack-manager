@@ -417,3 +417,7 @@ func TestDeleteSharedValues(t *testing.T) {
 		})
 	}
 }
+
+func (*mockClusterRepoForSV) CountAll() (int, error) { return 0, nil }
+
+func (*mockClusterRepoForSV) CountByHealthStatus(status string) (int, error) { return 0, nil }

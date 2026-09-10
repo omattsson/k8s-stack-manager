@@ -82,16 +82,6 @@ func main() {
 	repo, mysqlGormDB, err := initDatabase(cfg)
 	must("database", err)
 
-	// Register database/sql pool metrics with OTel.
-	if cfg.Otel.Enabled || cfg.Otel.MetricsEnabled {
-		sqlDB, dbErr := mysqlGormDB.DB()
-		if dbErr == nil {
-			if metricsErr := telemetry.StartDBMetrics(sqlDB); metricsErr != nil {
-				slog.Warn("Failed to register DB pool metrics", "error", metricsErr)
-			}
-		}
-	}
-
 	// Health checker.
 	healthChecker := health.New()
 	healthChecker.AddCheck("database", func(ctx context.Context) error {
@@ -106,6 +96,24 @@ func main() {
 	// Domain-specific repositories.
 	repos, err := initRepositories(cfg, mysqlGormDB)
 	must("domain repositories", err)
+
+	// Register database/sql pool metrics with OTel after repositories are available.
+	if cfg.Otel.Enabled || cfg.Otel.MetricsEnabled {
+		sqlDB, dbErr := mysqlGormDB.DB()
+		if dbErr == nil {
+			if metricsErr := telemetry.StartDBMetrics(sqlDB); metricsErr != nil {
+				slog.Warn("Failed to register DB pool metrics", "error", metricsErr)
+			}
+		}
+		if metricsErr := telemetry.StartBusinessMetrics(
+			repos.StackInstance,
+			repos.User,
+			repos.StackTemplate,
+			repos.Cluster,
+		); metricsErr != nil {
+			slog.Warn("Failed to register business metrics", "error", metricsErr)
+		}
+	}
 
 	// Domain services (git, cluster, deployer, hooks, etc.).
 	svc, err := buildDomainServices(cfg, repos, hub, healthChecker)

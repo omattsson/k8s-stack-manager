@@ -103,7 +103,9 @@ func (p *HealthPoller) poll() {
 
 	for i := range clusters {
 		cl := &clusters[i]
+		started := time.Now()
 		newStatus := p.checkCluster(cl)
+		recordClusterHealthCheck(cl.Name, newStatus, time.Since(started))
 
 		slog.Debug("health poller: checked cluster",
 			"cluster_id", cl.ID,
@@ -115,13 +117,7 @@ func (p *HealthPoller) poll() {
 			continue
 		}
 
-		slog.Info("health poller: cluster status changed",
-			"cluster_id", cl.ID,
-			"cluster_name", cl.Name,
-			"old_status", cl.HealthStatus,
-			"new_status", newStatus,
-		)
-
+		oldStatus := cl.HealthStatus
 		cl.HealthStatus = newStatus
 		if updateErr := p.clusterRepo.Update(cl); updateErr != nil {
 			slog.Error("health poller: failed to update cluster health",
@@ -130,6 +126,17 @@ func (p *HealthPoller) poll() {
 			)
 			continue
 		}
+
+		// Record the transition only after it is persisted, so a failed
+		// Update does not emit a transition that never took effect (and would
+		// repeat on every poll).
+		recordClusterTransition(cl.Name, oldStatus, newStatus)
+		slog.Info("health poller: cluster status changed",
+			"cluster_id", cl.ID,
+			"cluster_name", cl.Name,
+			"old_status", oldStatus,
+			"new_status", newStatus,
+		)
 
 		p.broadcastChange(cl)
 	}

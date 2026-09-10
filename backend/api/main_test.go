@@ -1011,3 +1011,13 @@ func TestMust_NoError(t *testing.T) {
 		must("test component", nil)
 	})
 }
+
+func (*mockInstanceRepo) CountByStatuses(statuses []string) (int, error) { return 0, nil }
+
+func (*mockClusterRepo) CountAll() (int, error) { return 0, nil }
+
+func (*mockClusterRepo) CountByHealthStatus(status string) (int, error) { return 0, nil }
+
+func (*failOnCreateClusterRepo) CountAll() (int, error) { return 0, nil }
+
+func (*failOnCreateClusterRepo) CountByHealthStatus(status string) (int, error) { return 0, nil }

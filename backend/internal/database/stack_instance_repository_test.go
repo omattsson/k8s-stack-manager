@@ -247,3 +247,41 @@ func TestGORMStackInstanceRepository_ListExpired(t *testing.T) {
 		})
 	}
 }
+
+func TestGORMStackInstanceRepository_CountByStatuses(t *testing.T) {
+	t.Parallel()
+
+	repo := setupStackInstanceRepo(t)
+	seed := []struct{ name, status string }{
+		{"cbs-run1", models.StackStatusRunning},
+		{"cbs-run2", models.StackStatusRunning},
+		{"cbs-dep1", models.StackStatusDeploying},
+		{"cbs-stop1", models.StackStatusStopped},
+	}
+	for _, s := range seed {
+		require.NoError(t, repo.Create(&models.StackInstance{
+			Name: s.name, StackDefinitionID: "d1", Namespace: "ns-" + s.name,
+			OwnerID: "o1", Branch: "main", Status: s.status, ClusterID: "c1",
+		}))
+	}
+
+	tests := []struct {
+		name     string
+		statuses []string
+		want     int
+	}{
+		{"multiple matching statuses", []string{models.StackStatusRunning, models.StackStatusDeploying}, 3},
+		{"single status", []string{models.StackStatusRunning}, 2},
+		{"no matching status", []string{models.StackStatusError}, 0},
+		{"empty slice short-circuits", nil, 0},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got, err := repo.CountByStatuses(tt.statuses)
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}

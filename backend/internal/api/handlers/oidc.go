@@ -24,6 +24,15 @@ import (
 )
 
 // OIDC handler message constants.
+// Policy-rejection sentinels returned by provisionUser. Their Error() text is
+// also used as the redirect error code, so it must stay stable. They let the
+// callback classify expected rejections (disabled account, no auto-provision)
+// separately from operational failures in login metrics.
+var (
+	errNoAccount       = errors.New("no_account")
+	errAccountDisabled = errors.New("account_disabled")
+)
+
 const (
 	errMsgAuthFailed = "auth_failed"
 )
@@ -205,10 +214,16 @@ func (h *OIDCHandler) Callback(c *gin.Context) {
 	// Validate state (one-time use — prevents CSRF and replay).
 	stateData, stateErr := h.sessionStore.ConsumeOIDCState(c.Request.Context(), stateParam)
 	if stateErr != nil || stateData == nil {
+		// A store/decode error is an operational failure; a nil result with no
+		// error means the state is missing, expired, or replayed — a rejected
+		// login attempt. Count both so auth.login.total{method="oidc"} is
+		// complete, but keep them in distinct outcome series.
 		if stateErr != nil {
 			slog.Error("OIDC state lookup failed", "error", stateErr)
+			middleware.RecordLogin("oidc", "failure")
 		} else {
 			slog.Warn("OIDC callback with invalid or expired state")
+			middleware.RecordLogin("oidc", "invalid")
 		}
 		c.Redirect(http.StatusFound, "/login?error=invalid_state")
 		return
@@ -218,6 +233,7 @@ func (h *OIDCHandler) Callback(c *gin.Context) {
 	oidcUser, err := h.provider.Exchange(c.Request.Context(), code, stateData.CodeVerifier)
 	if err != nil {
 		slog.Error("OIDC token exchange failed", "error", err)
+		middleware.RecordLogin("oidc", "failure")
 		c.Redirect(http.StatusFound, "/login?error=auth_failed")
 		return
 	}
@@ -226,9 +242,26 @@ func (h *OIDCHandler) Callback(c *gin.Context) {
 	user, err := h.provisionUser(oidcUser)
 	if err != nil {
 		slog.Error("OIDC user provisioning failed", "error", err)
+		// Policy rejections are expected outcomes, not operational failures;
+		// keep them in distinct series to match local login.
+		switch {
+		case errors.Is(err, errAccountDisabled):
+			middleware.RecordLogin("oidc", "disabled")
+		case errors.Is(err, errNoAccount):
+			middleware.RecordLogin("oidc", "restricted")
+		default:
+			middleware.RecordLogin("oidc", "failure")
+		}
 		c.Redirect(http.StatusFound, "/login?error="+err.Error())
 		return
 	}
+
+	// The login is not complete until a token is generated and, for CLI flows,
+	// the CLI session is updated. Default the outcome to "failure" and mark
+	// "success" only on the real completion paths below, so JWT-generation or
+	// CLI-session errors are recorded as failures rather than successes.
+	loginOutcome := "failure"
+	defer func() { middleware.RecordLogin("oidc", loginOutcome) }()
 
 	// Generate local JWT with OIDC-specific claims.
 	expiration := h.authCfg.AccessTokenExpiration
@@ -318,10 +351,12 @@ func (h *OIDCHandler) Callback(c *gin.Context) {
 			q.Set("token_type", "Bearer")
 			q.Set("expires_in", strconv.Itoa(int(h.authCfg.JWTExpiration.Seconds())))
 			loopURL.RawQuery = q.Encode()
+			loginOutcome = "success"
 			c.Redirect(http.StatusFound, loopURL.String())
 			return
 		}
 
+		loginOutcome = "success"
 		c.Data(http.StatusOK, "text/html; charset=utf-8", cliAuthSuccessPage)
 		return
 	}
@@ -334,6 +369,7 @@ func (h *OIDCHandler) Callback(c *gin.Context) {
 	params := url.Values{}
 	params.Set("token", token)
 	params.Set("redirect", redirectPath)
+	loginOutcome = "success"
 	c.Redirect(http.StatusFound, "/auth/callback#"+params.Encode())
 }
 
@@ -500,7 +536,7 @@ func (h *OIDCHandler) provisionUser(oidcUser *auth.OIDCUser) (*models.User, erro
 
 	// User not found — check auto-provisioning.
 	if !h.cfg.AutoProvision {
-		return nil, fmt.Errorf("no_account")
+		return nil, errNoAccount
 	}
 
 	return h.createOIDCUser(oidcUser)
@@ -510,7 +546,7 @@ func (h *OIDCHandler) provisionUser(oidcUser *auth.OIDCUser) (*models.User, erro
 // IdP response into the local user record.
 func (h *OIDCHandler) updateExistingOIDCUser(user *models.User, oidcUser *auth.OIDCUser) (*models.User, error) {
 	if user.Disabled {
-		return nil, fmt.Errorf("account_disabled")
+		return nil, errAccountDisabled
 	}
 	changed := false
 	if oidcUser.Email != "" && user.Email != oidcUser.Email {
@@ -540,7 +576,7 @@ func (h *OIDCHandler) updateExistingOIDCUser(user *models.User, oidcUser *auth.O
 // linkLocalUserToOIDC converts a local user to an OIDC-linked user.
 func (h *OIDCHandler) linkLocalUserToOIDC(user *models.User, oidcUser *auth.OIDCUser) (*models.User, error) {
 	if user.Disabled {
-		return nil, fmt.Errorf("account_disabled")
+		return nil, errAccountDisabled
 	}
 	user.AuthProvider = "oidc"
 	user.ExternalID = &oidcUser.Subject

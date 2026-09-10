@@ -1711,3 +1711,9 @@ func TestRateLimiters_Stop_NilSafe(t *testing.T) {
 	rl2 := &RateLimiters{}
 	assert.NotPanics(t, func() { rl2.Stop() })
 }
+
+func (*stubStackInstanceRepo) CountByStatuses(statuses []string) (int, error) { return 0, nil }
+
+func (*stubClusterRepo) CountAll() (int, error) { return 0, nil }
+
+func (*stubClusterRepo) CountByHealthStatus(status string) (int, error) { return 0, nil }

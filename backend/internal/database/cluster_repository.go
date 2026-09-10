@@ -226,6 +226,28 @@ func (r *GORMClusterRepository) List() ([]models.Cluster, error) {
 	return clusters, nil
 }
 
+// CountAll returns the total number of clusters using a projected aggregate
+// query, so it does not load or decrypt cluster secrets like List() does.
+func (r *GORMClusterRepository) CountAll() (int, error) {
+	var count int64
+	if err := r.db.Model(&models.Cluster{}).Count(&count).Error; err != nil {
+		return 0, dberrors.NewDatabaseError("count_all", err)
+	}
+	return int(count), nil
+}
+
+// CountByHealthStatus returns the number of clusters with the given health
+// status using a projected aggregate query (no secret decryption).
+func (r *GORMClusterRepository) CountByHealthStatus(status string) (int, error) {
+	var count int64
+	if err := r.db.Model(&models.Cluster{}).
+		Where("health_status = ?", status).
+		Count(&count).Error; err != nil {
+		return 0, dberrors.NewDatabaseError("count_by_health_status", err)
+	}
+	return int(count), nil
+}
+
 // FindDefault returns the cluster marked as default.
 func (r *GORMClusterRepository) FindDefault() (*models.Cluster, error) {
 	var cluster models.Cluster

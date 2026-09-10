@@ -945,3 +945,7 @@ func TestHealthCheck_MixedFirstFailsSecondReachable(t *testing.T) {
 	err := reg.HealthCheck(context.Background())
 	require.NoError(t, err, "should succeed when at least one cluster is reachable")
 }
+
+func (*mockClusterRepo) CountAll() (int, error) { return 0, nil }
+
+func (*mockClusterRepo) CountByHealthStatus(status string) (int, error) { return 0, nil }

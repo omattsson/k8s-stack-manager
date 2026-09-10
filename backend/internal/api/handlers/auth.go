@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"log/slog"
 	"net/http"
 	"runtime"
@@ -105,23 +106,34 @@ type RegisterRequest struct {
 func (h *AuthHandler) Login(c *gin.Context) {
 	var req LoginRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
+		middleware.RecordLogin("local", "invalid")
 		c.JSON(http.StatusBadRequest, gin.H{"error": msgInvalidRequestFormat})
 		return
 	}
 
 	user, err := h.userRepo.FindByUsername(req.Username)
 	if err != nil {
+		// An unknown username is an invalid credential; only other lookup
+		// errors are operational failures.
+		if isNotFoundError(err) {
+			middleware.RecordLogin("local", "invalid")
+		} else {
+			slog.Error("Login user lookup failed", "error", err)
+			middleware.RecordLogin("local", "failure")
+		}
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid username or password"})
 		return
 	}
 
 	if user.Disabled {
+		middleware.RecordLogin("local", "disabled")
 		c.JSON(http.StatusForbidden, gin.H{"error": "Account disabled"})
 		return
 	}
 
 	// When OIDC is enabled and local auth is not explicitly allowed, only service accounts can use local login.
 	if h.oidcCfg != nil && h.oidcCfg.Enabled && !h.oidcCfg.LocalAuth && !user.ServiceAccount {
+		middleware.RecordLogin("local", "restricted")
 		c.JSON(http.StatusForbidden, gin.H{"error": "Local login is restricted to service accounts. Please use SSO."})
 		return
 	}
@@ -143,6 +155,15 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		<-bcryptSem
 
 		if bcryptErr != nil {
+			// A password mismatch is an invalid credential. Any other bcrypt
+			// error (for example a malformed or unsupported stored hash) is a
+			// server-side failure, not a bad client credential.
+			if errors.Is(bcryptErr, bcrypt.ErrMismatchedHashAndPassword) {
+				middleware.RecordLogin("local", "invalid")
+			} else {
+				slog.Error("bcrypt comparison failed", "error", bcryptErr)
+				middleware.RecordLogin("local", "failure")
+			}
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid username or password"})
 			return
 		}
@@ -165,9 +186,12 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		Expiration:  expiration,
 	})
 	if err != nil {
+		middleware.RecordLogin("local", "failure")
 		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
 		return
 	}
+
+	middleware.RecordLogin("local", "success")
 
 	// Issue refresh token if repository is configured.
 	if h.refreshTokenRepo != nil {
@@ -331,12 +355,14 @@ type RefreshResponse struct {
 // @Router      /api/v1/auth/refresh [post]
 func (h *AuthHandler) Refresh(c *gin.Context) {
 	if h.refreshTokenRepo == nil {
+		middleware.RecordRefresh("disabled")
 		c.JSON(http.StatusNotImplemented, gin.H{"error": "Refresh tokens are not enabled"})
 		return
 	}
 
 	rawToken, err := c.Cookie(refreshTokenCookieName)
 	if err != nil || rawToken == "" {
+		middleware.RecordRefresh("missing")
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Refresh token required"})
 		return
 	}
@@ -346,9 +372,11 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 	if err != nil {
 		if isNotFoundError(err) {
 			h.clearRefreshCookie(c)
+			middleware.RecordRefresh("revoked")
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid refresh token"})
 		} else {
 			slog.Error("Failed to look up refresh token", "error", err)
+			middleware.RecordRefresh("failure")
 			c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
 		}
 		return
@@ -359,6 +387,7 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 		slog.Warn("Revoked refresh token reuse detected", "user_id", stored.UserID, "token_id", stored.ID)
 		_ = h.refreshTokenRepo.RevokeAllForUser(stored.UserID)
 		h.clearRefreshCookie(c)
+		middleware.RecordRefresh("revoked")
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid refresh token"})
 		return
 	}
@@ -366,6 +395,7 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 	now := time.Now().UTC()
 	if now.After(stored.ExpiresAt) {
 		h.clearRefreshCookie(c)
+		middleware.RecordRefresh("expired")
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Refresh token expired"})
 		return
 	}
@@ -374,6 +404,7 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 	if now.Sub(stored.LastActivity) > h.cfg.SessionIdleTimeout {
 		_ = h.refreshTokenRepo.RevokeByID(stored.ID)
 		h.clearRefreshCookie(c)
+		middleware.RecordRefresh("expired")
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Session idle timeout exceeded"})
 		return
 	}
@@ -381,7 +412,14 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 	// Look up user to get current role/username.
 	user, err := h.userRepo.FindByID(stored.UserID)
 	if err != nil {
-		slog.Error("Failed to find user for refresh", "user_id", stored.UserID, "error", err)
+		// A deleted or missing user is an expected invalid-session condition,
+		// not an operational failure — only real repository errors are.
+		if isNotFoundError(err) {
+			middleware.RecordRefresh("revoked")
+		} else {
+			slog.Error("Failed to find user for refresh", "user_id", stored.UserID, "error", err)
+			middleware.RecordRefresh("failure")
+		}
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid refresh token"})
 		return
 	}
@@ -389,6 +427,7 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 	if user.Disabled {
 		_ = h.refreshTokenRepo.RevokeAllForUser(stored.UserID)
 		h.clearRefreshCookie(c)
+		middleware.RecordRefresh("disabled")
 		c.JSON(http.StatusForbidden, gin.H{"error": "Account disabled"})
 		return
 	}
@@ -417,6 +456,7 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 		return nil
 	}); err != nil {
 		slog.Error("Failed to rotate refresh token", "user_id", user.ID, "error", err)
+		middleware.RecordRefresh("failure")
 		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
 		return
 	}
@@ -424,6 +464,7 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 	if replayDetected {
 		slog.Warn("Concurrent refresh token consumption detected", "user_id", stored.UserID, "token_id", stored.ID)
 		h.clearRefreshCookie(c)
+		middleware.RecordRefresh("revoked")
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid refresh token"})
 		return
 	}
@@ -441,10 +482,14 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 	})
 	if err != nil {
 		slog.Error("Failed to generate access token during refresh", "error", err)
+		middleware.RecordRefresh("failure")
 		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
 		return
 	}
 
+	// Record success only after the access token was generated: the refresh is
+	// not complete until this point.
+	middleware.RecordRefresh("success")
 	c.JSON(http.StatusOK, RefreshResponse{Token: accessToken})
 }
 

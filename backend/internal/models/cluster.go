@@ -67,6 +67,8 @@ type ClusterRepository interface {
 	Update(cluster *Cluster) error
 	Delete(id string) error
 	List() ([]Cluster, error)
+	CountAll() (int, error)
+	CountByHealthStatus(status string) (int, error)
 	FindDefault() (*Cluster, error)
 	SetDefault(id string) error
 }

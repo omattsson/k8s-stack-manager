@@ -3978,3 +3978,5 @@ func TestFinalizeDeploy_ReadinessWarning_AttachesHookMetadata(t *testing.T) {
 
 // Verify that streamingMockHelmExecutor satisfies StreamingHelmExecutor at compile time.
 var _ StreamingHelmExecutor = (*streamingMockHelmExecutor)(nil)
+
+func (*mockInstanceRepo) CountByStatuses(statuses []string) (int, error) { return 0, nil }

@@ -522,3 +522,5 @@ func TestActionPastTense(t *testing.T) {
 		})
 	}
 }
+
+func (*mockInstanceRepo) CountByStatuses(statuses []string) (int, error) { return 0, nil }

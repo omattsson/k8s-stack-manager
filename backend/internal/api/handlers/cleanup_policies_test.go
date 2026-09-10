@@ -785,3 +785,5 @@ func (r *cleanupMockAuditRepo) List(_ models.AuditLogFilters) (*models.AuditLogR
 		Total: int64(len(r.entries)),
 	}, nil
 }
+
+func (*cleanupMockInstanceRepo) CountByStatuses(statuses []string) (int, error) { return 0, nil }

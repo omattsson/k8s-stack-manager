@@ -93,12 +93,15 @@ func (r *SecretRefresher) refresh() {
 		return
 	}
 
+	start := time.Now()
 	clusters, err := r.clusterRepo.List()
 	if err != nil {
 		slog.Error("secret refresher: failed to list clusters", "error", err)
+		recordSecretRefreshResult("failure", time.Since(start))
 		return
 	}
 
+	var totalRefreshed, totalFailed int
 	for i := range clusters {
 		cl := &clusters[i]
 		regCfg := cl.RegistryConfig()
@@ -106,28 +109,46 @@ func (r *SecretRefresher) refresh() {
 			continue
 		}
 
-		r.refreshClusterSecrets(cl, regCfg)
+		refreshed, failed := r.refreshClusterSecrets(cl, regCfg)
+		totalRefreshed += refreshed
+		totalFailed += failed
+	}
+	recordSecretRefreshResult(secretRefreshStatus(totalRefreshed, totalFailed), time.Since(start))
+}
+
+// secretRefreshStatus classifies a refresh cycle by outcome:
+//   - "success": no namespace failed, including no-op cycles with nothing to
+//     refresh (refreshed == 0 && failed == 0)
+//   - "failure": at least one namespace failed and none succeeded
+//   - "partial": at least one namespace succeeded and at least one failed
+func secretRefreshStatus(refreshed, failed int) string {
+	switch {
+	case failed == 0:
+		return "success"
+	case refreshed == 0:
+		return "failure"
+	default:
+		return "partial"
 	}
 }
 
 const secretRefreshTimeout = 30 * time.Second
 
-func (r *SecretRefresher) refreshClusterSecrets(cl *models.Cluster, regCfg *models.RegistryConfig) {
+func (r *SecretRefresher) refreshClusterSecrets(cl *models.Cluster, regCfg *models.RegistryConfig) (refreshed, failed int) {
 	instances, err := r.instanceRepo.FindByCluster(cl.ID)
 	if err != nil {
 		slog.Error("secret refresher: failed to list instances",
 			"cluster_id", cl.ID, "error", err)
-		return
+		return 0, 1
 	}
 
 	k8sClient, err := r.registry.GetK8sClient(cl.ID)
 	if err != nil {
 		slog.Error("secret refresher: failed to get k8s client",
 			"cluster_id", cl.ID, "error", err)
-		return
+		return 0, 1
 	}
 
-	var refreshed, failed int
 	for j := range instances {
 		inst := &instances[j]
 		if inst.Status != models.StackStatusRunning && inst.Status != models.StackStatusPartial && inst.Status != models.StackStatusDeploying && inst.Status != models.StackStatusStabilizing {
@@ -158,6 +179,7 @@ func (r *SecretRefresher) refreshClusterSecrets(cl *models.Cluster, regCfg *mode
 			"failed", failed,
 		)
 	}
+	return refreshed, failed
 }
 
 func (r *SecretRefresher) refreshSecret(k8sClient *k8s.Client, namespace string, regCfg *models.RegistryConfig) error {
