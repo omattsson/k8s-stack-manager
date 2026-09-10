@@ -112,7 +112,14 @@ func (h *AuthHandler) Login(c *gin.Context) {
 
 	user, err := h.userRepo.FindByUsername(req.Username)
 	if err != nil {
-		middleware.RecordLogin("local", "failure")
+		// An unknown username is an invalid credential; only other lookup
+		// errors are operational failures.
+		if isNotFoundError(err) {
+			middleware.RecordLogin("local", "invalid")
+		} else {
+			slog.Error("Login user lookup failed", "error", err)
+			middleware.RecordLogin("local", "failure")
+		}
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid username or password"})
 		return
 	}
@@ -147,7 +154,8 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		<-bcryptSem
 
 		if bcryptErr != nil {
-			middleware.RecordLogin("local", "failure")
+			// A wrong password is an invalid credential, not an operational failure.
+			middleware.RecordLogin("local", "invalid")
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid username or password"})
 			return
 		}

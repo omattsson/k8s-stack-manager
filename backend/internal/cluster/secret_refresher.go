@@ -116,9 +116,11 @@ func (r *SecretRefresher) refresh() {
 	recordSecretRefreshResult(secretRefreshStatus(totalRefreshed, totalFailed), time.Since(start))
 }
 
-// secretRefreshStatus classifies a refresh cycle: "success" when nothing
-// failed, "failure" when everything failed (or nothing succeeded), and
-// "partial" when some namespaces refreshed and others did not.
+// secretRefreshStatus classifies a refresh cycle by outcome:
+//   - "success": no namespace failed, including no-op cycles with nothing to
+//     refresh (refreshed == 0 && failed == 0)
+//   - "failure": at least one namespace failed and none succeeded
+//   - "partial": at least one namespace succeeded and at least one failed
 func secretRefreshStatus(refreshed, failed int) string {
 	switch {
 	case failed == 0:

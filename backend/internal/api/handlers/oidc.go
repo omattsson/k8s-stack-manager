@@ -205,14 +205,17 @@ func (h *OIDCHandler) Callback(c *gin.Context) {
 	// Validate state (one-time use — prevents CSRF and replay).
 	stateData, stateErr := h.sessionStore.ConsumeOIDCState(c.Request.Context(), stateParam)
 	if stateErr != nil || stateData == nil {
+		// A store/decode error is an operational failure; a nil result with no
+		// error means the state is missing, expired, or replayed — a rejected
+		// login attempt. Count both so auth.login.total{method="oidc"} is
+		// complete, but keep them in distinct outcome series.
 		if stateErr != nil {
 			slog.Error("OIDC state lookup failed", "error", stateErr)
+			middleware.RecordLogin("oidc", "failure")
 		} else {
 			slog.Warn("OIDC callback with invalid or expired state")
+			middleware.RecordLogin("oidc", "invalid")
 		}
-		// A missing, expired, or replayed state is a rejected login attempt;
-		// count it so auth.login.total{method="oidc"} does not omit this class.
-		middleware.RecordLogin("oidc", "invalid")
 		c.Redirect(http.StatusFound, "/login?error=invalid_state")
 		return
 	}
