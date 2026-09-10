@@ -210,6 +210,9 @@ func (h *OIDCHandler) Callback(c *gin.Context) {
 		} else {
 			slog.Warn("OIDC callback with invalid or expired state")
 		}
+		// A missing, expired, or replayed state is a rejected login attempt;
+		// count it so auth.login.total{method="oidc"} does not omit this class.
+		middleware.RecordLogin("oidc", "invalid")
 		c.Redirect(http.StatusFound, "/login?error=invalid_state")
 		return
 	}

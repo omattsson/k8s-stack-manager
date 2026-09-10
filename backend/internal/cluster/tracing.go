@@ -45,8 +45,10 @@ func initClusterMetrics() {
 
 	clusterMetrics.secretRefreshTotal, err = clusterMeter.Int64Counter(
 		"cluster.secret.refresh.total",
-		metric.WithDescription("Total secret-refresh attempts by outcome."),
-		metric.WithUnit("{refresh}"),
+		// One event per refresh cycle (not per namespace), classified
+		// success/partial/failure, matching cluster.secret.refresh.duration.
+		metric.WithDescription("Total image pull secret refresh cycles by outcome."),
+		metric.WithUnit("{cycle}"),
 	)
 	if err != nil {
 		otel.Handle(err)
