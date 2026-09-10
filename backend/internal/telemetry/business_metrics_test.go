@@ -25,8 +25,12 @@ type fakeInstanceRepo struct {
 
 func (f *fakeInstanceRepo) CountAll() (int, error) { return f.total, nil }
 
-func (f *fakeInstanceRepo) CountByStatus(status string) (int, error) {
-	return f.byStatus[status], nil
+func (f *fakeInstanceRepo) CountByStatuses(statuses []string) (int, error) {
+	sum := 0
+	for _, s := range statuses {
+		sum += f.byStatus[s]
+	}
+	return sum, nil
 }
 
 type fakeUserRepo struct {
@@ -45,10 +49,18 @@ func (f *fakeTemplateRepo) Count() (int64, error) { return f.count, nil }
 
 type fakeClusterRepo struct {
 	models.ClusterRepository
-	clusters []models.Cluster
+	total   int
+	healthy int
 }
 
-func (f *fakeClusterRepo) List() ([]models.Cluster, error) { return f.clusters, nil }
+func (f *fakeClusterRepo) CountAll() (int, error) { return f.total, nil }
+
+func (f *fakeClusterRepo) CountByHealthStatus(status string) (int, error) {
+	if status == models.ClusterHealthy {
+		return f.healthy, nil
+	}
+	return f.total - f.healthy, nil
+}
 
 func TestStartBusinessMetrics_ObservesGauges(t *testing.T) {
 	reader := sdkmetric.NewManualReader()
@@ -73,11 +85,7 @@ func TestStartBusinessMetrics_ObservesGauges(t *testing.T) {
 	}
 	userRepo := &fakeUserRepo{count: 5}
 	templateRepo := &fakeTemplateRepo{count: 4}
-	clusterRepo := &fakeClusterRepo{clusters: []models.Cluster{
-		{HealthStatus: models.ClusterHealthy},
-		{HealthStatus: models.ClusterHealthy},
-		{HealthStatus: models.ClusterUnreachable},
-	}}
+	clusterRepo := &fakeClusterRepo{total: 3, healthy: 2}
 
 	require.NoError(t, StartBusinessMetrics(instanceRepo, userRepo, templateRepo, clusterRepo))
 

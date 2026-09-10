@@ -231,7 +231,13 @@ func (h *OIDCHandler) Callback(c *gin.Context) {
 		c.Redirect(http.StatusFound, "/login?error="+err.Error())
 		return
 	}
-	middleware.RecordLogin("oidc", "success")
+
+	// The login is not complete until a token is generated and, for CLI flows,
+	// the CLI session is updated. Default the outcome to "failure" and mark
+	// "success" only on the real completion paths below, so JWT-generation or
+	// CLI-session errors are recorded as failures rather than successes.
+	loginOutcome := "failure"
+	defer func() { middleware.RecordLogin("oidc", loginOutcome) }()
 
 	// Generate local JWT with OIDC-specific claims.
 	expiration := h.authCfg.AccessTokenExpiration
@@ -321,10 +327,12 @@ func (h *OIDCHandler) Callback(c *gin.Context) {
 			q.Set("token_type", "Bearer")
 			q.Set("expires_in", strconv.Itoa(int(h.authCfg.JWTExpiration.Seconds())))
 			loopURL.RawQuery = q.Encode()
+			loginOutcome = "success"
 			c.Redirect(http.StatusFound, loopURL.String())
 			return
 		}
 
+		loginOutcome = "success"
 		c.Data(http.StatusOK, "text/html; charset=utf-8", cliAuthSuccessPage)
 		return
 	}
@@ -337,6 +345,7 @@ func (h *OIDCHandler) Callback(c *gin.Context) {
 	params := url.Values{}
 	params.Set("token", token)
 	params.Set("redirect", redirectPath)
+	loginOutcome = "success"
 	c.Redirect(http.StatusFound, "/auth/callback#"+params.Encode())
 }
 

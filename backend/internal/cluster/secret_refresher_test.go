@@ -195,3 +195,5 @@ func TestSecretRefresher_StartStop(t *testing.T) {
 	refresher.Stop()
 	refresher.Stop() // safe to call twice
 }
+
+func (*mockInstanceRepo) CountByStatuses(statuses []string) (int, error) { return 0, nil }

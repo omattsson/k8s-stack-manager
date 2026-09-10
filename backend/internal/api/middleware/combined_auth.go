@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"errors"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -9,9 +10,21 @@ import (
 	"backend/internal/cache"
 	"backend/internal/models"
 	"backend/internal/sessionstore"
+	"backend/pkg/dberrors"
 
 	"github.com/gin-gonic/gin"
 )
+
+// apiKeyLookupOutcome classifies a repository lookup error for metrics: a
+// not-found error is a bad client credential ("invalid"), while any other
+// error is an operational/dependency failure ("failure") that must be
+// alertable separately.
+func apiKeyLookupOutcome(err error) string {
+	if errors.Is(err, dberrors.ErrNotFound) {
+		return "invalid"
+	}
+	return "failure"
+}
 
 // lastUsedCache prevents UpdateLastUsed from firing more than once per
 // API key per minute, reducing connection pool pressure under high load.
@@ -66,8 +79,11 @@ func CombinedAuth(deps APIKeyAuthDeps) gin.HandlerFunc {
 
 		records, err := deps.APIKeyRepo.FindByPrefix(prefix)
 		if err != nil {
-			slog.Error("API key lookup failed", "error", err)
-			RecordAPIKeyAuth("invalid")
+			outcome := apiKeyLookupOutcome(err)
+			if outcome == "failure" {
+				slog.Error("API key lookup failed", "error", err)
+			}
+			RecordAPIKeyAuth(outcome)
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Invalid API key"})
 			return
 		}
@@ -101,7 +117,11 @@ func CombinedAuth(deps APIKeyAuthDeps) gin.HandlerFunc {
 		// Load the associated user to get role and current username.
 		user, err := deps.UserRepo.FindByID(record.UserID)
 		if err != nil {
-			RecordAPIKeyAuth("invalid")
+			outcome := apiKeyLookupOutcome(err)
+			if outcome == "failure" {
+				slog.Error("API key user lookup failed", "user_id", record.UserID, "error", err)
+			}
+			RecordAPIKeyAuth(outcome)
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Invalid API key"})
 			return
 		}

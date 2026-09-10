@@ -817,3 +817,5 @@ func TestWatcherContextCancellation(t *testing.T) {
 		t.Fatal("watcher did not stop within 2 seconds after context cancellation")
 	}
 }
+
+func (*mockInstanceRepo) CountByStatuses(statuses []string) (int, error) { return 0, nil }

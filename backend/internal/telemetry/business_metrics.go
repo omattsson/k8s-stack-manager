@@ -83,56 +83,50 @@ func StartBusinessMetrics(
 	}
 
 	_, err = meter.RegisterCallback(func(_ context.Context, o metric.Observer) error {
-		// Use aggregate count queries instead of loading every row: instance
-		// lists carry heavy TEXT fields and cluster lists decrypt secrets, so
-		// List() at scrape interval would grow more expensive as tables grow.
-		instancesTotal, countErr := instanceRepo.CountAll()
-		if countErr != nil {
-			slog.Warn("business metrics: failed to count instances", "error", countErr)
-			return nil
-		}
-		instancesActive := 0
-		for _, status := range activeInstanceStatuses {
-			n, statusErr := instanceRepo.CountByStatus(status)
-			if statusErr != nil {
-				slog.Warn("business metrics: failed to count instances by status",
-					"status", status, "error", statusErr)
-				return nil
-			}
-			instancesActive += n
-		}
-		o.ObserveInt64(businessMetrics.instancesActive, int64(instancesActive))
-		o.ObserveInt64(businessMetrics.instancesTotal, int64(instancesTotal))
+		// Each KPI group is observed independently: use projected aggregate
+		// count queries (never List(), which loads heavy TEXT fields and
+		// decrypts cluster secrets on every scrape), and let one failing query
+		// skip only its own gauge instead of suppressing the others.
 
-		usersTotal, userErr := userRepo.Count()
-		if userErr != nil {
+		// Instances.
+		if total, instErr := instanceRepo.CountAll(); instErr != nil {
+			slog.Warn("business metrics: failed to count instances", "error", instErr)
+		} else {
+			o.ObserveInt64(businessMetrics.instancesTotal, int64(total))
+		}
+		// Count all active statuses in one query so an instance changing status
+		// mid-scrape cannot be double-counted or missed.
+		if active, activeErr := instanceRepo.CountByStatuses(activeInstanceStatuses); activeErr != nil {
+			slog.Warn("business metrics: failed to count active instances", "error", activeErr)
+		} else {
+			o.ObserveInt64(businessMetrics.instancesActive, int64(active))
+		}
+
+		// Users.
+		if users, userErr := userRepo.Count(); userErr != nil {
 			slog.Warn("business metrics: failed to count users", "error", userErr)
-			return nil
+		} else {
+			o.ObserveInt64(businessMetrics.usersTotal, users)
 		}
-		o.ObserveInt64(businessMetrics.usersTotal, usersTotal)
 
-		templatesTotal, templateErr := templateRepo.Count()
-		if templateErr != nil {
+		// Templates.
+		if templates, templateErr := templateRepo.Count(); templateErr != nil {
 			slog.Warn("business metrics: failed to count templates", "error", templateErr)
-			return nil
+		} else {
+			o.ObserveInt64(businessMetrics.templatesTotal, templates)
 		}
-		o.ObserveInt64(businessMetrics.templatesTotal, templatesTotal)
 
-		// ClusterRepository has no count method and the healthy count needs
-		// per-cluster status, so List() is retained here.
-		clusterList, clusterErr := clusterRepo.List()
-		if clusterErr != nil {
-			slog.Warn("business metrics: failed to list clusters", "error", clusterErr)
-			return nil
+		// Clusters — projected counts, no secret decryption.
+		if total, clusterErr := clusterRepo.CountAll(); clusterErr != nil {
+			slog.Warn("business metrics: failed to count clusters", "error", clusterErr)
+		} else {
+			o.ObserveInt64(businessMetrics.clustersTotal, int64(total))
 		}
-		o.ObserveInt64(businessMetrics.clustersTotal, int64(len(clusterList)))
-		clustersHealthy := 0
-		for _, cluster := range clusterList {
-			if cluster.HealthStatus == models.ClusterHealthy {
-				clustersHealthy++
-			}
+		if healthy, healthyErr := clusterRepo.CountByHealthStatus(models.ClusterHealthy); healthyErr != nil {
+			slog.Warn("business metrics: failed to count healthy clusters", "error", healthyErr)
+		} else {
+			o.ObserveInt64(businessMetrics.clustersHealthy, int64(healthy))
 		}
-		o.ObserveInt64(businessMetrics.clustersHealthy, int64(clustersHealthy))
 		return nil
 	},
 		businessMetrics.instancesActive,

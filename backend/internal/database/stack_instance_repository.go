@@ -180,6 +180,22 @@ func (r *GORMStackInstanceRepository) CountByStatus(status string) (int, error) 
 	return int(count), nil
 }
 
+// CountByStatuses returns the number of stack instances whose status is any of
+// the given statuses, in a single aggregate query. Using one WHERE status IN
+// (...) query keeps the count consistent even if statuses change concurrently.
+func (r *GORMStackInstanceRepository) CountByStatuses(statuses []string) (int, error) {
+	if len(statuses) == 0 {
+		return 0, nil
+	}
+	var count int64
+	if err := r.db.Model(&models.StackInstance{}).
+		Where("status IN ?", statuses).
+		Count(&count).Error; err != nil {
+		return 0, dberrors.NewDatabaseError("count_by_statuses", err)
+	}
+	return int(count), nil
+}
+
 // ExistsByDefinitionAndStatus checks whether any instance exists for a given definition+status.
 func (r *GORMStackInstanceRepository) ExistsByDefinitionAndStatus(definitionID, status string) (bool, error) {
 	var count int64

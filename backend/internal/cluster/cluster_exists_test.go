@@ -141,3 +141,11 @@ func (r *notFoundClusterRepo) Delete(_ string) error                     { retur
 func (r *notFoundClusterRepo) List() ([]models.Cluster, error)           { return nil, nil }
 func (r *notFoundClusterRepo) FindDefault() (*models.Cluster, error)     { return nil, dberrors.ErrNotFound }
 func (r *notFoundClusterRepo) SetDefault(_ string) error                 { return nil }
+
+func (*transientErrorClusterRepo) CountAll() (int, error) { return 0, nil }
+
+func (*transientErrorClusterRepo) CountByHealthStatus(status string) (int, error) { return 0, nil }
+
+func (*notFoundClusterRepo) CountAll() (int, error) { return 0, nil }
+
+func (*notFoundClusterRepo) CountByHealthStatus(status string) (int, error) { return 0, nil }

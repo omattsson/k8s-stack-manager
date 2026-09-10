@@ -254,3 +254,5 @@ func TestWarner_DefaultThresholdAndInterval(t *testing.T) {
 	assert.Equal(t, 30*time.Minute, w.threshold, "default threshold should be 30m")
 	assert.Equal(t, 60*time.Second, w.interval, "default interval should be 60s")
 }
+
+func (*warnerMockInstanceRepo) CountByStatuses(statuses []string) (int, error) { return 0, nil }

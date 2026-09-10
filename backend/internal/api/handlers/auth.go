@@ -105,6 +105,7 @@ type RegisterRequest struct {
 func (h *AuthHandler) Login(c *gin.Context) {
 	var req LoginRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
+		middleware.RecordLogin("local", "invalid")
 		c.JSON(http.StatusBadRequest, gin.H{"error": msgInvalidRequestFormat})
 		return
 	}
@@ -124,6 +125,7 @@ func (h *AuthHandler) Login(c *gin.Context) {
 
 	// When OIDC is enabled and local auth is not explicitly allowed, only service accounts can use local login.
 	if h.oidcCfg != nil && h.oidcCfg.Enabled && !h.oidcCfg.LocalAuth && !user.ServiceAccount {
+		middleware.RecordLogin("local", "restricted")
 		c.JSON(http.StatusForbidden, gin.H{"error": "Local login is restricted to service accounts. Please use SSO."})
 		return
 	}
@@ -445,8 +447,6 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 		return
 	}
 
-	middleware.RecordRefresh("success")
-
 	// Set cookie only after the transaction committed successfully.
 	h.setRefreshCookie(c, newRawToken)
 
@@ -460,10 +460,14 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 	})
 	if err != nil {
 		slog.Error("Failed to generate access token during refresh", "error", err)
+		middleware.RecordRefresh("failure")
 		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
 		return
 	}
 
+	// Record success only after the access token was generated: the refresh is
+	// not complete until this point.
+	middleware.RecordRefresh("success")
 	c.JSON(http.StatusOK, RefreshResponse{Token: accessToken})
 }
 

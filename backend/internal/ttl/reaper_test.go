@@ -337,3 +337,5 @@ func TestReaper_InitialCheckOnStart(t *testing.T) {
 	assert.Equal(t, "Expired (TTL)", got.ErrorMessage)
 	assert.Equal(t, 1, auditRepo.count())
 }
+
+func (*mockInstanceRepo) CountByStatuses(statuses []string) (int, error) { return 0, nil }

@@ -917,6 +917,25 @@ func (m *MockStackInstanceRepository) CountByStatus(status string) (int, error) 
 	return count, nil
 }
 
+func (m *MockStackInstanceRepository) CountByStatuses(statuses []string) (int, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.err != nil {
+		return 0, m.err
+	}
+	set := make(map[string]struct{}, len(statuses))
+	for _, s := range statuses {
+		set[s] = struct{}{}
+	}
+	count := 0
+	for _, i := range m.items {
+		if _, ok := set[i.Status]; ok {
+			count++
+		}
+	}
+	return count, nil
+}
+
 func (m *MockStackInstanceRepository) ExistsByDefinitionAndStatus(definitionID, status string) (bool, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -1495,6 +1514,30 @@ func (m *MockClusterRepository) List() ([]models.Cluster, error) {
 		out = append(out, *cl)
 	}
 	return out, nil
+}
+
+func (m *MockClusterRepository) CountAll() (int, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.err != nil {
+		return 0, m.err
+	}
+	return len(m.clusters), nil
+}
+
+func (m *MockClusterRepository) CountByHealthStatus(status string) (int, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.err != nil {
+		return 0, m.err
+	}
+	count := 0
+	for _, cl := range m.clusters {
+		if cl.HealthStatus == status {
+			count++
+		}
+	}
+	return count, nil
 }
 
 func (m *MockClusterRepository) FindDefault() (*models.Cluster, error) {

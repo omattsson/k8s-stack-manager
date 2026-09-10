@@ -1237,3 +1237,9 @@ func TestBootstrapFullPipeline(t *testing.T) {
 	router.ServeHTTP(w, req)
 	assert.Equal(t, http.StatusOK, w.Code)
 }
+
+func (*stubStackInstanceRepo) CountByStatuses(statuses []string) (int, error) { return 0, nil }
+
+func (*stubClusterRepo) CountAll() (int, error) { return 0, nil }
+
+func (*stubClusterRepo) CountByHealthStatus(status string) (int, error) { return 0, nil }
