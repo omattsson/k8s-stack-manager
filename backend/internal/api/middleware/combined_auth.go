@@ -49,7 +49,7 @@ func CombinedAuth(deps APIKeyAuthDeps) gin.HandlerFunc {
 		// Fall back to X-API-Key header.
 		apiKeyHeader := c.GetHeader("X-API-Key")
 		if apiKeyHeader == "" {
-			RecordAPIKeyAuth("disabled")
+			RecordAPIKeyAuth("missing")
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Authorization required"})
 			return
 		}

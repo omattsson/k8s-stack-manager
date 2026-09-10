@@ -344,7 +344,7 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 
 	rawToken, err := c.Cookie(refreshTokenCookieName)
 	if err != nil || rawToken == "" {
-		middleware.RecordRefresh("expired")
+		middleware.RecordRefresh("missing")
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Refresh token required"})
 		return
 	}
@@ -358,7 +358,7 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid refresh token"})
 		} else {
 			slog.Error("Failed to look up refresh token", "error", err)
-			middleware.RecordRefresh("expired")
+			middleware.RecordRefresh("failure")
 			c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
 		}
 		return
@@ -395,7 +395,7 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 	user, err := h.userRepo.FindByID(stored.UserID)
 	if err != nil {
 		slog.Error("Failed to find user for refresh", "user_id", stored.UserID, "error", err)
-		middleware.RecordRefresh("revoked")
+		middleware.RecordRefresh("failure")
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid refresh token"})
 		return
 	}
@@ -432,7 +432,7 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 		return nil
 	}); err != nil {
 		slog.Error("Failed to rotate refresh token", "user_id", user.ID, "error", err)
-		middleware.RecordRefresh("expired")
+		middleware.RecordRefresh("failure")
 		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
 		return
 	}

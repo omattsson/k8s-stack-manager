@@ -29,17 +29,18 @@ func TestAuthMetrics_RecordLoginAndRefresh(t *testing.T) {
 	RecordLogin("local", "success")
 	RecordLogin("oidc", "failure")
 	RecordRefresh("success")
+	RecordAPIKeyAuth("success")
 
 	var rm metricdata.ResourceMetrics
 	require.NoError(t, reader.Collect(context.Background(), &rm))
 
-	count := 0
+	found := map[string]bool{}
 	for _, sm := range rm.ScopeMetrics {
 		for _, m := range sm.Metrics {
-			if m.Name == "auth.login.total" || m.Name == "auth.token.refresh.total" {
-				count++
-			}
+			found[m.Name] = true
 		}
 	}
-	assert.GreaterOrEqual(t, count, 2)
+	assert.True(t, found["auth.login.total"], "auth.login.total not recorded")
+	assert.True(t, found["auth.token.refresh.total"], "auth.token.refresh.total not recorded")
+	assert.True(t, found["auth.apikey.total"], "auth.apikey.total not recorded")
 }

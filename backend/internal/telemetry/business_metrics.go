@@ -10,6 +10,17 @@ import (
 	"go.opentelemetry.io/otel/metric"
 )
 
+// activeInstanceStatuses lists the statuses treated as "actively deployed"
+// across the backend (see k8s/watcher, cluster/quota_monitor, and
+// cluster/secret_refresher). "partial" is included so the KPI does not
+// undercount deployments where only some charts succeeded.
+var activeInstanceStatuses = []string{
+	models.StackStatusRunning,
+	models.StackStatusDeploying,
+	models.StackStatusStabilizing,
+	models.StackStatusPartial,
+}
+
 var businessMetrics struct {
 	instancesActive metric.Int64ObservableGauge
 	instancesTotal  metric.Int64ObservableGauge
@@ -72,35 +83,43 @@ func StartBusinessMetrics(
 	}
 
 	_, err = meter.RegisterCallback(func(_ context.Context, o metric.Observer) error {
-		instanceList, listErr := instanceRepo.List()
-		if listErr != nil {
-			slog.Warn("business metrics: failed to list instances", "error", listErr)
+		// Use aggregate count queries instead of loading every row: instance
+		// lists carry heavy TEXT fields and cluster lists decrypt secrets, so
+		// List() at scrape interval would grow more expensive as tables grow.
+		instancesTotal, countErr := instanceRepo.CountAll()
+		if countErr != nil {
+			slog.Warn("business metrics: failed to count instances", "error", countErr)
 			return nil
 		}
 		instancesActive := 0
-		for _, inst := range instanceList {
-			switch inst.Status {
-			case models.StackStatusRunning, models.StackStatusDeploying, models.StackStatusStabilizing:
-				instancesActive++
+		for _, status := range activeInstanceStatuses {
+			n, statusErr := instanceRepo.CountByStatus(status)
+			if statusErr != nil {
+				slog.Warn("business metrics: failed to count instances by status",
+					"status", status, "error", statusErr)
+				return nil
 			}
+			instancesActive += n
 		}
 		o.ObserveInt64(businessMetrics.instancesActive, int64(instancesActive))
-		o.ObserveInt64(businessMetrics.instancesTotal, int64(len(instanceList)))
+		o.ObserveInt64(businessMetrics.instancesTotal, int64(instancesTotal))
 
-		userList, userErr := userRepo.List()
+		usersTotal, userErr := userRepo.Count()
 		if userErr != nil {
-			slog.Warn("business metrics: failed to list users", "error", userErr)
+			slog.Warn("business metrics: failed to count users", "error", userErr)
 			return nil
 		}
-		o.ObserveInt64(businessMetrics.usersTotal, int64(len(userList)))
+		o.ObserveInt64(businessMetrics.usersTotal, usersTotal)
 
-		templateList, templateErr := templateRepo.List()
+		templatesTotal, templateErr := templateRepo.Count()
 		if templateErr != nil {
-			slog.Warn("business metrics: failed to list templates", "error", templateErr)
+			slog.Warn("business metrics: failed to count templates", "error", templateErr)
 			return nil
 		}
-		o.ObserveInt64(businessMetrics.templatesTotal, int64(len(templateList)))
+		o.ObserveInt64(businessMetrics.templatesTotal, templatesTotal)
 
+		// ClusterRepository has no count method and the healthy count needs
+		// per-cluster status, so List() is retained here.
 		clusterList, clusterErr := clusterRepo.List()
 		if clusterErr != nil {
 			slog.Warn("business metrics: failed to list clusters", "error", clusterErr)

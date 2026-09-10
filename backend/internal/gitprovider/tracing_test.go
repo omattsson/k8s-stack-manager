@@ -32,13 +32,12 @@ func TestGitProviderMetrics_RecordBranchList(t *testing.T) {
 	var rm metricdata.ResourceMetrics
 	require.NoError(t, reader.Collect(context.Background(), &rm))
 
-	found := false
+	found := map[string]bool{}
 	for _, sm := range rm.ScopeMetrics {
 		for _, m := range sm.Metrics {
-			if m.Name == "gitprovider.branch_list.total" || m.Name == "gitprovider.branch_list.duration" {
-				found = true
-			}
+			found[m.Name] = true
 		}
 	}
-	assert.True(t, found)
+	assert.True(t, found["gitprovider.branch_list.total"], "branch_list counter missing")
+	assert.True(t, found["gitprovider.branch_list.duration"], "branch_list duration histogram missing")
 }

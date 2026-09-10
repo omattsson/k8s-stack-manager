@@ -122,15 +122,18 @@ func (r *Registry) ListBranches(ctx context.Context, repoURL string) ([]Branch, 
 	return branches, nil
 }
 
+// providerTypeName returns the metric label for a provider. It delegates to
+// the GitProvider.ProviderType() contract so wrappers and future
+// implementations keep an accurate label instead of falling through to
+// "unknown".
 func providerTypeName(p GitProvider) string {
-	switch p.(type) {
-	case *azureDevOpsProvider:
-		return "azure_devops"
-	case *gitlabProvider:
-		return "gitlab"
-	default:
+	if p == nil {
 		return "unknown"
 	}
+	if t := p.ProviderType(); t != "" {
+		return t
+	}
+	return "unknown"
 }
 
 // GetDefaultBranch detects the provider and returns the default branch.

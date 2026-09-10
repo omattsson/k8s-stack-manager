@@ -27,6 +27,7 @@ func TestClusterMetrics_RecordHealthTransitionAndRefresh(t *testing.T) {
 	initClusterMetrics()
 	t.Cleanup(func() { clusterMeter = prevClusterMeter })
 
+	recordClusterHealthCheck("prod", "healthy", 120*time.Millisecond)
 	recordClusterTransition("prod", "unreachable", "healthy")
 	recordSecretRefreshResult("success", 500*time.Millisecond)
 
@@ -36,11 +37,11 @@ func TestClusterMetrics_RecordHealthTransitionAndRefresh(t *testing.T) {
 	found := map[string]bool{}
 	for _, sm := range rm.ScopeMetrics {
 		for _, m := range sm.Metrics {
-			if m.Name == "cluster.health.transitions.total" || m.Name == "cluster.secret.refresh.total" {
-				found[m.Name] = true
-			}
+			found[m.Name] = true
 		}
 	}
-	assert.True(t, found["cluster.health.transitions.total"])
-	assert.True(t, found["cluster.secret.refresh.total"])
+	assert.True(t, found["cluster.health.transitions.total"], "transitions counter missing")
+	assert.True(t, found["cluster.secret.refresh.total"], "secret refresh counter missing")
+	assert.True(t, found["cluster.health.check.duration"], "health check duration histogram missing")
+	assert.True(t, found["cluster.secret.refresh.duration"], "secret refresh duration histogram missing")
 }
