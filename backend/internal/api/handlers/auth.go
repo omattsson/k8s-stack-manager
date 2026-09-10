@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"log/slog"
 	"net/http"
 	"runtime"
@@ -154,8 +155,15 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		<-bcryptSem
 
 		if bcryptErr != nil {
-			// A wrong password is an invalid credential, not an operational failure.
-			middleware.RecordLogin("local", "invalid")
+			// A password mismatch is an invalid credential. Any other bcrypt
+			// error (for example a malformed or unsupported stored hash) is a
+			// server-side failure, not a bad client credential.
+			if errors.Is(bcryptErr, bcrypt.ErrMismatchedHashAndPassword) {
+				middleware.RecordLogin("local", "invalid")
+			} else {
+				slog.Error("bcrypt comparison failed", "error", bcryptErr)
+				middleware.RecordLogin("local", "failure")
+			}
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid username or password"})
 			return
 		}
@@ -404,8 +412,14 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 	// Look up user to get current role/username.
 	user, err := h.userRepo.FindByID(stored.UserID)
 	if err != nil {
-		slog.Error("Failed to find user for refresh", "user_id", stored.UserID, "error", err)
-		middleware.RecordRefresh("failure")
+		// A deleted or missing user is an expected invalid-session condition,
+		// not an operational failure — only real repository errors are.
+		if isNotFoundError(err) {
+			middleware.RecordRefresh("revoked")
+		} else {
+			slog.Error("Failed to find user for refresh", "user_id", stored.UserID, "error", err)
+			middleware.RecordRefresh("failure")
+		}
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid refresh token"})
 		return
 	}

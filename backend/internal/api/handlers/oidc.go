@@ -24,6 +24,15 @@ import (
 )
 
 // OIDC handler message constants.
+// Policy-rejection sentinels returned by provisionUser. Their Error() text is
+// also used as the redirect error code, so it must stay stable. They let the
+// callback classify expected rejections (disabled account, no auto-provision)
+// separately from operational failures in login metrics.
+var (
+	errNoAccount       = errors.New("no_account")
+	errAccountDisabled = errors.New("account_disabled")
+)
+
 const (
 	errMsgAuthFailed = "auth_failed"
 )
@@ -233,7 +242,16 @@ func (h *OIDCHandler) Callback(c *gin.Context) {
 	user, err := h.provisionUser(oidcUser)
 	if err != nil {
 		slog.Error("OIDC user provisioning failed", "error", err)
-		middleware.RecordLogin("oidc", "failure")
+		// Policy rejections are expected outcomes, not operational failures;
+		// keep them in distinct series to match local login.
+		switch {
+		case errors.Is(err, errAccountDisabled):
+			middleware.RecordLogin("oidc", "disabled")
+		case errors.Is(err, errNoAccount):
+			middleware.RecordLogin("oidc", "restricted")
+		default:
+			middleware.RecordLogin("oidc", "failure")
+		}
 		c.Redirect(http.StatusFound, "/login?error="+err.Error())
 		return
 	}
@@ -518,7 +536,7 @@ func (h *OIDCHandler) provisionUser(oidcUser *auth.OIDCUser) (*models.User, erro
 
 	// User not found — check auto-provisioning.
 	if !h.cfg.AutoProvision {
-		return nil, fmt.Errorf("no_account")
+		return nil, errNoAccount
 	}
 
 	return h.createOIDCUser(oidcUser)
@@ -528,7 +546,7 @@ func (h *OIDCHandler) provisionUser(oidcUser *auth.OIDCUser) (*models.User, erro
 // IdP response into the local user record.
 func (h *OIDCHandler) updateExistingOIDCUser(user *models.User, oidcUser *auth.OIDCUser) (*models.User, error) {
 	if user.Disabled {
-		return nil, fmt.Errorf("account_disabled")
+		return nil, errAccountDisabled
 	}
 	changed := false
 	if oidcUser.Email != "" && user.Email != oidcUser.Email {
@@ -558,7 +576,7 @@ func (h *OIDCHandler) updateExistingOIDCUser(user *models.User, oidcUser *auth.O
 // linkLocalUserToOIDC converts a local user to an OIDC-linked user.
 func (h *OIDCHandler) linkLocalUserToOIDC(user *models.User, oidcUser *auth.OIDCUser) (*models.User, error) {
 	if user.Disabled {
-		return nil, fmt.Errorf("account_disabled")
+		return nil, errAccountDisabled
 	}
 	user.AuthProvider = "oidc"
 	user.ExternalID = &oidcUser.Subject
