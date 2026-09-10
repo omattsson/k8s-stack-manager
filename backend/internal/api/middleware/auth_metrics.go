@@ -51,6 +51,15 @@ func initAuthMetrics() {
 	}
 }
 
+// RebindAuthMeter rebinds the auth metric instruments to the current global
+// MeterProvider. The instruments are created at package initialization against
+// whatever provider is installed then, so a provider installed later (notably
+// a test manual reader in another package) only takes effect after this call.
+func RebindAuthMeter() {
+	authMeter = otel.Meter("auth")
+	initAuthMetrics()
+}
+
 func RecordLogin(method, status string) {
 	if method == "" || status == "" {
 		return
