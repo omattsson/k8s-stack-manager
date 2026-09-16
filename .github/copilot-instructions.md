@@ -21,7 +21,7 @@ Full-stack app: **Go (Gin) backend** + **React (TypeScript, Vite, MUI) frontend*
 | Backend tests (unit, no DB) | `cd backend && go test ./... -v -short` |
 | All backend tests (unit + integration) | `make test-backend-all` (starts MySQL) |
 | Frontend tests | `cd frontend && npm test` |
-| All tests | `make test` |
+| Unit tests (backend + frontend) | `make test` |
 | E2E tests | `make test-e2e` (starts infra + backend + Playwright) |
 | Swagger docs | `cd backend && make docs` (runs `swag init -g api/main.go`) |
 | Coverage (80% threshold) | `cd backend && make test-coverage` |
@@ -323,7 +323,7 @@ backend/internal/
 - **Git provider detection**: URL-based — `dev.azure.com`/`visualstudio.com` → Azure DevOps; `gitlab.com` or custom → GitLab
 - **Helm values merge**: Merge order shared values (cluster-scoped, by priority) → chart default values → instance overrides → template locked values (locked always wins). Then substitute template vars `{{.Branch}}`, `{{.Namespace}}`, `{{.InstanceName}}`, `{{.StackName}}`, `{{.Owner}}`
 - **Deploy preview**: `GET /stack-instances/:id/deploy-preview` returns the merged values per chart without deploying
-- **Rollback**: `POST /stack-instances/:id/rollback` rolls Helm releases back; fires `pre-rollback`/`post-rollback` hooks
+- **Rollback**: `POST /stack-instances/:id/rollback` rolls Helm releases back; fires `pre-rollback`, then `rollback-completed` on either outcome and `post-rollback` only on success
 - **Auth**: JWT with `Authorization: Bearer <token>` header; middleware injects `userID`, `username`, `role` into Gin context. Refresh tokens rotate via `/auth/refresh`; logout blocks tokens in `sessionstore`
 - **Hooks**: Lifecycle events go to HMAC-signed webhook subscribers; `pre-*` events can gate the operation (`failure_policy: fail`). Organization-specific behaviour (Slack, DB refresh, approval gates) belongs in hook subscribers, not in core (see `EXTENDING.md`)
 - **Notification channels**: DevOps and admin users register outbound webhook channels (`/admin/notification-channels`, guarded by `RequireDevOps`) with per-event subscriptions, test send, and delivery logs. In-app notifications remain per user

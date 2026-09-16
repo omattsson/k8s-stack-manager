@@ -241,7 +241,7 @@ make lint                                 # Full lint
 ## When in doubt
 - Read `internal/api/handlers/handlers_test.go` — reference backend test file
 - Read frontend test files under `src/pages/*/` — reference frontend test patterns
-- Read `frontend/e2e/instances.spec.ts` or `frontend/e2e/deployment.spec.ts` — reference e2e test files; domain handler mocks are in `internal/api/handlers/mock_domain_repositories_test.go`
+- Read `frontend/e2e/instances.spec.ts` or `frontend/e2e/deployment.spec.ts` — reference e2e test files; domain handler mocks are in `backend/internal/api/handlers/mock_domain_repositories_test.go`
 - Read `.github/instructions/*.md` — project rules and conventions
 - Match existing test patterns exactly rather than inventing new ones
 

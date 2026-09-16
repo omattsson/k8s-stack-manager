@@ -101,7 +101,7 @@ Kubeconfig data encrypted at rest with AES-256-GCM (`KUBECONFIG_ENCRYPTION_KEY`)
 7. `k8s.Watcher` polls namespace for pod/deployment status
 8. Status updates broadcast via WebSocket
 
-`GET /api/v1/stack-instances/:id/deploy-preview` returns the merged values without deploying. `POST /api/v1/stack-instances/:id/rollback` reverses step 5 per chart and fires `pre-rollback` / `rollback-completed` / `post-rollback`. Other dispatched hook events: `deploy-finalized`, `deploy-timeout`, `pre/post-instance-create`, `pre/post-instance-delete`, `stop-completed`, `clean-completed`, `delete-completed`. The constants `instance-created`, `stack-expiring`, `stack-expired`, `quota-warning`, `secret-expiring`, `cleanup-policy-executed` are defined but not yet fired, and `pre/post-namespace-create` are reserved (see `backend/docs/hooks.md` and `EXTENDING.md`).
+`GET /api/v1/stack-instances/:id/deploy-preview` returns the merged values without deploying. `POST /api/v1/stack-instances/:id/rollback` reverses step 5 per chart and fires `pre-rollback`, then `rollback-completed` on either outcome and `post-rollback` only on success. Other dispatched hook events: `deploy-finalized`, `deploy-timeout`, `pre/post-instance-create`, `pre/post-instance-delete`, `stop-completed`, `clean-completed`, `delete-completed`. The constants `instance-created`, `stack-expiring`, `stack-expired`, `quota-warning`, `secret-expiring`, `cleanup-policy-executed` are defined but not yet fired, and `pre/post-namespace-create` are reserved (see `backend/docs/hooks.md` and `EXTENDING.md`).
 
 ## Authentication
 

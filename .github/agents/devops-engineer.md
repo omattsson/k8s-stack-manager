@@ -77,7 +77,7 @@ Key rules:
 
 ### Nginx (`frontend/nginx.conf`)
 
-`make dev` builds the frontend `development` stage and runs the Vite dev server on :3000, which proxies `/api` and `/ws` to backend:8081. The `production`/Helm stage serves static files via `nginx-unprivileged` on :8080 (with WebSocket upgrade headers): in Compose prod it proxies `/api` and `/ws` to backend:8081; in the Helm chart it serves the SPA only and the ingress routes `/api` and `/ws`.
+The Compose `frontend` service always runs the Vite dev server (`command: npm run dev`, on :3000), which proxies `/api` and `/ws` to backend:8081 — there is no working nginx path in Compose (the command override would fail on the nginx image, which has no npm). The `production` Dockerfile stage serves static files via `nginx-unprivileged` on :8080 and is used only by the Helm chart, where it serves the SPA and the ingress routes `/api` and `/ws`.
 
 ### Makefile
 
