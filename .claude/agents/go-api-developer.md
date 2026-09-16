@@ -35,7 +35,7 @@ You are a senior Go backend engineer. Implement the requested feature or fix end
 7. Regenerate swagger if handlers changed: `cd backend && make docs`
 
 ## New Resource Checklist
-1. Model in a new file `internal/models/<entity>.go` (embed `Base`, add `Version uint` with `default:1`, define the repository interface there; `models.go` only holds `Base`, `Item`, `Filter`, `Pagination`)
+1. Model in a new file `internal/models/<entity>.go` (embed `Base`, add `Version uint` with `default:1`, define the repository interface there; `models.go` holds the shared types: `Base`, `Item`, `Validator`, `Versionable`, the generic `Repository` interface, `GenericRepository`, `Filter`, `Pagination`)
 2. Validation in `internal/models/validation.go` (implement `Validator`)
 3. Repository in `internal/database/<entity>_repository.go`, wired in `repository_factory.go`; migration in `internal/database/migrations.go` (incrementing version)
 4. Handler in `internal/api/handlers/` — for simple CRUD use the generic `Handler` struct; for domain resources, create a dedicated handler struct with specialized repository dependencies (see `InstanceHandler`, `DefinitionHandler`)

@@ -8,7 +8,7 @@ Built with Vite 8 + React 19 + TypeScript 6 (strict mode). Uses SWC via `@vitejs
 - **Routing**: `react-router-dom` v7 with `<Routes>` / `<Route>` in `src/routes.tsx`
 - **UI Library**: MUI v9 (`@mui/material`) — use MUI components instead of raw HTML
 - **API Client**: Axios instance in `src/api/client.ts`
-- **API Config**: `src/api/config.ts` — dev: `http://localhost:8081` (direct), prod: `/api` (nginx strips `/api` prefix via trailing `/` in `proxy_pass`). Endpoints in `client.ts` use full `/api/v1/...` paths.
+- **API Config**: `src/api/config.ts` — dev: `http://localhost:8081` (direct), prod: `/api` (nginx `location /api/` proxies to `backend:8081/api/`, prefix preserved; the Vite dev proxy forwards `/api` unchanged). Endpoints in `client.ts` use full `/api/v1/...` paths.
 - **WebSocket**: `reconnecting-websocket` with context provider and hook
 - **Contexts**: `src/context/AuthContext.tsx` (authentication state + JWT), `NotificationContext.tsx` (toast/snackbar), `ThemeContext.tsx` (light/dark toggle)
 - **Hooks**: `src/hooks/useCountdown.ts` (countdown timer), `useUnsavedChanges.ts` (unsaved changes warning), `useWebSocket.ts` (WebSocket real-time updates)

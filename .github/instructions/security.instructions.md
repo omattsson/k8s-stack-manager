@@ -48,7 +48,7 @@ v1.Use(rateLimiter.RateLimit())
 ```
 
 ## Sessions, Tokens and Headers
-- Revoked JWTs and refresh tokens go to the `sessionstore` blocklist; `CombinedAuth` checks it and `User.Disabled` on every request. Fail open on store errors (log + continue).
+- Logout blocklists the access-token `jti` in `sessionstore` (`BlockToken`); refresh tokens are revoked through `RefreshTokenRepository`, and reuse of a rotated refresh token revokes the whole family. JWT auth checks `IsTokenBlocked` (fail open on store errors: log + continue); API-key auth does not use the blocklist. Disabling a user blocks the user in `sessionstore`, and every auth path (login, refresh, OIDC, API key) rejects `User.Disabled`.
 - `middleware.SecurityHeaders()` sets baseline security headers; `middleware.RedactWSToken()` strips `?token=` from `/ws` URLs before logging, metrics and tracing. Keep both.
 - Outbound hooks are HMAC-signed (`X-StackManager-Signature`, `internal/hooks/client.go`). Never log hook secrets, provider tokens, or kubeconfig data.
 - Kubeconfig data is encrypted at rest with AES-GCM (`pkg/crypto`, `KUBECONFIG_ENCRYPTION_KEY`).

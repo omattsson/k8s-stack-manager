@@ -54,7 +54,7 @@ HTTP server timeouts are configurable in `internal/config/config.go`:
 These prevent slow clients from consuming connections. Set via env vars in production based on expected request sizes.
 
 ## Pagination
-List endpoints take `?page=N&pageSize=M` (default 25, max 100; `limit`/`offset` accepted as legacy fallback) and call `ListPaged(limit, offset)` with column projection. Always implement pagination for list endpoints to avoid unbounded result sets. Use batch lookups (`FindByIDs`, `CountByTemplateIDs`) instead of N+1 loops.
+New and changed list endpoints take `?page=N&pageSize=M` (default 25, max 100; `limit`/`offset` accepted as legacy fallback) and call `ListPaged(limit, offset)` with column projection, as stack instances, definitions and templates do. Older endpoints (items, audit logs, notifications, delivery logs) still take `limit`/`offset`; small admin lists (users, clusters, cleanup policies) are unpaged. Always implement pagination for new list endpoints to avoid unbounded result sets. Use batch lookups (`FindByIDs`, `CountByTemplateIDs`) instead of N+1 loops.
 
 ## Caching and Metrics
-Use `internal/cache` (generic in-memory TTL cache) for short-lived data such as the login cache (`LOGIN_CACHE_TTL`) and git branch lists (5m). HTTP, DB pool, auth and business metrics are exported through OpenTelemetry (`internal/telemetry`, `api/middleware/metrics.go`); add a metric when you add a hot path.
+Use `internal/cache` (generic in-memory TTL cache) for short-lived data; combined auth, login (`LOGIN_CACHE_TTL`), dashboard and analytics use it. `gitprovider.Registry` keeps its own 5-minute branch-list cache. HTTP, DB pool, auth and business metrics are exported through OpenTelemetry (`internal/telemetry`, `api/middleware/metrics.go`); add a metric when you add a hot path.

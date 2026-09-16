@@ -7,7 +7,7 @@ applyTo: "**"
 ## Adding a New Resource (Step-by-Step)
 
 ### 1. Define the Model
-Add to `internal/models/models.go`. Embed `Base` for ID, timestamps, and soft-delete:
+Create `internal/models/<entity>.go` (one file per entity, repository interface in the same file; `models.go` holds only the shared types). Embed `Base` for ID, timestamps, and soft-delete:
 ```go
 type Order struct {
     Base
@@ -58,7 +58,7 @@ func (h *Handler) CreateOrder(c *gin.Context) {
         return
     }
     if err := h.repository.Create(c.Request.Context(), &order); err != nil {
-        status, message := handleDBError(err)
+        status, message := mapError(err, "Order") // items.go uses handleDBError; domain handlers use mapError
         c.JSON(status, gin.H{"error": message})
         return
     }
@@ -135,7 +135,7 @@ export const orderService = {
 Create a new page in `frontend/src/pages/Orders/index.tsx` and register in `routes.tsx`.
 
 ## Key Patterns to Follow
-- **Error handling**: Use `handleDBError()` for all repository errors — it maps DB errors to correct HTTP status codes
+- **Error handling**: Use `mapError(err, "Entity")` (in `handlers/errors.go`) for domain handler repository errors; `handleDBError()` is used only by the Items reference handler. Both map DB errors to correct HTTP status codes and never leak internal details.
 - **ID parsing**: Always validate path params with `strconv.ParseUint` and return 400 for invalid IDs
 - **Response format**: Success returns the entity directly; errors return `gin.H{"error": "message"}`
 - **Filtering**: Use `models.Filter` and `models.Pagination` structs passed as conditions to `repository.List()`

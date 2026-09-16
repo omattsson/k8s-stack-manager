@@ -70,7 +70,7 @@ backend/
     database/repository.go            # Repository factory
     database/migrations.go            # Versioned migrations (auto-run on startup)
     database/errors.go                # Re-exports from pkg/dberrors
-    models/models.go                  # Base, Item, Filter, Pagination, Repository interface
+    models/models.go                  # Base, Item, Validator, Versionable, generic Repository + GenericRepository, Filter, Pagination
     models/<entity>.go                # One file per domain model + its repository interface
     database/<entity>_repository.go   # One GORM repository per model; wired in repository_factory.go
     cache/                            # Generic in-memory TTL cache
@@ -89,14 +89,14 @@ backend/
 
 Follow these steps IN ORDER. Do not skip any.
 
-### 1. Model (`internal/models/models.go`)
+### 1. Model (`internal/models/<entity>.go`, one file per entity; the repository interface goes in the same file)
 ```go
 type Order struct {
     Base
     UserID  uint    `gorm:"not null" json:"user_id"`
     Total   float64 `gorm:"not null" json:"total"`
     Status  string  `gorm:"size:50;not null;default:'pending'" json:"status"`
-    Version uint    `gorm:"not null;default:0" json:"version"`
+    Version uint    `gorm:"not null;default:1" json:"version"`
 }
 ```
 - Always embed `Base` (gives ID, CreatedAt, UpdatedAt, DeletedAt)

@@ -101,7 +101,7 @@ Kubeconfig data encrypted at rest with AES-256-GCM (`KUBECONFIG_ENCRYPTION_KEY`)
 7. `k8s.Watcher` polls namespace for pod/deployment status
 8. Status updates broadcast via WebSocket
 
-`GET /:id/deploy-preview` returns the merged values without deploying. `POST /:id/rollback` reverses step 5 per chart and fires `pre-rollback` / `post-rollback`. Other hook events: `pre/post-instance-create`, `pre/post-namespace-create`, `stop-completed`, `clean-completed`, `stack-expiring`, `stack-expired`, `quota-warning`, `secret-expiring`, `cleanup-policy-executed` (full list in `EXTENDING.md`).
+`GET /:id/deploy-preview` returns the merged values without deploying. `POST /:id/rollback` reverses step 5 per chart and fires `pre-rollback` / `post-rollback`. Other hook events: `deploy-finalized`, `pre/post-instance-create`, `pre/post-instance-delete`, `stop-completed`, `clean-completed`, `stack-expiring`, `stack-expired`, `quota-warning`, `secret-expiring`, `cleanup-policy-executed` (full list in `EXTENDING.md`; `pre/post-namespace-create` are reserved and not wired).
 
 ## Authentication
 
@@ -115,7 +115,7 @@ Kubeconfig data encrypted at rest with AES-256-GCM (`KUBECONFIG_ENCRYPTION_KEY`)
 
 ## Observability
 
-`telemetry.Init` sets up OTLP traces and metrics (`OTEL_*`, `METRICS_ENABLED`). HTTP metrics and auth outcome counters come from middleware; DB pool and business KPIs from `telemetry`. `RedactWSToken` removes the WebSocket `?token=` query param before logging and tracing. The Helm chart can deploy an OTel collector (`otel.enabled`) and a ServiceMonitor (`metrics.serviceMonitor.enabled`). Local: `make dev-otel` (Prometheus `:9090`, Grafana `:3001`).
+`telemetry.Init` sets up OTLP traces and metrics (`OTEL_*`, `METRICS_ENABLED`). HTTP metrics middleware is active when `OTEL_ENABLED` or `METRICS_ENABLED` is true; tracing middleware and span enrichment only when `OTEL_ENABLED`. HTTP metrics and auth outcome counters come from middleware; DB pool and business KPIs from `telemetry`. `RedactWSToken` removes the WebSocket `?token=` query param before logging and tracing. The Helm chart can deploy an OTel collector (`otel.enabled`) and a ServiceMonitor (`metrics.serviceMonitor.enabled`). Local: `make dev-otel` (Prometheus `:9090`, Grafana `:3001`).
 
 ## Outbound Notifications
 

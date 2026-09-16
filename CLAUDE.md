@@ -6,7 +6,7 @@ Full-stack app: **Go (Gin) backend** + **React (TypeScript, Vite, MUI) frontend*
 
 **Bootstrap flow**: `backend/api/main.go` → `config.LoadConfig()` → `telemetry.Init(cfg.Otel)` → `database.NewRepositoryWithGormDB(cfg)` → session store (`sessionstore`) → `routes.SetupRoutes(router, routes.Deps{...})` → `http.Server` with graceful shutdown (`SIGINT`/`SIGTERM`, stops rate limiters and flushes telemetry).
 
-**Ports**: Backend `:8081` on host, frontend `:3000` in dev. Inside Docker, nginx (`proxy_pass` with trailing `/`) and Vite (`rewrite: ^/api → ""`) both strip the `/api` prefix when proxying to `backend:8081`. Local non-Docker dev hits `localhost:8081` directly (`frontend/src/api/config.ts`). With `make dev-otel`: Grafana `:3001`, Prometheus `:9090`.
+**Ports**: Backend `:8081` on host, frontend `:3000` in dev. Inside Docker, nginx (`location /api/` → `proxy_pass http://backend:8081/api/`) and the Vite dev proxy (`/api` → backend, no rewrite) both keep the `/api` prefix; backend routes are registered under `/api/v1`. Local non-Docker dev hits `localhost:8081` directly (`frontend/src/api/config.ts`). With `make dev-otel`: Grafana `:3001`, Prometheus `:9090`.
 
 ## Development Commands
 
@@ -26,7 +26,6 @@ Full-stack app: **Go (Gin) backend** + **React (TypeScript, Vite, MUI) frontend*
 | Swagger docs | `cd backend && make docs` (runs `swag init -g api/main.go`) |
 | Coverage (80% threshold) | `cd backend && make test-coverage` |
 | Lint | `make lint` (`go vet` + `npm run lint`) |
-| Format | `make fmt` |
 | Install deps | `make install` |
 | Helm lint | `make helm-lint` |
 | Helm dry-run render | `make helm-template` |
@@ -164,7 +163,7 @@ backend/
     database/migrations.go       # Versioned migrations via schema.Migrator, auto-run on startup
     database/errors.go           # Re-exports from pkg/dberrors (single source of truth)
     database/schema/             # Migrator and versioned migration structs
-    models/                      # One file per domain model + repository interface; models.go has Base, Item, Filter, Pagination; validation.go
+    models/                      # One file per domain model + repository interface; models.go has Base, Item, Validator, Versionable, the generic Repository interface + GenericRepository, Filter, Pagination; validation.go
     health/health.go             # Dependency health checks (liveness/readiness)
     auth/                        # OIDC provider (PKCE) + state store for OpenID Connect auth
     cache/                       # Generic concurrent in-memory TTL cache
@@ -188,7 +187,7 @@ backend/
 
 ## Key Backend Patterns
 
-**Repository interface**: The generic `models.Repository` interface uses `Create`, `FindByID`, `Update`, `Delete`, `List` — all take `context.Context` first. Implemented by `GenericRepository` (GORM/MySQL). Domain-specific repositories (e.g., `StackInstanceRepository`, `UserRepository`, `AuditLogRepository`) have dedicated interfaces in their model files with custom method signatures. The repository auto-calls `Validate()` on create/update if the model implements `Validator`. List endpoints use `ListPaged(limit, offset)` returning `([]T, total, error)` — GORM uses `SELECT`+column projection+`LIMIT/OFFSET`. Batch methods (`CountByTemplateIDs`, `FindByIDs`) eliminate N+1 queries for enrichment lookups.
+**Repository interface**: The generic `models.Repository` interface uses `Create`, `FindByID`, `Update`, `Delete`, `List` — all take `context.Context` first. Implemented by `GenericRepository` (GORM/MySQL). Domain-specific repositories (e.g., `StackInstanceRepository`, `UserRepository`, `AuditLogRepository`) have dedicated interfaces in their model files with custom method signatures. The repository auto-calls `Validate()` on create/update if the model implements `Validator`. Paginated list endpoints (stack instances, definitions, templates) use `ListPaged(limit, offset)` returning `([]T, total, error)` — GORM uses `SELECT`+column projection+`LIMIT/OFFSET`. New or changed list endpoints must use this pattern; small admin lists (users, clusters, cleanup policies, favorites, API keys) still return unpaged `List()` results. Batch methods (`CountByTemplateIDs`, `FindByIDs`) eliminate N+1 queries for enrichment lookups.
 
 **Handler struct**: `handlers.Handler` holds `models.Repository` and optional `websocket.BroadcastSender` via constructor injection (`NewHandler(repo)` or `NewHandlerWithHub(repo, hub)`). Domain handlers (e.g., `InstanceHandler`, `DefinitionHandler`, `AdminHandler`, `DashboardHandler`) use separate structs with specialized repository dependencies injected via their own constructors. Health handlers use factory functions returning `gin.HandlerFunc` via closure.
 
@@ -198,11 +197,11 @@ backend/
 
 **Filter whitelist**: `GenericRepository` has `allowedFilterFields` map. New entities need `NewRepositoryWithFilterFields()` or the existing repo must be extended.
 
-**Routes registration**: `SetupRoutes()` accepts a `Deps` struct with all handler and repository dependencies; handlers are optional and registered inside `if deps.XHandler != nil` blocks. Returns `*RateLimiters` (API limiter + optional login limiter; caller must call `Stop()` on shutdown). Global middleware order: RequestID → RedactWSToken → HTTPMetrics (if `METRICS_ENABLED`) → otelgin (if `OTEL_ENABLED`) → Logger → Recovery → SecurityHeaders → CORS → MaxBodySize (1MB). `/api/v1` adds the API rate limiter (`RATE_LIMIT`, default 100 req/min per IP); login gets a stricter limiter when `LOGIN_RATE_LIMIT` > 0 (default 10/min). The authenticated group adds `CombinedAuth` (JWT + API key, checks token blocklist and disabled users), `SpanEnrichUser`, and `NewAuditMiddleware`. Role-based access via `RequireAdmin()`/`RequireDevOps()`. WebSocket at `/ws`, health at `/health/*`.
+**Routes registration**: `SetupRoutes()` accepts a `Deps` struct with all handler and repository dependencies; handlers are optional and registered inside `if deps.XHandler != nil` blocks. Returns `*RateLimiters` (API limiter + optional login limiter; caller must call `Stop()` on shutdown). Global middleware order: RequestID → RedactWSToken → HTTPMetrics (if `OTEL_ENABLED` or `METRICS_ENABLED`) → otelgin (if `OTEL_ENABLED`) → Logger → Recovery → SecurityHeaders → CORS → MaxBodySize (1MB). `/api/v1` adds the API rate limiter (`RATE_LIMIT`, default 100 req/min per IP); login gets a stricter limiter when `LOGIN_RATE_LIMIT` > 0 (default 10/min). The authenticated group adds `CombinedAuth` (JWT + API key, checks token blocklist and disabled users), `SpanEnrichUser` (if `OTEL_ENABLED`), and `NewAuditMiddleware` (if an audit logger is configured). Role-based access via `RequireAdmin()`/`RequireDevOps()`. WebSocket at `/ws`, health at `/health/*`.
 
-**Sessions**: Login returns a JWT and a refresh token. `POST /auth/refresh` rotates it; `/auth/logout` and `/auth/logout-all` add tokens to the `sessionstore` blocklist. `IsTokenBlocked` fails open on store errors (log + continue). All auth paths reject `User.Disabled`.
+**Sessions**: Login returns a JWT (with a `jti`) and a refresh token. `POST /auth/refresh` rotates the refresh token through `RefreshTokenRepository` (reuse of a rotated token revokes the whole family). `/auth/logout` blocklists the current access-token `jti` in `sessionstore` and revokes the presented refresh token; `/auth/logout-all` also revokes every refresh token of the user. JWT auth checks `IsTokenBlocked` and fails open on store errors (log + continue); API-key auth skips the blocklist. Disabling a user blocks the user in `sessionstore` and all auth paths (login, refresh, OIDC, API key) reject `User.Disabled`.
 
-**Hooks**: `hooks.Dispatcher` sends HMAC-signed HTTP webhooks for lifecycle events (`pre-deploy`, `post-deploy`, `pre-rollback`, `post-rollback`, `pre/post-instance-create`, `pre/post-namespace-create`, `stack-expiring`, `quota-warning`, ...). `pre-*` subscribers can abort with `failure_policy: fail`. Subscribers come from `HOOKS_CONFIG_FILE` (Helm: `hooks.subscribers`). Contract in `backend/docs/hooks.md`.
+**Hooks**: `hooks.Dispatcher` sends HMAC-signed HTTP webhooks for lifecycle events (`pre-deploy`, `post-deploy`, `deploy-finalized`, `pre-rollback`, `post-rollback`, `pre/post-instance-create`, `pre/post-instance-delete`, `stop-completed`, `clean-completed`, `stack-expiring`, `stack-expired`, `quota-warning`, `secret-expiring`, ...; `pre/post-namespace-create` are reserved, not wired). `pre-*` subscribers can abort with `failure_policy: fail`. Subscribers come from `HOOKS_CONFIG_FILE` (Helm: `hooks.subscribers`). Contract in `backend/docs/hooks.md`.
 
 **Telemetry**: `telemetry.Init` configures OTLP traces and metrics (`OTEL_ENABLED`, `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_SERVICE_NAME`, `OTEL_TRACE_SAMPLE_RATE`). `StartDBMetrics` and `StartBusinessMetrics` register gauges; HTTP and auth metrics come from middleware. Add tracing for new outbound calls in a `tracing.go` next to the package (see `cluster/`, `deployer/`, `gitprovider/`, `hooks/`).
 
@@ -386,7 +385,7 @@ backend/internal/
 - Rate limiting: per-IP sliding window on API routes; stricter login limiter (`LOGIN_RATE_LIMIT`)
 - `SecurityHeaders` middleware sets baseline headers on every response — never remove it
 - Recovery middleware catches panics globally — never remove it
-- Revoked tokens live in `sessionstore`; every auth path checks the blocklist and `User.Disabled`
+- Revoked access-token `jti`s and blocked users live in `sessionstore`; revoked refresh tokens live in `RefreshTokenRepository`. JWT auth checks the blocklist; every auth path (login, refresh, OIDC, API key) rejects `User.Disabled`
 - `RedactWSToken` strips `?token=` from `/ws` URLs before logging, metrics, and tracing — keep it first after RequestID
 - Outbound hooks are HMAC-signed (`X-StackManager-Signature`); never log hook secrets or provider tokens
 - Kubeconfig data is encrypted at rest with AES-GCM (`KUBECONFIG_ENCRYPTION_KEY`)
@@ -397,8 +396,8 @@ backend/internal/
 - DB retry: 5 attempts, 2s delay on startup
 - Docker networks: `backend-net` (db, backend) and `frontend-net` (backend, frontend) — maintain separation
 - Health checks: register for all external dependencies via `healthChecker.AddCheck()`
-- Always implement pagination for list endpoints — `page`/`pageSize` query params (default 25, max 100; `limit`/`offset` accepted as legacy fallback) backed by `ListPaged(limit, offset)`. Select only columns needed for list views (omit TEXT fields like `description`). Use batch queries (`CountByTemplateIDs`, `FindByIDs`) instead of N+1 loops for enrichment data.
-- Use `internal/cache` for short-lived in-memory caching (login cache `LOGIN_CACHE_TTL`, git branch lists 5m) instead of ad-hoc maps
+- Always implement pagination for new list endpoints — `page`/`pageSize` query params (default 25, max 100; `limit`/`offset` accepted as legacy fallback) backed by `ListPaged(limit, offset)`, as in stack instances, definitions and templates. Older endpoints (items, audit logs, notifications, delivery logs) still take `limit`/`offset`; small admin lists are unpaged. Select only columns needed for list views (omit TEXT fields like `description`). Use batch queries (`CountByTemplateIDs`, `FindByIDs`) instead of N+1 loops for enrichment data.
+- Use `internal/cache` for short-lived in-memory caching instead of ad-hoc maps (used by combined auth, login, dashboard and analytics handlers; `LOGIN_CACHE_TTL`). `gitprovider.Registry` keeps its own 5-minute branch cache
 - Struct field ordering: optimize for memory alignment (8-byte fields first)
 
 ## Project Plan

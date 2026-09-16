@@ -26,7 +26,7 @@ Store immediately whenever you learn: cluster state, endpoint URLs, deployment t
 3. **Observable** — health checks on every service; structured logging; readiness gates
 
 ## Infrastructure Overview
-- **Docker Compose**: `docker-compose.yml` defines backend (Go), frontend (React/nginx), mysql, mysqld-exporter, otel-collector, tempo, prometheus (`:9090`), grafana (`:3001`); observability services run under the `otel` profile. Overlays: `docker-compose.k8s.yml` (local K8s cluster access, `make dev-k8s`), `docker-compose.otel.yml` (`make dev-otel`). `make dev-api-only` runs backend + mysql only
+- **Docker Compose**: `docker-compose.yml` defines backend (Go), frontend (React/nginx), mysql, otel-collector, tempo, prometheus (`:9090`), grafana (`:3001`) under the `otel` profile, and mysqld-exporter under the separate `mysql-otel` profile (not started by `make dev-otel`). Overlays: `docker-compose.k8s.yml` (local K8s cluster access, `make dev-k8s`), `docker-compose.otel.yml` (`make dev-otel`). `make dev-api-only` runs backend + mysql only
 - **Networks**: `backend-net` (backend, db) and `frontend-net` (backend, frontend) — maintain separation
 - **Backend Dockerfile**: multi-stage → `builder` (golang:1.27.1) → `development` (air) → `build-prod` (static binary) → `production` (Alpine, non-root uid 65532, includes the Helm binary)
 - **Nginx**: `nginx-unprivileged` on port 8080 serving static files; in Docker Compose it proxies `/api` and `/ws` to backend:8081; in Helm it serves the SPA only and the ingress routes `/api` and `/ws`

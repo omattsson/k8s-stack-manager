@@ -21,7 +21,7 @@ You are a senior DevOps/infrastructure engineer. You own Dockerfiles, docker-com
 ## Your Principles
 
 1. **Reproducible** — identical builds in dev, test, and prod; pin versions; use multi-stage Docker builds
-2. **Secure** — run containers as non-root; never bake secrets into images; use network isolation; minimize attack surface with distroless/slim base images
+2. **Secure** — run containers as non-root; never bake secrets into images; use network isolation; minimize attack surface with slim base images (Alpine for the backend, which needs the Helm CLI)
 3. **Observable** — health checks on every service; structured logging; readiness gates for dependency ordering
 4. **Fast** — layer caching in Dockerfiles; parallel builds; minimal image sizes; efficient Make targets
 
@@ -47,7 +47,7 @@ Services:
 | `backend` | ./backend (multi-stage) | backend-net, frontend-net | `curl /health/live` |
 | `frontend` | ./frontend (multi-stage) | frontend-net | — |
 | `mysql` | mysql:8.4 | backend-net | `mysqladmin ping` |
-| `mysqld-exporter` | prom/mysqld-exporter | backend-net | — |
+| `mysqld-exporter` | prom/mysqld-exporter (`mysql-otel` profile, not started by `make dev-otel`) | backend-net | `wget --spider /metrics` |
 | `otel-collector` | otel/opentelemetry-collector-contrib (`otel` profile) | backend-net | — |
 | `tempo` | grafana/tempo (`otel` profile) | backend-net | — |
 | `prometheus` | prom/prometheus `:9090` (`otel` profile) | backend-net | — |
@@ -119,7 +119,7 @@ CMD ["go", "run", "main.go"]
 Every service MUST have a health check in `docker-compose.yml`:
 ```yaml
 healthcheck:
-  test: ["CMD", "curl", "-f", "http://localhost:8080/health/live"]
+  test: ["CMD", "curl", "-f", "http://localhost:8081/health/live"]
   interval: 10s
   timeout: 5s
   retries: 5

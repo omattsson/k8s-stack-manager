@@ -38,7 +38,7 @@ type Repository interface {
 All methods take `context.Context` as the first parameter. Implemented by `GenericRepository` (GORM/MySQL). The factory in `internal/database/repository.go` initializes the repository based on config.
 
 ## Models
-Define each model in its own file `internal/models/<entity>.go` together with its repository interface (`models.go` holds only `Base`, `Item`, `Filter`, `Pagination`). Embed `Base` for ID, timestamps, and soft-delete:
+Define each model in its own file `internal/models/<entity>.go` together with its repository interface (`models.go` holds the shared types: `Base`, `Item`, `Validator`, `Versionable`, the generic `Repository` interface, `GenericRepository`, `Filter`, `Pagination`). Embed `Base` for ID, timestamps, and soft-delete:
 ```go
 type Item struct {
     Base
