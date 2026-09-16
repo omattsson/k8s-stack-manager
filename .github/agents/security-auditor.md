@@ -182,7 +182,7 @@ nmap -sV localhost -p 8081,3000,3306
 - **Containers**: Multi-stage Docker builds, docker-compose orchestration
 - **Helm**: Deployments or Argo Rollouts (`argoRollouts.enabled`), Traefik IngressRoute or standard Ingress, bundled MySQL, OTel collector, External Secrets Operator templates — review secrets handling, NetworkPolicy, exposed services
 - **Sessions**: `internal/sessionstore` token blocklist + OIDC state; login rate limiter (`LOGIN_RATE_LIMIT`); `SecurityHeaders` and `RedactWSToken` middleware
-- **Outbound hooks**: `internal/hooks` HMAC-signed webhooks (`X-StackManager-Signature`) — review SSRF exposure and secret handling; outbound notification channels in `internal/notifier`
+- **Outbound hooks**: `internal/hooks` webhooks, HMAC-signed with `X-StackManager-Signature` only when the subscription/action has a non-empty secret (`secret_env` is optional; empty means unsigned) — review SSRF exposure, unsigned subscriptions, and secret handling; outbound notification channels in `internal/notifier`
 - **Secrets**: Environment variables via `config.LoadConfig()`, `.env` fallback
 - **Auth**: JWT + API key combined middleware, OIDC support
 - **Encryption**: AES-GCM for kubeconfig data at rest (`pkg/crypto`)

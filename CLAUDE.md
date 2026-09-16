@@ -64,7 +64,7 @@ helm/k8s-stack-manager/
     rollout.yaml                           # Argo Rollout, canary 20%→50%→80% (argoRollouts.enabled=true)
     service.yaml, service-canary.yaml      # Stable + canary services
     hpa.yaml, pdb.yaml                     # Autoscaling (off by default), PodDisruptionBudget (on)
-    hooks-configmap.yaml                   # Hook subscribers file (hooks.enabled)
+    hooks-configmap.yaml                   # Hook subscriptions file (hooks.enabled)
     servicemonitor.yaml                    # Prometheus Operator scrape (metrics.serviceMonitor.enabled)
   templates/frontend/
     configmap.yaml                         # nginx.conf (SPA-only routing)
@@ -94,7 +94,7 @@ Key values in `values.yaml`:
 - `mysql.enabled`, `mysql.auth.*`, `mysql.persistence.enabled` — Bundled database
 - `ingress.type`, `ingress.host`, `ingress.traefik.*`, `ingress.className`, `ingress.tls` — Ingress settings
 - `otel.enabled`, `metrics.enabled`, `metrics.serviceMonitor.enabled` — Observability
-- `hooks.enabled`, `hooks.subscribers` — Outbound webhook subscribers (see `EXTENDING.md`)
+- `hooks.enabled`, `hooks.subscriptions` — Outbound webhook subscriptions (see `EXTENDING.md`)
 - `externalSecrets.enabled`, `externalSecrets.secretStore.*` — External Secrets Operator
 
 ## Backend Structure
@@ -201,7 +201,7 @@ backend/
 
 **Sessions**: Login returns a JWT (with a `jti`) and a refresh token. `POST /auth/refresh` rotates the refresh token through `RefreshTokenRepository` (reuse of a rotated token revokes the whole family). `/auth/logout` blocklists the current access-token `jti` in `sessionstore` and revokes the presented refresh token; `/auth/logout-all` also revokes every refresh token of the user. JWT auth checks `IsTokenBlocked` and fails open on store errors (log + continue); API-key auth skips the blocklist. Disabling a user blocks the user in `sessionstore` and all auth paths (login, refresh, OIDC, API key) reject `User.Disabled`.
 
-**Hooks**: `hooks.Dispatcher` sends HMAC-signed HTTP webhooks for lifecycle events (`pre-deploy`, `post-deploy`, `deploy-finalized`, `pre-rollback`, `post-rollback`, `pre/post-instance-create`, `pre/post-instance-delete`, `stop-completed`, `clean-completed`, `stack-expiring`, `stack-expired`, `quota-warning`, `secret-expiring`, ...; `pre/post-namespace-create` are reserved, not wired). `pre-*` subscribers can abort with `failure_policy: fail`. Subscribers come from `HOOKS_CONFIG_FILE` (Helm: `hooks.subscribers`). Contract in `backend/docs/hooks.md`.
+**Hooks**: `hooks.Dispatcher` sends HTTP webhooks (HMAC-signed with `X-StackManager-Signature` only when the subscription has a non-empty secret) for lifecycle events (`pre-deploy`, `post-deploy`, `deploy-finalized`, `pre-rollback`, `post-rollback`, `pre/post-instance-create`, `pre/post-instance-delete`, `stop-completed`, `clean-completed`, `stack-expiring`, `stack-expired`, `quota-warning`, `secret-expiring`, ...; `pre/post-namespace-create` are reserved, not wired). `pre-*` subscribers can abort with `failure_policy: fail`. Subscriptions come from `HOOKS_CONFIG_FILE` (Helm: `hooks.subscriptions`). Contract in `backend/docs/hooks.md`.
 
 **Telemetry**: `telemetry.Init` configures OTLP traces and metrics (`OTEL_ENABLED`, `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_SERVICE_NAME`, `OTEL_TRACE_SAMPLE_RATE`). `StartDBMetrics` and `StartBusinessMetrics` register gauges; HTTP and auth metrics come from middleware. Add tracing for new outbound calls in a `tracing.go` next to the package (see `cluster/`, `deployer/`, `gitprovider/`, `hooks/`).
 
@@ -387,7 +387,7 @@ backend/internal/
 - Recovery middleware catches panics globally — never remove it
 - Revoked access-token `jti`s and blocked users live in `sessionstore`; revoked refresh tokens live in `RefreshTokenRepository`. JWT auth checks the blocklist; every auth path (login, refresh, OIDC, API key) rejects `User.Disabled`
 - `RedactWSToken` strips `?token=` from `/ws` URLs before logging, metrics, and tracing — keep it first after RequestID
-- Outbound hooks are HMAC-signed (`X-StackManager-Signature`); never log hook secrets or provider tokens
+- Outbound hooks are HMAC-signed (`X-StackManager-Signature`) when a subscription has a secret; subscriptions without a secret are sent unsigned. Never log hook secrets or provider tokens
 - Kubeconfig data is encrypted at rest with AES-GCM (`KUBECONFIG_ENCRYPTION_KEY`)
 
 ## Scalability Notes

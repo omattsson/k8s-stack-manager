@@ -48,10 +48,10 @@ Services:
 | `frontend` | ./frontend (multi-stage) | frontend-net | — |
 | `mysql` | mysql:8.4 | backend-net | `mysqladmin ping` |
 | `mysqld-exporter` | prom/mysqld-exporter (`mysql-otel` profile, not started by `make dev-otel`) | backend-net | `wget --spider /metrics` |
-| `otel-collector` | otel/opentelemetry-collector-contrib (`otel` profile) | backend-net | — |
-| `tempo` | grafana/tempo (`otel` profile) | backend-net | — |
-| `prometheus` | prom/prometheus `:9090` (`otel` profile) | backend-net | — |
-| `grafana` | grafana/grafana `:3001` (`otel` profile) | backend-net | — |
+| `otel-collector` | otel/opentelemetry-collector-contrib (`otel` profile) | backend-net | `otelcol validate` |
+| `tempo` | grafana/tempo (`otel` profile, UI `:3200`) | backend-net | `wget /ready` |
+| `prometheus` | prom/prometheus (`otel` profile, UI `:9090`) | backend-net | `wget /-/healthy` |
+| `grafana` | grafana/grafana (`otel` profile, UI `:3001`) | backend-net | `wget /api/health` |
 
 Overlays: `docker-compose.k8s.yml` for local K8s cluster access (`make dev-k8s`), `docker-compose.otel.yml` for the observability stack (`make dev-otel`). `make dev-api-only` runs backend + mysql only for `stackctl` workflows.
 
@@ -67,10 +67,10 @@ Multi-stage build:
 - `builder` — `golang:1.27.1` base, downloads the Helm CLI
 - `development` — installs `air` for hot reload, used with `GO_ENV=development`
 - `build-prod` — builds static binary with `CGO_ENABLED=0`
-- `production` — `alpine:3.24`, non-root (uid 65532), copies the app binary and the Helm binary only
+- `production` — `alpine:3.24`, non-root (uid 65532), copies the app binary and the Helm binary only (a scratch/static base is not possible because the backend shells out to the Helm CLI)
 
 Key rules:
-- Production image MUST be a minimal base (Alpine; the backend needs the Helm CLI, so scratch/distroless is not possible)
+- Production image MUST be a minimal base (Alpine); the backend shells out to the Helm CLI, so a scratch or static-only base does not work
 - MUST run as non-root (uid 65532)
 - MUST copy only the app binary and the Helm binary — no source code or build tools in prod image
 - Use `CGO_ENABLED=0 GOOS=linux` for static linking
@@ -81,7 +81,7 @@ Key rules:
 
 ### Makefile
 
-Key targets: `dev`, `dev-k8s`, `dev-otel`, `dev-api-only`, `dev-local`, `seed`, `prod`, `test`, `test-backend-all`, `test-e2e`, `integration-infra-start/stop`, `mysql-start/stop`, `otel-start/stop`, `helm-lint`, `helm-template`, `helm-test`, `helm-install/upgrade/uninstall`, `helm-release`, `loadtest*`, `clean`, `install`, `lint`, `fmt`, `docs`
+Key targets: `dev`, `dev-k8s`, `dev-otel`, `dev-api-only`, `dev-local`, `seed`, `prod`, `test`, `test-backend-all`, `test-e2e`, `integration-infra-start/stop`, `mysql-start/stop`, `otel-start/stop`, `helm-lint`, `helm-template`, `helm-test`, `helm-install/upgrade/uninstall`, `helm-release`, `loadtest*`, `clean`, `install`, `lint`, `docs` (note: `make fmt` is currently broken — it calls a `frontend` npm `format` script that does not exist)
 
 ### Helm chart (`helm/k8s-stack-manager/`, 0.4.1)
 

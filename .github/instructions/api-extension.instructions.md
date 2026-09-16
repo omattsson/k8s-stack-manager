@@ -49,7 +49,7 @@ migrator.AddMigration(schema.Migration{
 ```
 
 ### 4. Create Handler File
-Create `internal/api/handlers/orders.go`. Use the existing `Handler` struct — it already has the `Repository` and optional `BroadcastSender` dependencies:
+Create `internal/api/handlers/orders.go`. This tutorial keeps the generic `Handler` struct for a simple `Item`-shaped CRUD resource; a real domain resource with its own dependencies defines a dedicated handler struct (e.g. `OrderHandler`) instead. The generic `Handler` already has the `Repository` and optional `BroadcastSender`:
 ```go
 func (h *Handler) CreateOrder(c *gin.Context) {
     var order models.Order
@@ -68,20 +68,19 @@ func (h *Handler) CreateOrder(c *gin.Context) {
 Follow the full CRUD pattern from `handlers/items.go`: CreateX, GetX, GetXs (list), UpdateX, DeleteX.
 
 ### 5. Register Routes
-Add to `internal/api/routes/routes.go` under the authenticated `/api/v1` group (`authed`, which applies `CombinedAuth`, `SpanEnrichUser` and the audit middleware). Add the handler to `Deps`, construct it in `api/main.go`, and register inside a nil check so the handler stays optional:
+Add to `internal/api/routes/routes.go`, mirroring the `items` block — construct the generic handler and register the routes:
 ```go
-if deps.OrderHandler != nil {
-    orders := authed.Group("/orders")
-    {
-        orders.GET("", deps.OrderHandler.ListOrders)
-        orders.GET("/:id", deps.OrderHandler.GetOrder)
-        orders.POST("", deps.OrderHandler.CreateOrder)
-        orders.PUT("/:id", deps.OrderHandler.UpdateOrder)
-        orders.DELETE("/:id", deps.OrderHandler.DeleteOrder)
-    }
+ordersHandler := handlers.NewHandlerWithHub(deps.Repository, deps.Hub)
+orders := v1.Group("/orders")
+{
+    orders.GET("", ordersHandler.GetOrders)
+    orders.GET("/:id", ordersHandler.GetOrder)
+    orders.POST("", ordersHandler.CreateOrder)
+    orders.PUT("/:id", ordersHandler.UpdateOrder)
+    orders.DELETE("/:id", ordersHandler.DeleteOrder)
 }
 ```
-Domain resources get their own handler struct and repository interface (defined in `internal/models/<entity>.go`, implemented in `internal/database/<entity>_repository.go`, wired in `repository_factory.go`). Use `mapError(err, "Order")` for error mapping. Only the Items reference implementation reuses the generic `Handler`.
+In the real codebase every domain resource instead uses a dedicated handler struct with its own repository interface (defined in `internal/models/<entity>.go`, implemented in `internal/database/<entity>_repository.go`, wired in `repository_factory.go`), added to `Deps`, constructed in `api/main.go`, and registered under the authenticated group inside an `if deps.XHandler != nil` block (which applies `CombinedAuth`, `SpanEnrichUser` and audit middleware). Those handlers use `mapError(err, "Entity")`; only the Items reference implementation reuses the generic `Handler`.
 
 ### 6. Add Swagger Annotations
 Add godoc comments above each handler method:

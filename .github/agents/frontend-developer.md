@@ -66,7 +66,7 @@ frontend/src/
     StackDefinitions/                # Definition management
     Templates/                       # Template gallery + builder
     AuditLog/                        # Audit log viewer
-    Admin/                           # User management, orphaned namespaces, clusters, notification channels (admin only)
+    Admin/                           # User management, orphaned namespaces, clusters (admin only); notification channels (DevOps+)
     Profile/                         # User profile + API keys
     Analytics/                       # Usage statistics and deployment metrics
     CleanupPolicies/                 # Cron-based cleanup policy management
