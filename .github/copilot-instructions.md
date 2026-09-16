@@ -36,7 +36,7 @@ Full-stack app: **Go (Gin) backend** + **React (TypeScript, Vite, MUI) frontend*
 
 ## Helm Chart (Kubernetes Deployment)
 
-The Helm chart lives in `helm/k8s-stack-manager/` (chart `0.4.1`, appVersion `0.4.0`). It deploys backend, frontend, and optionally a bundled MySQL and an OpenTelemetry collector. Workload kind, ingress type, secrets source, and observability are all toggles in `values.yaml`.
+The Helm chart lives in `helm/k8s-stack-manager/` (chart version and appVersion in `Chart.yaml`). It deploys backend, frontend, and optionally a bundled MySQL and an OpenTelemetry collector. Workload kind, ingress type, secrets source, and observability are all toggles in `values.yaml`.
 
 ### Prerequisites
 - Kubernetes cluster with `kubectl` context configured
@@ -49,7 +49,7 @@ The Helm chart lives in `helm/k8s-stack-manager/` (chart `0.4.1`, appVersion `0.
 
 ```
 helm/k8s-stack-manager/
-  Chart.yaml                              # Chart metadata
+  Chart.yaml                              # Chart metadata (version, appVersion — source of truth)
   values.yaml                             # All configurable values
   tests/external-secrets-values.yaml      # Values used by `make helm-test`
   templates/_helpers.tpl                   # Reusable named templates

@@ -83,7 +83,7 @@ The Compose `frontend` service always runs the Vite dev server (`command: npm ru
 
 Key targets: `dev`, `dev-k8s`, `dev-otel`, `dev-api-only`, `dev-local`, `seed`, `prod`, `test`, `test-backend-all`, `test-e2e`, `integration-infra-start/stop`, `mysql-start/stop`, `otel-start/stop`, `helm-lint`, `helm-template`, `helm-test`, `helm-install/upgrade/uninstall`, `helm-release`, `loadtest*`, `clean`, `install`, `lint`, `docs` (note: `make fmt` is currently broken — it calls a `frontend` npm `format` script that does not exist)
 
-### Helm chart (`helm/k8s-stack-manager/`, 0.4.1)
+### Helm chart (`helm/k8s-stack-manager/`; version in `Chart.yaml`)
 
 Deployments by default; `argoRollouts.enabled` switches to canary Rollouts with an AnalysisTemplate. `ingress.type`: traefik | ingress | none. Bundled MySQL (`mysql.enabled`, default on), OTel collector (`otel.enabled`), Prometheus metrics + ServiceMonitor (`metrics.*`), HPA and PDB per workload, External Secrets Operator (`externalSecrets.enabled`), hooks subscribers ConfigMap (`hooks.enabled`). `make helm-test` renders default and External Secrets values.
 

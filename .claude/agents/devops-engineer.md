@@ -33,7 +33,7 @@ Store immediately whenever you learn: cluster state, endpoint URLs, deployment t
 - **Ports**: backend:8081, frontend:3000
 - **K8s integration**: `KUBECONFIG_PATH`, `HELM_BINARY`, `DEPLOYMENT_TIMEOUT` (default 10m), `MAX_CONCURRENT_DEPLOYS` (default 5)
 - **Local dev**: `make dev-local` runs backend + frontend locally with hot reload (Go `air` + Vite HMR)
-- **Helm chart**: `helm/k8s-stack-manager/` (0.4.1) — Deployments by default, `argoRollouts.enabled` for canary Rollouts + AnalysisTemplate; `ingress.type` traefik | ingress | none; bundled MySQL (`mysql.enabled`, default on); OTel collector (`otel.enabled`); Prometheus metrics + ServiceMonitor (`metrics.*`); HPA/PDB per workload; External Secrets Operator (`externalSecrets.enabled`); hooks subscribers ConfigMap (`hooks.enabled`). `make helm-test` renders default + External Secrets values
+- **Helm chart**: `helm/k8s-stack-manager/` (version in `Chart.yaml`) — Deployments by default, `argoRollouts.enabled` for canary Rollouts + AnalysisTemplate; `ingress.type` traefik | ingress | none; bundled MySQL (`mysql.enabled`, default on); OTel collector (`otel.enabled`); Prometheus metrics + ServiceMonitor (`metrics.*`); HPA/PDB per workload; External Secrets Operator (`externalSecrets.enabled`); hooks subscribers ConfigMap (`hooks.enabled`). `make helm-test` renders default + External Secrets values
 - **Extension hooks**: Webhook subscribers configured via `hooks` section in `values.yaml`; generates ConfigMap + volume mount when `hooks.enabled=true`
 - **CI (GitHub Actions)**: `pull-request.yml` (validate: Go + Node 26 tests, lint), `security-scan.yml`, `codeql.yml`, `docker-build.yml`, `helm-release.yml` (chart-releaser)
 
