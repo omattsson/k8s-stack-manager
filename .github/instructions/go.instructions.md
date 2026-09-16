@@ -35,7 +35,7 @@ type Repository interface {
     Close() error
 }
 ```
-All methods take `context.Context` as the first parameter. Implemented by `GenericRepository` (GORM/MySQL). The factory in `internal/database/repository.go` initializes the repository based on config.
+All CRUD, list and ping methods take `context.Context` as the first parameter (`Close() error` does not). Implemented by `GenericRepository` (GORM/MySQL). The factory in `internal/database/repository.go` initializes the repository based on config.
 
 ## Models
 Define each model in its own file `internal/models/<entity>.go` together with its repository interface (`models.go` holds the shared types: `Base`, `Item`, `Validator`, `Versionable`, the generic `Repository` interface, `GenericRepository`, `Filter`, `Pagination`). Embed `Base` for ID, timestamps, and soft-delete:
@@ -106,4 +106,4 @@ migrator.AddMigration(schema.Migration{
 Migrations run automatically on startup.
 
 ## Configuration
-All config via env vars, loaded by `config.LoadConfig()` with `.env` fallback (godotenv). Key vars: `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASSWORD`, `PORT`, `APP_ENV`, `JWT_SECRET`, `OIDC_*`, `SESSION_STORE` (mysql | memory), `SESSION_IDLE_TIMEOUT`, `LOGIN_CACHE_TTL`, `RATE_LIMIT`, `LOGIN_RATE_LIMIT`, `KUBECONFIG_PATH`, `KUBECONFIG_ENCRYPTION_KEY`, `HELM_BINARY`, `HOOKS_CONFIG_FILE`, `OTEL_ENABLED`, `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_SERVICE_NAME`, `OTEL_TRACE_SAMPLE_RATE`, `METRICS_ENABLED`. See `internal/config/config.go` for all fields and defaults.
+All config via env vars, loaded by `config.LoadConfig()` with `.env` fallback (godotenv). Key vars: `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASSWORD`, `SERVER_PORT`, `APP_ENV`, `JWT_SECRET`, `OIDC_*`, `SESSION_STORE` (mysql | memory), `SESSION_IDLE_TIMEOUT`, `LOGIN_CACHE_TTL`, `RATE_LIMIT`, `LOGIN_RATE_LIMIT`, `KUBECONFIG_PATH`, `KUBECONFIG_ENCRYPTION_KEY`, `HELM_BINARY`, `HOOKS_CONFIG_FILE`, `OTEL_ENABLED`, `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_SERVICE_NAME`, `OTEL_TRACE_SAMPLE_RATE`, `METRICS_ENABLED`. See `internal/config/config.go` for all fields and defaults.

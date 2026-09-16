@@ -137,5 +137,5 @@ Create a new page in `frontend/src/pages/Orders/index.tsx` and register in `rout
 - **Error handling**: Use `mapError(err, "Entity")` (in `handlers/errors.go`) for domain handler repository errors; `handleDBError()` is used only by the Items reference handler. Both map DB errors to correct HTTP status codes and never leak internal details.
 - **ID parsing**: Always validate path params with `strconv.ParseUint` and return 400 for invalid IDs
 - **Response format**: Success returns the entity directly; errors return `gin.H{"error": "message"}`
-- **Filtering**: Use `models.Filter` and `models.Pagination` structs passed as conditions to `repository.List()`
+- **Filtering / pagination**: small or legacy lists pass `models.Filter` and `models.Pagination` to `repository.List()`; new large list endpoints take `page`/`pageSize` and call `ListPaged(limit, offset)` with column projection instead of an unbounded `List()`
 - **Middleware**: Apply rate limiting to route groups that need it; CORS/Logger/Recovery are global

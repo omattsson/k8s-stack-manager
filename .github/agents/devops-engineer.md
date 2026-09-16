@@ -77,7 +77,7 @@ Key rules:
 
 ### Nginx (`frontend/nginx.conf`)
 
-`nginx-unprivileged` on port 8080. In Docker Compose it serves static files and proxies `/api` and `/ws` (with upgrade headers) to backend:8081. In the Helm chart it serves the SPA only; the ingress routes `/api` and `/ws`.
+`make dev` builds the frontend `development` stage and runs the Vite dev server on :3000, which proxies `/api` and `/ws` to backend:8081. The `production`/Helm stage serves static files via `nginx-unprivileged` on :8080 (with WebSocket upgrade headers): in Compose prod it proxies `/api` and `/ws` to backend:8081; in the Helm chart it serves the SPA only and the ingress routes `/api` and `/ws`.
 
 ### Makefile
 
@@ -116,7 +116,7 @@ CMD ["go", "run", "main.go"]
 - New services: decide which network(s) they belong to based on least-privilege
 
 ### Health checks
-Every service MUST have a health check in `docker-compose.yml`:
+Every backend or dependency service should have a health check in `docker-compose.yml` (the frontend dev container currently has none, so this is a guideline, not an enforced invariant):
 ```yaml
 healthcheck:
   test: ["CMD-SHELL", "wget --spider -q http://localhost:8081/health/live || exit 1"]  # the Alpine production image has busybox wget, not curl

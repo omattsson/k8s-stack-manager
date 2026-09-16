@@ -29,7 +29,7 @@ Store immediately whenever you learn: cluster state, endpoint URLs, deployment t
 - **Docker Compose**: `docker-compose.yml` defines backend (Go), frontend (React/nginx), mysql, otel-collector, tempo, prometheus (`:9090`), grafana (`:3001`) under the `otel` profile, and mysqld-exporter under the separate `mysql-otel` profile (not started by `make dev-otel`). Overlays: `docker-compose.k8s.yml` (local K8s cluster access, `make dev-k8s`), `docker-compose.otel.yml` (`make dev-otel`). `make dev-api-only` runs backend + mysql only
 - **Networks**: `backend-net` (backend, db) and `frontend-net` (backend, frontend) — maintain separation
 - **Backend Dockerfile**: multi-stage → `builder` (golang:1.27.1) → `development` (air) → `build-prod` (static binary) → `production` (Alpine, non-root uid 65532, includes the Helm binary)
-- **Nginx**: `nginx-unprivileged` on port 8080 serving static files; in Docker Compose it proxies `/api` and `/ws` to backend:8081; in Helm it serves the SPA only and the ingress routes `/api` and `/ws`
+- **Frontend serving**: `make dev` uses the frontend `development` stage — the Vite dev server on :3000 proxies `/api` and `/ws` to backend:8081. The `production`/Helm stage serves static files via `nginx-unprivileged` on :8080; in Compose prod it proxies `/api` and `/ws`, in Helm it serves the SPA only and the ingress routes `/api` and `/ws`
 - **Ports**: backend:8081, frontend:3000
 - **K8s integration**: `KUBECONFIG_PATH`, `HELM_BINARY`, `DEPLOYMENT_TIMEOUT` (default 10m), `MAX_CONCURRENT_DEPLOYS` (default 5)
 - **Local dev**: `make dev-local` runs backend + frontend locally with hot reload (Go `air` + Vite HMR)
@@ -40,7 +40,7 @@ Store immediately whenever you learn: cluster state, endpoint URLs, deployment t
 ## Critical Rules
 - Production images MUST run as non-root on a minimal base (backend: Alpine + Helm binary; frontend: nginx-unprivileged). No build tools or secrets in the final stage
 - Frontend container MUST NOT access the database directly
-- Every service MUST have a health check in docker-compose
+- Every backend/dependency service should have a health check in docker-compose (the frontend dev container currently has none)
 - Use `depends_on` with `condition: service_healthy` for startup ordering
 - Changing a port requires updating: docker-compose, nginx.conf, frontend API config, health check URLs
 - Helm secrets (JWT_SECRET, ADMIN_PASSWORD, KUBECONFIG_ENCRYPTION_KEY, DB_PASSWORD) go in `backend.secrets` (Secret or ExternalSecret), not ConfigMap

@@ -78,7 +78,7 @@ Lowest to highest priority (`internal/helm/values_generator.go`):
 3. Instance value overrides (per chart)
 4. **Template locked values** (applied last; nothing can override them)
 
-Template variables (`{{.Branch}}`, `{{.Namespace}}`, `{{.InstanceName}}`, `{{.StackName}}`, `{{.Owner}}`) are substituted at export time.
+Template variables (`{{.Branch}}`, `{{.Namespace}}`, `{{.InstanceName}}`, `{{.StackName}}`, `{{.Owner}}`) are substituted by `ValuesGenerator` whenever merged values are produced — deploy, preview and export.
 
 ## Multi-Cluster
 
@@ -101,7 +101,7 @@ Kubeconfig data encrypted at rest with AES-256-GCM (`KUBECONFIG_ENCRYPTION_KEY`)
 7. `k8s.Watcher` polls namespace for pod/deployment status
 8. Status updates broadcast via WebSocket
 
-`GET /:id/deploy-preview` returns the merged values without deploying. `POST /:id/rollback` reverses step 5 per chart and fires `pre-rollback` / `post-rollback`. Other hook events: `deploy-finalized`, `pre/post-instance-create`, `pre/post-instance-delete`, `stop-completed`, `clean-completed`, `stack-expiring`, `stack-expired`, `quota-warning`, `secret-expiring`, `rollback-completed`, `delete-completed`, `instance-created`, `deploy-timeout`, `cleanup-policy-executed` (see `backend/docs/hooks.md` and `EXTENDING.md` for the event contract; `pre/post-namespace-create` are reserved and not wired).
+`GET /api/v1/stack-instances/:id/deploy-preview` returns the merged values without deploying. `POST /api/v1/stack-instances/:id/rollback` reverses step 5 per chart and fires `pre-rollback` / `rollback-completed` / `post-rollback`. Other dispatched hook events: `deploy-finalized`, `deploy-timeout`, `pre/post-instance-create`, `pre/post-instance-delete`, `stop-completed`, `clean-completed`, `delete-completed`. The constants `instance-created`, `stack-expiring`, `stack-expired`, `quota-warning`, `secret-expiring`, `cleanup-policy-executed` are defined but not yet fired, and `pre/post-namespace-create` are reserved (see `backend/docs/hooks.md` and `EXTENDING.md`).
 
 ## Authentication
 
