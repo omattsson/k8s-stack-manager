@@ -5,24 +5,27 @@ applyTo: "**/*.{ts,tsx}"
 # TypeScript/React Frontend Instructions
 
 ## Project Setup
-Frontend lives in `frontend/`. Built with Vite + React 19 + TypeScript (strict mode). Uses SWC via `@vitejs/plugin-react-swc` for fast compilation.
+Frontend lives in `frontend/`. Built with Vite 8 + React 19 + TypeScript 6 (strict mode). Uses SWC via `@vitejs/plugin-react-swc` for fast compilation. Tests: Vitest 5 + Testing Library, Playwright e2e (26 specs in `e2e/`). Node 22+.
 
 ## Key Architecture
 - **Entry**: `src/main.tsx` → `App.tsx` → `routes.tsx`
 - **Routing**: `react-router-dom` v7 with `<Routes>` / `<Route>` in `src/routes.tsx`
-- **UI Library**: MUI (Material UI) v7 — use MUI components (`Box`, `Paper`, `Typography`, `Alert`, etc.) instead of raw HTML
+- **UI Library**: MUI (Material UI) v9 — use MUI components (`Box`, `Paper`, `Typography`, `Alert`, etc.) instead of raw HTML
 - **API Client**: Axios instance in `src/api/client.ts` with response interceptor for error logging
 - **API Config**: `src/api/config.ts` — `API_BASE_URL` switches between `http://localhost:8081` (dev) and `/api` (prod)
 - **WebSocket**: `reconnecting-websocket` library with hook in `src/hooks/useWebSocket.ts`
 
 ## Component Patterns
 ### Pages
-Each page is a directory under `src/pages/` with an `index.tsx` export:
+Each page is a directory under `src/pages/`. Simple pages export from `index.tsx`; domain pages use named files:
 ```
-src/pages/StackInstances/     # Dashboard
-src/pages/StackDefinitions/   # Definition management
-src/pages/Templates/          # Template gallery
+src/pages/StackInstances/     # Dashboard.tsx, Detail.tsx, Form.tsx, Compare.tsx, widgets/
+src/pages/StackDefinitions/   # List.tsx, Form.tsx, ImportDefinitionDialog.tsx, UpgradeDialog.tsx
+src/pages/Templates/          # Gallery.tsx, Builder.tsx, Instantiate.tsx, Preview.tsx, VersionHistory.tsx
+src/pages/Admin/              # Clusters/, NotificationChannels/, OrphanedNamespaces/, Users/
+src/pages/Analytics/          # index.tsx (simple page)
 ```
+Shared dialogs and wizards live in `src/components/` (e.g. `DeployPreviewDialog`, `SetupWizard`, `QuickDeployDialog`, `QuotaConfigDialog`).
 Register new pages in `src/routes.tsx`:
 ```tsx
 <Route path="/new-page" element={<NewPage />} />

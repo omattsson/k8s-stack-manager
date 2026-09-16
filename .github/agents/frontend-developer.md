@@ -40,8 +40,8 @@ When given a GitHub issue:
 
 ## Project Architecture
 
-- **Framework**: React 19 + TypeScript 5.8 (strict mode) + Vite 6
-- **UI Library**: MUI (Material UI) v7 — **always use MUI components, never raw HTML**
+- **Framework**: React 19 + TypeScript 6 (strict mode) + Vite 8; Vitest 5; Node 22+
+- **UI Library**: MUI (Material UI) v9 — **always use MUI components, never raw HTML**
 - **Routing**: react-router-dom v7
 - **HTTP Client**: Axios with centralized instance in `src/api/client.ts`
 - **Testing**: Vitest + Testing Library (unit), Playwright (e2e)
@@ -66,7 +66,7 @@ frontend/src/
     StackDefinitions/                # Definition management
     Templates/                       # Template gallery + builder
     AuditLog/                        # Audit log viewer
-    Admin/                           # User management, orphaned namespaces, clusters (admin only)
+    Admin/                           # User management, orphaned namespaces, clusters, notification channels (admin only)
     Profile/                         # User profile + API keys
     Analytics/                       # Usage statistics and deployment metrics
     CleanupPolicies/                 # Cron-based cleanup policy management
@@ -89,13 +89,17 @@ frontend/src/
     roles.ts                         # Role ranking and permission helpers
     notificationHelpers.tsx          # Toast notification utilities
     recentTemplates.ts               # Recently used template tracking
+    setupWizard.ts                   # First-run setup wizard dismissed flag
   test/
     setup.ts                         # Vitest setup: @testing-library/jest-dom
-  e2e/
-    auth.spec.ts                     # Auth e2e tests
-    instances.spec.ts                # Stack instances e2e
-    deployment.spec.ts               # Deploy/stop e2e
-    navigation.spec.ts
+  e2e/                               # 26 Playwright specs, one per feature area
+    auth.spec.ts, oidc-auth.spec.ts, definitions.spec.ts, templates.spec.ts,
+    template-versions.spec.ts, instances.spec.ts, deployment.spec.ts, compare.spec.ts,
+    value-overrides.spec.ts, branch-overrides.spec.ts, bulk-operations.spec.ts,
+    import-export.spec.ts, clusters.spec.ts, cluster-health.spec.ts, shared-values.spec.ts,
+    cleanup-policies.spec.ts, orphaned-namespaces.spec.ts, admin-users.spec.ts,
+    profile.spec.ts, notifications.spec.ts, dashboard-widgets.spec.ts, analytics.spec.ts,
+    audit-log.spec.ts, websocket.spec.ts, navigation.spec.ts, ux-improvements.spec.ts
 ```
 
 ## Adding a New Page (Checklist)

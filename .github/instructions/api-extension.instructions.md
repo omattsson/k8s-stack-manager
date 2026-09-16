@@ -68,18 +68,20 @@ func (h *Handler) CreateOrder(c *gin.Context) {
 Follow the full CRUD pattern from `handlers/items.go`: CreateX, GetX, GetXs (list), UpdateX, DeleteX.
 
 ### 5. Register Routes
-Add to `internal/api/routes/routes.go` under the `/api/v1` group. Reuse the same `Handler` instance:
+Add to `internal/api/routes/routes.go` under the authenticated `/api/v1` group (`authed`, which applies `CombinedAuth`, `SpanEnrichUser` and the audit middleware). Add the handler to `Deps`, construct it in `api/main.go`, and register inside a nil check so the handler stays optional:
 ```go
-orders := v1.Group("/orders")
-{
-    orders.GET("", itemsHandler.GetOrders)
-    orders.GET("/:id", itemsHandler.GetOrder)
-    orders.POST("", itemsHandler.CreateOrder)
-    orders.PUT("/:id", itemsHandler.UpdateOrder)
-    orders.DELETE("/:id", itemsHandler.DeleteOrder)
+if deps.OrderHandler != nil {
+    orders := authed.Group("/orders")
+    {
+        orders.GET("", deps.OrderHandler.ListOrders)
+        orders.GET("/:id", deps.OrderHandler.GetOrder)
+        orders.POST("", deps.OrderHandler.CreateOrder)
+        orders.PUT("/:id", deps.OrderHandler.UpdateOrder)
+        orders.DELETE("/:id", deps.OrderHandler.DeleteOrder)
+    }
 }
 ```
-If the new resource needs its own dependencies beyond `Repository`, create a separate handler struct.
+Domain resources get their own handler struct and repository interface (defined in `internal/models/<entity>.go`, implemented in `internal/database/<entity>_repository.go`, wired in `repository_factory.go`). Use `mapError(err, "Order")` for error mapping. Only the Items reference implementation reuses the generic `Handler`.
 
 ### 6. Add Swagger Annotations
 Add godoc comments above each handler method:

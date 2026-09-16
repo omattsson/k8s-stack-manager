@@ -46,48 +46,65 @@ Services:
 |---|---|---|---|
 | `backend` | ./backend (multi-stage) | backend-net, frontend-net | `curl /health/live` |
 | `frontend` | ./frontend (multi-stage) | frontend-net | — |
+| `mysql` | mysql:8.4 | backend-net | `mysqladmin ping` |
+| `mysqld-exporter` | prom/mysqld-exporter | backend-net | — |
+| `otel-collector` | otel/opentelemetry-collector-contrib (`otel` profile) | backend-net | — |
+| `tempo` | grafana/tempo (`otel` profile) | backend-net | — |
+| `prometheus` | prom/prometheus `:9090` (`otel` profile) | backend-net | — |
+| `grafana` | grafana/grafana `:3001` (`otel` profile) | backend-net | — |
 
-Also `docker-compose.k8s.yml` overlay for local K8s cluster access (`make dev-k8s`).
+Overlays: `docker-compose.k8s.yml` for local K8s cluster access (`make dev-k8s`), `docker-compose.otel.yml` for the observability stack (`make dev-otel`). `make dev-api-only` runs backend + mysql only for `stackctl` workflows.
 
 **Network isolation**: `backend-net` connects backend + db. `frontend-net` connects backend + frontend. Frontend CANNOT reach the database directly. Always maintain this separation.
 
 **Environment variables**: All config flows via env vars with defaults. Secrets use `${VAR:-default}` substitution — defaults are for local dev ONLY.
 
-**Volumes**: Persistent data (`mysql_data`), caches (`backend_go_mod`, `frontend_node_modules`), log mounts (`mysql_logs`).
+**Volumes**: Persistent data (`mysql_data`, `grafana_data`, `tempo_data`), caches (`backend_go_mod`, `frontend_node_modules`).
 
 ### Backend Dockerfile (`backend/Dockerfile`)
 
 Multi-stage build:
-- `builder` — Go 1.24.3 base
+- `builder` — `golang:1.27.1` base, downloads the Helm CLI
 - `development` — installs `air` for hot reload, used with `GO_ENV=development`
-- `production` — builds static binary with `CGO_ENABLED=0`
-- `prod-final` — distroless non-root image, copies only the binary
+- `build-prod` — builds static binary with `CGO_ENABLED=0`
+- `production` — `alpine:3.24`, non-root (uid 65532), copies the app binary and the Helm binary only
 
 Key rules:
-- Production image MUST use distroless or scratch
-- MUST run as non-root (`USER nonroot:nonroot`)
-- MUST copy only the binary — no source code in prod image
+- Production image MUST be a minimal base (Alpine; the backend needs the Helm CLI, so scratch/distroless is not possible)
+- MUST run as non-root (uid 65532)
+- MUST copy only the app binary and the Helm binary — no source code or build tools in prod image
 - Use `CGO_ENABLED=0 GOOS=linux` for static linking
 
 ### Nginx (`frontend/nginx.conf`)
 
-Reverse proxy in production: serves static frontend files, proxies `/api` to backend. Must handle WebSocket upgrade headers when WebSocket support is added.
+`nginx-unprivileged` on port 8080. In Docker Compose it serves static files and proxies `/api` and `/ws` (with upgrade headers) to backend:8081. In the Helm chart it serves the SPA only; the ingress routes `/api` and `/ws`.
 
 ### Makefile
 
-Key targets: `dev`, `prod`, `test`, `test-backend-all`, `test-e2e`, `integration-infra-start/stop`, `clean`, `install`, `lint`, `docs`
+Key targets: `dev`, `dev-k8s`, `dev-otel`, `dev-api-only`, `dev-local`, `seed`, `prod`, `test`, `test-backend-all`, `test-e2e`, `integration-infra-start/stop`, `mysql-start/stop`, `otel-start/stop`, `helm-lint`, `helm-template`, `helm-test`, `helm-install/upgrade/uninstall`, `helm-release`, `loadtest*`, `clean`, `install`, `lint`, `fmt`, `docs`
+
+### Helm chart (`helm/k8s-stack-manager/`, 0.4.1)
+
+Deployments by default; `argoRollouts.enabled` switches to canary Rollouts with an AnalysisTemplate. `ingress.type`: traefik | ingress | none. Bundled MySQL (`mysql.enabled`, default on), OTel collector (`otel.enabled`), Prometheus metrics + ServiceMonitor (`metrics.*`), HPA and PDB per workload, External Secrets Operator (`externalSecrets.enabled`), hooks subscribers ConfigMap (`hooks.enabled`). `make helm-test` renders default and External Secrets values.
+
+### CI (`.github/workflows/`)
+
+`pull-request.yml` (validate: Go tests, Node 26 frontend tests, lint), `security-scan.yml`, `codeql.yml`, `docker-build.yml`, `helm-release.yml` (chart-releaser).
 
 ## Critical Rules
 
 ### Container security
 ```dockerfile
-# CORRECT — non-root, distroless, static binary only
-FROM gcr.io/distroless/static-debian11:nonroot
-USER nonroot:nonroot
-COPY --from=builder /app/main .
+# CORRECT — minimal base, non-root, binaries only
+FROM alpine:3.24
+RUN apk add --no-cache ca-certificates
+COPY --from=build-prod /app/main .
+COPY --from=builder /usr/local/bin/helm /usr/local/bin/helm
+RUN adduser -D -u 65532 nonroot
+USER 65532:65532
 
 # WRONG — root, full OS, source code included
-FROM golang:1.24.3
+FROM golang:1.27.1
 COPY . .
 CMD ["go", "run", "main.go"]
 ```
@@ -114,7 +131,7 @@ Use `depends_on` with `condition: service_healthy` for startup ordering.
 | Service | Container Port | Host Port | Notes |
 |---|---|---|---|
 | backend | 8081 | 8081 | API |
-| frontend | 80 (nginx) / 3000 (dev) | 3000 | Web UI |
+| frontend | 8080 (nginx-unprivileged) / 3000 (dev) | 3000 | Web UI |
 
 **K8s integration env vars**: `KUBECONFIG_PATH`, `HELM_BINARY`, `DEPLOYMENT_TIMEOUT` (default 10m), `MAX_CONCURRENT_DEPLOYS` (default 5).
 
@@ -123,7 +140,7 @@ Changing a port requires updating: docker-compose.yml, nginx.conf, frontend API 
 ### Volume management
 - Named volumes for persistent data: `mysql_data`
 - Named volumes for caches: `backend_go_mod`, `frontend_node_modules`
-- Bind mounts for config: `config/mysql/my.cnf`
+- Bind mounts for config: `backend/config/mysql/my.cnf`
 - Use `make clean` to remove all volumes and rebuild from scratch
 
 ## Commands to verify

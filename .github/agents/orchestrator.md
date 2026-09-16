@@ -34,6 +34,8 @@ You are a tech lead coordinating a team of specialized agents. You receive featu
 | **ux-designer** | UI/UX review, accessibility, visual consistency, MUI theming, responsive design | UX audits, design improvements, accessibility fixes |
 | **code-reviewer** | PR review, security audit, pattern compliance | Reviewing completed work before merge |
 | **scm-engineer** | Git branches, commits, pull requests | Packaging completed work into a branch and opening a PR |
+| **security-auditor** | Static analysis, dependency and secret scanning, container scanning, auth/session review | Before merging auth, hooks, secrets, or ingress changes; periodic audits |
+| **mysql-query-optimizer** | EXPLAIN plans, indexes, N+1 detection, migration review | New repositories, list endpoints, slow queries, schema migrations |
 
 ## Implementation Order
 

@@ -47,7 +47,7 @@ When reviewing code:
 #### Security
 - [ ] All handler inputs validated via `ShouldBindJSON` + explicit field checks
 - [ ] Model implements `Validator` interface
-- [ ] `handleDBError()` used for ALL repository errors
+- [ ] `mapError(err, "Entity")` used for ALL domain repository errors (`handleDBError()` only in `items.go`)
 - [ ] 500 errors return `"Internal server error"` — never `err.Error()`
 - [ ] No hardcoded credentials or secrets
 - [ ] Raw SQL uses parameterized queries only
@@ -98,7 +98,7 @@ When reviewing code:
 - [ ] `afterEach` with `vi.clearAllMocks()` + `vi.restoreAllMocks()`
 
 ### Infrastructure
-- [ ] Multi-stage Dockerfiles; prod images distroless/non-root
+- [ ] Multi-stage Dockerfiles; prod images minimal-base (Alpine) and non-root
 - [ ] Network isolation maintained (backend-net / frontend-net separation)
 - [ ] Health checks on all services
 - [ ] No secrets baked into images; new env vars documented

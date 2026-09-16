@@ -60,7 +60,7 @@ When given a task:
 
 ### Frontend E2e Tests
 - **Framework**: Playwright (Chromium)
-- **Location**: `frontend/e2e/*.spec.ts`
+- **Location**: `frontend/e2e/*.spec.ts` — 26 specs, one per feature area (auth, oidc-auth, definitions, templates, template-versions, instances, deployment, compare, value-overrides, branch-overrides, bulk-operations, import-export, clusters, cluster-health, shared-values, cleanup-policies, orphaned-namespaces, admin-users, profile, notifications, dashboard-widgets, analytics, audit-log, websocket, navigation, ux-improvements). Extend the matching spec; add one per new feature
 - **Config**: `frontend/playwright.config.ts`
 - **Run**: `make test-e2e` (starts full Docker stack)
 
@@ -241,7 +241,7 @@ make lint                                 # Full lint
 ## When in doubt
 - Read `internal/api/handlers/handlers_test.go` — reference backend test file
 - Read frontend test files under `src/pages/*/` — reference frontend test patterns
-- Read `e2e/instances.spec.ts` or `e2e/deployment.spec.ts` — reference e2e test files
+- Read `frontend/e2e/instances.spec.ts` or `frontend/e2e/deployment.spec.ts` — reference e2e test files; domain handler mocks are in `internal/api/handlers/mock_domain_repositories_test.go`
 - Read `.github/instructions/*.md` — project rules and conventions
 - Match existing test patterns exactly rather than inventing new ones
 

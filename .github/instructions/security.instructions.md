@@ -41,11 +41,17 @@ GORM parameterizes all queries automatically. When writing raw SQL in migrations
 The `Base` model uses `DeletedAt *time.Time` with a GORM index. Deletes are soft by default — rows are marked with a timestamp, not removed. GORM automatically filters soft-deleted records from queries. If implementing hard delete, be explicit and document why.
 
 ## Rate Limiting
-The `RateLimiter` in `handlers/rate_limiter.go` provides per-IP request throttling using a sliding window. Apply it to route groups that need protection:
+The `RateLimiter` in `handlers/rate_limiter.go` provides per-IP request throttling using a sliding window. `SetupRoutes` applies it to the whole `/api/v1` group (`RATE_LIMIT`, default 100/min) and adds a stricter login limiter (`LOGIN_RATE_LIMIT`, default 10/min):
 ```go
-rateLimiter := handlers.NewRateLimiter(100, time.Minute)
-items.Use(rateLimiter.RateLimit())
+rateLimiter := handlers.NewRateLimiter(int(cfg.Server.RateLimit), time.Minute)
+v1.Use(rateLimiter.RateLimit())
 ```
+
+## Sessions, Tokens and Headers
+- Revoked JWTs and refresh tokens go to the `sessionstore` blocklist; `CombinedAuth` checks it and `User.Disabled` on every request. Fail open on store errors (log + continue).
+- `middleware.SecurityHeaders()` sets baseline security headers; `middleware.RedactWSToken()` strips `?token=` from `/ws` URLs before logging, metrics and tracing. Keep both.
+- Outbound hooks are HMAC-signed (`X-StackManager-Signature`, `internal/hooks/client.go`). Never log hook secrets, provider tokens, or kubeconfig data.
+- Kubeconfig data is encrypted at rest with AES-GCM (`pkg/crypto`, `KUBECONFIG_ENCRYPTION_KEY`).
 
 ## Recovery Middleware
 The `Recovery()` middleware in `internal/api/middleware/middleware.go` catches panics and returns a generic 500. This is applied globally in `routes.go`. Never remove it — it prevents unhandled panics from crashing the server and potentially leaking stack traces.
