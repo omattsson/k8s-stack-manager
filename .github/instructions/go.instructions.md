@@ -5,10 +5,12 @@ applyTo: "**/*.go"
 # Go Backend Instructions
 
 ## Project Layout
-All backend code lives under `backend/`. The module is `backend` (see `go.mod`). Use `backend/internal/` for private packages and `backend/pkg/` for shared utilities.
+All backend code lives under `backend/`. The module is `backend` (see `go.mod`, Go 1.26). Use `backend/internal/` for private packages and `backend/pkg/` for shared utilities.
+
+Packages under `internal/`: `api` (handlers, middleware, routes), `auth` (OIDC), `cache` (in-memory TTL cache), `cluster` (ClusterRegistry, health poller, quota monitor, secret refresher), `config`, `database` (GORM repositories, migrations), `deployer` (Helm CLI), `gitprovider`, `health`, `helm` (values merge), `hooks` (outbound webhooks, HMAC), `k8s`, `models`, `notifier`, `scheduler`, `sessionstore` (token blocklist + OIDC state), `telemetry` (OpenTelemetry, metrics), `ttl`, `websocket`.
 
 ## Handler Pattern
-HTTP handlers live in `internal/api/handlers/`. Resource handlers use the `Handler` struct with repository injection:
+HTTP handlers live in `internal/api/handlers/`. The Items reference handler uses the generic `Handler` struct with repository injection; domain handlers use dedicated structs with the repositories they need and `mapError(err, "Entity")` for errors:
 ```go
 type Handler struct {
     repository models.Repository
@@ -33,10 +35,10 @@ type Repository interface {
     Close() error
 }
 ```
-All methods take `context.Context` as the first parameter. Implemented by `GenericRepository` (GORM/MySQL). The factory in `internal/database/repository.go` initializes the repository based on config.
+All CRUD, list and ping methods take `context.Context` as the first parameter (`Close() error` does not). Implemented by `GenericRepository` (GORM/MySQL). The factory in `internal/database/repository.go` initializes the repository based on config.
 
 ## Models
-Define models in `internal/models/models.go`. Embed `Base` for ID, timestamps, and soft-delete:
+Define each model in its own file `internal/models/<entity>.go` together with its repository interface (`models.go` holds the shared types: `Base`, `Item`, `Validator`, `Versionable`, the generic `Repository` interface, `GenericRepository`, `Filter`, `Pagination`). Embed `Base` for ID, timestamps, and soft-delete:
 ```go
 type Item struct {
     Base
@@ -104,4 +106,4 @@ migrator.AddMigration(schema.Migration{
 Migrations run automatically on startup.
 
 ## Configuration
-All config via env vars, loaded by `config.LoadConfig()` with `.env` fallback (godotenv). Key vars: `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASSWORD`, `PORT`, `APP_ENV`. See `internal/config/config.go` for all fields and defaults.
+All config via env vars, loaded by `config.LoadConfig()` with `.env` fallback (godotenv). Key vars: `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASSWORD`, `SERVER_PORT`, `APP_ENV`, `JWT_SECRET`, `OIDC_*`, `SESSION_STORE` (mysql | memory), `SESSION_IDLE_TIMEOUT`, `LOGIN_CACHE_TTL`, `RATE_LIMIT`, `LOGIN_RATE_LIMIT`, `KUBECONFIG_PATH`, `KUBECONFIG_ENCRYPTION_KEY`, `HELM_BINARY`, `HOOKS_CONFIG_FILE`, `OTEL_ENABLED`, `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_SERVICE_NAME`, `OTEL_TRACE_SAMPLE_RATE`, `METRICS_ENABLED`. See `internal/config/config.go` for all fields and defaults.

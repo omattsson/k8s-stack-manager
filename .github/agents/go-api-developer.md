@@ -40,9 +40,9 @@ When given a GitHub issue:
 
 ## Project Architecture
 
-- **Module**: `backend` (Go 1.23, Gin web framework, GORM ORM)
+- **Module**: `backend` (Go 1.26, Gin web framework, GORM ORM)
 - **Data stores**: MySQL (GORM)
-- **Bootstrap**: `api/main.go` → `config.LoadConfig()` → `database.NewRepository(cfg)` → `routes.SetupRoutes()` → `http.Server` with graceful shutdown
+- **Bootstrap**: `api/main.go` → `config.LoadConfig()` → `telemetry.Init(cfg.Otel)` → `database.NewRepositoryWithGormDB(cfg)` → session store → `routes.SetupRoutes()` (returns `*RateLimiters`) → `http.Server` with graceful shutdown
 - **Ports**: Backend `:8081` on host and inside Docker
 
 ### Key directories
@@ -52,18 +52,31 @@ backend/
   api/main.go                         # Entry point
   internal/
     api/handlers/items.go             # Reference CRUD implementation — COPY THIS PATTERN
-    api/handlers/health.go            # Health endpoints (closure injection)
+    api/handlers/handlers.go          # Health endpoints (closure injection)
+    api/handlers/errors.go            # mapError() for domain handlers
+    api/handlers/dashboard.go         # DashboardHandler (GET /api/v1/dashboard)
+    api/handlers/notification_channels.go # NotificationChannelHandler (/api/v1/admin/notification-channels)
+    api/handlers/mock_domain_repositories_test.go # Mocks for domain repositories
     api/handlers/rate_limiter.go      # Per-IP sliding window rate limiter
     api/handlers/mock_repository.go   # In-memory mock for unit tests
     api/handlers/test_schemas.go      # JSON schemas for response validation
     api/routes/routes.go              # All route registration + middleware
-    api/middleware/middleware.go       # CORS, Logger, Recovery, RequestID, MaxBodySize
+    api/middleware/middleware.go       # RequestID, Logger, Recovery, SecurityHeaders, CORS, MaxBodySize
+    api/middleware/combined_auth.go    # JWT + API key auth, sessionstore blocklist, User.Disabled
+    api/middleware/audit.go, role.go   # Audit logging, RequireAdmin/RequireDevOps
+    api/middleware/metrics.go, auth_metrics.go, otel.go, ws_redact.go # HTTP + auth metrics, span enrichment, WS token redaction
     config/config.go                  # Env var loading with typed structs
     database/factory.go               # MySQL connection with retry
     database/repository.go            # Repository factory
     database/migrations.go            # Versioned migrations (auto-run on startup)
     database/errors.go                # Re-exports from pkg/dberrors
-    models/models.go                  # Domain models + Repository interface
+    models/models.go                  # Base, Item, Validator, Versionable, generic Repository + GenericRepository, Filter, Pagination
+    models/<entity>.go                # One file per domain model + its repository interface
+    database/<entity>_repository.go   # One GORM repository per model; wired in repository_factory.go
+    cache/                            # Generic in-memory TTL cache
+    sessionstore/                     # Token blocklist + OIDC state (mysql | memory)
+    hooks/                            # Outbound lifecycle webhooks, HMAC signing (docs/hooks.md)
+    telemetry/                        # OpenTelemetry bootstrap, DB pool + business metrics
     models/validation.go              # Validator interface implementations
     websocket/hub.go                  # WebSocket hub (BroadcastSender interface)
     websocket/client.go               # WebSocket client with read/write pumps
@@ -76,14 +89,14 @@ backend/
 
 Follow these steps IN ORDER. Do not skip any.
 
-### 1. Model (`internal/models/models.go`)
+### 1. Model (`internal/models/<entity>.go`, one file per entity; the repository interface goes in the same file)
 ```go
 type Order struct {
     Base
     UserID  uint    `gorm:"not null" json:"user_id"`
     Total   float64 `gorm:"not null" json:"total"`
     Status  string  `gorm:"size:50;not null;default:'pending'" json:"status"`
-    Version uint    `gorm:"not null;default:0" json:"version"`
+    Version uint    `gorm:"not null;default:1" json:"version"`
 }
 ```
 - Always embed `Base` (gives ID, CreatedAt, UpdatedAt, DeletedAt)
@@ -114,9 +127,9 @@ migrator.AddMigration(schema.Migration{
 - For indexes: check existence in `information_schema.statistics` before creating (idempotent)
 
 ### 4. Handler (`internal/api/handlers/orders.go`)
-- Use existing `Handler` struct (has `Repository`)
+- Simple CRUD on `Item`: reuse the generic `Handler` struct. Domain resources: dedicated handler struct + repository interface in `models/<entity>.go`, registered under the `authed` group in an `if deps.XHandler != nil` block
 - Implement: `CreateOrder`, `GetOrder`, `GetOrders`, `UpdateOrder`, `DeleteOrder`
-- Always use `handleDBError()` for repository errors
+- Use `mapError(err, "Entity")` for domain repository errors (`handleDBError()` only in `items.go`)
 - Parse IDs with `strconv.ParseUint` — return 400 for invalid
 - Success: return entity directly; Error: return `gin.H{"error": "message"}`
 - For 500s: ALWAYS return `"Internal server error"`, never `err.Error()`
@@ -153,8 +166,8 @@ Add godoc comments above each handler. Then run: `cd backend && make docs`
 
 ### Error handling
 ```go
-// In handlers — ALWAYS use handleDBError for repo errors:
-status, message := handleDBError(err)
+// In domain handlers — use mapError for repo errors (items.go uses handleDBError):
+status, message := mapError(err, "Order")
 c.JSON(status, gin.H{"error": message})
 
 // NEVER do this for 500s:
@@ -176,7 +189,7 @@ c.JSON(500, gin.H{"error": err.Error()})  // LEAKS INTERNALS
 - NEVER skip tests — every handler method needs test coverage
 - Use `testify/assert` exclusively (never bare `if` checks)
 - Integration tests use build tags: `//go:build integration`
-- Integration test names: `TestDatabase*` (MySQL), `TestAzureTable*` (Azure)
+- Integration test names: `TestDatabase*` (MySQL)
 - Target 80% code coverage minimum
 
 ### Commands to verify your work

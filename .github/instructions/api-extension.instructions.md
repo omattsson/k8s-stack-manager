@@ -7,7 +7,7 @@ applyTo: "**"
 ## Adding a New Resource (Step-by-Step)
 
 ### 1. Define the Model
-Add to `internal/models/models.go`. Embed `Base` for ID, timestamps, and soft-delete:
+Create `internal/models/<entity>.go` (one file per entity, repository interface in the same file; `models.go` holds only the shared types). Embed `Base` for ID, timestamps, and soft-delete:
 ```go
 type Order struct {
     Base
@@ -49,7 +49,7 @@ migrator.AddMigration(schema.Migration{
 ```
 
 ### 4. Create Handler File
-Create `internal/api/handlers/orders.go`. Use the existing `Handler` struct — it already has the `Repository` and optional `BroadcastSender` dependencies:
+Create `internal/api/handlers/orders.go`. This tutorial keeps the generic `Handler` struct for a simple `Item`-shaped CRUD resource; a real domain resource with its own dependencies defines a dedicated handler struct (e.g. `OrderHandler`) instead. The generic `Handler` already has the `Repository` and optional `BroadcastSender`:
 ```go
 func (h *Handler) CreateOrder(c *gin.Context) {
     var order models.Order
@@ -58,7 +58,7 @@ func (h *Handler) CreateOrder(c *gin.Context) {
         return
     }
     if err := h.repository.Create(c.Request.Context(), &order); err != nil {
-        status, message := handleDBError(err)
+        status, message := mapError(err, "Order") // items.go uses handleDBError; domain handlers use mapError
         c.JSON(status, gin.H{"error": message})
         return
     }
@@ -68,18 +68,19 @@ func (h *Handler) CreateOrder(c *gin.Context) {
 Follow the full CRUD pattern from `handlers/items.go`: CreateX, GetX, GetXs (list), UpdateX, DeleteX.
 
 ### 5. Register Routes
-Add to `internal/api/routes/routes.go` under the `/api/v1` group. Reuse the same `Handler` instance:
+Add to `internal/api/routes/routes.go`, mirroring the `items` block — construct the generic handler and register the routes:
 ```go
+ordersHandler := handlers.NewHandlerWithHub(deps.Repository, deps.Hub)
 orders := v1.Group("/orders")
 {
-    orders.GET("", itemsHandler.GetOrders)
-    orders.GET("/:id", itemsHandler.GetOrder)
-    orders.POST("", itemsHandler.CreateOrder)
-    orders.PUT("/:id", itemsHandler.UpdateOrder)
-    orders.DELETE("/:id", itemsHandler.DeleteOrder)
+    orders.GET("", ordersHandler.GetOrders)
+    orders.GET("/:id", ordersHandler.GetOrder)
+    orders.POST("", ordersHandler.CreateOrder)
+    orders.PUT("/:id", ordersHandler.UpdateOrder)
+    orders.DELETE("/:id", ordersHandler.DeleteOrder)
 }
 ```
-If the new resource needs its own dependencies beyond `Repository`, create a separate handler struct.
+In the real codebase every domain resource instead uses a dedicated handler struct with its own repository interface (defined in `internal/models/<entity>.go`, implemented in `internal/database/<entity>_repository.go`, wired in `repository_factory.go`), added to `Deps`, constructed in `api/main.go`, and registered under the authenticated group inside an `if deps.XHandler != nil` block (which applies `CombinedAuth`, `SpanEnrichUser` and audit middleware). Those handlers use `mapError(err, "Entity")`; only the Items reference implementation reuses the generic `Handler`.
 
 ### 6. Add Swagger Annotations
 Add godoc comments above each handler method:
@@ -133,8 +134,8 @@ export const orderService = {
 Create a new page in `frontend/src/pages/Orders/index.tsx` and register in `routes.tsx`.
 
 ## Key Patterns to Follow
-- **Error handling**: Use `handleDBError()` for all repository errors — it maps DB errors to correct HTTP status codes
+- **Error handling**: Use `mapError(err, "Entity")` (in `handlers/errors.go`) for domain handler repository errors; `handleDBError()` is used only by the Items reference handler. Both map DB errors to correct HTTP status codes and never leak internal details.
 - **ID parsing**: Always validate path params with `strconv.ParseUint` and return 400 for invalid IDs
 - **Response format**: Success returns the entity directly; errors return `gin.H{"error": "message"}`
-- **Filtering**: Use `models.Filter` and `models.Pagination` structs passed as conditions to `repository.List()`
+- **Filtering / pagination**: small or legacy lists pass `models.Filter` and `models.Pagination` to `repository.List()`; new large list endpoints take `page`/`pageSize` and call `ListPaged(limit, offset)` with column projection instead of an unbounded `List()`
 - **Middleware**: Apply rate limiting to route groups that need it; CORS/Logger/Recovery are global

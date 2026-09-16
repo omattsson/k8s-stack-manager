@@ -112,8 +112,8 @@ Backend (Go + Gin)
 
 ### Prerequisites
 - Docker and Docker Compose
-- Go 1.25+ (for local backend development)
-- Node.js 20+ (for local frontend development)
+- Go 1.26+ (for local backend development)
+- Node.js 22+ (for local frontend development)
 
 ### Start with Docker Compose
 

@@ -1,28 +1,28 @@
 # Frontend — TypeScript/React Instructions
 
 ## Project Setup
-Built with Vite + React 19 + TypeScript (strict mode). Uses SWC via `@vitejs/plugin-react-swc`.
+Built with Vite 8 + React 19 + TypeScript 6 (strict mode). Uses SWC via `@vitejs/plugin-react-swc`. Tests run on Vitest 5 + Testing Library; e2e on Playwright (`e2e/`, 26 specs). Node 22+ required (Dockerfile uses `node:26-alpine`).
 
 ## Architecture
 - **Entry**: `src/main.tsx` → `App.tsx` → `routes.tsx`
 - **Routing**: `react-router-dom` v7 with `<Routes>` / `<Route>` in `src/routes.tsx`
-- **UI Library**: MUI v7 — use MUI components instead of raw HTML
+- **UI Library**: MUI v9 (`@mui/material`) — use MUI components instead of raw HTML
 - **API Client**: Axios instance in `src/api/client.ts`
-- **API Config**: `src/api/config.ts` — dev: `http://localhost:8081` (direct), prod: `/api` (nginx strips `/api` prefix via trailing `/` in `proxy_pass`). Endpoints in `client.ts` use full `/api/v1/...` paths.
+- **API Config**: `src/api/config.ts` — `API_BASE_URL` is `http://localhost:8081` in dev and `''` (same-origin) in prod. Endpoints in `client.ts` include the full `/api/v1/...` path, so in prod requests go to `/api/v1/...` on the same origin; nginx (`location /api/` → `backend:8081/api/`) and the Vite dev proxy both preserve the `/api` prefix.
 - **WebSocket**: `reconnecting-websocket` with context provider and hook
 - **Contexts**: `src/context/AuthContext.tsx` (authentication state + JWT), `NotificationContext.tsx` (toast/snackbar), `ThemeContext.tsx` (light/dark toggle)
 - **Hooks**: `src/hooks/useCountdown.ts` (countdown timer), `useUnsavedChanges.ts` (unsaved changes warning), `useWebSocket.ts` (WebSocket real-time updates)
 - **Theme**: `src/theme/` — `index.ts` (MUI theme export), `palette.ts`, `typography.ts`, `components.ts` (default prop/style overrides)
 - **Types**: `src/types/index.ts` — shared TypeScript type definitions
-- **Utils**: `src/utils/roles.ts` — role ranking and permission helpers; `src/utils/timeAgo.ts` — relative timestamp formatting ("2m ago", "3h ago"); `src/utils/notificationHelpers.tsx` — toast notification utilities; `src/utils/recentTemplates.ts` — recently used template tracking via localStorage
+- **Utils**: `src/utils/roles.ts` — role ranking and permission helpers; `src/utils/timeAgo.ts` — relative timestamp formatting ("2m ago", "3h ago"); `src/utils/notificationHelpers.tsx` — toast notification utilities; `src/utils/recentTemplates.ts` — recently used template tracking via localStorage; `src/utils/setupWizard.ts` — first-run setup wizard dismissed flag in localStorage
 
 ## Component Patterns
 - Functional components only (no class components)
 - `useState`/`useEffect` for state, no global state library
 - MUI `sx` prop for styling, no separate CSS files
 - TypeScript interfaces for all component props and API response types
-- Pages: one directory per page under `src/pages/` with `index.tsx` — current pages: Login, AuthCallback, StackInstances (Dashboard), StackDefinitions, Templates, AuditLog, Admin, Profile, Analytics, CleanupPolicies, ClusterHealth, Notifications, SharedValues, NotFound
-- Shared components in `src/components/`: Layout, AccessUrls, BranchSelector, ConfirmDialog, DeploymentLogViewer, EmptyState, EntityLink, ErrorBoundary, FavoriteButton, LoadingState, NotificationCenter, PodStatusDisplay, ProtectedRoute, QuickDeployDialog, QuotaConfigDialog, StatusBadge, TtlSelector, YamlEditor
+- Pages: one directory per page under `src/pages/`. Simple pages export from `index.tsx`: Login, AuthCallback, AuditLog, Profile, Analytics, CleanupPolicies, ClusterHealth, Notifications, SharedValues, NotFound. Domain pages use named files: `StackInstances/` (`Dashboard.tsx`, `Detail.tsx`, `Form.tsx`, `Compare.tsx`, `widgets/`), `StackDefinitions/` (`List.tsx`, `Form.tsx`, `ImportDefinitionDialog.tsx`, `UpgradeDialog.tsx`), `Templates/` (`Gallery.tsx`, `Builder.tsx`, `Instantiate.tsx`, `Preview.tsx`, `VersionHistory.tsx`), `Admin/` (`Clusters/`, `NotificationChannels/`, `OrphanedNamespaces/`, `Users/`)
+- Shared components in `src/components/`: Layout, AccessUrls, BranchSelector, ConfirmDialog, DeployPreviewDialog (shows merged values before deploy via `GET /stack-instances/:id/deploy-preview`), DeploymentLogViewer, EmptyState, EntityLink, ErrorBoundary, FavoriteButton, LoadingState, NotificationCenter, PodStatusDisplay, ProtectedRoute, QuickDeployDialog, QuotaConfigDialog, SetupWizard (first-run checklist: cluster, template, instance), StatusBadge, TtlSelector, YamlEditor
 
 ## UX Patterns
 

@@ -35,7 +35,7 @@ Docker and Kubernetes use `/health/live` (liveness) and `/health/ready` (readine
 ```go
 type MyModel struct {
     Base
-    Version uint `gorm:"not null;default:0" json:"version"`
+    Version uint `gorm:"not null;default:1" json:"version"`
     // ... fields
 }
 ```
@@ -54,4 +54,7 @@ HTTP server timeouts are configurable in `internal/config/config.go`:
 These prevent slow clients from consuming connections. Set via env vars in production based on expected request sizes.
 
 ## Pagination
-The `models.Pagination` struct and List handler support server-side pagination via `?limit=N&offset=M` query params. Always implement pagination for list endpoints to avoid unbounded result sets.
+New and changed list endpoints take `?page=N&pageSize=M` (default 25, max 100; `limit`/`offset` accepted as legacy fallback) and call `ListPaged(limit, offset)` with column projection, as stack instances, definitions and templates do (stack instances and definitions also accept a `limit`/`offset` fallback; templates take `page`/`pageSize` only). Older endpoints (items, audit logs, notifications, delivery logs) take `limit`/`offset`; small admin lists (users, clusters, cleanup policies, favorites, API keys) are unpaged. Always implement pagination for new list endpoints to avoid unbounded result sets. Use batch lookups (`FindByIDs`, `CountByTemplateIDs`) instead of N+1 loops.
+
+## Caching and Metrics
+Use `internal/cache` (generic in-memory TTL cache) for short-lived data; combined auth, login (`LOGIN_CACHE_TTL`), dashboard and analytics use it. `gitprovider.Registry` keeps its own 5-minute branch-list cache. HTTP, DB pool, auth and business metrics are exported through OpenTelemetry (`internal/telemetry`, `api/middleware/metrics.go`); add a metric when you add a hot path.

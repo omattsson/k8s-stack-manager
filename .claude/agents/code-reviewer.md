@@ -30,7 +30,7 @@ When the review surfaces durable patterns or anti-patterns — recurring bug sha
 
 ## Backend Checklist
 - [ ] Inputs validated via `ShouldBindJSON` + explicit checks + `Validator` interface
-- [ ] `handleDBError()` / `mapError()` used for ALL repo errors; 500s return `"Internal server error"`
+- [ ] `mapError(err, "Entity")` used for ALL domain repo errors (`handleDBError()` only in `items.go`); 500s return `"Internal server error"`
 - [ ] No hardcoded secrets; raw SQL uses parameterized queries
 - [ ] ID params parsed with `strconv.ParseUint` (400 on failure)
 - [ ] Optimistic locking with version check; 409 on mismatch
@@ -44,6 +44,8 @@ When the review surfaces durable patterns or anti-patterns — recurring bug sha
 - [ ] Hooks/actions: HMAC signing, timeout enforcement, `failure_policy` respected for pre-deploy hooks
 - [ ] Notifications: dispatch on mutating events; per-user preferences respected
 - [ ] Bulk operations: bounded batch size (max 50); per-item error reporting
+- [ ] Telemetry: new outbound calls traced; new metrics registered in `internal/telemetry/`; no secrets or tokens in span attributes or logs (`RedactWSToken` stays first after RequestID)
+- [ ] New handlers registered under the `authed` group in an `if deps.XHandler != nil` block; route table in `CLAUDE.md` updated
 
 ## Frontend Checklist
 - [ ] MUI components only; `sx` prop styling; functional components

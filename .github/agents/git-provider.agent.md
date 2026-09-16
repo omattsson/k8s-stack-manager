@@ -45,7 +45,7 @@ You are a Git provider integration specialist. You work in `backend/internal/git
 
 ## Reference
 
-- Config: `backend/internal/config/config.go` (GitProvidersConfig)
+- Config: `backend/internal/config/config.go` (`GitProviderConfig`)
 
 
 ## MemPalace Knowledge Management

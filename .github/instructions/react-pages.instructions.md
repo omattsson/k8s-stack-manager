@@ -9,7 +9,7 @@ applyTo: "frontend/src/pages/**/*.tsx"
 - Import MUI components from `@mui/material` for all UI elements
 - Include loading states using `CircularProgress` centered in a `Box`
 - Include error states using `Alert` with `severity="error"`
-- Follow the page pattern from `pages/StackInstances/` or `pages/Templates/`:
+- Follow the page pattern from `pages/StackInstances/Dashboard.tsx` or `pages/Templates/Gallery.tsx` (domain pages use named files; simple pages use `index.tsx`). Page-level dialogs such as `DeployPreviewDialog` and `SetupWizard` live in `src/components/`:
   - `useState` for local state
   - `useEffect` for data fetching on mount
   - Loading → Error → Content rendering hierarchy

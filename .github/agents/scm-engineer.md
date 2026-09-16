@@ -45,7 +45,7 @@ Use this format: `<type>/<issue>-<short-description>`
 | `fix/` | Bug fixes | `fix/15-null-pointer-in-handler` |
 | `chore/` | Non-functional work (deps, CI, docs) | `chore/8-update-go-dependencies` |
 | `refactor/` | Code restructuring | `refactor/20-extract-middleware` |
-| `infra/` | Infrastructure changes | `infra/11-add-redis-service` |
+| `infra/` | Infrastructure changes | `infra/11-add-otel-collector` |
 
 Rules:
 - Always lowercase, hyphens for spaces
@@ -190,7 +190,7 @@ Refs #42"
 Before committing, always verify:
 
 1. **No secrets** — scan staged files: `git diff --cached | grep -iE "(password|secret|key|token)" || echo "clean"`
-2. **No generated files** — don't commit `docs/swagger.json` unless intentional, check `.gitignore` coverage
+2. **No generated files** — don't commit `backend/docs/swagger.json` / `swagger.yaml` unless intentional, check `.gitignore` coverage
 3. **Tests pass** — `cd backend && go test ./... -short` for backend changes
 4. **Lint passes** — `make lint` if available
 5. **Clean diff** — review `git diff --cached` to confirm only intended changes

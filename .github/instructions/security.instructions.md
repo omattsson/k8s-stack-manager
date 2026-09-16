@@ -41,11 +41,17 @@ GORM parameterizes all queries automatically. When writing raw SQL in migrations
 The `Base` model uses `DeletedAt *time.Time` with a GORM index. Deletes are soft by default — rows are marked with a timestamp, not removed. GORM automatically filters soft-deleted records from queries. If implementing hard delete, be explicit and document why.
 
 ## Rate Limiting
-The `RateLimiter` in `handlers/rate_limiter.go` provides per-IP request throttling using a sliding window. Apply it to route groups that need protection:
+The `RateLimiter` in `handlers/rate_limiter.go` provides per-IP request throttling using a sliding window. `SetupRoutes` applies it to the whole `/api/v1` group (`RATE_LIMIT`, default 100/min) and adds a stricter login limiter (`LOGIN_RATE_LIMIT`, default 10/min):
 ```go
-rateLimiter := handlers.NewRateLimiter(100, time.Minute)
-items.Use(rateLimiter.RateLimit())
+rateLimiter := handlers.NewRateLimiter(int(cfg.Server.RateLimit), time.Minute)
+v1.Use(rateLimiter.RateLimit())
 ```
+
+## Sessions, Tokens and Headers
+- Logout blocklists the access-token `jti` in `sessionstore` (`BlockToken`); refresh tokens are revoked through `RefreshTokenRepository`, and reuse of a rotated refresh token revokes the whole family. JWT auth checks `IsTokenBlocked` (fail open on store errors: log + continue); API-key auth does not use the blocklist. Disabling a user blocks the user in `sessionstore`, and every auth path (login, refresh, OIDC, API key) rejects `User.Disabled`.
+- `middleware.SecurityHeaders()` sets baseline security headers; `middleware.RedactWSToken()` strips `?token=` from `/ws` URLs before logging, metrics and tracing. Keep both.
+- Outbound hooks are HMAC-signed with `X-StackManager-Signature` when a subscription/action sets `secret_env` to an env var holding the secret (`internal/hooks/client.go`). Omitting `secret_env` is the only unsigned opt-in; a configured `secret_env` that resolves to an empty value is rejected at config load (fail closed). Never log hook secrets, provider tokens, or kubeconfig data.
+- Kubeconfig data is encrypted at rest with AES-GCM (`pkg/crypto`, `KUBECONFIG_ENCRYPTION_KEY`).
 
 ## Recovery Middleware
 The `Recovery()` middleware in `internal/api/middleware/middleware.go` catches panics and returns a generic 500. This is applied globally in `routes.go`. Never remove it — it prevents unhandled panics from crashing the server and potentially leaking stack traces.
