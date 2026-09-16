@@ -14,7 +14,8 @@
     "test:e2e": "playwright test",
     "test:e2e:headed": "playwright test --headed",
     "test:e2e:ui": "playwright test --ui",
-    "lint": "tsc --noEmit && eslint --max-warnings 5 src/"
+    "lint": "tsc --noEmit && eslint --max-warnings 5 src/",
+    "format": "eslint --fix src/"
   },
   "keywords": [],
   "author": "",
