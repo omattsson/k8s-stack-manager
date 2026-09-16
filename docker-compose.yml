@@ -78,7 +78,7 @@ services:
       # Stack defaults
       - DEFAULT_BRANCH=${DEFAULT_BRANCH:-master}
     healthcheck:
-      test: ["CMD-SHELL", "wget --spider -q http://localhost:8081/health/live || exit 1"]
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost:8081/health/live || exit 1"]
       interval: 15s
       timeout: 10s
       retries: 5
