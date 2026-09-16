@@ -165,7 +165,7 @@ backend/
     database/schema/             # Migrator and versioned migration structs
     models/                      # One file per domain model + repository interface; models.go has Base, Item, Validator, Versionable, the generic Repository interface + GenericRepository, Filter, Pagination; validation.go
     health/health.go             # Dependency health checks (liveness/readiness)
-    auth/                        # OIDC provider (PKCE) + state store for OpenID Connect auth
+    auth/                        # OIDC provider (PKCE) — discovery, authorize, token exchange (OIDC/CLI state is persisted in sessionstore)
     cache/                       # Generic concurrent in-memory TTL cache
     cluster/                     # ClusterRegistry (multi-cluster coordination), health poller, quota monitor, secret refresher
     deployer/                    # Helm CLI wrapper for deploy/undeploy/rollback/status (multi-cluster via registry), cleanup executor, expiry stopper
@@ -209,7 +209,7 @@ backend/
 
 ```
 frontend/src/
-  api/config.ts                # API_BASE_URL: localhost:8081 (dev) | /api (prod)
+  api/config.ts                # API_BASE_URL: http://localhost:8081 (dev) | '' same-origin (prod); client paths already include /api/v1
   api/client.ts                # Axios instance + service objects
   routes.tsx                   # Route definitions
   App.tsx                      # Root component with providers
@@ -308,7 +308,7 @@ backend/internal/
   notifier/              # Notification dispatch (in-app + outbound notification channels on deploy/stop/clean events)
   scheduler/             # Cron-based cleanup policy execution with condition parsing
   ttl/                   # TTL reaper: background goroutine auto-expiring instances
-  auth/                  # OIDC provider: OpenID Connect authentication (PKCE), state store
+  auth/                  # OIDC provider: OpenID Connect authentication (PKCE); OIDC/CLI state persisted in sessionstore
   sessionstore/          # Token blocklist + OIDC state (MySQL or memory)
   cache/                 # In-memory TTL cache (login cache, branch lists)
   telemetry/             # OpenTelemetry setup, DB and business metrics
@@ -326,7 +326,7 @@ backend/internal/
 - **Rollback**: `POST /stack-instances/:id/rollback` rolls Helm releases back; fires `pre-rollback`/`post-rollback` hooks
 - **Auth**: JWT with `Authorization: Bearer <token>` header; middleware injects `userID`, `username`, `role` into Gin context. Refresh tokens rotate via `/auth/refresh`; logout blocks tokens in `sessionstore`
 - **Hooks**: Lifecycle events go to HMAC-signed webhook subscribers; `pre-*` events can gate the operation (`failure_policy: fail`). Organization-specific behaviour (Slack, DB refresh, approval gates) belongs in hook subscribers, not in core (see `EXTENDING.md`)
-- **Notification channels**: Admins register outbound webhook channels (`/admin/notification-channels`) with per-event subscriptions, test send, and delivery logs. In-app notifications remain per user
+- **Notification channels**: DevOps and admin users register outbound webhook channels (`/admin/notification-channels`, guarded by `RequireDevOps`) with per-event subscriptions, test send, and delivery logs. In-app notifications remain per user
 - **Generic design**: No company-specific hardcoding; all branding and configurable values via environment variables
 - **Cleanup policies**: Cron-scheduled actions (stop/clean/delete) on instances matching a condition. Policies target a cluster (or "all"). Scheduler reloads on policy changes. Manual run supported with dry-run mode.
 - **TTL auto-expiry**: Instances with `TTLMinutes > 0` get `ExpiresAt` set on deploy. Background reaper checks every minute and stops expired instances.

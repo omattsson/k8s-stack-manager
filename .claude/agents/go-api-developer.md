@@ -14,7 +14,7 @@ You are a senior Go backend engineer. Implement the requested feature or fix end
    - `internal/deployer/` — Helm CLI wrapper for deploy/undeploy (multi-cluster)
    - `internal/k8s/` — Kubernetes cluster client, status, resource quotas
    - `internal/cluster/` — ClusterRegistry, health poller, secret refresher
-   - `internal/auth/` — OIDC provider, state store
+   - `internal/auth/` — OIDC provider (PKCE); OIDC/CLI state persisted in `sessionstore`
    - `internal/sessionstore/` — Token blocklist + OIDC state persistence (MySQL/memory)
    - `internal/helm/` — Values deep-merge + template variable substitution
    - `internal/notifier/` — Notification dispatch on lifecycle events

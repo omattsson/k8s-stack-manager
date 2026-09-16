@@ -12,7 +12,7 @@ Frontend lives in `frontend/`. Built with Vite 8 + React 19 + TypeScript 6 (stri
 - **Routing**: `react-router-dom` v7 with `<Routes>` / `<Route>` in `src/routes.tsx`
 - **UI Library**: MUI (Material UI) v9 — use MUI components (`Box`, `Paper`, `Typography`, `Alert`, etc.) instead of raw HTML
 - **API Client**: Axios instance in `src/api/client.ts` with response interceptor for error logging
-- **API Config**: `src/api/config.ts` — `API_BASE_URL` switches between `http://localhost:8081` (dev) and `/api` (prod)
+- **API Config**: `src/api/config.ts` — `API_BASE_URL` is `http://localhost:8081` in dev and `''` (same-origin) in prod; client methods already include the `/api/v1/...` prefix, and nginx/the ingress route `/api` to the backend
 - **WebSocket**: `reconnecting-websocket` library with hook in `src/hooks/useWebSocket.ts`
 
 ## Component Patterns

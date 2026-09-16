@@ -28,7 +28,7 @@ backend/internal/
 │   ├── handlers/     # HTTP handlers (one file per resource; rate limiter lives here)
 │   ├── middleware/    # auth, combined auth (JWT + API key), audit, role, security headers, HTTP + auth metrics, OTel span enrichment, WS token redaction
 │   └── routes/       # routes.go — all route registration + middleware order
-├── auth/             # OIDC provider (PKCE), state store
+├── auth/             # OIDC provider (PKCE) — OIDC/CLI state persisted in sessionstore
 ├── cache/            # Generic in-memory TTL cache
 ├── cluster/          # ClusterRegistry, health poller, quota monitor, secret refresher
 ├── config/           # Env-based config loading
@@ -101,7 +101,7 @@ Kubeconfig data encrypted at rest with AES-256-GCM (`KUBECONFIG_ENCRYPTION_KEY`)
 7. `k8s.Watcher` polls namespace for pod/deployment status
 8. Status updates broadcast via WebSocket
 
-`GET /:id/deploy-preview` returns the merged values without deploying. `POST /:id/rollback` reverses step 5 per chart and fires `pre-rollback` / `post-rollback`. Other hook events: `deploy-finalized`, `pre/post-instance-create`, `pre/post-instance-delete`, `stop-completed`, `clean-completed`, `stack-expiring`, `stack-expired`, `quota-warning`, `secret-expiring`, `cleanup-policy-executed` (full list in `EXTENDING.md`; `pre/post-namespace-create` are reserved and not wired).
+`GET /:id/deploy-preview` returns the merged values without deploying. `POST /:id/rollback` reverses step 5 per chart and fires `pre-rollback` / `post-rollback`. Other hook events: `deploy-finalized`, `pre/post-instance-create`, `pre/post-instance-delete`, `stop-completed`, `clean-completed`, `stack-expiring`, `stack-expired`, `quota-warning`, `secret-expiring`, `rollback-completed`, `delete-completed`, `instance-created`, `deploy-timeout`, `cleanup-policy-executed` (see `backend/docs/hooks.md` and `EXTENDING.md` for the event contract; `pre/post-namespace-create` are reserved and not wired).
 
 ## Authentication
 
@@ -119,7 +119,7 @@ Kubeconfig data encrypted at rest with AES-256-GCM (`KUBECONFIG_ENCRYPTION_KEY`)
 
 ## Outbound Notifications
 
-Admins register webhook notification channels (`/api/v1/admin/notification-channels`) with per-event subscriptions. `notifier` dispatches lifecycle events to them and records `NotificationDeliveryLog` rows; a test-send endpoint validates a channel. In-app notifications stay per user.
+DevOps and admin users register webhook notification channels (`/api/v1/admin/notification-channels`, guarded by `RequireDevOps`) with per-event subscriptions. `notifier` dispatches lifecycle events to them and records `NotificationDeliveryLog` rows; a test-send endpoint validates a channel. In-app notifications stay per user.
 
 ## Design Decisions
 

@@ -44,12 +44,12 @@ Services:
 
 | Service | Image | Networks | Health Check |
 |---|---|---|---|
-| `backend` | ./backend (multi-stage) | backend-net, frontend-net | `curl /health/live` |
+| `backend` | ./backend (multi-stage) | backend-net, frontend-net | `wget /health/live` (compose currently uses `curl`, absent from the Alpine prod image) |
 | `frontend` | ./frontend (multi-stage) | frontend-net | — |
 | `mysql` | mysql:8.4 | backend-net | `mysqladmin ping` |
 | `mysqld-exporter` | prom/mysqld-exporter (`mysql-otel` profile, not started by `make dev-otel`) | backend-net | `wget --spider /metrics` |
 | `otel-collector` | otel/opentelemetry-collector-contrib (`otel` profile) | backend-net | `otelcol validate` |
-| `tempo` | grafana/tempo (`otel` profile, UI `:3200`) | backend-net | `wget /ready` |
+| `tempo` | grafana/tempo (`otel` profile, HTTP/readiness `:3200`; Grafana is the UI) | backend-net | `wget /ready` |
 | `prometheus` | prom/prometheus (`otel` profile, UI `:9090`) | backend-net | `wget /-/healthy` |
 | `grafana` | grafana/grafana (`otel` profile, UI `:3001`) | backend-net | `wget /api/health` |
 
@@ -119,7 +119,7 @@ CMD ["go", "run", "main.go"]
 Every service MUST have a health check in `docker-compose.yml`:
 ```yaml
 healthcheck:
-  test: ["CMD", "curl", "-f", "http://localhost:8081/health/live"]
+  test: ["CMD-SHELL", "wget --spider -q http://localhost:8081/health/live || exit 1"]  # the Alpine production image has busybox wget, not curl
   interval: 10s
   timeout: 5s
   retries: 5
