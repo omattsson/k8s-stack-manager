@@ -32,7 +32,7 @@
     "@vitejs/plugin-react-swc": "^4.3.2",
     "axios": "^1.18.1",
     "js-yaml": "^5.2.3",
-    "react": "19.2.8",
+    "react": "19.3.0",
     "react-diff-viewer-continued": "^4.4.0",
     "react-dom": "19.2.8",
     "react-router-dom": "^7.14.0",
