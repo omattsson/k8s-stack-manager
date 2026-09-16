@@ -21,6 +21,9 @@ You are a senior Go backend engineer. Implement the requested feature or fix end
    - `internal/scheduler/` — Cron-based cleanup policy execution
    - `internal/ttl/` — TTL reaper for auto-expiring instances
    - `internal/websocket/` — Real-time event broadcasting
+   - `internal/hooks/` — Outbound lifecycle webhooks (HMAC signed, `failure_policy`); contract in `docs/hooks.md`
+   - `internal/cache/` — Generic in-memory TTL cache (login cache, branch lists)
+   - `internal/telemetry/` — OpenTelemetry bootstrap, DB pool + business metrics; HTTP/auth metrics live in `api/middleware/`
 
 ## Workflow
 1. Read the request and understand acceptance criteria
@@ -32,13 +35,13 @@ You are a senior Go backend engineer. Implement the requested feature or fix end
 7. Regenerate swagger if handlers changed: `cd backend && make docs`
 
 ## New Resource Checklist
-1. Model in `internal/models/models.go` (embed `Base`, add `Version uint`)
+1. Model in a new file `internal/models/<entity>.go` (embed `Base`, add `Version uint` with `default:1`, define the repository interface there; `models.go` only holds `Base`, `Item`, `Filter`, `Pagination`)
 2. Validation in `internal/models/validation.go` (implement `Validator`)
-3. Migration in `internal/database/migrations.go` (incrementing version)
+3. Repository in `internal/database/<entity>_repository.go`, wired in `repository_factory.go`; migration in `internal/database/migrations.go` (incrementing version)
 4. Handler in `internal/api/handlers/` — for simple CRUD use the generic `Handler` struct; for domain resources, create a dedicated handler struct with specialized repository dependencies (see `InstanceHandler`, `DefinitionHandler`)
-5. Routes in `internal/api/routes/routes.go` under `/api/v1`
+5. Routes in `internal/api/routes/routes.go` under the authenticated `/api/v1` group, inside an `if deps.XHandler != nil` block; add the handler to `Deps` and construct it in `api/main.go`
 6. Swagger annotations on every handler (`@Accept`, `@Produce`, `@Param`, `@Success`, `@Failure` for 400/401/403/404/500)
-7. Tests in `internal/api/handlers/` (table-driven, `t.Parallel()`) — `MockRepository` only works for `Item` type; domain resources need separate mock implementations (see `mock_stack_instance_repository_test.go`)
+7. Tests in `internal/api/handlers/` (table-driven, `t.Parallel()`) — `MockRepository` only works for `Item` type; domain resources use the mocks in `mock_domain_repositories_test.go` (session store: `mock_session_store_test.go`, transactions: `mock_tx_runner_test.go`)
 
 ## Critical Rules
 - Audit logging is handled by `middleware.NewAuditMiddleware` on route groups — do NOT add audit calls inside handlers
@@ -50,3 +53,5 @@ You are a senior Go backend engineer. Implement the requested feature or fix end
 - Session store: fail-open on `IsTokenBlocked` DB errors (log + continue)
 - Hooks: respect `failure_policy` (`fail` aborts the operation; `ignore` logs and continues)
 - Notifications: use `notifier.Dispatch()` for lifecycle events, not direct DB inserts
+- Hooks: emit new lifecycle events through `hooks.Dispatcher`; add the event to `docs/hooks.md` and `EXTENDING.md`
+- Telemetry: new outbound calls get spans in a `tracing.go` beside the package; new counters/gauges go in `internal/telemetry/` and use the `otel` global meter

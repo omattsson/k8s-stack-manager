@@ -37,7 +37,7 @@ When you learn something durable about testing — flaky test root causes, fixtu
 - `testify/assert`, table-driven with `t.Parallel()` on parent AND subtests
 - `tt := tt` to capture range variable
 - `setupTestRouter()` returns `(*gin.Engine, *MockRepository)`
-- Domain handlers need dedicated mock repos (see `mock_stack_instance_repository_test.go`)
+- Domain handlers use the mocks in `mock_domain_repositories_test.go` (plus `mock_session_store_test.go`, `mock_tx_runner_test.go`)
 - Validate JSON with `gojsonschema` schemas from `test_schemas.go`
 - Cover: success, validation error, not found, internal error, version conflict
 - Auth tests: check disabled user on login, refresh, OIDC callback, and API key paths
@@ -52,5 +52,5 @@ When you learn something durable about testing — flaky test root causes, fixtu
 ## E2e Test Pattern (Playwright)
 - Accessible locators; generous timeouts (10s) for API-dependent elements
 - Run with `make test-e2e`; each test independent, no shared state
-- E2e specs: `auth.spec.ts`, `definitions.spec.ts`, `templates.spec.ts`, `instances.spec.ts`, `deployment.spec.ts`, `audit-log.spec.ts`, `navigation.spec.ts`
+- E2e specs: 26 files in `frontend/e2e/` — one per feature area (auth, oidc-auth, definitions, templates, template-versions, instances, deployment, compare, value-overrides, branch-overrides, bulk-operations, import-export, clusters, cluster-health, shared-values, cleanup-policies, orphaned-namespaces, admin-users, profile, notifications, dashboard-widgets, analytics, audit-log, websocket, navigation, ux-improvements). Add a new spec per feature; extend the matching one for changes
 - Deployment tests: verify deploy/stop operations, WebSocket progress updates, deployment log display

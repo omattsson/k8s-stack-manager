@@ -64,8 +64,8 @@ Template → (instantiate) → Definition + ChartConfigs → (create instance) �
 
 ### Prerequisites
 - Docker and Docker Compose
-- Go 1.25+ (backend)
-- Node.js 20+ (frontend)
+- Go 1.26+ (backend)
+- Node.js 22+ (frontend)
 
 ### Running
 ```bash

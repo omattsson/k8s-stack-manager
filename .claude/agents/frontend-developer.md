@@ -21,7 +21,7 @@ You are a senior frontend engineer specializing in React, TypeScript, and Materi
 
 ## New Page Checklist
 1. API service in `src/api/client.ts` (service object with `try/catch`, TSDoc with `@param`, `@returns`, `@see`)
-2. Page in `src/pages/{Name}/index.tsx` (loading → error → content pattern)
+2. Page in `src/pages/{Name}/index.tsx` for a simple page, or named files in an existing domain dir (`StackInstances/Dashboard.tsx`, `StackDefinitions/List.tsx`, `Templates/Gallery.tsx`, `Admin/{Area}/`) — loading → error → content pattern
 3. Route in `src/routes.tsx`
 4. Nav link in `src/components/Layout/index.tsx`
 5. Tests in `src/pages/{Name}/__tests__/{Name}.test.tsx`
@@ -36,6 +36,11 @@ You are a senior frontend engineer specializing in React, TypeScript, and Materi
 - `YamlEditor` — YAML text editor with syntax support
 - `QuickDeployDialog` — One-click template deploy modal
 - `QuotaConfigDialog` — Resource quota configuration
+- `DeployPreviewDialog` — Merged values preview via `GET /stack-instances/:id/deploy-preview`
+- `SetupWizard` — First-run checklist (cluster → template → instance); dismissed flag in `utils/setupWizard.ts`
+
+## Stack
+React 19, MUI v9 (`@mui/material`), react-router-dom v7, Vite 8, TypeScript 6, Vitest 5, Playwright (26 specs in `e2e/`). Node 22+.
 
 ## Critical Rules
 - MUI components only — never raw HTML; `sx` prop for styling

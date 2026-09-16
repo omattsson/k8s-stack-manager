@@ -11,7 +11,7 @@ See [WIKI.md](WIKI.md) for user-facing concepts, [EXTENDING.md](EXTENDING.md) fo
 │                    Frontend (React 19)                        │
 │  MUI · Vite · Monaco Editor · WebSocket · OIDC (PKCE)       │
 ├──────────────────────────────────────────────────────────────┤
-│                   Backend (Go 1.25 + Gin)                     │
+│                   Backend (Go 1.26 + Gin)                     │
 │  REST API · JWT · Swagger · Audit Middleware · OTel           │
 ├──────┬──────────┬──────────┬──────────┬──────────┬───────────┤
 │MySQL │ Cluster  │ Git      │ Helm     │ Hook     │ K8s       │
@@ -25,21 +25,27 @@ See [WIKI.md](WIKI.md) for user-facing concepts, [EXTENDING.md](EXTENDING.md) fo
 ```
 backend/internal/
 ├── api/
-│   ├── handlers/     # HTTP handlers (one file per resource)
-│   ├── middleware/    # auth, audit, role, rate-limiter
-│   └── routes.go     # All route registration
-├── auth/             # OIDC provider, state store
+│   ├── handlers/     # HTTP handlers (one file per resource; rate limiter lives here)
+│   ├── middleware/    # auth, combined auth (JWT + API key), audit, role, security headers, HTTP + auth metrics, OTel span enrichment, WS token redaction
+│   └── routes/       # routes.go — all route registration + middleware order
+├── auth/             # OIDC provider (PKCE), state store
+├── cache/            # Generic in-memory TTL cache
 ├── cluster/          # ClusterRegistry, health poller, quota monitor, secret refresher
 ├── config/           # Env-based config loading
-├── database/         # GORM repositories (one per model)
-├── deployer/         # Helm deploy/undeploy manager, expiry stopper, cleanup executor
+├── database/         # GORM repositories (one per model), migrations
+├── deployer/         # Helm deploy/undeploy/rollback manager, expiry stopper, cleanup executor
 ├── gitprovider/      # Azure DevOps + GitLab branch listing, URL detection, cache
+├── health/           # Liveness/readiness checks
 ├── helm/             # Values deep-merge, template variable substitution
 ├── hooks/            # Event dispatcher, action routing, HMAC signing
 ├── k8s/              # K8s client, namespace status, watcher, pod exec, scaling
-├── models/           # GORM model structs
+├── models/           # GORM model structs + repository interfaces
+├── notifier/         # In-app notifications + outbound notification channels
 ├── scheduler/        # Cleanup policy scheduler (cron)
-└── telemetry/        # OpenTelemetry setup, DB metrics
+├── sessionstore/     # Token blocklist + OIDC state (MySQL or memory)
+├── telemetry/        # OpenTelemetry setup, DB pool metrics, business metrics
+├── ttl/              # Instance expiry reaper
+└── websocket/        # Hub, clients, message types
 ```
 
 ## Data Model
@@ -61,17 +67,16 @@ StackInstance ──1:N──▶ ValueOverride (per chart)
       └──▶ Cluster (deployment target)
 ```
 
-Supporting models: `User`, `AuditLog`, `DeploymentLog`, `UserFavorite`, `Notification`, `RefreshToken`, `ApiKey`, `CleanupPolicy`, `ResourceQuota`, `InstanceQuotaOverride`, `SharedValues`, `TemplateVersion`.
+Supporting models: `User`, `AuditLog`, `DeploymentLog`, `UserFavorite`, `Notification`, `NotificationPreference`, `NotificationChannel` (+ `NotificationChannelSubscription`, `NotificationDeliveryLog`), `RefreshToken`, `APIKey`, `CleanupPolicy`, `ResourceQuotaConfig`, `InstanceQuotaOverride`, `SharedValues`, `TemplateVersion`, `TemplateSnapshot`.
 
 ## Values Merge Precedence
 
-Lowest to highest priority:
+Lowest to highest priority (`internal/helm/values_generator.go`):
 
-1. Shared values (cluster-scoped, by priority)
-2. Template default values
-3. **Template locked values** (cannot be overridden by anything below)
-4. Definition default values
-5. Instance value overrides
+1. Shared values (cluster-scoped, applied in priority order, lowest first)
+2. Chart default values (from the definition's `ChartConfig`; copied from the template on instantiate)
+3. Instance value overrides (per chart)
+4. **Template locked values** (applied last; nothing can override them)
 
 Template variables (`{{.Branch}}`, `{{.Namespace}}`, `{{.InstanceName}}`, `{{.StackName}}`, `{{.Owner}}`) are substituted at export time.
 
@@ -96,6 +101,8 @@ Kubeconfig data encrypted at rest with AES-256-GCM (`KUBECONFIG_ENCRYPTION_KEY`)
 7. `k8s.Watcher` polls namespace for pod/deployment status
 8. Status updates broadcast via WebSocket
 
+`GET /:id/deploy-preview` returns the merged values without deploying. `POST /:id/rollback` reverses step 5 per chart and fires `pre-rollback` / `post-rollback`. Other hook events: `pre/post-instance-create`, `pre/post-namespace-create`, `stop-completed`, `clean-completed`, `stack-expiring`, `stack-expired`, `quota-warning`, `secret-expiring`, `cleanup-policy-executed` (full list in `EXTENDING.md`).
+
 ## Authentication
 
 - **Local**: username/password → bcrypt → JWT
@@ -104,6 +111,15 @@ Kubeconfig data encrypted at rest with AES-256-GCM (`KUBECONFIG_ENCRYPTION_KEY`)
 - DevOps manages templates; admin manages clusters, users, cleanup policies
 - **SessionStore**: Persistent token blocklist and OIDC state (MySQL default, in-memory for tests). Survives restarts — revoked tokens stay blocked, in-flight OIDC logins survive backend redeploys.
 - **User.Disabled**: Admin can disable accounts. Blocks login, token refresh, OIDC login, and API key auth immediately.
+- **Rate limits**: per-IP limiter on `/api/v1` (`RATE_LIMIT`, default 100/min) and a stricter login limiter (`LOGIN_RATE_LIMIT`, default 10/min).
+
+## Observability
+
+`telemetry.Init` sets up OTLP traces and metrics (`OTEL_*`, `METRICS_ENABLED`). HTTP metrics and auth outcome counters come from middleware; DB pool and business KPIs from `telemetry`. `RedactWSToken` removes the WebSocket `?token=` query param before logging and tracing. The Helm chart can deploy an OTel collector (`otel.enabled`) and a ServiceMonitor (`metrics.serviceMonitor.enabled`). Local: `make dev-otel` (Prometheus `:9090`, Grafana `:3001`).
+
+## Outbound Notifications
+
+Admins register webhook notification channels (`/api/v1/admin/notification-channels`) with per-event subscriptions. `notifier` dispatches lifecycle events to them and records `NotificationDeliveryLog` rows; a test-send endpoint validates a channel. In-app notifications stay per user.
 
 ## Design Decisions
 
