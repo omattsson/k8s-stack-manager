@@ -2,6 +2,7 @@ package config_test
 
 import (
 	"os"
+	"reflect"
 	"testing"
 	"time"
 
@@ -112,6 +113,95 @@ func TestLoadConfig(t *testing.T) {
 		assert.Equal(t, "info", config.Logging.Level)
 		assert.Empty(t, config.Logging.File)
 	})
+}
+
+func TestLoadConfigGitHubToken(t *testing.T) {
+	t.Setenv("GITHUB_TOKEN", "test-github-token")
+	t.Setenv("GITHUB_ALLOWED_REPOSITORIES", "octo-org/octo-repo")
+
+	cfg, err := config.LoadConfig()
+	require.NoError(t, err)
+	assert.Equal(t, "test-github-token", cfg.GitProvider.GitHubToken)
+}
+
+func TestLoadConfigGitHubAllowedRepositories(t *testing.T) {
+	// Not parallel: t.Setenv mutates process-wide environment variables.
+	tests := []struct {
+		name            string
+		token           string
+		allowed         string
+		wantAllowed     []string
+		sensitiveValues []string
+		wantErr         bool
+	}{
+		{
+			name:        "normalizes trims and deduplicates exact repositories",
+			token:       "github-token-marker",
+			allowed:     " Octo-Org/Repo , octo-org/repo, OTHER/Second_Repo ",
+			wantAllowed: []string{"octo-org/repo", "other/second_repo"},
+		},
+		{
+			name:            "rejects malformed entries without reflecting input",
+			allowed:         "octo-org/repo,https://credential-marker@github.com/octo-org/other",
+			sensitiveValues: []string{"credential-marker", "github.com"},
+			wantErr:         true,
+		},
+		{
+			name:            "rejects token with empty allowlist fail closed",
+			token:           "github-token-marker",
+			sensitiveValues: []string{"github-token-marker"},
+			wantErr:         true,
+		},
+		{
+			name: "accepts tokenless empty allowlist",
+		},
+		{
+			name:        "accepts explicit allowlist without token",
+			allowed:     "octo-org/repo",
+			wantAllowed: []string{"octo-org/repo"},
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("ENV_FILE", t.TempDir()+"/missing.env")
+			t.Setenv("GITHUB_TOKEN", tt.token)
+			t.Setenv("GITHUB_ALLOWED_REPOSITORIES", tt.allowed)
+
+			cfg, err := config.LoadConfig()
+			if tt.wantErr {
+				require.Error(t, err)
+				for _, sensitive := range tt.sensitiveValues {
+					assert.NotContains(t, err.Error(), sensitive)
+				}
+				return
+			}
+
+			require.NoError(t, err)
+			require.NotNil(t, cfg)
+			assert.Equal(t, tt.token, cfg.GitProvider.GitHubToken)
+			actualAllowed := gitHubAllowedRepositories(t, cfg.GitProvider)
+			if tt.wantAllowed == nil {
+				assert.Empty(t, actualAllowed)
+			} else {
+				assert.Equal(t, tt.wantAllowed, actualAllowed)
+			}
+		})
+	}
+}
+
+func gitHubAllowedRepositories(t *testing.T, providerConfig config.GitProviderConfig) []string {
+	t.Helper()
+	field := reflect.ValueOf(providerConfig).FieldByName("GitHubAllowedRepositories")
+	require.True(t, field.IsValid(), "GitProviderConfig must expose parsed GitHubAllowedRepositories")
+	require.Equal(t, reflect.Slice, field.Kind())
+
+	allowed := make([]string, field.Len())
+	for index := 0; index < field.Len(); index++ {
+		allowed[index] = field.Index(index).String()
+	}
+	return allowed
 }
 
 func TestDatabaseDSN(t *testing.T) {

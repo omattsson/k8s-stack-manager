@@ -133,16 +133,23 @@ func buildDomainServices(
 	healthChecker *health.HealthChecker,
 ) (*domainServices, error) {
 	// Git provider registry.
-	gitRegistry := gitprovider.NewRegistry(gitprovider.Config{
+	gitRegistry, err := gitprovider.NewRegistry(gitprovider.Config{
 		AzureDevOps: gitprovider.AzureDevOpsConfig{
 			PAT:        cfg.GitProvider.AzureDevOpsPAT,
 			DefaultOrg: cfg.GitProvider.AzureDevOpsDefaultOrg,
+		},
+		GitHub: gitprovider.GitHubConfig{
+			Token:               cfg.GitProvider.GitHubToken,
+			AllowedRepositories: cfg.GitProvider.GitHubAllowedRepositories,
 		},
 		GitLab: gitprovider.GitLabConfig{
 			Token:   cfg.GitProvider.GitLabToken,
 			BaseURL: cfg.GitProvider.GitLabBaseURL,
 		},
 	})
+	if err != nil {
+		return nil, fmt.Errorf("build Git provider registry: %w", err)
+	}
 
 	valuesGen := helm.NewValuesGenerator()
 

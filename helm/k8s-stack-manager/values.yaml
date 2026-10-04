@@ -60,6 +60,9 @@ backend:
     HELM_BINARY: helm
     DEPLOYMENT_TIMEOUT: "10m"
     MAX_CONCURRENT_DEPLOYS: "5"
+    # Exact, comma-separated owner/repository entries allowed for authenticated
+    # GitHub requests. Required when GITHUB_TOKEN is non-empty.
+    GITHUB_ALLOWED_REPOSITORIES: ""
     # Wildcard TLS secret replication — copies a shared TLS secret into every
     # stack namespace so ingresses can reference it. Disabled when
     # WILDCARD_TLS_SOURCE_SECRET is empty. Set to enable for local dev flows
@@ -121,6 +124,8 @@ backend:
     KUBECONFIG_ENCRYPTION_KEY: ""
     # Git providers (optional)
     AZURE_DEVOPS_PAT: ""
+    # Keep this in the Secret (or ExternalSecret), never backend.env.
+    GITHUB_TOKEN: ""
     GITLAB_TOKEN: ""
     # OIDC secrets (optional)
     OIDC_CLIENT_SECRET: ""
@@ -201,6 +206,9 @@ externalSecrets:
   # - secretKey: ADMIN_PASSWORD
   #   remoteRef:
   #     key: k8s-stack-manager-admin-password
+  # - secretKey: GITHUB_TOKEN
+  #   remoteRef:
+  #     key: k8s-stack-manager-github-token
 
 # ---------------------------------------------------------------------------
 # Frontend

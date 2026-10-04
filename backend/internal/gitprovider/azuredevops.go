@@ -3,9 +3,7 @@ package gitprovider
 import (
 	"context"
 	"encoding/base64"
-	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -51,18 +49,18 @@ func parseAzureDevOpsURL(rawURL string) (*azureRepoInfo, error) {
 		return parseAzureVSURL(rawURL)
 	}
 
-	return nil, fmt.Errorf("not an Azure DevOps URL: %s", rawURL)
+	return nil, providerError(ErrInvalidRepositoryURL, "azure_devops", "not an Azure DevOps URL", nil)
 }
 
 func parseAzureSSH(rawURL string) (*azureRepoInfo, error) {
 	colonIdx := strings.Index(rawURL, ":v3/")
 	if colonIdx < 0 {
-		return nil, fmt.Errorf("invalid Azure DevOps SSH URL: %s", rawURL)
+		return nil, providerError(ErrInvalidRepositoryURL, "azure_devops", "invalid Azure DevOps SSH URL", nil)
 	}
 	path := rawURL[colonIdx+4:]
 	parts := strings.Split(path, "/")
 	if len(parts) < 3 {
-		return nil, fmt.Errorf("invalid Azure DevOps SSH URL path: %s", rawURL)
+		return nil, providerError(ErrInvalidRepositoryURL, "azure_devops", "invalid Azure DevOps SSH URL path", nil)
 	}
 	return &azureRepoInfo{Org: parts[0], Project: parts[1], Repo: parts[2]}, nil
 }
@@ -72,7 +70,7 @@ func parseAzureDevURL(rawURL string) (*azureRepoInfo, error) {
 	rawURL = strings.TrimPrefix(rawURL, "http://")
 	parts := strings.Split(rawURL, "/")
 	if len(parts) < 5 || parts[3] != "_git" {
-		return nil, fmt.Errorf("invalid Azure DevOps URL format: %s", rawURL)
+		return nil, providerError(ErrInvalidRepositoryURL, "azure_devops", "invalid Azure DevOps URL format", nil)
 	}
 	return &azureRepoInfo{Org: parts[1], Project: parts[2], Repo: parts[4]}, nil
 }
@@ -82,12 +80,12 @@ func parseAzureVSURL(rawURL string) (*azureRepoInfo, error) {
 	rawURL = strings.TrimPrefix(rawURL, "http://")
 	parts := strings.Split(rawURL, "/")
 	if len(parts) < 4 || parts[2] != "_git" {
-		return nil, fmt.Errorf("invalid Azure DevOps visualstudio.com URL format: %s", rawURL)
+		return nil, providerError(ErrInvalidRepositoryURL, "azure_devops", "invalid Azure DevOps visualstudio.com URL format", nil)
 	}
 	host := parts[0]
 	dotIdx := strings.Index(host, ".visualstudio.com")
 	if dotIdx <= 0 {
-		return nil, fmt.Errorf("cannot extract org from host: %s", host)
+		return nil, providerError(ErrInvalidRepositoryURL, "azure_devops", "cannot extract org from host", nil)
 	}
 	return &azureRepoInfo{Org: host[:dotIdx], Project: parts[1], Repo: parts[3]}, nil
 }
@@ -122,24 +120,20 @@ func (p *azureDevOpsProvider) ListBranches(ctx context.Context, repoURL string) 
 
 	resp, err := p.httpClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("Azure DevOps API request failed: %w", err)
+		return nil, providerError(ErrUpstreamFailure, "azure_devops", "Azure DevOps API request failed", err)
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode == http.StatusUnauthorized {
-		return nil, fmt.Errorf("Azure DevOps authentication failed (HTTP 401)")
-	}
-	if resp.StatusCode == http.StatusNotFound {
-		return nil, fmt.Errorf("repository not found: %s/%s/%s", info.Org, info.Project, info.Repo)
-	}
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return nil, fmt.Errorf("Azure DevOps API returned HTTP %d: %s", resp.StatusCode, string(body))
+	if err := azureDevOpsResponseError(resp); err != nil {
+		return nil, err
 	}
 
 	var refsResp azureRefsResponse
-	if err := json.NewDecoder(resp.Body).Decode(&refsResp); err != nil {
-		return nil, fmt.Errorf("decode Azure DevOps response: %w", err)
+	if err := decodeProviderJSON(resp.Body, &refsResp, "azure_devops", "Azure DevOps", "Azure DevOps"); err != nil {
+		return nil, err
+	}
+	if len(refsResp.Value) > providerMaxBranches {
+		return nil, providerError(ErrUpstreamFailure, "azure_devops", "Azure DevOps branch collection limit exceeded", nil)
 	}
 
 	branches := make([]Branch, 0, len(refsResp.Value))
@@ -171,21 +165,37 @@ func (p *azureDevOpsProvider) GetDefaultBranch(ctx context.Context, repoURL stri
 
 	resp, err := p.httpClient.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("Azure DevOps API request failed: %w", err)
+		return "", providerError(ErrUpstreamFailure, "azure_devops", "Azure DevOps API request failed", err)
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("Azure DevOps API returned HTTP %d", resp.StatusCode)
+	if err := azureDevOpsResponseError(resp); err != nil {
+		return "", err
 	}
 
 	var repoResp struct {
 		DefaultBranch string `json:"defaultBranch"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&repoResp); err != nil {
-		return "", fmt.Errorf("decode Azure DevOps response: %w", err)
+	if err := decodeProviderJSON(resp.Body, &repoResp, "azure_devops", "Azure DevOps", "Azure DevOps"); err != nil {
+		return "", err
 	}
 	return strings.TrimPrefix(repoResp.DefaultBranch, "refs/heads/"), nil
+}
+
+func azureDevOpsResponseError(resp *http.Response) error {
+	if resp.StatusCode == http.StatusOK {
+		return nil
+	}
+	if resp.StatusCode == http.StatusTooManyRequests {
+		return rateLimitError("azure_devops", "Azure DevOps API rate limit exceeded; retry later", parseRetryAfter(resp.Header.Get("Retry-After"), time.Now()))
+	}
+	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+		return providerError(ErrAuthentication, "azure_devops", fmt.Sprintf("Azure DevOps authentication failed or permission denied (HTTP %d)", resp.StatusCode), nil)
+	}
+	if resp.StatusCode == http.StatusNotFound {
+		return providerError(ErrRepositoryNotFound, "azure_devops", "Azure DevOps repository not found", nil)
+	}
+	return providerError(ErrUpstreamFailure, "azure_devops", fmt.Sprintf("Azure DevOps API returned HTTP %d", resp.StatusCode), nil)
 }
 
 func (p *azureDevOpsProvider) ValidateBranch(ctx context.Context, repoURL string, branch string) (bool, error) {

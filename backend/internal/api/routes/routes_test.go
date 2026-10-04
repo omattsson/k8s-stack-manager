@@ -3,6 +3,7 @@ package routes
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	"backend/internal/api/handlers"
+	"backend/internal/api/middleware"
 	"backend/internal/config"
 	"backend/internal/database"
 	"backend/internal/gitprovider"
@@ -52,6 +54,12 @@ type stubAuditLogger struct{}
 
 func (s *stubAuditLogger) Create(_ *models.AuditLog) error { return nil }
 
+type routeRoundTripper func(*http.Request) (*http.Response, error)
+
+func (fn routeRoundTripper) RoundTrip(request *http.Request) (*http.Response, error) {
+	return fn(request)
+}
+
 // ---- helpers ----
 
 func testConfig() *config.Config {
@@ -91,6 +99,76 @@ func setupMinimalRouter(t *testing.T) (*gin.Engine, *RateLimiters) {
 	t.Cleanup(func() { rl.Stop() })
 
 	return router, rl
+}
+
+func TestSetupRoutesRedactsGitRepoBeforeRouteHandling(t *testing.T) {
+	t.Parallel()
+	router, _ := setupMinimalRouter(t)
+
+	request := httptest.NewRequest(http.MethodGet,
+		"/api/v1/git/branches?repo=https%3A%2F%2Fuser%3Asecret%40github.com%2Forg%2Frepo%3Ftoken%3Dnested-secret%23main&keep=%2f%2B", nil)
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+
+	assert.Equal(t, "keep=%2f%2B", request.URL.RawQuery)
+	assert.NotContains(t, request.RequestURI, "user")
+	assert.NotContains(t, request.RequestURI, "secret")
+	assert.NotContains(t, request.RequestURI, "token")
+}
+
+func TestGitRouteAllowsAuthenticatedUserForAllowedRepository(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	originalTransport := http.DefaultTransport
+	t.Cleanup(func() { http.DefaultTransport = originalTransport })
+	providerRequests := make(chan *http.Request, 1)
+	http.DefaultTransport = routeRoundTripper(func(request *http.Request) (*http.Response, error) {
+		providerRequests <- request.Clone(request.Context())
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(`[{"name":"main"}]`)),
+			Request:    request,
+		}, nil
+	})
+
+	cfg := testConfig()
+	healthChecker := health.New()
+	healthChecker.SetReady(true)
+	hub := websocket.NewHub()
+	go hub.Run()
+	t.Cleanup(func() { hub.Shutdown() })
+
+	registry, err := gitprovider.NewRegistry(gitprovider.Config{GitHub: gitprovider.GitHubConfig{
+		Token:               "provider-token-marker",
+		AllowedRepositories: []string{"octo-org/octo-repo"},
+	}})
+	require.NoError(t, err)
+	authHandler := handlers.NewAuthHandler(&stubUserRepo{}, &cfg.Auth, &cfg.OIDC)
+	router := gin.New()
+	rateLimiters := SetupRoutes(router, Deps{
+		Config:        cfg,
+		HealthChecker: healthChecker,
+		Hub:           hub,
+		AuthHandler:   authHandler,
+		GitHandler:    handlers.NewGitHandler(registry),
+	})
+	t.Cleanup(rateLimiters.Stop)
+
+	token, err := middleware.GenerateToken("user-1", "alice", "developer", cfg.Auth.JWTSecret, time.Hour)
+	require.NoError(t, err)
+	request := httptest.NewRequest(http.MethodGet,
+		"/api/v1/git/branches?repo=https%3A%2F%2Fgithub.com%2Focto-org%2Focto-repo.git", nil)
+	request.Header.Set("Authorization", "Bearer "+token)
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+
+	require.Equal(t, http.StatusOK, response.Code)
+	require.JSONEq(t, `[{"name":"main","is_default":false}]`, response.Body.String())
+	providerRequest := <-providerRequests
+	assert.Equal(t, "api.github.com", providerRequest.URL.Host)
+	assert.Equal(t, "/repos/octo-org/octo-repo/branches", providerRequest.URL.Path)
+	assert.Equal(t, "Bearer provider-token-marker", providerRequest.Header.Get("Authorization"))
 }
 
 // ---- tests ----
@@ -752,29 +830,35 @@ func TestSetupRoutes_SwaggerGatedByConfig(t *testing.T) {
 
 type stubStackTemplateRepo struct{}
 
-func (s *stubStackTemplateRepo) Create(_ *models.StackTemplate) error                       { return nil }
-func (s *stubStackTemplateRepo) FindByID(_ string) (*models.StackTemplate, error)           { return nil, nil }
-func (s *stubStackTemplateRepo) Update(_ *models.StackTemplate) error                       { return nil }
-func (s *stubStackTemplateRepo) Delete(_ string) error                                      { return nil }
-func (s *stubStackTemplateRepo) List() ([]models.StackTemplate, error)                      { return nil, nil }
-func (s *stubStackTemplateRepo) ListPaged(_, _ int) ([]models.StackTemplate, int64, error)  { return nil, 0, nil }
-func (s *stubStackTemplateRepo) ListPublished() ([]models.StackTemplate, error)             { return nil, nil }
+func (s *stubStackTemplateRepo) Create(_ *models.StackTemplate) error             { return nil }
+func (s *stubStackTemplateRepo) FindByID(_ string) (*models.StackTemplate, error) { return nil, nil }
+func (s *stubStackTemplateRepo) Update(_ *models.StackTemplate) error             { return nil }
+func (s *stubStackTemplateRepo) Delete(_ string) error                            { return nil }
+func (s *stubStackTemplateRepo) List() ([]models.StackTemplate, error)            { return nil, nil }
+func (s *stubStackTemplateRepo) ListPaged(_, _ int) ([]models.StackTemplate, int64, error) {
+	return nil, 0, nil
+}
+func (s *stubStackTemplateRepo) ListPublished() ([]models.StackTemplate, error) { return nil, nil }
 func (s *stubStackTemplateRepo) ListPublishedPaged(_, _ int) ([]models.StackTemplate, int64, error) {
 	return nil, 0, nil
 }
-func (s *stubStackTemplateRepo) ListByOwner(_ string) ([]models.StackTemplate, error) { return nil, nil }
-func (s *stubStackTemplateRepo) Count() (int64, error)                                { return 0, nil }
+func (s *stubStackTemplateRepo) ListByOwner(_ string) ([]models.StackTemplate, error) {
+	return nil, nil
+}
+func (s *stubStackTemplateRepo) Count() (int64, error) { return 0, nil }
 
 type stubStackDefinitionRepo struct{}
 
-func (s *stubStackDefinitionRepo) Create(_ *models.StackDefinition) error             { return nil }
-func (s *stubStackDefinitionRepo) FindByID(_ string) (*models.StackDefinition, error) { return nil, nil }
+func (s *stubStackDefinitionRepo) Create(_ *models.StackDefinition) error { return nil }
+func (s *stubStackDefinitionRepo) FindByID(_ string) (*models.StackDefinition, error) {
+	return nil, nil
+}
 func (s *stubStackDefinitionRepo) FindByName(_ string) ([]models.StackDefinition, error) {
 	return nil, nil
 }
-func (s *stubStackDefinitionRepo) Update(_ *models.StackDefinition) error               { return nil }
-func (s *stubStackDefinitionRepo) Delete(_ string) error                                { return nil }
-func (s *stubStackDefinitionRepo) List() ([]models.StackDefinition, error)              { return nil, nil }
+func (s *stubStackDefinitionRepo) Update(_ *models.StackDefinition) error  { return nil }
+func (s *stubStackDefinitionRepo) Delete(_ string) error                   { return nil }
+func (s *stubStackDefinitionRepo) List() ([]models.StackDefinition, error) { return nil, nil }
 func (s *stubStackDefinitionRepo) ListPaged(_, _ int) ([]models.StackDefinition, int64, error) {
 	return nil, 0, nil
 }
@@ -794,14 +878,14 @@ func (s *stubStackDefinitionRepo) Count() (int64, error) { return 0, nil }
 
 type stubStackInstanceRepo struct{}
 
-func (s *stubStackInstanceRepo) Create(_ *models.StackInstance) error              { return nil }
-func (s *stubStackInstanceRepo) FindByID(_ string) (*models.StackInstance, error)  { return nil, nil }
+func (s *stubStackInstanceRepo) Create(_ *models.StackInstance) error             { return nil }
+func (s *stubStackInstanceRepo) FindByID(_ string) (*models.StackInstance, error) { return nil, nil }
 func (s *stubStackInstanceRepo) FindByNamespace(_ string) (*models.StackInstance, error) {
 	return nil, nil
 }
-func (s *stubStackInstanceRepo) Update(_ *models.StackInstance) error               { return nil }
-func (s *stubStackInstanceRepo) Delete(_ string) error                              { return nil }
-func (s *stubStackInstanceRepo) List() ([]models.StackInstance, error)              { return nil, nil }
+func (s *stubStackInstanceRepo) Update(_ *models.StackInstance) error  { return nil }
+func (s *stubStackInstanceRepo) Delete(_ string) error                 { return nil }
+func (s *stubStackInstanceRepo) List() ([]models.StackInstance, error) { return nil, nil }
 func (s *stubStackInstanceRepo) ListPaged(_, _ int) ([]models.StackInstance, int, error) {
 	return nil, 0, nil
 }
@@ -832,7 +916,7 @@ func (s *stubStackInstanceRepo) ListIDsByOwnerIDs(_ []string) (map[string][]stri
 func (s *stubStackInstanceRepo) ExistsByDefinitionAndStatus(_, _ string) (bool, error) {
 	return false, nil
 }
-func (s *stubStackInstanceRepo) ListExpired() ([]*models.StackInstance, error)   { return nil, nil }
+func (s *stubStackInstanceRepo) ListExpired() ([]*models.StackInstance, error) { return nil, nil }
 func (s *stubStackInstanceRepo) ListExpiringSoon(_ time.Duration) ([]*models.StackInstance, error) {
 	return nil, nil
 }
@@ -899,10 +983,10 @@ func (s *stubInstanceQuotaOverrideRepo) Delete(_ context.Context, _ string) erro
 
 type stubUserFavoriteRepo struct{}
 
-func (s *stubUserFavoriteRepo) List(_ string) ([]*models.UserFavorite, error)  { return nil, nil }
-func (s *stubUserFavoriteRepo) Add(_ *models.UserFavorite) error               { return nil }
-func (s *stubUserFavoriteRepo) Remove(_, _, _ string) error                    { return nil }
-func (s *stubUserFavoriteRepo) IsFavorite(_, _, _ string) (bool, error)        { return false, nil }
+func (s *stubUserFavoriteRepo) List(_ string) ([]*models.UserFavorite, error) { return nil, nil }
+func (s *stubUserFavoriteRepo) Add(_ *models.UserFavorite) error              { return nil }
+func (s *stubUserFavoriteRepo) Remove(_, _, _ string) error                   { return nil }
+func (s *stubUserFavoriteRepo) IsFavorite(_, _, _ string) (bool, error)       { return false, nil }
 
 type stubNotificationRepo struct{}
 
@@ -946,9 +1030,11 @@ func (s *stubSharedValuesRepo) FindByID(_ string) (*models.SharedValues, error) 
 func (s *stubSharedValuesRepo) FindByClusterAndID(_, _ string) (*models.SharedValues, error) {
 	return nil, nil
 }
-func (s *stubSharedValuesRepo) Update(_ *models.SharedValues) error                  { return nil }
-func (s *stubSharedValuesRepo) Delete(_ string) error                                { return nil }
-func (s *stubSharedValuesRepo) ListByCluster(_ string) ([]models.SharedValues, error) { return nil, nil }
+func (s *stubSharedValuesRepo) Update(_ *models.SharedValues) error { return nil }
+func (s *stubSharedValuesRepo) Delete(_ string) error               { return nil }
+func (s *stubSharedValuesRepo) ListByCluster(_ string) ([]models.SharedValues, error) {
+	return nil, nil
+}
 
 type stubTemplateVersionRepo struct{}
 
@@ -996,7 +1082,7 @@ func (s *stubDeploymentLogRepo) ListRecentGlobal(_ context.Context, _ int) ([]mo
 
 type stubAuditLogRepo struct{}
 
-func (s *stubAuditLogRepo) Create(_ *models.AuditLog) error                     { return nil }
+func (s *stubAuditLogRepo) Create(_ *models.AuditLog) error { return nil }
 func (s *stubAuditLogRepo) List(_ models.AuditLogFilters) (*models.AuditLogResult, error) {
 	return nil, nil
 }
@@ -1004,10 +1090,14 @@ func (s *stubAuditLogRepo) List(_ models.AuditLogFilters) (*models.AuditLogResul
 type stubSessionStore struct{}
 
 func (s *stubSessionStore) BlockToken(_ context.Context, _ string, _ time.Time) error { return nil }
-func (s *stubSessionStore) IsTokenBlocked(_ context.Context, _ string) (bool, error)  { return false, nil }
-func (s *stubSessionStore) BlockUser(_ context.Context, _ string, _ time.Time) error  { return nil }
-func (s *stubSessionStore) IsUserBlocked(_ context.Context, _ string) (bool, error)   { return false, nil }
-func (s *stubSessionStore) UnblockUser(_ context.Context, _ string) error             { return nil }
+func (s *stubSessionStore) IsTokenBlocked(_ context.Context, _ string) (bool, error) {
+	return false, nil
+}
+func (s *stubSessionStore) BlockUser(_ context.Context, _ string, _ time.Time) error { return nil }
+func (s *stubSessionStore) IsUserBlocked(_ context.Context, _ string) (bool, error) {
+	return false, nil
+}
+func (s *stubSessionStore) UnblockUser(_ context.Context, _ string) error { return nil }
 func (s *stubSessionStore) SaveOIDCState(_ context.Context, _ string, _ sessionstore.OIDCStateData, _ time.Duration) error {
 	return nil
 }
@@ -1077,7 +1167,9 @@ func setupFullRouter(t *testing.T) (*gin.Engine, *RateLimiters) {
 		definitionRepo, chartConfigRepo, templateRepo, templateChartRepo,
 		valuesGen, userRepo, 0,
 	)
-	gitHandler := handlers.NewGitHandler(gitprovider.NewRegistry(gitprovider.Config{}))
+	gitRegistry, err := gitprovider.NewRegistry(gitprovider.Config{})
+	require.NoError(t, err)
+	gitHandler := handlers.NewGitHandler(gitRegistry)
 	auditLogHandler := handlers.NewAuditLogHandler(&stubAuditLogRepo{})
 	userHandler := handlers.NewUserHandler(userRepo)
 	apiKeyHandler := handlers.NewAPIKeyHandler(apiKeyRepo, userRepo, &cfg.Auth)
@@ -1106,37 +1198,37 @@ func setupFullRouter(t *testing.T) (*gin.Engine, *RateLimiters) {
 	require.NoError(t, err)
 
 	rl := SetupRoutes(router, Deps{
-		Repository:                  mockRepo,
-		HealthChecker:               healthChecker,
-		Config:                      cfg,
-		Hub:                         hub,
-		AuthHandler:                 authHandler,
-		TemplateHandler:             templateHandler,
-		DefinitionHandler:           definitionHandler,
-		InstanceHandler:             instanceHandler,
-		GitHandler:                  gitHandler,
-		AuditLogHandler:             auditLogHandler,
-		AuditLogger:                 &stubAuditLogger{},
-		UserHandler:                 userHandler,
-		APIKeyHandler:               apiKeyHandler,
-		AdminHandler:                adminHandler,
-		BranchOverrideHandler:       branchOverrideHandler,
+		Repository:                   mockRepo,
+		HealthChecker:                healthChecker,
+		Config:                       cfg,
+		Hub:                          hub,
+		AuthHandler:                  authHandler,
+		TemplateHandler:              templateHandler,
+		DefinitionHandler:            definitionHandler,
+		InstanceHandler:              instanceHandler,
+		GitHandler:                   gitHandler,
+		AuditLogHandler:              auditLogHandler,
+		AuditLogger:                  &stubAuditLogger{},
+		UserHandler:                  userHandler,
+		APIKeyHandler:                apiKeyHandler,
+		AdminHandler:                 adminHandler,
+		BranchOverrideHandler:        branchOverrideHandler,
 		InstanceQuotaOverrideHandler: instanceQuotaHandler,
-		FavoriteHandler:             favoriteHandler,
-		QuickDeployHandler:          quickDeployHandler,
-		AnalyticsHandler:            analyticsHandler,
-		CleanupPolicyHandler:        cleanupPolicyHandler,
-		ClusterHandler:              clusterHandler,
-		SharedValuesHandler:         sharedValuesHandler,
-		DashboardHandler:            dashboardHandler,
-		TemplateVersionHandler:      templateVersionHandler,
-		NotificationHandler:         notificationHandler,
-		OIDCHandler:                 oidcHandler,
-		UserRepo:                    userRepo,
-		APIKeyRepo:                  apiKeyRepo,
-		ClusterRepo:                 clusterRepo,
-		InstanceRepo:                instanceRepo,
-		SessionStore:                &stubSessionStore{},
+		FavoriteHandler:              favoriteHandler,
+		QuickDeployHandler:           quickDeployHandler,
+		AnalyticsHandler:             analyticsHandler,
+		CleanupPolicyHandler:         cleanupPolicyHandler,
+		ClusterHandler:               clusterHandler,
+		SharedValuesHandler:          sharedValuesHandler,
+		DashboardHandler:             dashboardHandler,
+		TemplateVersionHandler:       templateVersionHandler,
+		NotificationHandler:          notificationHandler,
+		OIDCHandler:                  oidcHandler,
+		UserRepo:                     userRepo,
+		APIKeyRepo:                   apiKeyRepo,
+		ClusterRepo:                  clusterRepo,
+		InstanceRepo:                 instanceRepo,
+		SessionStore:                 &stubSessionStore{},
 	})
 	t.Cleanup(func() { rl.Stop() })
 
@@ -1522,13 +1614,13 @@ func TestSetupRoutes_ClusterHandlerFallbackConstruction(t *testing.T) {
 	authHandler := handlers.NewAuthHandler(&stubUserRepo{}, &cfg.Auth, &cfg.OIDC)
 
 	rl := SetupRoutes(router, Deps{
-		Repository:    mockRepo,
-		HealthChecker: healthChecker,
-		Config:        cfg,
-		Hub:           hub,
-		AuthHandler:   authHandler,
-		UserRepo:      &stubUserRepo{},
-		APIKeyRepo:    &stubAPIKeyRepo{},
+		Repository:     mockRepo,
+		HealthChecker:  healthChecker,
+		Config:         cfg,
+		Hub:            hub,
+		AuthHandler:    authHandler,
+		UserRepo:       &stubUserRepo{},
+		APIKeyRepo:     &stubAPIKeyRepo{},
 		ClusterHandler: nil, // explicitly nil
 		ClusterRepo:    &stubClusterRepo{},
 		InstanceRepo:   &stubStackInstanceRepo{},

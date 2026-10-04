@@ -169,7 +169,7 @@ backend/
     cache/                       # Generic concurrent in-memory TTL cache
     cluster/                     # ClusterRegistry (multi-cluster coordination), health poller, quota monitor, secret refresher
     deployer/                    # Helm CLI wrapper for deploy/undeploy/rollback/status (multi-cluster via registry), cleanup executor, expiry stopper
-    gitprovider/                 # Azure DevOps + GitLab branch listing, URL detection, 5-minute cache
+    gitprovider/                 # Azure DevOps + GitHub + GitLab branch listing, URL detection, 5-minute cache
     helm/                        # Values deep-merge, template variable substitution
     hooks/                       # Outbound lifecycle webhooks: dispatcher, HMAC-signed client, actions, config file (see docs/hooks.md, EXTENDING.md)
     k8s/                         # Kubernetes cluster client, status watcher, resource quotas, pod exec, scaling
@@ -197,7 +197,7 @@ backend/
 
 **Filter whitelist**: `GenericRepository` has `allowedFilterFields` map. New entities need `NewRepositoryWithFilterFields()` or the existing repo must be extended.
 
-**Routes registration**: `SetupRoutes()` accepts a `Deps` struct with all handler and repository dependencies; handlers are optional and registered inside `if deps.XHandler != nil` blocks. Returns `*RateLimiters` (API limiter + optional login limiter; caller must call `Stop()` on shutdown). Global middleware order: RequestID → RedactWSToken → HTTPMetrics (if `OTEL_ENABLED` or `METRICS_ENABLED`) → otelgin (if `OTEL_ENABLED`) → Logger → Recovery → SecurityHeaders → CORS → MaxBodySize (1MB). `/api/v1` adds the API rate limiter (`RATE_LIMIT`, default 100 req/min per IP); login gets a stricter limiter when `LOGIN_RATE_LIMIT` > 0 (default 10/min). The authenticated group adds `CombinedAuth` (JWT + API key, checks token blocklist and disabled users), `SpanEnrichUser` (if `OTEL_ENABLED`), and `NewAuditMiddleware` (if an audit logger is configured). Role-based access via `RequireAdmin()`/`RequireDevOps()`. WebSocket at `/ws`, health at `/health/*`.
+**Routes registration**: `SetupRoutes()` accepts a `Deps` struct with all handler and repository dependencies; handlers are optional and registered inside `if deps.XHandler != nil` blocks. Returns `*RateLimiters` (API limiter + optional login limiter; caller must call `Stop()` on shutdown). Global middleware order: RequestID → RedactWSToken → RedactGitRepoQuery → HTTPMetrics (if `OTEL_ENABLED` or `METRICS_ENABLED`) → otelgin (if `OTEL_ENABLED`) → Logger → Recovery → SecurityHeaders → CORS → MaxBodySize (1MB). `/api/v1` adds the API rate limiter (`RATE_LIMIT`, default 100 req/min per IP); login gets a stricter limiter when `LOGIN_RATE_LIMIT` > 0 (default 10/min). The authenticated group adds `CombinedAuth` (JWT + API key, checks token blocklist and disabled users), `SpanEnrichUser` (if `OTEL_ENABLED`), and `NewAuditMiddleware` (if an audit logger is configured). Role-based access via `RequireAdmin()`/`RequireDevOps()`. WebSocket at `/ws`, health at `/health/*`.
 
 **Sessions**: Login returns a JWT (with a `jti`) and a refresh token. `POST /auth/refresh` rotates the refresh token through `RefreshTokenRepository` (reuse of a rotated token revokes the whole family). `/auth/logout` blocklists the current access-token `jti` in `sessionstore` and revokes the presented refresh token; `/auth/logout-all` also revokes every refresh token of the user. JWT auth checks `IsTokenBlocked` and fails open on store errors (log + continue); API-key auth skips the blocklist. Disabling a user blocks the user in `sessionstore` and all auth paths (login, refresh, OIDC, API key) reject `User.Disabled`.
 
@@ -300,7 +300,7 @@ This application enables developers to configure, store, and deploy multi-servic
 ```
 backend/internal/
   cluster/               # ClusterRegistry: multi-cluster client management, health poller, quota monitor, secret refresher
-  gitprovider/           # Azure DevOps + GitLab branch listing, URL detection, caching
+  gitprovider/           # Azure DevOps + GitHub + GitLab branch listing, URL detection, caching
   helm/                  # Values deep-merge, template variable substitution, YAML export
   deployer/              # Helm CLI wrapper for deploy/undeploy/rollback/status (multi-cluster via registry), cleanup executor, expiry stopper
   k8s/                   # Kubernetes cluster client, status watcher, resource quota management, pod exec, scaling
@@ -320,7 +320,7 @@ backend/internal/
 - **Branch default**: "master" unless overridden per stack definition's `DefaultBranch` field
 - **Namespace naming**: Auto-generated as `stack-{instance-name}-{owner}`
 - **Multi-cluster**: Clusters are registered via `/api/v1/clusters` with kubeconfig data (encrypted at rest via `pkg/crypto`) or kubeconfig path. `ClusterRegistry` manages per-cluster K8s/Helm clients. Health poller monitors cluster status. Stack instances target a specific cluster (or the default). Per-cluster container registry credentials (`registry_url`, `registry_username`, `registry_password`) enable automatic image pull secret provisioning at deploy time and periodic refresh (4h) via `SecretRefresher`.
-- **Git provider detection**: URL-based — `dev.azure.com`/`visualstudio.com` → Azure DevOps; `gitlab.com` or custom → GitLab
+- **Git provider detection**: URL-based — `dev.azure.com`/`visualstudio.com` → Azure DevOps; `github.com` → GitHub; `gitlab.com` or custom → GitLab
 - **Helm values merge**: Merge order shared values (cluster-scoped, by priority) → chart default values → instance overrides → template locked values (locked always wins). Then substitute template vars `{{.Branch}}`, `{{.Namespace}}`, `{{.InstanceName}}`, `{{.StackName}}`, `{{.Owner}}`
 - **Deploy preview**: `GET /stack-instances/:id/deploy-preview` returns the merged values per chart without deploying
 - **Rollback**: `POST /stack-instances/:id/rollback` rolls Helm releases back; fires `pre-rollback`, then `rollback-completed` on either outcome and `post-rollback` only on success

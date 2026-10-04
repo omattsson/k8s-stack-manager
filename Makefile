@@ -371,10 +371,69 @@ helm-lint: ## Lint the Helm chart
 	helm lint $(HELM_CHART) \
 		--values $(HELM_CHART)/tests/external-secrets-values.yaml
 
-helm-test: ## Verify default and External Secrets Helm renders
+helm-test: ## Verify Deployment, Argo Rollout, and External Secrets Helm renders
 	@set -e; \
 	template_file=$$(mktemp); \
 	trap 'rm -f "$$template_file"' EXIT; \
+	helm template $(HELM_RELEASE) $(HELM_CHART) --show-only templates/backend/configmap.yaml \
+		--set backend.secrets.JWT_SECRET=dummy-jwt-secret-for-template > "$$template_file"; \
+	grep -q 'GITHUB_ALLOWED_REPOSITORIES: ""' "$$template_file"; \
+	helm template $(HELM_RELEASE) $(HELM_CHART) --show-only templates/backend/configmap.yaml \
+		--set backend.secrets.JWT_SECRET=dummy-jwt-secret-for-template \
+		--set-string 'backend.env.GITHUB_ALLOWED_REPOSITORIES=example-org/api\,example-org/web' > "$$template_file"; \
+	grep -q 'GITHUB_ALLOWED_REPOSITORIES: "example-org/api,example-org/web"' "$$template_file"; \
+	for rollout_mode in false true; do \
+		if [ "$$rollout_mode" = true ]; then \
+			workload_template=templates/backend/rollout.yaml; \
+			expected_kind=Rollout; \
+		else \
+			workload_template=templates/backend/deployment.yaml; \
+			expected_kind=Deployment; \
+		fi; \
+		helm template $(HELM_RELEASE) $(HELM_CHART) --show-only "$$workload_template" \
+			--set backend.secrets.JWT_SECRET=dummy-jwt-secret-for-template \
+			--set argoRollouts.enabled="$$rollout_mode" > "$$template_file"; \
+		grep -q "^kind: $${expected_kind}$$" "$$template_file"; \
+		awk '/envFrom:/{env=1} env && /configMapRef:/{config_ref=1; next} config_ref && /name: k8s-stack-manager-backend$$/{config=1; config_ref=0} env && /secretRef:/{secret_ref=1; next} secret_ref && /name: k8s-stack-manager-backend$$/{secret=1; secret_ref=0} END{exit !(config && secret)}' "$$template_file"; \
+		base_config_checksum=$$(awk '/checksum\/config:/{print $$2; exit}' "$$template_file"); \
+		base_secret_checksum=$$(awk '/checksum\/secret:/{print $$2; exit}' "$$template_file"); \
+		test -n "$$base_config_checksum"; \
+		test -n "$$base_secret_checksum"; \
+		helm template $(HELM_RELEASE) $(HELM_CHART) --show-only "$$workload_template" \
+			--set backend.secrets.JWT_SECRET=dummy-jwt-secret-for-template \
+			--set argoRollouts.enabled="$$rollout_mode" \
+			--set-string backend.env.GITHUB_ALLOWED_REPOSITORIES=example-org/api > "$$template_file"; \
+		allowlist_config_checksum=$$(awk '/checksum\/config:/{print $$2; exit}' "$$template_file"); \
+		allowlist_secret_checksum=$$(awk '/checksum\/secret:/{print $$2; exit}' "$$template_file"); \
+		test "$$base_config_checksum" != "$$allowlist_config_checksum"; \
+		test "$$base_secret_checksum" = "$$allowlist_secret_checksum"; \
+		helm template $(HELM_RELEASE) $(HELM_CHART) --show-only "$$workload_template" \
+			--set backend.secrets.JWT_SECRET=dummy-jwt-secret-for-template \
+			--set argoRollouts.enabled="$$rollout_mode" \
+			--set-string backend.env.GITHUB_ALLOWED_REPOSITORIES=example-org/api \
+			--set-string backend.secrets.GITHUB_TOKEN=github-token-for-checksum-test > "$$template_file"; \
+		token_config_checksum=$$(awk '/checksum\/config:/{print $$2; exit}' "$$template_file"); \
+		token_secret_checksum=$$(awk '/checksum\/secret:/{print $$2; exit}' "$$template_file"); \
+		test "$$allowlist_config_checksum" = "$$token_config_checksum"; \
+		test "$$base_secret_checksum" != "$$token_secret_checksum"; \
+		helm template $(HELM_RELEASE) $(HELM_CHART) --show-only "$$workload_template" \
+			--values $(HELM_CHART)/tests/external-secrets-values.yaml \
+			--set argoRollouts.enabled="$$rollout_mode" > "$$template_file"; \
+		awk '/envFrom:/{env=1} env && /configMapRef:/{config_ref=1; next} config_ref && /name: k8s-stack-manager-backend$$/{config=1; config_ref=0} env && /secretRef:/{secret_ref=1; next} secret_ref && /name: k8s-stack-manager-backend$$/{secret=1; secret_ref=0} END{exit !(config && secret)}' "$$template_file"; \
+		external_secret_checksum=$$(awk '/checksum\/secret:/{print $$2; exit}' "$$template_file"); \
+		helm template $(HELM_RELEASE) $(HELM_CHART) --show-only "$$workload_template" \
+			--values $(HELM_CHART)/tests/external-secrets-values.yaml \
+			--set argoRollouts.enabled="$$rollout_mode" \
+			--set-string backend.secrets.GITHUB_TOKEN=ignored-in-external-secrets-mode > "$$template_file"; \
+		ignored_inline_checksum=$$(awk '/checksum\/secret:/{print $$2; exit}' "$$template_file"); \
+		test "$$external_secret_checksum" = "$$ignored_inline_checksum"; \
+		helm template $(HELM_RELEASE) $(HELM_CHART) --show-only "$$workload_template" \
+			--values $(HELM_CHART)/tests/external-secrets-values.yaml \
+			--set argoRollouts.enabled="$$rollout_mode" \
+			--set-string externalSecrets.data[4].remoteRef.key=k8s-stack-manager-github-token-new-reference > "$$template_file"; \
+		changed_mapping_checksum=$$(awk '/checksum\/secret:/{print $$2; exit}' "$$template_file"); \
+		test "$$external_secret_checksum" != "$$changed_mapping_checksum"; \
+	done; \
 	helm template $(HELM_RELEASE) $(HELM_CHART) --namespace $(HELM_NAMESPACE) \
 		--set backend.secrets.JWT_SECRET=dummy-jwt-secret-for-template > "$$template_file"; \
 	grep -q 'Source: k8s-stack-manager/templates/mysql/secret.yaml' "$$template_file"; \
@@ -388,8 +447,10 @@ helm-test: ## Verify default and External Secrets Helm renders
 	grep -q 'MYSQL_PASSWORD:' "$$template_file"; \
 	helm template $(HELM_RELEASE) $(HELM_CHART) --show-only templates/backend/secret.yaml \
 		--set backend.secrets.JWT_SECRET=dummy-jwt-secret-for-template \
+		--set backend.secrets.GITHUB_TOKEN=github-token-for-template \
 		--set mysql.auth.rootPassword=inline-root-password > "$$template_file"; \
 	grep -q 'DB_PASSWORD: "aW5saW5lLXJvb3QtcGFzc3dvcmQ="' "$$template_file"; \
+	grep -q 'GITHUB_TOKEN: "Z2l0aHViLXRva2VuLWZvci10ZW1wbGF0ZQ=="' "$$template_file"; \
 	helm template $(HELM_RELEASE) $(HELM_CHART) --show-only templates/backend/secret.yaml \
 		--set backend.secrets.JWT_SECRET=dummy-jwt-secret-for-template \
 		--set mysql.auth.rootPassword=inline-root-password --set mysql.auth.user=app-user \
@@ -404,6 +465,7 @@ helm-test: ## Verify default and External Secrets Helm renders
 		--values $(HELM_CHART)/tests/external-secrets-values.yaml > "$$template_file"; \
 	! grep -q 'Source: k8s-stack-manager/templates/mysql/secret.yaml' "$$template_file"; \
 	grep -q 'key: k8s-stack-manager-mysql-root-password' "$$template_file"; \
+	awk '/^kind: ExternalSecret$$/{backend=0} /^  name: .*backend$$/{backend=1} backend && /secretKey: GITHUB_TOKEN/{token=1} backend && token && /key: k8s-stack-manager-github-token$$/{remote=1} END{exit !(token && remote)}' "$$template_file"; \
 	    awk '/^kind: ExternalSecret$$/{backend=0} /^  name: .*backend$$/{backend=1} backend && /secretKey: ADMIN_PASSWORD/{admin=1} END{exit !admin}' "$$template_file"; \
 	awk '/^kind: ExternalSecret$$/{mysql=0} /^  name: .*mysql$$/{mysql=1} mysql && /secretKey: MYSQL_PASSWORD/{password=1} mysql && /key: k8s-stack-manager-mysql-password/{remote=1} END{exit !(password && remote)}' "$$template_file"; \
 			awk '/^kind: ExternalSecret$$/{backend=0} /^  name: .*backend$$/{backend=1} backend && /secretKey: DB_PASSWORD/{password=1} backend && password && /key: k8s-stack-manager-mysql-password$$/{key=1} backend && password && /property: application-password$$/{property=1} backend && password && /version: user-v2$$/{version=1} END{exit !(password && key && property && version)}' "$$template_file"; \

@@ -1210,11 +1210,17 @@ export const instanceService = {
   },
 };
 
+/** Availability status for a supported Git provider. */
+export interface ProviderStatus {
+  type: string;
+  available: boolean;
+}
+
 /** Git provider service for branch listing and validation. Maps to `/api/v1/git`. */
 export const gitService = {
   /**
    * List branches for a git repository.
-   * @param repoUrl - Repository URL (Azure DevOps or GitLab)
+   * @param repoUrl - Repository URL (Azure DevOps, GitLab, or GitHub)
    * @returns Array of branch names
    * @see GET /api/v1/git/branches
    */
@@ -1244,13 +1250,13 @@ export const gitService = {
     }
   },
   /**
-   * List configured git providers.
-   * @returns Array of provider names
+   * List availability statuses for supported Git providers.
+   * @returns Array of provider status objects
    * @see GET /api/v1/git/providers
    */
-  providers: async (): Promise<string[]> => {
+  providers: async (): Promise<ProviderStatus[]> => {
     try {
-      const response = await api.get('/api/v1/git/providers');
+      const response = await api.get<ProviderStatus[]>('/api/v1/git/providers');
       return response.data;
     } catch (error) {
       console.error('Failed to fetch providers:', error);

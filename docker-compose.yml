@@ -56,6 +56,8 @@ services:
       # Git providers (optional - leave empty for local dev)
       - AZURE_DEVOPS_PAT=${AZURE_DEVOPS_PAT:-}
       - AZURE_DEVOPS_DEFAULT_ORG=${AZURE_DEVOPS_DEFAULT_ORG:-}
+      - GITHUB_TOKEN=${GITHUB_TOKEN:-}
+      - GITHUB_ALLOWED_REPOSITORIES=${GITHUB_ALLOWED_REPOSITORIES:-}
       - GITLAB_TOKEN=${GITLAB_TOKEN:-}
       - GITLAB_BASE_URL=${GITLAB_BASE_URL:-https://gitlab.com}
       # Deployment

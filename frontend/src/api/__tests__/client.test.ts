@@ -810,7 +810,11 @@ describe('gitService', () => {
 
   it('providers sends GET to /api/v1/git/providers', async () => {
     const api = mockApi;
-    const providers = ['azure-devops', 'gitlab'];
+    const providers = [
+      { type: 'azure_devops', available: false },
+      { type: 'github', available: true },
+      { type: 'gitlab', available: false },
+    ];
     api.get.mockResolvedValueOnce(mockResponse(providers));
 
     const result = await gitService.providers();
