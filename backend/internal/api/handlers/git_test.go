@@ -215,26 +215,42 @@ func TestGitProviderErrorMappings(t *testing.T) {
 	}
 }
 
-func TestGitProviderRateLimitHeaderClampsPastResetToZero(t *testing.T) {
+func TestGitProviderRateLimitHeader(t *testing.T) {
 	t.Parallel()
-	gin.SetMode(gin.TestMode)
 
-	router := gin.New()
-	router.GET("/rate-limit", func(c *gin.Context) {
-		writeGitProviderError(c, &gitprovider.RateLimitError{
-			Provider:   "github",
-			Message:    "sanitized rate limit",
-			RetryAfter: time.Now().Add(-time.Minute),
+	tests := []struct {
+		name           string
+		retryAfter     time.Time
+		expectedHeader string
+	}{
+		{name: "omits unknown reset", retryAfter: time.Time{}, expectedHeader: ""},
+		{name: "clamps past reset to zero", retryAfter: time.Now().Add(-time.Minute), expectedHeader: "0"},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			gin.SetMode(gin.TestMode)
+
+			router := gin.New()
+			router.GET("/rate-limit", func(c *gin.Context) {
+				writeGitProviderError(c, &gitprovider.RateLimitError{
+					Provider:   "github",
+					Message:    "sanitized rate limit",
+					RetryAfter: tt.retryAfter,
+				})
+			})
+
+			response := httptest.NewRecorder()
+			request := httptest.NewRequest(http.MethodGet, "/rate-limit", nil)
+			router.ServeHTTP(response, request)
+
+			assert.Equal(t, http.StatusTooManyRequests, response.Code)
+			assert.Equal(t, tt.expectedHeader, response.Header().Get("Retry-After"))
+			assert.JSONEq(t, `{"error":"Git provider rate limit exceeded"}`, response.Body.String())
 		})
-	})
-
-	response := httptest.NewRecorder()
-	request := httptest.NewRequest(http.MethodGet, "/rate-limit", nil)
-	router.ServeHTTP(response, request)
-
-	assert.Equal(t, http.StatusTooManyRequests, response.Code)
-	assert.Equal(t, "0", response.Header().Get("Retry-After"))
-	assert.JSONEq(t, `{"error":"Git provider rate limit exceeded"}`, response.Body.String())
+	}
 }
 
 // gitlabBranchesHandler returns a handler that serves a static list of branch names

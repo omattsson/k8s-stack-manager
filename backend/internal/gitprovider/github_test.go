@@ -757,13 +757,15 @@ func TestGitHubRetryAfterAndErrorClassification(t *testing.T) {
 
 	retryAt := time.Date(2026, time.October, 5, 12, 0, 0, 0, time.UTC)
 	tests := []struct {
-		name       string
-		statusCode int
-		kind       error
-		retryAfter string
+		name               string
+		retryAfter         string
+		rateLimitRemaining string
+		kind               error
+		statusCode         int
 	}{
 		{name: "authentication", statusCode: http.StatusUnauthorized, kind: ErrAuthentication},
 		{name: "permission", statusCode: http.StatusForbidden, kind: ErrAuthentication},
+		{name: "forbidden with retry after", statusCode: http.StatusForbidden, kind: ErrRateLimited, retryAfter: retryAt.Format(http.TimeFormat), rateLimitRemaining: "42"},
 		{name: "not found", statusCode: http.StatusNotFound, kind: ErrRepositoryNotFound},
 		{name: "rate limited", statusCode: http.StatusTooManyRequests, kind: ErrRateLimited, retryAfter: retryAt.Format(http.TimeFormat)},
 		{name: "upstream", statusCode: http.StatusBadGateway, kind: ErrUpstreamFailure},
@@ -776,6 +778,9 @@ func TestGitHubRetryAfterAndErrorClassification(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				if tt.retryAfter != "" {
 					w.Header().Set("Retry-After", tt.retryAfter)
+				}
+				if tt.rateLimitRemaining != "" {
+					w.Header().Set("X-RateLimit-Remaining", tt.rateLimitRemaining)
 				}
 				w.WriteHeader(tt.statusCode)
 				_, _ = w.Write([]byte("credential-marker"))

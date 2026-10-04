@@ -387,12 +387,16 @@ func githubResponseError(resp *http.Response, info *githubRepoInfo) error {
 		return nil
 	}
 
+	retryAfter := resp.Header.Get("Retry-After")
+	if (resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusTooManyRequests) && !parseRetryAfter(retryAfter, time.Now()).IsZero() {
+		return githubRateLimitError(resp.Header.Get("X-RateLimit-Reset"), retryAfter)
+	}
 	remaining, remainingErr := strconv.ParseInt(resp.Header.Get("X-RateLimit-Remaining"), 10, 64)
 	if (resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusTooManyRequests) && remainingErr == nil && remaining == 0 {
-		return githubRateLimitError(resp.Header.Get("X-RateLimit-Reset"), resp.Header.Get("Retry-After"))
+		return githubRateLimitError(resp.Header.Get("X-RateLimit-Reset"), retryAfter)
 	}
 	if resp.StatusCode == http.StatusTooManyRequests {
-		return rateLimitError("github", "GitHub API rate limit exceeded; retry later", parseRetryAfter(resp.Header.Get("Retry-After"), time.Now()))
+		return rateLimitError("github", "GitHub API rate limit exceeded; retry later", parseRetryAfter(retryAfter, time.Now()))
 	}
 	if resp.StatusCode == http.StatusUnauthorized {
 		return providerError(ErrAuthentication, "github", "GitHub authentication failed (HTTP 401); check GITHUB_TOKEN", nil)

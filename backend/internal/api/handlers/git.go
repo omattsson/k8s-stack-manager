@@ -94,11 +94,13 @@ func (h *GitHandler) ValidateBranch(c *gin.Context) {
 func writeGitProviderError(c *gin.Context, err error) {
 	var rateLimitErr *gitprovider.RateLimitError
 	if errors.As(err, &rateLimitErr) {
-		retryAfterSeconds := int64(math.Ceil(time.Until(rateLimitErr.RetryAfter).Seconds()))
-		if retryAfterSeconds < 0 {
-			retryAfterSeconds = 0
+		if !rateLimitErr.RetryAfter.IsZero() {
+			retryAfterSeconds := int64(math.Ceil(time.Until(rateLimitErr.RetryAfter).Seconds()))
+			if retryAfterSeconds < 0 {
+				retryAfterSeconds = 0
+			}
+			c.Header("Retry-After", strconv.FormatInt(retryAfterSeconds, 10))
 		}
-		c.Header("Retry-After", strconv.FormatInt(retryAfterSeconds, 10))
 		c.JSON(http.StatusTooManyRequests, gin.H{"error": "Git provider rate limit exceeded"})
 		return
 	}
