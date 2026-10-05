@@ -1,4 +1,4 @@
-import axios from 'axios';
+import axios, { type AxiosRequestConfig } from 'axios';
 import { axiosConfig } from './config';
 import type {
   LoginRequest,
@@ -1221,12 +1221,19 @@ export const gitService = {
   /**
    * List branches for a git repository.
    * @param repoUrl - Repository URL (Azure DevOps, GitLab, or GitHub)
+   * @param config - Optional Axios request config containing an abort signal
    * @returns Array of branch names
    * @see GET /api/v1/git/branches
    */
-  branches: async (repoUrl: string): Promise<string[]> => {
+  branches: async (
+    repoUrl: string,
+    config?: Pick<AxiosRequestConfig, 'signal'>,
+  ): Promise<string[]> => {
     try {
-      const response = await api.get('/api/v1/git/branches', { params: { repo: repoUrl } });
+      const response = await api.get('/api/v1/git/branches', {
+        ...config,
+        params: { repo: repoUrl },
+      });
       return response.data.map((b: { name: string }) => b.name);
     } catch (error) {
       console.error('Failed to fetch branches:', error);
