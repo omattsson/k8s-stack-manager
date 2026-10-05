@@ -13,6 +13,8 @@ import (
 	"strings"
 	"time"
 
+	"backend/internal/gitprovider"
+
 	"github.com/joho/godotenv"
 )
 
@@ -55,10 +57,12 @@ type AuthConfig struct {
 
 // GitProviderConfig holds Git provider configuration.
 type GitProviderConfig struct {
-	AzureDevOpsPAT        string
-	AzureDevOpsDefaultOrg string
-	GitLabToken           string
-	GitLabBaseURL         string
+	AzureDevOpsPAT            string
+	AzureDevOpsDefaultOrg     string
+	GitHubToken               string
+	GitLabToken               string
+	GitLabBaseURL             string
+	GitHubAllowedRepositories []string
 }
 
 // NamespaceRoleBindingSpec describes a RoleBinding that the deployer applies
@@ -284,6 +288,22 @@ func (c *Config) Validate() error {
 		}
 	}
 
+	if err := c.GitProvider.Validate(); err != nil {
+		return fmt.Errorf("git provider config: %w", err)
+	}
+
+	return nil
+}
+
+// Validate checks Git provider configuration without exposing secret values.
+func (c *GitProviderConfig) Validate() error {
+	githubConfig := gitprovider.GitHubConfig{AllowedRepositories: c.GitHubAllowedRepositories}
+	if err := githubConfig.Validate(); err != nil {
+		return errors.New("GITHUB_ALLOWED_REPOSITORIES contains an invalid repository")
+	}
+	if c.GitHubToken != "" && len(c.GitHubAllowedRepositories) == 0 {
+		return errors.New("GITHUB_ALLOWED_REPOSITORIES is required when GITHUB_TOKEN is set")
+	}
 	return nil
 }
 
@@ -557,11 +577,32 @@ func loadAuthConfig() AuthConfig {
 
 func loadGitProviderConfig() GitProviderConfig {
 	return GitProviderConfig{
-		AzureDevOpsPAT:        getEnv("AZURE_DEVOPS_PAT", ""),
-		AzureDevOpsDefaultOrg: getEnv("AZURE_DEVOPS_DEFAULT_ORG", ""),
-		GitLabToken:           getEnv("GITLAB_TOKEN", ""),
-		GitLabBaseURL:         getEnv("GITLAB_BASE_URL", ""),
+		AzureDevOpsPAT:            getEnv("AZURE_DEVOPS_PAT", ""),
+		AzureDevOpsDefaultOrg:     getEnv("AZURE_DEVOPS_DEFAULT_ORG", ""),
+		GitHubToken:               getEnv("GITHUB_TOKEN", ""),
+		GitLabToken:               getEnv("GITLAB_TOKEN", ""),
+		GitLabBaseURL:             getEnv("GITLAB_BASE_URL", ""),
+		GitHubAllowedRepositories: parseGitHubAllowedRepositories(getEnv("GITHUB_ALLOWED_REPOSITORIES", "")),
 	}
+}
+
+func parseGitHubAllowedRepositories(raw string) []string {
+	if strings.TrimSpace(raw) == "" {
+		return nil
+	}
+
+	entries := strings.Split(raw, ",")
+	allowed := make([]string, 0, len(entries))
+	seen := make(map[string]struct{}, len(entries))
+	for _, entry := range entries {
+		normalized := strings.ToLower(strings.TrimSpace(entry))
+		if _, exists := seen[normalized]; exists {
+			continue
+		}
+		seen[normalized] = struct{}{}
+		allowed = append(allowed, normalized)
+	}
+	return allowed
 }
 
 func loadDeploymentConfig() DeploymentConfig {

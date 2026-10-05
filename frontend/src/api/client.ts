@@ -1,4 +1,4 @@
-import axios from 'axios';
+import axios, { type AxiosRequestConfig } from 'axios';
 import { axiosConfig } from './config';
 import type {
   LoginRequest,
@@ -1210,17 +1210,30 @@ export const instanceService = {
   },
 };
 
+/** Availability status for a supported Git provider. */
+export interface ProviderStatus {
+  type: string;
+  available: boolean;
+}
+
 /** Git provider service for branch listing and validation. Maps to `/api/v1/git`. */
 export const gitService = {
   /**
    * List branches for a git repository.
-   * @param repoUrl - Repository URL (Azure DevOps or GitLab)
+   * @param repoUrl - Repository URL (Azure DevOps, GitLab, or GitHub)
+   * @param config - Optional Axios request config containing an abort signal
    * @returns Array of branch names
    * @see GET /api/v1/git/branches
    */
-  branches: async (repoUrl: string): Promise<string[]> => {
+  branches: async (
+    repoUrl: string,
+    config?: Pick<AxiosRequestConfig, 'signal'>,
+  ): Promise<string[]> => {
     try {
-      const response = await api.get('/api/v1/git/branches', { params: { repo: repoUrl } });
+      const response = await api.get('/api/v1/git/branches', {
+        ...config,
+        params: { repo: repoUrl },
+      });
       return response.data.map((b: { name: string }) => b.name);
     } catch (error) {
       console.error('Failed to fetch branches:', error);
@@ -1244,13 +1257,13 @@ export const gitService = {
     }
   },
   /**
-   * List configured git providers.
-   * @returns Array of provider names
+   * List availability statuses for supported Git providers.
+   * @returns Array of provider status objects
    * @see GET /api/v1/git/providers
    */
-  providers: async (): Promise<string[]> => {
+  providers: async (): Promise<ProviderStatus[]> => {
     try {
-      const response = await api.get('/api/v1/git/providers');
+      const response = await api.get<ProviderStatus[]>('/api/v1/git/providers');
       return response.data;
     } catch (error) {
       console.error('Failed to fetch providers:', error);

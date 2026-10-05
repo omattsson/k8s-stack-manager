@@ -3700,8 +3700,42 @@ paths:
             additionalProperties:
               type: string
             type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "429":
+          description: Too Many Requests
+          headers:
+            Retry-After:
+              description: Provider rate limit retry delay in seconds, when supplied
+              type: integer
+          schema:
+            additionalProperties:
+              type: string
+            type: object
         "500":
           description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "502":
+          description: Bad Gateway
           schema:
             additionalProperties:
               type: string
@@ -3727,6 +3761,24 @@ paths:
             items:
               $ref: '#/definitions/gitprovider.ProviderStatus'
             type: array
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "429":
+          description: Too Many Requests
+          schema:
+            additionalProperties:
+              type: string
+            type: object
       summary: List Git providers
       tags:
       - git
@@ -3758,8 +3810,42 @@ paths:
             additionalProperties:
               type: string
             type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "429":
+          description: Too Many Requests
+          headers:
+            Retry-After:
+              description: Provider rate limit retry delay in seconds, when supplied
+              type: integer
+          schema:
+            additionalProperties:
+              type: string
+            type: object
         "500":
           description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "502":
+          description: Bad Gateway
           schema:
             additionalProperties:
               type: string
@@ -3998,7 +4084,6 @@ paths:
           description: OK
           schema:
             additionalProperties:
-              format: int64
               type: integer
             type: object
         "401":

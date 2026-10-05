@@ -780,6 +780,19 @@ describe('gitService', () => {
     expect(result).toEqual(['main', 'develop', 'feature/x']);
   });
 
+  it('branches forwards an optional abort signal', async () => {
+    const api = mockApi;
+    const controller = new AbortController();
+    api.get.mockResolvedValueOnce(mockResponse([{ name: 'main' }]));
+
+    await gitService.branches('https://github.com/org/repo', { signal: controller.signal });
+
+    expect(api.get).toHaveBeenCalledWith('/api/v1/git/branches', {
+      signal: controller.signal,
+      params: { repo: 'https://github.com/org/repo' },
+    });
+  });
+
   it('branches throws on error', async () => {
     const api = mockApi;
     api.get.mockRejectedValueOnce(new Error('Not Found'));
@@ -810,7 +823,11 @@ describe('gitService', () => {
 
   it('providers sends GET to /api/v1/git/providers', async () => {
     const api = mockApi;
-    const providers = ['azure-devops', 'gitlab'];
+    const providers = [
+      { type: 'azure_devops', available: false },
+      { type: 'github', available: true },
+      { type: 'gitlab', available: false },
+    ];
     api.get.mockResolvedValueOnce(mockResponse(providers));
 
     const result = await gitService.providers();

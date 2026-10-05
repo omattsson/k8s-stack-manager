@@ -23,6 +23,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"testing"
 	"time"
 
@@ -908,6 +909,79 @@ func TestBuildDomainServices_ReturnsAllFields(t *testing.T) {
 	// HookDispatcher and ActionRegistry are nil when HooksConfigFile is empty.
 	assert.Nil(t, svc.HookDispatcher, "HookDispatcher should be nil when no hooks config")
 	assert.Nil(t, svc.ActionRegistry, "ActionRegistry should be nil when no hooks config")
+}
+
+func TestBuildDomainServices_PassesGitHubTokenToRegistry(t *testing.T) {
+	t.Parallel()
+
+	cfg := buildTestConfig()
+	cfg.GitProvider.GitHubToken = "github-token-marker"
+	cfg.GitProvider.GitHubAllowedRepositories = []string{"octo-org/permitted"}
+	repos := buildTestRepositorySet()
+	hub := buildTestHub(t)
+
+	svc, err := buildDomainServices(cfg, repos, hub, health.New())
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		svc.WatcherCancel()
+		svc.K8sWatcher.Stop()
+		svc.HealthPoller.Stop()
+		svc.SecretRefresher.Stop()
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	assert.Error(t, svc.GitRegistry.HealthCheck(ctx), "a configured GitHub token must enable the registry health check")
+}
+
+func TestBuildDomainServices_RejectsGitHubTokenWithoutAllowlist(t *testing.T) {
+	t.Parallel()
+
+	cfg := buildTestConfig()
+	cfg.GitProvider.GitHubToken = "github-token-secret-marker"
+
+	svc, err := buildDomainServices(cfg, buildTestRepositorySet(), buildTestHub(t), health.New())
+	require.Error(t, err)
+	assert.Nil(t, svc)
+	assert.Contains(t, err.Error(), "build Git provider registry")
+	assert.NotContains(t, err.Error(), "github-token-secret-marker")
+}
+
+func TestBuildDomainServices_PassesGitHubAllowedRepositoriesToRegistry(t *testing.T) {
+	t.Parallel()
+
+	cfg := buildTestConfig()
+	if !setGitHubAllowedRepositories(t, &cfg.GitProvider, []string{"octo-org/permitted"}) {
+		return
+	}
+	repos := buildTestRepositorySet()
+	hub := buildTestHub(t)
+
+	svc, err := buildDomainServices(cfg, repos, hub, health.New())
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		svc.WatcherCancel()
+		svc.K8sWatcher.Stop()
+		svc.HealthPoller.Stop()
+		svc.SecretRefresher.Stop()
+	})
+
+	_, err = svc.GitRegistry.ListBranches(context.Background(), "https://github.com/octo-org/denied-marker")
+	assert.ErrorIs(t, err, gitprovider.ErrRepositoryNotAllowed)
+	assert.NotContains(t, err.Error(), "denied-marker")
+}
+
+func setGitHubAllowedRepositories(t *testing.T, providerConfig *config.GitProviderConfig, allowed []string) bool {
+	t.Helper()
+	field := reflect.ValueOf(providerConfig).Elem().FieldByName("GitHubAllowedRepositories")
+	if !assert.True(t, field.IsValid(), "GitProviderConfig must expose parsed GitHubAllowedRepositories") {
+		return false
+	}
+	if !assert.True(t, field.CanSet(), "GitHubAllowedRepositories must be settable during bootstrap") {
+		return false
+	}
+	field.Set(reflect.ValueOf(allowed))
+	return true
 }
 
 func TestBuildDomainServices_InvalidHooksConfigFile(t *testing.T) {

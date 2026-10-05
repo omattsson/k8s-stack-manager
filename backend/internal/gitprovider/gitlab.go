@@ -2,9 +2,7 @@ package gitprovider
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -45,12 +43,12 @@ func parseGitLabProjectPath(rawURL string) (string, error) {
 func parseGitLabSSH(rawURL string) (string, error) {
 	colonIdx := strings.Index(rawURL, ":")
 	if colonIdx < 0 {
-		return "", fmt.Errorf("invalid GitLab SSH URL: %s", rawURL)
+		return "", providerError(ErrInvalidRepositoryURL, "gitlab", "invalid GitLab SSH URL", nil)
 	}
 	path := rawURL[colonIdx+1:]
 	path = strings.TrimSuffix(path, ".git")
 	if path == "" || !strings.Contains(path, "/") {
-		return "", fmt.Errorf("invalid GitLab SSH URL path: %s", rawURL)
+		return "", providerError(ErrInvalidRepositoryURL, "gitlab", "invalid GitLab SSH URL path", nil)
 	}
 	return path, nil
 }
@@ -61,11 +59,11 @@ func parseGitLabHTTPS(rawURL string) (string, error) {
 	rawURL = strings.TrimSuffix(rawURL, ".git")
 	slashIdx := strings.Index(rawURL, "/")
 	if slashIdx < 0 {
-		return "", fmt.Errorf("invalid GitLab URL: missing path")
+		return "", providerError(ErrInvalidRepositoryURL, "gitlab", "invalid GitLab URL: missing path", nil)
 	}
 	path := rawURL[slashIdx+1:]
 	if path == "" || !strings.Contains(path, "/") {
-		return "", fmt.Errorf("invalid GitLab URL path: %s", rawURL)
+		return "", providerError(ErrInvalidRepositoryURL, "gitlab", "invalid GitLab URL path", nil)
 	}
 	return path, nil
 }
@@ -92,24 +90,20 @@ func (p *gitlabProvider) ListBranches(ctx context.Context, repoURL string) ([]Br
 
 	resp, err := p.httpClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("GitLab API request failed: %w", err)
+		return nil, providerError(ErrUpstreamFailure, "gitlab", "GitLab API request failed", err)
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode == http.StatusUnauthorized {
-		return nil, fmt.Errorf("GitLab authentication failed (HTTP 401)")
-	}
-	if resp.StatusCode == http.StatusNotFound {
-		return nil, fmt.Errorf("GitLab project not found: %s", projectPath)
-	}
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return nil, fmt.Errorf("GitLab API returned HTTP %d: %s", resp.StatusCode, string(body))
+	if err := gitLabResponseError(resp); err != nil {
+		return nil, err
 	}
 
 	var glBranches []gitlabBranchResponse
-	if err := json.NewDecoder(resp.Body).Decode(&glBranches); err != nil {
-		return nil, fmt.Errorf("decode GitLab response: %w", err)
+	if err := decodeProviderJSON(resp.Body, &glBranches, "gitlab", "GitLab", "GitLab"); err != nil {
+		return nil, err
+	}
+	if len(glBranches) > providerMaxBranches {
+		return nil, providerError(ErrUpstreamFailure, "gitlab", "GitLab branch collection limit exceeded", nil)
 	}
 
 	branches := make([]Branch, 0, len(glBranches))
@@ -117,6 +111,22 @@ func (p *gitlabProvider) ListBranches(ctx context.Context, repoURL string) ([]Br
 		branches = append(branches, Branch{Name: b.Name, IsDefault: b.Default})
 	}
 	return branches, nil
+}
+
+func gitLabResponseError(resp *http.Response) error {
+	if resp.StatusCode == http.StatusOK {
+		return nil
+	}
+	if resp.StatusCode == http.StatusTooManyRequests {
+		return rateLimitError("gitlab", "GitLab API rate limit exceeded; retry later", parseRetryAfter(resp.Header.Get("Retry-After"), time.Now()))
+	}
+	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+		return providerError(ErrAuthentication, "gitlab", fmt.Sprintf("GitLab authentication failed or permission denied (HTTP %d)", resp.StatusCode), nil)
+	}
+	if resp.StatusCode == http.StatusNotFound {
+		return providerError(ErrRepositoryNotFound, "gitlab", "GitLab project not found", nil)
+	}
+	return providerError(ErrUpstreamFailure, "gitlab", fmt.Sprintf("GitLab API returned HTTP %d", resp.StatusCode), nil)
 }
 
 func (p *gitlabProvider) GetDefaultBranch(ctx context.Context, repoURL string) (string, error) {
@@ -129,7 +139,7 @@ func (p *gitlabProvider) GetDefaultBranch(ctx context.Context, repoURL string) (
 			return b.Name, nil
 		}
 	}
-	return "", fmt.Errorf("no default branch found for %s", repoURL)
+	return "", providerError(ErrUpstreamFailure, "gitlab", "GitLab project has no default branch", nil)
 }
 
 func (p *gitlabProvider) ValidateBranch(ctx context.Context, repoURL string, branch string) (bool, error) {

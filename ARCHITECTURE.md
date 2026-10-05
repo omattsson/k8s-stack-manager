@@ -16,7 +16,7 @@ See [WIKI.md](WIKI.md) for user-facing concepts, [EXTENDING.md](EXTENDING.md) fo
 ├──────┬──────────┬──────────┬──────────┬──────────┬───────────┤
 │MySQL │ Cluster  │ Git      │ Helm     │ Hook     │ K8s       │
 │(GORM)│ Registry │ Provider │ Values   │ Dispatch │ Deployer  │
-│      │ (multi)  │ (AzDO+GL)│ (merge)  │ (events) │ (helm)   │
+│      │ (multi)  │(Az+GH+GL)│ (merge)  │ (events) │ (helm)   │
 └──────┴──────────┴──────────┴──────────┴──────────┴───────────┘
 ```
 
@@ -34,7 +34,7 @@ backend/internal/
 ├── config/           # Env-based config loading
 ├── database/         # GORM repositories (one per model), migrations
 ├── deployer/         # Helm deploy/undeploy/rollback manager, expiry stopper, cleanup executor
-├── gitprovider/      # Azure DevOps + GitLab branch listing, URL detection, cache
+├── gitprovider/      # Azure DevOps + GitHub + GitLab branch listing, URL detection, cache
 ├── health/           # Liveness/readiness checks
 ├── helm/             # Values deep-merge, template variable substitution
 ├── hooks/            # Event dispatcher, action routing, HMAC signing

@@ -69,7 +69,7 @@ Manage your account, generate API keys for CI/CD automation, and configure notif
 ### Additional Features
 
 - **Multi-cluster support** — Register and manage multiple Kubernetes clusters with encrypted kubeconfig storage (AES-GCM). Monitor cluster health and resource utilization.
-- **Git provider integration** — Automatic branch listing from Azure DevOps and GitLab repositories, with per-chart branch overrides.
+- **Git provider integration** — Automatic branch listing from Azure DevOps, GitHub, and GitLab repositories, with per-chart branch overrides.
 - **Helm values deep merge** — Chart defaults are deep-merged with instance overrides. Template variables (`{{.Branch}}`, `{{.Namespace}}`, `{{.InstanceName}}`, etc.) are substituted automatically.
 - **Cleanup policies** — Schedule cron-based cleanup actions (stop, clean, delete) on instances matching custom conditions.
 - **TTL auto-expiry** — Set time-to-live on instances; a background reaper automatically stops expired deployments.
@@ -102,7 +102,7 @@ Frontend (React + MUI + TypeScript)
 Backend (Go + Gin)
   ├── REST API with JWT auth
   ├── MySQL (GORM)
-  ├── Git Provider (Azure DevOps + GitLab)
+  ├── Git Provider (Azure DevOps + GitHub + GitLab)
   ├── Helm Values (deep merge + template substitution)
   ├── Multi-cluster support (kubeconfig encrypted at rest)
   └── Audit Logging
@@ -264,7 +264,7 @@ full command surface.
 │   │   ├── api/               # Handlers, middleware, routes
 │   │   ├── config/            # Environment-based configuration
 │   │   ├── database/          # Database repositories + migrations
-│   │   ├── gitprovider/       # Azure DevOps + GitLab integration
+│   │   ├── gitprovider/       # Azure DevOps + GitHub + GitLab integration
 │   │   ├── helm/              # Values merge + template substitution
 │   │   ├── cluster/           # Multi-cluster registry + health poller
 │   │   ├── deployer/          # Helm CLI wrapper for deploy/undeploy (multi-cluster)
@@ -322,10 +322,20 @@ Key environment variables (see `docker-compose.yml` for full list):
 | `JWT_SECRET` | Yes | JWT signing secret (min 16 chars) |
 | `ADMIN_PASSWORD` | Yes | Initial admin password |
 | `AZURE_DEVOPS_PAT` | No | Azure DevOps personal access token |
+| `GITHUB_TOKEN` | No | GitHub fine-grained personal access token; requires `GITHUB_ALLOWED_REPOSITORIES` |
+| `GITHUB_ALLOWED_REPOSITORIES` | With `GITHUB_TOKEN` | Exact comma-separated `owner/repository` entries allowed to use the token |
 | `GITLAB_TOKEN` | No | GitLab access token |
 | `DEFAULT_BRANCH` | No | Default Git branch (default: `master`) |
 | `KUBECONFIG_ENCRYPTION_KEY` | No | Passphrase for deriving AES-256 key (SHA-256) to encrypt kubeconfig data at rest |
 | `SESSION_STORE` | No | Session store backend: `mysql` (default) or `memory` |
+
+### GitHub authentication
+
+Leave both `GITHUB_TOKEN` and `GITHUB_ALLOWED_REPOSITORIES` empty to query public repositories without authentication. This tokenless mode uses GitHub's lower unauthenticated API rate limit.
+
+For private repositories or higher rate limits, use a fine-grained personal access token restricted to exactly the repositories listed in `GITHUB_ALLOWED_REPOSITORIES`, grant only **Contents: read**, set an expiration, and rotate it before expiry. The allowlist is a comma-separated list of exact, case-insensitive `owner/repository` names; it does not support owner-wide entries, wildcards, prefixes, or repository URLs. Authenticated requests for repositories outside the list are denied with HTTP 403. Configuration fails closed at startup when `GITHUB_TOKEN` is set without a non-empty allowlist. GitHub App authentication remains an optional future integration and is not implemented.
+
+> **Upgrade required for GitHub tokens:** Before rolling out this version, existing installations that set `GITHUB_TOKEN` must configure `GITHUB_ALLOWED_REPOSITORIES` with the exact `owner/repository` entries the token may access. Ideally, apply this non-secret configuration before updating the workload so every new backend pod starts successfully. Installations without `GITHUB_TOKEN` are unaffected.
 
 ## Helm Chart (Kubernetes Deployment)
 
@@ -370,6 +380,11 @@ Before installation, install ESO with its `external-secrets.io/v1` CRDs, grant t
 
 ```yaml
 # external-secrets-values.yaml
+backend:
+  env:
+    # Must exactly match repository access granted to the token below.
+    GITHUB_ALLOWED_REPOSITORIES: example-org/api
+
 externalSecrets:
   enabled: true
   azureKeyVault:
@@ -385,6 +400,9 @@ externalSecrets:
     - secretKey: ADMIN_PASSWORD
       remoteRef:
         key: k8s-stack-manager-admin-password
+    - secretKey: GITHUB_TOKEN
+      remoteRef:
+        key: k8s-stack-manager-github-token
     - secretKey: MYSQL_ROOT_PASSWORD
       remoteRef:
         key: k8s-stack-manager-mysql-root-password
@@ -414,6 +432,8 @@ helm upgrade --install k8s-stack-manager helm/k8s-stack-manager \
 ```
 
 `externalSecrets.data` explicitly maps every Key Vault secret to an environment key. Include every non-empty key required by `backend.secrets`, plus `MYSQL_ROOT_PASSWORD` when `mysql.enabled=true`; also include `MYSQL_PASSWORD` when `mysql.auth.user` is non-empty. Do not map `DB_PASSWORD` independently: the backend Secret derives it from `MYSQL_PASSWORD` when `mysql.auth.user` is set, otherwise from `MYSQL_ROOT_PASSWORD`. The MySQL password mappings target the MySQL Secret, not the backend Secret. Do not place Key Vault values or Azure credentials in the values file.
+
+ESO can refresh the Kubernetes Secret when the remote `GITHUB_TOKEN` changes, but environment variables in an already-running backend process do not update. Restart the backend Deployment or trigger an Argo Rollout after rotation, unless an external restart controller watches the Secret and restarts workloads. Remote value rotation does not change the chart-rendered checksum because Helm cannot observe the remote secret value.
 
 This MySQL password guidance applies only when `mysql.enabled=true`. When `mysql.enabled=false`, include a `DB_PASSWORD` mapping with the `remoteRef` for the external database password.
 

@@ -1,6 +1,6 @@
 # K8s Stack Manager — Backend
 
-Go backend for the K8s Stack Manager, built with the Gin framework. Provides REST API for managing Helm-based application stack definitions, instances, templates, and value overrides. Supports JWT authentication, audit logging, Git provider integration (Azure DevOps + GitLab), Helm values generation, and multi-cluster management with encrypted kubeconfig storage.
+Go backend for the K8s Stack Manager, built with the Gin framework. Provides REST API for managing Helm-based application stack definitions, instances, templates, and value overrides. Supports JWT authentication, audit logging, Git provider integration (Azure DevOps + GitHub + GitLab), Helm values generation, and multi-cluster management with encrypted kubeconfig storage.
 
 ## Project Structure
 
@@ -19,7 +19,7 @@ backend/
 │   │   ├── repository.go              # Repository factory
 │   │   ├── migrations.go              # Versioned schema migrations
 │   │   └── errors.go                  # Re-exports from pkg/dberrors
-│   ├── gitprovider/                    # Azure DevOps + GitLab branch listing
+│   ├── gitprovider/                    # Azure DevOps + GitHub + GitLab branch listing
 │   ├── health/                         # Liveness + readiness checks
 │   ├── helm/                           # Values deep-merge + template substitution
 │   ├── deployer/                       # Helm CLI wrapper for deploy/undeploy (multi-cluster)
@@ -85,12 +85,16 @@ Key environment variables (see `docker-compose.yml` for full list):
 | `ADMIN_PASSWORD` | (required) | Initial admin password |
 | `SELF_REGISTRATION` | `false` | Allow self-registration |
 | `AZURE_DEVOPS_PAT` | | Azure DevOps personal access token |
+| `GITHUB_TOKEN` | | GitHub fine-grained personal access token; requires `GITHUB_ALLOWED_REPOSITORIES` |
+| `GITHUB_ALLOWED_REPOSITORIES` | | Exact comma-separated `owner/repository` entries allowed to use the token |
 | `GITLAB_TOKEN` | | GitLab access token |
 | `DEFAULT_BRANCH` | `master` | Default Git branch |
 | `KUBECONFIG_ENCRYPTION_KEY` | | Passphrase for deriving AES-256 key (SHA-256) to encrypt kubeconfig data and registry passwords at rest |
 | `RATE_LIMIT` | `100` | Requests per minute per IP |
 | `CORS_ALLOWED_ORIGINS` | `*` | Allowed CORS origins |
 | `SESSION_STORE` | `mysql` | Session store backend (`mysql` or `memory`) for token blocklist and OIDC state |
+
+For public GitHub repositories, leave `GITHUB_TOKEN` and `GITHUB_ALLOWED_REPOSITORIES` empty to use tokenless access at GitHub's lower unauthenticated rate limit. For authenticated access, use a fine-grained PAT restricted to exactly the allowlisted repositories, grant only **Contents: read**, set an expiration, and rotate it before expiry. Allowlist matching is exact and case-insensitive; wildcards, prefixes, owner-wide entries, and repository URLs are not accepted. Repositories outside the allowlist return HTTP 403, and startup fails closed if a token is configured without an allowlist. GitHub App authentication is not implemented.
 
 ## Data Storage
 
