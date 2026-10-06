@@ -102,6 +102,10 @@ spec:
                 name: {{ include "k8s-stack-manager.fullname" . }}-backend
             - secretRef:
                 name: {{ include "k8s-stack-manager.fullname" . }}-backend
+          {{- with .Values.backend.extraEnv }}
+          env:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
           lifecycle:
             preStop:
               exec:
@@ -143,6 +147,9 @@ spec:
               mountPath: /etc/hooks
               readOnly: true
             {{- end }}
+            {{- with .Values.backend.extraVolumeMounts }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
@@ -166,5 +173,8 @@ spec:
         - name: hooks-config
           configMap:
             name: {{ include "k8s-stack-manager.fullname" . }}-hooks
+        {{- end }}
+        {{- with .Values.backend.extraVolumes }}
+        {{- toYaml . | nindent 8 }}
         {{- end }}
 {{- end }}
