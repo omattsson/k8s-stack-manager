@@ -114,6 +114,28 @@ backend:
   #     # roleBindingName: refresh-db-snap-manager   # optional; defaults to clusterRole
   namespaceRoleBindings: []
 
+  # Extra environment variables, volumes and volume mounts for the backend
+  # container (plain Kubernetes syntax). Example: give Helm a registry login
+  # file (docker config.json format) for OCI chart repositories that need
+  # authentication, from a Secret that another tool keeps up to date:
+  #   extraEnv:
+  #     - name: HELM_REGISTRY_CONFIG
+  #       value: /etc/helm-registry/config.json
+  #   extraVolumes:
+  #     - name: helm-registry
+  #       secret:
+  #         secretName: helm-registry-config
+  #         items:
+  #           - key: .dockerconfigjson
+  #             path: config.json
+  #   extraVolumeMounts:
+  #     - name: helm-registry
+  #       mountPath: /etc/helm-registry
+  #       readOnly: true
+  extraEnv: []
+  extraVolumes: []
+  extraVolumeMounts: []
+
   # Secret environment variables (stored in Secret).
   secrets:
     JWT_SECRET: "CHANGE-ME-generate-a-random-secret"               # MUST be provided — minimum 16 chars

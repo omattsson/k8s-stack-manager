@@ -433,7 +433,18 @@ helm-test: ## Verify default and External Secrets Helm renders
 	if helm template $(HELM_RELEASE) $(HELM_CHART) --values $(HELM_CHART)/tests/external-secrets-values.yaml \
 		--set externalSecrets.secretStore.create=false --set-string externalSecrets.secretStore.name= >/dev/null 2>&1; then exit 1; fi; \
 	helm template $(HELM_RELEASE) $(HELM_CHART) --values $(HELM_CHART)/tests/external-secrets-values.yaml \
-		--set externalSecrets.secretStore.create=false --set-string externalSecrets.secretStore.name= 2>&1 | grep -q 'externalSecrets.secretStore.name must be set'
+		--set externalSecrets.secretStore.create=false --set-string externalSecrets.secretStore.name= 2>&1 | grep -q 'externalSecrets.secretStore.name must be set'; \
+	for kind in deployment rollout; do \
+		helm template $(HELM_RELEASE) $(HELM_CHART) --show-only templates/backend/$$kind.yaml \
+			--values $(HELM_CHART)/tests/backend-extra-values.yaml \
+			--set argoRollouts.enabled=$$( [ $$kind = rollout ] && echo true || echo false ) > "$$template_file"; \
+		grep -q 'name: HELM_REGISTRY_CONFIG' "$$template_file"; \
+		grep -q 'mountPath: /etc/helm-registry' "$$template_file"; \
+		grep -q 'secretName: helm-registry-config' "$$template_file"; \
+	done; \
+	helm template $(HELM_RELEASE) $(HELM_CHART) --show-only templates/backend/deployment.yaml \
+		--set backend.secrets.JWT_SECRET=dummy-jwt-secret-for-template > "$$template_file"; \
+	! grep -q '^          env:' "$$template_file"
 
 helm-template: ## Render templates locally (dry-run)
 	helm template $(HELM_RELEASE) $(HELM_CHART) --namespace $(HELM_NAMESPACE) \
