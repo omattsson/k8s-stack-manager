@@ -506,15 +506,15 @@ func (m *Manager) executeDeploy(helm HelmExecutor, k8sClient *k8s.Client, regCfg
 	ctx, cancel := context.WithTimeout(m.shutdownCtx, timeout)
 	defer cancel()
 
-	// Ensure the target namespace exists before any pre-install resource
-	// provisioning (wildcard TLS, pull secrets, RoleBindings). Called once
-	// here so that the individual feature blocks don't each need their own
-	// EnsureNamespace.
-	needsNS := (m.wildcardTLSSourceSecret != "" && m.wildcardTLSSourceNS != "") ||
-		regCfg != nil ||
-		len(m.namespaceRoleBindings) > 0
+	// Ensure the target namespace exists, with the label
+	// managed-by=k8s-stack-manager, before any chart installs and before any
+	// pre-install resource provisioning (wildcard TLS, pull secrets,
+	// RoleBindings). Always called: without it `helm --create-namespace`
+	// creates the namespace without the label, and tools that select stack
+	// namespaces by the label (for example an External Secrets
+	// ClusterExternalSecret) never see it.
 	nsReady := false
-	if needsNS && k8sClient != nil {
+	if k8sClient != nil {
 		if err := k8sClient.EnsureNamespace(ctx, namespace); err != nil {
 			slog.Warn("failed to ensure namespace for pre-install resources",
 				"instance_id", instanceID, "namespace", namespace, "error", err,
