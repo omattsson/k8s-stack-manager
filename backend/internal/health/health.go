@@ -11,6 +11,10 @@ type HealthChecker struct {
 	isReady      bool
 	startTime    time.Time
 	dependencies map[string]HealthCheck
+	// optional names checks whose failure is reported but does not mark the
+	// service DOWN (an optional feature must not take the service out of the
+	// load balancer).
+	optional map[string]bool
 }
 
 // HealthCheck is a function that checks a dependency's health.
@@ -33,6 +37,7 @@ func New() *HealthChecker {
 	return &HealthChecker{
 		startTime:    time.Now(),
 		dependencies: make(map[string]HealthCheck),
+		optional:     make(map[string]bool),
 		isReady:      false,
 	}
 }
@@ -41,6 +46,15 @@ func (h *HealthChecker) AddCheck(name string, check HealthCheck) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.dependencies[name] = check
+}
+
+// AddOptionalCheck registers a check whose failure is reported in the
+// readiness checks as DOWN but does not change the overall status.
+func (h *HealthChecker) AddOptionalCheck(name string, check HealthCheck) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.dependencies[name] = check
+	h.optional[name] = true
 }
 
 func (h *HealthChecker) SetReady(ready bool) {
@@ -69,6 +83,10 @@ func (h *HealthChecker) CheckReadiness(ctx context.Context) HealthStatus {
 	for k, v := range h.dependencies {
 		deps[k] = v
 	}
+	optional := make(map[string]bool, len(h.optional))
+	for k, v := range h.optional {
+		optional[k] = v
+	}
 	h.mu.RUnlock()
 
 	if !ready {
@@ -87,7 +105,9 @@ func (h *HealthChecker) CheckReadiness(ctx context.Context) HealthStatus {
 
 	for name, check := range deps {
 		if err := check(ctx); err != nil {
-			status.Status = "DOWN"
+			if !optional[name] {
+				status.Status = "DOWN"
+			}
 			status.Checks[name] = CheckStatus{
 				Status:  "DOWN",
 				Message: err.Error(),

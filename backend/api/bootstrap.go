@@ -174,7 +174,9 @@ func buildDomainServices(
 	healthChecker.AddCheck("cluster_registry", func(ctx context.Context) error {
 		return clusterRegistry.HealthCheck(ctx)
 	})
-	healthChecker.AddCheck("git_provider", func(ctx context.Context) error {
+	// Optional: the git provider only serves branch lists in the UI. An Azure
+	// DevOps or GitLab outage must not take the backend out of service.
+	healthChecker.AddOptionalCheck("git_provider", func(ctx context.Context) error {
 		return gitRegistry.HealthCheck(ctx)
 	})
 	healthChecker.AddCheck("helm", deployer.HelmHealthCheck(cfg.Deployment.HelmBinary))
