@@ -204,12 +204,12 @@ func TestListDefinitions(t *testing.T) {
 	t.Run("filters by name query param", func(t *testing.T) {
 		t.Parallel()
 		defRepo := NewMockStackDefinitionRepository()
-		seedDefinition(t, defRepo, "d1", "klaravik-dev", "owner-1")
-		seedDefinition(t, defRepo, "d2", "klaravik-staging", "owner-1")
+		seedDefinition(t, defRepo, "d1", "example-dev", "owner-1")
+		seedDefinition(t, defRepo, "d2", "example-staging", "owner-1")
 
 		router := setupDefinitionRouter(defRepo, NewMockChartConfigRepository(), NewMockStackInstanceRepository(), "uid-1", "user")
 		w := httptest.NewRecorder()
-		req, _ := http.NewRequest(http.MethodGet, "/api/v1/stack-definitions?name=klaravik-dev", nil)
+		req, _ := http.NewRequest(http.MethodGet, "/api/v1/stack-definitions?name=example-dev", nil)
 		router.ServeHTTP(w, req)
 
 		assert.Equal(t, http.StatusOK, w.Code)
@@ -219,13 +219,13 @@ func TestListDefinitions(t *testing.T) {
 		var data []models.StackDefinition
 		require.NoError(t, json.Unmarshal(resp["data"], &data))
 		assert.Len(t, data, 1)
-		assert.Equal(t, "klaravik-dev", data[0].Name)
+		assert.Equal(t, "example-dev", data[0].Name)
 	})
 
 	t.Run("name filter returns empty when no match", func(t *testing.T) {
 		t.Parallel()
 		defRepo := NewMockStackDefinitionRepository()
-		seedDefinition(t, defRepo, "d1", "klaravik-dev", "owner-1")
+		seedDefinition(t, defRepo, "d1", "example-dev", "owner-1")
 
 		router := setupDefinitionRouter(defRepo, NewMockChartConfigRepository(), NewMockStackInstanceRepository(), "uid-1", "user")
 		w := httptest.NewRecorder()
@@ -248,7 +248,7 @@ func TestListDefinitions(t *testing.T) {
 
 		router := setupDefinitionRouter(defRepo, NewMockChartConfigRepository(), NewMockStackInstanceRepository(), "uid-1", "user")
 		w := httptest.NewRecorder()
-		req, _ := http.NewRequest(http.MethodGet, "/api/v1/stack-definitions?name=klaravik-dev", nil)
+		req, _ := http.NewRequest(http.MethodGet, "/api/v1/stack-definitions?name=example-dev", nil)
 		router.ServeHTTP(w, req)
 
 		assert.Equal(t, http.StatusInternalServerError, w.Code)
