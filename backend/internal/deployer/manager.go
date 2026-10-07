@@ -497,13 +497,16 @@ func (m *Manager) executeDeploy(helm HelmExecutor, k8sClient *k8s.Client, regCfg
 
 	// Use a bounded context derived from the shutdown context so that
 	// operations are cancelled both on timeout and on server shutdown.
+	// The helm timeout applies to one chart, so the whole deploy gets one
+	// timeout per chart (see deployBudget); each chart gets its own deadline
+	// in the loop below.
 	var timeout time.Duration
 	if helm != nil {
 		timeout = helm.Timeout()
 	} else {
 		timeout = 5 * time.Minute
 	}
-	ctx, cancel := context.WithTimeout(m.shutdownCtx, timeout)
+	ctx, cancel := context.WithTimeout(m.shutdownCtx, deployBudget(timeout, len(charts)))
 	defer cancel()
 
 	// Ensure the target namespace exists, with the label
@@ -673,7 +676,22 @@ func (m *Manager) executeDeploy(helm HelmExecutor, k8sClient *k8s.Client, regCfg
 			repoURL = ""
 		}
 
-		output, err := helm.Install(ctx, InstallRequest{
+		// A release left in pending-* by an earlier, interrupted deploy blocks
+		// every upgrade; remove the stuck revision first.
+		if k8sClient != nil {
+			msg, recErr := recoverPendingRelease(ctx, helm, k8sClient.Clientset(), releaseName, namespace)
+			if recErr != nil {
+				allOutput += fmt.Sprintf("WARNING: %s\n", recErr.Error())
+			} else if msg != "" {
+				allOutput += msg + "\n"
+				m.broadcastLog(instanceID, deployLog.ID, msg)
+			}
+		}
+
+		// helm stops itself at --timeout and marks the release failed; the
+		// margin keeps this context from killing helm before that.
+		chartCtx, chartCancel := context.WithTimeout(ctx, timeout+chartTimeoutMargin)
+		output, err := helm.Install(chartCtx, InstallRequest{
 			ReleaseName: releaseName,
 			ChartPath:   chartRef,
 			RepoURL:     repoURL,
@@ -682,6 +700,7 @@ func (m *Manager) executeDeploy(helm HelmExecutor, k8sClient *k8s.Client, regCfg
 			Namespace:   namespace,
 			SkipCRDs:    true,
 		})
+		chartCancel()
 
 		allOutput += fmt.Sprintf("=== Chart: %s ===\n%s\n", chart.ChartConfig.ChartName, output)
 		if !streaming {
@@ -1160,6 +1179,22 @@ func (m *Manager) finalizeStop(instanceID string, deployLog *models.DeploymentLo
 //
 // The function keeps only the first wrapped layer (e.g. "deploying chart
 // \"nginx\"") plus a generic suffix.
+// chartTimeoutMargin is added to the helm timeout for the context of one chart,
+// so that helm reaches its own --timeout (and marks the release failed) before
+// the context stops it.
+const chartTimeoutMargin = time.Minute
+
+// deployBudget returns the timeout for a whole deploy: the helm timeout per
+// chart plus one margin. The helm timeout applies to one helm command, so one
+// shared helm timeout for all charts could stop a later chart in the middle of
+// its upgrade.
+func deployBudget(helmTimeout time.Duration, charts int) time.Duration {
+	if charts < 1 {
+		charts = 1
+	}
+	return time.Duration(charts)*helmTimeout + chartTimeoutMargin
+}
+
 func isTimeoutError(err error) bool {
 	if err == nil {
 		return false

@@ -58,6 +58,7 @@ backend:
     SELF_REGISTRATION: "true"
     DEFAULT_BRANCH: master
     HELM_BINARY: helm
+    # helm --timeout for one chart; a deploy of N charts may take N x this value.
     DEPLOYMENT_TIMEOUT: "10m"
     MAX_CONCURRENT_DEPLOYS: "5"
     # Wildcard TLS secret replication — copies a shared TLS secret into every

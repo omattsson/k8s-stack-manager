@@ -14,8 +14,26 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 )
+
+// helmTerminateGrace is how long a helm process gets after SIGTERM before it is
+// killed. On SIGTERM helm marks an in-flight install, upgrade or rollback as
+// failed. A SIGKILL leaves the release in pending-*, which blocks the next
+// operation with "another operation (install/upgrade/rollback) is in progress".
+const helmTerminateGrace = 30 * time.Second
+
+// newHelmCommand returns an exec.Cmd that stops helm with SIGTERM (not SIGKILL)
+// when ctx is done, and kills it only after helmTerminateGrace.
+func newHelmCommand(ctx context.Context, binaryPath string, args []string) *exec.Cmd {
+	cmd := exec.CommandContext(ctx, binaryPath, args...) //nolint:gosec // G204: binaryPath is admin-configured (not user input); all positional args are validated by validatePositionalArg to prevent argument injection; flag values are safe (consumed by pflag, not parsed as flags); exec.Command uses argv directly (no shell).
+	cmd.Cancel = func() error {
+		return cmd.Process.Signal(syscall.SIGTERM)
+	}
+	cmd.WaitDelay = helmTerminateGrace
+	return cmd
+}
 
 // errArgDashPrefix is returned when an argument starts with a dash, which could
 // cause the helm CLI to interpret it as a flag (argument injection).
@@ -311,7 +329,7 @@ func (h *HelmClient) RegistryLogin(ctx context.Context, host, username, password
 
 	slog.Info("executing helm registry login", "host", host, "username", username)
 
-	cmd := exec.CommandContext(ctx, h.binaryPath, args...) //nolint:gosec // G204: same justification as run()
+	cmd := newHelmCommand(ctx, h.binaryPath, args)
 	cmd.Stdin = strings.NewReader(password)
 
 	var combined bytes.Buffer
@@ -340,7 +358,7 @@ func (h *HelmClient) run(ctx context.Context, args []string) (string, error) {
 		"args", args,
 	)
 
-	cmd := exec.CommandContext(ctx, h.binaryPath, args...) //nolint:gosec // G204: binaryPath is admin-configured (not user input); all positional args are validated by validatePositionalArg to prevent argument injection; flag values are safe (consumed by pflag, not parsed as flags); exec.Command uses argv directly (no shell).
+	cmd := newHelmCommand(ctx, h.binaryPath, args)
 
 	var combined bytes.Buffer
 	cmd.Stdout = &combined
@@ -374,7 +392,7 @@ func (h *HelmClient) runStreaming(ctx context.Context, args []string, onLine fun
 		"streaming", true,
 	)
 
-	cmd := exec.CommandContext(ctx, h.binaryPath, args...) //nolint:gosec // G204: same justification as run()
+	cmd := newHelmCommand(ctx, h.binaryPath, args)
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
