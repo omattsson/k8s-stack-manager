@@ -31,11 +31,18 @@ type Config struct {
 	GitLab      GitLabConfig
 }
 
-// AzureDevOpsConfig holds Azure DevOps provider configuration.
+// AzureDevOpsConfig holds Azure DevOps provider configuration. Set PAT for
+// personal-access-token auth, or TokenSource for an Entra ID bearer token
+// (for example workload identity). PAT wins when both are set.
 type AzureDevOpsConfig struct {
-	PAT        string
-	DefaultOrg string
+	PAT         string
+	DefaultOrg  string
+	TokenSource TokenSource
 }
+
+// TokenSource returns a bearer token for Azure DevOps. Implementations must
+// cache tokens; the provider calls it for every request.
+type TokenSource func(ctx context.Context) (string, error)
 
 // GitLabConfig holds GitLab provider configuration.
 type GitLabConfig struct {

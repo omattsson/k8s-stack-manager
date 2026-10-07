@@ -142,7 +142,11 @@ backend:
     JWT_SECRET: "CHANGE-ME-generate-a-random-secret"               # MUST be provided — minimum 16 chars
     ADMIN_PASSWORD: "CHANGE-ME-set-a-secure-password"
     KUBECONFIG_ENCRYPTION_KEY: ""
-    # Git providers (optional)
+    # Git providers (optional). Instead of a PAT, Azure DevOps can use workload
+    # identity: set backend.env.AZURE_DEVOPS_AUTH=workload-identity plus
+    # AZURE_CLIENT_ID / AZURE_TENANT_ID / AZURE_FEDERATED_TOKEN_FILE, and mount a
+    # projected service-account token (audience api://AzureADTokenExchange) with
+    # backend.extraVolumes / backend.extraVolumeMounts.
     AZURE_DEVOPS_PAT: ""
     GITLAB_TOKEN: ""
     # OIDC secrets (optional)

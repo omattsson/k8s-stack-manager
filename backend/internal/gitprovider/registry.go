@@ -2,7 +2,6 @@ package gitprovider
 
 import (
 	"context"
-	"encoding/base64"
 	"fmt"
 	"io"
 	"log/slog"
@@ -36,7 +35,7 @@ func NewRegistry(cfg Config) *Registry {
 		nowFunc: time.Now,
 	}
 
-	if cfg.AzureDevOps.PAT != "" {
+	if cfg.AzureDevOps.PAT != "" || cfg.AzureDevOps.TokenSource != nil {
 		r.azureDevOps = newAzureDevOpsProvider(cfg.AzureDevOps)
 	}
 
@@ -63,7 +62,7 @@ func (r *Registry) detectProvider(repoURL string) (GitProvider, error) {
 	if strings.Contains(normalized, "dev.azure.com") ||
 		strings.Contains(normalized, "visualstudio.com") {
 		if r.azureDevOps == nil {
-			return nil, fmt.Errorf("Azure DevOps provider is not configured (PAT not set)")
+			return nil, fmt.Errorf("Azure DevOps provider is not configured (no PAT or workload identity)")
 		}
 		return r.azureDevOps, nil
 	}
@@ -211,8 +210,9 @@ func (r *Registry) pingAzureDevOps(ctx context.Context, p *azureDevOpsProvider) 
 	if err != nil {
 		return fmt.Errorf("azure devops: create request: %w", err)
 	}
-	auth := base64.StdEncoding.EncodeToString([]byte(":" + p.pat))
-	req.Header.Set("Authorization", "Basic "+auth)
+	if err := p.authorize(req); err != nil {
+		return err
+	}
 
 	resp, err := p.httpClient.Do(req)
 	if err != nil {

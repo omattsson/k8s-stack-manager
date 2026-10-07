@@ -2,7 +2,9 @@ package gitprovider
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -322,4 +324,86 @@ func (t *urlRewritingTransport) RoundTrip(req *http.Request) (*http.Response, er
 		base = http.DefaultTransport
 	}
 	return base.RoundTrip(newReq)
+}
+
+func TestAzureDevOpsAuthorization(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		pat        string
+		source     TokenSource
+		wantHeader string
+		wantErr    string
+	}{
+		{
+			name:       "PAT uses basic auth",
+			pat:        "test-pat",
+			wantHeader: "Basic " + base64.StdEncoding.EncodeToString([]byte(":test-pat")),
+		},
+		{
+			name:       "token source uses bearer auth",
+			source:     func(context.Context) (string, error) { return "entra-token", nil },
+			wantHeader: "Bearer entra-token",
+		},
+		{
+			name:       "PAT wins over token source",
+			pat:        "test-pat",
+			source:     func(context.Context) (string, error) { return "entra-token", nil },
+			wantHeader: "Basic " + base64.StdEncoding.EncodeToString([]byte(":test-pat")),
+		},
+		{
+			name:    "token source error is returned",
+			source:  func(context.Context) (string, error) { return "", errors.New("federation failed") },
+			wantErr: "get token: federation failed",
+		},
+		{
+			name:    "no credentials",
+			wantErr: "no credentials configured",
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			var got string
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				got = r.Header.Get("Authorization")
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(azureRefsResponse{Value: []azureRef{{Name: "refs/heads/main"}}})
+			}))
+			defer server.Close()
+
+			p := newTestAzureProvider(t, server)
+			p.pat = tt.pat
+			p.tokenSource = tt.source
+
+			_, err := p.ListBranches(context.Background(), "https://dev.azure.com/myorg/myproject/_git/myrepo")
+			if tt.wantErr != "" {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.wantErr)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantHeader, got)
+		})
+	}
+}
+
+func TestNewRegistry_AzureDevOpsWithTokenSource(t *testing.T) {
+	t.Parallel()
+
+	r := NewRegistry(Config{AzureDevOps: AzureDevOpsConfig{
+		TokenSource: func(context.Context) (string, error) { return "t", nil },
+	}})
+	p, err := r.detectProvider("https://dev.azure.com/org/project/_git/repo")
+	require.NoError(t, err)
+	assert.Equal(t, "azure_devops", p.ProviderType())
+
+	none := NewRegistry(Config{})
+	_, err = none.detectProvider("https://dev.azure.com/org/project/_git/repo")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no PAT or workload identity")
 }
