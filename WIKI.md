@@ -87,5 +87,5 @@ See `.github/instructions/api-extension.instructions.md` for the step-by-step gu
 
 - **JWT errors**: Ensure `JWT_SECRET` is set and at least 16 characters.
 - **Database connection errors (MySQL)**: Ensure MySQL is running. Check `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD` environment variables.
-- **Git provider errors**: Check `AZURE_DEVOPS_PAT` or `GITLAB_TOKEN` are set correctly. Empty tokens are valid (provider just won't be available).
+- **Git provider errors**: Check `AZURE_DEVOPS_PAT` (or `AZURE_DEVOPS_AUTH=workload-identity` with the `AZURE_*` variables) or `GITLAB_TOKEN` are set correctly. Empty tokens are valid (provider just won't be available).
 - **Cluster connection errors**: Verify the kubeconfig path or data is valid. Use the "Test Connection" button on the Clusters admin page. If `KUBECONFIG_ENCRYPTION_KEY` is set, all kubeconfig data is encrypted at rest — changing the key will make existing encrypted data unreadable.

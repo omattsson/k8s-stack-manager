@@ -322,6 +322,7 @@ Key environment variables (see `docker-compose.yml` for full list):
 | `JWT_SECRET` | Yes | JWT signing secret (min 16 chars) |
 | `ADMIN_PASSWORD` | Yes | Initial admin password |
 | `AZURE_DEVOPS_PAT` | No | Azure DevOps personal access token |
+| `AZURE_DEVOPS_AUTH` | No | `pat` (default) or `workload-identity`: list Azure DevOps branches with an Entra ID token from `AZURE_CLIENT_ID`, `AZURE_TENANT_ID` and `AZURE_FEDERATED_TOKEN_FILE` instead of a PAT |
 | `GITLAB_TOKEN` | No | GitLab access token |
 | `DEFAULT_BRANCH` | No | Default Git branch (default: `master`) |
 | `KUBECONFIG_ENCRYPTION_KEY` | No | Passphrase for deriving AES-256 key (SHA-256) to encrypt kubeconfig data at rest |

@@ -161,6 +161,27 @@ func TestConfigValidate(t *testing.T) {
 		assert.NoError(t, validConfig.Validate())
 	})
 
+	t.Run("AZURE_DEVOPS_AUTH values", func(t *testing.T) {
+		t.Parallel()
+		for _, tc := range []struct {
+			auth    string
+			wantErr bool
+		}{{"", false}, {"pat", false}, {"workload-identity", false}, {"oauth", true}} {
+			cfg := &config.Config{
+				App:         config.AppConfig{Name: "myapp", Environment: "production"},
+				Database:    config.DatabaseConfig{Host: "localhost", Port: "3306", User: "user", Password: "pass", DBName: "dbname", MaxOpenConns: 10, MaxIdleConns: 5, ConnMaxLifetime: time.Minute},
+				Server:      config.ServerConfig{Host: "127.0.0.1", Port: "8080", ReadTimeout: 5 * time.Second, WriteTimeout: 5 * time.Second, IdleTimeout: 30 * time.Second, ShutdownTimeout: 10 * time.Second},
+				GitProvider: config.GitProviderConfig{AzureDevOpsAuth: tc.auth},
+			}
+			err := cfg.Validate()
+			if tc.wantErr {
+				assert.ErrorContains(t, err, "AZURE_DEVOPS_AUTH", tc.auth)
+			} else {
+				assert.NoError(t, err, tc.auth)
+			}
+		}
+	})
+
 	t.Run("invalid app config", func(t *testing.T) {
 		t.Parallel()
 		cfg := &config.Config{

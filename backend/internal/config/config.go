@@ -59,6 +59,11 @@ type GitProviderConfig struct {
 	AzureDevOpsDefaultOrg string
 	GitLabToken           string
 	GitLabBaseURL         string
+
+	// AzureDevOpsAuth selects the Azure DevOps credential: "pat" (default,
+	// AZURE_DEVOPS_PAT) or "workload-identity" (an Entra ID token from
+	// AZURE_CLIENT_ID, AZURE_TENANT_ID and AZURE_FEDERATED_TOKEN_FILE).
+	AzureDevOpsAuth string
 }
 
 // NamespaceRoleBindingSpec describes a RoleBinding that the deployer applies
@@ -272,6 +277,12 @@ func (c *Config) Validate() error {
 		if err := c.Auth.Validate(); err != nil {
 			return fmt.Errorf("auth config: %w", err)
 		}
+	}
+
+	switch c.GitProvider.AzureDevOpsAuth {
+	case "", "pat", "workload-identity":
+	default:
+		return fmt.Errorf("AZURE_DEVOPS_AUTH must be \"pat\" or \"workload-identity\", got %q", c.GitProvider.AzureDevOpsAuth)
 	}
 
 	if c.Deployment.KubeconfigEncryptionKey == "" || len(c.Deployment.KubeconfigEncryptionKey) < 16 {
@@ -559,6 +570,7 @@ func loadGitProviderConfig() GitProviderConfig {
 	return GitProviderConfig{
 		AzureDevOpsPAT:        getEnv("AZURE_DEVOPS_PAT", ""),
 		AzureDevOpsDefaultOrg: getEnv("AZURE_DEVOPS_DEFAULT_ORG", ""),
+		AzureDevOpsAuth:       getEnv("AZURE_DEVOPS_AUTH", "pat"),
 		GitLabToken:           getEnv("GITLAB_TOKEN", ""),
 		GitLabBaseURL:         getEnv("GITLAB_BASE_URL", ""),
 	}

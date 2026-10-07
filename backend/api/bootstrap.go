@@ -132,11 +132,25 @@ func buildDomainServices(
 	hub *websocket.Hub,
 	healthChecker *health.HealthChecker,
 ) (*domainServices, error) {
-	// Git provider registry.
+	// Git provider registry. Azure DevOps uses a PAT, or workload identity
+	// when AZURE_DEVOPS_AUTH=workload-identity. A workload identity that cannot
+	// be set up leaves the Azure DevOps provider off (branch listing fails with
+	// a clear error) instead of stopping the server.
+	var azdoTokenSource gitprovider.TokenSource
+	if cfg.GitProvider.AzureDevOpsAuth == "workload-identity" {
+		ts, err := gitprovider.NewWorkloadIdentityTokenSource()
+		if err != nil {
+			slog.Error("Azure DevOps workload identity is not available; branch listing is off", "error", err)
+		} else {
+			azdoTokenSource = ts
+			slog.Info("Azure DevOps branch listing uses workload identity")
+		}
+	}
 	gitRegistry := gitprovider.NewRegistry(gitprovider.Config{
 		AzureDevOps: gitprovider.AzureDevOpsConfig{
-			PAT:        cfg.GitProvider.AzureDevOpsPAT,
-			DefaultOrg: cfg.GitProvider.AzureDevOpsDefaultOrg,
+			PAT:         cfg.GitProvider.AzureDevOpsPAT,
+			DefaultOrg:  cfg.GitProvider.AzureDevOpsDefaultOrg,
+			TokenSource: azdoTokenSource,
 		},
 		GitLab: gitprovider.GitLabConfig{
 			Token:   cfg.GitProvider.GitLabToken,

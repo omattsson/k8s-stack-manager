@@ -85,6 +85,7 @@ Key environment variables (see `docker-compose.yml` for full list):
 | `ADMIN_PASSWORD` | (required) | Initial admin password |
 | `SELF_REGISTRATION` | `false` | Allow self-registration |
 | `AZURE_DEVOPS_PAT` | | Azure DevOps personal access token |
+| `AZURE_DEVOPS_AUTH` | `pat` | `workload-identity` uses an Entra ID token (`AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_FEDERATED_TOKEN_FILE`) instead of the PAT |
 | `GITLAB_TOKEN` | | GitLab access token |
 | `DEFAULT_BRANCH` | `master` | Default Git branch |
 | `KUBECONFIG_ENCRYPTION_KEY` | | Passphrase for deriving AES-256 key (SHA-256) to encrypt kubeconfig data and registry passwords at rest |

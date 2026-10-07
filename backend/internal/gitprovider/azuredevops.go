@@ -12,17 +12,38 @@ import (
 )
 
 type azureDevOpsProvider struct {
-	pat        string
-	defaultOrg string
-	httpClient *http.Client
+	pat         string
+	tokenSource TokenSource
+	defaultOrg  string
+	httpClient  *http.Client
 }
 
 func newAzureDevOpsProvider(cfg AzureDevOpsConfig) *azureDevOpsProvider {
 	return &azureDevOpsProvider{
-		pat:        cfg.PAT,
-		defaultOrg: cfg.DefaultOrg,
-		httpClient: &http.Client{Timeout: 15 * time.Second},
+		pat:         cfg.PAT,
+		tokenSource: cfg.TokenSource,
+		defaultOrg:  cfg.DefaultOrg,
+		httpClient:  &http.Client{Timeout: 15 * time.Second},
 	}
+}
+
+// authorize sets the Authorization header: Basic with the PAT, or Bearer with
+// a token from the token source.
+func (p *azureDevOpsProvider) authorize(req *http.Request) error {
+	if p.pat != "" {
+		auth := base64.StdEncoding.EncodeToString([]byte(":" + p.pat))
+		req.Header.Set("Authorization", "Basic "+auth)
+		return nil
+	}
+	if p.tokenSource == nil {
+		return fmt.Errorf("azure devops: no credentials configured")
+	}
+	token, err := p.tokenSource(req.Context())
+	if err != nil {
+		return fmt.Errorf("azure devops: get token: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	return nil
 }
 
 func (p *azureDevOpsProvider) ProviderType() string {
@@ -116,9 +137,9 @@ func (p *azureDevOpsProvider) ListBranches(ctx context.Context, repoURL string) 
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
-
-	auth := base64.StdEncoding.EncodeToString([]byte(":" + p.pat))
-	req.Header.Set("Authorization", "Basic "+auth)
+	if err := p.authorize(req); err != nil {
+		return nil, err
+	}
 
 	resp, err := p.httpClient.Do(req)
 	if err != nil {
@@ -165,9 +186,9 @@ func (p *azureDevOpsProvider) GetDefaultBranch(ctx context.Context, repoURL stri
 	if err != nil {
 		return "", fmt.Errorf("create request: %w", err)
 	}
-
-	auth := base64.StdEncoding.EncodeToString([]byte(":" + p.pat))
-	req.Header.Set("Authorization", "Basic "+auth)
+	if err := p.authorize(req); err != nil {
+		return "", err
+	}
 
 	resp, err := p.httpClient.Do(req)
 	if err != nil {
