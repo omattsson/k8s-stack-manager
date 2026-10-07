@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"backend/internal/database"
+	helmvalues "backend/internal/helm"
 	"backend/internal/hooks"
 	"backend/internal/k8s"
 	"backend/internal/models"
@@ -412,6 +413,7 @@ func (m *Manager) Deploy(ctx context.Context, req DeployRequest) (string, error)
 			SourceRepoURL:   c.ChartConfig.SourceRepoURL,
 			BuildPipelineID: c.ChartConfig.BuildPipelineID,
 			Branch:          branch,
+			ImageTag:        helmvalues.SanitizeImageTag(branch),
 		})
 	}
 	hookMeta := map[string]string{}

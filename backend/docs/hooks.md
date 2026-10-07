@@ -65,7 +65,7 @@ file can be committed to version control:
 }
 ```
 
-- `timeout_seconds` — optional, default 5, max 30
+- `timeout_seconds` — optional, default 5, max 1800 (30 minutes, for gates that wait for CI builds)
 - `failure_policy` — optional, default `ignore`; set `fail` to block on error
 - `secret_env` — optional; names an env var holding the HMAC secret. If set,
   the process env var MUST be non-empty or startup fails closed.
@@ -104,7 +104,10 @@ Body (`apiVersion: hooks.k8sstackmanager.io/v1`):
     "id": "log-...",
     "started_at": "2026-04-18T10:15:32.820Z"
   },
-  "charts":   [{"name": "web", "release_name": "web", "version": "1.2.3"}],
+  "charts":   [{"name": "web", "release_name": "web", "version": "1.2.3",
+                "source_repo_url": "https://dev.azure.com/org/proj/_git/web",
+                "build_pipeline_id": "42", "branch": "feature/Login_Fix",
+                "image_tag": "feature-login-fix"}],
   "values":   {},
   "metadata": {},
   "extra":    {}
@@ -113,6 +116,11 @@ Body (`apiVersion: hooks.k8sstackmanager.io/v1`):
 
 Deployment/charts/values are populated only when relevant to the event. Handlers
 should not assume every field is present.
+
+`charts[].branch` is the effective branch of the chart (a per-chart override,
+else the instance branch). `charts[].image_tag` is the Docker-safe tag of that
+branch, the same value as the `{{.ImageTag}}` template variable in the chart
+values. A CI gate checks and builds this tag, so it matches what Helm deploys.
 
 ### Response
 

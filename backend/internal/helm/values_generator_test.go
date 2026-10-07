@@ -188,6 +188,29 @@ func TestGenerateValues(t *testing.T) {
 			},
 			wantYAML: "branch: master\n",
 		},
+		{
+			name: "ChartBranch also sets ImageTag",
+			params: GenerateParams{
+				DefaultValues: "tag: \"{{.ImageTag}}\"\n",
+				ChartBranch:   "Feature/Per_Chart",
+				TemplateVars: TemplateVars{
+					Branch:   "master",
+					ImageTag: "master",
+				},
+			},
+			wantYAML: "tag: feature-per-chart\n",
+		},
+		{
+			name: "empty ChartBranch keeps TemplateVars.ImageTag",
+			params: GenerateParams{
+				DefaultValues: "tag: \"{{.ImageTag}}\"\n",
+				TemplateVars: TemplateVars{
+					Branch:   "feature/foo",
+					ImageTag: "feature-foo",
+				},
+			},
+			wantYAML: "tag: feature-foo\n",
+		},
 	}
 
 	for _, tt := range tests {

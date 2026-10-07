@@ -192,6 +192,13 @@ func TestManager_Deploy_PreDeployHookIncludesChartData(t *testing.T) {
 			ChartName:    "redis",
 			ChartVersion: "7.0.0",
 		},
+	}, {
+		ChartConfig: models.ChartConfig{
+			ChartName:       "app-web",
+			ChartVersion:    "1.0.0",
+			BuildPipelineID: "43",
+		},
+		Branch: "Feature/Web_Fix",
 	}}
 
 	logID, err := mgr.Deploy(context.Background(), DeployRequest{
@@ -209,14 +216,22 @@ func TestManager_Deploy_PreDeployHookIncludesChartData(t *testing.T) {
 
 	preDeployEvt := rec.snapshot()[0]
 	assert.Equal(t, hooks.EventPreDeploy, preDeployEvt.event)
-	require.Len(t, preDeployEvt.envelope.Charts, 2, "pre-deploy must include all charts")
+	require.Len(t, preDeployEvt.envelope.Charts, 3, "pre-deploy must include all charts")
 
 	assert.Equal(t, "app-api", preDeployEvt.envelope.Charts[0].Name)
 	assert.Equal(t, "42", preDeployEvt.envelope.Charts[0].BuildPipelineID)
 	assert.Equal(t, "https://dev.azure.com/org/proj/_git/app-api", preDeployEvt.envelope.Charts[0].SourceRepoURL)
 
+	assert.Equal(t, "feature/foo", preDeployEvt.envelope.Charts[0].Branch)
+	assert.Equal(t, "feature-foo", preDeployEvt.envelope.Charts[0].ImageTag, "image_tag must match {{.ImageTag}}")
+
 	assert.Equal(t, "redis", preDeployEvt.envelope.Charts[1].Name)
 	assert.Empty(t, preDeployEvt.envelope.Charts[1].BuildPipelineID)
+
+	// A per-chart branch override gives the chart its own branch and tag.
+	assert.Equal(t, "app-web", preDeployEvt.envelope.Charts[2].Name)
+	assert.Equal(t, "Feature/Web_Fix", preDeployEvt.envelope.Charts[2].Branch)
+	assert.Equal(t, "feature-web-fix", preDeployEvt.envelope.Charts[2].ImageTag)
 }
 
 func TestManager_Deploy_PreHookAbortFinalizesAsError(t *testing.T) {

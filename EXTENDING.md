@@ -209,7 +209,7 @@ Both event subscriptions and action subscriptions live in the `HOOKS_CONFIG_FILE
 
 - **`secret_env`** names an environment variable holding the HMAC secret. The file itself is safe to commit to version control; secrets stay in env (mounted from a Kubernetes Secret, Vault, …).
 - Empty `secret_env` disables HMAC signing for that subscriber — safe only for internal localhost communication on a trust boundary.
-- `timeout_seconds`: events default 5s (max 600s); actions default 30s (max 300s).
+- `timeout_seconds`: events default 5s (max 1800s); actions default 30s (max 300s).
 - `failure_policy`: `fail` or `ignore`; defaults to `ignore` if omitted.
 
 ## Request envelope — EventEnvelope
