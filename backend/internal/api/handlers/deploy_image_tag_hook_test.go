@@ -49,7 +49,7 @@ func TestBulkDeploy_PreDeployHookCarriesChartBranchOverride(t *testing.T) {
 		StackDefinitionID: "d1",
 		ChartName:         "app",
 		RepositoryURL:     "oci://example.com/charts/app",
-		BuildPipelineID:   "811",
+		BuildPipelineID:   "42",
 		DefaultValues:     "image:\n  tag: \"{{.ImageTag}}\"\n",
 		DeployOrder:       1,
 	}))
@@ -112,5 +112,5 @@ func TestBulkDeploy_PreDeployHookCarriesChartBranchOverride(t *testing.T) {
 	require.Len(t, charts, 1)
 	assert.Equal(t, "Feature/App_Fix", charts[0].Branch)
 	assert.Equal(t, "feature-app-fix", charts[0].ImageTag)
-	assert.Equal(t, "811", charts[0].BuildPipelineID)
+	assert.Equal(t, "42", charts[0].BuildPipelineID)
 }

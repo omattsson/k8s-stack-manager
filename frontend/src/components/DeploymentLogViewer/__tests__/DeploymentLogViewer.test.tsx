@@ -266,12 +266,12 @@ describe('DeploymentLogViewer', () => {
   describe('real-time streaming', () => {
     it('shows streaming lines for a running log', () => {
       const streamingLines = {
-        [runningLogNoOutput.id]: ['Installing chart kvk-core...', 'Waiting for pods...'],
+        [runningLogNoOutput.id]: ['Installing chart app-core...', 'Waiting for pods...'],
       };
       render(
         <DeploymentLogViewer logs={[runningLogNoOutput]} streamingLines={streamingLines} />,
       );
-      expect(screen.getByText('Installing chart kvk-core...')).toBeInTheDocument();
+      expect(screen.getByText('Installing chart app-core...')).toBeInTheDocument();
       expect(screen.getByText('Waiting for pods...')).toBeInTheDocument();
     });
 

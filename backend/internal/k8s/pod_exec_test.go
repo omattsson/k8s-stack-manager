@@ -17,7 +17,7 @@ func TestExecInDeploymentPod_RequiresRESTConfig(t *testing.T) {
 	cs := fake.NewSimpleClientset()
 	c := NewClientFromInterface(cs)
 
-	_, err := c.ExecInDeploymentPod(context.Background(), "ns", "kvk-redis", "", []string{"redis-cli", "FLUSHALL"})
+	_, err := c.ExecInDeploymentPod(context.Background(), "ns", "app-redis", "", []string{"redis-cli", "FLUSHALL"})
 	assert.Error(t, err)
 	assert.True(t, errors.Is(err, ErrRESTConfigUnavailable))
 }

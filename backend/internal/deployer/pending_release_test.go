@@ -27,7 +27,7 @@ func TestRecoverPendingRelease(t *testing.T) {
 	t.Parallel()
 
 	const ns = "stack-demo"
-	const release = "kvk-core"
+	const release = "app-core"
 
 	tests := []struct {
 		name          string
@@ -42,34 +42,34 @@ func TestRecoverPendingRelease(t *testing.T) {
 			name:          "pending-upgrade removes only the stuck revision",
 			history:       []ReleaseRevision{{Revision: 3, Status: "pending-upgrade"}},
 			wantMsg:       `revision 3 was stuck in pending-upgrade`,
-			wantRemaining: []string{"sh.helm.release.v1.kvk-core.v1", "sh.helm.release.v1.kvk-core.v2"},
+			wantRemaining: []string{"sh.helm.release.v1.app-core.v1", "sh.helm.release.v1.app-core.v2"},
 		},
 		{
 			name:          "pending-install removes revision 1 and keeps other secrets",
 			history:       []ReleaseRevision{{Revision: 1, Status: "pending-install"}},
 			wantMsg:       `revision 1 was stuck in pending-install`,
-			wantRemaining: []string{"sh.helm.release.v1.kvk-core.v2", "sh.helm.release.v1.kvk-core.v3"},
+			wantRemaining: []string{"sh.helm.release.v1.app-core.v2", "sh.helm.release.v1.app-core.v3"},
 		},
 		{
 			name:          "pending-rollback is recovered",
 			history:       []ReleaseRevision{{Revision: 2, Status: "pending-rollback"}},
 			wantMsg:       `revision 2 was stuck in pending-rollback`,
-			wantRemaining: []string{"sh.helm.release.v1.kvk-core.v1", "sh.helm.release.v1.kvk-core.v3"},
+			wantRemaining: []string{"sh.helm.release.v1.app-core.v1", "sh.helm.release.v1.app-core.v3"},
 		},
 		{
 			name:          "deployed release is left alone",
 			history:       []ReleaseRevision{{Revision: 3, Status: "deployed"}},
-			wantRemaining: []string{"sh.helm.release.v1.kvk-core.v1", "sh.helm.release.v1.kvk-core.v2", "sh.helm.release.v1.kvk-core.v3"},
+			wantRemaining: []string{"sh.helm.release.v1.app-core.v1", "sh.helm.release.v1.app-core.v2", "sh.helm.release.v1.app-core.v3"},
 		},
 		{
 			name:          "failed release is left alone",
 			history:       []ReleaseRevision{{Revision: 3, Status: "failed"}},
-			wantRemaining: []string{"sh.helm.release.v1.kvk-core.v1", "sh.helm.release.v1.kvk-core.v2", "sh.helm.release.v1.kvk-core.v3"},
+			wantRemaining: []string{"sh.helm.release.v1.app-core.v1", "sh.helm.release.v1.app-core.v2", "sh.helm.release.v1.app-core.v3"},
 		},
 		{
 			name:          "missing release is a no-op",
 			historyErr:    errors.New("release: not found"),
-			wantRemaining: []string{"sh.helm.release.v1.kvk-core.v1", "sh.helm.release.v1.kvk-core.v2", "sh.helm.release.v1.kvk-core.v3"},
+			wantRemaining: []string{"sh.helm.release.v1.app-core.v1", "sh.helm.release.v1.app-core.v2", "sh.helm.release.v1.app-core.v3"},
 		},
 		{
 			name:      "delete failure is returned",
@@ -85,9 +85,9 @@ func TestRecoverPendingRelease(t *testing.T) {
 			t.Parallel()
 
 			cs := fake.NewSimpleClientset(
-				releaseSecret("sh.helm.release.v1.kvk-core.v1", ns),
-				releaseSecret("sh.helm.release.v1.kvk-core.v2", ns),
-				releaseSecret("sh.helm.release.v1.kvk-core.v3", ns),
+				releaseSecret("sh.helm.release.v1.app-core.v1", ns),
+				releaseSecret("sh.helm.release.v1.app-core.v2", ns),
+				releaseSecret("sh.helm.release.v1.app-core.v3", ns),
 			)
 			if tt.deleteErr != nil {
 				cs.PrependReactor("delete", "secrets", func(k8stesting.Action) (bool, k8sruntime.Object, error) {
@@ -136,7 +136,7 @@ func TestRecoverPendingRelease_NilClientset(t *testing.T) {
 			return nil, nil
 		},
 	}
-	msg, err := recoverPendingRelease(context.Background(), helm, nil, "kvk-core", "ns")
+	msg, err := recoverPendingRelease(context.Background(), helm, nil, "app-core", "ns")
 	require.NoError(t, err)
 	assert.Empty(t, msg)
 	assert.False(t, called, "no helm call without a clientset")
