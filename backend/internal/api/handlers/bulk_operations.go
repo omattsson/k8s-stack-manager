@@ -225,6 +225,7 @@ func (h *InstanceHandler) BulkDeploy(c *gin.Context) {
 			chartInfos = append(chartInfos, deployer.ChartDeployInfo{
 				ChartConfig: ch,
 				ValuesYAML:  yamlData,
+				Branch:      branchMap[ch.ID],
 			})
 		}
 

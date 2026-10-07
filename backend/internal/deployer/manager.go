@@ -469,6 +469,19 @@ func (m *Manager) executeDeploy(helm HelmExecutor, k8sClient *k8s.Client, regCfg
 		return
 	}
 
+	// A pre-deploy hook (for example a CI gate that waits for image builds)
+	// can run for many minutes. If a stop or clean changed the instance status
+	// meanwhile, do not install the charts. finalizeDeploy keeps the new status
+	// and only closes the deploy log.
+	if current, err := m.instanceRepo.FindByID(instanceID); err == nil && current.Status != models.StackStatusDeploying {
+		cancelErr := fmt.Errorf("deploy cancelled: instance status changed to %s during the pre-deploy hook", current.Status)
+		m.broadcastLog(instanceID, deployLog.ID, "WARNING: "+cancelErr.Error())
+		slog.Warn("deploy cancelled after pre-deploy hook: status changed",
+			"instance_id", instanceID, "log_id", deployLog.ID, "status", current.Status)
+		m.finalizeDeploy(instanceID, deployLog, "", cancelErr, false, lastDeployedValues, "")
+		return
+	}
+
 	// Acquire semaphore.
 	m.semaphore <- struct{}{}
 	defer func() { <-m.semaphore }()

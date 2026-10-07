@@ -169,7 +169,7 @@ Content-Type: application/json
 }
 ```
 
-- `timeout_seconds` — optional, default 30, max 300
+- `timeout_seconds` — optional, default 30, max 600
 - `secret_env` — optional; same fail-closed semantics as subscriptions
 
 ### Request envelope
