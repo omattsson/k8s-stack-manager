@@ -1251,7 +1251,7 @@ func (h *InstanceHandler) DeployInstance(c *gin.Context) {
 		return
 	}
 
-	valuesMap, err := h.buildChartValues(c.Request.Context(), inst, def, charts)
+	valuesMap, branchMap, err := h.buildChartValuesAndBranches(c.Request.Context(), inst, def, charts)
 	if err != nil {
 		slog.Error("Failed to build chart values",
 			logKeyInstanceID, id,
@@ -1259,16 +1259,6 @@ func (h *InstanceHandler) DeployInstance(c *gin.Context) {
 		)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
 		return
-	}
-
-	branchMap := make(map[string]string)
-	if h.branchOverrideRepo != nil {
-		branchOverrides, boErr := h.branchOverrideRepo.List(inst.ID)
-		if boErr == nil {
-			for _, bo := range branchOverrides {
-				branchMap[bo.ChartConfigID] = bo.Branch
-			}
-		}
 	}
 
 	var chartInfos []deployer.ChartDeployInfo
@@ -2141,15 +2131,24 @@ func (h *InstanceHandler) CompareInstances(c *gin.Context) {
 // buildChartValues generates merged Helm values YAML for each chart in a stack
 // instance. It returns a map of chartName → YAML string.
 func (h *InstanceHandler) buildChartValues(ctx context.Context, inst *models.StackInstance, def *models.StackDefinition, charts []models.ChartConfig) (map[string]string, error) {
+	values, _, err := h.buildChartValuesAndBranches(ctx, inst, def, charts)
+	return values, err
+}
+
+// buildChartValuesAndBranches is buildChartValues that also returns the
+// per-chart branch overrides (chart config ID -> branch) it used, so the
+// deployer reports the same branch and image tag to hooks as the rendered
+// values.
+func (h *InstanceHandler) buildChartValuesAndBranches(ctx context.Context, inst *models.StackInstance, def *models.StackDefinition, charts []models.ChartConfig) (map[string]string, map[string]string, error) {
 	lockedMap, err := h.buildLockedValuesMap(def)
 	if err != nil {
-		return nil, fmt.Errorf("build locked values: %w", err)
+		return nil, nil, fmt.Errorf("build locked values: %w", err)
 	}
 
 	overridesMap := make(map[string]string)
 	overrides, err := h.overrideRepo.ListByInstance(inst.ID)
 	if err != nil {
-		return nil, fmt.Errorf("list value overrides: %w", err)
+		return nil, nil, fmt.Errorf("list value overrides: %w", err)
 	}
 	for _, ov := range overrides {
 		overridesMap[ov.ChartConfigID] = ov.Values
@@ -2159,7 +2158,7 @@ func (h *InstanceHandler) buildChartValues(ctx context.Context, inst *models.Sta
 	if h.branchOverrideRepo != nil {
 		branchOverrides, err := h.branchOverrideRepo.List(inst.ID)
 		if err != nil {
-			return nil, fmt.Errorf("list branch overrides: %w", err)
+			return nil, nil, fmt.Errorf("list branch overrides: %w", err)
 		}
 		for _, bo := range branchOverrides {
 			branchMap[bo.ChartConfigID] = bo.Branch
@@ -2188,12 +2187,12 @@ func (h *InstanceHandler) buildChartValues(ctx context.Context, inst *models.Sta
 			TemplateVars:   templateVars,
 		})
 		if err != nil {
-			return nil, fmt.Errorf("generate values for chart %s: %w", ch.ChartName, err)
+			return nil, nil, fmt.Errorf("generate values for chart %s: %w", ch.ChartName, err)
 		}
 		result[ch.ChartName] = string(yamlData)
 	}
 
-	return result, nil
+	return result, branchMap, nil
 }
 
 // buildLockedValuesMap returns chartName → lockedValues for a definition's source template.

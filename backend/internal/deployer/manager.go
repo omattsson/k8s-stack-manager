@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"backend/internal/database"
+	helmvalues "backend/internal/helm"
 	"backend/internal/hooks"
 	"backend/internal/k8s"
 	"backend/internal/models"
@@ -412,6 +413,7 @@ func (m *Manager) Deploy(ctx context.Context, req DeployRequest) (string, error)
 			SourceRepoURL:   c.ChartConfig.SourceRepoURL,
 			BuildPipelineID: c.ChartConfig.BuildPipelineID,
 			Branch:          branch,
+			ImageTag:        helmvalues.SanitizeImageTag(branch),
 		})
 	}
 	hookMeta := map[string]string{}
@@ -464,6 +466,19 @@ func (m *Manager) executeDeploy(helm HelmExecutor, k8sClient *k8s.Client, regCfg
 		slog.Error("pre-deploy hook denied deployment",
 			"instance_id", instanceID, "log_id", deployLog.ID, "error", err)
 		m.finalizeDeploy(instanceID, deployLog, "", deployErr, false, lastDeployedValues, "")
+		return
+	}
+
+	// A pre-deploy hook (for example a CI gate that waits for image builds)
+	// can run for many minutes. If a stop or clean changed the instance status
+	// meanwhile, do not install the charts. finalizeDeploy keeps the new status
+	// and only closes the deploy log.
+	if current, err := m.instanceRepo.FindByID(instanceID); err == nil && current.Status != models.StackStatusDeploying {
+		cancelErr := fmt.Errorf("deploy cancelled: instance status changed to %s during the pre-deploy hook", current.Status)
+		m.broadcastLog(instanceID, deployLog.ID, "WARNING: "+cancelErr.Error())
+		slog.Warn("deploy cancelled after pre-deploy hook: status changed",
+			"instance_id", instanceID, "log_id", deployLog.ID, "status", current.Status)
+		m.finalizeDeploy(instanceID, deployLog, "", cancelErr, false, lastDeployedValues, "")
 		return
 	}
 

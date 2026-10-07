@@ -209,7 +209,7 @@ Both event subscriptions and action subscriptions live in the `HOOKS_CONFIG_FILE
 
 - **`secret_env`** names an environment variable holding the HMAC secret. The file itself is safe to commit to version control; secrets stay in env (mounted from a Kubernetes Secret, Vault, …).
 - Empty `secret_env` disables HMAC signing for that subscriber — safe only for internal localhost communication on a trust boundary.
-- `timeout_seconds`: events default 5s (max 600s); actions default 30s (max 300s).
+- `timeout_seconds`: events default 5s (max 1800s); actions default 30s (max 600s).
 - `failure_policy`: `fail` or `ignore`; defaults to `ignore` if omitted.
 
 ## Request envelope — EventEnvelope
@@ -488,9 +488,9 @@ A post-deploy subscriber that posts to Slack on `status=error` only. Drops on 2x
 
 ### CI trigger gate — build images before deploy
 
-A `pre-deploy` subscriber with `failure_policy: fail` and a high timeout (600s) that checks if container images exist for the branch being deployed. When images are missing, it triggers CI builds (Azure DevOps, GitHub Actions, GitLab CI, etc.) and polls until they complete.
+A `pre-deploy` subscriber with `failure_policy: fail` and a high timeout (up to 1800s) that checks if container images exist for the branch being deployed. When images are missing, it triggers CI builds (Azure DevOps, GitHub Actions, GitLab CI, etc.) and polls until they complete.
 
-The core sends `charts` with `source_repo_url` and `build_pipeline_id` in the pre-deploy envelope, plus `metadata.registry_url` for registry lookups. The subscriber uses the streaming progress protocol to show build status in the deployment log.
+The core sends `charts` with `source_repo_url`, `build_pipeline_id`, `branch` and `image_tag` (the `{{.ImageTag}}` value of that chart) in the pre-deploy envelope, plus `metadata.registry_url` for registry lookups. The subscriber uses the streaming progress protocol to show build status in the deployment log.
 
 ```json
 {
@@ -498,14 +498,14 @@ The core sends `charts` with `source_repo_url` and `build_pipeline_id` in the pr
     "name": "ci-trigger-gate",
     "events": ["pre-deploy"],
     "url": "http://ci-trigger-gate.extensions.svc.cluster.local:8080/hook",
-    "timeout_seconds": 600,
+    "timeout_seconds": 1500,
     "failure_policy": "fail",
     "secret_env": "CI_TRIGGER_WEBHOOK_SECRET"
   }]
 }
 ```
 
-Skip logic keeps it fast: charts without `build_pipeline_id` are skipped (public/pre-built images), semver tags are skipped (release images), and an in-memory cache avoids re-checking images that were verified recently. A typical deploy with pre-built images adds <1s; a deploy that triggers builds blocks for 3-10 minutes with periodic status updates in the log viewer.
+Skip logic keeps it fast: charts without `build_pipeline_id` are skipped (public/pre-built images), semver tags are skipped (release images), and an in-memory cache avoids re-checking images that were verified recently. A typical deploy with pre-built images adds <1s; a deploy that triggers builds blocks for 3-10 minutes with periodic status updates in the log viewer. If a stop or clean changes the instance status while the gate runs, the deploy is cancelled and installs nothing. A backend restart during the gate cancels the deploy (the CI build continues); deploy again afterwards.
 
 See [k8s-stack-manager-extensions/hooks/ci-trigger-gate](https://github.com/omattsson/k8s-stack-manager-extensions) for a reference implementation with Azure DevOps support.
 

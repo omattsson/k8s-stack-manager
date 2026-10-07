@@ -25,16 +25,17 @@ type recordedHook struct {
 // hookRecorder is an httptest server that captures every event posted to it.
 // Tests inspect recorder.events after the deploy goroutine completes.
 type hookRecorder struct {
-	t        *testing.T
-	mu       sync.Mutex
-	events   []recordedHook
-	deny     map[string]string // event -> message; if set, respond Allowed:false
-	server   *httptest.Server
+	t       *testing.T
+	mu      sync.Mutex
+	events  []recordedHook
+	deny    map[string]string // event -> message; if set, respond Allowed:false
+	onEvent map[string]func() // event -> callback run before the response
+	server  *httptest.Server
 }
 
 func newHookRecorder(t *testing.T) *hookRecorder {
 	t.Helper()
-	r := &hookRecorder{t: t, deny: map[string]string{}}
+	r := &hookRecorder{t: t, deny: map[string]string{}, onEvent: map[string]func(){}}
 	r.server = httptest.NewServer(http.HandlerFunc(r.serve))
 	t.Cleanup(r.server.Close)
 	return r
@@ -50,8 +51,12 @@ func (r *hookRecorder) serve(w http.ResponseWriter, req *http.Request) {
 	r.mu.Lock()
 	r.events = append(r.events, recordedHook{event: env.Event, envelope: env})
 	denyMsg, deny := r.deny[env.Event]
+	callback := r.onEvent[env.Event]
 	r.mu.Unlock()
 
+	if callback != nil {
+		callback()
+	}
 	if deny {
 		_ = json.NewEncoder(w).Encode(hooks.HookResponse{Allowed: false, Message: denyMsg})
 		return
@@ -192,6 +197,13 @@ func TestManager_Deploy_PreDeployHookIncludesChartData(t *testing.T) {
 			ChartName:    "redis",
 			ChartVersion: "7.0.0",
 		},
+	}, {
+		ChartConfig: models.ChartConfig{
+			ChartName:       "app-web",
+			ChartVersion:    "1.0.0",
+			BuildPipelineID: "43",
+		},
+		Branch: "Feature/Web_Fix",
 	}}
 
 	logID, err := mgr.Deploy(context.Background(), DeployRequest{
@@ -209,14 +221,22 @@ func TestManager_Deploy_PreDeployHookIncludesChartData(t *testing.T) {
 
 	preDeployEvt := rec.snapshot()[0]
 	assert.Equal(t, hooks.EventPreDeploy, preDeployEvt.event)
-	require.Len(t, preDeployEvt.envelope.Charts, 2, "pre-deploy must include all charts")
+	require.Len(t, preDeployEvt.envelope.Charts, 3, "pre-deploy must include all charts")
 
 	assert.Equal(t, "app-api", preDeployEvt.envelope.Charts[0].Name)
 	assert.Equal(t, "42", preDeployEvt.envelope.Charts[0].BuildPipelineID)
 	assert.Equal(t, "https://dev.azure.com/org/proj/_git/app-api", preDeployEvt.envelope.Charts[0].SourceRepoURL)
 
+	assert.Equal(t, "feature/foo", preDeployEvt.envelope.Charts[0].Branch)
+	assert.Equal(t, "feature-foo", preDeployEvt.envelope.Charts[0].ImageTag, "image_tag must match {{.ImageTag}}")
+
 	assert.Equal(t, "redis", preDeployEvt.envelope.Charts[1].Name)
 	assert.Empty(t, preDeployEvt.envelope.Charts[1].BuildPipelineID)
+
+	// A per-chart branch override gives the chart its own branch and tag.
+	assert.Equal(t, "app-web", preDeployEvt.envelope.Charts[2].Name)
+	assert.Equal(t, "Feature/Web_Fix", preDeployEvt.envelope.Charts[2].Branch)
+	assert.Equal(t, "feature-web-fix", preDeployEvt.envelope.Charts[2].ImageTag)
 }
 
 func TestManager_Deploy_PreHookAbortFinalizesAsError(t *testing.T) {
@@ -322,4 +342,83 @@ func TestManager_Deploy_NoDispatcherIsNoOp(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assert.NotEmpty(t, logID)
+}
+
+// TestManager_Deploy_StatusChangedDuringPreDeployHookSkipsInstall covers a
+// stop or clean during a long pre-deploy hook (for example a CI gate that
+// waits for image builds): the deploy must not install the charts, and it must
+// keep the status that the stop or clean set.
+func TestManager_Deploy_StatusChangedDuringPreDeployHookSkipsInstall(t *testing.T) {
+	t.Parallel()
+
+	rec := newHookRecorder(t)
+	instanceRepo := newMockInstanceRepo()
+	logRepo := newMockDeployLogRepo()
+
+	inst := &models.StackInstance{
+		ID:                "inst-stopped-during-gate",
+		StackDefinitionID: "def-1",
+		Name:              "gate-stop",
+		Namespace:         "stack-gate-stop",
+		OwnerID:           "user-1",
+		Branch:            "feature/foo",
+		Status:            models.StackStatusDraft,
+	}
+	require.NoError(t, instanceRepo.Create(inst))
+
+	// While the pre-deploy hook runs, a stop moves the instance to stopped.
+	rec.onEvent[hooks.EventPreDeploy] = func() {
+		current, err := instanceRepo.FindByID(inst.ID)
+		if err != nil {
+			t.Errorf("find instance: %v", err)
+			return
+		}
+		current.Status = models.StackStatusStopped
+		if err := instanceRepo.Update(current); err != nil {
+			t.Errorf("update instance: %v", err)
+		}
+	}
+
+	helmExec := &mockHelmExecutor{}
+	mgr := NewManager(ManagerConfig{
+		Registry:      &mockClusterResolver{helm: helmExec},
+		InstanceRepo:  instanceRepo,
+		DeployLogRepo: logRepo,
+		TxRunner:      &mockTxRunner{instanceRepo: instanceRepo, logRepo: logRepo},
+		Hub:           &mockBroadcaster{},
+		MaxConcurrent: 2,
+		Hooks:         rec.dispatcherFor(t, hooks.FailurePolicyFail),
+	})
+
+	logID, err := mgr.Deploy(context.Background(), DeployRequest{
+		Instance:   inst,
+		Definition: &models.StackDefinition{ID: "def-1", Name: "test-def"},
+		Charts: []ChartDeployInfo{{
+			ChartConfig: models.ChartConfig{ChartName: "app", ChartVersion: "1.0.0"},
+		}},
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, logID)
+
+	require.Eventually(t, func() bool {
+		logs, _ := logRepo.ListByInstance(context.Background(), inst.ID)
+		return len(logs) > 0 && logs[0].Status != models.DeployLogRunning
+	}, 2*time.Second, 20*time.Millisecond, "deployment log should be finalized")
+
+	helmExec.mu.Lock()
+	installs := len(helmExec.installCalls)
+	helmExec.mu.Unlock()
+	assert.Zero(t, installs, "no chart may be installed after the status changed")
+
+	stored, err := instanceRepo.FindByID(inst.ID)
+	require.NoError(t, err)
+	assert.Equal(t, models.StackStatusStopped, stored.Status, "the status set by the stop must stay")
+
+	logs, err := logRepo.ListByInstance(context.Background(), inst.ID)
+	require.NoError(t, err)
+	require.Len(t, logs, 1)
+	assert.Equal(t, models.DeployLogError, logs[0].Status)
+	// sanitizeDeployError makes the stored message generic; the specific
+	// "deploy cancelled" text goes to the live deploy log.
+	assert.NotEmpty(t, logs[0].ErrorMessage)
 }

@@ -100,6 +100,11 @@ type ChartRef struct {
 	SourceRepoURL   string `json:"source_repo_url,omitempty"`
 	BuildPipelineID string `json:"build_pipeline_id,omitempty"`
 	Branch          string `json:"branch,omitempty"`
+	// ImageTag is the Docker-safe tag of Branch, the same value as the
+	// {{.ImageTag}} template variable in the chart values. Subscribers (for
+	// example a CI trigger gate) use it so they check and build the tag that
+	// Helm deploys.
+	ImageTag string `json:"image_tag,omitempty"`
 }
 
 // HookResponse is the JSON shape subscribers return.
