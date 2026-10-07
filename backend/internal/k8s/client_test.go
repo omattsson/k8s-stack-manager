@@ -91,6 +91,71 @@ func TestEnsureNamespace_AddsLabel(t *testing.T) {
 	assert.Equal(t, "k8s-stack-manager", ns.Labels["managed-by"])
 }
 
+func TestEnsureNamespace_LabelsExistingNamespace(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		labels     map[string]string
+		wantPatch  bool
+		wantLabels map[string]string
+	}{
+		{
+			name:       "adds the label to a namespace without labels",
+			labels:     nil,
+			wantPatch:  true,
+			wantLabels: map[string]string{"managed-by": "k8s-stack-manager"},
+		},
+		{
+			name:      "adds the label and keeps other labels",
+			labels:    map[string]string{"name": "stack-a"},
+			wantPatch: true,
+			wantLabels: map[string]string{
+				"name":       "stack-a",
+				"managed-by": "k8s-stack-manager",
+			},
+		},
+		{
+			name:       "fixes a wrong value",
+			labels:     map[string]string{"managed-by": "helm"},
+			wantPatch:  true,
+			wantLabels: map[string]string{"managed-by": "k8s-stack-manager"},
+		},
+		{
+			name:       "no change when the label is present",
+			labels:     map[string]string{"managed-by": "k8s-stack-manager"},
+			wantPatch:  false,
+			wantLabels: map[string]string{"managed-by": "k8s-stack-manager"},
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			cs := fake.NewSimpleClientset(&corev1.Namespace{
+				ObjectMeta: metav1.ObjectMeta{Name: "stack-a", Labels: tt.labels},
+			})
+			client := NewClientFromInterface(cs)
+
+			err := client.EnsureNamespace(context.Background(), "stack-a")
+			assert.NoError(t, err)
+
+			ns, err := cs.CoreV1().Namespaces().Get(context.Background(), "stack-a", metav1.GetOptions{})
+			assert.NoError(t, err)
+			assert.Equal(t, tt.wantLabels, ns.Labels)
+
+			patched := false
+			for _, a := range cs.Actions() {
+				if a.GetVerb() == "patch" && a.GetResource().Resource == "namespaces" {
+					patched = true
+				}
+			}
+			assert.Equal(t, tt.wantPatch, patched)
+		})
+	}
+}
+
 func TestDeleteNamespace(t *testing.T) {
 	t.Parallel()
 
