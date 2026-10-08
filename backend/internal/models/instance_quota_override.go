@@ -25,4 +25,7 @@ type InstanceQuotaOverrideRepository interface {
 	GetByInstanceID(ctx context.Context, instanceID string) (*InstanceQuotaOverride, error)
 	Upsert(ctx context.Context, override *InstanceQuotaOverride) error
 	Delete(ctx context.Context, instanceID string) error
+	// ListByInstanceIDs returns the overrides of the given instances (one
+	// query). Instances without an override are absent from the result.
+	ListByInstanceIDs(ctx context.Context, instanceIDs []string) ([]InstanceQuotaOverride, error)
 }

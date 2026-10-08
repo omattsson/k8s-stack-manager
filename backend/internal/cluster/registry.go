@@ -153,6 +153,11 @@ func (r *Registry) GetDefaultClients() (*ClusterClients, error) {
 	return r.GetClients(cluster.ID)
 }
 
+// ErrNoDefaultCluster is returned by ResolveClusterID when the cluster ID is
+// empty and no cluster is marked as default. Other lookup failures (for
+// example a database error) are not wrapped with it.
+var ErrNoDefaultCluster = errors.New("no default cluster configured")
+
 // ResolveClusterID returns clusterID if non-empty, otherwise returns the default cluster's ID.
 func (r *Registry) ResolveClusterID(clusterID string) (string, error) {
 	if clusterID != "" {
@@ -166,7 +171,7 @@ func (r *Registry) ResolveClusterID(clusterID string) (string, error) {
 
 	if resolved {
 		if id == "" {
-			return "", fmt.Errorf("no default cluster configured")
+			return "", ErrNoDefaultCluster
 		}
 		return id, nil
 	}
@@ -176,7 +181,7 @@ func (r *Registry) ResolveClusterID(clusterID string) (string, error) {
 		id = r.defaultID
 		r.mu.Unlock()
 		if id == "" {
-			return "", fmt.Errorf("no default cluster configured")
+			return "", ErrNoDefaultCluster
 		}
 		return id, nil
 	}
@@ -186,6 +191,8 @@ func (r *Registry) ResolveClusterID(clusterID string) (string, error) {
 		if isNotFoundError(err) {
 			r.defaultResolved = true
 			r.defaultID = ""
+			r.mu.Unlock()
+			return "", fmt.Errorf("%w: %w", ErrNoDefaultCluster, err)
 		}
 		r.mu.Unlock()
 		return "", fmt.Errorf("no default cluster configured: %w", err)

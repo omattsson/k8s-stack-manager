@@ -2214,6 +2214,13 @@ func (m *mockQuotaOverrideRepo) Delete(_ context.Context, _ string) error {
 	return nil
 }
 
+func (m *mockQuotaOverrideRepo) ListByInstanceIDs(_ context.Context, _ []string) ([]models.InstanceQuotaOverride, error) {
+	if m.err != nil || m.override == nil {
+		return nil, m.err
+	}
+	return []models.InstanceQuotaOverride{*m.override}, nil
+}
+
 func TestManager_ApplyNamespaceQuotas_SkipsWhenEmpty(t *testing.T) {
 	t.Parallel()
 

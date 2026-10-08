@@ -2,6 +2,7 @@ package cluster
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -12,6 +13,7 @@ import (
 	"backend/internal/deployer"
 	"backend/internal/k8s"
 	"backend/internal/models"
+	"backend/pkg/dberrors"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -949,3 +951,33 @@ func TestHealthCheck_MixedFirstFailsSecondReachable(t *testing.T) {
 func (*mockClusterRepo) CountAll() (int, error) { return 0, nil }
 
 func (*mockClusterRepo) CountByHealthStatus(status string) (int, error) { return 0, nil }
+
+// TestResolveClusterID_ErrNoDefaultCluster checks that a missing default
+// cluster is reported as ErrNoDefaultCluster on the first and the cached
+// lookup, so callers can tell it apart from a lookup failure.
+func TestResolveClusterID_ErrNoDefaultCluster(t *testing.T) {
+	t.Parallel()
+
+	repo := newMockClusterRepo()
+	repo.findDefaultErr = dberrors.NewDatabaseError("find_default", dberrors.ErrNotFound)
+	reg := newTestRegistry(repo)
+	for i := 0; i < 2; i++ {
+		_, err := reg.ResolveClusterID("")
+		require.Error(t, err)
+		assert.ErrorIs(t, err, ErrNoDefaultCluster, "call %d", i+1)
+		assert.Contains(t, err.Error(), "no default cluster configured")
+	}
+}
+
+// TestResolveClusterID_LookupFailureIsNotErrNoDefaultCluster checks that a
+// failed default lookup (not a missing default) is not ErrNoDefaultCluster.
+func TestResolveClusterID_LookupFailureIsNotErrNoDefaultCluster(t *testing.T) {
+	t.Parallel()
+
+	repo := newMockClusterRepo()
+	repo.findDefaultErr = errors.New("connection refused")
+	reg := newTestRegistry(repo)
+	_, err := reg.ResolveClusterID("")
+	require.Error(t, err)
+	assert.NotErrorIs(t, err, ErrNoDefaultCluster)
+}

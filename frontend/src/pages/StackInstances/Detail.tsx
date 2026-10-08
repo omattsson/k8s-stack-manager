@@ -17,8 +17,11 @@ import {
   Grid,
   Chip,
   Tooltip,
+  Menu,
+  MenuItem,
 } from '@mui/material';
 import CloseIcon from '@mui/icons-material/Close';
+import ArrowDropDownIcon from '@mui/icons-material/ArrowDropDown';
 import StatusBadge from '../../components/StatusBadge';
 import BranchSelector from '../../components/BranchSelector';
 import ConfirmDialog from '../../components/ConfirmDialog';
@@ -37,6 +40,8 @@ import LoadingState from '../../components/LoadingState';
 import { useUnsavedChanges } from '../../hooks/useUnsavedChanges';
 import { useAuth } from '../../context/AuthContext';
 import { canModifyInstance } from '../../utils/roles';
+import { describeApiError } from '../../utils/apiError';
+import { downloadBlob } from '../../utils/download';
 
 const Detail = () => {
   const { id } = useParams<{ id: string }>();
@@ -57,6 +62,7 @@ const Detail = () => {
   const [error, setError] = useState<string | null>(null);
   const { showSuccess } = useNotification();
   const [deleteOpen, setDeleteOpen] = useState(false);
+  const [exportMenuAnchor, setExportMenuAnchor] = useState<HTMLElement | null>(null);
   const [deployPreviewOpen, setDeployPreviewOpen] = useState(false);
   const [deploying, setDeploying] = useState(false);
   const [stopping, setStopping] = useState(false);
@@ -299,17 +305,53 @@ const Detail = () => {
         await instanceService.update(id, { branch });
         setInstance({ ...instance, branch });
       }
+      initialBranchRef.current = branch;
 
-      // Save overrides
-      for (const [chartConfigId, values] of Object.entries(editedOverrides)) {
-        await instanceService.setOverride(id, chartConfigId, { values });
+      // Save changed overrides. A cleared editor deletes an existing
+      // override instead of storing an empty one. The saved state is
+      // updated per chart, so a retry after a partial failure only sends
+      // what is still unsaved.
+      const submitted = editedOverrides;
+      const saved: Record<string, string> = { ...initialOverridesRef.current };
+      for (const [chartConfigId, values] of Object.entries(submitted)) {
+        const initial = saved[chartConfigId];
+        if (values.trim() === '') {
+          if (initial !== undefined) {
+            try {
+              await instanceService.deleteOverride(id, chartConfigId);
+            } catch (err) {
+              // 404: the override is already gone, which is the goal.
+              if ((err as { response?: { status?: number } } | null)?.response?.status !== 404) throw err;
+            }
+            delete saved[chartConfigId];
+            initialOverridesRef.current = { ...saved };
+          }
+          continue;
+        }
+        if (values !== initial) {
+          await instanceService.setOverride(id, chartConfigId, { values });
+          saved[chartConfigId] = values;
+          initialOverridesRef.current = { ...saved };
+        }
       }
 
-      initialBranchRef.current = branch;
-      initialOverridesRef.current = { ...editedOverrides };
+      // Normalize the saved charts (drop cleared editors), but keep any
+      // edit typed while the save request ran.
+      setEditedOverrides((prev) => {
+        const next = { ...prev };
+        for (const [chartConfigId, values] of Object.entries(submitted)) {
+          if (prev[chartConfigId] !== values) continue;
+          if (chartConfigId in saved) {
+            next[chartConfigId] = saved[chartConfigId];
+          } else {
+            delete next[chartConfigId];
+          }
+        }
+        return next;
+      });
       showSuccess('Changes saved successfully');
-    } catch {
-      setError('Failed to save changes');
+    } catch (err) {
+      setError(await describeApiError(err, 'Failed to save changes'));
     } finally {
       setSaving(false);
     }
@@ -336,19 +378,17 @@ const Detail = () => {
     setDeleteOpen(false);
   };
 
-  const handleExport = async () => {
+  const handleExport = async (chart?: ChartConfig) => {
+    setExportMenuAnchor(null);
     if (!id) return;
+    const instanceName = instance?.name || id;
     try {
-      const values = await instanceService.exportValues(id);
-      const blob = new Blob([typeof values === 'string' ? values : JSON.stringify(values, null, 2)], { type: 'text/yaml' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `${instance?.name || 'values'}-export.yaml`;
-      a.click();
-      URL.revokeObjectURL(url);
-    } catch {
-      setError('Failed to export values');
+      const file = chart
+        ? await instanceService.exportChartValues(id, chart.id, `${instanceName}-${chart.chart_name}-values.yaml`)
+        : await instanceService.exportValues(id, instanceName);
+      downloadBlob(file.blob, file.filename);
+    } catch (err) {
+      setError(await describeApiError(err, 'Failed to export values'));
     }
   };
 
@@ -587,7 +627,31 @@ const Detail = () => {
           </Box>
           <Box sx={{ display: 'flex', gap: 1 }}>
             {canModify && renderStatusActions(instance.status)}
-            <Button variant="outlined" onClick={handleExport}>Export Values</Button>
+            <Button
+              variant="outlined"
+              id="export-values-button"
+              aria-controls={exportMenuAnchor ? 'export-values-menu' : undefined}
+              aria-haspopup="menu"
+              aria-expanded={exportMenuAnchor ? 'true' : undefined}
+              endIcon={<ArrowDropDownIcon />}
+              onClick={(e) => setExportMenuAnchor(e.currentTarget)}
+            >
+              Export Values
+            </Button>
+            <Menu
+              id="export-values-menu"
+              anchorEl={exportMenuAnchor}
+              open={Boolean(exportMenuAnchor)}
+              onClose={() => setExportMenuAnchor(null)}
+              slotProps={{ list: { 'aria-labelledby': 'export-values-button' } }}
+            >
+              <MenuItem onClick={() => handleExport()}>All charts (ZIP)</MenuItem>
+              {charts.map((chart) => (
+                <MenuItem key={chart.id} onClick={() => handleExport(chart)}>
+                  {chart.chart_name} (YAML)
+                </MenuItem>
+              ))}
+            </Menu>
             <Button variant="outlined" onClick={handleClone}>Clone</Button>
             {canModify && (
               <Button variant="outlined" color="error" onClick={() => setDeleteOpen(true)}>Delete</Button>

@@ -594,6 +594,9 @@ func (s *stubInstanceQuotaOverrideRepo) Upsert(_ context.Context, _ *models.Inst
 	return nil
 }
 func (s *stubInstanceQuotaOverrideRepo) Delete(_ context.Context, _ string) error { return nil }
+func (s *stubInstanceQuotaOverrideRepo) ListByInstanceIDs(_ context.Context, _ []string) ([]models.InstanceQuotaOverride, error) {
+	return nil, nil
+}
 
 // ---- stubCleanupPolicyRepo ----
 

@@ -37,7 +37,9 @@ func setupValueOverrideRouter(
 	insts := r.Group("/api/v1/stack-instances")
 	{
 		insts.GET("/:id/overrides", h.GetOverrides)
+		insts.GET("/:id/overrides/:chartId", h.GetOverride)
 		insts.PUT("/:id/overrides/:chartId", h.SetOverride)
+		insts.DELETE("/:id/overrides/:chartId", h.DeleteOverride)
 	}
 	return r
 }
@@ -142,7 +144,7 @@ func TestSetOverride(t *testing.T) {
 
 		router := setupValueOverrideRouter(
 			instRepo, overrideRepo,
-			NewMockStackDefinitionRepository(), NewMockChartConfigRepository(),
+			NewMockStackDefinitionRepository(), newOverrideTestChartRepo(t),
 			NewMockStackTemplateRepository(), NewMockTemplateChartConfigRepository(),
 			"uid-1", "user",
 		)
@@ -171,7 +173,7 @@ func TestSetOverride(t *testing.T) {
 
 		router := setupValueOverrideRouter(
 			instRepo, overrideRepo,
-			NewMockStackDefinitionRepository(), NewMockChartConfigRepository(),
+			NewMockStackDefinitionRepository(), newOverrideTestChartRepo(t),
 			NewMockStackTemplateRepository(), NewMockTemplateChartConfigRepository(),
 			"uid-1", "user",
 		)
@@ -245,7 +247,7 @@ func TestSetOverride(t *testing.T) {
 
 		router := setupValueOverrideRouter(
 			instRepo, overrideRepo,
-			NewMockStackDefinitionRepository(), NewMockChartConfigRepository(),
+			NewMockStackDefinitionRepository(), newOverrideTestChartRepo(t),
 			NewMockStackTemplateRepository(), NewMockTemplateChartConfigRepository(),
 			"uid-1", "user",
 		)
@@ -266,7 +268,7 @@ func TestSetOverride(t *testing.T) {
 
 		router := setupValueOverrideRouter(
 			instRepo, overrideRepo,
-			NewMockStackDefinitionRepository(), NewMockChartConfigRepository(),
+			NewMockStackDefinitionRepository(), newOverrideTestChartRepo(t),
 			NewMockStackTemplateRepository(), NewMockTemplateChartConfigRepository(),
 			"uid-1", "user",
 		)

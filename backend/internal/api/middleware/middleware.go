@@ -52,6 +52,9 @@ func CORS(allowedOrigins string) gin.HandlerFunc {
 		}
 		c.Writer.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 		c.Writer.Header().Set("Access-Control-Allow-Headers", "Content-Type, Content-Length, Accept-Encoding, Authorization, X-Request-ID, X-API-Key")
+		// Let browser code read these response headers on cross-origin calls
+		// (for example the export file name in Content-Disposition).
+		c.Writer.Header().Set("Access-Control-Expose-Headers", "Content-Disposition, X-Request-ID")
 
 		if c.Request.Method == "OPTIONS" {
 			c.AbortWithStatus(http.StatusNoContent)

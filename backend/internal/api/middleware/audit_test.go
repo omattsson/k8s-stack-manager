@@ -315,6 +315,7 @@ func TestExtractEntityType(t *testing.T) {
 		{"/api/v1/stack-definitions/:id/charts", "chart_config"},
 		{"/api/v1/stack-definitions/:id/charts/:chartId", "chart_config"},
 		{"/api/v1/stack-instances/:id/overrides", "value_override"},
+		{"/api/v1/stack-instances/:id/overrides/:chartId", "value_override"},
 		{"/api/v1/auth/register", "user"}, // normalizeEntityType maps "register" → "user"
 		{"/api/v1/auth/:id", "user"},          // last non-param segment is "auth" → "user"
 		{"/api/v1/audit-logs", "audit_log"},
@@ -359,3 +360,24 @@ func TestNormalizeEntityType(t *testing.T) {
 
 // Unused import prevention — ensure json is used.
 var _ = json.Marshal
+
+// TestAuditMiddleware_AuditsValueOverrideDelete checks that DELETE
+// /stack-instances/:id/overrides/:chartId (issue 445) gets an audit entry
+// with action "delete", entity type "value_override" and the instance ID.
+func TestAuditMiddleware_AuditsValueOverrideDelete(t *testing.T) {
+	t.Parallel()
+	logger := &mockAuditLogger{}
+	r := buildAuditRouter(logger, http.MethodDelete, "/api/v1/stack-instances/:id/overrides/:chartId", http.StatusNoContent, "")
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest(http.MethodDelete, "/api/v1/stack-instances/inst-1/overrides/chart-1", nil)
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusNoContent, w.Code)
+	require.True(t, waitForAudit(logger, 200*time.Millisecond))
+	entry := logger.last()
+	assert.Equal(t, "delete", entry.Action)
+	assert.Equal(t, "value_override", entry.EntityType)
+	assert.Equal(t, "inst-1", entry.EntityID)
+	assert.Equal(t, "test-user-id", entry.UserID)
+}

@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -41,6 +42,15 @@ type QuickDeployHandler struct {
 	k8sWatcher         *k8s.Watcher
 	defaultTTLMinutes  int
 	txRunner           database.TxRunner
+	sharedValuesRepo   models.SharedValuesRepository
+}
+
+// WithSharedValues attaches the cluster shared values repository so quick
+// deploy merges the shared values of the target cluster as the lowest values
+// layer. Returns h for chaining. Without it no shared values are applied.
+func (h *QuickDeployHandler) WithSharedValues(repo models.SharedValuesRepository) *QuickDeployHandler {
+	h.sharedValuesRepo = repo
+	return h
 }
 
 // NewQuickDeployHandler creates a new QuickDeployHandler with all required dependencies.
@@ -318,7 +328,7 @@ func (h *QuickDeployHandler) QuickDeploy(c *gin.Context) {
 	}
 
 	// 5. Trigger deploy.
-	logID, deployErr := h.triggerDeploy(c, inst, def, chartConfigs, templateCharts, username)
+	logID, deployErr := h.triggerDeploy(c, inst, def, chartConfigs, username)
 
 	if deployErr != nil {
 		slog.Error("Quick deploy failed during deployment phase",
@@ -353,13 +363,15 @@ func (h *QuickDeployHandler) QuickDeploy(c *gin.Context) {
 	})
 }
 
-// triggerDeploy generates values and starts the deployment, mirroring DeployInstance logic.
+// triggerDeploy generates values with the shared values pipeline
+// (valuesBuilder, as DeployInstance) and starts the deployment. Any lookup
+// error (shared values, value or branch overrides, locked values) fails the
+// quick deploy; the caller then marks the instance as error.
 func (h *QuickDeployHandler) triggerDeploy(
 	c *gin.Context,
 	inst *models.StackInstance,
 	def *models.StackDefinition,
 	chartConfigs []models.ChartConfig,
-	templateCharts []models.TemplateChartConfig,
 	ownerName string,
 ) (string, error) {
 	if h.deployManager == nil {
@@ -370,73 +382,51 @@ func (h *QuickDeployHandler) triggerDeploy(
 		return "", fmt.Errorf("no charts configured for this stack definition")
 	}
 
-	// Build locked values map from template charts.
-	lockedMap := make(map[string]string)
-	for _, tc := range templateCharts {
-		lockedMap[tc.ChartName] = tc.LockedValues
+	valuesMap, branchMap, err := h.values().build(c.Request.Context(), inst, def, chartConfigs, ownerName)
+	if err != nil {
+		return "", fmt.Errorf("build chart values: %w", err)
 	}
 
-	// Build overrides map (empty for quick deploy — no value overrides yet).
-	overridesMap := make(map[string]string)
-	if h.overrideRepo != nil {
-		overrides, err := h.overrideRepo.ListByInstance(inst.ID)
-		if err == nil {
-			for _, ov := range overrides {
-				overridesMap[ov.ChartConfigID] = ov.Values
-			}
-		}
-	}
-
-	// Build per-chart branch override map.
-	branchMap := make(map[string]string)
-	if h.branchOverrideRepo != nil {
-		branchOverrides, err := h.branchOverrideRepo.List(inst.ID)
-		if err == nil {
-			for _, bo := range branchOverrides {
-				branchMap[bo.ChartConfigID] = bo.Branch
-			}
-		}
-	}
-
-	templateVars := helm.TemplateVars{
-		Branch:       inst.Branch,
-		ImageTag:     helm.SanitizeImageTag(inst.Branch),
-		Namespace:    inst.Namespace,
-		InstanceName: inst.Name,
-		StackName:    def.Name,
-		Owner:        ownerName,
-	}
-
-	var chartInfos []deployer.ChartDeployInfo
+	chartInfos := make([]deployer.ChartDeployInfo, 0, len(chartConfigs))
 	for _, ch := range chartConfigs {
-		params := helm.GenerateParams{
-			ChartName:      ch.ChartName,
-			DefaultValues:  ch.DefaultValues,
-			LockedValues:   lockedMap[ch.ChartName],
-			OverrideValues: overridesMap[ch.ID],
-			ChartBranch:    branchMap[ch.ID],
-			TemplateVars:   templateVars,
-		}
-
-		yamlData, err := h.valuesGen.GenerateValues(c.Request.Context(), params)
-		if err != nil {
-			return "", fmt.Errorf("failed to generate values for chart %s: %w", ch.ChartName, err)
-		}
-
 		chartInfos = append(chartInfos, deployer.ChartDeployInfo{
 			ChartConfig: ch,
-			ValuesYAML:  yamlData,
+			ValuesYAML:  []byte(valuesMap[ch.ChartName]),
 			Branch:      branchMap[ch.ID],
 		})
 	}
 
+	// Record the rendered values like DeployInstance, so deploy preview
+	// compares against what this deploy applied.
+	var lastDeployedValues string
+	if encoded, encErr := json.Marshal(valuesMap); encErr == nil {
+		lastDeployedValues = string(encoded)
+	}
+
 	req := deployer.DeployRequest{
-		Instance:   inst,
-		Definition: def,
-		Charts:     chartInfos,
+		Instance:           inst,
+		Definition:         def,
+		Charts:             chartInfos,
+		LastDeployedValues: lastDeployedValues,
 	}
 
 	return h.deployManager.Deploy(c.Request.Context(), req)
+}
+
+// values returns the values pipeline over the handler's repositories.
+func (h *QuickDeployHandler) values() *valuesBuilder {
+	b := &valuesBuilder{
+		overrideRepo:       h.overrideRepo,
+		branchOverrideRepo: h.branchOverrideRepo,
+		templateChartRepo:  h.templateChartRepo,
+		userRepo:           h.userRepo,
+		valuesGen:          h.valuesGen,
+		sharedValuesRepo:   h.sharedValuesRepo,
+	}
+	if h.registry != nil {
+		b.resolver = h.registry
+	}
+	return b
 }
 
 // truncate shortens a string to maxLen runes, preserving UTF-8 boundaries.

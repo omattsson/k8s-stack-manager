@@ -2379,7 +2379,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Creates or updates the resource quota configuration for a cluster. Admin only.",
+                "description": "Creates or updates the resource quota configuration for a cluster. Admin only. Each non-empty quantity must be a valid Kubernetes quantity (for example 500m, 2, 512Mi, 10Gi) and not negative; cpu_request must not exceed cpu_limit and memory_request must not exceed memory_limit; pod_limit must not be negative. Values are trimmed. Invalid input returns 400 with the field name. The quota is also checked merged with the quota override of every instance on the cluster (for the default cluster also instances without a cluster); a conflict returns 400 listing up to 10 instance names and the first rule broken.",
                 "consumes": [
                     "application/json"
                 ],
@@ -2417,6 +2417,24 @@ const docTemplate = `{
                     },
                     "400": {
                         "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {
@@ -4873,7 +4891,7 @@ const docTemplate = `{
         },
         "/api/v1/stack-instances/compare": {
             "get": {
-                "description": "Compare the merged values of two stack instances side-by-side, per chart",
+                "description": "Compare the merged values of two stack instances side-by-side, per chart. The merged values use the deploy pipeline: cluster shared values, chart defaults, value overrides, locked template values and chart branch overrides. charts[].has_differences is true when the merged YAML differs or the chart exists on one side only.",
                 "produces": [
                     "application/json"
                 ],
@@ -4906,6 +4924,15 @@ const docTemplate = `{
                     },
                     "400": {
                         "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {
@@ -5308,7 +5335,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Upsert a per-chart branch override for a specific chart in a stack instance",
+                "description": "Upsert a per-chart branch override for a specific chart in a stack instance. chartId must be a chart config of the instance's stack definition (404 \"Chart not found in this stack definition\" otherwise).",
                 "consumes": [
                     "application/json"
                 ],
@@ -5360,6 +5387,15 @@ const docTemplate = `{
                             }
                         }
                     },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
                     "403": {
                         "description": "Forbidden",
                         "schema": {
@@ -5395,7 +5431,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Remove the per-chart branch override for a specific chart in a stack instance",
+                "description": "Remove the per-chart branch override for a specific chart in a stack instance. An existing override row is removed even when its chart is not part of the definition, so stale rows can be cleaned up. Without an override the response is 404: \"Chart not found in this stack definition\" for an unknown chart, otherwise \"Branch override not found\".",
                 "produces": [
                     "application/json"
                 ],
@@ -5422,6 +5458,15 @@ const docTemplate = `{
                 "responses": {
                     "204": {
                         "description": "No Content"
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
                     },
                     "403": {
                         "description": "Forbidden",
@@ -5785,7 +5830,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Compare pending merged values against last-deployed values per chart",
+                "description": "Compare pending merged values against last-deployed values per chart. Pending values use the deploy pipeline: cluster shared values (by priority), chart defaults, instance overrides, locked template values. A shared values load error returns 500 (fail closed).",
                 "produces": [
                     "application/json"
                 ],
@@ -5966,8 +6011,97 @@ const docTemplate = `{
             }
         },
         "/api/v1/stack-instances/{id}/overrides/{chartId}": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Get the value override of one chart in a stack instance. chartId must be a chart config of the instance's stack definition.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "value-overrides"
+                ],
+                "summary": "Get the override for a chart",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Instance ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Chart config ID",
+                        "name": "chartId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/models.ValueOverride"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Instance not found, chart not found in this stack definition, or no override",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            },
             "put": {
-                "description": "Upsert value overrides for a specific chart in a stack instance",
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Upsert value overrides for a specific chart in a stack instance. chartId must be a chart config of the instance's stack definition. Empty or whitespace-only values remove the override and return 204 No Content (also when no override existed).",
                 "consumes": [
                     "application/json"
                 ],
@@ -6010,8 +6144,101 @@ const docTemplate = `{
                             "$ref": "#/definitions/models.ValueOverride"
                         }
                     },
+                    "204": {
+                        "description": "Override removed (empty values)"
+                    },
                     "400": {
                         "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Instance not found, or chart not found in this stack definition",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Remove the value override of one chart in a stack instance. An existing override row is removed even when its chart is no longer part of the definition, so stale rows can be cleaned up. Without an override the response is 404: \"Chart not found in this stack definition\" for an unknown chart, otherwise \"Value override not found\". The audit middleware records the delete.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "value-overrides"
+                ],
+                "summary": "Delete the override for a chart",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Instance ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Chart config ID",
+                        "name": "chartId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {
@@ -6030,6 +6257,15 @@ const docTemplate = `{
                     },
                     "404": {
                         "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {
@@ -6194,7 +6430,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Upsert the per-instance resource quota override for a stack instance",
+                "description": "Upsert the per-instance resource quota override for a stack instance. Each non-empty quantity must be a valid Kubernetes quantity (for example 500m, 2, 512Mi, 10Gi) and not negative; cpu_request must not exceed cpu_limit and memory_request must not exceed memory_limit; pod_limit must not be negative. Values are trimmed. The effective quota (cluster quota of the instance's cluster merged with this override) must follow the same rules, for example \"cpu_request 4 (instance override) exceeds the effective cpu_limit 2 (cluster quota)\". Invalid input returns 400 with the field name.",
                 "consumes": [
                     "application/json"
                 ],
@@ -6544,7 +6780,7 @@ const docTemplate = `{
         },
         "/api/v1/stack-instances/{id}/values": {
             "get": {
-                "description": "Generate and export merged values for all charts as a zip archive",
+                "description": "Generate and export merged values for all charts as a zip archive (same layers as deploy, including cluster shared values and chart branch overrides)",
                 "produces": [
                     "application/zip"
                 ],
@@ -6566,6 +6802,12 @@ const docTemplate = `{
                         "description": "ZIP archive",
                         "schema": {
                             "type": "file"
+                        },
+                        "headers": {
+                            "Content-Disposition": {
+                                "type": "string",
+                                "description": "attachment with a quoted filename \u003cinstance\u003e-values.zip and an RFC 5987 filename* (UTF-8) form"
+                            }
                         }
                     },
                     "404": {
@@ -6591,7 +6833,7 @@ const docTemplate = `{
         },
         "/api/v1/stack-instances/{id}/values/{chartId}": {
             "get": {
-                "description": "Generate and export merged values.yaml for a specific chart",
+                "description": "Generate and export the merged values.yaml for a specific chart: cluster shared values (by priority), chart defaults, instance overrides, locked template values and the chart branch override, as used by deploy.",
                 "produces": [
                     "application/x-yaml"
                 ],
@@ -6620,10 +6862,25 @@ const docTemplate = `{
                         "description": "YAML content",
                         "schema": {
                             "type": "string"
+                        },
+                        "headers": {
+                            "Content-Disposition": {
+                                "type": "string",
+                                "description": "attachment with a quoted filename \u003cinstance\u003e-\u003cchart\u003e-values.yaml and an RFC 5987 filename* (UTF-8) form"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
                         }
                     },
                     "404": {
-                        "description": "Not Found",
+                        "description": "Instance not found, or chart not found in this stack definition",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {

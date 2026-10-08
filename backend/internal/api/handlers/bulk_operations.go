@@ -1,13 +1,13 @@
 package handlers
 
 import (
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
 
 	"backend/internal/database"
 	"backend/internal/deployer"
-	"backend/internal/helm"
 	"backend/internal/models"
 
 	"github.com/gin-gonic/gin"
@@ -152,83 +152,39 @@ func (h *InstanceHandler) BulkDeploy(c *gin.Context) {
 			return "", fmt.Errorf("no charts configured for this stack definition")
 		}
 
-		// Build locked values map from template.
-		lockedMap := make(map[string]string)
-		if def.SourceTemplateID != "" && h.templateChartRepo != nil {
-			templateCharts, tcErr := h.templateChartRepo.ListByTemplate(def.SourceTemplateID)
-			if tcErr != nil {
-				return "", fmt.Errorf("failed to list template chart configs")
-			}
-			for _, tc := range templateCharts {
-				lockedMap[tc.ChartName] = tc.LockedValues
-			}
-		}
-
-		// Build overrides map.
-		overridesMap := make(map[string]string)
-		overrides, err := h.overrideRepo.ListByInstance(inst.ID)
-		if err != nil {
-			return "", fmt.Errorf("failed to list value overrides")
-		}
-		for _, ov := range overrides {
-			overridesMap[ov.ChartConfigID] = ov.Values
-		}
-
-		// Build per-chart branch override map.
-		branchMap := make(map[string]string)
-		if h.branchOverrideRepo != nil {
-			branchOverrides, boErr := h.branchOverrideRepo.List(inst.ID)
-			if boErr != nil {
-				return "", fmt.Errorf("failed to list branch overrides")
-			}
-			for _, bo := range branchOverrides {
-				branchMap[bo.ChartConfigID] = bo.Branch
-			}
-		}
-
 		if inst.Namespace == "" {
 			return "", fmt.Errorf("instance namespace is empty")
 		}
 
-		ownerName := resolveOwnerName(h.userRepo, inst.OwnerID)
-
-		templateVars := helm.TemplateVars{
-			Branch:       inst.Branch,
-			ImageTag:     helm.SanitizeImageTag(inst.Branch),
-			Namespace:    inst.Namespace,
-			InstanceName: inst.Name,
-			StackName:    def.Name,
-			Owner:        ownerName,
+		// Same values pipeline as DeployInstance: shared values, defaults,
+		// overrides, locked values and branch overrides. Fail closed.
+		valuesMap, branchMap, err := h.buildChartValuesAndBranches(c.Request.Context(), inst, def, charts)
+		if err != nil {
+			slog.Error("bulk deploy: failed to build chart values", logKeyInstanceID, inst.ID, "error", err)
+			return "", fmt.Errorf("failed to generate values")
 		}
 
-		// Generate values YAML for each chart.
 		var chartInfos []deployer.ChartDeployInfo
 		for _, ch := range charts {
-			params := helm.GenerateParams{
-				ChartName:      ch.ChartName,
-				DefaultValues:  ch.DefaultValues,
-				LockedValues:   lockedMap[ch.ChartName],
-				OverrideValues: overridesMap[ch.ID],
-				ChartBranch:    branchMap[ch.ID],
-				TemplateVars:   templateVars,
-			}
-
-			yamlData, genErr := h.valuesGen.GenerateValues(c.Request.Context(), params)
-			if genErr != nil {
-				return "", fmt.Errorf("failed to generate values")
-			}
-
 			chartInfos = append(chartInfos, deployer.ChartDeployInfo{
 				ChartConfig: ch,
-				ValuesYAML:  yamlData,
+				ValuesYAML:  []byte(valuesMap[ch.ChartName]),
 				Branch:      branchMap[ch.ID],
 			})
 		}
 
+		// Record the rendered values like DeployInstance, so deploy preview
+		// compares against what this deploy applied.
+		var lastDeployedValues string
+		if encoded, encErr := json.Marshal(valuesMap); encErr == nil {
+			lastDeployedValues = string(encoded)
+		}
+
 		req := deployer.DeployRequest{
-			Instance:   inst,
-			Definition: def,
-			Charts:     chartInfos,
+			Instance:           inst,
+			Definition:         def,
+			Charts:             chartInfos,
+			LastDeployedValues: lastDeployedValues,
 		}
 
 		logID, err := h.deployManager.Deploy(c.Request.Context(), req)

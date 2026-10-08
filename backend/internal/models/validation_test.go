@@ -854,3 +854,60 @@ func TestCleanupPolicyValidate(t *testing.T) {
 		})
 	}
 }
+
+// TestValidateQuotaQuantities covers the quantity rules shared by
+// ResourceQuotaConfig and InstanceQuotaOverride (issue 463).
+func TestValidateQuotaQuantities(t *testing.T) {
+	t.Parallel()
+
+	pods := 3
+	negPods := -1
+	tests := []struct {
+		name    string
+		cpuReq  string
+		cpuLim  string
+		memReq  string
+		memLim  string
+		storage string
+		pods    *int
+		wantErr string
+	}{
+		{name: "all empty", wantErr: ""},
+		{name: "valid set", cpuReq: "250m", cpuLim: "1", memReq: "128Mi", memLim: "1Gi", storage: "5Gi", pods: &pods},
+		{name: "decimal and exponent forms", cpuReq: "0.5", cpuLim: "1e3", memLim: "1G"},
+		{name: "request equals limit", cpuReq: "1", cpuLim: "1000m"},
+		{name: "invalid memory limit", memLim: "abc", wantErr: "memory_limit: invalid quantity"},
+		{name: "invalid cpu limit", cpuLim: "2 cores", wantErr: "cpu_limit: invalid quantity"},
+		{name: "invalid storage limit", storage: "1TBB", wantErr: "storage_limit: invalid quantity"},
+		{name: "whitespace only", memReq: " ", wantErr: "memory_request: invalid quantity"},
+		{name: "negative memory request", memReq: "-1Gi", wantErr: "memory_request: must not be negative"},
+		{name: "longer than column", cpuReq: "123456789012345678901", wantErr: "cpu_request: must be at most 20 characters"},
+		{name: "cpu request above limit", cpuReq: "20", cpuLim: "16", wantErr: "cpu_request must not exceed cpu_limit"},
+		{name: "memory request above limit", memReq: "2Gi", memLim: "1024Mi", wantErr: "memory_request must not exceed memory_limit"},
+		{name: "negative pod limit", pods: &negPods, wantErr: "pod_limit must be non-negative"},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			podLimit := 0
+			if tt.pods != nil {
+				podLimit = *tt.pods
+			}
+			rq := ResourceQuotaConfig{ClusterID: "c1", CPURequest: tt.cpuReq, CPULimit: tt.cpuLim, MemoryRequest: tt.memReq, MemoryLimit: tt.memLim, StorageLimit: tt.storage, PodLimit: podLimit}
+			iqo := InstanceQuotaOverride{StackInstanceID: "i1", CPURequest: tt.cpuReq, CPULimit: tt.cpuLim, MemoryRequest: tt.memReq, MemoryLimit: tt.memLim, StorageLimit: tt.storage, PodLimit: tt.pods}
+
+			for name, err := range map[string]error{"cluster quota": rq.Validate(), "instance override": iqo.Validate()} {
+				if tt.wantErr == "" {
+					assert.NoError(t, err, name)
+					continue
+				}
+				if assert.Error(t, err, name) {
+					assert.Contains(t, err.Error(), tt.wantErr, name)
+				}
+			}
+		})
+	}
+}

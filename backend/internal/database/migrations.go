@@ -1027,6 +1027,10 @@ func (d *Database) AutoMigrate() error {
 	// lifetime, reuse grace window, idle timeout from the last request).
 	migrator.AddMigration(refreshTokenSessionFamilyMigration())
 
+	// Migration 42: Remove empty value override rows. A PUT with empty values
+	// now deletes the override; older versions stored an empty row instead.
+	migrator.AddMigration(removeEmptyValueOverridesMigration())
+
 	// Run migrations
 	if err := migrator.MigrateUp(); err != nil {
 		return err
@@ -1077,6 +1081,30 @@ func refreshTokenSessionFamilyMigration() schema.Migration {
 					}
 				}
 			}
+			return nil
+		},
+	}
+}
+
+// removeEmptyValueOverridesMigration is migration 42. It deletes value
+// override rows whose values are empty or whitespace only. Such rows have no
+// effect on the rendered values but show up in GET /overrides. Down is a
+// no-op: the deleted rows carried no data.
+func removeEmptyValueOverridesMigration() schema.Migration {
+	return schema.Migration{
+		Version:     "20261008000042",
+		Name:        "remove_empty_value_overrides",
+		Description: "Delete value_overrides rows with empty or whitespace-only values",
+		Up: func(tx *gorm.DB) error {
+			if !tx.Migrator().HasTable(&models.ValueOverride{}) {
+				return nil
+			}
+			return tx.Exec(
+				"DELETE FROM value_overrides WHERE `values` IS NULL OR TRIM(REPLACE(REPLACE(REPLACE(`values`, ?, ''), ?, ''), ?, '')) = ''",
+				"\n", "\r", "\t",
+			).Error
+		},
+		Down: func(_ *gorm.DB) error {
 			return nil
 		},
 	}

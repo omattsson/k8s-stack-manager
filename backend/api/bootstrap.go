@@ -366,7 +366,7 @@ func buildHandlers(
 	if err != nil {
 		return nil, fmt.Errorf("create instance handler: %w", err)
 	}
-	instanceHandler.WithHooks(svc.HookDispatcher).WithActions(svc.ActionRegistry).WithNotifier(svc.LifecycleNotifier)
+	instanceHandler.WithHooks(svc.HookDispatcher).WithActions(svc.ActionRegistry).WithNotifier(svc.LifecycleNotifier).WithSharedValues(repos.SharedValues)
 
 	// Git handler.
 	gitHandler := handlers.NewGitHandler(svc.GitRegistry)
@@ -387,13 +387,15 @@ func buildHandlers(
 	adminHandler := handlers.NewAdminHandler(svc.ClusterRegistry, repos.StackInstance)
 
 	// Cluster handler.
-	clusterHandler := handlers.NewClusterHandlerWithQuotas(repos.Cluster, svc.ClusterRegistry, repos.StackInstance, repos.ResourceQuota)
+	clusterHandler := handlers.NewClusterHandlerWithQuotas(repos.Cluster, svc.ClusterRegistry, repos.StackInstance, repos.ResourceQuota).
+		WithInstanceQuotaOverrides(repos.InstanceQuotaOverride)
 
 	// Branch override handler.
-	branchOverrideHandler := handlers.NewBranchOverrideHandler(repos.ChartBranchOverride, repos.StackInstance)
+	branchOverrideHandler := handlers.NewBranchOverrideHandler(repos.ChartBranchOverride, repos.StackInstance, repos.ChartConfig)
 
 	// Instance quota override handler.
-	instanceQuotaOverrideHandler := handlers.NewInstanceQuotaOverrideHandler(repos.InstanceQuotaOverride, repos.StackInstance)
+	instanceQuotaOverrideHandler := handlers.NewInstanceQuotaOverrideHandler(repos.InstanceQuotaOverride, repos.StackInstance).
+		WithClusterQuotas(repos.ResourceQuota, svc.ClusterRegistry)
 
 	// Shared values handler.
 	sharedValuesHandler := handlers.NewSharedValuesHandler(repos.SharedValues, repos.Cluster)
@@ -415,6 +417,16 @@ func buildHandlers(
 	)
 	if err != nil {
 		return nil, fmt.Errorf("create quick deploy handler: %w", err)
+	}
+	quickDeployHandler.WithSharedValues(repos.SharedValues)
+
+	// Cluster shared values are the lowest values layer of every deploy.
+	// Warn loudly if they are not wired: deploys would silently skip them.
+	if !instanceHandler.SharedValuesConfigured() {
+		slog.Warn("shared values repository not wired on the instance handler; cluster shared values are not applied to deploy, preview, export or compare")
+	}
+	if !quickDeployHandler.SharedValuesConfigured() {
+		slog.Warn("shared values repository not wired on the quick deploy handler; cluster shared values are not applied to quick deploy")
 	}
 
 	// Analytics handler.
