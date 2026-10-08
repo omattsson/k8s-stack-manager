@@ -219,6 +219,7 @@ func TestDashboard_ExpiringSoon(t *testing.T) {
 		ID:         "i1",
 		Name:       "expiring-stack",
 		Namespace:  "ns-1",
+		OwnerID:    "uid-alice",
 		Status:     models.StackStatusRunning,
 		ExpiresAt:  &expiresAt,
 		TTLMinutes: 60,
@@ -234,6 +235,9 @@ func TestDashboard_ExpiringSoon(t *testing.T) {
 
 	require.Len(t, resp.ExpiringSoon, 1)
 	assert.Equal(t, "expiring-stack", resp.ExpiringSoon[0].Name)
+	assert.Equal(t, "uid-alice", resp.ExpiringSoon[0].OwnerID)
+	// The frontend reads owner_id to decide if "Extend TTL" shows.
+	assert.Contains(t, w.Body.String(), `"owner_id":"uid-alice"`)
 }
 
 func TestDashboard_FailingInstances(t *testing.T) {

@@ -7,9 +7,10 @@ interface BranchSelectorProps {
   value: string;
   onChange: (branch: string) => void;
   label?: string;
+  disabled?: boolean;
 }
 
-const BranchSelector = ({ repoUrl, value, onChange, label = 'Branch' }: BranchSelectorProps) => {
+const BranchSelector = ({ repoUrl, value, onChange, label = 'Branch', disabled = false }: BranchSelectorProps) => {
   const [branches, setBranches] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(false);
@@ -41,6 +42,7 @@ const BranchSelector = ({ repoUrl, value, onChange, label = 'Branch' }: BranchSe
         onChange={(e) => onChange(e.target.value)}
         fullWidth
         size="small"
+        disabled={disabled}
         helperText="Could not load branches. Enter branch name manually."
       />
     );
@@ -52,6 +54,7 @@ const BranchSelector = ({ repoUrl, value, onChange, label = 'Branch' }: BranchSe
       value={value || null}
       onChange={(_e, newValue) => onChange(newValue || '')}
       loading={loading}
+      disabled={disabled}
       freeSolo
       onInputChange={(_e, newValue, reason) => {
         if (reason === 'input') onChange(newValue);

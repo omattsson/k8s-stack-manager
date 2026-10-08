@@ -62,9 +62,14 @@ vi.mock('../../../api/client', () => ({
   },
 }));
 
+const authState = vi.hoisted(() => ({
+  user: { id: '1', username: 'admin', role: 'admin', display_name: 'Admin' } as
+    { id: string; username: string; role: string; display_name: string },
+}));
+
 vi.mock('../../../context/AuthContext', () => ({
   useAuth: () => ({
-    user: { id: '1', username: 'admin', role: 'admin', display_name: 'Admin' },
+    user: authState.user,
     isAuthenticated: true,
     isLoading: false,
     login: vi.fn(),
@@ -93,6 +98,7 @@ describe('Dashboard', () => {
   afterEach(() => {
     vi.clearAllMocks();
     capturedWsHandlers.length = 0;
+    authState.user = { id: '1', username: 'admin', role: 'admin', display_name: 'Admin' };
   });
 
   // Reset default mocks that survive clearAllMocks
@@ -379,6 +385,39 @@ describe('Dashboard', () => {
 
     beforeEach(() => {
       (instanceService.list as ReturnType<typeof vi.fn>).mockResolvedValue(twoInstances);
+    });
+
+    const renderDashboard = () => render(
+      <MemoryRouter>
+        <NotificationProvider>
+          <Dashboard />
+        </NotificationProvider>
+      </MemoryRouter>
+    );
+
+    it('shows checkboxes for a devops user on instances owned by others', async () => {
+      authState.user = { id: 'u-devops', username: 'devops1', role: 'devops', display_name: 'DevOps' };
+      renderDashboard();
+      await waitFor(() => {
+        expect(screen.getByText('Instance A')).toBeInTheDocument();
+      });
+      expect(screen.getByRole('checkbox', { name: 'Select Instance A' })).toBeInTheDocument();
+      expect(screen.getByRole('checkbox', { name: 'Select Instance B' })).toBeInTheDocument();
+      expect(screen.getByRole('checkbox', { name: 'Select all instances' })).toBeInTheDocument();
+    });
+
+    it('offers no bulk selection to a user with role user', async () => {
+      // The user owns Instance A; bulk routes still need the devops role.
+      authState.user = { id: '1', username: 'alice', role: 'user', display_name: 'Alice' };
+      renderDashboard();
+      await waitFor(() => {
+        expect(screen.getByText('Instance A')).toBeInTheDocument();
+      });
+      expect(screen.queryByRole('checkbox', { name: 'Select Instance A' })).not.toBeInTheDocument();
+      expect(screen.queryByRole('checkbox', { name: 'Select Instance B' })).not.toBeInTheDocument();
+      expect(screen.queryByRole('checkbox', { name: 'Select all instances' })).not.toBeInTheDocument();
+      // Details stay available for every instance.
+      expect(screen.getAllByRole('button', { name: 'Details' })).toHaveLength(2);
     });
 
     it('shows checkboxes on each instance card', async () => {

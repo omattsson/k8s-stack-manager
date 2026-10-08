@@ -191,6 +191,24 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		return
 	}
 
+	// Close the disable race: re-read the user after signing and before the
+	// token or a refresh token leaves the server.
+	if err := recheckUserActive(h.userRepo, user.ID); err != nil {
+		switch {
+		case errors.Is(err, errAccountDisabled):
+			middleware.RecordLogin("local", "disabled")
+			c.JSON(http.StatusForbidden, gin.H{"error": "Account disabled"})
+		case errors.Is(err, errUserGone):
+			middleware.RecordLogin("local", "invalid")
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid username or password"})
+		default:
+			slog.Error("Login user re-check failed", "user_id", user.ID, "error", err)
+			middleware.RecordLogin("local", "failure")
+			c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
+		}
+		return
+	}
+
 	middleware.RecordLogin("local", "success")
 
 	// Issue refresh token if repository is configured.
@@ -469,9 +487,6 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 		return
 	}
 
-	// Set cookie only after the transaction committed successfully.
-	h.setRefreshCookie(c, newRawToken)
-
 	accessToken, err := middleware.GenerateTokenWithOpts(middleware.GenerateTokenOptions{
 		UserID:      user.ID,
 		Username:    user.Username,
@@ -486,6 +501,29 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
 		return
 	}
+
+	// Close the disable race (same as login): re-read the user after signing.
+	// On rejection revoke the rotated refresh token too.
+	if err := recheckUserActive(h.userRepo, user.ID); err != nil {
+		_ = h.refreshTokenRepo.RevokeAllForUser(user.ID)
+		h.clearRefreshCookie(c)
+		switch {
+		case errors.Is(err, errAccountDisabled):
+			middleware.RecordRefresh("disabled")
+			c.JSON(http.StatusForbidden, gin.H{"error": "Account disabled"})
+		case errors.Is(err, errUserGone):
+			middleware.RecordRefresh("revoked")
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid refresh token"})
+		default:
+			slog.Error("Refresh user re-check failed", "user_id", user.ID, "error", err)
+			middleware.RecordRefresh("failure")
+			c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
+		}
+		return
+	}
+
+	// Set cookie only after the transaction committed and the user re-check passed.
+	h.setRefreshCookie(c, newRawToken)
 
 	// Record success only after the access token was generated: the refresh is
 	// not complete until this point.

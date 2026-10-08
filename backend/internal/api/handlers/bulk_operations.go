@@ -5,7 +5,6 @@ import (
 	"log/slog"
 	"net/http"
 
-	"backend/internal/api/middleware"
 	"backend/internal/database"
 	"backend/internal/deployer"
 	"backend/internal/helm"
@@ -62,10 +61,6 @@ func (h *InstanceHandler) executeBulkOperation(c *gin.Context, opName string, op
 		return
 	}
 
-	userID := middleware.GetUserIDFromContext(c)
-	role := middleware.GetRoleFromContext(c)
-	isPrivileged := role == "admin" || role == "devops"
-
 	resp := BulkOperationResponse{
 		Total:   len(req.InstanceIDs),
 		Results: make([]BulkOperationResultItem, 0, len(req.InstanceIDs)),
@@ -85,8 +80,9 @@ func (h *InstanceHandler) executeBulkOperation(c *gin.Context, opName string, op
 		}
 		result.InstanceName = inst.Name
 
-		// Authorization: non-privileged users can only operate on their own instances.
-		if !isPrivileged && inst.OwnerID != userID {
+		// Authorization: same rule as the single-instance endpoints
+		// (owner, admin or devops; see canModifyInstance).
+		if !canModifyInstance(c, inst) {
 			result.Status = "error"
 			result.Error = "forbidden"
 			resp.Failed++

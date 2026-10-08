@@ -42,6 +42,32 @@ Template → (instantiate) → Definition + ChartConfigs → (create instance) �
 - Role hierarchy: `admin` > `devops` > `user`
 - Admin can register users; self-registration is configurable
 
+### Stack Instance Permissions
+
+| Operation | Owner | `admin` | `devops` | Other `user` |
+|---|---|---|---|---|
+| View the instance, status, pods, deploy log, access URLs, export values, compare, clone | yes | yes | yes | yes |
+| Deploy, deploy preview, stop, clean, delete, rollback, run actions | yes | yes | yes | no (403) |
+| Edit the instance, extend the TTL | yes | yes | yes | no (403) |
+| Read or change value, branch and quota overrides | yes | yes | yes | no (403) |
+
+- A refused request returns 403 before any side effect: no hook, no status change, no deploy-log entry, no Helm call. The backend logs the refused attempt.
+- The web UI hides the lifecycle buttons and shows the page read-only for a user who cannot modify the instance.
+- A clone always belongs to the user who creates it.
+- The override restriction limits who can *edit* through the override endpoints. It is not a secrecy control: the merged values (export, compare, deploy-log values) and a clone still contain the override values. Do not put secrets in value overrides; use Kubernetes Secrets or an external secret store.
+
+### Revoking a User
+
+| Action | Access tokens issued before | Refresh tokens | API keys |
+|---|---|---|---|
+| Delete the user | rejected (401) | revoked | deleted |
+| Disable the user | rejected (401) | revoked | kept, but rejected while the user is disabled |
+| Reset the password | rejected (401) | revoked | kept |
+
+A new login after a password reset works at once. Only tokens issued before the action are rejected. Enabling a disabled user does not bring back the tokens issued before the disable.
+
+Known gap: the WebSocket connection (`/ws`) does not check the blocklists yet (#466).
+
 ### Multi-Cluster
 - Clusters are registered via the API with a kubeconfig path or kubeconfig data (encrypted at rest with AES-GCM)
 - `ClusterRegistry` manages per-cluster Kubernetes and Helm clients

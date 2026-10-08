@@ -374,11 +374,8 @@ func buildHandlers(
 	auditLogHandler := handlers.NewAuditLogHandler(repos.AuditLog)
 
 	// User handler.
-	userHandler := handlers.NewUserHandler(repos.User)
+	userHandler := handlers.NewUserHandler(repos.User, repos.RefreshToken, repos.APIKey)
 	userHandler.SetSessionStore(sessStore)
-	if repos.RefreshToken != nil {
-		userHandler.SetRefreshTokenRepo(repos.RefreshToken)
-	}
 	userHandler.SetAccessTokenExpiration(cfg.Auth.AccessTokenExpiration)
 	userHandler.SetJWTExpiration(cfg.Auth.JWTExpiration)
 

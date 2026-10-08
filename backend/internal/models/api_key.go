@@ -36,6 +36,9 @@ type APIKeyRepository interface {
 	ListByUser(userID string) ([]*APIKey, error)
 	UpdateLastUsed(userID, keyID string, t time.Time) error
 	Delete(userID, keyID string) error
+	// DeleteAllForUser removes every API key of the user in one statement and
+	// returns the number of deleted keys. Zero keys is not an error.
+	DeleteAllForUser(userID string) (int64, error)
 }
 
 // GenerateAPIKey creates a cryptographically random 32-byte key and returns:

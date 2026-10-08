@@ -90,12 +90,22 @@ func AuthRequiredWithSessionStore(jwtSecret string, store sessionstore.SessionSt
 		}
 
 		if store != nil && claims.UserID != "" {
-			userBlocked, userBlockErr := store.IsUserBlocked(c.Request.Context(), claims.UserID)
+			// A user block revokes tokens issued at or before the block (user
+			// deleted, disabled or password reset). A token without iat gets a
+			// zero time and counts as blocked.
+			var issuedAt time.Time
+			if claims.IssuedAt != nil {
+				issuedAt = claims.IssuedAt.Time
+			}
+			userBlocked, userBlockErr := store.IsUserBlocked(c.Request.Context(), claims.UserID, issuedAt)
 			if userBlockErr != nil {
 				slog.Error("Failed to check user blocklist", "user_id", claims.UserID, "error", userBlockErr)
 				// Fail open — same policy as token blocklist check
 			} else if userBlocked {
-				c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "Account disabled"})
+				// 401 (not 403) so the frontend sends the user back to login.
+				// Login itself still answers 403 "Account disabled" for a
+				// disabled user.
+				c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Session revoked"})
 				return
 			}
 		}

@@ -20,15 +20,23 @@ import (
 // @Produce     json
 // @Param       id  path     string true "Instance ID"
 // @Success     200 {array}  models.ValueOverride
+// @Failure     403 {object} map[string]string
 // @Failure     404 {object} map[string]string
 // @Router      /api/v1/stack-instances/{id}/overrides [get]
 func (h *InstanceHandler) GetOverrides(c *gin.Context) {
 	instanceID := c.Param("id")
 
 	// Verify instance exists.
-	if _, err := h.instanceRepo.FindByID(instanceID); err != nil {
+	inst, err := h.instanceRepo.FindByID(instanceID)
+	if err != nil {
 		status, message := mapError(err, entityStackInstance)
 		c.JSON(status, gin.H{"error": message})
+		return
+	}
+
+	// Authorization: overrides are part of the instance configuration, so the
+	// read follows the modify rule (owner, admin or devops), like DeployPreview.
+	if !requireInstanceModify(c, inst) {
 		return
 	}
 
@@ -53,6 +61,7 @@ func (h *InstanceHandler) GetOverrides(c *gin.Context) {
 // @Param       body    body     models.ValueOverride true "Override values"
 // @Success     200     {object} models.ValueOverride
 // @Failure     400     {object} map[string]string
+// @Failure     403     {object} map[string]string
 // @Failure     404     {object} map[string]string
 // @Router      /api/v1/stack-instances/{id}/overrides/{chartId} [put]
 func (h *InstanceHandler) SetOverride(c *gin.Context) {
@@ -64,6 +73,11 @@ func (h *InstanceHandler) SetOverride(c *gin.Context) {
 	if err != nil {
 		status, message := mapError(err, entityStackInstance)
 		c.JSON(status, gin.H{"error": message})
+		return
+	}
+
+	// Authorization: only the owner, an admin or a devops user may set overrides.
+	if !requireInstanceModify(c, inst) {
 		return
 	}
 

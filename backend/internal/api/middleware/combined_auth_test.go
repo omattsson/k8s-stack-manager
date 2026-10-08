@@ -55,6 +55,9 @@ func (r *testAPIKeyRepo) Create(key *models.APIKey) error                       
 func (r *testAPIKeyRepo) FindByID(userID, keyID string) (*models.APIKey, error)  { return nil, nil }
 func (r *testAPIKeyRepo) ListByUser(userID string) ([]*models.APIKey, error)     { return nil, nil }
 func (r *testAPIKeyRepo) Delete(userID, keyID string) error                      { return nil }
+func (r *testAPIKeyRepo) DeleteAllForUser(_ string) (int64, error) {
+	return 0, nil
+}
 
 type testUserRepo struct {
 	mu    sync.RWMutex

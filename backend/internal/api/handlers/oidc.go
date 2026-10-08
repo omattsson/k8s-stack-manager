@@ -285,6 +285,43 @@ func (h *OIDCHandler) Callback(c *gin.Context) {
 		return
 	}
 
+	isCLI := strings.HasPrefix(stateData.RedirectURL, "cli:")
+
+	// CLI can't use refresh token cookies, so issue a long-lived JWT. It is
+	// signed here, before the user re-check below, so the re-check covers it.
+	cliToken := token
+	if isCLI && h.refreshTokenRepo != nil {
+		longLived, err := middleware.GenerateTokenWithOpts(middleware.GenerateTokenOptions{
+			UserID:       user.ID,
+			Username:     user.Username,
+			DisplayName:  user.DisplayName,
+			Role:         user.Role,
+			Secret:       h.authCfg.JWTSecret,
+			Expiration:   h.authCfg.JWTExpiration,
+			AuthProvider: "oidc",
+			Email:        user.Email,
+		})
+		if err == nil {
+			cliToken = longLived
+		} else {
+			slog.Warn("Failed to generate long-lived CLI token, using short-lived", "error", err)
+		}
+	}
+
+	// Close the disable race: re-read the user after signing and before any
+	// token is stored, returned, or a refresh token is persisted.
+	if err := recheckUserActive(h.userRepo, user.ID); err != nil {
+		switch {
+		case errors.Is(err, errAccountDisabled):
+			loginOutcome = "disabled"
+			c.Redirect(http.StatusFound, "/login?error="+errAccountDisabled.Error())
+		default:
+			slog.Error("OIDC user re-check failed", "user_id", user.ID, "error", err)
+			c.Redirect(http.StatusFound, "/login?error=auth_failed")
+		}
+		return
+	}
+
 	// Issue refresh token cookie for OIDC users too.
 	if h.refreshTokenRepo != nil {
 		if issueErr := issueOIDCRefreshToken(c, h.refreshTokenRepo, h.authCfg, user.ID); issueErr != nil {
@@ -294,28 +331,8 @@ func (h *OIDCHandler) Callback(c *gin.Context) {
 	}
 
 	// Check if this is a CLI auth session.
-	if strings.HasPrefix(stateData.RedirectURL, "cli:") {
+	if isCLI {
 		sessionID := strings.TrimPrefix(stateData.RedirectURL, "cli:")
-
-		// CLI can't use refresh token cookies, so issue a long-lived JWT.
-		cliToken := token
-		if h.refreshTokenRepo != nil {
-			longLived, err := middleware.GenerateTokenWithOpts(middleware.GenerateTokenOptions{
-				UserID:       user.ID,
-				Username:     user.Username,
-				DisplayName:  user.DisplayName,
-				Role:         user.Role,
-				Secret:       h.authCfg.JWTSecret,
-				Expiration:   h.authCfg.JWTExpiration,
-				AuthProvider: "oidc",
-				Email:        user.Email,
-			})
-			if err == nil {
-				cliToken = longLived
-			} else {
-				slog.Warn("Failed to generate long-lived CLI token, using short-lived", "error", err)
-			}
-		}
 
 		if err := h.sessionStore.UpdateCLIAuth(c.Request.Context(), sessionID, sessionstore.CLIAuthData{
 			Token:    cliToken,

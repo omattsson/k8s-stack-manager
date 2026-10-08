@@ -14,6 +14,22 @@ vi.mock('react-router-dom', async () => {
   };
 });
 
+// Current user for the auth mock. Default: the owner of mockInstance (owner_id 'user1').
+const authState = vi.hoisted(() => ({
+  user: { id: 'user1', username: 'alice', role: 'user', display_name: 'Alice' } as
+    { id: string; username: string; role: string; display_name: string },
+}));
+
+vi.mock('../../../context/AuthContext', () => ({
+  useAuth: () => ({
+    user: authState.user,
+    isAuthenticated: true,
+    isLoading: false,
+    login: vi.fn(),
+    logout: vi.fn(),
+  }),
+}));
+
 vi.mock('../../../hooks/useWebSocket', () => ({
   useWebSocket: () => ({ send: vi.fn() }),
 }));
@@ -224,6 +240,7 @@ const mockDefinition = {
 describe('StackInstances Detail', () => {
   afterEach(() => {
     vi.clearAllMocks();
+    authState.user = { id: 'user1', username: 'alice', role: 'user', display_name: 'Alice' };
   });
 
   it('shows loading spinner while fetching', () => {
@@ -1487,5 +1504,155 @@ describe('StackInstances Detail', () => {
       expect(screen.getByTestId('deployment-log-viewer')).toBeInTheDocument();
     });
     expect(screen.getByText('2 log entries')).toBeInTheDocument();
+  });
+});
+
+describe('StackInstances Detail permissions', () => {
+  const setUser = (id: string, role: string) => {
+    authState.user = { id, username: id, role, display_name: id };
+  };
+
+  afterEach(() => {
+    vi.clearAllMocks();
+    authState.user = { id: 'user1', username: 'alice', role: 'user', display_name: 'Alice' };
+  });
+
+  const expectModifyControls = async () => {
+    await waitFor(() => {
+      expect(screen.getByText('Test Instance')).toBeInTheDocument();
+    });
+    expect(screen.getByRole('button', { name: 'Stop' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Clean Namespace' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Delete' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Save Changes' })).toBeInTheDocument();
+    expect(screen.getByText('Your Overrides')).toBeInTheDocument();
+    expect(screen.queryByText(/Overrides are visible to the owner/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Read-only: you are not the owner/)).not.toBeInTheDocument();
+    expect(instanceService.getOverrides).toHaveBeenCalledWith('123');
+    expect(branchOverrideService.list).toHaveBeenCalledWith('123');
+  };
+
+  it.each([
+    ['owner with role user', 'user1', 'user'],
+    ['admin who is not the owner', 'u-admin', 'admin'],
+    ['devops user who is not the owner', 'u-devops', 'devops'],
+  ])('shows lifecycle actions for the %s', async (_label, userId, role) => {
+    setUser(userId, role);
+    setupMocks();
+    renderDetail();
+    await expectModifyControls();
+  });
+
+  it('shows Deploy for the owner when the instance is stopped', async () => {
+    setupMocks({ status: 'stopped' });
+    renderDetail();
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Deploy' })).toBeInTheDocument();
+    });
+  });
+
+  it('hides lifecycle actions and shows read-only info for another user', async () => {
+    setUser('u-bob', 'user');
+    setupMocks();
+    renderDetail();
+
+    await waitFor(() => {
+      expect(screen.getByText('Test Instance')).toBeInTheDocument();
+    });
+    expect(screen.getByText('Read-only: you are not the owner of this stack.')).toBeInTheDocument();
+    for (const name of ['Deploy', 'Stop', 'Clean Namespace', 'Delete', 'Save Changes', 'Extend']) {
+      expect(screen.queryByRole('button', { name })).not.toBeInTheDocument();
+    }
+    // Viewing and copying stay available.
+    expect(screen.getByRole('button', { name: 'Export Values' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Clone' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Back to Dashboard' })).toBeInTheDocument();
+    expect(screen.getByTestId('status-badge')).toHaveTextContent('running');
+    expect(screen.getByText('Overrides are visible to the owner, admins and devops users.')).toBeInTheDocument();
+    expect(screen.queryByText('Your Overrides')).not.toBeInTheDocument();
+    expect(screen.getByText('Default Values')).toBeInTheDocument();
+  });
+
+  it('shows the TTL countdown but hides Extend for another user', async () => {
+    setUser('u-bob', 'user');
+    (useCountdown as unknown as MockFn).mockReturnValue({
+      remaining: '3h 42m',
+      isWarning: false,
+      isCritical: false,
+      isExpired: false,
+    });
+    setupMocks({ status: 'running', expires_at: '2026-01-01T12:00:00Z' });
+    renderDetail();
+
+    await waitFor(() => {
+      expect(screen.getByText(/Expires in 3h 42m/)).toBeInTheDocument();
+    });
+    expect(screen.queryByRole('button', { name: 'Extend' })).not.toBeInTheDocument();
+    (useCountdown as unknown as MockFn).mockReturnValue(null);
+  });
+
+  it('shows Extend for the owner when the TTL countdown runs', async () => {
+    (useCountdown as unknown as MockFn).mockReturnValue({
+      remaining: '3h 42m',
+      isWarning: false,
+      isCritical: false,
+      isExpired: false,
+    });
+    setupMocks({ status: 'running', expires_at: '2026-01-01T12:00:00Z' });
+    renderDetail();
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Extend' })).toBeInTheDocument();
+    });
+    (useCountdown as unknown as MockFn).mockReturnValue(null);
+  });
+
+  it('hides Deploy for another user when the instance is stopped', async () => {
+    setUser('u-bob', 'user');
+    setupMocks({ status: 'stopped' });
+    renderDetail();
+
+    await waitFor(() => {
+      expect(screen.getByText('Test Instance')).toBeInTheDocument();
+    });
+    expect(screen.queryByRole('button', { name: 'Deploy' })).not.toBeInTheDocument();
+  });
+
+  it('does not fetch value or branch overrides for another user', async () => {
+    setUser('u-bob', 'user');
+    setupMocks();
+    renderDetail();
+
+    await waitFor(() => {
+      expect(screen.getByText('Test Instance')).toBeInTheDocument();
+    });
+    expect(instanceService.getOverrides).not.toHaveBeenCalled();
+    expect(branchOverrideService.list).not.toHaveBeenCalled();
+    expect(instanceService.getDeployLog).toHaveBeenCalledWith('123');
+    expect(instanceService.getPods).toHaveBeenCalledWith('123');
+    expect(screen.queryByText('Failed to load instance details')).not.toBeInTheDocument();
+  });
+
+  it('keeps pods, access URLs and deployment history visible for another user', async () => {
+    setUser('u-bob', 'user');
+    const podsStatus = {
+      namespace: 'stack-test',
+      status: 'healthy',
+      charts: [],
+      ingresses: [{ url: 'https://my-stack.example.com' }],
+      last_checked: '2025-01-01',
+    };
+    setupMocks({}, {
+      podsStatus,
+      logs: [{ id: 'log1', stack_instance_id: '123', action: 'deploy', status: 'success', output: '', started_at: '2025-01-01' }],
+    });
+    renderDetail();
+
+    await waitFor(() => {
+      expect(screen.getByTestId('access-urls')).toBeInTheDocument();
+    });
+    expect(screen.getByText('https://my-stack.example.com')).toBeInTheDocument();
+    expect(screen.getByTestId('pod-status-display')).toBeInTheDocument();
+    expect(screen.getByTestId('deployment-log-viewer')).toBeInTheDocument();
   });
 });

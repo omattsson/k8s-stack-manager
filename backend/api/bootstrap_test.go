@@ -713,6 +713,9 @@ func (s *stubAPIKeyRepo) FindByPrefix(_ string) ([]*models.APIKey, error) { retu
 func (s *stubAPIKeyRepo) ListByUser(_ string) ([]*models.APIKey, error)   { return nil, nil }
 func (s *stubAPIKeyRepo) UpdateLastUsed(_, _ string, _ time.Time) error   { return nil }
 func (s *stubAPIKeyRepo) Delete(_, _ string) error                        { return nil }
+func (s *stubAPIKeyRepo) DeleteAllForUser(_ string) (int64, error) {
+	return 0, nil
+}
 
 // ---- stubSharedValuesRepo ----
 

@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"log/slog"
 	"net/http"
 	"time"
@@ -20,21 +21,92 @@ type UserHandler struct {
 	userRepo              models.UserRepository
 	sessionStore          sessionstore.SessionStore
 	refreshTokenRepo      models.RefreshTokenRepository
+	apiKeyRepo            models.APIKeyRepository
 	accessTokenExpiration time.Duration
 	jwtExpiration         time.Duration
 }
 
-// NewUserHandler creates a new UserHandler.
-func NewUserHandler(userRepo models.UserRepository) *UserHandler {
-	return &UserHandler{userRepo: userRepo}
+// NewUserHandler creates a new UserHandler. refreshTokenRepo and apiKeyRepo are
+// used by revokeUserAccess; pass nil to skip that revocation step (tests only).
+func NewUserHandler(
+	userRepo models.UserRepository,
+	refreshTokenRepo models.RefreshTokenRepository,
+	apiKeyRepo models.APIKeyRepository,
+) *UserHandler {
+	return &UserHandler{
+		userRepo:         userRepo,
+		refreshTokenRepo: refreshTokenRepo,
+		apiKeyRepo:       apiKeyRepo,
+	}
 }
 
 func (h *UserHandler) SetSessionStore(store sessionstore.SessionStore) { h.sessionStore = store }
-func (h *UserHandler) SetRefreshTokenRepo(repo models.RefreshTokenRepository) {
-	h.refreshTokenRepo = repo
+func (h *UserHandler) SetAccessTokenExpiration(d time.Duration)        { h.accessTokenExpiration = d }
+func (h *UserHandler) SetJWTExpiration(d time.Duration)                { h.jwtExpiration = d }
+
+// blockIssuedTokens writes a user block that revokes every access token of
+// the user issued at or before now. It lives until the longest access-token
+// lifetime has passed. Tokens issued later pass. Logs and continues on error.
+func (h *UserHandler) blockIssuedTokens(ctx context.Context, userID string) {
+	if h.sessionStore == nil {
+		return
+	}
+	ttl := h.accessTokenExpiration
+	if h.jwtExpiration > ttl {
+		ttl = h.jwtExpiration
+	}
+	if ttl <= 0 {
+		ttl = 24 * time.Hour
+	}
+	if err := h.sessionStore.BlockUser(ctx, userID, time.Now().Add(ttl)); err != nil {
+		slog.Warn("Failed to block user in session store", "user_id", userID, "error", err)
+	}
 }
-func (h *UserHandler) SetAccessTokenExpiration(d time.Duration) { h.accessTokenExpiration = d }
-func (h *UserHandler) SetJWTExpiration(d time.Duration)         { h.jwtExpiration = d }
+
+// revokeOptions selects the optional steps of revokeUserAccess.
+type revokeOptions struct {
+	// deleteAPIKeys deletes all API keys of the user. Only DeleteUser sets it.
+	// Disable keeps the keys: API-key auth already rejects a disabled user
+	// (User.Disabled check in CombinedAuth), and enabling the user again
+	// restores them. A password reset changes only the password, so the keys
+	// stay valid.
+	deleteAPIKeys bool
+}
+
+// revokeUserAccess ends the sessions of a user. DeleteUser, DisableUser and
+// ResetUserPassword call it after their own change succeeds. Steps:
+//  1. Block the user in the session store until the longest access-token
+//     lifetime has passed. Access tokens issued at or before the block get
+//     401; tokens issued later (for example after a password reset) work.
+//  2. Revoke all refresh tokens of the user (explicit; no reliance on a
+//     foreign-key cascade).
+//  3. If opts.deleteAPIKeys is set, delete all API keys of the user in one
+//     statement.
+//
+// Error policy: log and continue. Each step runs even when an earlier step
+// fails, and the request still succeeds. The caller has already committed its
+// change (row deleted, user disabled, password changed), so a failure status
+// would report a change that took effect. Other guards stay in place on a
+// partial failure: refresh and API-key auth reload the user and reject a
+// deleted or disabled user.
+//
+// Callers pass context.WithoutCancel(c.Request.Context()) so a client that
+// disconnects after the commit cannot cancel the revocation.
+func (h *UserHandler) revokeUserAccess(ctx context.Context, userID string, opts revokeOptions) {
+	h.blockIssuedTokens(ctx, userID)
+
+	if h.refreshTokenRepo != nil {
+		if err := h.refreshTokenRepo.RevokeAllForUser(userID); err != nil {
+			slog.Warn("Failed to revoke refresh tokens", "user_id", userID, "error", err)
+		}
+	}
+
+	if opts.deleteAPIKeys && h.apiKeyRepo != nil {
+		if _, err := h.apiKeyRepo.DeleteAllForUser(userID); err != nil {
+			slog.Warn("Failed to delete API keys", "user_id", userID, "error", err)
+		}
+	}
+}
 
 // ListUsers godoc
 // @Summary      List all users
@@ -58,7 +130,7 @@ func (h *UserHandler) ListUsers(c *gin.Context) {
 
 // DeleteUser godoc
 // @Summary      Delete a user
-// @Description  Permanently deletes a user account. Admin only. Cannot delete own account.
+// @Description  Permanently deletes a user account. Admin only. Cannot delete own account. Revokes the user's current access tokens and all refresh tokens, and deletes all API keys of the user.
 // @Tags         users
 // @Produce      json
 // @Security     BearerAuth
@@ -89,12 +161,14 @@ func (h *UserHandler) DeleteUser(c *gin.Context) {
 		return
 	}
 
+	h.revokeUserAccess(context.WithoutCancel(c.Request.Context()), id, revokeOptions{deleteAPIKeys: true})
+
 	c.Status(http.StatusNoContent)
 }
 
 // DisableUser godoc
 // @Summary      Disable a user
-// @Description  Disables a user account. All API keys for this user immediately stop working. Admin only.
+// @Description  Disables a user account. Admin only. Revokes the user's current access tokens and all refresh tokens. API keys stop working while the user is disabled and work again after enable.
 // @Tags         users
 // @Accept       json
 // @Produce      json
@@ -113,7 +187,7 @@ func (h *UserHandler) DisableUser(c *gin.Context) {
 
 // EnableUser godoc
 // @Summary      Enable a user
-// @Description  Re-enables a previously disabled user account. Admin only.
+// @Description  Re-enables a previously disabled user account. Admin only. Access tokens issued before the enable stay revoked; the user must log in again.
 // @Tags         users
 // @Accept       json
 // @Produce      json
@@ -158,29 +232,12 @@ func (h *UserHandler) setDisabled(c *gin.Context, disabled bool) {
 	}
 
 	if disabled {
-		if h.refreshTokenRepo != nil {
-			if err := h.refreshTokenRepo.RevokeAllForUser(id); err != nil {
-				slog.Warn("Failed to revoke refresh tokens on disable", "user_id", id, "error", err)
-			}
-		}
-		if h.sessionStore != nil {
-			ttl := h.accessTokenExpiration
-			if h.jwtExpiration > ttl {
-				ttl = h.jwtExpiration
-			}
-			if ttl <= 0 {
-				ttl = 24 * time.Hour
-			}
-			if err := h.sessionStore.BlockUser(c.Request.Context(), id, time.Now().Add(ttl)); err != nil {
-				slog.Warn("Failed to block user in session store", "user_id", id, "error", err)
-			}
-		}
+		h.revokeUserAccess(context.WithoutCancel(c.Request.Context()), id, revokeOptions{})
 	} else {
-		if h.sessionStore != nil {
-			if err := h.sessionStore.UnblockUser(c.Request.Context(), id); err != nil {
-				slog.Warn("Failed to unblock user in session store", "user_id", id, "error", err)
-			}
-		}
+		// Do not unblock: that would make tokens issued before the disable
+		// valid again. A fresh block (block time = now) lets only new logins
+		// through and also replaces a legacy block row without a block time.
+		h.blockIssuedTokens(context.WithoutCancel(c.Request.Context()), id)
 	}
 
 	action := "enabled"
@@ -192,7 +249,7 @@ func (h *UserHandler) setDisabled(c *gin.Context, disabled bool) {
 
 // ResetUserPassword godoc
 // @Summary      Reset user password
-// @Description  Resets the password for a local/service account user. Admin only.
+// @Description  Resets the password for a local/service account user. Admin only. Revokes the user's current access tokens and all refresh tokens. API keys stay valid.
 // @Tags         users
 // @Accept       json
 // @Produce      json
@@ -251,23 +308,7 @@ func (h *UserHandler) ResetUserPassword(c *gin.Context) {
 		return
 	}
 
-	if h.refreshTokenRepo != nil {
-		if err := h.refreshTokenRepo.RevokeAllForUser(id); err != nil {
-			slog.Warn("Failed to revoke refresh tokens after password reset", "user_id", id, "error", err)
-		}
-	}
-	if h.sessionStore != nil {
-		ttl := h.accessTokenExpiration
-		if h.jwtExpiration > ttl {
-			ttl = h.jwtExpiration
-		}
-		if ttl <= 0 {
-			ttl = 24 * time.Hour
-		}
-		if err := h.sessionStore.BlockUser(c.Request.Context(), id, time.Now().Add(ttl)); err != nil {
-			slog.Warn("Failed to block user in session store after password reset", "user_id", id, "error", err)
-		}
-	}
+	h.revokeUserAccess(context.WithoutCancel(c.Request.Context()), id, revokeOptions{})
 
 	c.JSON(http.StatusOK, gin.H{"message": "Password reset successfully"})
 }

@@ -74,7 +74,7 @@ Manage your account, generate API keys for CI/CD automation, and configure notif
 - **Cleanup policies** — Schedule cron-based cleanup actions (stop, clean, delete) on instances matching custom conditions.
 - **TTL auto-expiry** — Set time-to-live on instances; a background reaper automatically stops expired deployments.
 - **Real-time updates** — WebSocket-based live updates push deployment status changes to all connected clients.
-- **RBAC** — Role-based access control (admin, devops, developer) with JWT authentication and optional OpenID Connect (OIDC) SSO.
+- **RBAC** — Role-based access control (admin, devops, user) with JWT authentication and optional OpenID Connect (OIDC) SSO. Only the owner, admins and devops users can change or operate a stack instance; other users see it read-only (see [WIKI.md](WIKI.md#stack-instance-permissions)).
 - **In-app notifications** — Get notified on deploy/stop/clean events with configurable per-user preferences.
 - **Instance comparison** — Side-by-side diff of two stack instances including merged Helm values per chart.
 - **Shared values** — Per-cluster shared Helm values applied to all instances, merged by priority before instance-specific overrides.
