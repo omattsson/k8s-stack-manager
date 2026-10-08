@@ -345,8 +345,50 @@ func TestAuthConfigValidate(t *testing.T) {
 			AccessTokenExpiration:  15 * time.Minute,
 			RefreshTokenExpiration: 168 * time.Hour,
 			SessionIdleTimeout:     30 * time.Minute,
+			SessionMaxLifetime:     12 * time.Hour,
+			RefreshReuseGrace:      30 * time.Second,
 		}
 		assert.NoError(t, cfg.Validate())
+	})
+
+	t.Run("session lifetime and reuse grace limits", func(t *testing.T) {
+		t.Parallel()
+		tests := []struct {
+			name        string
+			maxLifetime time.Duration
+			grace       time.Duration
+			wantErr     string
+		}{
+			{name: "max lifetime equal to access token expiration", maxLifetime: 15 * time.Minute},
+			{name: "grace zero disables", maxLifetime: 12 * time.Hour, grace: 0},
+			{name: "grace at cap", maxLifetime: 12 * time.Hour, grace: 5 * time.Minute},
+			{name: "max lifetime below access token expiration", maxLifetime: 10 * time.Minute, wantErr: "session_max_lifetime"},
+			{name: "max lifetime zero", maxLifetime: 0, wantErr: "session_max_lifetime"},
+			{name: "negative grace", maxLifetime: 12 * time.Hour, grace: -time.Second, wantErr: "refresh_reuse_grace"},
+			{name: "grace above cap", maxLifetime: 12 * time.Hour, grace: 6 * time.Minute, wantErr: "refresh_reuse_grace"},
+		}
+		for _, tt := range tests {
+			tt := tt
+			t.Run(tt.name, func(t *testing.T) {
+				t.Parallel()
+				cfg := config.AuthConfig{
+					JWTSecret:              "this-is-a-long-enough-secret",
+					JWTExpiration:          24 * time.Hour,
+					AccessTokenExpiration:  15 * time.Minute,
+					RefreshTokenExpiration: 168 * time.Hour,
+					SessionIdleTimeout:     30 * time.Minute,
+					SessionMaxLifetime:     tt.maxLifetime,
+					RefreshReuseGrace:      tt.grace,
+				}
+				err := cfg.Validate()
+				if tt.wantErr == "" {
+					assert.NoError(t, err)
+					return
+				}
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.wantErr)
+			})
+		}
 	})
 
 	t.Run("empty JWT secret fails", func(t *testing.T) {

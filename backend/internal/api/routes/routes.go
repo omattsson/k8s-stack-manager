@@ -91,6 +91,10 @@ type Deps struct {
 	// SessionStore for token blocklist and OIDC state persistence.
 	SessionStore sessionstore.SessionStore
 
+	// SessionActivity records request activity of JWT sessions (the "sid"
+	// claim) for the session idle timeout. nil disables activity tracking.
+	SessionActivity middleware.SessionActivityFunc
+
 	// HealthVerbose enables verbose health check output.
 	HealthVerbose bool
 }
@@ -196,6 +200,9 @@ func SetupRoutes(router *gin.Engine, deps Deps) *RateLimiters {
 			APIKeyRepo:   deps.APIKeyRepo,
 			UserRepo:     deps.UserRepo,
 			SessionStore: deps.SessionStore,
+			// Each authenticated JWT request keeps the refresh-token
+			// family alive for the idle timeout (throttled per session).
+			OnSessionActivity: deps.SessionActivity,
 		})
 
 		// Auth — login and refresh are public; register requires auth.

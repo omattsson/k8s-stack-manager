@@ -73,6 +73,17 @@ backend:
     # When hooks.enabled is true, a ConfigMap and volume mount are
     # created automatically — no manual HOOKS_CONFIG_FILE needed.
     JWT_EXPIRATION: "24h"
+    # ---- Sessions (refresh tokens) — see WIKI.md "Sessions" ----
+    # ACCESS_TOKEN_EXPIRATION: "15m"   # lifetime of one access token
+    # SESSION_IDLE_TIMEOUT: "30m"      # end a session after this time without requests
+    # SESSION_MAX_LIFETIME: "12h"      # absolute lifetime from login; refresh never extends it
+    # REFRESH_REUSE_GRACE: "30s"       # concurrent refresh from two tabs; "0" disables
+    # SECURE_COOKIES — Secure flag on the refresh-token cookie. When unset, the
+    # chart renders "true" if the ingress has TLS (ingress.type=traefik with
+    # ingress.traefik.tls.secretName, or ingress.type=ingress with ingress.tls).
+    # Set it explicitly to override, for example "true" when TLS terminates at
+    # a load balancer in front of the ingress, or "false" to opt out.
+    # SECURE_COOKIES: "true"
     ADMIN_USERNAME: admin
     # OIDC (disabled by default)
     OIDC_ENABLED: "false"

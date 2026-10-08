@@ -183,3 +183,18 @@ Validate ingress type.
 {{- fail (printf "ingress.type must be one of: traefik, ingress, none (got: %s)" .Values.ingress.type) -}}
 {{- end -}}
 {{- end -}}
+
+{{/*
+Return "true" when the chart ingress terminates TLS:
+- ingress.type=traefik with ingress.traefik.tls.secretName set, or
+- ingress.type=ingress with a non-empty ingress.tls list.
+TLS terminated outside the chart (for example at a load balancer) is not
+detected; set backend.env.SECURE_COOKIES explicitly in that case.
+*/}}
+{{- define "k8s-stack-manager.ingressTLSEnabled" -}}
+{{- if and (eq .Values.ingress.type "traefik") .Values.ingress.traefik.tls .Values.ingress.traefik.tls.secretName -}}
+true
+{{- else if and (eq .Values.ingress.type "ingress") .Values.ingress.tls -}}
+true
+{{- end -}}
+{{- end -}}

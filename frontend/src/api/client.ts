@@ -1,5 +1,7 @@
 import axios from 'axios';
+import type { InternalAxiosRequestConfig } from 'axios';
 import { axiosConfig } from './config';
+import { isAuthRejection, refreshAccessToken, TOKEN_STORAGE_KEY } from './refresh';
 import type {
   LoginRequest,
   LoginResponse,
@@ -69,45 +71,37 @@ declare module 'axios' {
 
 const api = axios.create(axiosConfig);
 
-// Separate instance for token refresh — sends the httpOnly cookie and has no
-// response interceptors, preventing refresh-retry loops.
-const refreshApi = axios.create({ ...axiosConfig, withCredentials: true });
-
 // Auth interceptor — attach JWT from localStorage
 api.interceptors.request.use((config) => {
-  const token = localStorage.getItem('token');
+  const token = localStorage.getItem(TOKEN_STORAGE_KEY);
   if (token) {
     config.headers.Authorization = `Bearer ${token}`;
   }
   return config;
 });
 
-// --- Silent token refresh on 401 ---
-interface QueueItem {
-  resolve: (token: string) => void;
-  reject: (error: unknown) => void;
+function redirectToLogin(): void {
+  if (globalThis.location.pathname !== '/login') {
+    globalThis.location.href = '/login';
+  }
 }
 
-let isRefreshing = false;
-let failedQueue: QueueItem[] = [];
-
-function processQueue(error: unknown, token: string | null): void {
-  for (const item of failedQueue) {
-    if (token) {
-      item.resolve(token);
-    } else {
-      item.reject(error);
-    }
+/** Extract the bearer token that a request was sent with, if any. */
+function bearerToken(config: InternalAxiosRequestConfig): string | null {
+  const header = config.headers?.Authorization;
+  if (typeof header === 'string' && header.startsWith('Bearer ')) {
+    return header.slice('Bearer '.length);
   }
-  failedQueue = [];
+  return null;
 }
 
 // Response interceptor — attempt a silent refresh on 401, then retry the
-// original request. Concurrent 401s are queued so only one refresh fires.
+// original request once. refreshAccessToken() is single flight in this tab
+// (concurrent 401s share one refresh) and across tabs (Web Locks).
 api.interceptors.response.use(
   (response) => response,
   async (error) => {
-    const originalRequest = error.config;
+    const originalRequest: InternalAxiosRequestConfig | undefined = error.config;
     const authPaths = ['/auth/login', '/auth/refresh', '/auth/logout', '/auth/logout-all'];
     const isAuthEndpoint = authPaths.some(p => originalRequest?.url?.includes(p));
 
@@ -117,50 +111,25 @@ api.interceptors.response.use(
       !originalRequest._retry &&
       !isAuthEndpoint
     ) {
-      if (isRefreshing) {
-        // Park this request until the in-flight refresh settles.
-        return new Promise<unknown>((resolve, reject) => {
-          failedQueue.push({
-            resolve: (token: string) => {
-              originalRequest._retry = true;
-              originalRequest.headers.Authorization = `Bearer ${token}`;
-              resolve(api(originalRequest));
-            },
-            reject,
-          });
-        });
-      }
-
       originalRequest._retry = true;
-      isRefreshing = true;
-
       try {
-        const { data } = await refreshApi.post<{ token: string }>(
-          '/api/v1/auth/refresh',
-        );
-        const newToken = data.token;
-        localStorage.setItem('token', newToken);
+        const newToken = await refreshAccessToken(bearerToken(originalRequest));
         originalRequest.headers.Authorization = `Bearer ${newToken}`;
-        processQueue(null, newToken);
         return api(originalRequest);
       } catch (refreshError) {
-        processQueue(refreshError, null);
-        localStorage.removeItem('token');
-        if (globalThis.location.pathname !== '/login') {
-          globalThis.location.href = '/login';
+        // 401/403: refreshAccessToken() removed the token; the session is over.
+        // Network error, timeout or 5xx: keep the session and surface the error.
+        if (isAuthRejection(refreshError)) {
+          redirectToLogin();
         }
         return Promise.reject(refreshError);
-      } finally {
-        isRefreshing = false;
       }
     }
 
     // Retried request still got 401 — session is invalid
     if (error.response?.status === 401 && originalRequest?._retry) {
-      localStorage.removeItem('token');
-      if (globalThis.location.pathname !== '/login') {
-        globalThis.location.href = '/login';
-      }
+      localStorage.removeItem(TOKEN_STORAGE_KEY);
+      redirectToLogin();
     }
 
     return Promise.reject(error);
@@ -215,12 +184,15 @@ export const authService = {
   },
   /**
    * Refresh the access token using the httpOnly refresh cookie.
+   * Single flight in this tab and across tabs (see `refreshAccessToken`);
+   * stores the new token in localStorage, removes it only on a 401/403 answer.
+   * @param failedToken - The expired or rejected access token (defaults to the stored token)
    * @returns Object containing the new short-lived access token
    * @see POST /api/v1/auth/refresh
    */
-  refresh: async (): Promise<{ token: string }> => {
-    const response = await refreshApi.post<{ token: string }>('/api/v1/auth/refresh');
-    return response.data;
+  refresh: async (failedToken?: string | null): Promise<{ token: string }> => {
+    const token = await refreshAccessToken(failedToken);
+    return { token };
   },
   /**
    * Logout the current session (revokes the refresh token server-side and clears the cookie).

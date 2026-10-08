@@ -381,7 +381,7 @@ helm-test: ## Verify default and External Secrets Helm renders
 	helm template $(HELM_RELEASE) $(HELM_CHART) --show-only templates/mysql/secret.yaml \
 		--set backend.secrets.JWT_SECRET=dummy-jwt-secret-for-template \
 		--set mysql.auth.password=inline-user-password > "$$template_file"; \
-	! grep -q 'MYSQL_PASSWORD:' "$$template_file"; \
+	if grep -q 'MYSQL_PASSWORD:' "$$template_file"; then echo "unexpected match: MYSQL_PASSWORD:" >&2; exit 1; fi; \
 	helm template $(HELM_RELEASE) $(HELM_CHART) --show-only templates/mysql/secret.yaml \
 		--set backend.secrets.JWT_SECRET=dummy-jwt-secret-for-template \
 		--set mysql.auth.user=app-user --set mysql.auth.password=inline-user-password > "$$template_file"; \
@@ -402,14 +402,14 @@ helm-test: ## Verify default and External Secrets Helm renders
 	grep -q 'DB_PASSWORD: "ZXhwbGljaXQtYmFja2VuZC1wYXNzd29yZA=="' "$$template_file"; \
 	helm template $(HELM_RELEASE) $(HELM_CHART) --namespace $(HELM_NAMESPACE) \
 		--values $(HELM_CHART)/tests/external-secrets-values.yaml > "$$template_file"; \
-	! grep -q 'Source: k8s-stack-manager/templates/mysql/secret.yaml' "$$template_file"; \
+	if grep -q 'Source: k8s-stack-manager/templates/mysql/secret.yaml' "$$template_file"; then echo "unexpected match: Source: k8s-stack-manager/templates/mysql/secret.yaml" >&2; exit 1; fi; \
 	grep -q 'key: k8s-stack-manager-mysql-root-password' "$$template_file"; \
 	    awk '/^kind: ExternalSecret$$/{backend=0} /^  name: .*backend$$/{backend=1} backend && /secretKey: ADMIN_PASSWORD/{admin=1} END{exit !admin}' "$$template_file"; \
 	awk '/^kind: ExternalSecret$$/{mysql=0} /^  name: .*mysql$$/{mysql=1} mysql && /secretKey: MYSQL_PASSWORD/{password=1} mysql && /key: k8s-stack-manager-mysql-password/{remote=1} END{exit !(password && remote)}' "$$template_file"; \
 			awk '/^kind: ExternalSecret$$/{backend=0} /^  name: .*backend$$/{backend=1} backend && /secretKey: DB_PASSWORD/{password=1} backend && password && /key: k8s-stack-manager-mysql-password$$/{key=1} backend && password && /property: application-password$$/{property=1} backend && password && /version: user-v2$$/{version=1} END{exit !(password && key && property && version)}' "$$template_file"; \
 	helm template $(HELM_RELEASE) $(HELM_CHART) --show-only templates/external-secrets/external-secret.yaml \
 		--values $(HELM_CHART)/tests/external-secrets-values.yaml --set mysql.auth.user= > "$$template_file"; \
-	! grep -q 'secretKey: MYSQL_PASSWORD' "$$template_file"; \
+	if grep -q 'secretKey: MYSQL_PASSWORD' "$$template_file"; then echo "unexpected match: secretKey: MYSQL_PASSWORD" >&2; exit 1; fi; \
 			awk '/^kind: ExternalSecret$$/{backend=0} /^  name: .*backend$$/{backend=1} backend && /secretKey: DB_PASSWORD/{password=1} backend && password && /key: k8s-stack-manager-mysql-root-password$$/{key=1} backend && password && /property: root-password$$/{property=1} backend && password && /version: root-v1$$/{version=1} END{exit !(password && key && property && version)}' "$$template_file"; \
 			helm template $(HELM_RELEASE) $(HELM_CHART) --show-only templates/external-secrets/external-secret.yaml \
 				--values $(HELM_CHART)/tests/external-secrets-values.yaml --set mysql.enabled=false \
@@ -444,7 +444,23 @@ helm-test: ## Verify default and External Secrets Helm renders
 	done; \
 	helm template $(HELM_RELEASE) $(HELM_CHART) --show-only templates/backend/deployment.yaml \
 		--set backend.secrets.JWT_SECRET=dummy-jwt-secret-for-template > "$$template_file"; \
-	! grep -q '^          env:' "$$template_file"
+	if grep -q '^          env:' "$$template_file"; then echo "unexpected match: ^          env:" >&2; exit 1; fi; \
+	helm template $(HELM_RELEASE) $(HELM_CHART) --show-only templates/backend/configmap.yaml \
+		--set backend.secrets.JWT_SECRET=dummy-jwt-secret-for-template > "$$template_file"; \
+	if grep -q 'SECURE_COOKIES' "$$template_file"; then echo "unexpected match: SECURE_COOKIES" >&2; exit 1; fi; \
+	helm template $(HELM_RELEASE) $(HELM_CHART) --show-only templates/backend/configmap.yaml \
+		--set backend.secrets.JWT_SECRET=dummy-jwt-secret-for-template \
+		--set ingress.traefik.tls.secretName=stack-manager-tls > "$$template_file"; \
+	grep -q 'SECURE_COOKIES: "true"' "$$template_file"; \
+	helm template $(HELM_RELEASE) $(HELM_CHART) --show-only templates/backend/configmap.yaml \
+		--set backend.secrets.JWT_SECRET=dummy-jwt-secret-for-template \
+		--set ingress.type=ingress --set ingress.tls[0].secretName=stack-manager-tls > "$$template_file"; \
+	grep -q 'SECURE_COOKIES: "true"' "$$template_file"; \
+	helm template $(HELM_RELEASE) $(HELM_CHART) --show-only templates/backend/configmap.yaml \
+		--set backend.secrets.JWT_SECRET=dummy-jwt-secret-for-template \
+		--set ingress.traefik.tls.secretName=stack-manager-tls --set backend.env.SECURE_COOKIES=false > "$$template_file"; \
+	grep -q 'SECURE_COOKIES: "false"' "$$template_file"; \
+	[ "$$(grep -c 'SECURE_COOKIES' "$$template_file")" -eq 1 ]
 
 helm-template: ## Render templates locally (dry-run)
 	helm template $(HELM_RELEASE) $(HELM_CHART) --namespace $(HELM_NAMESPACE) \

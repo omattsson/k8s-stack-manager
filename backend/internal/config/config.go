@@ -35,6 +35,10 @@ type CORSConfig struct {
 	AllowedOrigins string
 }
 
+// maxRefreshReuseGrace caps REFRESH_REUSE_GRACE. The grace window only has to
+// cover concurrent refresh requests; a long window weakens replay detection.
+const maxRefreshReuseGrace = 5 * time.Minute
+
 // AuthConfig holds authentication and authorization configuration.
 type AuthConfig struct {
 	JWTSecret               string
@@ -42,6 +46,8 @@ type AuthConfig struct {
 	AccessTokenExpiration   time.Duration
 	RefreshTokenExpiration  time.Duration
 	SessionIdleTimeout      time.Duration
+	SessionMaxLifetime      time.Duration // Absolute session lifetime; rotation never extends a session beyond it.
+	RefreshReuseGrace       time.Duration // A just-rotated refresh token still gets an access token this long; 0 disables.
 	LoginCacheTTL           time.Duration
 	AdminUsername           string
 	AdminPassword           string
@@ -383,6 +389,14 @@ func (c *AuthConfig) Validate() error {
 		return errors.New("access_token_expiration must not exceed session_idle_timeout")
 	}
 
+	if c.SessionMaxLifetime < c.AccessTokenExpiration {
+		return errors.New("session_max_lifetime must be at least access_token_expiration")
+	}
+
+	if c.RefreshReuseGrace < 0 || c.RefreshReuseGrace > maxRefreshReuseGrace {
+		return fmt.Errorf("refresh_reuse_grace must be between 0 and %s", maxRefreshReuseGrace)
+	}
+
 	if c.MaxRefreshTokensPerUser < 0 {
 		return errors.New("max_refresh_tokens_per_user must be non-negative")
 	}
@@ -552,6 +566,8 @@ func loadAuthConfig() AuthConfig {
 		AccessTokenExpiration:   accessExp,
 		RefreshTokenExpiration:  getEnvDuration("REFRESH_TOKEN_EXPIRATION", 168*time.Hour),
 		SessionIdleTimeout:      getEnvDuration("SESSION_IDLE_TIMEOUT", 30*time.Minute),
+		SessionMaxLifetime:      getEnvDuration("SESSION_MAX_LIFETIME", 12*time.Hour),
+		RefreshReuseGrace:       getEnvDuration("REFRESH_REUSE_GRACE", 30*time.Second),
 		LoginCacheTTL:           getEnvDuration("LOGIN_CACHE_TTL", 30*time.Second),
 		AdminUsername:           getEnv("ADMIN_USERNAME", "admin"),
 		AdminPassword:           getEnv("ADMIN_PASSWORD", ""),

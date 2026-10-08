@@ -10,6 +10,10 @@ data:
   {{- range $key, $value := .Values.backend.env }}
   {{ $key }}: {{ $value | quote }}
   {{- end }}
+  {{- /* Secure refresh-token cookie behind TLS; an explicit backend.env.SECURE_COOKIES (also "false") wins. */}}
+  {{- if and (not (hasKey .Values.backend.env "SECURE_COOKIES")) (eq (include "k8s-stack-manager.ingressTLSEnabled" .) "true") }}
+  SECURE_COOKIES: "true"
+  {{- end }}
   {{- if .Values.mysql.enabled }}
   DB_HOST: {{ include "k8s-stack-manager.mysql.serviceName" . | quote }}
   DB_PORT: "3306"

@@ -37,6 +37,9 @@ type APIKeyAuthDeps struct {
 	APIKeyRepo   models.APIKeyRepository
 	UserRepo     models.UserRepository
 	SessionStore sessionstore.SessionStore
+	// OnSessionActivity records activity of JWT sessions (idle timeout). It is
+	// optional; API-key requests never call it.
+	OnSessionActivity SessionActivityFunc
 }
 
 // CombinedAuth returns middleware that accepts either:
@@ -45,11 +48,14 @@ type APIKeyAuthDeps struct {
 //
 // When APIKeyRepo or UserRepo is nil the middleware falls back to JWT-only auth.
 func CombinedAuth(deps APIKeyAuthDeps) gin.HandlerFunc {
+	jwtMW := AuthRequiredWithOptions(JWTAuthOptions{
+		JWTSecret:         deps.JWTSecret,
+		SessionStore:      deps.SessionStore,
+		OnSessionActivity: deps.OnSessionActivity,
+	})
 	if deps.APIKeyRepo == nil || deps.UserRepo == nil {
-		return AuthRequiredWithSessionStore(deps.JWTSecret, deps.SessionStore)
+		return jwtMW
 	}
-
-	jwtMW := AuthRequiredWithSessionStore(deps.JWTSecret, deps.SessionStore)
 
 	return func(c *gin.Context) {
 		// Prefer JWT Bearer when present.

@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -25,6 +26,7 @@ import (
 
 type MockRefreshTokenRepository struct {
 	mu           sync.RWMutex
+	txMu         sync.Mutex                      // serialises WithTx
 	tokens       map[string]*models.RefreshToken // by ID
 	byHash       map[string]*models.RefreshToken // by TokenHash
 	createErr    error
@@ -32,6 +34,12 @@ type MockRefreshTokenRepository struct {
 	revokeErr    error
 	revokeAllErr error
 	deleteErr    error
+	// countHook, when set, runs before each CountActiveInFamily call with the
+	// 1-based call number (outside the lock). Tests use it to revoke tokens
+	// between a handler step and its re-check.
+	countHook  func(call int)
+	countCalls int
+	countErr   error // returned by CountActiveInFamily when set
 }
 
 func NewMockRefreshTokenRepository() *MockRefreshTokenRepository {
@@ -78,7 +86,7 @@ func (m *MockRefreshTokenRepository) RevokeByID(id string) error {
 	return nil
 }
 
-func (m *MockRefreshTokenRepository) RevokeByIDIfActive(id string) (int64, error) {
+func (m *MockRefreshTokenRepository) MarkRotatedIfActive(id string, rotatedAt time.Time) (int64, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.revokeErr != nil {
@@ -86,9 +94,60 @@ func (m *MockRefreshTokenRepository) RevokeByIDIfActive(id string) (int64, error
 	}
 	if t, ok := m.tokens[id]; ok && !t.Revoked {
 		t.Revoked = true
+		at := rotatedAt
+		t.RotatedAt = &at
 		return 1, nil
 	}
 	return 0, nil
+}
+
+func (m *MockRefreshTokenRepository) RevokeFamily(familyID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.revokeAllErr != nil {
+		return m.revokeAllErr
+	}
+	for _, t := range m.tokens {
+		if t.FamilyID == familyID || t.ID == familyID {
+			t.Revoked = true
+		}
+	}
+	return nil
+}
+
+func (m *MockRefreshTokenRepository) CountActiveInFamily(familyID string) (int64, error) {
+	m.mu.Lock()
+	m.countCalls++
+	call, hook := m.countCalls, m.countHook
+	m.mu.Unlock()
+	if hook != nil {
+		hook(call)
+	}
+
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.countErr != nil {
+		return 0, m.countErr
+	}
+	var count int64
+	now := time.Now()
+	for _, t := range m.tokens {
+		if (t.FamilyID == familyID || t.ID == familyID) && !t.Revoked && t.ExpiresAt.After(now) {
+			count++
+		}
+	}
+	return count, nil
+}
+
+func (m *MockRefreshTokenRepository) TouchFamily(_ context.Context, familyID string, at time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, t := range m.tokens {
+		if t.FamilyID == familyID && !t.Revoked && t.ExpiresAt.After(at) && t.LastActivity.Before(at) {
+			t.LastActivity = at
+		}
+	}
+	return nil
 }
 
 func (m *MockRefreshTokenRepository) RevokeAllForUser(userID string) error {
@@ -150,9 +209,40 @@ func (m *MockRefreshTokenRepository) CountActiveForUser(userID string) (int64, e
 	return count, nil
 }
 
+// WithTx emulates a serialisable transaction: transactions run one at a time
+// on a copy of the data, and the copy replaces the data only when fn succeeds.
+// Readers outside the transaction never see uncommitted writes, the same as
+// with a real database (needed by the concurrent-refresh tests).
 func (m *MockRefreshTokenRepository) WithTx(fn func(models.RefreshTokenRepository) error) error {
-	// In tests, just run the function with the same mock (no real transaction).
-	return fn(m)
+	m.txMu.Lock()
+	defer m.txMu.Unlock()
+
+	m.mu.RLock()
+	staged := &MockRefreshTokenRepository{
+		tokens:       make(map[string]*models.RefreshToken, len(m.tokens)),
+		byHash:       make(map[string]*models.RefreshToken, len(m.byHash)),
+		createErr:    m.createErr,
+		findErr:      m.findErr,
+		revokeErr:    m.revokeErr,
+		revokeAllErr: m.revokeAllErr,
+		deleteErr:    m.deleteErr,
+	}
+	for id, tok := range m.tokens {
+		cp := *tok
+		staged.tokens[id] = &cp
+		staged.byHash[cp.TokenHash] = &cp
+	}
+	m.mu.RUnlock()
+
+	if err := fn(staged); err != nil {
+		return err
+	}
+
+	m.mu.Lock()
+	m.tokens = staged.tokens
+	m.byHash = staged.byHash
+	m.mu.Unlock()
+	return nil
 }
 
 func (m *MockRefreshTokenRepository) SetCreateError(err error) {
@@ -1064,9 +1154,9 @@ func TestIssueRefreshToken_MaxTokensEnforcement(t *testing.T) {
 			var rawToken string
 			var err error
 			if tt.excludeTokenID != "" {
-				rawToken, err = h.issueRefreshTokenWith(c, refreshRepo, "uid-1", tt.excludeTokenID)
+				rawToken, _, err = h.issueRefreshTokenWith(c, refreshRepo, "uid-1", newRefreshSession(), tt.excludeTokenID)
 			} else {
-				rawToken, err = h.issueRefreshTokenWith(c, refreshRepo, "uid-1")
+				rawToken, _, err = h.issueRefreshTokenWith(c, refreshRepo, "uid-1", newRefreshSession(), "")
 			}
 
 			require.NoError(t, err)

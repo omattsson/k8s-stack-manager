@@ -327,6 +327,13 @@ Key environment variables (see `docker-compose.yml` for full list):
 | `DEFAULT_BRANCH` | No | Default Git branch (default: `master`) |
 | `KUBECONFIG_ENCRYPTION_KEY` | No | Passphrase for deriving AES-256 key (SHA-256) to encrypt kubeconfig data at rest |
 | `SESSION_STORE` | No | Session store backend: `mysql` (default) or `memory` |
+| `ACCESS_TOKEN_EXPIRATION` | No | Access-token lifetime (default: `15m`) |
+| `SESSION_IDLE_TIMEOUT` | No | End a session after this time without requests (default: `30m`) |
+| `SESSION_MAX_LIFETIME` | No | Absolute session lifetime from login; refresh never extends it (default: `12h`) |
+| `REFRESH_REUSE_GRACE` | No | A just-rotated refresh token still gets an access token for this time, for concurrent refreshes from several tabs; `0` disables (default: `30s`) |
+| `SECURE_COOKIES` | No | Set the `Secure` flag on the refresh-token cookie; use `true` behind HTTPS (default: `false`; the Helm chart sets `true` when the ingress has TLS) |
+
+See [Sessions](WIKI.md#sessions) for how the session limits work together.
 
 ## Helm Chart (Kubernetes Deployment)
 

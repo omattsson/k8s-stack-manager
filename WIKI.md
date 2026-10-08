@@ -56,6 +56,37 @@ Template → (instantiate) → Definition + ChartConfigs → (create instance) �
 - A clone always belongs to the user who creates it.
 - The override restriction limits who can *edit* through the override endpoints. It is not a secrecy control: the merged values (export, compare, deploy-log values) and a clone still contain the override values. Do not put secrets in value overrides; use Kubernetes Secrets or an external secret store.
 
+### Sessions
+
+A login (local or SSO) starts a session. The session has one refresh token at a time. Each refresh replaces (rotates) the refresh token. All refresh tokens of one session form a family. The access token carries the session ID in the `sid` claim.
+
+| Variable | Default | Effect |
+|---|---|---|
+| `ACCESS_TOKEN_EXPIRATION` | `15m` | Lifetime of one access token. The client then calls `POST /api/v1/auth/refresh`. |
+| `REFRESH_TOKEN_EXPIRATION` | `168h` | Upper limit for one refresh token. `SESSION_MAX_LIFETIME` usually ends the session first. |
+| `SESSION_IDLE_TIMEOUT` | `30m` | The session ends when no request arrives for this time. Must be at least `ACCESS_TOKEN_EXPIRATION`. |
+| `SESSION_MAX_LIFETIME` | `12h` | The session ends this long after the login, also when the user is active. Must be at least `ACCESS_TOKEN_EXPIRATION`. |
+| `REFRESH_REUSE_GRACE` | `30s` | Time in which a just-rotated refresh token still gets a new access token. `0` disables the grace. Maximum `5m`. |
+| `SECURE_COOKIES` | `false` | Sets the `Secure` flag on the refresh-token cookie. Set it to `true` behind HTTPS. The Helm chart sets it when the ingress has TLS. |
+
+How the limits work together:
+
+- Idle time counts from the last authenticated request, not from the last refresh. Each request with a session access token updates the session activity (at most one database write per minute per session). API-key requests do not change sessions.
+- A refresh never extends the session. A new refresh token expires at the earlier of `now + REFRESH_TOKEN_EXPIRATION` and `login time + SESSION_MAX_LIFETIME`.
+- After `SESSION_MAX_LIFETIME` the user must log in again. An SSO login reads the role and the account state from the identity provider again. So a role change in the identity provider applies at the latest after `SESSION_MAX_LIFETIME` plus one `ACCESS_TOKEN_EXPIRATION`.
+- Two browser tabs can refresh at the same time with the same cookie. The second request presents a token that the first request just rotated. Inside `REFRESH_REUSE_GRACE` it gets a new access token and no new cookie. Nothing is revoked.
+- Any other reuse of a used refresh token revokes the session family (replay protection). Other sessions of the user stay active. A token revoked by logout never gets the grace.
+- An access token stays valid until it expires, also when the session idles out. Revocation (see below) uses the token blocklist instead.
+
+Note: The application has no API to change the role of a user. For SSO users the identity provider controls the role; the role syncs at each SSO login.
+
+Exceptions to the session limits:
+
+- **CLI token from the SSO CLI login** (`stackctl login` through the browser): a long-lived access token (`JWT_EXPIRATION`, default 24h) without a session. `SESSION_IDLE_TIMEOUT` and `SESSION_MAX_LIFETIME` do not apply. It keeps the role it had at the login until it expires. Revoking the user (table below) still rejects it.
+- **API keys** have no session. They use the user's current role in the database and stay valid until they expire or are revoked.
+- **WebSocket** traffic (`/ws`) does not count as activity for the idle limit. A tab that only receives live updates idles out after `SESSION_IDLE_TIMEOUT`.
+- **Lost refresh response:** if the server rotates the refresh token but the browser never gets the response (network drop, client timeout), the browser keeps the used cookie. A retry within `REFRESH_REUSE_GRACE` still works, but sets no new cookie. The next refresh after the grace window counts as a replay and ends the session; the user must log in again. This fails safe by design.
+
 ### Revoking a User
 
 | Action | Access tokens issued before | Refresh tokens | API keys |

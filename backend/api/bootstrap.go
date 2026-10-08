@@ -2,6 +2,7 @@ package main
 
 import (
 	"backend/internal/api/handlers"
+	"backend/internal/api/middleware"
 	"backend/internal/api/routes"
 	"backend/internal/auth"
 	"backend/internal/cluster"
@@ -460,6 +461,17 @@ func buildHandlers(
 	}, nil
 }
 
+// sessionActivityFunc returns the hook that moves the idle-timeout clock of a
+// refresh-token family forward on authenticated requests. nil repo: no hook.
+func sessionActivityFunc(repo models.RefreshTokenRepository) middleware.SessionActivityFunc {
+	if repo == nil {
+		return nil
+	}
+	return func(ctx context.Context, sessionID string, at time.Time) error {
+		return repo.TouchFamily(ctx, sessionID, at)
+	}
+}
+
 // buildRouter creates the Gin engine, wires all routes, and returns the
 // router plus the rate limiters (caller must stop them on shutdown).
 func buildRouter(cfg *config.Config, hs *handlerSet, deps routerDeps) (*gin.Engine, *routes.RateLimiters) {
@@ -496,6 +508,7 @@ func buildRouter(cfg *config.Config, hs *handlerSet, deps routerDeps) (*gin.Engi
 		APIKeyRepo:                   deps.Repos.APIKey,
 		OIDCHandler:                  hs.OIDC,
 		SessionStore:                 deps.SessionStore,
+		SessionActivity:              sessionActivityFunc(deps.Repos.RefreshToken),
 		HealthVerbose:                cfg.Server.HealthVerbose,
 	})
 	return router, rateLimiters
