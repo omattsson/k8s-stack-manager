@@ -899,6 +899,9 @@ func (s *stubInstanceQuotaOverrideRepo) Upsert(_ context.Context, _ *models.Inst
 	return nil
 }
 func (s *stubInstanceQuotaOverrideRepo) Delete(_ context.Context, _ string) error { return nil }
+func (s *stubInstanceQuotaOverrideRepo) ListByInstanceIDs(_ context.Context, _ []string) ([]models.InstanceQuotaOverride, error) {
+	return nil, nil
+}
 
 type stubUserFavoriteRepo struct{}
 
@@ -1087,7 +1090,7 @@ func setupFullRouter(t *testing.T) (*gin.Engine, *RateLimiters) {
 	userHandler := handlers.NewUserHandler(userRepo, nil, apiKeyRepo)
 	apiKeyHandler := handlers.NewAPIKeyHandler(apiKeyRepo, userRepo, &cfg.Auth)
 	adminHandler := handlers.NewAdminHandler(nil, instanceRepo)
-	branchOverrideHandler := handlers.NewBranchOverrideHandler(branchOverrideRepo, instanceRepo)
+	branchOverrideHandler := handlers.NewBranchOverrideHandler(branchOverrideRepo, instanceRepo, chartConfigRepo)
 	instanceQuotaHandler := handlers.NewInstanceQuotaOverrideHandler(&stubInstanceQuotaOverrideRepo{}, instanceRepo)
 	favoriteHandler := handlers.NewFavoriteHandler(&stubUserFavoriteRepo{})
 	analyticsHandler := handlers.NewAnalyticsHandler(templateRepo, definitionRepo, instanceRepo, deployLogRepo, userRepo)
@@ -1257,7 +1260,9 @@ func TestSetupRoutes_AllHandlers_RegistersCompleteAPI(t *testing.T) {
 		{"GET", "/api/v1/stack-instances/:id/values"},
 		{"GET", "/api/v1/stack-instances/:id/values/:chartId"},
 		{"GET", "/api/v1/stack-instances/:id/overrides"},
+		{"GET", "/api/v1/stack-instances/:id/overrides/:chartId"},
 		{"PUT", "/api/v1/stack-instances/:id/overrides/:chartId"},
+		{"DELETE", "/api/v1/stack-instances/:id/overrides/:chartId"},
 		{"POST", "/api/v1/stack-instances/:id/deploy"},
 		{"GET", "/api/v1/stack-instances/:id/deploy-preview"},
 		{"POST", "/api/v1/stack-instances/:id/stop"},

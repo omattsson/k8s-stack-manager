@@ -154,3 +154,42 @@ func TestCORSMiddleware(t *testing.T) {
 		assert.Equal(t, http.StatusNoContent, w.Code)
 	})
 }
+
+// TestCORSMiddleware_ExposeHeaders checks that browser code may read
+// Content-Disposition (export file name) and X-Request-ID on cross-origin
+// responses, for wildcard and explicit origin lists, and on preflight.
+func TestCORSMiddleware_ExposeHeaders(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		allowed string
+		method  string
+		origin  string
+	}{
+		{name: "wildcard GET", allowed: "*", method: http.MethodGet, origin: "https://example.com"},
+		{name: "explicit origin GET", allowed: "https://app.example.com", method: http.MethodGet, origin: "https://app.example.com"},
+		{name: "explicit origin preflight", allowed: "https://app.example.com", method: http.MethodOptions, origin: "https://app.example.com"},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			r := gin.New()
+			r.Use(CORS(tt.allowed))
+			r.Any("/test", func(c *gin.Context) {
+				c.Header("Content-Disposition", "attachment; filename=stack-values.zip")
+				c.Status(http.StatusOK)
+			})
+
+			w := httptest.NewRecorder()
+			req, _ := http.NewRequest(tt.method, "/test", nil)
+			req.Header.Set("Origin", tt.origin)
+			r.ServeHTTP(w, req)
+
+			assert.Equal(t, "Content-Disposition, X-Request-ID", w.Header().Get("Access-Control-Expose-Headers"))
+			assert.Equal(t, "Content-Type, Content-Length, Accept-Encoding, Authorization, X-Request-ID, X-API-Key", w.Header().Get("Access-Control-Allow-Headers"))
+		})
+	}
+}

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   Box,
   Button,
@@ -14,6 +14,8 @@ import {
 import { clusterService } from '../../api/client';
 import type { ResourceQuotaConfig } from '../../types';
 import { useNotification } from '../../context/NotificationContext';
+import { parseCpuMillicores, parseMemoryBytes, parseQuantity } from '../../utils/quantity';
+import { describeApiError } from '../../utils/apiError';
 
 interface QuotaConfigDialogProps {
   open: boolean;
@@ -31,12 +33,70 @@ const emptyQuota: Omit<ResourceQuotaConfig, 'id' | 'cluster_id'> = {
   pod_limit: 0,
 };
 
+type QuotaForm = typeof emptyQuota;
+type QuantityField = 'cpu_request' | 'cpu_limit' | 'memory_request' | 'memory_limit' | 'storage_limit';
+type QuotaErrors = Partial<Record<QuantityField | 'pod_limit', string>>;
+
+const quantityFields: QuantityField[] = ['cpu_request', 'cpu_limit', 'memory_request', 'memory_limit', 'storage_limit'];
+
+const formatHint: Record<QuantityField, string> = {
+  cpu_request: 'Use a CPU quantity such as 500m, 1 or 1.5',
+  cpu_limit: 'Use a CPU quantity such as 500m, 1 or 1.5',
+  memory_request: 'Use a memory quantity such as 256Mi, 1Gi or 1G',
+  memory_limit: 'Use a memory quantity such as 256Mi, 1Gi or 1G',
+  storage_limit: 'Use a storage quantity such as 10Gi or 50G',
+};
+
+/** Return a copy of the form with surrounding whitespace removed from every quantity field. */
+function trimQuota(form: QuotaForm): QuotaForm {
+  const trimmed = { ...form };
+  for (const field of quantityFields) {
+    trimmed[field] = form[field].trim();
+  }
+  return trimmed;
+}
+
+/** Validate the quota form. An empty quantity means "not set" and is valid. */
+function validateQuota(input: QuotaForm): QuotaErrors {
+  const form = trimQuota(input);
+  const errors: QuotaErrors = {};
+  for (const field of quantityFields) {
+    const raw = form[field];
+    if (!raw) continue;
+    const value = parseQuantity(raw);
+    if (value === null) {
+      errors[field] = `Invalid quantity. ${formatHint[field]}`;
+    } else if (value < 0) {
+      errors[field] = 'Must not be negative';
+    }
+  }
+  const pairs: Array<[QuantityField, QuantityField, (v: string) => number | null, string]> = [
+    ['cpu_request', 'cpu_limit', parseCpuMillicores, 'CPU request must not be higher than the CPU limit'],
+    ['memory_request', 'memory_limit', parseMemoryBytes, 'Memory request must not be higher than the memory limit'],
+  ];
+  for (const [requestField, limitField, parse, message] of pairs) {
+    if (errors[requestField] || errors[limitField]) continue;
+    const request = form[requestField] ? parse(form[requestField]) : null;
+    const limit = form[limitField] ? parse(form[limitField]) : null;
+    if (request !== null && limit !== null && request > limit) {
+      errors[requestField] = message;
+    }
+  }
+  if (form.pod_limit < 0) {
+    errors.pod_limit = 'Must not be negative';
+  }
+  return errors;
+}
+
 const QuotaConfigDialog = ({ open, onClose, clusterId, clusterName }: QuotaConfigDialogProps) => {
   const [form, setForm] = useState(emptyQuota);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [hasExisting, setHasExisting] = useState(false);
+  const [touched, setTouched] = useState<Partial<Record<QuantityField | 'pod_limit', boolean>>>({});
+  const fieldErrors = useMemo(() => validateQuota(form), [form]);
+  const hasFieldErrors = Object.keys(fieldErrors).length > 0;
   const { showSuccess, showError } = useNotification();
 
   useEffect(() => {
@@ -44,17 +104,23 @@ const QuotaConfigDialog = ({ open, onClose, clusterId, clusterName }: QuotaConfi
     const fetchQuotas = async () => {
       setLoading(true);
       setError(null);
+      setTouched({});
       try {
         const config = await clusterService.getQuotas(clusterId);
         if (config) {
-          setForm({
-            cpu_request: config.cpu_request,
-            cpu_limit: config.cpu_limit,
-            memory_request: config.memory_request,
-            memory_limit: config.memory_limit,
-            storage_limit: config.storage_limit,
-            pod_limit: config.pod_limit,
-          });
+          const loaded: QuotaForm = {
+            cpu_request: config.cpu_request ?? '',
+            cpu_limit: config.cpu_limit ?? '',
+            memory_request: config.memory_request ?? '',
+            memory_limit: config.memory_limit ?? '',
+            storage_limit: config.storage_limit ?? '',
+            pod_limit: config.pod_limit ?? 0,
+          };
+          setForm(loaded);
+          // Show errors for stored values that are invalid right away, so the
+          // admin sees why Save is disabled.
+          const loadedErrors = validateQuota(loaded);
+          setTouched(Object.fromEntries(Object.keys(loadedErrors).map((field) => [field, true])));
           setHasExisting(true);
         } else {
           setForm(emptyQuota);
@@ -70,18 +136,23 @@ const QuotaConfigDialog = ({ open, onClose, clusterId, clusterName }: QuotaConfi
   }, [open, clusterId]);
 
   const handleSave = async () => {
+    if (hasFieldErrors) {
+      setTouched({ cpu_request: true, cpu_limit: true, memory_request: true, memory_limit: true, storage_limit: true, pod_limit: true });
+      return;
+    }
     setSaving(true);
     setError(null);
     try {
       await clusterService.updateQuotas(clusterId, {
         cluster_id: clusterId,
-        ...form,
+        ...trimQuota(form),
       });
       showSuccess('Resource quotas saved');
       onClose();
-    } catch {
-      setError('Failed to save quota configuration');
-      showError('Failed to save quota configuration');
+    } catch (err) {
+      const message = await describeApiError(err, 'Failed to save quota configuration');
+      setError(message);
+      showError(message);
     } finally {
       setSaving(false);
     }
@@ -102,6 +173,20 @@ const QuotaConfigDialog = ({ open, onClose, clusterId, clusterName }: QuotaConfi
     } finally {
       setSaving(false);
     }
+  };
+
+  /** Props that show a field's validation error (after blur or a save attempt) in place of its help text. */
+  const fieldProps = (field: QuantityField | 'pod_limit', help: string) => {
+    // A request-above-limit error shows under the request field, so it
+    // becomes visible when either field of the pair is touched.
+    const pairedLimit = field === 'cpu_request' ? 'cpu_limit' : field === 'memory_request' ? 'memory_limit' : null;
+    const isTouched = Boolean(touched[field] || (pairedLimit && touched[pairedLimit]));
+    const visible = Boolean(isTouched && fieldErrors[field]);
+    return {
+      error: visible,
+      helperText: visible ? fieldErrors[field] : help,
+      onBlur: () => setTouched((prev) => ({ ...prev, [field]: true })),
+    };
   };
 
   const handleClose = () => {
@@ -137,40 +222,40 @@ const QuotaConfigDialog = ({ open, onClose, clusterId, clusterName }: QuotaConfi
                 label="CPU Request"
                 value={form.cpu_request}
                 onChange={(e) => setForm({ ...form, cpu_request: e.target.value })}
+                {...fieldProps('cpu_request', 'Default CPU request per namespace (e.g., 500m, 1, 2000m)')}
                 fullWidth
-                helperText="Default CPU request per namespace (e.g., 500m, 1, 2000m)"
                 placeholder="500m"
               />
               <TextField
                 label="CPU Limit"
                 value={form.cpu_limit}
                 onChange={(e) => setForm({ ...form, cpu_limit: e.target.value })}
+                {...fieldProps('cpu_limit', 'Maximum CPU per namespace (e.g., 2000m, 4)')}
                 fullWidth
-                helperText="Maximum CPU per namespace (e.g., 2000m, 4)"
                 placeholder="2000m"
               />
               <TextField
                 label="Memory Request"
                 value={form.memory_request}
                 onChange={(e) => setForm({ ...form, memory_request: e.target.value })}
+                {...fieldProps('memory_request', 'Default memory request per namespace (e.g., 256Mi, 1Gi)')}
                 fullWidth
-                helperText="Default memory request per namespace (e.g., 256Mi, 1Gi)"
                 placeholder="256Mi"
               />
               <TextField
                 label="Memory Limit"
                 value={form.memory_limit}
                 onChange={(e) => setForm({ ...form, memory_limit: e.target.value })}
+                {...fieldProps('memory_limit', 'Maximum memory per namespace (e.g., 1Gi, 2Gi)')}
                 fullWidth
-                helperText="Maximum memory per namespace (e.g., 1Gi, 2Gi)"
                 placeholder="1Gi"
               />
               <TextField
                 label="Storage Limit"
                 value={form.storage_limit}
                 onChange={(e) => setForm({ ...form, storage_limit: e.target.value })}
+                {...fieldProps('storage_limit', 'Maximum storage per namespace (e.g., 10Gi, 50Gi)')}
                 fullWidth
-                helperText="Maximum storage per namespace (e.g., 10Gi, 50Gi)"
                 placeholder="10Gi"
               />
               <TextField
@@ -178,8 +263,8 @@ const QuotaConfigDialog = ({ open, onClose, clusterId, clusterName }: QuotaConfi
                 type="number"
                 value={form.pod_limit}
                 onChange={(e) => setForm({ ...form, pod_limit: Number.parseInt(e.target.value, 10) || 0 })}
+                {...fieldProps('pod_limit', 'Maximum number of pods per namespace (0 = unlimited)')}
                 fullWidth
-                helperText="Maximum number of pods per namespace (0 = unlimited)"
               />
             </Box>
           </>
@@ -200,7 +285,7 @@ const QuotaConfigDialog = ({ open, onClose, clusterId, clusterName }: QuotaConfi
         <Button
           variant="contained"
           onClick={handleSave}
-          disabled={saving || loading}
+          disabled={saving || loading || hasFieldErrors}
         >
           {saving ? <CircularProgress size={20} /> : 'Save'}
         </Button>

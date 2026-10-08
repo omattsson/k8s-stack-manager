@@ -531,15 +531,72 @@ describe('instanceService', () => {
     expect(result).toEqual(override);
   });
 
-  it('exportValues sends GET to export endpoint', async () => {
-    const api = mockApi;
-    const yaml = 'key: value\nreplicas: 2';
-    api.get.mockResolvedValueOnce(mockResponse(yaml));
+  it('deleteOverride sends DELETE to specific chart override', async () => {
+    mockApi.delete.mockResolvedValueOnce(mockResponse(null));
+
+    await instanceService.deleteOverride('i1', 'c1');
+
+    expect(mockApi.delete).toHaveBeenCalledWith('/api/v1/stack-instances/i1/overrides/c1');
+  });
+
+  it('exportValues requests the values ZIP as a blob and returns it unchanged', async () => {
+    const blob = new Blob(['PK\u0003\u0004'], { type: 'application/zip' });
+    mockApi.get.mockResolvedValueOnce({
+      ...mockResponse(blob),
+      headers: { 'content-disposition': 'attachment; filename=demo-values.zip' },
+    });
+
+    const result = await instanceService.exportValues('i1', 'demo');
+
+    expect(mockApi.get).toHaveBeenCalledWith('/api/v1/stack-instances/i1/values', { responseType: 'blob' });
+    expect(result.blob).toBe(blob);
+    expect(result.filename).toBe('demo-values.zip');
+  });
+
+  it.each([
+    ['attachment; filename="quoted name-values.zip"', 'quoted name-values.zip'],
+    ["attachment; filename*=UTF-8''caf%C3%A9-values.zip; filename=cafe-values.zip", 'café-values.zip'],
+  ])('exportValues reads the file name from %s', async (header, expected) => {
+    mockApi.get.mockResolvedValueOnce({ ...mockResponse(new Blob(['x'])), headers: { 'content-disposition': header } });
+
+    const result = await instanceService.exportValues('i1', 'demo');
+
+    expect(result.filename).toBe(expected);
+  });
+
+  it('exportValues falls back to <instance-name>-values.zip without Content-Disposition', async () => {
+    mockApi.get.mockResolvedValueOnce(mockResponse(new Blob(['x'])));
+
+    const result = await instanceService.exportValues('i1', 'demo');
+
+    expect(result.filename).toBe('demo-values.zip');
+  });
+
+  it('exportValues falls back to the instance ID when no name is given', async () => {
+    mockApi.get.mockResolvedValueOnce(mockResponse(new Blob(['x'])));
 
     const result = await instanceService.exportValues('i1');
 
-    expect(api.get).toHaveBeenCalledWith('/api/v1/stack-instances/i1/export');
-    expect(result).toBe(yaml);
+    expect(result.filename).toBe('i1-values.zip');
+  });
+
+  it('exportChartValues requests one chart as a blob with a fallback file name', async () => {
+    const blob = new Blob(['replicaCount: 2\n'], { type: 'application/x-yaml' });
+    mockApi.get.mockResolvedValueOnce(mockResponse(blob));
+
+    const result = await instanceService.exportChartValues('i1', 'c1', 'demo-api-values.yaml');
+
+    expect(mockApi.get).toHaveBeenCalledWith('/api/v1/stack-instances/i1/values/c1', { responseType: 'blob' });
+    expect(result.blob).toBe(blob);
+    expect(result.filename).toBe('demo-api-values.yaml');
+  });
+
+  it('exportChartValues defaults the file name to the chart ID', async () => {
+    mockApi.get.mockResolvedValueOnce(mockResponse(new Blob(['a: 1'])));
+
+    const result = await instanceService.exportChartValues('i1', 'c1');
+
+    expect(result.filename).toBe('c1-values.yaml');
   });
 
   it('deploy sends POST to deploy endpoint', async () => {
@@ -1836,6 +1893,16 @@ describe('instanceService — error paths', () => {
   it('exportValues throws on error', async () => {
     mockApi.get.mockRejectedValueOnce(new Error('Not Found'));
     await expect(instanceService.exportValues('i1')).rejects.toThrow('Not Found');
+  });
+
+  it('exportChartValues throws on error', async () => {
+    mockApi.get.mockRejectedValueOnce(new Error('Not Found'));
+    await expect(instanceService.exportChartValues('i1', 'c1')).rejects.toThrow('Not Found');
+  });
+
+  it('deleteOverride throws on error', async () => {
+    mockApi.delete.mockRejectedValueOnce(new Error('Forbidden'));
+    await expect(instanceService.deleteOverride('i1', 'c1')).rejects.toThrow('Forbidden');
   });
 
   it('deploy throws on error', async () => {

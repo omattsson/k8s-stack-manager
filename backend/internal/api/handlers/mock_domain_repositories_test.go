@@ -1798,6 +1798,21 @@ func NewMockInstanceQuotaOverrideRepository() *MockInstanceQuotaOverrideReposito
 	return &MockInstanceQuotaOverrideRepository{items: make(map[string]*models.InstanceQuotaOverride)}
 }
 
+func (m *MockInstanceQuotaOverrideRepository) ListByInstanceIDs(_ context.Context, instanceIDs []string) ([]models.InstanceQuotaOverride, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.err != nil {
+		return nil, m.err
+	}
+	var out []models.InstanceQuotaOverride
+	for _, id := range instanceIDs {
+		if o, ok := m.items[id]; ok {
+			out = append(out, *o)
+		}
+	}
+	return out, nil
+}
+
 func (m *MockInstanceQuotaOverrideRepository) GetByInstanceID(_ context.Context, instanceID string) (*models.InstanceQuotaOverride, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()

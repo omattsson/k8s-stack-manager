@@ -7,6 +7,7 @@ import (
 
 	"github.com/robfig/cron/v3"
 	"gopkg.in/yaml.v3"
+	"k8s.io/apimachinery/pkg/api/resource"
 )
 
 var (
@@ -276,7 +277,7 @@ func (rq *ResourceQuotaConfig) Validate() error {
 	if rq.PodLimit < 0 {
 		return errors.New("pod_limit must be non-negative")
 	}
-	return nil
+	return validateQuotaQuantities(rq.CPURequest, rq.CPULimit, rq.MemoryRequest, rq.MemoryLimit, rq.StorageLimit)
 }
 
 // Validate implements model validation for InstanceQuotaOverride.
@@ -286,6 +287,55 @@ func (iqo *InstanceQuotaOverride) Validate() error {
 	}
 	if iqo.PodLimit != nil && *iqo.PodLimit < 0 {
 		return errors.New("pod_limit must be non-negative")
+	}
+	return validateQuotaQuantities(iqo.CPURequest, iqo.CPULimit, iqo.MemoryRequest, iqo.MemoryLimit, iqo.StorageLimit)
+}
+
+// maxQuotaQuantityLen matches the size:20 column of the quota quantity fields.
+const maxQuotaQuantityLen = 20
+
+// validateQuotaQuantities checks the resource quantity fields shared by
+// ResourceQuotaConfig and InstanceQuotaOverride. Each non-empty value must
+// parse as a Kubernetes quantity (the deployer parses them again when it
+// creates the namespace ResourceQuota), must not be negative, and a request
+// must not exceed its limit when both are set. Empty values mean "not set".
+func validateQuotaQuantities(cpuRequest, cpuLimit, memoryRequest, memoryLimit, storageLimit string) error {
+	fields := []struct {
+		name  string
+		value string
+	}{
+		{"cpu_request", cpuRequest},
+		{"cpu_limit", cpuLimit},
+		{"memory_request", memoryRequest},
+		{"memory_limit", memoryLimit},
+		{"storage_limit", storageLimit},
+	}
+
+	parsed := make(map[string]resource.Quantity, len(fields))
+	for _, f := range fields {
+		if f.value == "" {
+			continue
+		}
+		if len(f.value) > maxQuotaQuantityLen {
+			return fmt.Errorf("%s: must be at most %d characters", f.name, maxQuotaQuantityLen)
+		}
+		q, err := resource.ParseQuantity(f.value)
+		if err != nil {
+			return fmt.Errorf("%s: invalid quantity (examples: 500m, 2, 512Mi, 10Gi)", f.name)
+		}
+		if q.Sign() < 0 {
+			return fmt.Errorf("%s: must not be negative", f.name)
+		}
+		parsed[f.name] = q
+	}
+
+	pairs := [][2]string{{"cpu_request", "cpu_limit"}, {"memory_request", "memory_limit"}}
+	for _, p := range pairs {
+		req, hasReq := parsed[p[0]]
+		lim, hasLim := parsed[p[1]]
+		if hasReq && hasLim && req.Cmp(lim) > 0 {
+			return fmt.Errorf("%s must not exceed %s", p[0], p[1])
+		}
 	}
 	return nil
 }

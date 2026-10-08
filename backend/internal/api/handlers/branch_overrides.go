@@ -29,18 +29,22 @@ const (
 
 // BranchOverrideHandler handles per-chart branch override endpoints.
 type BranchOverrideHandler struct {
-	overrideRepo models.ChartBranchOverrideRepository
-	instanceRepo models.StackInstanceRepository
+	overrideRepo    models.ChartBranchOverrideRepository
+	instanceRepo    models.StackInstanceRepository
+	chartConfigRepo models.ChartConfigRepository
 }
 
-// NewBranchOverrideHandler creates a new BranchOverrideHandler.
+// NewBranchOverrideHandler creates a new BranchOverrideHandler. chartConfigRepo
+// is used to check that :chartId is a chart of the instance's definition.
 func NewBranchOverrideHandler(
 	overrideRepo models.ChartBranchOverrideRepository,
 	instanceRepo models.StackInstanceRepository,
+	chartConfigRepo models.ChartConfigRepository,
 ) *BranchOverrideHandler {
 	return &BranchOverrideHandler{
-		overrideRepo: overrideRepo,
-		instanceRepo: instanceRepo,
+		overrideRepo:    overrideRepo,
+		instanceRepo:    instanceRepo,
+		chartConfigRepo: chartConfigRepo,
 	}
 }
 
@@ -94,7 +98,7 @@ type setBranchOverrideRequest struct {
 
 // SetBranchOverride godoc
 // @Summary     Set or update branch override for a chart
-// @Description Upsert a per-chart branch override for a specific chart in a stack instance
+// @Description Upsert a per-chart branch override for a specific chart in a stack instance. chartId must be a chart config of the instance's stack definition (404 "Chart not found in this stack definition" otherwise).
 // @Tags        branch-overrides
 // @Accept      json
 // @Produce     json
@@ -103,6 +107,7 @@ type setBranchOverrideRequest struct {
 // @Param       body    body     setBranchOverrideRequest true "Branch override"
 // @Success     200     {object} models.ChartBranchOverride
 // @Failure     400     {object} map[string]string
+// @Failure     401     {object} map[string]string
 // @Failure     403     {object} map[string]string
 // @Failure     404     {object} map[string]string
 // @Failure     500     {object} map[string]string
@@ -124,6 +129,10 @@ func (h *BranchOverrideHandler) SetBranchOverride(c *gin.Context) {
 
 	// Authorization: owner, admin or devops (see canModifyInstance).
 	if !requireInstanceModify(c, inst) {
+		return
+	}
+
+	if _, ok := requireInstanceChart(c, h.chartConfigRepo, inst, chartID); !ok {
 		return
 	}
 
@@ -171,12 +180,13 @@ func (h *BranchOverrideHandler) SetBranchOverride(c *gin.Context) {
 
 // DeleteBranchOverride godoc
 // @Summary     Delete branch override for a chart
-// @Description Remove the per-chart branch override for a specific chart in a stack instance
+// @Description Remove the per-chart branch override for a specific chart in a stack instance. An existing override row is removed even when its chart is not part of the definition, so stale rows can be cleaned up. Without an override the response is 404: "Chart not found in this stack definition" for an unknown chart, otherwise "Branch override not found".
 // @Tags        branch-overrides
 // @Produce     json
 // @Param       id      path     string true "Instance ID"
 // @Param       chartId path     string true "Chart config ID"
 // @Success     204     "No Content"
+// @Failure     401     {object} map[string]string
 // @Failure     403     {object} map[string]string
 // @Failure     404     {object} map[string]string
 // @Failure     500     {object} map[string]string
@@ -202,6 +212,12 @@ func (h *BranchOverrideHandler) DeleteBranchOverride(c *gin.Context) {
 	}
 
 	if err := h.overrideRepo.Delete(instanceID, chartID); err != nil {
+		if isNotFoundError(err) {
+			// No override: tell an unknown chart apart from a missing override.
+			if _, ok := requireInstanceChart(c, h.chartConfigRepo, inst, chartID); !ok {
+				return
+			}
+		}
 		status, message := mapError(err, entityBranchOverride)
 		if status == http.StatusInternalServerError {
 			slog.Error("failed to delete branch override", logKeyBOInstanceID, instanceID, logKeyBOChartID, chartID, "error", err)

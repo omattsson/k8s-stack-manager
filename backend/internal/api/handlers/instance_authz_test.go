@@ -153,7 +153,7 @@ func newAuthzFixture(t *testing.T, instStatus, callerID, callerRole string) *aut
 	h.WithHooks(dispatcher)
 	h.WithActions(actions)
 
-	boHandler := NewBranchOverrideHandler(f.boRepo, f.instRepo)
+	boHandler := NewBranchOverrideHandler(f.boRepo, f.instRepo, ccRepo)
 	quotaHandler := NewInstanceQuotaOverrideHandler(f.quotaRepo, f.instRepo)
 
 	r := gin.New()

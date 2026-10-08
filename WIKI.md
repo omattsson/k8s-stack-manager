@@ -55,6 +55,7 @@ Template → (instantiate) → Definition + ChartConfigs → (create instance) �
 - The web UI hides the lifecycle buttons and shows the page read-only for a user who cannot modify the instance.
 - A clone always belongs to the user who creates it.
 - The override restriction limits who can *edit* through the override endpoints. It is not a secrecy control: the merged values (export, compare, deploy-log values) and a clone still contain the override values. Do not put secrets in value overrides; use Kubernetes Secrets or an external secret store.
+- The same applies to cluster **shared values**: only admins can edit them, but every user sees them in the exported and compared values of any stack on that cluster. Do not put secrets in shared values.
 
 ### Sessions
 
@@ -113,9 +114,10 @@ Known gap: the WebSocket connection (`/ws`) does not check the blocklists yet (#
 - Service-level tokens (PAT/token), not per-user
 
 ### Helm Values
-- Deep merge: chart defaults ← instance overrides
+- Deep merge, lowest first: cluster shared values (by priority, then name in byte order, then ID) ← chart defaults ← instance overrides ← template locked values (locked always wins)
 - Template variable substitution: `{{.Branch}}`, `{{.Namespace}}`, `{{.InstanceName}}`, `{{.StackName}}`, `{{.Owner}}`
-- Export as YAML
+- The same merge feeds deploy, deploy preview, bulk deploy, quick deploy, export and compare
+- Export: `GET /stack-instances/:id/values` (ZIP, one `values.yaml` per chart) or `GET /stack-instances/:id/values/:chartId` (YAML)
 
 ## Development
 

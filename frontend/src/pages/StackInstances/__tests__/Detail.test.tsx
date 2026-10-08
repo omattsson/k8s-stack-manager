@@ -57,9 +57,11 @@ vi.mock('../../../api/client', () => ({
     getOverrides: vi.fn(),
     update: vi.fn(),
     setOverride: vi.fn(),
+    deleteOverride: vi.fn(),
     clone: vi.fn(),
     delete: vi.fn(),
     exportValues: vi.fn(),
+    exportChartValues: vi.fn(),
     deploy: vi.fn(),
     stop: vi.fn(),
     clean: vi.fn(),
@@ -87,12 +89,23 @@ vi.mock('../../../api/client', () => ({
 }));
 
 vi.mock('../../../components/YamlEditor', () => ({
-  default: (props: { label?: string; value: string }) => (
+  default: (props: { label?: string; value: string; readOnly?: boolean; onChange?: (v: string) => void }) => (
     <div data-testid="yaml-editor">
       <span>{props.label}</span>
       <pre>{props.value}</pre>
+      {!props.readOnly && (
+        <>
+          <button onClick={() => props.onChange?.('')}>clear {props.label}</button>
+          <button onClick={() => props.onChange?.('replicaCount: 5')}>edit {props.label}</button>
+          <button onClick={() => props.onChange?.('replicaCount: 7')}>edit again {props.label}</button>
+        </>
+      )}
     </div>
   ),
+}));
+
+vi.mock('../../../utils/download', () => ({
+  downloadBlob: vi.fn(),
 }));
 
 vi.mock('../../../components/DeploymentLogViewer', () => ({
@@ -166,6 +179,7 @@ vi.mock('../../../components/DeployPreviewDialog', () => ({
 
 import { instanceService, definitionService, branchOverrideService } from '../../../api/client';
 import useCountdown from '../../../hooks/useCountdown';
+import { downloadBlob } from '../../../utils/download';
 
 type MockFn = ReturnType<typeof vi.fn>;
 
@@ -1052,16 +1066,11 @@ describe('StackInstances Detail', () => {
     });
   });
 
-  it('calls instanceService.exportValues when Export Values is clicked', async () => {
+  it('downloads the values ZIP unchanged when All charts (ZIP) is chosen', async () => {
     const user = userEvent.setup();
     setupMocks();
-    (instanceService.exportValues as MockFn).mockResolvedValue('replicaCount: 2');
-
-    // Mock URL methods
-    const origCreateObjectURL = URL.createObjectURL;
-    const origRevokeObjectURL = URL.revokeObjectURL;
-    URL.createObjectURL = vi.fn().mockReturnValue('blob:test');
-    URL.revokeObjectURL = vi.fn();
+    const blob = new Blob(['PK\u0003\u0004'], { type: 'application/zip' });
+    (instanceService.exportValues as MockFn).mockResolvedValue({ blob, filename: 'Test Instance-values.zip' });
 
     renderDetail();
 
@@ -1070,19 +1079,21 @@ describe('StackInstances Detail', () => {
     });
 
     await user.click(screen.getByRole('button', { name: /export values/i }));
+    await user.click(await screen.findByRole('menuitem', { name: 'All charts (ZIP)' }));
 
     await waitFor(() => {
-      expect(instanceService.exportValues).toHaveBeenCalledWith('123');
+      expect(instanceService.exportValues).toHaveBeenCalledWith('123', 'Test Instance');
     });
-
-    URL.createObjectURL = origCreateObjectURL;
-    URL.revokeObjectURL = origRevokeObjectURL;
+    expect(downloadBlob).toHaveBeenCalledWith(blob, 'Test Instance-values.zip');
+    expect((downloadBlob as MockFn).mock.calls[0][0]).toBe(blob);
   });
 
-  it('shows error when export fails', async () => {
+  it('downloads one chart as YAML when a chart is chosen', async () => {
     const user = userEvent.setup();
     setupMocks();
-    (instanceService.exportValues as MockFn).mockRejectedValue(new Error('Not found'));
+    const blob = new Blob(['replicaCount: 1\n'], { type: 'application/x-yaml' });
+    (instanceService.exportChartValues as MockFn).mockResolvedValue({ blob, filename: 'Test Instance-frontend-values.yaml' });
+
     renderDetail();
 
     await waitFor(() => {
@@ -1090,9 +1101,55 @@ describe('StackInstances Detail', () => {
     });
 
     await user.click(screen.getByRole('button', { name: /export values/i }));
+    await user.click(await screen.findByRole('menuitem', { name: 'frontend (YAML)' }));
+
+    await waitFor(() => {
+      expect(instanceService.exportChartValues).toHaveBeenCalledWith('123', 'chart1', 'Test Instance-frontend-values.yaml');
+    });
+    expect(downloadBlob).toHaveBeenCalledWith(blob, 'Test Instance-frontend-values.yaml');
+    expect(instanceService.exportValues).not.toHaveBeenCalled();
+  });
+
+  it('shows the generic error when export fails without an HTTP response', async () => {
+    const user = userEvent.setup();
+    setupMocks();
+    (instanceService.exportValues as MockFn).mockRejectedValue(new Error('Network Error'));
+    renderDetail();
+
+    await waitFor(() => {
+      expect(screen.getByText('Test Instance')).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole('button', { name: /export values/i }));
+    await user.click(await screen.findByRole('menuitem', { name: 'All charts (ZIP)' }));
 
     await waitFor(() => {
       expect(screen.getByText('Failed to export values')).toBeInTheDocument();
+    });
+    expect(downloadBlob).not.toHaveBeenCalled();
+  });
+
+  it('shows the HTTP status and server message when export fails', async () => {
+    const user = userEvent.setup();
+    setupMocks();
+    (instanceService.exportValues as MockFn).mockRejectedValue({
+      response: {
+        status: 403,
+        statusText: 'Forbidden',
+        data: new Blob([JSON.stringify({ error: 'Access denied' })], { type: 'application/json' }),
+      },
+    });
+    renderDetail();
+
+    await waitFor(() => {
+      expect(screen.getByText('Test Instance')).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole('button', { name: /export values/i }));
+    await user.click(await screen.findByRole('menuitem', { name: 'All charts (ZIP)' }));
+
+    await waitFor(() => {
+      expect(screen.getByText('Failed to export values (HTTP 403: Access denied)')).toBeInTheDocument();
     });
   });
 
@@ -1461,6 +1518,202 @@ describe('StackInstances Detail', () => {
     // Save should complete without error (no overrides to save, no branch change)
     await waitFor(() => {
       expect(screen.queryByText('Failed to save changes')).not.toBeInTheDocument();
+    });
+  });
+
+  it('deletes an existing override when its editor is cleared and saved', async () => {
+    const user = userEvent.setup();
+    setupMocks();
+    (instanceService.getOverrides as MockFn).mockResolvedValue([
+      { id: 'ov1', stack_instance_id: '123', chart_config_id: 'chart1', values: 'replicaCount: 3' },
+    ]);
+    (instanceService.deleteOverride as MockFn).mockResolvedValue(undefined);
+    renderDetail();
+
+    await waitFor(() => {
+      expect(screen.getByText('replicaCount: 3')).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole('button', { name: 'clear Your Overrides' }));
+    await user.click(screen.getByRole('button', { name: /save changes/i }));
+
+    await waitFor(() => {
+      expect(instanceService.deleteOverride).toHaveBeenCalledWith('123', 'chart1');
+    });
+    expect(instanceService.setOverride).not.toHaveBeenCalled();
+    await waitFor(() => {
+      expect(screen.getByText('Changes saved successfully')).toBeInTheDocument();
+    });
+
+    // A second save does not send the DELETE again.
+    await user.click(screen.getByRole('button', { name: /save changes/i }));
+    await waitFor(() => {
+      expect(instanceService.deleteOverride).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it('does not send DELETE or PUT for an empty override that never existed', async () => {
+    const user = userEvent.setup();
+    setupMocks();
+    renderDetail();
+
+    await waitFor(() => {
+      expect(screen.getByText('Test Instance')).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole('button', { name: 'clear Your Overrides' }));
+    await user.click(screen.getByRole('button', { name: /save changes/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText('Changes saved successfully')).toBeInTheDocument();
+    });
+    expect(instanceService.deleteOverride).not.toHaveBeenCalled();
+    expect(instanceService.setOverride).not.toHaveBeenCalled();
+  });
+
+  it('sends PUT for a changed non-empty override', async () => {
+    const user = userEvent.setup();
+    setupMocks();
+    (instanceService.setOverride as MockFn).mockResolvedValue({});
+    renderDetail();
+
+    await waitFor(() => {
+      expect(screen.getByText('Test Instance')).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole('button', { name: 'edit Your Overrides' }));
+    await user.click(screen.getByRole('button', { name: /save changes/i }));
+
+    await waitFor(() => {
+      expect(instanceService.setOverride).toHaveBeenCalledWith('123', 'chart1', { values: 'replicaCount: 5' });
+    });
+    expect(instanceService.deleteOverride).not.toHaveBeenCalled();
+  });
+
+  it('does not repeat a successful DELETE when a later PUT fails', async () => {
+    const user = userEvent.setup();
+    setupMocks();
+    (definitionService.get as MockFn).mockResolvedValue({
+      ...mockDefinition,
+      charts: [
+        mockDefinition.charts[0],
+        { ...mockDefinition.charts[0], id: 'chart2', chart_name: 'backend', deploy_order: 2 },
+      ],
+    });
+    (instanceService.getOverrides as MockFn).mockResolvedValue([
+      { id: 'ov1', stack_instance_id: '123', chart_config_id: 'chart1', values: 'replicaCount: 3' },
+    ]);
+    (instanceService.deleteOverride as MockFn).mockResolvedValue(undefined);
+    (instanceService.setOverride as MockFn)
+      .mockRejectedValueOnce({ response: { status: 500, statusText: 'Internal Server Error', data: { error: 'Internal server error' } } })
+      .mockResolvedValueOnce({});
+    renderDetail();
+
+    await waitFor(() => {
+      expect(screen.getByText('replicaCount: 3')).toBeInTheDocument();
+    });
+
+    // Chart A (chart1): clear the existing override. Chart B (chart2): add a new one.
+    const clearButtons = screen.getAllByRole('button', { name: 'clear Your Overrides', hidden: true });
+    const editButtons = screen.getAllByRole('button', { name: 'edit Your Overrides', hidden: true });
+    await user.click(clearButtons[0]);
+    await user.click(editButtons[1]);
+    await user.click(screen.getByRole('button', { name: /save changes/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText('Failed to save changes (HTTP 500: Internal server error)')).toBeInTheDocument();
+    });
+    expect(instanceService.deleteOverride).toHaveBeenCalledTimes(1);
+
+    await user.click(screen.getByRole('button', { name: /save changes/i }));
+
+    await waitFor(() => {
+      expect(instanceService.setOverride).toHaveBeenCalledTimes(2);
+    });
+    expect(instanceService.setOverride).toHaveBeenLastCalledWith('123', 'chart2', { values: 'replicaCount: 5' });
+    expect(instanceService.deleteOverride).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps an override edit typed while the save request runs', async () => {
+    const user = userEvent.setup();
+    setupMocks();
+    let resolvePut: (value: unknown) => void = () => {};
+    (instanceService.setOverride as MockFn)
+      .mockImplementationOnce(() => new Promise((resolve) => { resolvePut = resolve; }))
+      .mockResolvedValueOnce({});
+    renderDetail();
+
+    await waitFor(() => {
+      expect(screen.getByText('Test Instance')).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole('button', { name: 'edit Your Overrides' }));
+    await user.click(screen.getByRole('button', { name: /save changes/i }));
+    await waitFor(() => {
+      expect(instanceService.setOverride).toHaveBeenCalledWith('123', 'chart1', { values: 'replicaCount: 5' });
+    });
+
+    // Edit again while the PUT is still pending, then let the PUT finish.
+    await user.click(screen.getByRole('button', { name: 'edit again Your Overrides' }));
+    resolvePut({});
+
+    await waitFor(() => {
+      expect(screen.getByText('Changes saved successfully')).toBeInTheDocument();
+    });
+    expect(screen.getByText('replicaCount: 7')).toBeInTheDocument();
+
+    // The newer edit is still unsaved, so the next save sends it.
+    await user.click(screen.getByRole('button', { name: /save changes/i }));
+    await waitFor(() => {
+      expect(instanceService.setOverride).toHaveBeenLastCalledWith('123', 'chart1', { values: 'replicaCount: 7' });
+    });
+    expect(instanceService.setOverride).toHaveBeenCalledTimes(2);
+  });
+
+  it('treats a 404 on DELETE as success', async () => {
+    const user = userEvent.setup();
+    setupMocks();
+    (instanceService.getOverrides as MockFn).mockResolvedValue([
+      { id: 'ov1', stack_instance_id: '123', chart_config_id: 'chart1', values: 'replicaCount: 3' },
+    ]);
+    (instanceService.deleteOverride as MockFn).mockRejectedValue({
+      response: { status: 404, statusText: 'Not Found', data: { error: 'Override not found' } },
+    });
+    renderDetail();
+
+    await waitFor(() => {
+      expect(screen.getByText('replicaCount: 3')).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole('button', { name: 'clear Your Overrides' }));
+    await user.click(screen.getByRole('button', { name: /save changes/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText('Changes saved successfully')).toBeInTheDocument();
+    });
+    expect(screen.queryByText(/Failed to save changes/)).not.toBeInTheDocument();
+  });
+
+  it('shows the HTTP reason when deleting an override fails', async () => {
+    const user = userEvent.setup();
+    setupMocks();
+    (instanceService.getOverrides as MockFn).mockResolvedValue([
+      { id: 'ov1', stack_instance_id: '123', chart_config_id: 'chart1', values: 'replicaCount: 3' },
+    ]);
+    (instanceService.deleteOverride as MockFn).mockRejectedValue({
+      response: { status: 403, statusText: 'Forbidden', data: { error: 'Access denied' } },
+    });
+    renderDetail();
+
+    await waitFor(() => {
+      expect(screen.getByText('replicaCount: 3')).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole('button', { name: 'clear Your Overrides' }));
+    await user.click(screen.getByRole('button', { name: /save changes/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText('Failed to save changes (HTTP 403: Access denied)')).toBeInTheDocument();
     });
   });
 

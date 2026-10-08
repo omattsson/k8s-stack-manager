@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import fs from 'node:fs';
 import { loginAsDevops, uniqueName, createAndPublishTemplate, instantiateTemplate, API_BASE, ADMIN_PASSWORD, ensureDefaultCluster, deleteCluster } from './helpers';
 
 test.describe('Stack Instance Management', () => {
@@ -349,17 +350,21 @@ test.describe('Stack Instance Management', () => {
     await expect(exportButton).toBeVisible();
     await expect(exportButton).toBeEnabled();
 
-    // Click to trigger export — listen for a download or a snackbar response
-    const downloadPromise = page.waitForEvent('download', { timeout: 5_000 }).catch(() => null);
+    // The button opens a menu: all charts as a ZIP, or one chart as YAML.
     await exportButton.click();
+    const zipItem = page.getByRole('menuitem', { name: 'All charts (ZIP)' });
+    await expect(zipItem).toBeVisible();
+
+    const downloadPromise = page.waitForEvent('download', { timeout: 10_000 });
+    await zipItem.click();
     const download = await downloadPromise;
 
-    if (download) {
-      // Download triggered — verify the filename
-      expect(download.suggestedFilename()).toMatch(/\.yaml$/);
-    }
-    // If no download, the export may show an error for test data with no real values —
-    // that's acceptable; we've verified the button exists and is interactive.
+    expect(download.suggestedFilename()).toBe(`${instName}-values.zip`);
+    // The file is saved unchanged: a ZIP archive starts with the "PK" signature.
+    const filePath = await download.path();
+    expect(filePath).toBeTruthy();
+    const header = fs.readFileSync(filePath).subarray(0, 2).toString('latin1');
+    expect(header).toBe('PK');
   });
 
   test('TTL selector allows changing time-to-live preset', async ({ page }) => {

@@ -113,6 +113,18 @@ func (m *MockChartBranchOverrideRepository) SetError(err error) {
 
 // ---- Test router setup ----
 
+// newBranchTestChartRepo returns chart configs chart-1..chart-5 of definition
+// def-1 and chart-other of definition def-2.
+func newBranchTestChartRepo() *MockChartConfigRepository {
+	repo := NewMockChartConfigRepository()
+	for i := 1; i <= 5; i++ {
+		id := "chart-" + string(rune('0'+i))
+		_ = repo.Create(&models.ChartConfig{ID: id, StackDefinitionID: "def-1", ChartName: "app-" + id})
+	}
+	_ = repo.Create(&models.ChartConfig{ID: "chart-other", StackDefinitionID: "def-2", ChartName: "other"})
+	return repo
+}
+
 func setupBranchOverrideRouter(
 	instanceRepo *MockStackInstanceRepository,
 	overrideRepo *MockChartBranchOverrideRepository,
@@ -122,7 +134,7 @@ func setupBranchOverrideRouter(
 	r := gin.New()
 	r.Use(injectAuthContext(callerID, callerRole))
 
-	h := NewBranchOverrideHandler(overrideRepo, instanceRepo)
+	h := NewBranchOverrideHandler(overrideRepo, instanceRepo, newBranchTestChartRepo())
 
 	insts := r.Group("/api/v1/stack-instances")
 	{
@@ -541,6 +553,60 @@ func TestDeleteBranchOverride_OwnerAuthorization(t *testing.T) {
 			router.ServeHTTP(w, req)
 
 			assert.Equal(t, tt.wantStatus, w.Code)
+		})
+	}
+}
+
+// TestBranchOverride_ChartValidation checks that :chartId must be a chart of
+// the instance's definition (#445), and that DELETE still removes a stale row
+// whose chart ID is not a chart config.
+func TestBranchOverride_ChartValidation(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		method     string
+		chartID    string
+		seedRow    bool
+		wantStatus int
+		wantError  string
+	}{
+		{name: "PUT unknown chart ID", method: http.MethodPut, chartID: "my-chart-name", wantStatus: http.StatusNotFound, wantError: msgChartNotInDefinition},
+		{name: "PUT chart of another definition", method: http.MethodPut, chartID: "chart-other", wantStatus: http.StatusNotFound, wantError: msgChartNotInDefinition},
+		{name: "PUT chart of the definition", method: http.MethodPut, chartID: "chart-1", wantStatus: http.StatusOK},
+		{name: "DELETE unknown chart without override", method: http.MethodDelete, chartID: "my-chart-name", wantStatus: http.StatusNotFound, wantError: msgChartNotInDefinition},
+		{name: "DELETE known chart without override", method: http.MethodDelete, chartID: "chart-2", wantStatus: http.StatusNotFound, wantError: "Branch override not found"},
+		{name: "DELETE stale row with unknown chart ID", method: http.MethodDelete, chartID: "my-chart-name", seedRow: true, wantStatus: http.StatusNoContent},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			instRepo := NewMockStackInstanceRepository()
+			overrideRepo := NewMockChartBranchOverrideRepository()
+			seedInstance(t, instRepo, "inst-1", "my-stack", "def-1", "uid-1", models.StackStatusDraft)
+			if tt.seedRow {
+				seedBranchOverride(t, overrideRepo, "bo-1", "inst-1", tt.chartID, "feature/old")
+			}
+
+			router := setupBranchOverrideRouter(instRepo, overrideRepo, "uid-1", "user")
+			body := bytes.NewReader([]byte(`{"branch":"feature/x"}`))
+			req, _ := http.NewRequest(tt.method, "/api/v1/stack-instances/inst-1/branches/"+tt.chartID, body)
+			req.Header.Set("Content-Type", "application/json")
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, req)
+
+			require.Equal(t, tt.wantStatus, w.Code, w.Body.String())
+			if tt.wantError != "" {
+				var resp map[string]string
+				require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+				assert.Equal(t, tt.wantError, resp["error"])
+			}
+			if tt.method == http.MethodPut && tt.wantStatus == http.StatusNotFound {
+				_, err := overrideRepo.Get("inst-1", tt.chartID)
+				assert.Error(t, err, "no row may be stored for an invalid chart")
+			}
 		})
 	}
 }

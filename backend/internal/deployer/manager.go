@@ -459,6 +459,23 @@ func (m *Manager) executeDeploy(helm HelmExecutor, k8sClient *k8s.Client, regCfg
 	instanceID := instance.ID
 	namespace := instance.Namespace
 
+	// Check the effective namespace quota (cluster quota + instance override)
+	// first: before the pre-deploy hook (a CI gate can wait for minutes) and
+	// before any Helm call. An invalid quota would otherwise fail later with a
+	// Kubernetes API error; fail the deploy now with a clear message. Other
+	// lookup errors are not fatal here; applyNamespaceQuotas reports them.
+	if m.quotaRepo != nil {
+		qctx, qcancel := context.WithTimeout(m.shutdownCtx, 30*time.Second)
+		_, _, _, quotaErr := m.effectiveNamespaceQuota(qctx, instanceID)
+		qcancel()
+		if errors.Is(quotaErr, ErrInvalidQuota) {
+			m.broadcastLog(instanceID, deployLog.ID, "ERROR: "+quotaErr.Error())
+			slog.Warn("deployment rejected: invalid resource quota", "instance_id", instanceID, "error", quotaErr)
+			m.finalizeDeploy(instanceID, deployLog, "ERROR: "+quotaErr.Error()+"\n", quotaErr, false, lastDeployedValues, "")
+			return
+		}
+	}
+
 	// Fire pre-deploy hook BEFORE acquiring the semaphore so a long-running
 	// hook (e.g. CI trigger gate) doesn't hold a concurrency slot.
 	if err := m.fireDeployHook(m.shutdownCtx, hooks.EventPreDeploy, instance, deployLog.ID, deployLog.StartedAt, preDeployOpts); err != nil {
@@ -1227,7 +1244,8 @@ func sanitizeDeployError(err error) string {
 	// Look for the pattern "deploying chart ..." or "uninstalling chart ..."
 	// which is the outermost fmt.Errorf wrapper in executeDeploy / executeStopWithCharts.
 	// Partial/total chart failure messages are already user-safe — pass through.
-	if strings.HasPrefix(msg, "all charts failed") || strings.HasPrefix(msg, "partial deploy") {
+	if strings.HasPrefix(msg, "all charts failed") || strings.HasPrefix(msg, "partial deploy") ||
+		errors.Is(err, ErrInvalidQuota) {
 		return msg
 	}
 
@@ -1817,32 +1835,9 @@ func (m *Manager) finalizeRollback(instanceID string, deployLog *models.Deployme
 // applyNamespaceQuotas fetches the quota config for the instance's cluster and
 // applies ResourceQuota + LimitRange to the namespace via the K8s API.
 func (m *Manager) applyNamespaceQuotas(ctx context.Context, instanceID, namespace string) error {
-	// Look up the instance to get its cluster ID.
-	instance, err := m.instanceRepo.FindByID(instanceID)
+	clusterID, effectiveQuota, hasOverride, err := m.effectiveNamespaceQuota(ctx, instanceID)
 	if err != nil {
-		return fmt.Errorf("finding instance: %w", err)
-	}
-
-	clusterID, err := m.registry.ResolveClusterID(instance.ClusterID)
-	if err != nil {
-		return fmt.Errorf("resolving cluster: %w", err)
-	}
-
-	// Get cluster-level defaults. If none configured, start with an empty base.
-	clusterQuota, err := m.quotaRepo.GetByClusterID(ctx, clusterID)
-	if err != nil {
-		clusterQuota = &models.ResourceQuotaConfig{}
-	}
-
-	// Merge per-instance overrides on top of cluster defaults.
-	effectiveQuota := clusterQuota
-	hasOverride := false
-	if m.quotaOverrideRepo != nil {
-		override, overrideErr := m.quotaOverrideRepo.GetByInstanceID(ctx, instanceID)
-		if overrideErr == nil && override != nil {
-			effectiveQuota = mergeQuotaOverride(clusterQuota, override)
-			hasOverride = true
-		}
+		return err
 	}
 
 	// If the effective quota is completely empty, skip.
@@ -1876,30 +1871,54 @@ func (m *Manager) applyNamespaceQuotas(ctx context.Context, instanceID, namespac
 	return nil
 }
 
+// ErrInvalidQuota wraps every effective quota validation error. Its message
+// ("invalid resource quota: <field, value, source>") is user-safe, so
+// sanitizeDeployError passes it through.
+var ErrInvalidQuota = errors.New("invalid resource quota")
+
+// effectiveNamespaceQuota returns the resolved cluster ID and the quota that
+// applies to the instance namespace: the cluster quota (empty when none is
+// configured or the lookup fails) merged with the instance override. It
+// validates the merged quota (models.ValidateEffectiveQuota) and returns an
+// ErrInvalidQuota error naming the field and its source when
+// it is not valid, so a bad quota fails with a clear message instead of a
+// Kubernetes API error.
+func (m *Manager) effectiveNamespaceQuota(ctx context.Context, instanceID string) (string, *models.ResourceQuotaConfig, bool, error) {
+	instance, err := m.instanceRepo.FindByID(instanceID)
+	if err != nil {
+		return "", nil, false, fmt.Errorf("finding instance: %w", err)
+	}
+
+	clusterID, err := m.registry.ResolveClusterID(instance.ClusterID)
+	if err != nil {
+		return "", nil, false, fmt.Errorf("resolving cluster: %w", err)
+	}
+
+	// Get cluster-level defaults. If none configured, start with an empty base.
+	clusterQuota, err := m.quotaRepo.GetByClusterID(ctx, clusterID)
+	if err != nil || clusterQuota == nil {
+		clusterQuota = &models.ResourceQuotaConfig{}
+	}
+
+	var override *models.InstanceQuotaOverride
+	if m.quotaOverrideRepo != nil {
+		ov, overrideErr := m.quotaOverrideRepo.GetByInstanceID(ctx, instanceID)
+		if overrideErr == nil && ov != nil {
+			override = ov
+		}
+	}
+
+	if err := models.ValidateEffectiveQuota(clusterQuota, override); err != nil {
+		return clusterID, nil, override != nil, fmt.Errorf("%w: %w", ErrInvalidQuota, err)
+	}
+	return clusterID, mergeQuotaOverride(clusterQuota, override), override != nil, nil
+}
+
 // mergeQuotaOverride applies per-instance overrides on top of cluster defaults.
 // Non-empty override fields replace the cluster default; empty/nil fields fall
-// back to the cluster value.
+// back to the cluster value. See models.MergeQuotaOverride.
 func mergeQuotaOverride(cluster *models.ResourceQuotaConfig, override *models.InstanceQuotaOverride) *models.ResourceQuotaConfig {
-	merged := *cluster // copy
-	if override.CPURequest != "" {
-		merged.CPURequest = override.CPURequest
-	}
-	if override.CPULimit != "" {
-		merged.CPULimit = override.CPULimit
-	}
-	if override.MemoryRequest != "" {
-		merged.MemoryRequest = override.MemoryRequest
-	}
-	if override.MemoryLimit != "" {
-		merged.MemoryLimit = override.MemoryLimit
-	}
-	if override.StorageLimit != "" {
-		merged.StorageLimit = override.StorageLimit
-	}
-	if override.PodLimit != nil {
-		merged.PodLimit = *override.PodLimit
-	}
-	return &merged
+	return models.MergeQuotaOverride(cluster, override)
 }
 
 func truncateString(s string, maxLen int) string {

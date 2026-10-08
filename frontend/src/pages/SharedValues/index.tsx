@@ -264,6 +264,11 @@ const SharedValuesPage = () => {
         </Box>
       </Box>
 
+      <Alert severity="info" sx={{ mb: 2 }}>
+        Shared values are not secret: every user can see them in exported and compared stack values.
+        Keep secrets in Kubernetes Secrets.
+      </Alert>
+
       {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
 
       {(loading || valuesLoading) && <LoadingState label="Loading shared values..." />}

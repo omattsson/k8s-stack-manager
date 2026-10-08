@@ -71,6 +71,33 @@ declare module 'axios' {
 
 const api = axios.create(axiosConfig);
 
+/** A downloaded file: the raw body and the file name to save it under. */
+export interface ValuesExport {
+  blob: Blob;
+  filename: string;
+}
+
+/**
+ * Read the file name from a `Content-Disposition` header.
+ * Supports `filename*=UTF-8''<encoded>` (RFC 5987), quoted and bare `filename=` values.
+ */
+function filenameFromContentDisposition(header: unknown): string | null {
+  if (typeof header !== 'string' || !header) return null;
+  const extended = /filename\*\s*=\s*(?:UTF-8|utf-8)''([^;]+)/.exec(header);
+  if (extended) {
+    try {
+      return decodeURIComponent(extended[1].trim());
+    } catch {
+      // Malformed encoding: fall through to the plain filename parameter.
+    }
+  }
+  const quoted = /filename\s*=\s*"([^"]*)"/.exec(header);
+  if (quoted?.[1]) return quoted[1];
+  const bare = /filename\s*=\s*([^;]+)/.exec(header);
+  const name = bare?.[1]?.trim();
+  return name || null;
+}
+
 // Auth interceptor — attach JWT from localStorage
 api.interceptors.request.use((config) => {
   const token = localStorage.getItem(TOKEN_STORAGE_KEY);
@@ -912,17 +939,61 @@ export const instanceService = {
     }
   },
   /**
-   * Export merged Helm values for an instance as YAML.
+   * Delete the value override of one chart in an instance.
    * @param id - Instance ID
-   * @returns YAML string of merged values
-   * @see GET /api/v1/stack-instances/:id/export
+   * @param chartConfigId - Chart config ID whose override is removed
+   * @returns Resolves when the override is deleted
+   * @see DELETE /api/v1/stack-instances/:id/overrides/:chartConfigId
    */
-  exportValues: async (id: string): Promise<string> => {
+  deleteOverride: async (id: string, chartConfigId: string): Promise<void> => {
     try {
-      const response = await api.get(`/api/v1/stack-instances/${id}/export`);
-      return response.data;
+      await api.delete(`/api/v1/stack-instances/${id}/overrides/${chartConfigId}`);
+    } catch (error) {
+      console.error('Failed to delete override:', error);
+      throw error;
+    }
+  },
+  /**
+   * Export the merged Helm values of all charts as a ZIP archive
+   * (one `<chart>/values.yaml` per chart). The body is returned as a Blob
+   * without text conversion.
+   * @param id - Instance ID
+   * @param instanceName - Instance name, used for the fallback file name when the response has no readable `Content-Disposition`
+   * @returns The ZIP Blob and the file name from `Content-Disposition` (fallback `<instance-name>-values.zip`)
+   * @see GET /api/v1/stack-instances/:id/values
+   */
+  exportValues: async (id: string, instanceName?: string): Promise<ValuesExport> => {
+    try {
+      const response = await api.get<Blob>(`/api/v1/stack-instances/${id}/values`, { responseType: 'blob' });
+      return {
+        blob: response.data,
+        filename: filenameFromContentDisposition(response.headers?.['content-disposition'])
+          ?? `${instanceName || id}-values.zip`,
+      };
     } catch (error) {
       console.error('Failed to export values:', error);
+      throw error;
+    }
+  },
+  /**
+   * Export the merged Helm values of one chart as a YAML file.
+   * The body is returned as a Blob without text conversion.
+   * @param id - Instance ID
+   * @param chartConfigId - Chart config ID
+   * @param fallbackFilename - File name to use when the response has no readable `Content-Disposition` (default `<chartConfigId>-values.yaml`)
+   * @returns The YAML Blob and the file name
+   * @see GET /api/v1/stack-instances/:id/values/:chartId
+   */
+  exportChartValues: async (id: string, chartConfigId: string, fallbackFilename?: string): Promise<ValuesExport> => {
+    try {
+      const response = await api.get<Blob>(`/api/v1/stack-instances/${id}/values/${chartConfigId}`, { responseType: 'blob' });
+      return {
+        blob: response.data,
+        filename: filenameFromContentDisposition(response.headers?.['content-disposition'])
+          ?? fallbackFilename ?? `${chartConfigId}-values.yaml`,
+      };
+    } catch (error) {
+      console.error('Failed to export chart values:', error);
       throw error;
     }
   },
