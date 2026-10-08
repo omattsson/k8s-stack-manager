@@ -223,6 +223,36 @@ func TestAuditMiddleware_ExtractsEntityIDFromPathParam(t *testing.T) {
 	assert.Equal(t, "def-abc", logger.last().EntityID)
 }
 
+// TestAuditMiddleware_AuditsUserDelete checks that DELETE /users/:id (issue
+// 433) gets an audit entry from the middleware, so the handler writes none.
+func TestAuditMiddleware_AuditsUserDelete(t *testing.T) {
+	t.Parallel()
+	logger := &mockAuditLogger{}
+
+	r := gin.New()
+	r.Use(func(c *gin.Context) {
+		c.Set(contextKeyUserID, "admin-1")
+		c.Set(contextKeyUsername, "admin")
+		c.Next()
+	})
+	r.Use(NewAuditMiddleware(logger))
+	r.DELETE("/api/v1/users/:id", func(c *gin.Context) {
+		c.Status(http.StatusNoContent)
+	})
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest(http.MethodDelete, "/api/v1/users/user-target", nil)
+	r.ServeHTTP(w, req)
+
+	require.True(t, waitForAudit(logger, 200*time.Millisecond))
+	entry := logger.last()
+	require.NotNil(t, entry)
+	assert.Equal(t, "delete", entry.Action)
+	assert.Equal(t, "user", entry.EntityType)
+	assert.Equal(t, "user-target", entry.EntityID)
+	assert.Equal(t, "admin-1", entry.UserID)
+}
+
 func TestAuditMiddleware_FireAndForgetDoesNotBlockResponse(t *testing.T) {
 	t.Parallel()
 

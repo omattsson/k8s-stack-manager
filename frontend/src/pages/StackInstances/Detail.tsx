@@ -28,17 +28,22 @@ import PodStatusDisplay from '../../components/PodStatusDisplay';
 import AccessUrls from '../../components/AccessUrls';
 import FavoriteButton from '../../components/FavoriteButton';
 import { instanceService, definitionService, branchOverrideService } from '../../api/client';
-import type { StackInstance, ChartConfig, ValueOverride, DeploymentLog, NamespaceStatus } from '../../types';
+import type { StackInstance, ChartConfig, ValueOverride, ChartBranchOverride, DeploymentLog, NamespaceStatus } from '../../types';
 import YamlEditor from '../../components/YamlEditor';
 import TtlSelector from '../../components/TtlSelector';
 import useCountdown from '../../hooks/useCountdown';
 import { useNotification } from '../../context/NotificationContext';
 import LoadingState from '../../components/LoadingState';
 import { useUnsavedChanges } from '../../hooks/useUnsavedChanges';
+import { useAuth } from '../../context/AuthContext';
+import { canModifyInstance } from '../../utils/roles';
 
 const Detail = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const { user } = useAuth();
+  const userId = user?.id;
+  const userRole = user?.role;
 
   const [instance, setInstance] = useState<StackInstance | null>(null);
   const [charts, setCharts] = useState<ChartConfig[]>([]);
@@ -84,10 +89,14 @@ const Detail = () => {
         setInstance(inst);
         setBranch(inst.branch);
 
+        // Value and branch overrides are only readable by users who may modify
+        // the instance (owner, admin, devops). Skip them for viewers to avoid 403s.
+        const mayModify = userId !== undefined && userRole !== undefined
+          && canModifyInstance({ id: userId, role: userRole }, inst);
         const [defData, overrideData, branchOverrideData] = await Promise.all([
           definitionService.get(inst.stack_definition_id),
-          instanceService.getOverrides(id),
-          branchOverrideService.list(id),
+          mayModify ? instanceService.getOverrides(id) : Promise.resolve([] as ValueOverride[]),
+          mayModify ? branchOverrideService.list(id) : Promise.resolve([] as ChartBranchOverride[]),
         ]);
         setCharts(defData.charts || []);
         setOverrides(overrideData || []);
@@ -130,7 +139,7 @@ const Detail = () => {
       }
     };
     fetchData();
-  }, [id]);
+  }, [id, userId, userRole]);
 
   // Live-update instance status and deploy logs via WebSocket.
   const handleWsMessage = useCallback((msg: WsMessage) => {
@@ -462,6 +471,8 @@ const Detail = () => {
     return '';
   };
 
+  const canModify = canModifyInstance(user, instance);
+
   const canDeploy = instance?.status === 'draft' || instance?.status === 'stopped' || instance?.status === 'error' || instance?.status === 'partial';
   const canStop = instance?.status === 'running' || instance?.status === 'partial' || instance?.status === 'deploying' || instance?.status === 'stabilizing';
   const canClean = instance?.status === 'running' || instance?.status === 'partial' || instance?.status === 'stopped' || instance?.status === 'error';
@@ -561,24 +572,34 @@ const Detail = () => {
                   color={countdown.isCritical ? 'error' : countdown.isWarning ? 'warning' : 'success'}
                   icon={<span>⏱</span>}
                 />
-                <Button
-                  variant="outlined"
-                  size="small"
-                  onClick={handleExtend}
-                  disabled={extending}
-                >
-                  {extending ? 'Extending...' : 'Extend'}
-                </Button>
+                {canModify && (
+                  <Button
+                    variant="outlined"
+                    size="small"
+                    onClick={handleExtend}
+                    disabled={extending}
+                  >
+                    {extending ? 'Extending...' : 'Extend'}
+                  </Button>
+                )}
               </Box>
             )}
           </Box>
           <Box sx={{ display: 'flex', gap: 1 }}>
-            {renderStatusActions(instance.status)}
+            {canModify && renderStatusActions(instance.status)}
             <Button variant="outlined" onClick={handleExport}>Export Values</Button>
             <Button variant="outlined" onClick={handleClone}>Clone</Button>
-            <Button variant="outlined" color="error" onClick={() => setDeleteOpen(true)}>Delete</Button>
+            {canModify && (
+              <Button variant="outlined" color="error" onClick={() => setDeleteOpen(true)}>Delete</Button>
+            )}
           </Box>
         </Box>
+
+        {!canModify && (
+          <Alert severity="info" sx={{ mt: 2 }}>
+            Read-only: you are not the owner of this stack.
+          </Alert>
+        )}
 
         <Divider sx={{ my: 2 }} />
 
@@ -601,6 +622,7 @@ const Detail = () => {
             repoUrl={getRepoUrl()}
             value={branch}
             onChange={setBranch}
+            disabled={!canModify}
           />
         </Box>
 
@@ -609,7 +631,7 @@ const Detail = () => {
           <TtlSelector
             value={instance.ttl_minutes ?? 0}
             onChange={handleTtlChange}
-            disabled={saving}
+            disabled={saving || !canModify}
           />
         </Box>
       </Paper>
@@ -637,6 +659,7 @@ const Detail = () => {
                       value={branchOverrides[chart.id] || branch}
                       onChange={(newBranch) => handleChartBranchChange(chart.id, newBranch)}
                       label="Chart Branch"
+                      disabled={!canModify}
                     />
                   </Box>
                   {branchOverrides[chart.id] ? (
@@ -644,12 +667,12 @@ const Detail = () => {
                       label={`Override: ${branchOverrides[chart.id]}`}
                       color="warning"
                       size="small"
-                      onDelete={() => handleChartBranchChange(chart.id, '')}
-                      deleteIcon={
+                      onDelete={canModify ? () => handleChartBranchChange(chart.id, '') : undefined}
+                      deleteIcon={canModify ? (
                         <Tooltip title="Reset to instance branch">
                           <CloseIcon />
                         </Tooltip>
-                      }
+                      ) : undefined}
                     />
                   ) : (
                     <Chip label="Using instance branch" size="small" variant="outlined" />
@@ -667,12 +690,18 @@ const Detail = () => {
                     />
                   </Grid>
                   <Grid size={{ xs: 12, md: 6 }}>
-                    <YamlEditor
-                      label="Your Overrides"
-                      value={editedOverrides[chart.id] || ''}
-                      onChange={(val) => setEditedOverrides({ ...editedOverrides, [chart.id]: val })}
-                      height="300px"
-                    />
+                    {canModify ? (
+                      <YamlEditor
+                        label="Your Overrides"
+                        value={editedOverrides[chart.id] || ''}
+                        onChange={(val) => setEditedOverrides({ ...editedOverrides, [chart.id]: val })}
+                        height="300px"
+                      />
+                    ) : (
+                      <Alert severity="info">
+                        Overrides are visible to the owner, admins and devops users.
+                      </Alert>
+                    )}
                   </Grid>
                 </Grid>
               </Box>
@@ -694,9 +723,11 @@ const Detail = () => {
         <Button variant="outlined" onClick={() => navigate('/')}>
           Back to Dashboard
         </Button>
-        <Button variant="contained" onClick={handleSave} disabled={saving}>
-          {saving ? 'Saving...' : 'Save Changes'}
-        </Button>
+        {canModify && (
+          <Button variant="contained" onClick={handleSave} disabled={saving}>
+            {saving ? 'Saving...' : 'Save Changes'}
+          </Button>
+        )}
       </Box>
 
       <ConfirmDialog

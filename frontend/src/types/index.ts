@@ -723,6 +723,8 @@ export interface DashboardExpiring {
   expires_at: string;
   ttl_minutes: number;
   cluster_id?: string;
+  /** Owner user ID. Optional: older backends do not send it. */
+  owner_id?: string;
 }
 
 export interface DashboardFailing {

@@ -47,6 +47,9 @@ func (s *stubAPIKeyRepo) FindByPrefix(_ string) ([]*models.APIKey, error) { retu
 func (s *stubAPIKeyRepo) ListByUser(_ string) ([]*models.APIKey, error)   { return nil, nil }
 func (s *stubAPIKeyRepo) UpdateLastUsed(_, _ string, _ time.Time) error   { return nil }
 func (s *stubAPIKeyRepo) Delete(_, _ string) error                        { return nil }
+func (s *stubAPIKeyRepo) DeleteAllForUser(_ string) (int64, error) {
+	return 0, nil
+}
 
 type stubAuditLogger struct{}
 
@@ -495,7 +498,7 @@ func TestSetupRoutes_WithAllHandlersRegistersFullAPI(t *testing.T) {
 
 	cfg := testConfig()
 	authHandler := handlers.NewAuthHandler(&stubUserRepo{}, &cfg.Auth, &cfg.OIDC)
-	userHandler := handlers.NewUserHandler(&stubUserRepo{})
+	userHandler := handlers.NewUserHandler(&stubUserRepo{}, nil, &stubAPIKeyRepo{})
 	apiKeyHandler := handlers.NewAPIKeyHandler(&stubAPIKeyRepo{}, &stubUserRepo{}, &cfg.Auth)
 	auditLogHandler := handlers.NewAuditLogHandler(nil)
 
@@ -1006,7 +1009,9 @@ type stubSessionStore struct{}
 func (s *stubSessionStore) BlockToken(_ context.Context, _ string, _ time.Time) error { return nil }
 func (s *stubSessionStore) IsTokenBlocked(_ context.Context, _ string) (bool, error)  { return false, nil }
 func (s *stubSessionStore) BlockUser(_ context.Context, _ string, _ time.Time) error  { return nil }
-func (s *stubSessionStore) IsUserBlocked(_ context.Context, _ string) (bool, error)   { return false, nil }
+func (s *stubSessionStore) IsUserBlocked(_ context.Context, _ string, _ time.Time) (bool, error) {
+	return false, nil
+}
 func (s *stubSessionStore) UnblockUser(_ context.Context, _ string) error             { return nil }
 func (s *stubSessionStore) SaveOIDCState(_ context.Context, _ string, _ sessionstore.OIDCStateData, _ time.Duration) error {
 	return nil
@@ -1079,7 +1084,7 @@ func setupFullRouter(t *testing.T) (*gin.Engine, *RateLimiters) {
 	)
 	gitHandler := handlers.NewGitHandler(gitprovider.NewRegistry(gitprovider.Config{}))
 	auditLogHandler := handlers.NewAuditLogHandler(&stubAuditLogRepo{})
-	userHandler := handlers.NewUserHandler(userRepo)
+	userHandler := handlers.NewUserHandler(userRepo, nil, apiKeyRepo)
 	apiKeyHandler := handlers.NewAPIKeyHandler(apiKeyRepo, userRepo, &cfg.Auth)
 	adminHandler := handlers.NewAdminHandler(nil, instanceRepo)
 	branchOverrideHandler := handlers.NewBranchOverrideHandler(branchOverrideRepo, instanceRepo)

@@ -8,6 +8,7 @@ import (
 
 type memBlockEntry struct {
 	expiresAt time.Time
+	blockedAt int64 // Unix seconds; user blocks only
 }
 
 type memOIDCEntry struct {
@@ -61,19 +62,19 @@ func (s *MemoryStore) IsTokenBlocked(_ context.Context, jti string) (bool, error
 
 func (s *MemoryStore) BlockUser(_ context.Context, userID string, until time.Time) error {
 	s.mu.Lock()
-	s.userBlocks[userID] = memBlockEntry{expiresAt: until}
+	s.userBlocks[userID] = memBlockEntry{expiresAt: until, blockedAt: time.Now().Unix()}
 	s.mu.Unlock()
 	return nil
 }
 
-func (s *MemoryStore) IsUserBlocked(_ context.Context, userID string) (bool, error) {
+func (s *MemoryStore) IsUserBlocked(_ context.Context, userID string, issuedAt time.Time) (bool, error) {
 	s.mu.Lock()
 	entry, ok := s.userBlocks[userID]
 	s.mu.Unlock()
-	if !ok {
+	if !ok || !time.Now().Before(entry.expiresAt) {
 		return false, nil
 	}
-	return time.Now().Before(entry.expiresAt), nil
+	return userBlockApplies(entry.blockedAt, issuedAt), nil
 }
 
 func (s *MemoryStore) UnblockUser(_ context.Context, userID string) error {

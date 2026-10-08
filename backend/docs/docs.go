@@ -5045,6 +5045,15 @@ const docTemplate = `{
                             }
                         }
                     },
+                    "403": {
+                        "description": "Caller is not the owner, an admin or a devops user",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
                     "404": {
                         "description": "Not Found",
                         "schema": {
@@ -5086,6 +5095,15 @@ const docTemplate = `{
                     },
                     "204": {
                         "description": "No Content — instance deleted immediately (no resources to clean)"
+                    },
+                    "403": {
+                        "description": "Caller is not the owner, an admin or a devops user, or a pre-instance-delete hook rejected the request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
                     },
                     "404": {
                         "description": "Not Found",
@@ -5164,6 +5182,15 @@ const docTemplate = `{
                     },
                     "400": {
                         "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Caller is not the owner, an admin or a devops user",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {
@@ -5455,6 +5482,15 @@ const docTemplate = `{
                             }
                         }
                     },
+                    "403": {
+                        "description": "Caller is not the owner, an admin or a devops user",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
                     "404": {
                         "description": "Not Found",
                         "schema": {
@@ -5560,6 +5596,15 @@ const docTemplate = `{
                     },
                     "400": {
                         "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Caller is not the owner, an admin or a devops user",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {
@@ -5840,6 +5885,15 @@ const docTemplate = `{
                             }
                         }
                     },
+                    "403": {
+                        "description": "Caller is not the owner, an admin or a devops user",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
                     "404": {
                         "description": "Not Found",
                         "schema": {
@@ -5878,6 +5932,15 @@ const docTemplate = `{
                             "type": "array",
                             "items": {
                                 "$ref": "#/definitions/models.ValueOverride"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
                             }
                         }
                     },
@@ -5940,6 +6003,15 @@ const docTemplate = `{
                     },
                     "400": {
                         "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {
@@ -6298,6 +6370,15 @@ const docTemplate = `{
                             }
                         }
                     },
+                    "403": {
+                        "description": "Caller is not the owner, an admin or a devops user",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
                     "404": {
                         "description": "Not Found",
                         "schema": {
@@ -6415,6 +6496,15 @@ const docTemplate = `{
                     },
                     "400": {
                         "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Caller is not the owner, an admin or a devops user",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {
@@ -7612,7 +7702,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Permanently deletes a user account. Admin only. Cannot delete own account.",
+                "description": "Permanently deletes a user account. Admin only. Cannot delete own account. Revokes the user's current access tokens and all refresh tokens, and deletes all API keys of the user.",
                 "produces": [
                     "application/json"
                 ],
@@ -7906,7 +7996,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Disables a user account. All API keys for this user immediately stop working. Admin only.",
+                "description": "Disables a user account. Admin only. Revokes the user's current access tokens and all refresh tokens. API keys stop working while the user is disabled and work again after enable.",
                 "consumes": [
                     "application/json"
                 ],
@@ -7991,7 +8081,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Re-enables a previously disabled user account. Admin only.",
+                "description": "Re-enables a previously disabled user account. Admin only. Access tokens issued before the enable stay revoked; the user must log in again.",
                 "consumes": [
                     "application/json"
                 ],
@@ -8076,7 +8166,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Resets the password for a local/service account user. Admin only.",
+                "description": "Resets the password for a local/service account user. Admin only. Revokes the user's current access tokens and all refresh tokens. API keys stay valid.",
                 "consumes": [
                     "application/json"
                 ],
@@ -8737,6 +8827,9 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "namespace": {
+                    "type": "string"
+                },
+                "owner_id": {
                     "type": "string"
                 },
                 "status": {

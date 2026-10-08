@@ -46,6 +46,7 @@ import EmptyState from '../../components/EmptyState';
 import SetupWizard from '../../components/SetupWizard';
 import { useNotification } from '../../context/NotificationContext';
 import { useAuth } from '../../context/AuthContext';
+import { canModifyInstance, hasAtLeastRole } from '../../utils/roles';
 import { isSetupWizardDismissed, dismissSetupWizard } from '../../utils/setupWizard';
 
 const STATUSES = ['All', 'draft', 'deploying', 'stabilizing', 'running', 'partial', 'stopped', 'error'];
@@ -111,6 +112,8 @@ const PodHealthDot = ({ status }: { status?: K8sHealthStatus }) => {
 interface InstanceCardProps {
   instance: StackInstance;
   isSelected: boolean;
+  /** Show the bulk-selection checkbox (only for instances the user may modify). */
+  selectable: boolean;
   isFavorite: boolean;
   clusterName?: string;
   url?: string;
@@ -119,7 +122,7 @@ interface InstanceCardProps {
   onNavigate: (path: string) => void;
 }
 
-const InstanceCard = ({ instance, isSelected, isFavorite, clusterName, url, k8sHealth, onToggleSelect, onNavigate }: InstanceCardProps) => (
+const InstanceCard = ({ instance, isSelected, selectable, isFavorite, clusterName, url, k8sHealth, onToggleSelect, onNavigate }: InstanceCardProps) => (
   <Card
     sx={{
       height: '100%',
@@ -133,13 +136,15 @@ const InstanceCard = ({ instance, isSelected, isFavorite, clusterName, url, k8sH
     <CardContent sx={{ flex: 1 }}>
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, minWidth: 0 }}>
-          <Checkbox
-            checked={isSelected}
-            onChange={() => onToggleSelect(instance.id)}
-            onClick={(e) => e.stopPropagation()}
-            slotProps={{ input: { 'aria-label': `Select ${instance.name}` } }}
-            size="small"
-          />
+          {selectable && (
+            <Checkbox
+              checked={isSelected}
+              onChange={() => onToggleSelect(instance.id)}
+              onClick={(e) => e.stopPropagation()}
+              slotProps={{ input: { 'aria-label': `Select ${instance.name}` } }}
+              size="small"
+            />
+          )}
           <FavoriteButton entityType="instance" entityId={instance.id} size="small" initialFavorited={isFavorite} />
           <Typography variant="h6" component="h2" noWrap>
             {instance.name}
@@ -395,6 +400,15 @@ const Dashboard = () => {
     return instances.filter((inst) => favoriteInstanceIds.has(inst.id));
   }, [instances, favoriteInstanceIds]);
 
+  // Bulk operations need the devops role (backend route guard), and each
+  // instance must be modifiable by the user (owner, admin or devops).
+  const canBulk = hasAtLeastRole(user?.role, 'devops');
+  const selectableFiltered = useMemo(
+    () => (canBulk ? filtered.filter((inst) => canModifyInstance(user, inst)) : []),
+    [canBulk, filtered, user],
+  );
+  const selectableIds = useMemo(() => new Set(selectableFiltered.map((inst) => inst.id)), [selectableFiltered]);
+
   // Bulk selection helpers
   const toggleSelect = useCallback((id: string) => {
     setSelectedIds((prev) => {
@@ -410,12 +424,12 @@ const Dashboard = () => {
 
   const toggleSelectAll = useCallback(() => {
     setSelectedIds((prev) => {
-      if (prev.size === filtered.length && filtered.length > 0) {
+      if (prev.size === selectableFiltered.length && selectableFiltered.length > 0) {
         return new Set();
       }
-      return new Set(filtered.map((inst) => inst.id));
+      return new Set(selectableFiltered.map((inst) => inst.id));
     });
-  }, [filtered]);
+  }, [selectableFiltered]);
 
   const selectedInstances = useMemo(() => {
     return instances.filter((inst) => selectedIds.has(inst.id));
@@ -506,8 +520,8 @@ const Dashboard = () => {
     );
   }
 
-  const allFilteredSelected = filtered.length > 0 && selectedIds.size === filtered.length;
-  const someFilteredSelected = selectedIds.size > 0 && selectedIds.size < filtered.length;
+  const allFilteredSelected = selectableFiltered.length > 0 && selectedIds.size === selectableFiltered.length;
+  const someFilteredSelected = selectedIds.size > 0 && selectedIds.size < selectableFiltered.length;
 
   return (
     <Box>
@@ -720,24 +734,27 @@ const Dashboard = () => {
       ) : (
         <Box>
           {/* Select All header */}
-          <Box sx={{ display: 'flex', alignItems: 'center', mb: 1, ml: 1 }}>
-            <Checkbox
-              checked={allFilteredSelected}
-              indeterminate={someFilteredSelected}
-              onChange={toggleSelectAll}
-              slotProps={{ input: { 'aria-label': 'Select all instances' } }}
-              size="small"
-            />
-            <Typography variant="body2" color="text.secondary">
-              {allFilteredSelected ? 'Deselect all' : 'Select all'} ({filtered.length})
-            </Typography>
-          </Box>
+          {selectableFiltered.length > 0 && (
+            <Box sx={{ display: 'flex', alignItems: 'center', mb: 1, ml: 1 }}>
+              <Checkbox
+                checked={allFilteredSelected}
+                indeterminate={someFilteredSelected}
+                onChange={toggleSelectAll}
+                slotProps={{ input: { 'aria-label': 'Select all instances' } }}
+                size="small"
+              />
+              <Typography variant="body2" color="text.secondary">
+                {allFilteredSelected ? 'Deselect all' : 'Select all'} ({selectableFiltered.length})
+              </Typography>
+            </Box>
+          )}
           <Grid container spacing={3} aria-live="polite">
             {filtered.map((instance) => (
               <Grid key={instance.id} size={{ xs: 12, sm: 6, md: 4 }}>
                 <InstanceCard
                   instance={instance}
                   isSelected={selectedIds.has(instance.id)}
+                  selectable={selectableIds.has(instance.id)}
                   isFavorite={favoriteInstanceIds.has(instance.id)}
                   clusterName={instance.cluster_id ? clusterNameMap.get(instance.cluster_id) : undefined}
                   url={instanceUrls[instance.id]}

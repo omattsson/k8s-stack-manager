@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"strconv"
 	"sync"
 	"time"
 
@@ -69,30 +70,45 @@ func (s *MySQLStore) IsTokenBlocked(ctx context.Context, jti string) (bool, erro
 	return count > 0, nil
 }
 
+// BlockUser stores the block time (Unix seconds) in Data, so IsUserBlocked
+// can let tokens issued after the block through. No schema change: Data is
+// the existing text column of session_entries.
 func (s *MySQLStore) BlockUser(ctx context.Context, userID string, until time.Time) error {
 	entry := SessionEntry{
 		EntryKey:  userID,
 		Kind:      kindUserBlock,
+		Data:      strconv.FormatInt(time.Now().Unix(), 10),
 		ExpiresAt: until.Unix(),
 	}
 	return s.db.WithContext(ctx).
 		Clauses(clause.OnConflict{
 			Columns:   []clause.Column{{Name: "entry_key"}, {Name: "kind"}},
-			DoUpdates: clause.AssignmentColumns([]string{"expires_at"}),
+			DoUpdates: clause.AssignmentColumns([]string{"expires_at", "data"}),
 		}).
 		Create(&entry).Error
 }
 
-func (s *MySQLStore) IsUserBlocked(ctx context.Context, userID string) (bool, error) {
-	var count int64
+// IsUserBlocked returns true when an unexpired user block exists and the
+// token was issued at or before the block. Rows without a parsable block
+// time (written before this field existed) block every token.
+func (s *MySQLStore) IsUserBlocked(ctx context.Context, userID string, issuedAt time.Time) (bool, error) {
+	var entries []SessionEntry
 	err := s.db.WithContext(ctx).
-		Model(&SessionEntry{}).
+		Select("data").
 		Where("entry_key = ? AND kind = ? AND expires_at > ?", userID, kindUserBlock, time.Now().Unix()).
-		Count(&count).Error
+		Limit(1).
+		Find(&entries).Error
 	if err != nil {
 		return false, err
 	}
-	return count > 0, nil
+	if len(entries) == 0 {
+		return false, nil
+	}
+	blockedAt, parseErr := strconv.ParseInt(entries[0].Data, 10, 64)
+	if parseErr != nil {
+		blockedAt = 0 // legacy or malformed row: block every token
+	}
+	return userBlockApplies(blockedAt, issuedAt), nil
 }
 
 func (s *MySQLStore) UnblockUser(ctx context.Context, userID string) error {

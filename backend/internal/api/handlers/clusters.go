@@ -21,7 +21,7 @@ import (
 // isPrivilegedRole returns true if the caller has admin or devops role.
 func isPrivilegedRole(c *gin.Context) bool {
 	role := middleware.GetRoleFromContext(c)
-	return role == "admin" || role == "devops"
+	return role == roleAdmin || role == roleDevOps
 }
 
 // Cluster handler message constants.

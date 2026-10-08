@@ -22,7 +22,7 @@ func setupUserRouter(userRepo *MockUserRepository, callerID, callerRole string) 
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
 	r.Use(injectAuthContext(callerID, callerRole))
-	h := NewUserHandler(userRepo)
+	h := NewUserHandler(userRepo, nil, nil)
 	adminMW := middleware.RequireAdmin()
 	users := r.Group("/api/v1/users")
 	{

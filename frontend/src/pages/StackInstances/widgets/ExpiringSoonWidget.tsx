@@ -14,6 +14,8 @@ import { Link } from 'react-router-dom';
 import useCountdown from '../../../hooks/useCountdown';
 import { instanceService } from '../../../api/client';
 import { useNotification } from '../../../context/NotificationContext';
+import { useAuth } from '../../../context/AuthContext';
+import { canModifyInstance } from '../../../utils/roles';
 import type { DashboardExpiring } from '../../../types';
 
 interface ExpiringRowProps {
@@ -25,6 +27,10 @@ const ExpiringRow = ({ item, onExtended }: ExpiringRowProps) => {
   const [extending, setExtending] = useState(false);
   const countdown = useCountdown(item.expires_at);
   const { showError } = useNotification();
+  const { user } = useAuth();
+  // Only the owner, admin or devops may extend. When the backend does not send
+  // owner_id, keep the button: the backend still enforces the rule.
+  const canExtend = item.owner_id === undefined || canModifyInstance(user, { owner_id: item.owner_id });
 
   const handleExtend = async () => {
     setExtending(true);
@@ -60,15 +66,17 @@ const ExpiringRow = ({ item, onExtended }: ExpiringRowProps) => {
             color={countdown.isCritical ? 'error' : countdown.isWarning ? 'warning' : 'success'}
           />
         )}
-        <Button
-          size="small"
-          variant="outlined"
-          onClick={handleExtend}
-          disabled={extending}
-          sx={{ minWidth: 'auto', whiteSpace: 'nowrap' }}
-        >
-          {extending ? <CircularProgress size={16} /> : 'Extend TTL'}
-        </Button>
+        {canExtend && (
+          <Button
+            size="small"
+            variant="outlined"
+            onClick={handleExtend}
+            disabled={extending}
+            sx={{ minWidth: 'auto', whiteSpace: 'nowrap' }}
+          >
+            {extending ? <CircularProgress size={16} /> : 'Extend TTL'}
+          </Button>
+        )}
       </Box>
     </ListItem>
   );

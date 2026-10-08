@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"time"
 
-	"backend/internal/api/middleware"
 	"backend/internal/models"
 	"backend/pkg/dberrors"
 
@@ -70,10 +69,8 @@ func (h *BranchOverrideHandler) ListBranchOverrides(c *gin.Context) {
 		return
 	}
 
-	userID := middleware.GetUserIDFromContext(c)
-	role := middleware.GetRoleFromContext(c)
-	if inst.OwnerID != userID && role != "admin" {
-		c.JSON(http.StatusForbidden, gin.H{"error": "You do not have permission to view this instance"})
+	// Authorization: owner, admin or devops (see canModifyInstance).
+	if !requireInstanceModify(c, inst) {
 		return
 	}
 
@@ -125,10 +122,8 @@ func (h *BranchOverrideHandler) SetBranchOverride(c *gin.Context) {
 		return
 	}
 
-	userID := middleware.GetUserIDFromContext(c)
-	role := middleware.GetRoleFromContext(c)
-	if inst.OwnerID != userID && role != "admin" {
-		c.JSON(http.StatusForbidden, gin.H{"error": "You do not have permission to modify this instance"})
+	// Authorization: owner, admin or devops (see canModifyInstance).
+	if !requireInstanceModify(c, inst) {
 		return
 	}
 
@@ -201,10 +196,8 @@ func (h *BranchOverrideHandler) DeleteBranchOverride(c *gin.Context) {
 		return
 	}
 
-	userID := middleware.GetUserIDFromContext(c)
-	role := middleware.GetRoleFromContext(c)
-	if inst.OwnerID != userID && role != "admin" {
-		c.JSON(http.StatusForbidden, gin.H{"error": "You do not have permission to modify this instance"})
+	// Authorization: owner, admin or devops (see canModifyInstance).
+	if !requireInstanceModify(c, inst) {
 		return
 	}
 

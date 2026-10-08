@@ -292,6 +292,8 @@ definitions:
         type: string
       namespace:
         type: string
+      owner_id:
+        type: string
       status:
         type: string
       ttl_minutes:
@@ -4688,6 +4690,13 @@ paths:
         "204":
           description: No Content — instance deleted immediately (no resources to
             clean)
+        "403":
+          description: Caller is not the owner, an admin or a devops user, or a pre-instance-delete
+            hook rejected the request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
         "404":
           description: Not Found
           schema:
@@ -4762,6 +4771,12 @@ paths:
             additionalProperties:
               type: string
             type: object
+        "403":
+          description: Caller is not the owner, an admin or a devops user
+          schema:
+            additionalProperties:
+              type: string
+            type: object
         "404":
           description: Not Found
           schema:
@@ -4805,6 +4820,12 @@ paths:
             type: object
         "400":
           description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Caller is not the owner, an admin or a devops user
           schema:
             additionalProperties:
               type: string
@@ -4997,6 +5018,12 @@ paths:
             additionalProperties:
               type: string
             type: object
+        "403":
+          description: Caller is not the owner, an admin or a devops user
+          schema:
+            additionalProperties:
+              type: string
+            type: object
         "404":
           description: Not Found
           schema:
@@ -5067,6 +5094,12 @@ paths:
             type: object
         "400":
           description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Caller is not the owner, an admin or a devops user
           schema:
             additionalProperties:
               type: string
@@ -5253,6 +5286,12 @@ paths:
             additionalProperties:
               type: string
             type: object
+        "403":
+          description: Caller is not the owner, an admin or a devops user
+          schema:
+            additionalProperties:
+              type: string
+            type: object
         "404":
           description: Not Found
           schema:
@@ -5280,6 +5319,12 @@ paths:
             items:
               $ref: '#/definitions/models.ValueOverride'
             type: array
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
         "404":
           description: Not Found
           schema:
@@ -5320,6 +5365,12 @@ paths:
             $ref: '#/definitions/models.ValueOverride'
         "400":
           description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
           schema:
             additionalProperties:
               type: string
@@ -5550,6 +5601,12 @@ paths:
             additionalProperties:
               type: string
             type: object
+        "403":
+          description: Caller is not the owner, an admin or a devops user
+          schema:
+            additionalProperties:
+              type: string
+            type: object
         "404":
           description: Not Found
           schema:
@@ -5630,6 +5687,12 @@ paths:
             type: object
         "400":
           description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Caller is not the owner, an admin or a devops user
           schema:
             additionalProperties:
               type: string
@@ -6660,7 +6723,8 @@ paths:
   /api/v1/users/{id}:
     delete:
       description: Permanently deletes a user account. Admin only. Cannot delete own
-        account.
+        account. Revokes the user's current access tokens and all refresh tokens,
+        and deletes all API keys of the user.
       parameters:
       - description: User ID
         in: path
@@ -6855,8 +6919,9 @@ paths:
     put:
       consumes:
       - application/json
-      description: Disables a user account. All API keys for this user immediately
-        stop working. Admin only.
+      description: Disables a user account. Admin only. Revokes the user's current
+        access tokens and all refresh tokens. API keys stop working while the user
+        is disabled and work again after enable.
       parameters:
       - description: User ID
         in: path
@@ -6911,7 +6976,8 @@ paths:
     put:
       consumes:
       - application/json
-      description: Re-enables a previously disabled user account. Admin only.
+      description: Re-enables a previously disabled user account. Admin only. Access
+        tokens issued before the enable stay revoked; the user must log in again.
       parameters:
       - description: User ID
         in: path
@@ -6967,6 +7033,8 @@ paths:
       consumes:
       - application/json
       description: Resets the password for a local/service account user. Admin only.
+        Revokes the user's current access tokens and all refresh tokens. API keys
+        stay valid.
       parameters:
       - description: User ID
         in: path

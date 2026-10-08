@@ -619,6 +619,7 @@ func (h *InstanceHandler) GetInstance(c *gin.Context) {
 // @Param       instance body     models.StackInstance   true "Instance object"
 // @Success     200      {object} models.StackInstance
 // @Failure     400      {object} map[string]string
+// @Failure     403      {object} map[string]string "Caller is not the owner, an admin or a devops user"
 // @Failure     404      {object} map[string]string
 // @Router      /api/v1/stack-instances/{id} [put]
 func (h *InstanceHandler) UpdateInstance(c *gin.Context) {
@@ -635,11 +636,8 @@ func (h *InstanceHandler) UpdateInstance(c *gin.Context) {
 		return
 	}
 
-	// Authorization: only the owner or an admin may update the instance.
-	userID := middleware.GetUserIDFromContext(c)
-	role := middleware.GetRoleFromContext(c)
-	if existing.OwnerID != userID && role != "admin" {
-		c.JSON(http.StatusForbidden, gin.H{"error": "You are not allowed to modify this stack instance"})
+	// Authorization: only the owner, an admin or a devops user may update the instance.
+	if !requireInstanceModify(c, existing) {
 		return
 	}
 
@@ -703,6 +701,7 @@ func (h *InstanceHandler) UpdateInstance(c *gin.Context) {
 // @Param       id  path     string true "Instance ID"
 // @Success     202 {object} map[string]string "Cleanup initiated, instance will be deleted after resources are removed"
 // @Success     204 "No Content — instance deleted immediately (no resources to clean)"
+// @Failure     403 {object} map[string]string "Caller is not the owner, an admin or a devops user, or a pre-instance-delete hook rejected the request"
 // @Failure     404 {object} map[string]string
 // @Failure     409 {object} map[string]string "Instance is in a transient state (deploying/stopping/cleaning)"
 // @Failure     503 {object} map[string]string "Deploy manager not configured"
@@ -718,6 +717,12 @@ func (h *InstanceHandler) DeleteInstance(c *gin.Context) {
 	if err != nil {
 		status, message := mapError(err, entityStackInstance)
 		c.JSON(status, gin.H{"error": message})
+		return
+	}
+
+	// Authorization: only the owner, an admin or a devops user may delete the instance.
+	// Checked before any side effect (hooks, status change, deploy log, Helm).
+	if !requireInstanceModify(c, inst) {
 		return
 	}
 
@@ -816,6 +821,7 @@ type invokeActionRequest struct {
 // @Param       request body     invokeActionRequest   false "Optional parameters passed through to the subscriber"
 // @Success     200 {object} map[string]any
 // @Failure     400 {object} map[string]string
+// @Failure     403 {object} map[string]string "Caller is not the owner, an admin or a devops user"
 // @Failure     404 {object} map[string]string "Instance not found or action not registered"
 // @Failure     502 {object} map[string]string "Subscriber unreachable"
 // @Failure     503 {object} map[string]string "Action registry not configured"
@@ -836,6 +842,12 @@ func (h *InstanceHandler) InvokeAction(c *gin.Context) {
 	if err != nil {
 		status, message := mapError(err, entityStackInstance)
 		c.JSON(status, gin.H{"error": message})
+		return
+	}
+
+	// Authorization: only the owner, an admin or a devops user may run actions on the instance.
+	// Checked before any side effect (hooks, status change, deploy log, Helm).
+	if !requireInstanceModify(c, inst) {
 		return
 	}
 
@@ -1185,6 +1197,7 @@ func (h *InstanceHandler) ExportAllValues(c *gin.Context) {
 // @Param       id path string true "Instance ID"
 // @Success     202 {object} map[string]string "Deployment started"
 // @Failure     400 {object} map[string]string
+// @Failure     403 {object} map[string]string "Caller is not the owner, an admin or a devops user"
 // @Failure     404 {object} map[string]string
 // @Failure     409 {object} map[string]string "Already deploying"
 // @Router      /api/v1/stack-instances/{id}/deploy [post]
@@ -1204,6 +1217,12 @@ func (h *InstanceHandler) DeployInstance(c *gin.Context) {
 	if err != nil {
 		status, message := mapError(err, entityStackInstance)
 		c.JSON(status, gin.H{"error": message})
+		return
+	}
+
+	// Authorization: only the owner, an admin or a devops user may deploy the instance.
+	// Checked before any side effect (hooks, status change, deploy log, Helm).
+	if !requireInstanceModify(c, inst) {
 		return
 	}
 
@@ -1322,11 +1341,8 @@ func (h *InstanceHandler) DeployPreview(c *gin.Context) {
 		return
 	}
 
-	// Authorization: only the owner or an admin/devops may preview the instance.
-	userID := middleware.GetUserIDFromContext(c)
-	role := middleware.GetRoleFromContext(c)
-	if inst.OwnerID != userID && role != "admin" && role != "devops" {
-		c.JSON(http.StatusForbidden, gin.H{"error": "You are not allowed to preview this stack instance"})
+	// Authorization: only the owner, an admin or a devops user may preview the instance.
+	if !requireInstanceModify(c, inst) {
 		return
 	}
 
@@ -1394,6 +1410,7 @@ func (h *InstanceHandler) DeployPreview(c *gin.Context) {
 // @Param       id path string true "Instance ID"
 // @Success     202 {object} map[string]string "Stop initiated"
 // @Failure     400 {object} map[string]string
+// @Failure     403 {object} map[string]string "Caller is not the owner, an admin or a devops user"
 // @Failure     404 {object} map[string]string
 // @Failure     409 {object} map[string]string "Not running"
 // @Router      /api/v1/stack-instances/{id}/stop [post]
@@ -1413,6 +1430,12 @@ func (h *InstanceHandler) StopInstance(c *gin.Context) {
 	if err != nil {
 		status, message := mapError(err, entityStackInstance)
 		c.JSON(status, gin.H{"error": message})
+		return
+	}
+
+	// Authorization: only the owner, an admin or a devops user may stop the instance.
+	// Checked before any side effect (hooks, status change, deploy log, Helm).
+	if !requireInstanceModify(c, inst) {
 		return
 	}
 
@@ -1473,6 +1496,7 @@ func (h *InstanceHandler) StopInstance(c *gin.Context) {
 // @Param       id path string true "Instance ID"
 // @Success     202 {object} map[string]string "Namespace cleanup initiated"
 // @Failure     400 {object} map[string]string
+// @Failure     403 {object} map[string]string "Caller is not the owner, an admin or a devops user"
 // @Failure     404 {object} map[string]string
 // @Failure     409 {object} map[string]string "Invalid status for clean"
 // @Failure     503 {object} map[string]string "Deployment service not configured"
@@ -1493,6 +1517,12 @@ func (h *InstanceHandler) CleanInstance(c *gin.Context) {
 	if err != nil {
 		status, message := mapError(err, entityStackInstance)
 		c.JSON(status, gin.H{"error": message})
+		return
+	}
+
+	// Authorization: only the owner, an admin or a devops user may clean the instance.
+	// Checked before any side effect (hooks, status change, deploy log, Helm).
+	if !requireInstanceModify(c, inst) {
 		return
 	}
 
@@ -1823,6 +1853,7 @@ type extendTTLRequest struct {
 // @Param       body body    extendTTLRequest false "Optional TTL override"
 // @Success     200 {object} models.StackInstance
 // @Failure     400 {object} map[string]string
+// @Failure     403 {object} map[string]string "Caller is not the owner, an admin or a devops user"
 // @Failure     404 {object} map[string]string
 // @Router      /api/v1/stack-instances/{id}/extend [post]
 func (h *InstanceHandler) ExtendTTL(c *gin.Context) {
@@ -1839,11 +1870,8 @@ func (h *InstanceHandler) ExtendTTL(c *gin.Context) {
 		return
 	}
 
-	// Authorization: only the owner or an admin may extend the TTL.
-	userID := middleware.GetUserIDFromContext(c)
-	role := middleware.GetRoleFromContext(c)
-	if inst.OwnerID != userID && role != "admin" {
-		c.JSON(http.StatusForbidden, gin.H{"error": "You are not allowed to modify this stack instance"})
+	// Authorization: only the owner, an admin or a devops user may extend the TTL.
+	if !requireInstanceModify(c, inst) {
 		return
 	}
 
@@ -2221,6 +2249,7 @@ func (h *InstanceHandler) buildLockedValuesMap(def *models.StackDefinition) (map
 // @Param       body body     object false "Optional: {\"target_log_id\": \"...\"}"
 // @Success     202 {object} map[string]string
 // @Failure     400 {object} map[string]string
+// @Failure     403 {object} map[string]string "Caller is not the owner, an admin or a devops user"
 // @Failure     404 {object} map[string]string
 // @Failure     409 {object} map[string]string
 // @Failure     500 {object} map[string]string
@@ -2242,6 +2271,12 @@ func (h *InstanceHandler) RollbackInstance(c *gin.Context) {
 	if err != nil {
 		status, message := mapError(err, entityStackInstance)
 		c.JSON(status, gin.H{"error": message})
+		return
+	}
+
+	// Authorization: only the owner, an admin or a devops user may roll back the instance.
+	// Checked before any side effect (hooks, status change, deploy log, Helm).
+	if !requireInstanceModify(c, inst) {
 		return
 	}
 

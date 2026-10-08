@@ -5,12 +5,14 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
 	"backend/internal/sessionstore"
 
 	"github.com/gin-gonic/gin"
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -48,7 +50,7 @@ func (m *mockSessionStore) BlockUser(_ context.Context, userID string, _ time.Ti
 	return nil
 }
 
-func (m *mockSessionStore) IsUserBlocked(_ context.Context, userID string) (bool, error) {
+func (m *mockSessionStore) IsUserBlocked(_ context.Context, userID string, _ time.Time) (bool, error) {
 	if m.userBlockErr != nil {
 		return false, m.userBlockErr
 	}
@@ -122,12 +124,12 @@ func TestAuthRequired_UserBlocked(t *testing.T) {
 		wantErrMsg string
 	}{
 		{
-			name: "blocked user gets 403 Account disabled",
+			name: "blocked user gets 401 Session revoked",
 			setupStore: func(store *mockSessionStore) {
 				store.blockedUsers[targetUserID] = true
 			},
-			wantStatus: http.StatusForbidden,
-			wantErrMsg: "Account disabled",
+			wantStatus: http.StatusUnauthorized,
+			wantErrMsg: "Session revoked",
 		},
 		{
 			name: "IsUserBlocked error is fail-open and request succeeds",
@@ -164,6 +166,73 @@ func TestAuthRequired_UserBlocked(t *testing.T) {
 			assert.Equal(t, tt.wantStatus, w.Code)
 			if tt.wantErrMsg != "" {
 				assert.Contains(t, w.Body.String(), tt.wantErrMsg)
+			}
+		})
+	}
+}
+
+// signTestToken signs a token for userID with the given issued-at time. A zero
+// iat leaves the claim out.
+func signTestToken(t *testing.T, userID string, iat time.Time) string {
+	t.Helper()
+	rc := jwt.RegisteredClaims{
+		ID:        "jti-" + userID + "-" + strings.ReplaceAll(iat.Format(time.RFC3339Nano), ":", ""),
+		ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
+		Subject:   userID,
+	}
+	if !iat.IsZero() {
+		rc.IssuedAt = jwt.NewNumericDate(iat)
+	}
+	tok := jwt.NewWithClaims(jwt.SigningMethodHS256, Claims{
+		UserID: userID, Username: "alice", Role: "user", RegisteredClaims: rc,
+	})
+	signed, err := tok.SignedString([]byte(testSecret))
+	require.NoError(t, err)
+	return signed
+}
+
+// TestAuthRequired_UserBlock_IssuedAt checks that a user block revokes only
+// tokens issued at or before the block, with a real MemoryStore.
+func TestAuthRequired_UserBlock_IssuedAt(t *testing.T) {
+	t.Parallel()
+
+	const userID = "user-iat"
+	tests := []struct {
+		name       string
+		block      bool
+		iat        time.Time
+		wantStatus int
+	}{
+		{"no block, old token", false, time.Now().Add(-time.Minute), http.StatusOK},
+		{"blocked, token issued before block", true, time.Now().Add(-time.Minute), http.StatusUnauthorized},
+		{"blocked, token issued after block", true, time.Now().Add(2 * time.Second), http.StatusOK},
+		{"blocked, token without iat", true, time.Time{}, http.StatusUnauthorized},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			store := sessionstore.NewMemoryStore()
+			t.Cleanup(store.Stop)
+			if tt.block {
+				require.NoError(t, store.BlockUser(context.Background(), userID, time.Now().Add(time.Hour)))
+			}
+
+			gin.SetMode(gin.TestMode)
+			r := gin.New()
+			r.Use(AuthRequiredWithSessionStore(testSecret, store))
+			r.GET("/protected", func(c *gin.Context) { c.Status(http.StatusOK) })
+
+			w := httptest.NewRecorder()
+			req, _ := http.NewRequest(http.MethodGet, "/protected", nil)
+			req.Header.Set("Authorization", "Bearer "+signTestToken(t, userID, tt.iat))
+			r.ServeHTTP(w, req)
+
+			assert.Equal(t, tt.wantStatus, w.Code, w.Body.String())
+			if tt.wantStatus == http.StatusUnauthorized {
+				assert.Contains(t, w.Body.String(), "Session revoked")
 			}
 		})
 	}

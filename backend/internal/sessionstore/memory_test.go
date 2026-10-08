@@ -115,20 +115,20 @@ func TestMemoryStore_BlockUser(t *testing.T) {
 	s := NewMemoryStore()
 	ctx := context.Background()
 
-	blocked, err := s.IsUserBlocked(ctx, "user-1")
+	blocked, err := s.IsUserBlocked(ctx, "user-1", oldToken)
 	require.NoError(t, err)
 	assert.False(t, blocked)
 
 	require.NoError(t, s.BlockUser(ctx, "user-1", time.Now().Add(time.Hour)))
 
-	blocked, err = s.IsUserBlocked(ctx, "user-1")
+	blocked, err = s.IsUserBlocked(ctx, "user-1", oldToken)
 	require.NoError(t, err)
 	assert.True(t, blocked)
 
 	s.Stop()
 
 	// Stop only halts the cleanup goroutine — the in-memory data persists.
-	blocked, err = s.IsUserBlocked(ctx, "user-1")
+	blocked, err = s.IsUserBlocked(ctx, "user-1", oldToken)
 	require.NoError(t, err)
 	assert.True(t, blocked, "block entry should persist after Stop")
 }
@@ -141,13 +141,13 @@ func TestMemoryStore_BlockUser_Expiry(t *testing.T) {
 
 	require.NoError(t, s.BlockUser(ctx, "user-exp", time.Now().Add(50*time.Millisecond)))
 
-	blocked, err := s.IsUserBlocked(ctx, "user-exp")
+	blocked, err := s.IsUserBlocked(ctx, "user-exp", oldToken)
 	require.NoError(t, err)
 	assert.True(t, blocked)
 
 	time.Sleep(60 * time.Millisecond)
 
-	blocked, err = s.IsUserBlocked(ctx, "user-exp")
+	blocked, err = s.IsUserBlocked(ctx, "user-exp", oldToken)
 	require.NoError(t, err)
 	assert.False(t, blocked, "user block should expire after TTL")
 }
@@ -160,13 +160,13 @@ func TestMemoryStore_UnblockUser(t *testing.T) {
 
 	require.NoError(t, s.BlockUser(ctx, "user-1", time.Now().Add(time.Hour)))
 
-	blocked, err := s.IsUserBlocked(ctx, "user-1")
+	blocked, err := s.IsUserBlocked(ctx, "user-1", oldToken)
 	require.NoError(t, err)
 	require.True(t, blocked)
 
 	require.NoError(t, s.UnblockUser(ctx, "user-1"))
 
-	blocked, err = s.IsUserBlocked(ctx, "user-1")
+	blocked, err = s.IsUserBlocked(ctx, "user-1", oldToken)
 	require.NoError(t, err)
 	assert.False(t, blocked, "user should not be blocked after UnblockUser")
 }

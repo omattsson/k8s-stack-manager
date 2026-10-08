@@ -4,7 +4,6 @@ import (
 	"log/slog"
 	"net/http"
 
-	"backend/internal/api/middleware"
 	"backend/internal/models"
 
 	"github.com/gin-gonic/gin"
@@ -71,10 +70,8 @@ func (h *InstanceQuotaOverrideHandler) GetQuotaOverride(c *gin.Context) {
 		return
 	}
 
-	userID := middleware.GetUserIDFromContext(c)
-	role := middleware.GetRoleFromContext(c)
-	if inst.OwnerID != userID && role != "admin" {
-		c.JSON(http.StatusForbidden, gin.H{"error": "You do not have permission to view this instance"})
+	// Authorization: owner, admin or devops (see canModifyInstance).
+	if !requireInstanceModify(c, inst) {
 		return
 	}
 
@@ -119,10 +116,8 @@ func (h *InstanceQuotaOverrideHandler) SetQuotaOverride(c *gin.Context) {
 		return
 	}
 
-	userID := middleware.GetUserIDFromContext(c)
-	role := middleware.GetRoleFromContext(c)
-	if inst.OwnerID != userID && role != "admin" {
-		c.JSON(http.StatusForbidden, gin.H{"error": "You do not have permission to modify this instance"})
+	// Authorization: owner, admin or devops (see canModifyInstance).
+	if !requireInstanceModify(c, inst) {
 		return
 	}
 
@@ -190,10 +185,8 @@ func (h *InstanceQuotaOverrideHandler) DeleteQuotaOverride(c *gin.Context) {
 		return
 	}
 
-	userID := middleware.GetUserIDFromContext(c)
-	role := middleware.GetRoleFromContext(c)
-	if inst.OwnerID != userID && role != "admin" {
-		c.JSON(http.StatusForbidden, gin.H{"error": "You do not have permission to modify this instance"})
+	// Authorization: owner, admin or devops (see canModifyInstance).
+	if !requireInstanceModify(c, inst) {
 		return
 	}
 

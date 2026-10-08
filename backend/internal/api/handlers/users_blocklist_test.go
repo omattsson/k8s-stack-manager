@@ -15,25 +15,32 @@ import (
 )
 
 // setupUserRouterFull creates a gin engine with a UserHandler wired with an optional
-// session store and refresh token repository. It mirrors setupUserRouter but allows
-// testing the blocklist integration.
+// session store, refresh token repository and API key repository. It mirrors
+// setupUserRouter but allows testing the revocation integration.
 func setupUserRouterFull(
 	userRepo *MockUserRepository,
 	callerID, callerRole string,
 	store *mockSessionStore,
 	refreshRepo *MockRefreshTokenRepository,
+	apiKeyRepo *MockAPIKeyRepository,
 ) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
 	r.Use(injectAuthContext(callerID, callerRole))
-	h := NewUserHandler(userRepo)
+	// Convert typed nil pointers to nil interfaces so the handler skips the step.
+	var rtRepo models.RefreshTokenRepository
+	if refreshRepo != nil {
+		rtRepo = refreshRepo
+	}
+	var akRepo models.APIKeyRepository
+	if apiKeyRepo != nil {
+		akRepo = apiKeyRepo
+	}
+	h := NewUserHandler(userRepo, rtRepo, akRepo)
 	if store != nil {
 		h.SetSessionStore(store)
 	}
-	if refreshRepo != nil {
-		h.SetRefreshTokenRepo(refreshRepo)
-		h.SetAccessTokenExpiration(15 * time.Minute)
-	}
+	h.SetAccessTokenExpiration(15 * time.Minute)
 	adminMW := middleware.RequireAdmin()
 	users := r.Group("/api/v1/users")
 	{
@@ -41,6 +48,7 @@ func setupUserRouterFull(
 		users.DELETE("/:id", adminMW, h.DeleteUser)
 		users.PUT("/:id/disable", adminMW, h.DisableUser)
 		users.PUT("/:id/enable", adminMW, h.EnableUser)
+		users.PUT("/:id/password", adminMW, h.ResetUserPassword)
 	}
 	return r
 }
@@ -101,7 +109,7 @@ func TestDisableUser_BlocklistCalled(t *testing.T) {
 				refreshArg = refreshRepo
 			}
 
-			router := setupUserRouterFull(userRepo, "admin-1", "admin", store, refreshArg)
+			router := setupUserRouterFull(userRepo, "admin-1", "admin", store, refreshArg, nil)
 			w := httptest.NewRecorder()
 			req, _ := http.NewRequest(http.MethodPut, "/api/v1/users/"+targetID+"/disable", nil)
 			router.ServeHTTP(w, req)
@@ -126,28 +134,20 @@ func TestDisableUser_BlocklistCalled(t *testing.T) {
 	}
 }
 
-// ---- TestEnableUser_UnblockCalled ----
+// ---- TestEnableUser_ReblocksInsteadOfUnblock ----
 
-func TestEnableUser_UnblockCalled(t *testing.T) {
+// Enable must not make tokens issued before the disable valid again: it writes
+// a fresh block (BlockUser) and never calls UnblockUser.
+func TestEnableUser_ReblocksInsteadOfUnblock(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name              string
-		withStore         bool
-		wantStatus        int
-		wantUnblockCalled bool
+		name       string
+		withStore  bool
+		wantStatus int
 	}{
-		{
-			name:              "enable calls UnblockUser",
-			withStore:         true,
-			wantStatus:        http.StatusOK,
-			wantUnblockCalled: true,
-		},
-		{
-			name:       "enable with nil session store succeeds",
-			withStore:  false,
-			wantStatus: http.StatusOK,
-		},
+		{name: "enable calls BlockUser, not UnblockUser", withStore: true, wantStatus: http.StatusOK},
+		{name: "enable with nil session store succeeds", withStore: false, wantStatus: http.StatusOK},
 	}
 
 	for _, tt := range tests {
@@ -166,17 +166,19 @@ func TestEnableUser_UnblockCalled(t *testing.T) {
 				store = newMockHandlerSessionStore()
 			}
 
-			router := setupUserRouterFull(userRepo, "admin-1", "admin", store, nil)
+			router := setupUserRouterFull(userRepo, "admin-1", "admin", store, nil, nil)
 			w := httptest.NewRecorder()
 			req, _ := http.NewRequest(http.MethodPut, "/api/v1/users/"+targetID+"/enable", nil)
 			router.ServeHTTP(w, req)
 
 			assert.Equal(t, tt.wantStatus, w.Code)
+			got, err := userRepo.FindByID(targetID)
+			require.NoError(t, err)
+			assert.False(t, got.Disabled)
 
-			if tt.wantUnblockCalled {
-				require.NotNil(t, store)
-				assert.True(t, store.wasUnblockUserCalledFor(targetID),
-					"UnblockUser should be called for the re-enabled user ID")
+			if tt.withStore {
+				assert.True(t, store.wasBlockUserCalledFor(targetID), "enable must re-block old tokens")
+				assert.False(t, store.wasUnblockUserCalledFor(targetID), "enable must not unblock")
 			}
 		})
 	}

@@ -89,6 +89,19 @@ func (r *GORMAPIKeyRepository) UpdateLastUsed(userID, keyID string, t time.Time)
 	return nil
 }
 
+// DeleteAllForUser removes every API key of the user with a single
+// DELETE ... WHERE user_id = ?. Zero rows is not an error.
+func (r *GORMAPIKeyRepository) DeleteAllForUser(userID string) (int64, error) {
+	if userID == "" {
+		return 0, dberrors.NewDatabaseError("delete_all_for_user", dberrors.ErrValidation)
+	}
+	result := r.db.Where("user_id = ?", userID).Delete(&models.APIKey{})
+	if result.Error != nil {
+		return 0, dberrors.NewDatabaseError("delete_all_for_user", result.Error)
+	}
+	return result.RowsAffected, nil
+}
+
 // Delete removes an API key by user ID and key ID.
 func (r *GORMAPIKeyRepository) Delete(userID, keyID string) error {
 	result := r.db.Where("user_id = ? AND id = ?", userID, keyID).Delete(&models.APIKey{})

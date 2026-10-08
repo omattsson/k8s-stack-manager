@@ -1405,6 +1405,37 @@ func (m *MockAPIKeyRepository) Delete(userID, keyID string) error {
 	return nil
 }
 
+// DeleteAllForUser removes every key of the user; honours deleteErr.
+func (m *MockAPIKeyRepository) DeleteAllForUser(userID string) (int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.deleteErr != nil {
+		return 0, m.deleteErr
+	}
+	var n int64
+	for id, k := range m.keys {
+		if k.UserID != userID {
+			continue
+		}
+		if ks, exists := m.byPrefix[k.Prefix]; exists {
+			kept := ks[:0]
+			for _, entry := range ks {
+				if entry.ID != id {
+					kept = append(kept, entry)
+				}
+			}
+			if len(kept) == 0 {
+				delete(m.byPrefix, k.Prefix)
+			} else {
+				m.byPrefix[k.Prefix] = kept
+			}
+		}
+		delete(m.keys, id)
+		n++
+	}
+	return n, nil
+}
+
 func (m *MockAPIKeyRepository) SetCreateError(err error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

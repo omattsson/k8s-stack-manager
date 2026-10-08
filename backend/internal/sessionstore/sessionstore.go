@@ -30,11 +30,33 @@ type CLIAuthData struct {
 	Status   string `json:"status"` // "pending", "completed", "consumed"
 }
 
+// userBlockApplies is the shared rule for IsUserBlocked. blockedAt is the
+// block time in Unix seconds; 0 means unknown (a row written before the block
+// time was stored), which blocks every token. A token is blocked when it was
+// issued at or before the block second. The comparison is inclusive because a
+// JWT iat has one-second precision: a token issued in the same second as the
+// block may be older than the block, so it is revoked. A zero issuedAt (token
+// without iat) is always blocked.
+// Note: blockedAt and iat come from the clocks of different replicas; the rule
+// relies on NTP-synchronised clocks (skew of a second or more shifts the cut).
+func userBlockApplies(blockedAt int64, issuedAt time.Time) bool {
+	if blockedAt <= 0 || issuedAt.IsZero() {
+		return true
+	}
+	return issuedAt.Unix() <= blockedAt
+}
+
 type SessionStore interface {
 	BlockToken(ctx context.Context, jti string, expiresAt time.Time) error
 	IsTokenBlocked(ctx context.Context, jti string) (bool, error)
+	// BlockUser revokes every access token of the user issued at or before
+	// now. The block entry lives until `until` (the longest token lifetime).
+	// Tokens issued after the block (for example after a password reset)
+	// stay valid.
 	BlockUser(ctx context.Context, userID string, until time.Time) error
-	IsUserBlocked(ctx context.Context, userID string) (bool, error)
+	// IsUserBlocked reports whether a token of the user issued at issuedAt is
+	// revoked. See userBlockApplies for the rule.
+	IsUserBlocked(ctx context.Context, userID string, issuedAt time.Time) (bool, error)
 	UnblockUser(ctx context.Context, userID string) error
 	SaveOIDCState(ctx context.Context, state string, data OIDCStateData, ttl time.Duration) error
 	ConsumeOIDCState(ctx context.Context, state string) (*OIDCStateData, error)

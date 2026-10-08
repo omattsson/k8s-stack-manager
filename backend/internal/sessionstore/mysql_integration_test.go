@@ -154,13 +154,13 @@ func TestMySQLIntegration_BlockUser(t *testing.T) {
 	s := setupMySQLSessionStore(t)
 	ctx := context.Background()
 
-	blocked, err := s.IsUserBlocked(ctx, "user-1")
+	blocked, err := s.IsUserBlocked(ctx, "user-1", oldToken)
 	require.NoError(t, err)
 	assert.False(t, blocked)
 
 	require.NoError(t, s.BlockUser(ctx, "user-1", time.Now().Add(time.Hour)))
 
-	blocked, err = s.IsUserBlocked(ctx, "user-1")
+	blocked, err = s.IsUserBlocked(ctx, "user-1", oldToken)
 	require.NoError(t, err)
 	assert.True(t, blocked)
 }
@@ -171,7 +171,7 @@ func TestMySQLIntegration_BlockUser_Expired(t *testing.T) {
 
 	require.NoError(t, s.BlockUser(ctx, "user-exp", time.Now().Add(-time.Second)))
 
-	blocked, err := s.IsUserBlocked(ctx, "user-exp")
+	blocked, err := s.IsUserBlocked(ctx, "user-exp", oldToken)
 	require.NoError(t, err)
 	assert.False(t, blocked, "expired user block should not appear blocked")
 }
@@ -182,13 +182,13 @@ func TestMySQLIntegration_UnblockUser(t *testing.T) {
 
 	require.NoError(t, s.BlockUser(ctx, "user-1", time.Now().Add(time.Hour)))
 
-	blocked, err := s.IsUserBlocked(ctx, "user-1")
+	blocked, err := s.IsUserBlocked(ctx, "user-1", oldToken)
 	require.NoError(t, err)
 	require.True(t, blocked)
 
 	require.NoError(t, s.UnblockUser(ctx, "user-1"))
 
-	blocked, err = s.IsUserBlocked(ctx, "user-1")
+	blocked, err = s.IsUserBlocked(ctx, "user-1", oldToken)
 	require.NoError(t, err)
 	assert.False(t, blocked, "user should not be blocked after UnblockUser")
 }
@@ -199,4 +199,25 @@ func TestMySQLIntegration_UnblockUser_NotBlocked(t *testing.T) {
 
 	err := s.UnblockUser(ctx, "never-blocked")
 	assert.NoError(t, err, "unblocking a never-blocked user should not error")
+}
+
+func TestMySQLIntegration_BlockUser_IssuedAt(t *testing.T) {
+	s := setupMySQLSessionStore(t)
+	ctx := context.Background()
+
+	require.NoError(t, s.BlockUser(ctx, "user-iat", time.Now().Add(time.Hour)))
+
+	blocked, err := s.IsUserBlocked(ctx, "user-iat", oldToken)
+	require.NoError(t, err)
+	assert.True(t, blocked, "token issued before the block is revoked")
+
+	blocked, err = s.IsUserBlocked(ctx, "user-iat", time.Now().Add(2*time.Second))
+	require.NoError(t, err)
+	assert.False(t, blocked, "token issued after the block stays valid")
+
+	// A second block moves the block time forward (upsert updates data).
+	require.NoError(t, s.BlockUser(ctx, "user-iat", time.Now().Add(time.Hour)))
+	blocked, err = s.IsUserBlocked(ctx, "user-iat", oldToken)
+	require.NoError(t, err)
+	assert.True(t, blocked)
 }
