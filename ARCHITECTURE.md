@@ -111,6 +111,7 @@ Kubeconfig data encrypted at rest with AES-256-GCM (`KUBECONFIG_ENCRYPTION_KEY`)
 - DevOps manages templates; admin manages clusters, users, cleanup policies
 - **SessionStore**: Persistent token blocklist and OIDC state (MySQL default, in-memory for tests). Survives restarts — revoked tokens stay blocked, in-flight OIDC logins survive backend redeploys.
 - **User.Disabled**: Admin can disable accounts. Blocks login, token refresh, OIDC login, and API key auth immediately.
+- **Sessions**: a login starts a refresh-token family (`refresh_tokens.family_id`, also the access-token `sid` claim). Rotation keeps the family and its start time; a session ends after `SESSION_MAX_LIFETIME` or after `SESSION_IDLE_TIMEOUT` without requests (the JWT middleware records request activity, throttled to one write per minute per session). A just-rotated token gets an access token inside `REFRESH_REUSE_GRACE`; other reuse revokes the family. See [WIKI.md](WIKI.md#sessions).
 - **Rate limits**: per-IP limiter on `/api/v1` (`RATE_LIMIT`, default 100/min) and a stricter login limiter (`LOGIN_RATE_LIMIT`, default 10/min).
 
 ## Observability

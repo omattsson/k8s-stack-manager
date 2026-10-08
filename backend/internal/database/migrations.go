@@ -1023,6 +1023,10 @@ func (d *Database) AutoMigrate() error {
 		},
 	})
 
+	// Migration 41: Session family columns on refresh_tokens (absolute session
+	// lifetime, reuse grace window, idle timeout from the last request).
+	migrator.AddMigration(refreshTokenSessionFamilyMigration())
+
 	// Run migrations
 	if err := migrator.MigrateUp(); err != nil {
 		return err
@@ -1030,4 +1034,50 @@ func (d *Database) AutoMigrate() error {
 
 	slog.Info("Database migrations completed successfully")
 	return nil
+}
+
+// refreshTokenSessionFamilyMigration is migration 41. It is a function so
+// tests can run its Down step.
+func refreshTokenSessionFamilyMigration() schema.Migration {
+	return schema.Migration{
+		Version:     "20261008000041",
+		Name:        "add_refresh_token_session_family",
+		Description: "Add family_id, session_started_at and rotated_at to refresh_tokens and backfill legacy rows",
+		Up: func(tx *gorm.DB) error {
+			m := tx.Migrator()
+			for _, field := range []string{"FamilyID", "SessionStartedAt", "RotatedAt"} {
+				if !m.HasColumn(&models.RefreshToken{}, field) {
+					if err := m.AddColumn(&models.RefreshToken{}, field); err != nil {
+						return err
+					}
+				}
+			}
+			if !m.HasIndex(&models.RefreshToken{}, "FamilyID") {
+				if err := m.CreateIndex(&models.RefreshToken{}, "FamilyID"); err != nil {
+					return err
+				}
+			}
+			// A legacy token is its own family; its session started when it was created.
+			if err := tx.Exec("UPDATE refresh_tokens SET family_id = id WHERE family_id IS NULL OR family_id = ''").Error; err != nil {
+				return err
+			}
+			return tx.Exec("UPDATE refresh_tokens SET session_started_at = created_at WHERE session_started_at IS NULL").Error
+		},
+		Down: func(tx *gorm.DB) error {
+			m := tx.Migrator()
+			if m.HasIndex(&models.RefreshToken{}, "FamilyID") {
+				if err := m.DropIndex(&models.RefreshToken{}, "FamilyID"); err != nil {
+					return err
+				}
+			}
+			for _, field := range []string{"RotatedAt", "SessionStartedAt", "FamilyID"} {
+				if m.HasColumn(&models.RefreshToken{}, field) {
+					if err := m.DropColumn(&models.RefreshToken{}, field); err != nil {
+						return err
+					}
+				}
+			}
+			return nil
+		},
+	}
 }

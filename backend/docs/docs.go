@@ -1680,7 +1680,7 @@ const docTemplate = `{
         },
         "/api/v1/auth/refresh": {
             "post": {
-                "description": "Issues a new access token using the refresh token cookie. Rotates the refresh token (old one invalidated, new one issued).",
+                "description": "Issues a new access token using the refresh token cookie. Rotates the refresh token (old one invalidated, new one issued). A session ends SESSION_MAX_LIFETIME after login and after SESSION_IDLE_TIMEOUT without requests; rotation never extends the session. A token rotated less than REFRESH_REUSE_GRACE ago (for example a concurrent refresh from a second browser tab) gets a new access token without a new cookie. Any other reuse of a consumed token revokes the session.",
                 "consumes": [
                     "application/json"
                 ],
@@ -1699,7 +1699,16 @@ const docTemplate = `{
                         }
                     },
                     "401": {
-                        "description": "Invalid, expired, or revoked refresh token",
+                        "description": "Invalid, expired, or revoked refresh token or session",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Account disabled",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {

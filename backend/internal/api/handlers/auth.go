@@ -172,19 +172,26 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		}
 	}
 
-	expiration := h.cfg.AccessTokenExpiration
-	if h.refreshTokenRepo == nil {
-		expiration = h.cfg.JWTExpiration
+	// With refresh tokens the login starts a session; the access token carries
+	// its ID ("sid"). Without refresh tokens the token is long-lived and has
+	// no session.
+	var token string
+	var sess refreshSession
+	if h.refreshTokenRepo != nil {
+		sess = newRefreshSession()
+		token, err = h.sessionAccessToken(user, sess.familyID)
+	} else {
+		token, err = middleware.GenerateTokenWithOpts(middleware.GenerateTokenOptions{
+			UserID:       user.ID,
+			Username:     user.Username,
+			DisplayName:  user.DisplayName,
+			Role:         user.Role,
+			Secret:       h.cfg.JWTSecret,
+			Expiration:   h.cfg.JWTExpiration,
+			AuthProvider: authProviderOf(user),
+			Email:        user.Email,
+		})
 	}
-
-	token, err := middleware.GenerateTokenWithOpts(middleware.GenerateTokenOptions{
-		UserID:      user.ID,
-		Username:    user.Username,
-		DisplayName: user.DisplayName,
-		Role:        user.Role,
-		Secret:      h.cfg.JWTSecret,
-		Expiration:  expiration,
-	})
 	if err != nil {
 		middleware.RecordLogin("local", "failure")
 		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
@@ -209,16 +216,33 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		return
 	}
 
-	middleware.RecordLogin("local", "success")
-
 	// Issue refresh token if repository is configured.
 	if h.refreshTokenRepo != nil {
-		if err := h.issueRefreshToken(c, user.ID); err != nil {
+		rawRefresh, refreshExpiry, err := h.issueRefreshTokenWith(c, h.refreshTokenRepo, user.ID, sess, "")
+		if err != nil {
 			slog.Error("Failed to issue refresh token", "user_id", user.ID, "error", err)
 			// Continue without refresh token — access token still works.
+		} else {
+			// Close the revoke race: a revoke-all between the issue and here
+			// must not leave a working session.
+			if err := recheckSessionActive(h.refreshTokenRepo, sess.familyID); err != nil {
+				abandonSession(h.refreshTokenRepo, sess.familyID)
+				h.clearRefreshCookie(c)
+				if errors.Is(err, errSessionRevoked) {
+					middleware.RecordLogin("local", "revoked")
+					c.JSON(http.StatusUnauthorized, gin.H{"error": "Session revoked"})
+				} else {
+					slog.Error("Login session re-check failed", "user_id", user.ID, "family_id", sess.familyID, "error", err)
+					middleware.RecordLogin("local", "failure")
+					c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
+				}
+				return
+			}
+			h.setRefreshCookie(c, rawRefresh, refreshExpiry)
 		}
 	}
 
+	middleware.RecordLogin("local", "success")
 	c.JSON(http.StatusOK, LoginResponse{Token: token, User: *user})
 }
 
@@ -360,14 +384,19 @@ type RefreshResponse struct {
 	Token string `json:"token"`
 }
 
+// errRefreshTokenConsumed aborts the rotation transaction when another request
+// consumed or revoked the presented refresh token first.
+var errRefreshTokenConsumed = errors.New("refresh token already consumed")
+
 // Refresh godoc
 // @Summary     Refresh access token
-// @Description Issues a new access token using the refresh token cookie. Rotates the refresh token (old one invalidated, new one issued).
+// @Description Issues a new access token using the refresh token cookie. Rotates the refresh token (old one invalidated, new one issued). A session ends SESSION_MAX_LIFETIME after login and after SESSION_IDLE_TIMEOUT without requests; rotation never extends the session. A token rotated less than REFRESH_REUSE_GRACE ago (for example a concurrent refresh from a second browser tab) gets a new access token without a new cookie. Any other reuse of a consumed token revokes the session.
 // @Tags        auth
 // @Accept      json
 // @Produce     json
 // @Success     200 {object} RefreshResponse
-// @Failure     401 {object} map[string]string "Invalid, expired, or revoked refresh token"
+// @Failure     401 {object} map[string]string "Invalid, expired, or revoked refresh token or session"
+// @Failure     403 {object} map[string]string "Account disabled"
 // @Failure     500 {object} map[string]string
 // @Failure     501 {object} map[string]string "Refresh tokens not enabled"
 // @Router      /api/v1/auth/refresh [post]
@@ -386,31 +415,17 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 	}
 
 	tokenHash := hashRefreshToken(rawToken)
-	stored, err := h.refreshTokenRepo.FindByTokenHash(tokenHash)
-	if err != nil {
-		if isNotFoundError(err) {
-			h.clearRefreshCookie(c)
-			middleware.RecordRefresh("revoked")
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid refresh token"})
-		} else {
-			slog.Error("Failed to look up refresh token", "error", err)
-			middleware.RecordRefresh("failure")
-			c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
-		}
-		return
-	}
-
-	if stored.Revoked {
-		// Possible token replay — revoke all tokens for the user as a precaution.
-		slog.Warn("Revoked refresh token reuse detected", "user_id", stored.UserID, "token_id", stored.ID)
-		_ = h.refreshTokenRepo.RevokeAllForUser(stored.UserID)
-		h.clearRefreshCookie(c)
-		middleware.RecordRefresh("revoked")
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid refresh token"})
+	stored, ok := h.findRefreshToken(c, tokenHash)
+	if !ok {
 		return
 	}
 
 	now := time.Now().UTC()
+	if stored.Revoked {
+		h.refreshConsumedToken(c, stored, now)
+		return
+	}
+
 	if now.After(stored.ExpiresAt) {
 		h.clearRefreshCookie(c)
 		middleware.RecordRefresh("expired")
@@ -418,7 +433,19 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 		return
 	}
 
-	// Check idle timeout.
+	// Absolute session lifetime: the user must log in again (an SSO login
+	// syncs the role from the identity provider).
+	if h.sessionExpired(stored, now) {
+		_ = h.refreshTokenRepo.RevokeFamily(stored.SessionFamily())
+		h.clearRefreshCookie(c)
+		middleware.RecordRefresh("expired")
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Session expired"})
+		return
+	}
+
+	// Check idle timeout. Authenticated requests move LastActivity forward
+	// (session activity hook in the JWT middleware), so this is the time
+	// since the last request, not since the last refresh.
 	if now.Sub(stored.LastActivity) > h.cfg.SessionIdleTimeout {
 		_ = h.refreshTokenRepo.RevokeByID(stored.ID)
 		h.clearRefreshCookie(c)
@@ -450,51 +477,43 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 		return
 	}
 
-	// Rotate atomically: create new token + revoke old in one transaction.
-	// If the old token was already consumed (replay), revoke everything.
-	var replayDetected bool
+	// Rotate atomically: consume the old token, then create its successor in
+	// the same session family. Consuming first takes the row lock, so two
+	// concurrent refreshes with the same token serialise and the second one
+	// sees 0 changed rows.
+	sess := continuedSession(stored)
 	var newRawToken string
-	if err := h.refreshTokenRepo.WithTx(func(txRepo models.RefreshTokenRepository) error {
-		// Issue replacement token using the transactional repo.
-		var issueErr error
-		newRawToken, issueErr = h.issueRefreshTokenWith(c, txRepo, user.ID, stored.ID)
-		if issueErr != nil {
-			return issueErr
-		}
-		// Revoke consumed token. If another request already consumed it (replay),
-		// revoke everything — including the token we just issued — for safety.
-		affected, err := txRepo.RevokeByIDIfActive(stored.ID)
+	var newExpiresAt time.Time
+	err = h.refreshTokenRepo.WithTx(func(txRepo models.RefreshTokenRepository) error {
+		affected, err := txRepo.MarkRotatedIfActive(stored.ID, now)
 		if err != nil {
 			return err
 		}
 		if affected == 0 {
-			replayDetected = true
-			return txRepo.RevokeAllForUser(stored.UserID)
+			return errRefreshTokenConsumed
 		}
-		return nil
-	}); err != nil {
+		var issueErr error
+		newRawToken, newExpiresAt, issueErr = h.issueRefreshTokenWith(c, txRepo, user.ID, sess, stored.ID)
+		return issueErr
+	})
+	if errors.Is(err, errRefreshTokenConsumed) {
+		// Another request consumed the token after our read. Re-read it so a
+		// concurrent rotation gets the grace path and a revocation does not.
+		latest, ok := h.findRefreshToken(c, tokenHash)
+		if !ok {
+			return
+		}
+		h.refreshConsumedToken(c, latest, now)
+		return
+	}
+	if err != nil {
 		slog.Error("Failed to rotate refresh token", "user_id", user.ID, "error", err)
 		middleware.RecordRefresh("failure")
 		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
 		return
 	}
 
-	if replayDetected {
-		slog.Warn("Concurrent refresh token consumption detected", "user_id", stored.UserID, "token_id", stored.ID)
-		h.clearRefreshCookie(c)
-		middleware.RecordRefresh("revoked")
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid refresh token"})
-		return
-	}
-
-	accessToken, err := middleware.GenerateTokenWithOpts(middleware.GenerateTokenOptions{
-		UserID:      user.ID,
-		Username:    user.Username,
-		DisplayName: user.DisplayName,
-		Role:        user.Role,
-		Secret:      h.cfg.JWTSecret,
-		Expiration:  h.cfg.AccessTokenExpiration,
-	})
+	accessToken, err := h.sessionAccessToken(user, sess.familyID)
 	if err != nil {
 		slog.Error("Failed to generate access token during refresh", "error", err)
 		middleware.RecordRefresh("failure")
@@ -505,30 +524,226 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 	// Close the disable race (same as login): re-read the user after signing.
 	// On rejection revoke the rotated refresh token too.
 	if err := recheckUserActive(h.userRepo, user.ID); err != nil {
-		_ = h.refreshTokenRepo.RevokeAllForUser(user.ID)
-		h.clearRefreshCookie(c)
-		switch {
-		case errors.Is(err, errAccountDisabled):
-			middleware.RecordRefresh("disabled")
-			c.JSON(http.StatusForbidden, gin.H{"error": "Account disabled"})
-		case errors.Is(err, errUserGone):
-			middleware.RecordRefresh("revoked")
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid refresh token"})
-		default:
-			slog.Error("Refresh user re-check failed", "user_id", user.ID, "error", err)
-			middleware.RecordRefresh("failure")
-			c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
-		}
+		h.rejectRefreshAfterRecheck(c, user.ID, err)
+		return
+	}
+	// Close the revoke race: a logout-all or admin revoke that ran after the
+	// rotation committed has revoked the new token; do not hand out a token.
+	if err := recheckSessionActive(h.refreshTokenRepo, sess.familyID); err != nil {
+		h.rejectRefreshAfterSessionCheck(c, user.ID, sess.familyID, true, err)
 		return
 	}
 
-	// Set cookie only after the transaction committed and the user re-check passed.
-	h.setRefreshCookie(c, newRawToken)
+	// Set cookie only after the transaction committed and the re-checks passed.
+	h.setRefreshCookie(c, newRawToken, newExpiresAt)
 
 	// Record success only after the access token was generated: the refresh is
 	// not complete until this point.
 	middleware.RecordRefresh("success")
 	c.JSON(http.StatusOK, RefreshResponse{Token: accessToken})
+}
+
+// findRefreshToken looks up a refresh token by hash. On failure it writes the
+// response (401 for an unknown token, 500 for a repository error) and returns
+// false.
+func (h *AuthHandler) findRefreshToken(c *gin.Context, tokenHash string) (*models.RefreshToken, bool) {
+	stored, err := h.refreshTokenRepo.FindByTokenHash(tokenHash)
+	if err == nil {
+		return stored, true
+	}
+	if isNotFoundError(err) {
+		h.clearRefreshCookie(c)
+		middleware.RecordRefresh("revoked")
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid refresh token"})
+	} else {
+		slog.Error("Failed to look up refresh token", "error", err)
+		middleware.RecordRefresh("failure")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
+	}
+	return nil, false
+}
+
+// refreshConsumedToken handles a refresh with a token that is already revoked.
+//
+// Grace: a token that a normal rotation consumed less than RefreshReuseGrace
+// ago gets a new access token for the same session, when the session is still
+// active (two tabs refresh with the same cookie at the same time). The
+// response sets no cookie: the first response already set the successor, and
+// nothing is revoked.
+//
+// Replay: any other reuse (after the grace window, or of a token revoked by
+// logout, revoke-all or an admin action, which never has RotatedAt) revokes
+// the session family. Only the family is revoked, not all sessions of the
+// user: the replayed token can only belong to this family, and revoking the
+// other devices of the user adds no protection (refresh token rotation family
+// revocation, OAuth 2.0 Security BCP).
+func (h *AuthHandler) refreshConsumedToken(c *gin.Context, stored *models.RefreshToken, now time.Time) {
+	family := stored.SessionFamily()
+	if h.withinReuseGrace(stored, now) {
+		user, err := h.userRepo.FindByID(stored.UserID)
+		if err != nil && !isNotFoundError(err) {
+			slog.Error("Failed to find user for refresh", "user_id", stored.UserID, "error", err)
+			middleware.RecordRefresh("failure")
+			c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
+			return
+		}
+		if err == nil && !user.Disabled {
+			active, countErr := h.refreshTokenRepo.CountActiveInFamily(family)
+			if countErr != nil {
+				slog.Error("Failed to check refresh token family", "user_id", stored.UserID, "error", countErr)
+				middleware.RecordRefresh("failure")
+				c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
+				return
+			}
+			if active > 0 {
+				h.respondGraceRefresh(c, user, family)
+				return
+			}
+		}
+	}
+
+	slog.Warn("Refresh token reuse detected; revoking session", "user_id", stored.UserID, "token_id", stored.ID)
+	if err := h.refreshTokenRepo.RevokeFamily(family); err != nil {
+		slog.Error("Failed to revoke refresh token family", "user_id", stored.UserID, "error", err)
+	}
+	h.clearRefreshCookie(c)
+	middleware.RecordRefresh("revoked")
+	c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid refresh token"})
+}
+
+// withinReuseGrace reports whether a consumed token may still get an access
+// token: rotated (not revoked) less than RefreshReuseGrace ago, in a session
+// that has not reached its absolute lifetime.
+func (h *AuthHandler) withinReuseGrace(stored *models.RefreshToken, now time.Time) bool {
+	if h.cfg.RefreshReuseGrace <= 0 || stored.RotatedAt == nil {
+		return false
+	}
+	if now.Sub(*stored.RotatedAt) > h.cfg.RefreshReuseGrace {
+		return false
+	}
+	return !h.sessionExpired(stored, now)
+}
+
+// respondGraceRefresh answers a refresh in the reuse grace window with a new
+// access token only. It does not touch the refresh cookie.
+func (h *AuthHandler) respondGraceRefresh(c *gin.Context, user *models.User, sessionID string) {
+	accessToken, err := h.sessionAccessToken(user, sessionID)
+	if err != nil {
+		slog.Error("Failed to generate access token during refresh", "error", err)
+		middleware.RecordRefresh("failure")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
+		return
+	}
+	if err := recheckUserActive(h.userRepo, user.ID); err != nil {
+		h.rejectRefreshAfterRecheck(c, user.ID, err)
+		return
+	}
+	if err := recheckSessionActive(h.refreshTokenRepo, sessionID); err != nil {
+		h.rejectRefreshAfterSessionCheck(c, user.ID, sessionID, false, err)
+		return
+	}
+	middleware.RecordRefresh("grace")
+	c.JSON(http.StatusOK, RefreshResponse{Token: accessToken})
+}
+
+// errSessionRevoked means the session family has no active refresh token any
+// more (logout-all, admin revoke or replay revocation won a race).
+var errSessionRevoked = errors.New("session_revoked")
+
+// recheckSessionActive runs after an access token is signed and confirms that
+// the session family still has an active refresh token. Callers fail closed on
+// every non-nil result.
+func recheckSessionActive(repo models.RefreshTokenRepository, familyID string) error {
+	active, err := repo.CountActiveInFamily(familyID)
+	if err != nil {
+		return err
+	}
+	if active == 0 {
+		return errSessionRevoked
+	}
+	return nil
+}
+
+// abandonSession revokes a session family that a login created but did not
+// hand out (best effort; the error is only logged).
+func abandonSession(repo models.RefreshTokenRepository, familyID string) {
+	if err := repo.RevokeFamily(familyID); err != nil {
+		slog.Error("Failed to revoke abandoned session", "family_id", familyID, "error", err)
+	}
+}
+
+// rejectRefreshAfterSessionCheck ends a refresh whose session re-check failed.
+// It clears the cookie and revokes nothing more: the family is already revoked,
+// and a repository error is no reason to end other sessions. rotated tells
+// whether the rotation transaction already committed (the client then never
+// receives the new refresh token).
+func (h *AuthHandler) rejectRefreshAfterSessionCheck(c *gin.Context, userID, familyID string, rotated bool, err error) {
+	h.clearRefreshCookie(c)
+	if errors.Is(err, errSessionRevoked) {
+		middleware.RecordRefresh("revoked")
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Session revoked"})
+		return
+	}
+	if rotated {
+		slog.Error("Refresh session re-check failed: rotation committed but response failed",
+			"user_id", userID, "family_id", familyID, "error", err)
+	} else {
+		slog.Error("Refresh session re-check failed", "user_id", userID, "family_id", familyID, "error", err)
+	}
+	middleware.RecordRefresh("failure")
+	c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
+}
+
+// rejectRefreshAfterRecheck ends a refresh whose user re-check failed: it
+// revokes all refresh tokens of the user and clears the cookie.
+func (h *AuthHandler) rejectRefreshAfterRecheck(c *gin.Context, userID string, err error) {
+	_ = h.refreshTokenRepo.RevokeAllForUser(userID)
+	h.clearRefreshCookie(c)
+	switch {
+	case errors.Is(err, errAccountDisabled):
+		middleware.RecordRefresh("disabled")
+		c.JSON(http.StatusForbidden, gin.H{"error": "Account disabled"})
+	case errors.Is(err, errUserGone):
+		middleware.RecordRefresh("revoked")
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid refresh token"})
+	default:
+		slog.Error("Refresh user re-check failed", "user_id", userID, "error", err)
+		middleware.RecordRefresh("failure")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
+	}
+}
+
+// sessionExpired reports whether the session of the token is older than
+// SessionMaxLifetime.
+func (h *AuthHandler) sessionExpired(rt *models.RefreshToken, now time.Time) bool {
+	deadline := sessionDeadline(h.cfg, rt.SessionStart())
+	return !deadline.IsZero() && now.After(deadline)
+}
+
+// sessionAccessToken signs an access token for a refresh session. It carries
+// the provider and email of the user record (the same claims as at login) and
+// the session ID ("sid") that the JWT middleware uses for activity tracking.
+func (h *AuthHandler) sessionAccessToken(user *models.User, sessionID string) (string, error) {
+	return middleware.GenerateTokenWithOpts(middleware.GenerateTokenOptions{
+		UserID:       user.ID,
+		Username:     user.Username,
+		DisplayName:  user.DisplayName,
+		Role:         user.Role,
+		Secret:       h.cfg.JWTSecret,
+		Expiration:   h.cfg.AccessTokenExpiration,
+		AuthProvider: authProviderOf(user),
+		Email:        user.Email,
+		SessionID:    sessionID,
+	})
+}
+
+// authProviderOf returns the auth provider of the user record; "local" when
+// the record has none.
+func authProviderOf(user *models.User) string {
+	if user.AuthProvider == "" {
+		return "local"
+	}
+	return user.AuthProvider
 }
 
 // Logout godoc
@@ -632,39 +847,63 @@ func (h *AuthHandler) CleanupExpiredTokens() {
 	}
 }
 
-// issueRefreshToken generates a new refresh token, stores it, and sets the cookie.
-// excludeTokenID is an optional token ID to skip when enforcing the max token limit
-// (used during rotation to avoid revoking the token currently being consumed).
-func (h *AuthHandler) issueRefreshToken(c *gin.Context, userID string, excludeTokenID ...string) error {
-	rawToken, err := h.issueRefreshTokenWith(c, h.refreshTokenRepo, userID, excludeTokenID...)
-	if err != nil {
-		return err
-	}
-	h.setRefreshCookie(c, rawToken)
-	return nil
+// refreshSession identifies the login session (refresh-token family) that a
+// new refresh token belongs to.
+type refreshSession struct {
+	startedAt time.Time // login time; the absolute lifetime counts from here
+	familyID  string    // ID of the first token of the session; the "sid" claim
+	isNew     bool      // true at login: the first token uses familyID as its ID
 }
 
-// issueRefreshTokenWith is like issueRefreshToken but accepts an explicit repository,
-// allowing the caller to pass a transactional repo for atomic rotation.
-// Returns the raw token string so the caller can set the cookie after a transaction commits.
-func (h *AuthHandler) issueRefreshTokenWith(c *gin.Context, repo models.RefreshTokenRepository, userID string, excludeTokenID ...string) (string, error) {
+// newRefreshSession starts a new session at login.
+func newRefreshSession() refreshSession {
+	return refreshSession{familyID: uuid.New().String(), startedAt: time.Now().UTC(), isNew: true}
+}
+
+// continuedSession keeps the family and the start time of a rotated token.
+func continuedSession(rt *models.RefreshToken) refreshSession {
+	return refreshSession{familyID: rt.SessionFamily(), startedAt: rt.SessionStart()}
+}
+
+// sessionDeadline returns the end of a session that started at start, or the
+// zero time when SessionMaxLifetime is not set.
+func sessionDeadline(cfg *config.AuthConfig, start time.Time) time.Time {
+	if cfg.SessionMaxLifetime <= 0 {
+		return time.Time{}
+	}
+	return start.Add(cfg.SessionMaxLifetime)
+}
+
+// issueRefreshTokenWith creates a refresh token of the session in repo (a
+// transactional repo during rotation) without setting the cookie.
+// Returns the raw token and its expiry so the caller can set the cookie after a
+// transaction commits. excludeTokenID is the token being consumed (rotation)
+// and is skipped when the max token limit is enforced; pass "" at login.
+func (h *AuthHandler) issueRefreshTokenWith(c *gin.Context, repo models.RefreshTokenRepository, userID string, sess refreshSession, excludeTokenID string) (string, time.Time, error) {
+	return createRefreshToken(c, repo, h.cfg, userID, sess, excludeTokenID)
+}
+
+// createRefreshToken stores a new refresh token of the session and returns the
+// raw token and its expiry. The expiry is the earlier of now +
+// RefreshTokenExpiration and the session deadline, so rotation never extends
+// a session. Shared by local login, refresh and OIDC login.
+func createRefreshToken(c *gin.Context, repo models.RefreshTokenRepository, cfg *config.AuthConfig, userID string, sess refreshSession, excludeTokenID string) (string, time.Time, error) {
 	// Clean up excess tokens if over limit.
-	if h.cfg.MaxRefreshTokensPerUser > 0 {
+	if cfg.MaxRefreshTokensPerUser > 0 {
 		activeCount, err := repo.CountActiveForUser(userID)
 		if err != nil {
-			return "", err
+			return "", time.Time{}, err
 		}
-		if int(activeCount) >= h.cfg.MaxRefreshTokensPerUser {
+		if int(activeCount) >= cfg.MaxRefreshTokensPerUser {
 			// Revoke all and start fresh to stay within bounds,
-			// but skip the token currently being consumed (if any)
-			// so RevokeByIDIfActive can still detect replays.
-			if len(excludeTokenID) > 0 && excludeTokenID[0] != "" {
-				if err := repo.RevokeAllForUserExcept(userID, excludeTokenID[0]); err != nil {
-					return "", err
+			// but skip the token currently being consumed (if any).
+			if excludeTokenID != "" {
+				if err := repo.RevokeAllForUserExcept(userID, excludeTokenID); err != nil {
+					return "", time.Time{}, err
 				}
 			} else {
 				if err := repo.RevokeAllForUser(userID); err != nil {
-					return "", err
+					return "", time.Time{}, err
 				}
 			}
 		}
@@ -672,26 +911,45 @@ func (h *AuthHandler) issueRefreshTokenWith(c *gin.Context, repo models.RefreshT
 
 	rawToken, err := generateRefreshToken()
 	if err != nil {
-		return "", err
+		return "", time.Time{}, err
 	}
 
 	now := time.Now().UTC()
+	id := uuid.New().String()
+	if sess.isNew && sess.familyID != "" {
+		id = sess.familyID
+	}
+	familyID := sess.familyID
+	if familyID == "" {
+		familyID = id
+	}
+	startedAt := sess.startedAt
+	if startedAt.IsZero() {
+		startedAt = now
+	}
+	expiresAt := now.Add(cfg.RefreshTokenExpiration)
+	if deadline := sessionDeadline(cfg, startedAt); !deadline.IsZero() && deadline.Before(expiresAt) {
+		expiresAt = deadline
+	}
+
 	rt := &models.RefreshToken{
-		ID:           uuid.New().String(),
-		UserID:       userID,
-		TokenHash:    hashRefreshToken(rawToken),
-		ExpiresAt:    now.Add(h.cfg.RefreshTokenExpiration),
-		LastActivity: now,
-		CreatedAt:    now,
-		UserAgent:    truncate(c.GetHeader("User-Agent"), 500),
-		IPAddress:    c.ClientIP(),
+		ID:               id,
+		UserID:           userID,
+		FamilyID:         familyID,
+		TokenHash:        hashRefreshToken(rawToken),
+		ExpiresAt:        expiresAt,
+		LastActivity:     now,
+		CreatedAt:        now,
+		SessionStartedAt: startedAt,
+		UserAgent:        truncate(c.GetHeader("User-Agent"), 500),
+		IPAddress:        c.ClientIP(),
 	}
 
 	if err := repo.Create(rt); err != nil {
-		return "", err
+		return "", time.Time{}, err
 	}
 
-	return rawToken, nil
+	return rawToken, expiresAt, nil
 }
 
 // generateRefreshToken produces a cryptographically random token string.
@@ -709,29 +967,43 @@ func hashRefreshToken(raw string) string {
 	return hex.EncodeToString(h[:])
 }
 
-func (h *AuthHandler) setRefreshCookie(c *gin.Context, rawToken string) {
-	maxAge := int(h.cfg.RefreshTokenExpiration.Seconds())
-	c.SetSameSite(h.cfg.HTTPSameSite())
+func (h *AuthHandler) setRefreshCookie(c *gin.Context, rawToken string, expiresAt time.Time) {
+	writeRefreshCookie(c, h.cfg, rawToken, expiresAt)
+}
+
+// writeRefreshCookie sets the refresh token cookie. Max-Age follows the token
+// expiry, so the cookie never outlives the session.
+func writeRefreshCookie(c *gin.Context, cfg *config.AuthConfig, rawToken string, expiresAt time.Time) {
+	maxAge := int(time.Until(expiresAt).Seconds())
+	if maxAge < 1 {
+		maxAge = 1 // 0 would mean a browser-session cookie, negative deletes it
+	}
+	c.SetSameSite(cfg.HTTPSameSite())
 	c.SetCookie(
 		refreshTokenCookieName,
 		rawToken,
 		maxAge,
 		"/api/v1/auth",
 		"",
-		h.cfg.SecureCookies,
+		cfg.SecureCookies,
 		true, // httpOnly
 	)
 }
 
 func (h *AuthHandler) clearRefreshCookie(c *gin.Context) {
-	c.SetSameSite(h.cfg.HTTPSameSite())
+	clearRefreshCookieWith(c, h.cfg)
+}
+
+// clearRefreshCookieWith deletes the refresh token cookie (shared with OIDC).
+func clearRefreshCookieWith(c *gin.Context, cfg *config.AuthConfig) {
+	c.SetSameSite(cfg.HTTPSameSite())
 	c.SetCookie(
 		refreshTokenCookieName,
 		"",
 		-1,
 		"/api/v1/auth",
 		"",
-		h.cfg.SecureCookies,
+		cfg.SecureCookies,
 		true,
 	)
 }

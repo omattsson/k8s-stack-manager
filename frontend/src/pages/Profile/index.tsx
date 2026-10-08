@@ -257,7 +257,8 @@ const Profile = () => {
             </Box>
             <Typography color="text.secondary">Authentication:</Typography>
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-              {authProvider ? (
+              {/* The backend sends auth_provider "local" for local users; only other values are SSO. */}
+              {authProvider && authProvider !== 'local' ? (
                 <Chip
                   icon={<SecurityOutlinedIcon />}
                   label={`SSO via ${oidcConfig?.provider_name || authProvider}`}

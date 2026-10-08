@@ -92,6 +92,14 @@ Key environment variables (see `docker-compose.yml` for full list):
 | `RATE_LIMIT` | `100` | Requests per minute per IP |
 | `CORS_ALLOWED_ORIGINS` | `*` | Allowed CORS origins |
 | `SESSION_STORE` | `mysql` | Session store backend (`mysql` or `memory`) for token blocklist and OIDC state |
+| `ACCESS_TOKEN_EXPIRATION` | `15m` | Access-token lifetime when refresh tokens are on |
+| `REFRESH_TOKEN_EXPIRATION` | `168h` | Upper limit for one refresh token |
+| `SESSION_IDLE_TIMEOUT` | `30m` | End a session after this time without authenticated requests |
+| `SESSION_MAX_LIFETIME` | `12h` | Absolute session lifetime from login; refresh never extends it (at least `ACCESS_TOKEN_EXPIRATION`) |
+| `REFRESH_REUSE_GRACE` | `30s` | A just-rotated refresh token still gets a new access token (no new cookie) for this time; `0` disables, max `5m` |
+| `SECURE_COOKIES` | `false` | `Secure` flag on the refresh-token cookie; set `true` behind HTTPS |
+
+See [Sessions](../WIKI.md#sessions) for how the session limits work together.
 
 ## Data Storage
 

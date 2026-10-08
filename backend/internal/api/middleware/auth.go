@@ -1,12 +1,14 @@
 package middleware
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"strings"
 	"time"
 
+	"backend/internal/cache"
 	"backend/internal/sessionstore"
 
 	"github.com/gin-gonic/gin"
@@ -20,6 +22,7 @@ const (
 	contextKeyRole     = "role"
 	contextKeyJTI      = "jti"
 	contextKeyExpiry   = "tokenExpiry"
+	contextKeySID      = "sessionID"
 )
 
 // Claims represents the JWT claims payload.
@@ -30,6 +33,9 @@ type Claims struct {
 	Role         string `json:"role"`
 	AuthProvider string `json:"auth_provider,omitempty"`
 	Email        string `json:"email,omitempty"`
+	// SessionID is the refresh-token family of the login session ("sid").
+	// Empty for tokens outside a refresh session (for example CLI tokens).
+	SessionID string `json:"sid,omitempty"`
 	jwt.RegisteredClaims
 }
 
@@ -59,6 +65,74 @@ func AuthRequired(jwtSecret string) gin.HandlerFunc {
 // AuthRequiredWithSessionStore returns middleware that validates JWT tokens and checks
 // the provided session store for revoked tokens. If store is nil, no revocation check is performed.
 func AuthRequiredWithSessionStore(jwtSecret string, store sessionstore.SessionStore) gin.HandlerFunc {
+	return AuthRequiredWithOptions(JWTAuthOptions{JWTSecret: jwtSecret, SessionStore: store})
+}
+
+// SessionActivityFunc records activity of a login session. sessionID is the
+// "sid" claim (refresh-token family ID). The middleware calls it outside the
+// request goroutine, so it must be safe for concurrent use.
+type SessionActivityFunc func(ctx context.Context, sessionID string, at time.Time) error
+
+// sessionActivityInterval is the minimum time between two activity writes for
+// one session. It keeps the DB write rate at one per minute per session.
+const sessionActivityInterval = time.Minute
+
+// sessionActivityTimeout bounds one activity write, so a slow database cannot
+// pile up goroutines.
+const sessionActivityTimeout = 5 * time.Second
+
+// JWTAuthOptions configures AuthRequiredWithOptions.
+type JWTAuthOptions struct {
+	JWTSecret    string
+	SessionStore sessionstore.SessionStore // nil: no revocation checks
+	// OnSessionActivity is called (throttled, async) for each authenticated
+	// request with a "sid" claim. nil: no activity tracking.
+	OnSessionActivity SessionActivityFunc
+}
+
+// sessionActivityTracker throttles OnSessionActivity calls per session.
+type sessionActivityTracker struct {
+	fn       SessionActivityFunc
+	lastSeen *cache.TTLCache[time.Time]
+}
+
+func newSessionActivityTracker(fn SessionActivityFunc) *sessionActivityTracker {
+	if fn == nil {
+		return nil
+	}
+	return &sessionActivityTracker{
+		fn:       fn,
+		lastSeen: cache.New[time.Time](2*sessionActivityInterval, sessionActivityInterval),
+	}
+}
+
+// touch records activity for sessionID at most once per interval. The write
+// runs in a goroutine with a context that the client cannot cancel and that
+// expires after sessionActivityTimeout.
+func (t *sessionActivityTracker) touch(ctx context.Context, sessionID string) {
+	if t == nil || sessionID == "" {
+		return
+	}
+	now := time.Now().UTC()
+	if prev, ok := t.lastSeen.Get(sessionID); ok && now.Sub(prev) < sessionActivityInterval {
+		return
+	}
+	t.lastSeen.Set(sessionID, now)
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), sessionActivityTimeout)
+	go func() {
+		defer cancel()
+		if err := t.fn(ctx, sessionID, now); err != nil {
+			slog.Warn("Failed to record session activity", "error", err)
+		}
+	}()
+}
+
+// AuthRequiredWithOptions returns JWT middleware with revocation checks and
+// optional session activity tracking.
+func AuthRequiredWithOptions(opts JWTAuthOptions) gin.HandlerFunc {
+	jwtSecret := opts.JWTSecret
+	store := opts.SessionStore
+	activity := newSessionActivityTracker(opts.OnSessionActivity)
 	return func(c *gin.Context) {
 		authHeader := c.GetHeader("Authorization")
 		if authHeader == "" {
@@ -119,6 +193,10 @@ func AuthRequiredWithSessionStore(jwtSecret string, store sessionstore.SessionSt
 		if claims.ExpiresAt != nil {
 			c.Set(contextKeyExpiry, claims.ExpiresAt.Time)
 		}
+		if claims.SessionID != "" {
+			c.Set(contextKeySID, claims.SessionID)
+			activity.touch(c.Request.Context(), claims.SessionID)
+		}
 		c.Next()
 	}
 }
@@ -133,6 +211,7 @@ type GenerateTokenOptions struct {
 	Expiration   time.Duration
 	AuthProvider string // optional, included in claims when non-empty
 	Email        string // optional, included in claims when non-empty
+	SessionID    string // optional "sid" claim: refresh-token family of the session
 }
 
 // GenerateTokenWithOpts creates a signed JWT token using the provided options.
@@ -145,6 +224,7 @@ func GenerateTokenWithOpts(opts GenerateTokenOptions) (string, error) {
 		Role:         opts.Role,
 		AuthProvider: opts.AuthProvider,
 		Email:        opts.Email,
+		SessionID:    opts.SessionID,
 		RegisteredClaims: jwt.RegisteredClaims{
 			ID:        uuid.New().String(),
 			ExpiresAt: jwt.NewNumericDate(now.Add(opts.Expiration)),
@@ -207,6 +287,17 @@ func GetTokenExpiryFromContext(c *gin.Context) (time.Time, bool) {
 		}
 	}
 	return time.Time{}, false
+}
+
+// GetSessionIDFromContext returns the "sid" claim set by the JWT middleware,
+// or "" for API-key auth and tokens without a session.
+func GetSessionIDFromContext(c *gin.Context) string {
+	if v, exists := c.Get(contextKeySID); exists {
+		if s, ok := v.(string); ok {
+			return s
+		}
+	}
+	return ""
 }
 
 // GetJTIFromContext extracts the JWT ID (jti) set by AuthRequired middleware.

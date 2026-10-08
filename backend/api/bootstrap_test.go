@@ -767,13 +767,20 @@ func (s *stubRefreshTokenRepo) FindByTokenHash(_ string) (*models.RefreshToken, 
 	return nil, nil
 }
 func (s *stubRefreshTokenRepo) RevokeByID(_ string) error                  { return nil }
-func (s *stubRefreshTokenRepo) RevokeByIDIfActive(_ string) (int64, error) { return 0, nil }
 func (s *stubRefreshTokenRepo) RevokeAllForUser(_ string) error            { return nil }
 func (s *stubRefreshTokenRepo) RevokeAllForUserExcept(_, _ string) error   { return nil }
 func (s *stubRefreshTokenRepo) DeleteExpired() (int64, error)              { return 0, nil }
 func (s *stubRefreshTokenRepo) CountActiveForUser(_ string) (int64, error) { return 0, nil }
 func (s *stubRefreshTokenRepo) WithTx(fn func(txRepo models.RefreshTokenRepository) error) error {
 	return fn(s)
+}
+func (s *stubRefreshTokenRepo) MarkRotatedIfActive(_ string, _ time.Time) (int64, error) {
+	return 0, nil
+}
+func (s *stubRefreshTokenRepo) RevokeFamily(_ string) error                 { return nil }
+func (s *stubRefreshTokenRepo) CountActiveInFamily(_ string) (int64, error) { return 0, nil }
+func (s *stubRefreshTokenRepo) TouchFamily(_ context.Context, _ string, _ time.Time) error {
+	return nil
 }
 
 // ---- stubTxRunner ----
