@@ -7,6 +7,16 @@ export interface WsMessage {
   payload: Record<string, unknown>;
 }
 
+/** Payload of a `deployment.status` message. */
+export interface DeploymentStatusPayload {
+  instance_id?: string;
+  status?: string;
+  log_id?: string;
+  /** Operation that runs. Older servers omit it. A rollback reports the status "deploying". */
+  action?: 'deploy' | 'rollback' | 'stop' | 'clean';
+  error_message?: string;
+}
+
 type MessageHandler = (msg: WsMessage) => void;
 
 // Module-level singleton connection manager.

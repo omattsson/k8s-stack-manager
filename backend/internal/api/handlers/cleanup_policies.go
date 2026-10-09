@@ -49,7 +49,7 @@ func (h *CleanupPolicyHandler) ListCleanupPolicies(c *gin.Context) {
 
 // CreateCleanupPolicy godoc
 // @Summary     Create a cleanup policy
-// @Description Creates a new cleanup policy and reloads the scheduler
+// @Description Creates a new cleanup policy and reloads the scheduler. condition is a comma-separated list of key:value pairs (all must match): status:<status>; idle_days:<N> (no deploy for N days, creation time when never deployed); age_days:<N> (created more than N days ago); stopped_days:<N> (stopped, and the last stop finished N or more days ago; instances without a recorded stop time never match); ttl_expired.
 // @Tags        cleanup-policies
 // @Accept      json
 // @Produce     json
@@ -94,7 +94,7 @@ func (h *CleanupPolicyHandler) CreateCleanupPolicy(c *gin.Context) {
 
 // UpdateCleanupPolicy godoc
 // @Summary     Update a cleanup policy
-// @Description Updates an existing cleanup policy and reloads the scheduler
+// @Description Updates an existing cleanup policy and reloads the scheduler. See the create endpoint for the condition syntax (status, idle_days, age_days, stopped_days, ttl_expired).
 // @Tags        cleanup-policies
 // @Accept      json
 // @Produce     json

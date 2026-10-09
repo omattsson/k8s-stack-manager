@@ -83,3 +83,11 @@ func (r *GORMChartConfigRepository) ListByDefinition(definitionID string) ([]mod
 	}
 	return configs, nil
 }
+
+// DeleteByDefinition deletes all chart configs of a definition in one statement.
+func (r *GORMChartConfigRepository) DeleteByDefinition(definitionID string) error {
+	if err := r.db.Where("stack_definition_id = ?", definitionID).Delete(&models.ChartConfig{}).Error; err != nil {
+		return dberrors.NewDatabaseError("delete_by_definition", err)
+	}
+	return nil
+}

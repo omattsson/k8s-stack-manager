@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import Detail from '../Detail';
@@ -30,8 +30,16 @@ vi.mock('../../../context/AuthContext', () => ({
   }),
 }));
 
+// Keeps the last WebSocket message handler so tests can push messages.
+const wsState = vi.hoisted(() => ({
+  handler: null as null | ((msg: { type: string; payload: unknown }) => void),
+}));
+
 vi.mock('../../../hooks/useWebSocket', () => ({
-  useWebSocket: () => ({ send: vi.fn() }),
+  useWebSocket: (handler: (msg: { type: string; payload: unknown }) => void) => {
+    wsState.handler = handler;
+    return { send: vi.fn() };
+  },
 }));
 
 vi.mock('../../../hooks/useUnsavedChanges', () => ({
@@ -69,6 +77,7 @@ vi.mock('../../../api/client', () => ({
     getStatus: vi.fn(),
     getPods: vi.fn(),
     extend: vi.fn(),
+    rollback: vi.fn(),
   },
   definitionService: {
     get: vi.fn(),
@@ -109,9 +118,19 @@ vi.mock('../../../utils/download', () => ({
 }));
 
 vi.mock('../../../components/DeploymentLogViewer', () => ({
-  default: ({ logs }: { logs: unknown[] }) => (
+  default: ({ logs, currentDeployLogId, onRollbackTo }: {
+    logs: { id: string; action: string; status: string }[];
+    currentDeployLogId?: string;
+    onRollbackTo?: (log: { id: string }) => void;
+  }) => (
     <div data-testid="deployment-log-viewer">
       {logs.length} log entries
+      <span data-testid="log-actions">{logs.map((l) => l.action).join(',')}</span>
+      {onRollbackTo && logs
+        .filter((l) => l.action === 'deploy' && l.status === 'success' && l.id !== currentDeployLogId)
+        .map((l) => (
+          <button key={l.id} onClick={() => onRollbackTo(l)}>Roll back to {l.id}</button>
+        ))}
     </div>
   ),
 }));
@@ -228,6 +247,7 @@ const mockInstance = {
   ttl_minutes: 0,
   expires_at: undefined as string | undefined,
   error_message: undefined as string | undefined,
+  values_drift: undefined as boolean | undefined,
 };
 
 const mockDefinition = {
@@ -370,14 +390,15 @@ describe('StackInstances Detail', () => {
     expect(screen.getByRole('button', { name: /stop/i })).toBeInTheDocument();
   });
 
-  it('does NOT show Deploy button for running instance', async () => {
+  it('shows Redeploy instead of Deploy for running instance', async () => {
     setupMocks({ status: 'running' });
     renderDetail();
 
     await waitFor(() => {
       expect(screen.getByText('Test Instance')).toBeInTheDocument();
     });
-    expect(screen.queryByRole('button', { name: /deploy/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Deploy' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Redeploy' })).toBeInTheDocument();
   });
 
   it('shows Deploy button for stopped instance', async () => {
@@ -390,14 +411,14 @@ describe('StackInstances Detail', () => {
     expect(screen.getByRole('button', { name: /deploy/i })).toBeInTheDocument();
   });
 
-  it('shows Deploy button for error instance', async () => {
+  it('shows Redeploy button for error instance', async () => {
     setupMocks({ status: 'error' }, { deployLogReject: true });
     renderDetail();
 
     await waitFor(() => {
       expect(screen.getByText('Test Instance')).toBeInTheDocument();
     });
-    expect(screen.getByRole('button', { name: /deploy/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Redeploy' })).toBeInTheDocument();
   });
 
   it('calls instanceService.deploy when Deploy button is clicked', async () => {
@@ -915,10 +936,12 @@ describe('StackInstances Detail', () => {
     });
 
     await user.click(screen.getByRole('button', { name: /extend/i }));
+    await user.click(screen.getByRole('menuitem', { name: '+4 h' }));
 
     await waitFor(() => {
-      expect(instanceService.extend).toHaveBeenCalledWith('123');
+      expect(instanceService.extend).toHaveBeenCalledWith('123', 240);
     });
+    expect(await screen.findByText(/^Extended by 4 h\. Expires .+ \(in .+\)$/)).toBeInTheDocument();
   });
 
   it('shows Expired chip when instance stopped by TTL', async () => {
@@ -963,11 +986,11 @@ describe('StackInstances Detail', () => {
     expect(screen.getByTestId('ttl-value')).toHaveTextContent('240');
   });
 
-  it('calls instanceService.extend when TTL is changed', async () => {
+  it('sets the TTL through update when TTL is changed', async () => {
     const user = userEvent.setup();
     (useCountdown as unknown as MockFn).mockReturnValue(null);
     const inst = setupMocks({ status: 'draft', ttl_minutes: 0 }, { deployLogReject: true });
-    (instanceService.extend as MockFn).mockResolvedValue({ ...inst, ttl_minutes: 240 });
+    (instanceService.update as MockFn).mockResolvedValue({ ...inst, ttl_minutes: 240 });
 
     renderDetail();
 
@@ -978,8 +1001,9 @@ describe('StackInstances Detail', () => {
     await user.click(screen.getByTestId('ttl-change'));
 
     await waitFor(() => {
-      expect(instanceService.extend).toHaveBeenCalledWith('123', 240);
+      expect(instanceService.update).toHaveBeenCalledWith('123', { ttl_minutes: 240 });
     });
+    expect(instanceService.extend).not.toHaveBeenCalled();
   });
 
   it('confirms delete and navigates to dashboard', async () => {
@@ -1031,39 +1055,107 @@ describe('StackInstances Detail', () => {
     });
   });
 
-  it('clones instance and navigates to new instance', async () => {
+  it('opens the clone dialog with a valid suggested name and the source branch', async () => {
     const user = userEvent.setup();
-    setupMocks();
-    (instanceService.clone as MockFn).mockResolvedValue({ id: 'cloned-123' });
+    setupMocks({ status: 'draft', ttl_minutes: 240 }, { deployLogReject: true });
     renderDetail();
-
     await waitFor(() => {
       expect(screen.getByText('Test Instance')).toBeInTheDocument();
     });
 
-    await user.click(screen.getByRole('button', { name: /clone/i }));
+    await user.click(screen.getByRole('button', { name: 'Clone' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Clone Instance' });
+    expect(within(dialog).getByRole('textbox', { name: /name/i })).toHaveValue('test-instance-copy');
+    expect(within(dialog).getByRole('textbox', { name: /branch/i })).toHaveValue('main');
+    expect(within(dialog).getByTestId('ttl-value')).toHaveTextContent('240');
+    expect(instanceService.clone).not.toHaveBeenCalled();
+  });
+
+  it('validates the clone name live', async () => {
+    const user = userEvent.setup();
+    setupMocks({ status: 'draft' }, { deployLogReject: true });
+    renderDetail();
+    await waitFor(() => {
+      expect(screen.getByText('Test Instance')).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole('button', { name: 'Clone' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Clone Instance' });
+    const nameInput = within(dialog).getByRole('textbox', { name: /name/i });
+
+    await user.clear(nameInput);
+    await user.type(nameInput, 'Test Instance (Copy)');
+    expect(within(dialog).getByText('Use lowercase letters only')).toBeInTheDocument();
+    expect(within(dialog).getByRole('button', { name: 'Create Clone' })).toBeDisabled();
+
+    await user.clear(nameInput);
+    await user.type(nameInput, 'x'.repeat(51));
+    expect(within(dialog).getByText('Use 50 characters or fewer')).toBeInTheDocument();
+    expect(within(dialog).getByRole('button', { name: 'Create Clone' })).toBeDisabled();
+
+    await user.clear(nameInput);
+    expect(within(dialog).getByText('Instance name is required')).toBeInTheDocument();
+    expect(within(dialog).getByRole('button', { name: 'Create Clone' })).toBeDisabled();
+  });
+
+  it('clones with name, branch and TTL and navigates to the new instance', async () => {
+    const user = userEvent.setup();
+    setupMocks({ status: 'draft', ttl_minutes: 240 }, { deployLogReject: true });
+    (instanceService.clone as MockFn).mockResolvedValue({ id: 'cloned-123' });
+    renderDetail();
+    await waitFor(() => {
+      expect(screen.getByText('Test Instance')).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole('button', { name: 'Clone' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Clone Instance' });
+    const nameInput = within(dialog).getByRole('textbox', { name: /name/i });
+    await user.clear(nameInput);
+    await user.type(nameInput, 'my-copy');
+    const branchInput = within(dialog).getByRole('textbox', { name: /branch/i });
+    await user.clear(branchInput);
+    await user.type(branchInput, 'feature-x');
+    await user.click(within(dialog).getByRole('button', { name: 'Create Clone' }));
 
     await waitFor(() => {
-      expect(instanceService.clone).toHaveBeenCalledWith('123');
+      expect(instanceService.clone).toHaveBeenCalledWith('123', { name: 'my-copy', branch: 'feature-x', ttl_minutes: 240 });
     });
     expect(mockNavigate).toHaveBeenCalledWith('/stack-instances/cloned-123');
   });
 
-  it('shows error when clone fails', async () => {
+  it('sends no name when the suggested clone name is kept', async () => {
     const user = userEvent.setup();
-    setupMocks();
-    (instanceService.clone as MockFn).mockRejectedValue(new Error('Server error'));
+    setupMocks({ status: 'draft', ttl_minutes: 240 }, { deployLogReject: true });
+    (instanceService.clone as MockFn).mockResolvedValue({ id: 'cloned-123' });
     renderDetail();
-
     await waitFor(() => {
       expect(screen.getByText('Test Instance')).toBeInTheDocument();
     });
 
-    await user.click(screen.getByRole('button', { name: /clone/i }));
+    await user.click(screen.getByRole('button', { name: 'Clone' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Clone Instance' });
+    await user.click(within(dialog).getByRole('button', { name: 'Create Clone' }));
 
     await waitFor(() => {
-      expect(screen.getByText('Failed to clone instance')).toBeInTheDocument();
+      expect(instanceService.clone).toHaveBeenCalledWith('123', { branch: 'main', ttl_minutes: 240 });
     });
+  });
+
+  it('shows the API error in the clone dialog when clone fails', async () => {
+    const user = userEvent.setup();
+    setupMocks({ status: 'draft' }, { deployLogReject: true });
+    (instanceService.clone as MockFn).mockRejectedValue({ response: { status: 400, data: { error: 'invalid name' } } });
+    renderDetail();
+    await waitFor(() => {
+      expect(screen.getByText('Test Instance')).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole('button', { name: 'Clone' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Clone Instance' });
+    await user.click(within(dialog).getByRole('button', { name: 'Create Clone' }));
+
+    expect(await within(dialog).findByText(/invalid name/)).toBeInTheDocument();
+    expect(mockNavigate).not.toHaveBeenCalled();
   });
 
   it('downloads the values ZIP unchanged when All charts (ZIP) is chosen', async () => {
@@ -1290,9 +1382,10 @@ describe('StackInstances Detail', () => {
       expect(screen.getByText('Test Instance')).toBeInTheDocument();
     });
 
-    // Click the Extend button (shown next to countdown)
+    // Click the Extend button (shown next to countdown) and pick an option
     const extendBtn = await screen.findByRole('button', { name: /extend/i });
     await user.click(extendBtn);
+    await user.click(screen.getByRole('menuitem', { name: '+1 h' }));
 
     await waitFor(() => {
       expect(screen.getByText('Failed to extend TTL')).toBeInTheDocument();
@@ -1302,7 +1395,7 @@ describe('StackInstances Detail', () => {
   it('shows error when TTL change fails', async () => {
     const user = userEvent.setup();
     setupMocks({ status: 'draft', ttl_minutes: 60 }, { deployLogReject: true });
-    (instanceService.extend as MockFn).mockRejectedValue(new Error('Server error'));
+    (instanceService.update as MockFn).mockRejectedValue(new Error('Server error'));
     renderDetail();
 
     await waitFor(() => {
@@ -1907,5 +2000,389 @@ describe('StackInstances Detail permissions', () => {
     expect(screen.getByText('https://my-stack.example.com')).toBeInTheDocument();
     expect(screen.getByTestId('pod-status-display')).toBeInTheDocument();
     expect(screen.getByTestId('deployment-log-viewer')).toBeInTheDocument();
+  });
+});
+
+describe('StackInstances Detail redeploy, rollback and drift', () => {
+  afterEach(() => {
+    vi.clearAllMocks();
+    authState.user = { id: 'user1', username: 'alice', role: 'user', display_name: 'Alice' };
+  });
+
+  const deployLog = (id: string, hour: number, overrides: Record<string, unknown> = {}) => ({
+    id,
+    stack_instance_id: '123',
+    action: 'deploy',
+    status: 'success',
+    output: '',
+    started_at: new Date(Date.UTC(2030, 0, 1, hour, 0)).toISOString(),
+    ...overrides,
+  });
+  // Newest first, as the API returns them. d3 is the current deploy.
+  const threeDeploys = [
+    deployLog('d3', 12),
+    deployLog('stop1', 11, { action: 'stop' }),
+    deployLog('d2', 10, { branch: 'feature-x' }),
+    deployLog('failed', 9, { status: 'error' }),
+    deployLog('d1', 8),
+  ];
+  const timeOf = (hour: number) => new Date(Date.UTC(2030, 0, 1, hour, 0)).toLocaleString();
+
+  const waitForPage = async () => {
+    await waitFor(() => {
+      expect(screen.getByText('Test Instance')).toBeInTheDocument();
+    });
+  };
+
+  it.each(['running', 'partial', 'error'])('shows Redeploy and not Deploy for a %s instance', async (status) => {
+    setupMocks({ status });
+    renderDetail();
+    await waitForPage();
+    expect(screen.getByRole('button', { name: 'Redeploy' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Deploy' })).not.toBeInTheDocument();
+  });
+
+  it.each(['draft', 'stopped'])('shows Deploy and not Redeploy for a %s instance', async (status) => {
+    setupMocks({ status });
+    renderDetail();
+    await waitForPage();
+    expect(screen.getByRole('button', { name: 'Deploy' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Redeploy' })).not.toBeInTheDocument();
+  });
+
+  it('opens the Deploy Preview dialog from Redeploy and deploys on confirm', async () => {
+    const user = userEvent.setup();
+    setupMocks({ status: 'running' });
+    (instanceService.deploy as MockFn).mockResolvedValue({ log_id: 'l1', message: 'ok' });
+    renderDetail();
+    await waitForPage();
+
+    await user.click(screen.getByRole('button', { name: 'Redeploy' }));
+    const dialog = screen.getByTestId('deploy-preview-dialog');
+    await user.click(within(dialog).getByRole('button', { name: 'Deploy' }));
+
+    await waitFor(() => expect(instanceService.deploy).toHaveBeenCalledWith('123'));
+  });
+
+  it('shows "Saved. Redeploy to apply." after saving changes on a running instance', async () => {
+    const user = userEvent.setup();
+    setupMocks({ status: 'running' });
+    (instanceService.setOverride as MockFn).mockResolvedValue({});
+    renderDetail();
+    await waitForPage();
+
+    await user.click(screen.getByRole('button', { name: 'edit Your Overrides' }));
+    await user.click(screen.getByRole('button', { name: 'Save Changes' }));
+
+    const hint = await screen.findByText('Saved. Redeploy to apply.');
+    const alert = hint.closest('[role="alert"]') as HTMLElement;
+    await user.click(within(alert).getByRole('button', { name: 'Redeploy' }));
+    expect(screen.getByTestId('deploy-preview-dialog')).toBeInTheDocument();
+  });
+
+  it('does not show the redeploy hint after a save without changes', async () => {
+    const user = userEvent.setup();
+    setupMocks({ status: 'running' });
+    renderDetail();
+    await waitForPage();
+
+    await user.click(screen.getByRole('button', { name: 'Save Changes' }));
+    await waitFor(() => expect(screen.getByText('Changes saved successfully')).toBeInTheDocument());
+    expect(screen.queryByText('Saved. Redeploy to apply.')).not.toBeInTheDocument();
+  });
+
+  it('does not show the redeploy hint for a draft instance', async () => {
+    const user = userEvent.setup();
+    setupMocks({ status: 'draft' });
+    (instanceService.setOverride as MockFn).mockResolvedValue({});
+    renderDetail();
+    await waitForPage();
+
+    await user.click(screen.getByRole('button', { name: 'edit Your Overrides' }));
+    await user.click(screen.getByRole('button', { name: 'Save Changes' }));
+    await waitFor(() => expect(screen.getByText('Changes saved successfully')).toBeInTheDocument());
+    expect(screen.queryByText('Saved. Redeploy to apply.')).not.toBeInTheDocument();
+  });
+
+  it('shows Rollback for a running instance with two or more successful deploys', async () => {
+    setupMocks({ status: 'running' }, { logs: threeDeploys });
+    renderDetail();
+    await waitForPage();
+    expect(await screen.findByRole('button', { name: 'Rollback' })).toBeInTheDocument();
+  });
+
+  it('hides Rollback with only one successful deploy', async () => {
+    setupMocks({ status: 'running' }, { logs: [deployLog('d1', 8), deployLog('x', 9, { status: 'error' })] });
+    renderDetail();
+    await waitForPage();
+    await waitFor(() => expect(screen.getByTestId('deployment-log-viewer')).toBeInTheDocument());
+    expect(screen.queryByRole('button', { name: 'Rollback' })).not.toBeInTheDocument();
+  });
+
+  it('hides Rollback for a stopped instance', async () => {
+    setupMocks({ status: 'stopped' }, { logs: threeDeploys });
+    renderDetail();
+    await waitForPage();
+    await waitFor(() => expect(screen.getByTestId('deployment-log-viewer')).toBeInTheDocument());
+    expect(screen.queryByRole('button', { name: 'Rollback' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Roll back to/ })).not.toBeInTheDocument();
+  });
+
+  it('rolls back to the previous deploy by default and names the target', async () => {
+    const user = userEvent.setup();
+    setupMocks({ status: 'running' }, { logs: threeDeploys });
+    (instanceService.rollback as MockFn).mockResolvedValue({ log_id: 'rb1', message: 'ok' });
+    renderDetail();
+    await waitForPage();
+
+    await user.click(await screen.findByRole('button', { name: 'Rollback' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Roll Back Instance' });
+    const radios = within(dialog).getAllByRole('radio');
+    expect(radios).toHaveLength(3);
+    // The current deploy (d3) cannot be selected; the previous one (d2) is the default.
+    expect(within(dialog).getByRole('radio', { name: new RegExp(timeOf(12).replace(/[()]/g, '.')) })).toBeDisabled();
+    expect(within(dialog).getByRole('radio', { name: `${timeOf(10)} (branch feature-x)` })).toBeChecked();
+    expect(within(dialog).getByText(`Roll back "Test Instance" to the deploy of ${timeOf(10)} (branch feature-x)?`)).toBeInTheDocument();
+
+    await user.click(within(dialog).getByRole('button', { name: 'Roll Back' }));
+    await waitFor(() => expect(instanceService.rollback).toHaveBeenCalledWith('123', 'd2'));
+    expect(await screen.findByText('Rollback started. Follow the deployment log.')).toBeInTheDocument();
+  });
+
+  it('names the image and pre-deploy check limits in the rollback dialog', async () => {
+    const user = userEvent.setup();
+    setupMocks({ status: 'running' }, { logs: threeDeploys });
+    renderDetail();
+    await waitForPage();
+
+    await user.click(await screen.findByRole('button', { name: 'Rollback' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Roll Back Instance' });
+    expect(within(dialog).getByText(/restores the stored values of that deploy, not its images/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/Pre-deploy checks do not run for a rollback\. Pre-rollback hooks run\./)).toBeInTheDocument();
+  });
+
+  it('shows the rollback warning and the drift flag from the response', async () => {
+    const user = userEvent.setup();
+    setupMocks({ status: 'running' }, { logs: threeDeploys });
+    (instanceService.rollback as MockFn).mockResolvedValue({
+      log_id: 'rb1', message: 'ok', target_log_id: 'd2', values_drift: true,
+      warning: 'The next deploy applies the stored overrides again.',
+    });
+    renderDetail();
+    await waitForPage();
+    const getCalls = (instanceService.get as MockFn).mock.calls.length;
+
+    await user.click(await screen.findByRole('button', { name: 'Rollback' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Roll Back Instance' });
+    await user.click(within(dialog).getByRole('button', { name: 'Roll Back' }));
+
+    expect(await screen.findByText(
+      'Rollback started. Follow the deployment log. The next deploy applies the stored overrides again.',
+    )).toBeInTheDocument();
+    // One refetch after the rollback. It returns no drift yet (the log still
+    // runs), so the flag from the rollback response stays.
+    await waitFor(() => expect(instanceService.getDeployLog).toHaveBeenCalledTimes(2));
+    expect((instanceService.get as MockFn).mock.calls.length).toBe(getCalls + 1);
+    expect(screen.getByText(/The running values differ from the stored overrides/)).toBeInTheDocument();
+  });
+
+  it('labels the placeholder log of a rollback as rollback', async () => {
+    const user = userEvent.setup();
+    setupMocks({ status: 'running' }, { logs: threeDeploys });
+    (instanceService.rollback as MockFn).mockResolvedValue({ log_id: 'rb1', message: 'ok' });
+    renderDetail();
+    await waitForPage();
+
+    await user.click(await screen.findByRole('button', { name: 'Rollback' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Roll Back Instance' });
+    await user.click(within(dialog).getByRole('button', { name: 'Roll Back' }));
+    await screen.findByText('Rollback started. Follow the deployment log.');
+
+    act(() => {
+      wsState.handler?.({ type: 'deployment.status', payload: { instance_id: '123', status: 'deploying', log_id: 'rb1' } });
+    });
+    await waitFor(() => expect(screen.getByTestId('log-actions').textContent?.startsWith('rollback,')).toBe(true));
+  });
+
+  it('labels the placeholder log from the action in the WebSocket message', async () => {
+    setupMocks({ status: 'running' }, { logs: threeDeploys });
+    renderDetail();
+    await waitForPage();
+    await waitFor(() => expect(screen.getByTestId('log-actions')).toBeInTheDocument());
+
+    // A rollback started by another user: no local pending action.
+    act(() => {
+      wsState.handler?.({
+        type: 'deployment.status',
+        payload: { instance_id: '123', status: 'deploying', log_id: 'rb2', action: 'rollback' },
+      });
+    });
+    await waitFor(() => expect(screen.getByTestId('log-actions').textContent?.startsWith('rollback,')).toBe(true));
+  });
+
+  it('labels the placeholder log of a deploy started elsewhere as deploy', async () => {
+    setupMocks({ status: 'running' }, { logs: threeDeploys });
+    renderDetail();
+    await waitForPage();
+    await waitFor(() => expect(screen.getByTestId('log-actions')).toBeInTheDocument());
+
+    act(() => {
+      wsState.handler?.({ type: 'deployment.status', payload: { instance_id: '123', status: 'deploying', log_id: 'x1' } });
+    });
+    await waitFor(() => expect(screen.getByTestId('log-actions').textContent?.startsWith('deploy,')).toBe(true));
+  });
+
+  it('keeps a newer WebSocket status when a late instance fetch returns', async () => {
+    const inst = setupMocks({ status: 'running' }, { logs: threeDeploys });
+    renderDetail();
+    await waitForPage();
+
+    // The terminal refetch is slow; a newer status arrives before it returns.
+    let resolveGet: (value: unknown) => void = () => {};
+    (instanceService.get as MockFn).mockImplementation(() => new Promise((resolve) => { resolveGet = resolve; }));
+    act(() => {
+      wsState.handler?.({ type: 'deployment.status', payload: { instance_id: '123', status: 'running' } });
+    });
+    act(() => {
+      wsState.handler?.({ type: 'deployment.status', payload: { instance_id: '123', status: 'stopping' } });
+    });
+    await act(async () => {
+      resolveGet({ ...inst, status: 'running', values_drift: true });
+    });
+
+    expect(screen.getByTestId('status-badge')).toHaveTextContent('stopping');
+    // Other fields from the fetch still apply.
+    expect(screen.getByText(/The running values differ from the stored overrides/)).toBeInTheDocument();
+  });
+
+  it('keeps the current error message when a late instance fetch returns', async () => {
+    const inst = setupMocks({ status: 'running' }, { logs: threeDeploys });
+    renderDetail();
+    await waitForPage();
+
+    // Each fetch waits; the test resolves only the first (stale) one.
+    const resolvers: ((value: unknown) => void)[] = [];
+    (instanceService.get as MockFn).mockImplementation(() => new Promise((resolve) => { resolvers.push(resolve); }));
+    act(() => {
+      wsState.handler?.({ type: 'deployment.status', payload: { instance_id: '123', status: 'running' } });
+    });
+    act(() => {
+      wsState.handler?.({ type: 'deployment.status', payload: { instance_id: '123', status: 'stopped' } });
+    });
+    // The stale fetch carries an old error message. With the newer status
+    // "stopped" it would show the Expired chip.
+    await act(async () => {
+      resolvers[0]({ ...inst, status: 'running', error_message: 'Expired (TTL)' });
+    });
+
+    expect(screen.getByTestId('status-badge')).toHaveTextContent('stopped');
+    expect(screen.queryByText('Expired')).not.toBeInTheDocument();
+  });
+
+  it('refetches the instance on a terminal WebSocket status so the drift alert follows', async () => {
+    const inst = setupMocks({ status: 'running' }, { logs: threeDeploys });
+    renderDetail();
+    await waitForPage();
+    expect(screen.queryByText(/The running values differ from the stored overrides/)).not.toBeInTheDocument();
+
+    // Rollback finished: the instance now has drift.
+    (instanceService.get as MockFn).mockResolvedValue({ ...inst, values_drift: true });
+    act(() => {
+      wsState.handler?.({ type: 'deployment.status', payload: { instance_id: '123', status: 'running' } });
+    });
+    expect(await screen.findByText(/The running values differ from the stored overrides/)).toBeInTheDocument();
+
+    // Redeploy finished: the drift is gone.
+    (instanceService.get as MockFn).mockResolvedValue({ ...inst, values_drift: false });
+    act(() => {
+      wsState.handler?.({ type: 'deployment.status', payload: { instance_id: '123', status: 'running' } });
+    });
+    await waitFor(() => {
+      expect(screen.queryByText(/The running values differ from the stored overrides/)).not.toBeInTheDocument();
+    });
+  });
+
+  it('rolls back to a selected older deploy', async () => {
+    const user = userEvent.setup();
+    setupMocks({ status: 'running' }, { logs: threeDeploys });
+    (instanceService.rollback as MockFn).mockResolvedValue({ log_id: 'rb1', message: 'ok' });
+    renderDetail();
+    await waitForPage();
+
+    await user.click(await screen.findByRole('button', { name: 'Rollback' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Roll Back Instance' });
+    await user.click(within(dialog).getByRole('radio', { name: timeOf(8) }));
+    expect(within(dialog).getByText(`Roll back "Test Instance" to the deploy of ${timeOf(8)}?`)).toBeInTheDocument();
+    await user.click(within(dialog).getByRole('button', { name: 'Roll Back' }));
+
+    await waitFor(() => expect(instanceService.rollback).toHaveBeenCalledWith('123', 'd1'));
+  });
+
+  it('shows the API error when the rollback fails', async () => {
+    const user = userEvent.setup();
+    setupMocks({ status: 'running' }, { logs: threeDeploys });
+    (instanceService.rollback as MockFn).mockRejectedValue({ response: { status: 400, data: { error: 'target is not a successful deploy' } } });
+    renderDetail();
+    await waitForPage();
+
+    await user.click(await screen.findByRole('button', { name: 'Rollback' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Roll Back Instance' });
+    await user.click(within(dialog).getByRole('button', { name: 'Roll Back' }));
+
+    expect(await screen.findByText(/target is not a successful deploy/)).toBeInTheDocument();
+  });
+
+  it('offers "Roll back to this deploy" in the history for older successful deploys only', async () => {
+    const user = userEvent.setup();
+    setupMocks({ status: 'running' }, { logs: threeDeploys });
+    (instanceService.rollback as MockFn).mockResolvedValue({ log_id: 'rb1', message: 'ok' });
+    renderDetail();
+    await waitForPage();
+
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Roll back to d1' })).toBeInTheDocument());
+    expect(screen.getByRole('button', { name: 'Roll back to d2' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Roll back to d3' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Roll back to failed' })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Roll back to d1' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Roll Back Instance' });
+    expect(within(dialog).getByRole('radio', { name: timeOf(8) })).toBeChecked();
+    await user.click(within(dialog).getByRole('button', { name: 'Roll Back' }));
+
+    await waitFor(() => expect(instanceService.rollback).toHaveBeenCalledWith('123', 'd1'));
+  });
+
+  it('shows the drift warning when values_drift is true', async () => {
+    setupMocks({ status: 'running', values_drift: true });
+    renderDetail();
+    await waitForPage();
+    expect(screen.getByText(
+      'The running values differ from the stored overrides (after a rollback). The next deploy applies the stored overrides.',
+    )).toBeInTheDocument();
+  });
+
+  it('does not show the drift warning without drift', async () => {
+    setupMocks({ status: 'running' });
+    renderDetail();
+    await waitForPage();
+    expect(screen.queryByText(/The running values differ from the stored overrides/)).not.toBeInTheDocument();
+  });
+
+  it('shows none of the new actions to a user who may not modify the instance', async () => {
+    authState.user = { id: 'u-bob', username: 'bob', role: 'user', display_name: 'Bob' };
+    (useCountdown as unknown as MockFn).mockReturnValue({
+      remaining: '1h 0m', isWarning: false, isCritical: false, isExpired: false,
+    });
+    setupMocks({ status: 'running', expires_at: '2030-01-01T12:00:00Z' }, { logs: threeDeploys });
+    renderDetail();
+    await waitForPage();
+    await waitFor(() => expect(screen.getByTestId('deployment-log-viewer')).toBeInTheDocument());
+
+    for (const name of ['Redeploy', 'Deploy', 'Rollback', 'Extend']) {
+      expect(screen.queryByRole('button', { name })).not.toBeInTheDocument();
+    }
+    expect(screen.queryByRole('button', { name: /Roll back to/ })).not.toBeInTheDocument();
+    expect(screen.queryByText('Saved. Redeploy to apply.')).not.toBeInTheDocument();
+    (useCountdown as unknown as MockFn).mockReturnValue(null);
   });
 });

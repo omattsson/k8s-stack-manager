@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -239,6 +240,28 @@ func (m *mockDeployLogRepo) ListByInstancePaginated(_ context.Context, filters m
 		}
 	}
 	return &models.DeploymentLogResult{Data: out, Total: int64(len(out))}, nil
+}
+
+func (m *mockDeployLogRepo) ListLatestByActions(_ context.Context, instanceID string, actions []string, limit int) ([]models.DeploymentLog, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	var out []models.DeploymentLog
+	for _, l := range m.items {
+		if l.StackInstanceID != instanceID {
+			continue
+		}
+		for _, a := range actions {
+			if l.Action == a {
+				out = append(out, *l)
+				break
+			}
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].StartedAt.After(out[j].StartedAt) })
+	if limit > 0 && len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
 }
 
 func (m *mockDeployLogRepo) GetLatestByInstance(_ context.Context, instanceID string) (*models.DeploymentLog, error) {
@@ -1489,6 +1512,7 @@ type mockHelmExecutor struct {
 	uninstallFunc  func(ctx context.Context, req UninstallRequest) (string, error)
 	historyFunc    func(ctx context.Context, releaseName, namespace string, max int) ([]ReleaseRevision, error)
 	rollbackFunc   func(ctx context.Context, releaseName, namespace string, revision int) (string, error)
+	getValuesFunc  func(ctx context.Context, releaseName, namespace string, revision int) (string, error)
 	installCalls   []InstallRequest
 	uninstallCalls []UninstallRequest
 	timeout        time.Duration
@@ -1536,7 +1560,10 @@ func (m *mockHelmExecutor) Rollback(ctx context.Context, releaseName, namespace 
 	return "rolled back " + releaseName, nil
 }
 
-func (m *mockHelmExecutor) GetValues(_ context.Context, _ string, _ string, _ int) (string, error) {
+func (m *mockHelmExecutor) GetValues(ctx context.Context, releaseName, namespace string, revision int) (string, error) {
+	if m.getValuesFunc != nil {
+		return m.getValuesFunc(ctx, releaseName, namespace, revision)
+	}
 	return "", nil
 }
 

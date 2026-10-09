@@ -60,7 +60,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Creates a new cleanup policy and reloads the scheduler",
+                "description": "Creates a new cleanup policy and reloads the scheduler. condition is a comma-separated list of key:value pairs (all must match): status:\u003cstatus\u003e; idle_days:\u003cN\u003e (no deploy for N days, creation time when never deployed); age_days:\u003cN\u003e (created more than N days ago); stopped_days:\u003cN\u003e (stopped, and the last stop finished N or more days ago; instances without a recorded stop time never match); ttl_expired.",
                 "consumes": [
                     "application/json"
                 ],
@@ -117,7 +117,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Updates an existing cleanup policy and reloads the scheduler",
+                "description": "Updates an existing cleanup policy and reloads the scheduler. See the create endpoint for the condition syntax (status, idle_days, age_days, stopped_days, ttl_expired).",
                 "consumes": [
                     "application/json"
                 ],
@@ -3940,7 +3940,7 @@ const docTemplate = `{
                 }
             },
             "post": {
-                "description": "Create a new stack definition",
+                "description": "Create a new stack definition. Definition names are unique per owner.",
                 "consumes": [
                     "application/json"
                 ],
@@ -3977,13 +3977,40 @@ const docTemplate = `{
                                 "type": "string"
                             }
                         }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "409": {
+                        "description": "The owner already has a definition with this name",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
                     }
                 }
             }
         },
         "/api/v1/stack-definitions/import": {
             "post": {
-                "description": "Import a stack definition from a portable JSON bundle, creating a new definition with fresh IDs",
+                "description": "Import a stack definition from a portable JSON bundle, creating a new definition with fresh IDs. Definition names are unique per owner: when the caller already has a definition with the bundle name, the import uses \"\u003cname\u003e (imported)\", then \"\u003cname\u003e (imported 2)\", ... The response holds the final name (409 when no free name is found).",
                 "consumes": [
                     "application/json"
                 ],
@@ -4071,7 +4098,7 @@ const docTemplate = `{
                 }
             },
             "put": {
-                "description": "Update an existing stack definition",
+                "description": "Update an existing stack definition. A changed name must be unique for the owner of the definition.",
                 "consumes": [
                     "application/json"
                 ],
@@ -4116,8 +4143,35 @@ const docTemplate = `{
                             }
                         }
                     },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
                     "404": {
                         "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "409": {
+                        "description": "The owner already has a definition with this name",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {
@@ -5000,7 +5054,7 @@ const docTemplate = `{
         },
         "/api/v1/stack-instances/{id}": {
             "get": {
-                "description": "Get a stack instance by ID",
+                "description": "Get a stack instance by ID. values_drift is true when the running values come from a successful rollback and the stored overrides produce different values: the next deploy undoes the rollback. Only this endpoint computes values_drift; list responses omit it.",
                 "produces": [
                     "application/json"
                 ],
@@ -5024,8 +5078,35 @@ const docTemplate = `{
                             "$ref": "#/definitions/models.StackInstance"
                         }
                     },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
                     "404": {
                         "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {
@@ -5036,7 +5117,7 @@ const docTemplate = `{
                 }
             },
             "put": {
-                "description": "Update a stack instance (branch, name, etc.)",
+                "description": "Update a stack instance (branch, name, etc.). A changed name must be a DNS label (lowercase a-z, 0-9, '-', start and end alphanumeric, at most 50 characters); an unchanged name is not checked, so older instances with other names stay editable. A rename does not change the namespace.",
                 "consumes": [
                     "application/json"
                 ],
@@ -5102,7 +5183,7 @@ const docTemplate = `{
                 }
             },
             "delete": {
-                "description": "Deletes a stack instance. If the instance has running resources (status running/stopped/error), a cleanup is initiated first — helm releases are uninstalled and the namespace is deleted before the database record is removed. Returns 204 for immediate deletion (draft instances) or 202 when async cleanup is required.",
+                "description": "Deletes a stack instance. If the instance has running resources (status running/stopped/error), a cleanup is initiated first — helm releases are uninstalled and the namespace is deleted before the database record is removed. Returns 204 for immediate deletion (draft instances) or 202 when async cleanup is required. When quick deploy created the stack definition of the instance (owner_instance_id) and no other instance uses it, the definition and its charts are deleted with the instance.",
                 "produces": [
                     "application/json"
                 ],
@@ -5577,7 +5658,10 @@ const docTemplate = `{
         },
         "/api/v1/stack-instances/{id}/clone": {
             "post": {
-                "description": "Create a new stack instance as a copy of an existing one",
+                "description": "Create a new draft stack instance as a copy of an existing one. The clone belongs to the caller and uses the cluster and definition of the source.\nIt copies the TTL (unless ttl_minutes is given), the value overrides, the branch overrides and the instance quota override.\nThe body is optional. Without a name, the server picks the first free name of \u003csource\u003e-copy, \u003csource\u003e-copy-2, ... (the namespace stack-\u003cname\u003e-\u003cowner\u003e must be free). A given name must be a DNS label (lowercase a-z, 0-9, '-', start and end alphanumeric, at most 50 characters).",
+                "consumes": [
+                    "application/json"
+                ],
                 "produces": [
                     "application/json"
                 ],
@@ -5588,10 +5672,18 @@ const docTemplate = `{
                 "parameters": [
                     {
                         "type": "string",
-                        "description": "Instance ID",
+                        "description": "Source instance ID",
                         "name": "id",
                         "in": "path",
                         "required": true
+                    },
+                    {
+                        "description": "Optional clone name, branch and TTL",
+                        "name": "body",
+                        "in": "body",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.cloneInstanceRequest"
+                        }
                     }
                 ],
                 "responses": {
@@ -5599,6 +5691,33 @@ const docTemplate = `{
                         "description": "Created",
                         "schema": {
                             "$ref": "#/definitions/models.StackInstance"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid body, name or TTL",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
                         }
                     },
                     "404": {
@@ -5611,9 +5730,18 @@ const docTemplate = `{
                         }
                     },
                     "409": {
-                        "description": "Namespace already exists",
+                        "description": "Namespace already exists (given name), or no free generated name",
                         "schema": {
                             "$ref": "#/definitions/handlers.NamespaceConflictResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
                         }
                     }
                 }
@@ -5621,7 +5749,7 @@ const docTemplate = `{
         },
         "/api/v1/stack-instances/{id}/deploy": {
             "post": {
-                "description": "Trigger Helm deployment for a stack instance",
+                "description": "Trigger Helm deployment for a stack instance. Allowed for draft, stopped, error, partial and running instances (running = redeploy, a Helm upgrade with the current values). With a TTL, the expiry becomes now + ttl_minutes, unless the current expiry is later (a redeploy never makes the expiry earlier).",
                 "produces": [
                     "application/json"
                 ],
@@ -5830,7 +5958,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Compare pending merged values against last-deployed values per chart. Pending values use the deploy pipeline: cluster shared values (by priority), chart defaults, instance overrides, locked template values. A shared values load error returns 500 (fail closed).",
+                "description": "Compare pending merged values against the running values per chart. Pending values use the deploy pipeline: cluster shared values (by priority), chart defaults, instance overrides, locked template values. Previous values are the values of the last deploy, or of the last successful rollback. has_changes compares the YAML content (key order and formatting do not matter). values_drift is true when the last operation was a successful rollback and at least one chart has changes: the next deploy undoes the rollback. A shared values load error returns 500 (fail closed).",
                 "produces": [
                     "application/json"
                 ],
@@ -5895,7 +6023,7 @@ const docTemplate = `{
         },
         "/api/v1/stack-instances/{id}/extend": {
             "post": {
-                "description": "Extend the expiry time of a stack instance. Uses provided ttl_minutes or the instance's existing TTLMinutes.",
+                "description": "Extend the expiry time of a stack instance. The extend never makes the expiry earlier and never changes ttl_minutes.\n- {\"minutes\": N}: adds N minutes (N \u003e 0) to the current expires_at, or to now when the instance already expired or has no expiry time. The new expiry is capped at now + 43200 minutes (30 days).\n- Empty body: adds the instance's ttl_minutes in the same way (400 when ttl_minutes is 0).\n- Deprecated {\"ttl_minutes\": N} (without minutes): the old behaviour for older clients (stackctl 0.4.0 and earlier). It sets ttl_minutes to N and expires_at to now + N, which can make the expiry earlier. The response has a Warning header; the server logs a deprecation warning.\nAn instance without TTL and without expiry time has nothing to extend (400).",
                 "consumes": [
                     "application/json"
                 ],
@@ -5915,7 +6043,7 @@ const docTemplate = `{
                         "required": true
                     },
                     {
-                        "description": "Optional TTL override",
+                        "description": "Minutes to add (or the deprecated ttl_minutes)",
                         "name": "body",
                         "in": "body",
                         "schema": {
@@ -5925,13 +6053,28 @@ const docTemplate = `{
                 ],
                 "responses": {
                     "200": {
-                        "description": "OK",
+                        "description": "The instance with the new expires_at",
                         "schema": {
                             "$ref": "#/definitions/models.StackInstance"
+                        },
+                        "headers": {
+                            "Warning": {
+                                "type": "string",
+                                "description": "Set when the deprecated ttl_minutes body is used"
+                            }
                         }
                     },
                     "400": {
                         "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {
@@ -5950,6 +6093,15 @@ const docTemplate = `{
                     },
                     "404": {
                         "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {
@@ -6568,7 +6720,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Rollback all Helm releases in a stack instance to their previous revision",
+                "description": "Without target_log_id: roll back every Helm release of the instance by one revision (helm rollback).\nWith target_log_id: restore the values of that deploy. The log must be a successful deploy of this instance with a values snapshot (404 when the log does not exist or belongs to another instance, 400 otherwise). Each chart of the target deploy is upgraded (helm upgrade --install) with the merged values of that deploy and the chart version that the deploy recorded; deploys from before the version recording use the current chart version. Charts that the target deploy did not include are left unchanged.\nA rollback to a target restores the stored VALUES of that deploy (including the shared and locked values of that time), not the images. Image tags that are branch names can point to newer images now. A chart without a recorded version (the deploy used an empty chart version) installs the newest chart. Pre-deploy hooks do not run for a rollback; subscribe image gates to pre-rollback, which gets the same chart list (name, version, branch, image_tag) plus metadata rollback_mode, target_log_id and target_branch.\nThe pre-rollback hook runs in the background after the 202 answer, with progress streaming like pre-deploy. A rejection ends the rollback log with status error and the hook reason; the instance gets its previous status back. For a one-revision rollback the hook chart branches come from the previous successful deploy log when it recorded a branch.\nIn both modes a release stuck in pending-* is cleared before each chart, and after the rollback the instance waits for pod readiness (stabilizing) when readiness gating is configured, as for a deploy. A one-revision rollback that fails records the values of the charts that it already rolled back.\nThe rollback does not change the stored value or branch overrides. After a successful rollback the deploy preview compares against the running values; values_drift (in this response for a target, and in the deploy preview) shows that the next deploy applies the stored overrides again.",
                 "consumes": [
                     "application/json"
                 ],
@@ -6588,11 +6740,11 @@ const docTemplate = `{
                         "required": true
                     },
                     {
-                        "description": "Optional: {\\",
+                        "description": "Optional rollback target",
                         "name": "body",
                         "in": "body",
                         "schema": {
-                            "type": "object"
+                            "$ref": "#/definitions/handlers.rollbackRequest"
                         }
                     }
                 ],
@@ -6600,14 +6752,20 @@ const docTemplate = `{
                     "202": {
                         "description": "Accepted",
                         "schema": {
+                            "$ref": "#/definitions/handlers.RollbackResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid body, no charts, or the target is not a successful deploy with a values snapshot",
+                        "schema": {
                             "type": "object",
                             "additionalProperties": {
                                 "type": "string"
                             }
                         }
                     },
-                    "400": {
-                        "description": "Bad Request",
+                    "401": {
+                        "description": "Unauthorized",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {
@@ -6625,7 +6783,7 @@ const docTemplate = `{
                         }
                     },
                     "404": {
-                        "description": "Not Found",
+                        "description": "Instance or target deploy log not found",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {
@@ -7516,7 +7674,7 @@ const docTemplate = `{
         },
         "/api/v1/templates/{id}/instantiate": {
             "post": {
-                "description": "Create a StackDefinition and ChartConfigs from a template",
+                "description": "Create a StackDefinition and ChartConfigs from a template. Definition names are unique per owner.",
                 "consumes": [
                     "application/json"
                 ],
@@ -7561,8 +7719,35 @@ const docTemplate = `{
                             }
                         }
                     },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
                     "404": {
                         "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "409": {
+                        "description": "The caller already has a definition with this name",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {
@@ -7618,7 +7803,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Instantiate a template, create an instance, set branch overrides, and trigger deployment in a single call",
+                "description": "Instantiate a template, create an instance, set branch overrides, and trigger deployment in a single call.\ninstance_name must be a DNS label (lowercase a-z, 0-9, '-', start and end alphanumeric, at most 50 characters).\nThe new stack definition is owned by the instance (owner_instance_id): deleting the instance deletes the definition when no other instance uses it. The definition is named after the instance; when the caller already has a definition with that name, the name gets the suffix \" (2)\", \" (3)\", ...",
                 "consumes": [
                     "application/json"
                 ],
@@ -7663,6 +7848,24 @@ const docTemplate = `{
                             }
                         }
                     },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
                     "404": {
                         "description": "Not Found",
                         "schema": {
@@ -7670,6 +7873,12 @@ const docTemplate = `{
                             "additionalProperties": {
                                 "type": "string"
                             }
+                        }
+                    },
+                    "409": {
+                        "description": "Namespace already exists",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.NamespaceConflictResponse"
                         }
                     },
                     "500": {
@@ -9222,6 +9431,10 @@ const docTemplate = `{
                 "owner_id": {
                     "type": "string"
                 },
+                "owner_instance_id": {
+                    "description": "OwnerInstanceID is set when quick deploy created the definition for one\ninstance. Deleting that instance also deletes the definition when no\nother instance uses it. Empty for definitions that users create.",
+                    "type": "string"
+                },
                 "source_template_id": {
                     "type": "string"
                 },
@@ -9246,6 +9459,14 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "instance_name": {
+                    "type": "string"
+                },
+                "values_drift": {
+                    "description": "ValuesDrift is true when the running values come from a rollback (the\nlast operation was a successful rollback) and the stored overrides\nproduce different values: the next deploy undoes the rollback.",
+                    "type": "boolean"
+                },
+                "warning": {
+                    "description": "Warning explains ValuesDrift when it is true.",
                     "type": "string"
                 }
             }
@@ -9404,6 +9625,29 @@ const docTemplate = `{
             ],
             "properties": {
                 "password": {
+                    "type": "string"
+                }
+            }
+        },
+        "handlers.RollbackResponse": {
+            "type": "object",
+            "properties": {
+                "log_id": {
+                    "type": "string"
+                },
+                "message": {
+                    "type": "string"
+                },
+                "target_log_id": {
+                    "description": "TargetLogID is the deploy whose values the rollback restores. Empty\nfor a rollback by one Helm revision.",
+                    "type": "string"
+                },
+                "values_drift": {
+                    "description": "ValuesDrift is set for a rollback to a target: true when the values\nbuilt from the stored overrides differ from the target values. The\nrollback does not change the stored overrides, so the next deploy then\nchanges the running values again. Not set for a rollback by one\nrevision; use GET /deploy-preview after the rollback.",
+                    "type": "boolean"
+                },
+                "warning": {
+                    "description": "Warning explains ValuesDrift when it is true.",
                     "type": "string"
                 }
             }
@@ -9614,6 +9858,23 @@ const docTemplate = `{
                 }
             }
         },
+        "handlers.cloneInstanceRequest": {
+            "type": "object",
+            "properties": {
+                "branch": {
+                    "description": "Branch of the clone. Default: the branch of the source.",
+                    "type": "string"
+                },
+                "name": {
+                    "description": "Name of the clone. Must be a DNS label (lowercase a-z, 0-9, '-', start\nand end alphanumeric, at most 50 characters). When empty, the server\npicks the first free name of \u003csource\u003e-copy, \u003csource\u003e-copy-2, ...",
+                    "type": "string"
+                },
+                "ttl_minutes": {
+                    "description": "TTLMinutes of the clone (0 = no expiry). Default: the TTL of the source.",
+                    "type": "integer"
+                }
+            }
+        },
         "handlers.createChannelRequest": {
             "type": "object",
             "required": [
@@ -9670,7 +9931,12 @@ const docTemplate = `{
         "handlers.extendTTLRequest": {
             "type": "object",
             "properties": {
+                "minutes": {
+                    "description": "Minutes adds this many minutes to the current expiry (or to now when\nthe instance already expired or has no expiry time). Must be \u003e 0.",
+                    "type": "integer"
+                },
                 "ttl_minutes": {
+                    "description": "TTLMinutes is deprecated. Sent alone, it keeps the old behaviour: set\nthe TTL to this value and the expiry to now + TTL. Use minutes instead.",
                     "type": "integer"
                 }
             }
@@ -9746,6 +10012,15 @@ const docTemplate = `{
                     "$ref": "#/definitions/models.StackInstance"
                 },
                 "log_id": {
+                    "type": "string"
+                }
+            }
+        },
+        "handlers.rollbackRequest": {
+            "type": "object",
+            "properties": {
+                "target_log_id": {
+                    "description": "TargetLogID is the ID of a successful deploy log of this instance.",
                     "type": "string"
                 }
             }
@@ -10375,7 +10650,7 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "condition": {
-                    "description": "e.g. \"idle_days:7\", \"status:stopped,age_days:14\", \"ttl_expired\"",
+                    "description": "e.g. \"idle_days:7\", \"status:stopped,age_days:14\", \"stopped_days:3\", \"ttl_expired\"",
                     "type": "string"
                 },
                 "created_at": {
@@ -10463,6 +10738,14 @@ const docTemplate = `{
             "properties": {
                 "action": {
                     "description": "\"deploy\", \"stop\", \"clean\", \"rollback\"",
+                    "type": "string"
+                },
+                "branch": {
+                    "description": "Branch is the instance branch of a deploy, or the branch of the target\ndeploy for a rollback to a target. Empty for older logs and for stop\nand clean logs.",
+                    "type": "string"
+                },
+                "chart_versions": {
+                    "description": "ChartVersions is a JSON object chart name -\u003e chart version that a\ndeploy used. A rollback to this deploy installs the same versions.\nEmpty for logs written before the column existed.",
                     "type": "string"
                 },
                 "completed_at": {
@@ -10780,6 +11063,10 @@ const docTemplate = `{
                 "owner_id": {
                     "type": "string"
                 },
+                "owner_instance_id": {
+                    "description": "OwnerInstanceID is set when quick deploy created the definition for one\ninstance. Deleting that instance also deletes the definition when no\nother instance uses it. Empty for definitions that users create.",
+                    "type": "string"
+                },
                 "source_template_id": {
                     "type": "string"
                 },
@@ -10830,11 +11117,19 @@ const docTemplate = `{
                 "status": {
                     "type": "string"
                 },
+                "stopped_at": {
+                    "description": "StoppedAt is the time the last successful stop finished. It is nil\nwhen the instance is not stopped. A deploy or a clean clears it.\nCleanup policies use it for the stopped_days condition.",
+                    "type": "string"
+                },
                 "ttl_minutes": {
                     "type": "integer"
                 },
                 "updated_at": {
                     "type": "string"
+                },
+                "values_drift": {
+                    "description": "ValuesDrift is computed, not stored. GET /stack-instances/{id} sets it\nto true when the running values come from a successful rollback and\nthe stored overrides produce different values (the next deploy undoes\nthe rollback). List responses do not compute it.",
+                    "type": "boolean"
                 }
             }
         },

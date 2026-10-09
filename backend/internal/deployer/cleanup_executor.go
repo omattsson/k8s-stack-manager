@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"backend/internal/database"
 	"backend/internal/models"
 )
 
@@ -64,6 +65,11 @@ func (e *CleanupExecutor) DeleteInstance(ctx context.Context, inst *models.Stack
 	case models.StackStatusRunning, models.StackStatusPartial, models.StackStatusDeploying, models.StackStatusStabilizing,
 		models.StackStatusStopping, models.StackStatusCleaning:
 		return fmt.Errorf("cannot delete instance %s while status is %s; stop/clean must complete first", inst.ID, inst.Status)
+	}
+	// With a transaction runner, delete the branch overrides and the quick
+	// deploy definition owned by the instance in the same transaction.
+	if e.manager != nil && e.manager.txRunner != nil {
+		return database.DeleteInstanceWithOwnedDefinition(e.manager.txRunner, inst)
 	}
 	return e.instanceRepo.Delete(inst.ID)
 }

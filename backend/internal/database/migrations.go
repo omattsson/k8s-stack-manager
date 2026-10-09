@@ -1031,6 +1031,12 @@ func (d *Database) AutoMigrate() error {
 	// now deletes the override; older versions stored an empty row instead.
 	migrator.AddMigration(removeEmptyValueOverridesMigration())
 
+	// Migration 43: stack lifecycle columns. stopped_at on stack_instances
+	// (cleanup condition stopped_days), owner_instance_id on
+	// stack_definitions (quick deploy definitions) and chart_versions on
+	// deployment_logs (rollback to a deploy) and branch on deployment_logs.
+	migrator.AddMigration(stackLifecycleColumnsMigration())
+
 	// Run migrations
 	if err := migrator.MigrateUp(); err != nil {
 		return err
@@ -1105,6 +1111,88 @@ func removeEmptyValueOverridesMigration() schema.Migration {
 			).Error
 		},
 		Down: func(_ *gorm.DB) error {
+			return nil
+		},
+	}
+}
+
+// stackLifecycleColumnsMigration is migration 43. It adds
+// stack_instances.stopped_at, stack_definitions.owner_instance_id (indexed)
+// and deployment_logs.chart_versions and branch. Existing stopped instances get
+// stopped_at from their last successful stop log, or from updated_at when no
+// such log exists. It is a function so tests can run its Down step.
+func stackLifecycleColumnsMigration() schema.Migration {
+	return schema.Migration{
+		Version:     "20261009000043",
+		Name:        "add_stack_lifecycle_columns",
+		Description: "Add stopped_at to stack_instances, owner_instance_id to stack_definitions, chart_versions and branch to deployment_logs; backfill stopped_at",
+		Up: func(tx *gorm.DB) error {
+			m := tx.Migrator()
+			if m.HasTable(&models.StackInstance{}) && !m.HasColumn(&models.StackInstance{}, "StoppedAt") {
+				if err := m.AddColumn(&models.StackInstance{}, "StoppedAt"); err != nil {
+					return err
+				}
+			}
+			if m.HasTable(&models.StackDefinition{}) {
+				if !m.HasColumn(&models.StackDefinition{}, "OwnerInstanceID") {
+					if err := m.AddColumn(&models.StackDefinition{}, "OwnerInstanceID"); err != nil {
+						return err
+					}
+				}
+				if !m.HasIndex(&models.StackDefinition{}, "OwnerInstanceID") {
+					if err := m.CreateIndex(&models.StackDefinition{}, "OwnerInstanceID"); err != nil {
+						return err
+					}
+				}
+			}
+			for _, field := range []string{"ChartVersions", "Branch"} {
+				if m.HasTable(&models.DeploymentLog{}) && !m.HasColumn(&models.DeploymentLog{}, field) {
+					if err := m.AddColumn(&models.DeploymentLog{}, field); err != nil {
+						return err
+					}
+				}
+			}
+			if !m.HasTable(&models.StackInstance{}) {
+				return nil
+			}
+			if m.HasTable(&models.DeploymentLog{}) {
+				if err := tx.Exec(
+					`UPDATE stack_instances SET stopped_at = (
+						SELECT MAX(dl.completed_at) FROM deployment_logs dl
+						WHERE dl.stack_instance_id = stack_instances.id AND dl.action = ? AND dl.status = ?
+					) WHERE status = ? AND stopped_at IS NULL`,
+					models.DeployActionStop, models.DeployLogSuccess, models.StackStatusStopped,
+				).Error; err != nil {
+					return err
+				}
+			}
+			return tx.Exec(
+				"UPDATE stack_instances SET stopped_at = updated_at WHERE status = ? AND stopped_at IS NULL",
+				models.StackStatusStopped,
+			).Error
+		},
+		Down: func(tx *gorm.DB) error {
+			m := tx.Migrator()
+			for _, field := range []string{"Branch", "ChartVersions"} {
+				if m.HasColumn(&models.DeploymentLog{}, field) {
+					if err := m.DropColumn(&models.DeploymentLog{}, field); err != nil {
+						return err
+					}
+				}
+			}
+			if m.HasIndex(&models.StackDefinition{}, "OwnerInstanceID") {
+				if err := m.DropIndex(&models.StackDefinition{}, "OwnerInstanceID"); err != nil {
+					return err
+				}
+			}
+			if m.HasColumn(&models.StackDefinition{}, "OwnerInstanceID") {
+				if err := m.DropColumn(&models.StackDefinition{}, "OwnerInstanceID"); err != nil {
+					return err
+				}
+			}
+			if m.HasColumn(&models.StackInstance{}, "StoppedAt") {
+				return m.DropColumn(&models.StackInstance{}, "StoppedAt")
+			}
 			return nil
 		},
 	}

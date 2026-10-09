@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -188,13 +189,16 @@ func (h *DefinitionHandler) ListDefinitions(c *gin.Context) {
 
 // CreateDefinition godoc
 // @Summary     Create a stack definition
-// @Description Create a new stack definition
+// @Description Create a new stack definition. Definition names are unique per owner.
 // @Tags        stack-definitions
 // @Accept      json
 // @Produce     json
 // @Param       definition body     models.StackDefinition true "Definition object"
 // @Success     201        {object} models.StackDefinition
 // @Failure     400        {object} map[string]string
+// @Failure     401        {object} map[string]string
+// @Failure     409        {object} map[string]string "The owner already has a definition with this name"
+// @Failure     500        {object} map[string]string
 // @Router      /api/v1/stack-definitions [post]
 func (h *DefinitionHandler) CreateDefinition(c *gin.Context) {
 	var def models.StackDefinition
@@ -215,6 +219,13 @@ func (h *DefinitionHandler) CreateDefinition(c *gin.Context) {
 
 	if err := def.Validate(); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Quick deploy sets the owner instance; a user-created definition has none.
+	def.OwnerInstanceID = ""
+
+	if respondDefinitionNameTaken(c, h.definitionRepo, def.OwnerID, def.Name, "") {
 		return
 	}
 
@@ -265,7 +276,7 @@ func (h *DefinitionHandler) GetDefinition(c *gin.Context) {
 
 // UpdateDefinition godoc
 // @Summary     Update a stack definition
-// @Description Update an existing stack definition
+// @Description Update an existing stack definition. A changed name must be unique for the owner of the definition.
 // @Tags        stack-definitions
 // @Accept      json
 // @Produce     json
@@ -273,7 +284,10 @@ func (h *DefinitionHandler) GetDefinition(c *gin.Context) {
 // @Param       definition body     models.StackDefinition  true "Definition object"
 // @Success     200        {object} models.StackDefinition
 // @Failure     400        {object} map[string]string
+// @Failure     401        {object} map[string]string
 // @Failure     404        {object} map[string]string
+// @Failure     409        {object} map[string]string "The owner already has a definition with this name"
+// @Failure     500        {object} map[string]string
 // @Router      /api/v1/stack-definitions/{id} [put]
 func (h *DefinitionHandler) UpdateDefinition(c *gin.Context) {
 	id := c.Param("id")
@@ -293,6 +307,12 @@ func (h *DefinitionHandler) UpdateDefinition(c *gin.Context) {
 	if err := c.ShouldBindJSON(&update); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": msgInvalidRequestFormat})
 		return
+	}
+
+	if update.Name != existing.Name && update.Name != "" {
+		if respondDefinitionNameTaken(c, h.definitionRepo, existing.OwnerID, update.Name, existing.ID) {
+			return
+		}
 	}
 
 	existing.Name = update.Name
@@ -415,7 +435,7 @@ func (h *DefinitionHandler) ExportDefinition(c *gin.Context) {
 
 // ImportDefinition godoc
 // @Summary     Import a stack definition
-// @Description Import a stack definition from a portable JSON bundle, creating a new definition with fresh IDs
+// @Description Import a stack definition from a portable JSON bundle, creating a new definition with fresh IDs. Definition names are unique per owner: when the caller already has a definition with the bundle name, the import uses "<name> (imported)", then "<name> (imported 2)", ... The response holds the final name (409 when no free name is found).
 // @Tags        stack-definitions
 // @Accept      json
 // @Produce     json
@@ -476,6 +496,20 @@ func (h *DefinitionHandler) ImportDefinition(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+
+	// Definition names are unique per owner: an existing name gets the
+	// suffix " (imported)", " (imported 2)", ...
+	finalName, nameErr := uniqueDefinitionName(h.definitionRepo, def.OwnerID, importedDefinitionName(def.Name))
+	if errors.Is(nameErr, errNoFreeDefinitionName) {
+		c.JSON(http.StatusConflict, gin.H{"error": fmt.Sprintf("A stack definition named %q already exists for this owner", def.Name)})
+		return
+	}
+	if nameErr != nil {
+		status, message := mapError(nameErr, entityStackDefinition)
+		c.JSON(status, gin.H{"error": message})
+		return
+	}
+	def.Name = finalName
 
 	// Build chart models up front so both paths share the same data.
 	chartModels := make([]models.ChartConfig, 0, len(bundle.Charts))

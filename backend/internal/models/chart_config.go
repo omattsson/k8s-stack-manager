@@ -24,4 +24,7 @@ type ChartConfigRepository interface {
 	Update(config *ChartConfig) error
 	Delete(id string) error
 	ListByDefinition(definitionID string) ([]ChartConfig, error)
+	// DeleteByDefinition deletes all chart configs of a definition (no error
+	// when there are none).
+	DeleteByDefinition(definitionID string) error
 }

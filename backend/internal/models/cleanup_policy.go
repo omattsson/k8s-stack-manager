@@ -11,7 +11,7 @@ type CleanupPolicy struct {
 	Name      string     `json:"name" gorm:"size:255"`
 	ClusterID string     `json:"cluster_id" gorm:"size:36"`  // or "all" for all clusters
 	Action    string     `json:"action" gorm:"size:50"`      // "stop", "clean", "delete"
-	Condition string     `json:"condition" gorm:"type:text"` // e.g. "idle_days:7", "status:stopped,age_days:14", "ttl_expired"
+	Condition string     `json:"condition" gorm:"type:text"` // e.g. "idle_days:7", "status:stopped,age_days:14", "stopped_days:3", "ttl_expired"
 	Schedule  string     `json:"schedule" gorm:"size:100"`   // Cron expression, e.g. "0 2 * * *"
 	Enabled   bool       `json:"enabled"`
 	DryRun    bool       `json:"dry_run"` // If true, only report matches without acting

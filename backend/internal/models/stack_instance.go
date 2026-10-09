@@ -4,10 +4,14 @@ import "time"
 
 // StackInstance represents a deployed instance of a stack definition.
 type StackInstance struct {
-	CreatedAt          time.Time  `json:"created_at"`
-	UpdatedAt          time.Time  `json:"updated_at"`
-	LastDeployedAt     *time.Time `json:"last_deployed_at,omitempty"`
-	ExpiresAt          *time.Time `json:"expires_at,omitempty"`
+	CreatedAt      time.Time  `json:"created_at"`
+	UpdatedAt      time.Time  `json:"updated_at"`
+	LastDeployedAt *time.Time `json:"last_deployed_at,omitempty"`
+	ExpiresAt      *time.Time `json:"expires_at,omitempty"`
+	// StoppedAt is the time the last successful stop finished. It is nil
+	// when the instance is not stopped. A deploy or a clean clears it.
+	// Cleanup policies use it for the stopped_days condition.
+	StoppedAt          *time.Time `json:"stopped_at,omitempty"`
 	ID                 string     `json:"id" gorm:"primaryKey;size:36"`
 	StackDefinitionID  string     `json:"stack_definition_id" gorm:"size:36"`
 	Name               string     `json:"name" gorm:"size:255"`
@@ -19,6 +23,11 @@ type StackInstance struct {
 	ErrorMessage       string     `json:"error_message,omitempty" gorm:"type:text"`
 	LastDeployedValues string     `json:"-" gorm:"type:longtext"`
 	TTLMinutes         int        `json:"ttl_minutes"`
+	// ValuesDrift is computed, not stored. GET /stack-instances/{id} sets it
+	// to true when the running values come from a successful rollback and
+	// the stored overrides produce different values (the next deploy undoes
+	// the rollback). List responses do not compute it.
+	ValuesDrift bool `json:"values_drift,omitempty" gorm:"-"`
 }
 
 // Valid stack instance statuses.

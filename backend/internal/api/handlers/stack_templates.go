@@ -548,7 +548,7 @@ func (h *TemplateHandler) UnpublishTemplate(c *gin.Context) {
 
 // InstantiateTemplate godoc
 // @Summary     Instantiate a template
-// @Description Create a StackDefinition and ChartConfigs from a template
+// @Description Create a StackDefinition and ChartConfigs from a template. Definition names are unique per owner.
 // @Tags        templates
 // @Accept      json
 // @Produce     json
@@ -556,7 +556,10 @@ func (h *TemplateHandler) UnpublishTemplate(c *gin.Context) {
 // @Param       body body     models.StackDefinition true "Definition overrides (name, description)"
 // @Success     201  {object} DefinitionWithChartsResponse
 // @Failure     400  {object} map[string]string
+// @Failure     401  {object} map[string]string
 // @Failure     404  {object} map[string]string
+// @Failure     409  {object} map[string]string "The caller already has a definition with this name"
+// @Failure     500  {object} map[string]string
 // @Router      /api/v1/templates/{id}/instantiate [post]
 func (h *TemplateHandler) InstantiateTemplate(c *gin.Context) {
 	id := c.Param("id")
@@ -591,6 +594,10 @@ func (h *TemplateHandler) InstantiateTemplate(c *gin.Context) {
 		DefaultBranch:         tmpl.DefaultBranch,
 		CreatedAt:             now,
 		UpdatedAt:             now,
+	}
+
+	if h.definitionRepo != nil && respondDefinitionNameTaken(c, h.definitionRepo, def.OwnerID, def.Name, "") {
+		return
 	}
 
 	var chartConfigs []models.ChartConfig

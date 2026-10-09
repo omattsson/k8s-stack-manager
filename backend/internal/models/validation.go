@@ -109,6 +109,30 @@ const MaxInstanceNameLength = 50
 // MaxNamespaceLength is the maximum length for a K8s namespace (RFC 1123).
 const MaxNamespaceLength = 63
 
+// MsgInstanceNameFormat explains the instance name rule to API clients.
+const MsgInstanceNameFormat = "name must be a valid DNS label: lowercase letters a-z, digits 0-9 and '-', starting and ending with a letter or digit"
+
+// ValidateInstanceName checks a new or changed instance name. The name must
+// be an RFC 1123 label (lowercase a-z, 0-9 and '-', starting and ending with
+// an alphanumeric character) of at most MaxInstanceNameLength characters,
+// because charts build host names and labels from {{.InstanceName}}.
+//
+// StackInstance.Validate does not call this function: instances created
+// before the rule existed keep working, and updates that keep their name do
+// not fail. Handlers call it on create, clone, quick deploy and rename.
+func ValidateInstanceName(name string) error {
+	if name == "" {
+		return errors.New("name is required")
+	}
+	if len(name) > MaxInstanceNameLength {
+		return fmt.Errorf("name must be at most %d characters", MaxInstanceNameLength)
+	}
+	if !rfc1123LabelRegex.MatchString(name) {
+		return errors.New(MsgInstanceNameFormat)
+	}
+	return nil
+}
+
 // Validate implements model validation for StackInstance.
 func (si *StackInstance) Validate() error {
 	if si.StackDefinitionID == "" {

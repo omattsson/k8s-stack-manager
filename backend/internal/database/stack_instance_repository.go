@@ -103,7 +103,7 @@ func (r *GORMStackInstanceRepository) List() ([]models.StackInstance, error) {
 var listColumns = []string{
 	"id", "name", "namespace", "owner_id", "stack_definition_id",
 	"branch", "cluster_id", "status", "ttl_minutes",
-	"created_at", "updated_at", "last_deployed_at", "expires_at",
+	"created_at", "updated_at", "last_deployed_at", "expires_at", "stopped_at",
 }
 
 // ListPaged returns stack instances with limit/offset pagination and total count.

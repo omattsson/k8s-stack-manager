@@ -106,9 +106,31 @@ export interface StackInstance {
   last_deployed_at?: string;
   ttl_minutes?: number;
   expires_at?: string;
+  /** True when the stored overrides differ from the values that run (for example after a rollback). */
+  values_drift?: boolean;
   created_at: string;
   updated_at: string;
   definition?: StackDefinition;
+}
+
+/** Response of `POST /stack-instances/:id/rollback`. */
+export interface RollbackResponse {
+  log_id: string;
+  message: string;
+  /** The deploy log the rollback goes back to, when a target was given. */
+  target_log_id?: string;
+  /** True when the stored overrides differ from the values that run after the rollback. */
+  values_drift?: boolean;
+  /** Warning for the user, for example that the next deploy applies the stored overrides again. */
+  warning?: string;
+}
+
+/** Request body of `POST /stack-instances/:id/clone`. */
+export interface CloneInstanceRequest {
+  /** Name of the copy (RFC 1123 label). Omit it to let the server pick a free `<name>-copy[-N]`. */
+  name?: string;
+  branch?: string;
+  ttl_minutes?: number;
 }
 
 export interface DeploymentLog {
@@ -118,6 +140,10 @@ export interface DeploymentLog {
   status: 'running' | 'success' | 'error';
   output: string;
   error_message?: string;
+  /** Branch of the deploy, when the API sends it. */
+  branch?: string;
+  /** For a rollback: the deploy log that was the rollback target. */
+  target_log_id?: string;
   started_at: string;
   completed_at?: string;
 }

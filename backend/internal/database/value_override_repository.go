@@ -68,3 +68,11 @@ func (r *GORMValueOverrideRepository) ListByInstance(instanceID string) ([]model
 	}
 	return overrides, nil
 }
+
+// DeleteByInstance deletes all value overrides of an instance in one statement.
+func (r *GORMValueOverrideRepository) DeleteByInstance(instanceID string) error {
+	if err := r.DB.Where("stack_instance_id = ?", instanceID).Delete(&models.ValueOverride{}).Error; err != nil {
+		return dberrors.NewDatabaseError("delete_by_instance", err)
+	}
+	return nil
+}

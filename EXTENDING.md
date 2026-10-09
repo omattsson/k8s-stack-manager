@@ -162,6 +162,9 @@ Register at startup: `valuesGen.RegisterFunc("dnsify", fn)`. See
 | `pre-deploy` | Just before a deployment starts, after cluster resolution | Sync. `failure_policy: fail` aborts. |
 | `post-deploy` | After a deployment completes **successfully** | Fire-and-forget. |
 | `deploy-finalized` | After a deployment ends, success **or** failure | Fire-and-forget. |
+| `pre-rollback` | Before a rollback runs (in the background, after the API answered 202) | Sync for the rollback, with progress streaming. `failure_policy: fail` aborts; the instance gets its previous status back. Same `charts` list as `pre-deploy`. |
+| `post-rollback` | After a rollback completes **successfully** | Fire-and-forget. |
+| `rollback-completed` | After a rollback ends: `metadata.outcome` = `succeeded`, `failed`, `rejected` (by `pre-rollback`) or `cancelled` (another operation started) | Fire-and-forget. |
 | `pre-instance-create` | After validation, before DB write | Sync. `failure_policy: fail` → HTTP 403. |
 | `post-instance-create` | After the instance is persisted | Fire-and-forget. |
 | `pre-instance-delete` | After ID validation, before delete | Sync. `failure_policy: fail` → HTTP 403. |
@@ -491,6 +494,8 @@ A post-deploy subscriber that posts to Slack on `status=error` only. Drops on 2x
 A `pre-deploy` subscriber with `failure_policy: fail` and a high timeout (up to 1800s) that checks if container images exist for the branch being deployed. When images are missing, it triggers CI builds (Azure DevOps, GitHub Actions, GitLab CI, etc.) and polls until they complete.
 
 The core sends `charts` with `source_repo_url`, `build_pipeline_id`, `branch` and `image_tag` (the `{{.ImageTag}}` value of that chart) in the pre-deploy envelope, plus `metadata.registry_url` for registry lookups. The subscriber uses the streaming progress protocol to show build status in the deployment log.
+
+Pre-deploy hooks do not run for a rollback. To gate rollbacks too, add `pre-rollback` to `events`: the envelope has the same `charts` list, plus `metadata.rollback_mode` (`previous_revision` or `target`), `target_log_id` and `target_branch`. A rollback to a target restores the stored values of that deploy, not the images: an image tag that is a branch name can point to a newer image. `pre-rollback` runs in the background like `pre-deploy` and supports the same streaming progress protocol, so the gate's `LOG:` lines appear in the rollback log. For a one-revision rollback, the chart branches come from the previous successful deploy log when it recorded a branch (`metadata.branch_source`).
 
 ```json
 {

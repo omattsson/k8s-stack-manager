@@ -297,6 +297,9 @@ func TestManager_Deploy_PreHookAbortFinalizesAsError(t *testing.T) {
 	require.Len(t, logs, 1)
 	assert.Equal(t, models.DeployLogError, logs[0].Status)
 	assert.Contains(t, logs[0].ErrorMessage, "pre-deploy hook")
+	// The subscriber's deny reason is visible (issue #442), with the hook name.
+	assert.Equal(t, `pre-deploy hook "recorder" denied the deployment: policy says no`, logs[0].ErrorMessage)
+	assert.Contains(t, stored.ErrorMessage, "policy says no")
 
 	// Only the pre-deploy + deploy-finalized events fire (no post-deploy).
 	require.Eventually(t, func() bool {

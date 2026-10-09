@@ -8,12 +8,63 @@ A reusable blueprint created by DevOps engineers. Contains a set of Helm chart c
 ### Stack Definition
 A concrete collection of Helm chart configurations. Created by instantiating a template or from scratch. Owns the chart configs (chart name, repository, version, default values).
 
+- Definition names are unique per owner. Create, rename and template instantiate return 409 for a name that the owner already uses.
+- Import does not fail on a used name. It uses `<name> (imported)`, then `<name> (imported 2)`, and so on. The response shows the final name.
+- Quick deploy creates one definition for the new instance and sets `owner_instance_id`. When you delete that instance, the definition and its charts are deleted too, if no other instance uses the definition. If the name is used, quick deploy names the definition `<name> (2)`, `<name> (3)`, and so on.
+- Editing a quick deploy definition (for example adding a chart) does not keep it. It is still deleted with its owner instance when no instance uses it. To keep a setup, create your own definition (for example export and import it).
+- Older databases can contain duplicate names. They stay until you rename or delete them.
+- On MySQL the check is not case-sensitive (the default collation): `My-Def` and `my-def` are the same name. The in-memory test repositories compare exactly.
+
 ### Stack Instance
 A developer's working copy of a stack definition. Each instance has:
 - An **owner** (the developer)
 - A **branch** (Git branch for the deployment)
 - **Value overrides** per chart (merged on top of chart defaults)
 - An auto-generated **namespace** (`stack-{instance-name}-{owner}`)
+
+### Stack Instance Lifecycle
+
+**Names.** An instance name must be a DNS label (RFC 1123): lowercase letters `a-z`, digits `0-9` and `-`. It must start and end with a letter or a digit. The maximum length is 50 characters. Charts build host names from `{{.InstanceName}}`, so other characters break the Ingress. The API checks the rule on create, clone, quick deploy and rename (400). Older instances with other names keep working; an update that keeps the name does not fail.
+
+**Clone.** `POST /stack-instances/:id/clone` accepts an optional body `{"name": "...", "branch": "...", "ttl_minutes": N}`.
+- Without a name, the API uses the first free name of `<name>-copy`, `<name>-copy-2`, and so on.
+- The clone gets the cluster, the TTL, the value overrides, the branch overrides and the quota override of the source.
+- `branch` and `ttl_minutes` replace the values of the source. The clone is a draft and belongs to the caller.
+
+**Extend.** `POST /stack-instances/:id/extend` never makes the expiry earlier and never changes `ttl_minutes`.
+- `{"minutes": N}` adds N minutes to the current expiry. When the instance already expired or has no expiry time, it adds N minutes to now. N must be greater than 0.
+- An empty body adds the instance TTL (`ttl_minutes`) in the same way.
+- The new expiry is at most now + 30 days.
+- Deprecated: a body with only `ttl_minutes` keeps the old behaviour (expiry = now + `ttl_minutes`, and `ttl_minutes` changes). stackctl 0.4.0 and earlier send this body. The response has a `Warning` header.
+- The response is the instance with the new `expires_at`.
+
+**Rollback.** `POST /stack-instances/:id/rollback`:
+- Without a body, each Helm release goes back one revision.
+- With `{"target_log_id": "<log id>"}`, each chart gets the values of that deploy again (`helm upgrade --install` with the stored values snapshot). The chart version is the version that the deploy recorded. Older deploy logs have no recorded versions; then the current chart version is used. A deploy with an empty chart version records no version, so the rollback installs the newest chart. Charts that the target deploy did not include do not change.
+- A rollback to a target restores the stored **values** (including the shared and locked values of that time), not the images. Image tags that are branch names can point to newer images now.
+- Pre-deploy hooks do not run for a rollback. Subscribe image gates to `pre-rollback`. It gets the same chart list as `pre-deploy` (name, version, branch, `image_tag`) and the metadata `rollback_mode`, `target_log_id` and `target_branch` (see `backend/docs/hooks.md`).
+- In both modes a release stuck in `pending-*` is cleared before its upgrade or rollback (as for a deploy), and the instance waits for pod readiness (`stabilizing`) when readiness gating is on.
+- The `pre-rollback` hook runs in the background after the API answered 202. If it rejects the rollback, the rollback log ends with status `error` and the reason, and the instance gets its previous status back.
+- A one-revision rollback that fails on a chart records the values of the charts that it already rolled back, so the deploy preview stays correct.
+- The target must be a successful deploy of the same instance. Another log returns 400; an unknown log or a log of another instance returns 404.
+- The rollback does not change the stored value or branch overrides. After a rollback, the deploy preview compares against the values that now run (a failed rollback records the charts that it already upgraded). `values_drift: true` (in the rollback response for a target, in the deploy preview and in `GET /stack-instances/:id`) means that the next deploy applies the stored overrides again and undoes the rollback.
+- Each deploy and rollback log records the branch (`branch`). A rollback to a target records the branch of the target deploy.
+
+**Redeploy.** `POST /stack-instances/:id/deploy` also works for a `running` instance. It upgrades the releases with the current values. With a TTL, the expiry becomes now + `ttl_minutes`, unless the current expiry is later: a redeploy never makes the expiry earlier.
+
+**Delete.** Deleting an instance also deletes its value overrides, branch overrides and quota override. Then, in a separate step, the quick deploy definition is deleted when no instance uses it any more: the definition of the deleted instance, or a definition whose owner instance no longer exists (for example a clone of a deleted quick deploy instance). An error in that step is logged and does not undo the instance delete.
+
+**Cleanup policy conditions.** A condition is a comma-separated list of `key:value` pairs. All pairs must match.
+
+| Condition | Meaning |
+|---|---|
+| `status:<status>` | The instance status is `<status>`. |
+| `idle_days:N` | No deploy for N days (the creation time when the instance was never deployed). |
+| `age_days:N` | The instance was created more than N days ago. This is not the time since the stop. |
+| `stopped_days:N` | The instance is stopped, and the last stop finished N or more days ago. Instances without a recorded stop time never match. |
+| `ttl_expired` | The expiry time is in the past. |
+
+Use `stopped_days:N` for "stopped for N days". The stop time (`stopped_at`) is set when a stop finishes (API, TTL reaper, cleanup policy). A deploy or a clean clears it. The upgrade sets `stopped_at` for instances that are already stopped, from the last successful stop log or else from `updated_at`. Existing policies with `status:stopped,age_days:N` keep their meaning: created more than N days ago.
 
 ### Value Override
 Per-chart configuration overrides on a stack instance. Deep-merged with chart defaults during Helm values export. Template variables (`{{.Branch}}`, `{{.Namespace}}`, `{{.InstanceName}}`, etc.) are substituted at export time.

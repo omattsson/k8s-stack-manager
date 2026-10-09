@@ -102,7 +102,7 @@ describe('StackInstances Form', () => {
       expect(screen.getByText('Create Stack Instance')).toBeInTheDocument();
     });
 
-    expect(screen.getByText(/namespace will be auto-generated/i)).toBeInTheDocument();
+    expect(screen.getByText(/namespace is generated from the name and the owner/i)).toBeInTheDocument();
   });
 
   it('creates an instance on form submit', async () => {
@@ -129,7 +129,7 @@ describe('StackInstances Form', () => {
 
     // Type instance name
     const nameInput = screen.getByRole('textbox', { name: /instance name/i });
-    await user.type(nameInput, 'My App');
+    await user.type(nameInput, 'my-app');
 
     // Click create
     await user.click(screen.getByRole('button', { name: /create instance/i }));
@@ -175,7 +175,7 @@ describe('StackInstances Form', () => {
     await user.click(defSelect);
     await user.click(screen.getByText(/Web Stack/));
     const nameInput = screen.getByRole('textbox', { name: /instance name/i });
-    await user.type(nameInput, 'My App');
+    await user.type(nameInput, 'my-app');
 
     await user.click(screen.getByRole('button', { name: /create instance/i }));
 
@@ -444,8 +444,39 @@ describe('StackInstances Form', () => {
 
     // Type name but don't select a definition
     const nameInput = screen.getByRole('textbox', { name: /instance name/i });
-    await user.type(nameInput, 'My App');
+    await user.type(nameInput, 'my-app');
 
     expect(screen.getByRole('button', { name: /create instance/i })).toBeDisabled();
+  });
+
+  it('shows the name rule and blocks an invalid name', async () => {
+    const user = userEvent.setup();
+    (definitionService.list as ReturnType<typeof vi.fn>).mockResolvedValue(mockDefinitions);
+    render(
+      <MemoryRouter>
+        <Form />
+      </MemoryRouter>
+    );
+    await waitFor(() => {
+      expect(screen.getByText('Create Stack Instance')).toBeInTheDocument();
+    });
+    expect(screen.getByText(/Use lowercase letters \(a-z\), digits \(0-9\) and hyphens/)).toBeInTheDocument();
+
+    const defSelect = screen.getByRole('combobox', { name: /stack definition/i });
+    await user.click(defSelect);
+    await user.click(screen.getByText(/Web Stack/));
+
+    const nameInput = screen.getByRole('textbox', { name: /instance name/i });
+    await user.type(nameInput, 'My App');
+    expect(screen.getByText('Use lowercase letters only')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /create instance/i })).toBeDisabled();
+
+    await user.clear(nameInput);
+    await user.type(nameInput, 'my-app-');
+    expect(screen.getByText('Start and end with a letter or a digit')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /create instance/i })).toBeDisabled();
+
+    await user.type(nameInput, '1');
+    expect(screen.getByRole('button', { name: /create instance/i })).toBeEnabled();
   });
 });

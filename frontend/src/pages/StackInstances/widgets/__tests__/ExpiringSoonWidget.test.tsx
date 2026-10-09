@@ -1,9 +1,11 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import ExpiringSoonWidget from '../ExpiringSoonWidget';
 import { NotificationProvider } from '../../../../context/NotificationContext';
 import type { DashboardExpiring } from '../../../../types';
+import { instanceService } from '../../../../api/client';
 
 const authState = vi.hoisted(() => ({
   user: { id: 'u-alice', username: 'alice', role: 'user', display_name: 'Alice' } as
@@ -32,11 +34,11 @@ const item = (overrides: Partial<DashboardExpiring> = {}): DashboardExpiring => 
   ...overrides,
 });
 
-const renderWidget = (instances: DashboardExpiring[]) =>
+const renderWidget = (instances: DashboardExpiring[], onExtended = vi.fn()) =>
   render(
     <MemoryRouter>
       <NotificationProvider>
-        <ExpiringSoonWidget instances={instances} onExtended={vi.fn()} />
+        <ExpiringSoonWidget instances={instances} onExtended={onExtended} />
       </NotificationProvider>
     </MemoryRouter>,
   );
@@ -73,5 +75,20 @@ describe('ExpiringSoonWidget', () => {
     authState.user = { id: 'u-bob', username: 'bob', role: 'user', display_name: 'Bob' };
     renderWidget([item()]);
     expect(screen.getByRole('button', { name: 'Extend TTL' })).toBeInTheDocument();
+  });
+
+  it('extends by the chosen option and reports the new expiry', async () => {
+    const user = userEvent.setup();
+    const expiresAt = new Date(Date.now() + 25 * 3600000).toISOString();
+    (instanceService.extend as ReturnType<typeof vi.fn>).mockResolvedValue({ id: 'i1', expires_at: expiresAt });
+    const onExtended = vi.fn();
+    renderWidget([item({ owner_id: 'u-alice' })], onExtended);
+
+    await user.click(screen.getByRole('button', { name: 'Extend TTL' }));
+    await user.click(screen.getByRole('menuitem', { name: '+24 h' }));
+
+    await waitFor(() => expect(instanceService.extend).toHaveBeenCalledWith('i1', 1440));
+    expect(onExtended).toHaveBeenCalledWith('i1', expiresAt);
+    expect(await screen.findByText(/^Extended by 24 h\. Expires .+ \(in 1d 1h\)$/)).toBeInTheDocument();
   });
 });

@@ -472,10 +472,14 @@ func (m *MockStackDefinitionRepository) FindByID(id string) (*models.StackDefini
 	}
 	d, ok := m.items[id]
 	if !ok {
-		return nil, errors.New("not found")
+		return nil, dberrors.NewDatabaseError("find_by_id", dberrors.ErrNotFound)
 	}
 	cp := *d
 	return &cp, nil
+}
+
+func (m *MockStackDefinitionRepository) FindByIDForUpdate(id string) (*models.StackDefinition, error) {
+	return m.FindByID(id)
 }
 
 func (m *MockStackDefinitionRepository) FindByName(name string) ([]models.StackDefinition, error) {
@@ -695,6 +699,20 @@ func (m *MockChartConfigRepository) Delete(id string) error {
 	return nil
 }
 
+func (m *MockChartConfigRepository) DeleteByDefinition(definitionID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.err != nil {
+		return m.err
+	}
+	for id, c := range m.items {
+		if c.StackDefinitionID == definitionID {
+			delete(m.items, id)
+		}
+	}
+	return nil
+}
+
 func (m *MockChartConfigRepository) ListByDefinition(definitionID string) ([]models.ChartConfig, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -751,7 +769,7 @@ func (m *MockStackInstanceRepository) FindByID(id string) (*models.StackInstance
 	}
 	i, ok := m.items[id]
 	if !ok {
-		return nil, errors.New("not found")
+		return nil, dberrors.NewDatabaseError("find_by_id", dberrors.ErrNotFound)
 	}
 	cp := *i
 	return &cp, nil
@@ -1165,6 +1183,17 @@ func (m *MockValueOverrideRepository) Delete(id string) error {
 		return errors.New("not found")
 	}
 	delete(m.items, id)
+	return nil
+}
+
+func (m *MockValueOverrideRepository) DeleteByInstance(instanceID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for id, v := range m.items {
+		if v.StackInstanceID == instanceID {
+			delete(m.items, id)
+		}
+	}
 	return nil
 }
 
@@ -1821,7 +1850,7 @@ func (m *MockInstanceQuotaOverrideRepository) GetByInstanceID(_ context.Context,
 	}
 	o, ok := m.items[instanceID]
 	if !ok {
-		return nil, errors.New("not found")
+		return nil, dberrors.NewDatabaseError("GetByInstanceID", dberrors.ErrNotFound)
 	}
 	cp := *o
 	return &cp, nil
@@ -1853,7 +1882,7 @@ func (m *MockInstanceQuotaOverrideRepository) Delete(_ context.Context, instance
 		return m.err
 	}
 	if _, ok := m.items[instanceID]; !ok {
-		return errors.New("not found")
+		return dberrors.NewDatabaseError("Delete", dberrors.ErrNotFound)
 	}
 	delete(m.items, instanceID)
 	return nil

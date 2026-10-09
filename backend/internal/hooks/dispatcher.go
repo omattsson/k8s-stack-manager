@@ -5,7 +5,6 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
-	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -85,7 +84,7 @@ func (d *Dispatcher) fireInternal(ctx context.Context, event string, envelope Ev
 		sub := d.subs[idx]
 		if err := d.invoke(ctx, sub, envelope, onProgress); err != nil {
 			if sub.FailurePolicy == FailurePolicyFail {
-				return fmt.Errorf("hook %q failed (failure_policy=fail): %w", sub.Name, err)
+				return &FailedError{Hook: sub.Name, Err: err}
 			}
 			slog.Warn("hook failed (failure_policy=ignore)",
 				"subscription", sub.Name,
@@ -117,7 +116,7 @@ func (d *Dispatcher) invoke(ctx context.Context, sub Subscription, envelope Even
 		if msg == "" {
 			msg = "subscriber denied"
 		}
-		denyErr := errors.New(msg)
+		denyErr := &DeniedError{Hook: sub.Name, Message: msg}
 		finish(outcomeDenied, denyErr, statusCode)
 		return denyErr
 	}

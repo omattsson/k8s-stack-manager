@@ -497,14 +497,16 @@ describe('instanceService', () => {
     expect(api.delete).toHaveBeenCalledWith('/api/v1/stack-instances/i1');
   });
 
-  it('clone sends POST to clone endpoint', async () => {
+  it('clone sends POST with name, branch and TTL to clone endpoint', async () => {
     const api = mockApi;
     const cloned = { id: 'i3', name: 'inst-1-copy' };
     api.post.mockResolvedValueOnce(mockResponse(cloned));
 
-    const result = await instanceService.clone('i1');
+    const result = await instanceService.clone('i1', { name: 'inst-1-copy', branch: 'main', ttl_minutes: 240 });
 
-    expect(api.post).toHaveBeenCalledWith('/api/v1/stack-instances/i1/clone');
+    expect(api.post).toHaveBeenCalledWith('/api/v1/stack-instances/i1/clone', {
+      name: 'inst-1-copy', branch: 'main', ttl_minutes: 240,
+    });
     expect(result).toEqual(cloned);
   });
 
@@ -665,25 +667,34 @@ describe('instanceService', () => {
     expect(result).toEqual(podStatus);
   });
 
-  it('extend sends POST with ttl_minutes when provided', async () => {
+  it('extend sends POST with the minutes to add', async () => {
     const api = mockApi;
-    const extended = { id: 'i1', ttl_minutes: 120 };
+    const extended = { id: 'i1', expires_at: '2030-01-01T12:00:00Z' };
     api.post.mockResolvedValueOnce(mockResponse(extended));
 
-    const result = await instanceService.extend('i1', 120);
+    const result = await instanceService.extend('i1', 240);
 
-    expect(api.post).toHaveBeenCalledWith('/api/v1/stack-instances/i1/extend', { ttl_minutes: 120 });
+    expect(api.post).toHaveBeenCalledWith('/api/v1/stack-instances/i1/extend', { minutes: 240 });
     expect(result).toEqual(extended);
   });
 
-  it('extend sends POST with empty body when ttl not provided', async () => {
+  it('rollback sends POST with target_log_id when given', async () => {
     const api = mockApi;
-    const extended = { id: 'i1' };
-    api.post.mockResolvedValueOnce(mockResponse(extended));
+    api.post.mockResolvedValueOnce(mockResponse({ log_id: 'l9', message: 'ok' }));
 
-    await instanceService.extend('i1');
+    const result = await instanceService.rollback('i1', 'l2');
 
-    expect(api.post).toHaveBeenCalledWith('/api/v1/stack-instances/i1/extend', {});
+    expect(api.post).toHaveBeenCalledWith('/api/v1/stack-instances/i1/rollback', { target_log_id: 'l2' });
+    expect(result).toEqual({ log_id: 'l9', message: 'ok' });
+  });
+
+  it('rollback sends POST with empty body without a target', async () => {
+    const api = mockApi;
+    api.post.mockResolvedValueOnce(mockResponse({ log_id: 'l9', message: 'ok' }));
+
+    await instanceService.rollback('i1');
+
+    expect(api.post).toHaveBeenCalledWith('/api/v1/stack-instances/i1/rollback', {});
   });
 
   it('recent sends GET to /api/v1/stack-instances/recent', async () => {
@@ -1877,7 +1888,7 @@ describe('instanceService — error paths', () => {
 
   it('clone throws on error', async () => {
     mockApi.post.mockRejectedValueOnce(new Error('Not Found'));
-    await expect(instanceService.clone('i1')).rejects.toThrow('Not Found');
+    await expect(instanceService.clone('i1', { name: 'x' })).rejects.toThrow('Not Found');
   });
 
   it('getOverrides throws on error', async () => {

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import CleanupPolicies from '../index';
@@ -461,7 +461,7 @@ describe('CleanupPolicies Page', () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText('Stopped, Age > 14 days')).toBeInTheDocument();
+      expect(screen.getByText('Stopped, created more than 14 days ago')).toBeInTheDocument();
     });
   });
 
@@ -514,6 +514,74 @@ describe('CleanupPolicies Page', () => {
 
     await waitFor(() => {
       expect(screen.getByText(/name is required/i)).toBeInTheDocument();
+    });
+  });
+
+  describe('stopped_days and age_days conditions', () => {
+    const renderPage = () =>
+      render(
+        <MemoryRouter>
+          <NotificationProvider>
+            <CleanupPolicies />
+          </NotificationProvider>
+        </MemoryRouter>,
+      );
+
+    it.each([
+      ['stopped_days:3', 'Stopped > 3 days'],
+      ['age_days:30', 'Created more than 30 days ago'],
+    ])('shows %s as "%s"', async (condition, label) => {
+      (cleanupPolicyService.list as ReturnType<typeof vi.fn>).mockResolvedValue([{ ...mockPolicies[0], condition }]);
+      renderPage();
+      expect(await screen.findByText(label)).toBeInTheDocument();
+    });
+
+    it('stores "Stopped for X days" as stopped_days and explains age_days vs stopped_days', async () => {
+      const user = userEvent.setup();
+      (cleanupPolicyService.list as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+      (cleanupPolicyService.create as ReturnType<typeof vi.fn>).mockResolvedValue({ ...mockPolicies[0], id: 'p9' });
+      renderPage();
+      await waitFor(() => {
+        expect(screen.queryByRole('progressbar')).not.toBeInTheDocument();
+      });
+
+      await user.click(screen.getByRole('button', { name: /add policy/i }));
+      const dialog = screen.getByRole('dialog');
+      // Help lists stopped_days with an example and explains age_days.
+      expect(within(dialog).getByText('stopped_days:3')).toBeInTheDocument();
+      expect(within(dialog).getByText(/Stopped for more than N days \(time since the stop\)/)).toBeInTheDocument();
+      expect(within(dialog).getByText(/Created more than N days ago \(creation age, not the time since the stop\)/)).toBeInTheDocument();
+
+      await user.type(within(dialog).getByLabelText(/^Name/), 'Clean stopped');
+      await user.click(within(dialog).getByRole('combobox', { name: 'Condition' }));
+      await user.click(screen.getByRole('option', { name: 'Stopped for X days' }));
+      expect(within(dialog).getByText('Stopped > 3 days')).toBeInTheDocument();
+
+      await user.click(within(dialog).getByRole('button', { name: /^create$/i }));
+      await waitFor(() => {
+        expect(cleanupPolicyService.create).toHaveBeenCalledWith(expect.objectContaining({ condition: 'stopped_days:3' }));
+      });
+    });
+
+    it('stores "Created more than X days ago" as age_days', async () => {
+      const user = userEvent.setup();
+      (cleanupPolicyService.list as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+      (cleanupPolicyService.create as ReturnType<typeof vi.fn>).mockResolvedValue({ ...mockPolicies[0], id: 'p9' });
+      renderPage();
+      await waitFor(() => {
+        expect(screen.queryByRole('progressbar')).not.toBeInTheDocument();
+      });
+
+      await user.click(screen.getByRole('button', { name: /add policy/i }));
+      const dialog = screen.getByRole('dialog');
+      await user.type(within(dialog).getByLabelText(/^Name/), 'Old stacks');
+      await user.click(within(dialog).getByRole('combobox', { name: 'Condition' }));
+      await user.click(screen.getByRole('option', { name: 'Created more than X days ago' }));
+      await user.click(within(dialog).getByRole('button', { name: /^create$/i }));
+
+      await waitFor(() => {
+        expect(cleanupPolicyService.create).toHaveBeenCalledWith(expect.objectContaining({ condition: 'age_days:30' }));
+      });
     });
   });
 });

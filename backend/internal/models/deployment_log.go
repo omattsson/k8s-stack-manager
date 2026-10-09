@@ -17,6 +17,14 @@ type DeploymentLog struct {
 	ErrorMessage    string     `json:"error_message,omitempty" gorm:"type:text"`
 	ValuesSnapshot  string     `json:"values_snapshot,omitempty" gorm:"type:longtext"`
 	TargetLogID     string     `json:"target_log_id,omitempty" gorm:"size:36"`
+	// Branch is the instance branch of a deploy, or the branch of the target
+	// deploy for a rollback to a target. Empty for older logs and for stop
+	// and clean logs.
+	Branch string `json:"branch,omitempty" gorm:"size:255"`
+	// ChartVersions is a JSON object chart name -> chart version that a
+	// deploy used. A rollback to this deploy installs the same versions.
+	// Empty for logs written before the column existed.
+	ChartVersions string `json:"chart_versions,omitempty" gorm:"type:text"`
 }
 
 // Deployment log action constants.
@@ -76,6 +84,10 @@ type DeploymentLogRepository interface {
 	ListByInstance(ctx context.Context, instanceID string) ([]DeploymentLog, error)
 	ListByInstancePaginated(ctx context.Context, filters DeploymentLogFilters) (*DeploymentLogResult, error)
 	GetLatestByInstance(ctx context.Context, instanceID string) (*DeploymentLog, error)
+	// ListLatestByActions returns up to limit logs of the instance whose
+	// action is one of actions, newest first (by started_at). Only the small
+	// columns are loaded (no output, values snapshot or chart versions).
+	ListLatestByActions(ctx context.Context, instanceID string, actions []string, limit int) ([]DeploymentLog, error)
 	SummarizeByInstance(ctx context.Context, instanceID string) (*DeployLogSummary, error)
 	SummarizeBatch(ctx context.Context, instanceIDs []string) (map[string]*DeployLogSummary, error)
 	CountByAction(ctx context.Context, action string) (int, error)

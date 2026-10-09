@@ -340,7 +340,7 @@ func TestCloneInstance_Additional(t *testing.T) {
 		assert.Equal(t, http.StatusCreated, w.Code)
 		var result models.StackInstance
 		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &result))
-		assert.Contains(t, result.Name, "(Copy)")
+		assert.Equal(t, "my-stack-copy", result.Name)
 		assert.Equal(t, "d1", result.StackDefinitionID)
 
 		// Verify value overrides were copied.

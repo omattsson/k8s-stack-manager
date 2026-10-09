@@ -134,8 +134,11 @@ test.describe('Stack Instance Management', () => {
 
     const originalUrl = page.url();
 
-    // Clone
+    // Clone: the dialog suggests "<name>-copy"
     await page.getByRole('button', { name: 'Clone' }).click();
+    const cloneDialog = page.getByRole('dialog', { name: 'Clone Instance' });
+    await expect(cloneDialog.getByLabel('Name')).toHaveValue(`${instName}-copy`);
+    await cloneDialog.getByRole('button', { name: 'Create Clone' }).click();
     // Wait for navigation to a DIFFERENT instance page (not the current one)
     await page.waitForURL(
       (url) => {

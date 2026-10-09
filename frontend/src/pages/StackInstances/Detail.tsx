@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useWebSocket } from '../../hooks/useWebSocket';
-import type { WsMessage } from '../../hooks/useWebSocket';
+import type { WsMessage, DeploymentStatusPayload } from '../../hooks/useWebSocket';
 import {
   Box,
   Typography,
@@ -31,7 +31,7 @@ import PodStatusDisplay from '../../components/PodStatusDisplay';
 import AccessUrls from '../../components/AccessUrls';
 import FavoriteButton from '../../components/FavoriteButton';
 import { instanceService, definitionService, branchOverrideService } from '../../api/client';
-import type { StackInstance, ChartConfig, ValueOverride, ChartBranchOverride, DeploymentLog, NamespaceStatus } from '../../types';
+import type { RollbackResponse, StackInstance, ChartConfig, ValueOverride, ChartBranchOverride, DeploymentLog, NamespaceStatus } from '../../types';
 import YamlEditor from '../../components/YamlEditor';
 import TtlSelector from '../../components/TtlSelector';
 import useCountdown from '../../hooks/useCountdown';
@@ -42,6 +42,13 @@ import { useAuth } from '../../context/AuthContext';
 import { canModifyInstance } from '../../utils/roles';
 import { describeApiError } from '../../utils/apiError';
 import { downloadBlob } from '../../utils/download';
+import ExtendTtlMenu from '../../components/ExtendTtlMenu';
+import { successfulDeploys, currentDeployLogId, defaultRollbackTarget } from '../../utils/deployHistory';
+import CloneDialog from './CloneDialog';
+import RollbackDialog from './RollbackDialog';
+
+/** Statuses in which releases run, so a deploy is a redeploy and a rollback is possible. */
+const DEPLOYED_STATUSES = new Set(['running', 'partial', 'error']);
 
 const Detail = () => {
   const { id } = useParams<{ id: string }>();
@@ -74,7 +81,17 @@ const Detail = () => {
   const flushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [k8sStatus, setK8sStatus] = useState<NamespaceStatus | null>(null);
   const [statusLoading, setStatusLoading] = useState(false);
-  const [extending, setExtending] = useState(false);
+  const [cloneOpen, setCloneOpen] = useState(false);
+  const [rollbackOpen, setRollbackOpen] = useState(false);
+  const [rollbackTargetId, setRollbackTargetId] = useState<string | undefined>(undefined);
+  const [rollingBack, setRollingBack] = useState(false);
+  const [savedPendingRedeploy, setSavedPendingRedeploy] = useState(false);
+  // Counts deployment.status WebSocket messages. A fetched instance whose request
+  // started before a newer WebSocket status must not overwrite that status.
+  const wsStatusSeqRef = useRef(0);
+  // The action the user started last. The backend reports a rollback with the
+  // status "deploying", so the placeholder log uses this to name the action.
+  const pendingActionRef = useRef<DeploymentLog['action'] | null>(null);
   const initialOverridesRef = useRef<Record<string, string>>({});
   const initialBranchRef = useRef('');
   const isDirty = useMemo(() =>
@@ -147,15 +164,34 @@ const Detail = () => {
     fetchData();
   }, [id, userId, userRole]);
 
+  /**
+   * Fetch the instance and store it. When a WebSocket status arrived while the
+   * request ran, keep that newer status and its error message.
+   * @param instanceId - Instance ID
+   * @param adjust - Optional change to the fetched instance before it is stored
+   */
+  const refreshInstance = useCallback(async (
+    instanceId: string,
+    adjust?: (inst: StackInstance) => StackInstance,
+  ) => {
+    const seq = wsStatusSeqRef.current;
+    const fetched = await instanceService.get(instanceId);
+    const inst = adjust ? adjust(fetched) : fetched;
+    setInstance((prev) => (prev && wsStatusSeqRef.current !== seq
+      ? { ...inst, status: prev.status, error_message: prev.error_message }
+      : inst));
+  }, []);
+
   // Live-update instance status and deploy logs via WebSocket.
   const handleWsMessage = useCallback((msg: WsMessage) => {
     if (!id) return;
-    const payload = msg.payload as { instance_id?: string; status?: string };
+    const payload = msg.payload as DeploymentStatusPayload;
     if (payload.instance_id !== id) return;
 
     if (msg.type === 'deployment.status') {
       // Refresh instance data and K8s status when deployment status changes.
       const newStatus = payload.status as string;
+      wsStatusSeqRef.current += 1;
       setInstance((prev) => prev ? { ...prev, status: newStatus } : prev);
 
       // Clear stale K8s status at the start of any operation or when resources are gone.
@@ -171,17 +207,23 @@ const Detail = () => {
 
       // On active states, insert a placeholder log entry so streaming lines
       // have an accordion to attach to before the REST refresh completes.
-      const logId = (payload as { log_id?: string }).log_id;
-      if ((newStatus === 'deploying' || newStatus === 'stabilizing' || newStatus === 'stopping' || newStatus === 'cleaning' || newStatus === 'rolling_back') && logId) {
+      const logId = payload.log_id;
+      if ((newStatus === 'deploying' || newStatus === 'stabilizing' || newStatus === 'stopping' || newStatus === 'cleaning') && logId) {
         const actionMap: Record<string, DeploymentLog['action']> = {
-          deploying: 'deploy', stopping: 'stop', cleaning: 'clean', rolling_back: 'rollback',
+          deploying: 'deploy', stopping: 'stop', cleaning: 'clean',
         };
+        // A rollback also reports "deploying". Use the action from the message;
+        // older servers omit it, then use the action the user started here.
+        const action: DeploymentLog['action'] = payload.action
+          ?? (newStatus === 'deploying' && pendingActionRef.current === 'rollback'
+            ? 'rollback'
+            : actionMap[newStatus] || 'deploy');
         setDeployLogs((prev) => {
           if (prev.some((l) => l.id === logId)) return prev;
           return [{
             id: logId,
             stack_instance_id: id,
-            action: actionMap[newStatus] || 'deploy',
+            action,
             status: 'running' as const,
             output: '',
             started_at: new Date().toISOString(),
@@ -191,7 +233,11 @@ const Detail = () => {
 
       // Refresh deploy logs on terminal states and clear streaming lines.
       if (newStatus === 'running' || newStatus === 'partial' || newStatus === 'stopped' || newStatus === 'error' || newStatus === 'draft') {
+        // Refetch the whole instance: fields such as values_drift change when
+        // a rollback or a deploy finishes.
+        refreshInstance(id).catch(() => {});
         instanceService.getDeployLog(id).then(setDeployLogs).catch(() => {});
+        pendingActionRef.current = null;
         setStreamingLines({});
         streamingBufferRef.current = {};
         if (flushTimerRef.current) {
@@ -201,6 +247,7 @@ const Detail = () => {
         setDeploying(false);
         setStopping(false);
         setCleaning(false);
+        setRollingBack(false);
       }
     }
 
@@ -250,7 +297,7 @@ const Detail = () => {
       }
     }
 
-  }, [id]);
+  }, [id, refreshInstance]);
 
   const { send } = useWebSocket(handleWsMessage);
 
@@ -299,6 +346,7 @@ const Detail = () => {
     if (!id || !instance) return;
     setSaving(true);
     setError(null);
+    const hadChanges = isDirty;
     try {
       // Update branch if changed
       if (branch !== instance.branch) {
@@ -350,6 +398,7 @@ const Detail = () => {
         return next;
       });
       showSuccess('Changes saved successfully');
+      if (hadChanges && DEPLOYED_STATUSES.has(instance.status)) setSavedPendingRedeploy(true);
     } catch (err) {
       setError(await describeApiError(err, 'Failed to save changes'));
     } finally {
@@ -357,14 +406,9 @@ const Detail = () => {
     }
   };
 
-  const handleClone = async () => {
-    if (!id) return;
-    try {
-      const cloned = await instanceService.clone(id);
-      navigate(`/stack-instances/${cloned.id}`);
-    } catch {
-      setError('Failed to clone instance');
-    }
+  const handleCloned = (cloned: StackInstance) => {
+    setCloneOpen(false);
+    navigate(`/stack-instances/${cloned.id}`);
   };
 
   const handleDelete = async () => {
@@ -394,8 +438,10 @@ const Detail = () => {
 
   const handleDeploy = async () => {
     if (!id) return;
+    pendingActionRef.current = 'deploy';
     setDeploying(true);
     setError(null);
+    setSavedPendingRedeploy(false);
     try {
       await instanceService.deploy(id);
       showSuccess('Deployment started');
@@ -407,8 +453,7 @@ const Detail = () => {
     }
     // Best-effort refresh — don't surface errors to the user
     try {
-      const inst = await instanceService.get(id);
-      setInstance(inst);
+      await refreshInstance(id);
     } catch (e) { console.error('Failed to refresh instance after deploy', e); }
     try {
       const logs = await instanceService.getDeployLog(id);
@@ -418,6 +463,7 @@ const Detail = () => {
 
   const handleStop = async () => {
     if (!id) return;
+    pendingActionRef.current = 'stop';
     setStopping(true);
     setError(null);
     try {
@@ -430,8 +476,7 @@ const Detail = () => {
     }
     // Best-effort refresh — don't surface errors to the user
     try {
-      const inst = await instanceService.get(id);
-      setInstance(inst);
+      await refreshInstance(id);
     } catch (e) { console.error('Failed to refresh instance after stop', e); }
     try {
       const logs = await instanceService.getDeployLog(id);
@@ -441,6 +486,7 @@ const Detail = () => {
 
   const handleClean = async () => {
     if (!id) return;
+    pendingActionRef.current = 'clean';
     setCleaning(true);
     setError(null);
     try {
@@ -453,8 +499,7 @@ const Detail = () => {
     }
     // Best-effort refresh — don't surface errors to the user
     try {
-      const inst = await instanceService.get(id);
-      setInstance(inst);
+      await refreshInstance(id);
     } catch (e) { console.error('Failed to refresh instance after clean', e); }
     try {
       const logs = await instanceService.getDeployLog(id);
@@ -469,18 +514,51 @@ const Detail = () => {
     instance?.error_message?.includes('Expired (TTL)')
   );
 
-  const handleExtend = async () => {
+  const openRollback = (targetId?: string) => {
+    setRollbackTargetId(targetId);
+    setRollbackOpen(true);
+  };
+
+  const handleRollback = async (targetLogId: string) => {
     if (!id) return;
-    setExtending(true);
+    setRollbackOpen(false);
+    setRollingBack(true);
+    setError(null);
+    pendingActionRef.current = 'rollback';
+    let rollbackResult: RollbackResponse | undefined;
     try {
-      const updated = await instanceService.extend(id);
-      setInstance(updated);
-      showSuccess('TTL extended');
-    } catch {
-      setError('Failed to extend TTL');
-    } finally {
-      setExtending(false);
+      // The API accepts the rollback (202). A hook gate rejection shows in the
+      // deployment log, not as an HTTP error.
+      const result = await instanceService.rollback(id, targetLogId);
+      rollbackResult = result;
+      const started = 'Rollback started. Follow the deployment log.';
+      showSuccess(result?.warning ? `${started} ${result.warning}` : started);
+      if (result?.values_drift !== undefined) {
+        setInstance((prev) => prev ? { ...prev, values_drift: result.values_drift } : prev);
+      }
+    } catch (err) {
+      pendingActionRef.current = null;
+      setError(await describeApiError(err, 'Failed to start rollback'));
+      setRollingBack(false);
+      return;
     }
+    // Refetch once, in case the WebSocket misses the status change. While the
+    // rollback runs, the API can still return the old values_drift, so keep
+    // the value from the rollback response. The terminal WebSocket status
+    // refetches the instance again.
+    const responseDrift = rollbackResult?.values_drift;
+    try {
+      await refreshInstance(id, (inst) => (
+        responseDrift !== undefined && inst.values_drift !== responseDrift
+          ? { ...inst, values_drift: responseDrift }
+          : inst
+      ));
+    } catch (e) { console.error('Failed to refresh instance after rollback', e); }
+    // Best-effort log refresh — don't surface errors to the user
+    try {
+      const logs = await instanceService.getDeployLog(id);
+      setDeployLogs(logs);
+    } catch (e) { console.error('Failed to refresh deploy logs after rollback', e); }
   };
 
   const handleTtlChange = async (ttlMinutes: number) => {
@@ -490,7 +568,8 @@ const Detail = () => {
     try {
       let updated: StackInstance;
       if (ttlMinutes > 0) {
-        updated = await instanceService.extend(id, ttlMinutes);
+        // Sets the TTL and restarts the expiry from now.
+        updated = await instanceService.update(id, { ttl_minutes: ttlMinutes });
       } else {
         // Clear TTL — send full instance so required fields are preserved
         updated = await instanceService.update(id, { ...instance, ttl_minutes: 0 });
@@ -513,15 +592,24 @@ const Detail = () => {
 
   const canModify = canModifyInstance(user, instance);
 
-  const canDeploy = instance?.status === 'draft' || instance?.status === 'stopped' || instance?.status === 'error' || instance?.status === 'partial';
+  const canDeploy = instance?.status === 'draft' || instance?.status === 'stopped';
+  const canRedeploy = DEPLOYED_STATUSES.has(instance?.status ?? '');
+  const deploys = useMemo(() => successfulDeploys(deployLogs), [deployLogs]);
+  const currentLogId = useMemo(() => currentDeployLogId(deployLogs), [deployLogs]);
+  const canRollback = canRedeploy && deploys.length >= 2;
   const canStop = instance?.status === 'running' || instance?.status === 'partial' || instance?.status === 'deploying' || instance?.status === 'stabilizing';
   const canClean = instance?.status === 'running' || instance?.status === 'partial' || instance?.status === 'stopped' || instance?.status === 'error';
 
   const renderStatusActions = (status: string) => (
     <>
-      {canDeploy && (
+      {(canDeploy || canRedeploy) && (
         <Button variant="contained" color="success" onClick={() => setDeployPreviewOpen(true)} disabled={deploying}>
-          {deploying ? 'Deploying...' : 'Deploy'}
+          {deploying ? 'Deploying...' : canRedeploy ? 'Redeploy' : 'Deploy'}
+        </Button>
+      )}
+      {canRollback && (
+        <Button variant="outlined" color="warning" onClick={() => openRollback()} disabled={rollingBack}>
+          {rollingBack ? 'Rolling back...' : 'Rollback'}
         </Button>
       )}
       {status === 'stopping' && (
@@ -613,14 +701,11 @@ const Detail = () => {
                   icon={<span>⏱</span>}
                 />
                 {canModify && (
-                  <Button
-                    variant="outlined"
-                    size="small"
-                    onClick={handleExtend}
-                    disabled={extending}
-                  >
-                    {extending ? 'Extending...' : 'Extend'}
-                  </Button>
+                  <ExtendTtlMenu
+                    instanceId={instance.id}
+                    onExtended={setInstance}
+                    onError={setError}
+                  />
                 )}
               </Box>
             )}
@@ -652,7 +737,7 @@ const Detail = () => {
                 </MenuItem>
               ))}
             </Menu>
-            <Button variant="outlined" onClick={handleClone}>Clone</Button>
+            <Button variant="outlined" onClick={() => setCloneOpen(true)}>Clone</Button>
             {canModify && (
               <Button variant="outlined" color="error" onClick={() => setDeleteOpen(true)}>Delete</Button>
             )}
@@ -662,6 +747,27 @@ const Detail = () => {
         {!canModify && (
           <Alert severity="info" sx={{ mt: 2 }}>
             Read-only: you are not the owner of this stack.
+          </Alert>
+        )}
+
+        {instance.values_drift && (
+          <Alert severity="warning" sx={{ mt: 2 }}>
+            The running values differ from the stored overrides (after a rollback). The next deploy applies the stored overrides.
+          </Alert>
+        )}
+
+        {canModify && savedPendingRedeploy && canRedeploy && (
+          <Alert
+            severity="info"
+            sx={{ mt: 2 }}
+            onClose={() => setSavedPendingRedeploy(false)}
+            action={(
+              <Button color="inherit" size="small" onClick={() => setDeployPreviewOpen(true)} disabled={deploying}>
+                Redeploy
+              </Button>
+            )}
+          >
+            Saved. Redeploy to apply.
           </Alert>
         )}
 
@@ -779,7 +885,12 @@ const Detail = () => {
           <Typography variant="h6" sx={{ mb: 1 }}>
             Deployment History ({deployLogs.length})
           </Typography>
-          <DeploymentLogViewer logs={deployLogs} streamingLines={streamingLines} />
+          <DeploymentLogViewer
+            logs={deployLogs}
+            streamingLines={streamingLines}
+            currentDeployLogId={currentLogId}
+            onRollbackTo={canModify && canRollback ? (log) => openRollback(log.id) : undefined}
+          />
         </Box>
       )}
 
@@ -819,6 +930,25 @@ const Detail = () => {
         onConfirm={() => { setDeployPreviewOpen(false); handleDeploy(); }}
         onClose={() => setDeployPreviewOpen(false)}
       />
+
+      <CloneDialog
+        open={cloneOpen}
+        source={instance}
+        onClose={() => setCloneOpen(false)}
+        onCloned={handleCloned}
+      />
+
+      {canModify && canRollback && (
+        <RollbackDialog
+          open={rollbackOpen}
+          instanceName={instance.name}
+          deploys={deploys}
+          currentLogId={currentLogId}
+          initialTargetId={rollbackTargetId ?? defaultRollbackTarget(deploys, currentLogId)?.id}
+          onConfirm={handleRollback}
+          onClose={() => setRollbackOpen(false)}
+        />
+      )}
 
     </Box>
   );

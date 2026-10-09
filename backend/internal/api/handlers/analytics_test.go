@@ -80,6 +80,10 @@ func (m *mockDeployLogRepo) ListByInstancePaginated(_ context.Context, filters m
 	return &models.DeploymentLogResult{Data: out, Total: int64(len(out))}, nil
 }
 
+func (m *mockDeployLogRepo) ListLatestByActions(_ context.Context, _ string, _ []string, _ int) ([]models.DeploymentLog, error) {
+	return nil, nil
+}
+
 func (m *mockDeployLogRepo) GetLatestByInstance(_ context.Context, instanceID string) (*models.DeploymentLog, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()

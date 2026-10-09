@@ -49,6 +49,12 @@ type DeployPreviewResponse struct {
 	InstanceID   string               `json:"instance_id"`
 	InstanceName string               `json:"instance_name"`
 	Charts       []ChartDeployPreview `json:"charts"`
+	// ValuesDrift is true when the running values come from a rollback (the
+	// last operation was a successful rollback) and the stored overrides
+	// produce different values: the next deploy undoes the rollback.
+	ValuesDrift bool `json:"values_drift"`
+	// Warning explains ValuesDrift when it is true.
+	Warning string `json:"warning,omitempty"`
 }
 
 // MaxTTLMinutes is the maximum allowed TTL value (30 days).
@@ -411,8 +417,12 @@ func (h *InstanceHandler) GetRecentInstances(c *gin.Context) {
 // @Produce     json
 // @Param       instance body     models.StackInstance true "Instance object"
 // @Success     201      {object} models.StackInstance
-// @Failure     400      {object} map[string]string
+// @Failure     400      {object} map[string]string "Invalid body, or name is not a DNS label (lowercase a-z, 0-9, '-', start and end alphanumeric, at most 50 characters)"
+// @Failure     401      {object} map[string]string
+// @Failure     403      {object} map[string]string "A pre-instance-create hook rejected the request"
+// @Failure     404      {object} map[string]string "Stack definition not found"
 // @Failure     409      {object} NamespaceConflictResponse "Namespace already exists"
+// @Failure     500      {object} map[string]string
 // @Router      /api/v1/stack-instances [post]
 // createInstanceRequest is the JSON-binding DTO for CreateInstance.
 // TTLMinutes is *int so we can distinguish "omitted" (nil → use default)
@@ -492,6 +502,11 @@ func (h *InstanceHandler) CreateInstance(c *gin.Context) {
 		if clErr == nil && cl.MaxInstancesPerUser > 0 {
 			maxInstancesPerUser = cl.MaxInstancesPerUser
 		}
+	}
+
+	if err := models.ValidateInstanceName(inst.Name); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
 	}
 
 	// Auto-generate namespace.
@@ -595,12 +610,15 @@ func (h *InstanceHandler) CreateInstance(c *gin.Context) {
 
 // GetInstance godoc
 // @Summary     Get a stack instance
-// @Description Get a stack instance by ID
+// @Description Get a stack instance by ID. values_drift is true when the running values come from a successful rollback and the stored overrides produce different values: the next deploy undoes the rollback. Only this endpoint computes values_drift; list responses omit it.
 // @Tags        stack-instances
 // @Produce     json
 // @Param       id  path     string true "Instance ID"
 // @Success     200 {object} models.StackInstance
+// @Failure     400 {object} map[string]string
+// @Failure     401 {object} map[string]string
 // @Failure     404 {object} map[string]string
+// @Failure     500 {object} map[string]string
 // @Router      /api/v1/stack-instances/{id} [get]
 func (h *InstanceHandler) GetInstance(c *gin.Context) {
 	id := c.Param("id")
@@ -616,12 +634,14 @@ func (h *InstanceHandler) GetInstance(c *gin.Context) {
 		return
 	}
 
+	inst.ValuesDrift = h.instanceValuesDrift(c.Request.Context(), inst)
+
 	c.JSON(http.StatusOK, inst)
 }
 
 // UpdateInstance godoc
 // @Summary     Update a stack instance
-// @Description Update a stack instance (branch, name, etc.)
+// @Description Update a stack instance (branch, name, etc.). A changed name must be a DNS label (lowercase a-z, 0-9, '-', start and end alphanumeric, at most 50 characters); an unchanged name is not checked, so older instances with other names stay editable. A rename does not change the namespace.
 // @Tags        stack-instances
 // @Accept      json
 // @Produce     json
@@ -662,7 +682,13 @@ func (h *InstanceHandler) UpdateInstance(c *gin.Context) {
 		return
 	}
 
-	if update.Name != nil {
+	if update.Name != nil && *update.Name != existing.Name {
+		// Only a changed name must follow the name rule, so instances created
+		// before the rule existed can still be updated.
+		if err := models.ValidateInstanceName(*update.Name); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
 		existing.Name = *update.Name
 	}
 	if update.Branch != nil {
@@ -705,7 +731,7 @@ func (h *InstanceHandler) UpdateInstance(c *gin.Context) {
 
 // DeleteInstance godoc
 // @Summary     Delete a stack instance
-// @Description Deletes a stack instance. If the instance has running resources (status running/stopped/error), a cleanup is initiated first — helm releases are uninstalled and the namespace is deleted before the database record is removed. Returns 204 for immediate deletion (draft instances) or 202 when async cleanup is required.
+// @Description Deletes a stack instance. If the instance has running resources (status running/stopped/error), a cleanup is initiated first — helm releases are uninstalled and the namespace is deleted before the database record is removed. Returns 204 for immediate deletion (draft instances) or 202 when async cleanup is required. When quick deploy created the stack definition of the instance (owner_instance_id) and no other instance uses it, the definition and its charts are deleted with the instance.
 // @Tags        stack-instances
 // @Produce     json
 // @Param       id  path     string true "Instance ID"
@@ -789,12 +815,7 @@ func (h *InstanceHandler) DeleteInstance(c *gin.Context) {
 	}
 
 	if h.txRunner != nil {
-		txErr := h.txRunner.RunInTx(func(repos database.TxRepos) error {
-			if err := repos.BranchOverride.DeleteByInstance(id); err != nil {
-				return err
-			}
-			return repos.StackInstance.Delete(id)
-		})
+		txErr := database.DeleteInstanceWithOwnedDefinition(h.txRunner, inst)
 		if txErr != nil {
 			status, message := mapError(txErr, entityStackInstance)
 			c.JSON(status, gin.H{"error": message})
@@ -925,15 +946,56 @@ func (h *InstanceHandler) InvokeAction(c *gin.Context) {
 	})
 }
 
+// cloneInstanceRequest is the optional request body for CloneInstance.
+type cloneInstanceRequest struct {
+	// Name of the clone. Must be a DNS label (lowercase a-z, 0-9, '-', start
+	// and end alphanumeric, at most 50 characters). When empty, the server
+	// picks the first free name of <source>-copy, <source>-copy-2, ...
+	Name string `json:"name"`
+	// Branch of the clone. Default: the branch of the source.
+	Branch string `json:"branch"`
+	// TTLMinutes of the clone (0 = no expiry). Default: the TTL of the source.
+	TTLMinutes *int `json:"ttl_minutes"`
+}
+
+// maxCloneNameAttempts limits the generated clone names that are tried.
+const maxCloneNameAttempts = 50
+
+// cloneNameCandidate returns the n-th generated clone name for base:
+// <base>-copy for n = 1 and <base>-copy-<n> after that. The base is cut so the
+// name fits MaxInstanceNameLength, and it stays a valid DNS label.
+func cloneNameCandidate(base string, n int) string {
+	suffix := "-copy"
+	if n > 1 {
+		suffix = fmt.Sprintf("-copy-%d", n)
+	}
+	maxBase := models.MaxInstanceNameLength - len(suffix)
+	if len(base) > maxBase {
+		base = strings.TrimRight(base[:maxBase], "-")
+	}
+	if base == "" {
+		return strings.TrimPrefix(suffix, "-")
+	}
+	return base + suffix
+}
+
 // CloneInstance godoc
 // @Summary     Clone a stack instance
-// @Description Create a new stack instance as a copy of an existing one
+// @Description Create a new draft stack instance as a copy of an existing one. The clone belongs to the caller and uses the cluster and definition of the source.
+// @Description It copies the TTL (unless ttl_minutes is given), the value overrides, the branch overrides and the instance quota override.
+// @Description The body is optional. Without a name, the server picks the first free name of <source>-copy, <source>-copy-2, ... (the namespace stack-<name>-<owner> must be free). A given name must be a DNS label (lowercase a-z, 0-9, '-', start and end alphanumeric, at most 50 characters).
 // @Tags        stack-instances
+// @Accept      json
 // @Produce     json
-// @Param       id  path     string true "Instance ID"
-// @Success     201 {object} models.StackInstance
-// @Failure     404 {object} map[string]string
-// @Failure     409 {object} NamespaceConflictResponse "Namespace already exists"
+// @Param       id   path     string               true  "Source instance ID"
+// @Param       body body     cloneInstanceRequest false "Optional clone name, branch and TTL"
+// @Success     201  {object} models.StackInstance
+// @Failure     400  {object} map[string]string "Invalid body, name or TTL"
+// @Failure     401  {object} map[string]string
+// @Failure     403  {object} map[string]string
+// @Failure     404  {object} map[string]string
+// @Failure     409  {object} NamespaceConflictResponse "Namespace already exists (given name), or no free generated name"
+// @Failure     500  {object} map[string]string
 // @Router      /api/v1/stack-instances/{id}/clone [post]
 func (h *InstanceHandler) CloneInstance(c *gin.Context) {
 	id := c.Param("id")
@@ -944,34 +1006,88 @@ func (h *InstanceHandler) CloneInstance(c *gin.Context) {
 		return
 	}
 
+	var req cloneInstanceRequest
+	if c.Request.Body != nil && c.Request.Body != http.NoBody {
+		if bindErr := c.ShouldBindJSON(&req); bindErr != nil && !errors.Is(bindErr, io.EOF) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": msgInvalidRequestFormat})
+			return
+		}
+	}
+
 	now := time.Now().UTC()
 	ownerID := middleware.GetUserIDFromContext(c)
 	ownerName := middleware.GetUsernameFromContext(c)
 
-	// Truncate name before adding suffix to stay within the 50-char limit.
-	// Use rune slicing to avoid splitting multi-byte UTF-8 characters.
-	copySuffix := " (Copy)"
-	baseRunes := []rune(source.Name)
-	maxBase := models.MaxInstanceNameLength - len(copySuffix)
-	if maxBase < 0 {
-		maxBase = 0
+	ttl := source.TTLMinutes
+	if req.TTLMinutes != nil {
+		ttl = *req.TTLMinutes
 	}
-	if len(baseRunes) > maxBase {
-		baseRunes = baseRunes[:maxBase]
+	if ttl < 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "ttl_minutes must be non-negative"})
+		return
 	}
-	cloneName := string(baseRunes) + copySuffix
-	cloneNamespace := buildNamespace(cloneName, ownerName)
+	if ttl > MaxTTLMinutes {
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf(msgTTLExceedsMax, MaxTTLMinutes)})
+		return
+	}
+
+	branch := source.Branch
+	if req.Branch != "" {
+		branch = req.Branch
+	}
+
+	cloneName := req.Name
+	if cloneName != "" {
+		if err := models.ValidateInstanceName(cloneName); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		if h.checkNamespaceUniqueness(c, buildNamespace(cloneName, ownerName), cloneName) {
+			return
+		}
+	} else {
+		// The source name can be older than the name rule; sanitize it first.
+		base := sanitizeRFC1123Label(source.Name)
+		for n := 1; n <= maxCloneNameAttempts; n++ {
+			candidate := cloneNameCandidate(base, n)
+			_, findErr := h.instanceRepo.FindByNamespace(buildNamespace(candidate, ownerName))
+			if errors.Is(findErr, dberrors.ErrNotFound) {
+				cloneName = candidate
+				break
+			}
+			if findErr != nil {
+				slog.Error("Failed to check namespace uniqueness for clone",
+					logKeyInstanceID, id, "error", findErr)
+				c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
+				return
+			}
+		}
+		if cloneName == "" {
+			c.JSON(http.StatusConflict, NamespaceConflictResponse{
+				Error:       "namespace already exists",
+				Message:     fmt.Sprintf("No free clone name found; send a name in the request body (tried %d names)", maxCloneNameAttempts),
+				Suggestions: []string{},
+			})
+			return
+		}
+	}
 
 	clone := &models.StackInstance{
 		ID:                uuid.New().String(),
 		StackDefinitionID: source.StackDefinitionID,
 		Name:              cloneName,
-		Namespace:         cloneNamespace,
+		Namespace:         buildNamespace(cloneName, ownerName),
 		OwnerID:           ownerID,
-		Branch:            source.Branch,
+		Branch:            branch,
+		ClusterID:         source.ClusterID,
 		Status:            models.StackStatusDraft,
+		TTLMinutes:        ttl,
 		CreatedAt:         now,
 		UpdatedAt:         now,
+	}
+	if ttl > 0 {
+		exp := now.Add(time.Duration(ttl) * time.Minute)
+		clone.ExpiresAt = &exp
 	}
 
 	if err := clone.Validate(); err != nil {
@@ -979,34 +1095,15 @@ func (h *InstanceHandler) CloneInstance(c *gin.Context) {
 		return
 	}
 
-	// Check namespace uniqueness.
-	if h.checkNamespaceUniqueness(c, clone.Namespace, cloneName) {
+	if h.txRunner == nil {
+		slog.Error("txRunner not configured for CloneInstance", logKeyInstanceID, id)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
 		return
 	}
 
-	// Transactional path — instance create + override copies are atomic.
-	overrides, listErr := h.overrideRepo.ListByInstance(source.ID)
-	if listErr != nil {
-		overrides = nil // proceed without overrides
-	}
-
+	// Instance create + override copies are atomic.
 	txErr := h.txRunner.RunInTx(func(repos database.TxRepos) error {
-		if err := repos.StackInstance.Create(clone); err != nil {
-			return err
-		}
-		for _, ov := range overrides {
-			clonedOV := &models.ValueOverride{
-				ID:              uuid.New().String(),
-				StackInstanceID: clone.ID,
-				ChartConfigID:   ov.ChartConfigID,
-				Values:          ov.Values,
-				UpdatedAt:       now,
-			}
-			if err := repos.ValueOverride.Create(clonedOV); err != nil {
-				return err
-			}
-		}
-		return nil
+		return cloneInstanceTx(c.Request.Context(), repos, source.ID, clone, now)
 	})
 	if txErr != nil {
 		status, message := mapError(txErr, entityStackInstance)
@@ -1015,6 +1112,70 @@ func (h *InstanceHandler) CloneInstance(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusCreated, clone)
+}
+
+// cloneInstanceTx creates clone and copies the value overrides, the branch
+// overrides and the quota override of the source instance. Repositories that
+// are not in repos are skipped.
+func cloneInstanceTx(ctx context.Context, repos database.TxRepos, sourceID string, clone *models.StackInstance, now time.Time) error {
+	if err := repos.StackInstance.Create(clone); err != nil {
+		return err
+	}
+	if repos.ValueOverride != nil {
+		overrides, err := repos.ValueOverride.ListByInstance(sourceID)
+		if err != nil {
+			return err
+		}
+		for _, ov := range overrides {
+			if err := repos.ValueOverride.Create(&models.ValueOverride{
+				ID:              uuid.New().String(),
+				StackInstanceID: clone.ID,
+				ChartConfigID:   ov.ChartConfigID,
+				Values:          ov.Values,
+				UpdatedAt:       now,
+			}); err != nil {
+				return err
+			}
+		}
+	}
+	if repos.BranchOverride != nil {
+		branches, err := repos.BranchOverride.List(sourceID)
+		if err != nil {
+			return err
+		}
+		for _, bo := range branches {
+			if err := repos.BranchOverride.Set(&models.ChartBranchOverride{
+				ID:              uuid.New().String(),
+				StackInstanceID: clone.ID,
+				ChartConfigID:   bo.ChartConfigID,
+				Branch:          bo.Branch,
+				UpdatedAt:       now,
+			}); err != nil {
+				return err
+			}
+		}
+	}
+	if repos.InstanceQuotaOverride != nil {
+		quota, err := repos.InstanceQuotaOverride.GetByInstanceID(ctx, sourceID)
+		if err != nil && !errors.Is(err, dberrors.ErrNotFound) {
+			return err
+		}
+		if err == nil && quota != nil {
+			copied := *quota
+			copied.ID = uuid.New().String()
+			copied.StackInstanceID = clone.ID
+			copied.CreatedAt = now
+			copied.UpdatedAt = now
+			if quota.PodLimit != nil {
+				pods := *quota.PodLimit
+				copied.PodLimit = &pods
+			}
+			if err := repos.InstanceQuotaOverride.Upsert(ctx, &copied); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 // ExportChartValues godoc
@@ -1123,7 +1284,7 @@ func (h *InstanceHandler) ExportAllValues(c *gin.Context) {
 
 // DeployInstance godoc
 // @Summary     Deploy a stack instance
-// @Description Trigger Helm deployment for a stack instance
+// @Description Trigger Helm deployment for a stack instance. Allowed for draft, stopped, error, partial and running instances (running = redeploy, a Helm upgrade with the current values). With a TTL, the expiry becomes now + ttl_minutes, unless the current expiry is later (a redeploy never makes the expiry earlier).
 // @Tags        stack-instances
 // @Produce     json
 // @Param       id path string true "Instance ID"
@@ -1170,10 +1331,10 @@ func (h *InstanceHandler) DeployInstance(c *gin.Context) {
 		return
 	}
 
-	// Reset TTL expiry clock on deploy.
+	// Restart the TTL clock on deploy, but never make the expiry earlier: a
+	// redeploy of an instance that was extended keeps the later expiry.
 	if inst.TTLMinutes > 0 {
-		exp := time.Now().UTC().Add(time.Duration(inst.TTLMinutes) * time.Minute)
-		inst.ExpiresAt = &exp
+		inst.ExpiresAt = deployExpiry(inst.ExpiresAt, inst.TTLMinutes, time.Now().UTC())
 		_ = h.instanceRepo.Update(inst)
 	}
 
@@ -1248,7 +1409,7 @@ func (h *InstanceHandler) DeployInstance(c *gin.Context) {
 
 // DeployPreview godoc
 // @Summary     Preview deployment changes
-// @Description Compare pending merged values against last-deployed values per chart. Pending values use the deploy pipeline: cluster shared values (by priority), chart defaults, instance overrides, locked template values. A shared values load error returns 500 (fail closed).
+// @Description Compare pending merged values against the running values per chart. Pending values use the deploy pipeline: cluster shared values (by priority), chart defaults, instance overrides, locked template values. Previous values are the values of the last deploy, or of the last successful rollback. has_changes compares the YAML content (key order and formatting do not matter). values_drift is true when the last operation was a successful rollback and at least one chart has changes: the next deploy undoes the rollback. A shared values load error returns 500 (fail closed).
 // @Tags        stack-instances
 // @Produce     json
 // @Param       id path string true "Instance ID"
@@ -1323,15 +1484,25 @@ func (h *InstanceHandler) DeployPreview(c *gin.Context) {
 			ChartName:      ch.ChartName,
 			PreviousValues: previous,
 			PendingValues:  pending,
-			HasChanges:     pending != previous,
+			HasChanges:     !valuesEqual(pending, previous),
 		})
 	}
 
-	c.JSON(http.StatusOK, DeployPreviewResponse{
+	resp := DeployPreviewResponse{
 		InstanceID:   inst.ID,
 		InstanceName: inst.Name,
 		Charts:       chartPreviews,
-	})
+	}
+	anyChanges := false
+	for _, cp := range chartPreviews {
+		anyChanges = anyChanges || cp.HasChanges
+	}
+	if anyChanges && h.lastOperationWasRollback(c.Request.Context(), inst.ID) {
+		resp.ValuesDrift = true
+		resp.Warning = msgValuesDrift
+	}
+
+	c.JSON(http.StatusOK, resp)
 }
 
 // StopInstance godoc
@@ -1772,21 +1943,37 @@ func resolveOwnerName(userRepo models.UserRepository, ownerID string) string {
 
 // extendTTLRequest is the optional request body for the ExtendTTL endpoint.
 type extendTTLRequest struct {
-	TTLMinutes int `json:"ttl_minutes"`
+	// Minutes adds this many minutes to the current expiry (or to now when
+	// the instance already expired or has no expiry time). Must be > 0.
+	Minutes *int `json:"minutes,omitempty"`
+	// TTLMinutes is deprecated. Sent alone, it keeps the old behaviour: set
+	// the TTL to this value and the expiry to now + TTL. Use minutes instead.
+	TTLMinutes *int `json:"ttl_minutes,omitempty"`
 }
+
+// msgExtendTTLDeprecated is logged and returned in a Warning header when a
+// client sends the deprecated ttl_minutes body to the extend endpoint.
+const msgExtendTTLDeprecated = `299 - "ttl_minutes on /extend is deprecated and resets the expiry to now + ttl_minutes; send {\"minutes\": N} to add N minutes"`
 
 // ExtendTTL godoc
 // @Summary     Extend instance TTL
-// @Description Extend the expiry time of a stack instance. Uses provided ttl_minutes or the instance's existing TTLMinutes.
+// @Description Extend the expiry time of a stack instance. The extend never makes the expiry earlier and never changes ttl_minutes.
+// @Description - {"minutes": N}: adds N minutes (N > 0) to the current expires_at, or to now when the instance already expired or has no expiry time. The new expiry is capped at now + 43200 minutes (30 days).
+// @Description - Empty body: adds the instance's ttl_minutes in the same way (400 when ttl_minutes is 0).
+// @Description - Deprecated {"ttl_minutes": N} (without minutes): the old behaviour for older clients (stackctl 0.4.0 and earlier). It sets ttl_minutes to N and expires_at to now + N, which can make the expiry earlier. The response has a Warning header; the server logs a deprecation warning.
+// @Description An instance without TTL and without expiry time has nothing to extend (400).
 // @Tags        stack-instances
 // @Accept      json
 // @Produce     json
 // @Param       id  path     string          true  "Instance ID"
-// @Param       body body    extendTTLRequest false "Optional TTL override"
-// @Success     200 {object} models.StackInstance
+// @Param       body body    extendTTLRequest false "Minutes to add (or the deprecated ttl_minutes)"
+// @Success     200 {object} models.StackInstance "The instance with the new expires_at"
+// @Header      200 {string} Warning "Set when the deprecated ttl_minutes body is used"
 // @Failure     400 {object} map[string]string
+// @Failure     401 {object} map[string]string
 // @Failure     403 {object} map[string]string "Caller is not the owner, an admin or a devops user"
 // @Failure     404 {object} map[string]string
+// @Failure     500 {object} map[string]string
 // @Router      /api/v1/stack-instances/{id}/extend [post]
 func (h *InstanceHandler) ExtendTTL(c *gin.Context) {
 	id := c.Param("id")
@@ -1810,29 +1997,53 @@ func (h *InstanceHandler) ExtendTTL(c *gin.Context) {
 	var req extendTTLRequest
 	// Body is optional — only bind if the client sent content.
 	if c.Request.ContentLength != 0 {
-		if err := c.ShouldBindJSON(&req); err != nil {
+		if err := c.ShouldBindJSON(&req); err != nil && !errors.Is(err, io.EOF) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": msgInvalidRequestFormat})
 			return
 		}
 	}
 
-	ttl := req.TTLMinutes
-	if ttl == 0 {
-		ttl = inst.TTLMinutes
-	}
-	if ttl <= 0 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "No TTL configured for this instance"})
-		return
-	}
-	if ttl > MaxTTLMinutes {
-		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf(msgTTLExceedsMax, MaxTTLMinutes)})
-		return
-	}
+	now := time.Now().UTC()
 
-	inst.TTLMinutes = ttl
-	exp := time.Now().UTC().Add(time.Duration(ttl) * time.Minute)
-	inst.ExpiresAt = &exp
-	inst.UpdatedAt = time.Now().UTC()
+	switch {
+	case req.Minutes != nil:
+		if *req.Minutes <= 0 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "minutes must be greater than 0"})
+			return
+		}
+		if inst.TTLMinutes <= 0 && inst.ExpiresAt == nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Instance has no expiry; nothing to extend"})
+			return
+		}
+		inst.ExpiresAt = extendExpiry(inst.ExpiresAt, *req.Minutes, now)
+
+	case req.TTLMinutes != nil && *req.TTLMinutes != 0:
+		// Deprecated: old clients send ttl_minutes. Keep the old semantics.
+		ttl := *req.TTLMinutes
+		if ttl < 0 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "ttl_minutes must be greater than 0"})
+			return
+		}
+		if ttl > MaxTTLMinutes {
+			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf(msgTTLExceedsMax, MaxTTLMinutes)})
+			return
+		}
+		slog.Warn("deprecated ttl_minutes body on extend; the expiry is reset to now + ttl_minutes",
+			logKeyInstanceID, id, "ttl_minutes", ttl, "user_id", middleware.GetUserIDFromContext(c))
+		c.Header("Warning", msgExtendTTLDeprecated)
+		inst.TTLMinutes = ttl
+		exp := now.Add(time.Duration(ttl) * time.Minute)
+		inst.ExpiresAt = &exp
+
+	default:
+		// Empty body: extend by one TTL period.
+		if inst.TTLMinutes <= 0 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "No TTL configured for this instance"})
+			return
+		}
+		inst.ExpiresAt = extendExpiry(inst.ExpiresAt, inst.TTLMinutes, now)
+	}
+	inst.UpdatedAt = now
 
 	if err := h.instanceRepo.Update(inst); err != nil {
 		status, message := mapError(err, entityStackInstance)
@@ -1841,6 +2052,37 @@ func (h *InstanceHandler) ExtendTTL(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, inst)
+}
+
+// deployExpiry returns the expiry after a deploy: now + ttl, or the current
+// expiry when it is later (a redeploy never shortens an extended expiry).
+func deployExpiry(current *time.Time, ttlMinutes int, now time.Time) *time.Time {
+	exp := now.Add(time.Duration(ttlMinutes) * time.Minute)
+	if current != nil && current.After(exp) {
+		exp = *current
+	}
+	return &exp
+}
+
+// extendExpiry returns the expiry after adding minutes to current (or to now
+// when current is nil or in the past). The result is capped at now +
+// MaxTTLMinutes, but it is never earlier than current.
+func extendExpiry(current *time.Time, minutes int, now time.Time) *time.Time {
+	if minutes > MaxTTLMinutes {
+		minutes = MaxTTLMinutes
+	}
+	base := now
+	if current != nil && current.After(now) {
+		base = *current
+	}
+	exp := base.Add(time.Duration(minutes) * time.Minute)
+	if limit := now.Add(time.Duration(MaxTTLMinutes) * time.Minute); exp.After(limit) {
+		exp = limit
+	}
+	if current != nil && current.After(exp) {
+		exp = *current
+	}
+	return &exp
 }
 
 // CompareInstanceSummary is the summary info for one side of a comparison.
@@ -2062,19 +2304,31 @@ func (h *InstanceHandler) values() *valuesBuilder {
 	return b
 }
 
+// rollbackRequest is the optional request body for RollbackInstance.
+type rollbackRequest struct {
+	// TargetLogID is the ID of a successful deploy log of this instance.
+	TargetLogID string `json:"target_log_id"`
+}
+
 // RollbackInstance godoc
 // @Summary     Rollback a stack instance
-// @Description Rollback all Helm releases in a stack instance to their previous revision
+// @Description Without target_log_id: roll back every Helm release of the instance by one revision (helm rollback).
+// @Description With target_log_id: restore the values of that deploy. The log must be a successful deploy of this instance with a values snapshot (404 when the log does not exist or belongs to another instance, 400 otherwise). Each chart of the target deploy is upgraded (helm upgrade --install) with the merged values of that deploy and the chart version that the deploy recorded; deploys from before the version recording use the current chart version. Charts that the target deploy did not include are left unchanged.
+// @Description A rollback to a target restores the stored VALUES of that deploy (including the shared and locked values of that time), not the images. Image tags that are branch names can point to newer images now. A chart without a recorded version (the deploy used an empty chart version) installs the newest chart. Pre-deploy hooks do not run for a rollback; subscribe image gates to pre-rollback, which gets the same chart list (name, version, branch, image_tag) plus metadata rollback_mode, target_log_id and target_branch.
+// @Description The pre-rollback hook runs in the background after the 202 answer, with progress streaming like pre-deploy. A rejection ends the rollback log with status error and the hook reason; the instance gets its previous status back. For a one-revision rollback the hook chart branches come from the previous successful deploy log when it recorded a branch.
+// @Description In both modes a release stuck in pending-* is cleared before each chart, and after the rollback the instance waits for pod readiness (stabilizing) when readiness gating is configured, as for a deploy. A one-revision rollback that fails records the values of the charts that it already rolled back.
+// @Description The rollback does not change the stored value or branch overrides. After a successful rollback the deploy preview compares against the running values; values_drift (in this response for a target, and in the deploy preview) shows that the next deploy applies the stored overrides again.
 // @Tags        stack-instances
 // @Accept      json
 // @Produce     json
 // @Security    BearerAuth
-// @Param       id   path     string true "Instance ID"
-// @Param       body body     object false "Optional: {\"target_log_id\": \"...\"}"
-// @Success     202 {object} map[string]string
-// @Failure     400 {object} map[string]string
+// @Param       id   path     string          true  "Instance ID"
+// @Param       body body     rollbackRequest false "Optional rollback target"
+// @Success     202 {object} RollbackResponse
+// @Failure     400 {object} map[string]string "Invalid body, no charts, or the target is not a successful deploy with a values snapshot"
+// @Failure     401 {object} map[string]string
 // @Failure     403 {object} map[string]string "Caller is not the owner, an admin or a devops user"
-// @Failure     404 {object} map[string]string
+// @Failure     404 {object} map[string]string "Instance or target deploy log not found"
 // @Failure     409 {object} map[string]string
 // @Failure     500 {object} map[string]string
 // @Failure     503 {object} map[string]string
@@ -2112,9 +2366,7 @@ func (h *InstanceHandler) RollbackInstance(c *gin.Context) {
 		return
 	}
 
-	var body struct {
-		TargetLogID string `json:"target_log_id"`
-	}
+	var body rollbackRequest
 	if c.Request.Body != nil && c.Request.Body != http.NoBody {
 		if bindErr := c.ShouldBindJSON(&body); bindErr != nil && !errors.Is(bindErr, io.EOF) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": msgInvalidRequestFormat})
@@ -2141,15 +2393,44 @@ func (h *InstanceHandler) RollbackInstance(c *gin.Context) {
 		return
 	}
 
+	resp := RollbackResponse{Message: "Rollback started", TargetLogID: body.TargetLogID}
+	target := &rollbackTargetData{}
+	if body.TargetLogID != "" {
+		target, err = h.loadRollbackTarget(c.Request.Context(), id, body.TargetLogID)
+		if err != nil {
+			var targetErr *rollbackTargetError
+			if errors.As(err, &targetErr) {
+				c.JSON(targetErr.status, gin.H{"error": targetErr.message})
+				return
+			}
+			slog.Error("Failed to load rollback target", logKeyInstanceID, id, "target_log_id", body.TargetLogID, "error", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
+			return
+		}
+		pending, buildErr := h.buildChartValues(c.Request.Context(), inst, def, charts)
+		if buildErr != nil {
+			logRollbackDriftError(id, buildErr)
+		} else {
+			drift := targetValuesDrift(pending, target.values)
+			resp.ValuesDrift = &drift
+			if drift {
+				resp.Warning = msgValuesDrift
+			}
+		}
+	}
+
 	var chartInfos []deployer.ChartDeployInfo
 	for _, ch := range charts {
 		chartInfos = append(chartInfos, deployer.ChartDeployInfo{ChartConfig: ch})
 	}
 
 	logID, err := h.deployManager.Rollback(c.Request.Context(), deployer.RollbackRequest{
-		Instance:    inst,
-		Charts:      chartInfos,
-		TargetLogID: body.TargetLogID,
+		Instance:            inst,
+		Charts:              chartInfos,
+		TargetLogID:         body.TargetLogID,
+		TargetValues:        target.values,
+		TargetChartVersions: target.versions,
+		TargetBranch:        target.branch,
 	})
 	if err != nil {
 		slog.Error("Failed to start rollback",
@@ -2160,7 +2441,8 @@ func (h *InstanceHandler) RollbackInstance(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusAccepted, gin.H{"log_id": logID, "message": "Rollback started"})
+	resp.LogID = logID
+	c.JSON(http.StatusAccepted, resp)
 }
 
 // GetDeployLogValues godoc
