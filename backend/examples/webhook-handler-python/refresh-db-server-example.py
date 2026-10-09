@@ -95,6 +95,11 @@ def handle_action(name: str, request_obj: dict[str, Any]) -> tuple[int, dict[str
 
     # Replace this with real work. For long-running operations (>30s),
     # return 202 + a job_id and run the work on a background thread.
+    # The job_id MUST be random (for example "job-" + uuid.uuid4().hex),
+    # never sequential or a timestamp. Store the instance ID with the job.
+    # To show progress, serve the job log on the action's log_path and
+    # answer 404 when the instance_id query parameter does not match the
+    # job's instance (see docs/hooks.md, "Asynchronous actions").
     return 200, {
         "ok": True,
         "instance_namespace": inst.get("namespace"),

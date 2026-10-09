@@ -214,6 +214,7 @@ Both event subscriptions and action subscriptions live in the `HOOKS_CONFIG_FILE
 - Empty `secret_env` disables HMAC signing for that subscriber — safe only for internal localhost communication on a trust boundary.
 - `timeout_seconds`: events default 5s (max 1800s); actions default 30s (max 600s).
 - `failure_policy`: `fail` or `ignore`; defaults to `ignore` if omitted.
+- Actions also accept optional UI fields: `label`, `confirm`, `parameters` and `log_path`. See [Actions in the web UI](#actions-in-the-web-ui).
 
 ## Request envelope — EventEnvelope
 
@@ -361,6 +362,94 @@ API error mappings when invoking actions:
 
 ---
 
+## Actions in the web UI
+
+The instance detail page has an **Actions** menu next to Deploy, Stop and Clean. It lists the actions from `GET /api/v1/stack-instances/:id/actions`. The menu is hidden when no action is registered. Every user who can view the instance sees the menu; only the owner, an admin or a devops user can run an action (`can_invoke`), so for other users the items are disabled.
+
+Add optional UI fields to the action config:
+
+```json
+{
+  "actions": [
+    {
+      "name": "refresh-db",
+      "url": "http://refresh-db.refresh-db.svc.cluster.local/",
+      "description": "Replace the stack database with the latest snapshot",
+      "secret_env": "REFRESH_DB_WEBHOOK_SECRET",
+      "label": "Refresh database",
+      "confirm": "This replaces the database of the stack. Unsaved data is lost.",
+      "parameters": [
+        {"name": "image", "label": "Snapshot", "type": "string", "default": "golden"},
+        {"name": "dry_run", "label": "Dry run", "type": "bool"},
+        {"name": "scope", "type": "enum", "options": ["full", "schema-only"], "required": true}
+      ],
+      "log_path": "/jobs/{job_id}/log"
+    }
+  ]
+}
+```
+
+- `label` — menu text (default: `name`).
+- `confirm` — warning text in the run dialog. Use it for destructive actions.
+- `parameters` — the UI renders a form: `string` → text field, `bool` → switch, `enum` → select with `options`. `required` and `default` are optional. The backend checks declared parameters (type, required, options) and returns 400 on a mismatch; undeclared parameters pass through. The values reach the subscriber in `parameters`.
+- `log_path` — see below.
+
+The list endpoint never returns `url`, `secret_env` or headers. The dialog shows the result: `status_code` and `result`. A non-2xx `status_code` shows as an error.
+
+### Asynchronous actions: job ID and job log
+
+If the work takes longer than `timeout_seconds`, answer at once with a job ID and run the work in the background:
+
+```json
+{"job_id": "job-0123456789ab", "status": "started"}
+```
+
+Set `log_path` (a path on the host of `url`, with `{job_id}` once). The backend then serves the job log at:
+
+```
+GET /api/v1/stack-instances/:id/actions/:name/jobs/:job_id/log?offset=<n>
+```
+
+It answers JSON `{status, log, offset, next_offset, done, truncated}`. The web UI polls it every 3 seconds until `done` is true, and backs off on 429, 5xx gateway errors and network errors (`Retry-After`, else up to 30 seconds); a CLI can use the same route for `--follow`. Only users who may run the action may read the job log, because a job log can hold sensitive output.
+
+Your subscriber serves the log on `GET <log_path>?instance_id=<id>&offset=<n>&ts=<unix seconds>`:
+
+- Job IDs MUST be random (for example `"job-" + uuid4().hex`). Never use sequential numbers or timestamps.
+- Store the instance ID with each job. You MUST answer 404 when `instance_id` does not match the job's instance.
+- Return the log bytes from `offset` to the end as text (200), or 404 for an unknown job.
+- Send `X-Job-Status` (`running`, `succeeded`, `failed`, ...). Optional: `X-Log-Offset` (next offset; default `offset` + body length; ignored when smaller than `offset`).
+- An end marker line such as `===JOB-END=== status=succeeded` is only a fallback when you cannot send `X-Job-Status`: job output can print a fake marker.
+- Verify `X-StackManager-Signature`: for this GET it is the HMAC-SHA256 of the request URI (path and query, exactly as received). Refuse a request whose `ts` is more than 5 minutes from your clock.
+- The query string of the action `url` is not sent on log reads. If you authenticate invokes with a query key, authenticate log reads with the signature.
+
+```python
+def do_GET(self):
+    # Verify the signature over the request URI (path + query).
+    want = "sha256=" + hmac.new(SECRET.encode(), self.path.encode(), hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(self.headers.get("X-StackManager-Signature", ""), want):
+        self.send_response(401); self.end_headers(); return
+    ts = parse_qs(urlsplit(self.path).query).get("ts", ["0"])[0]
+    if not ts.isdigit() or abs(time.time() - int(ts)) > 300:   # 5-minute window
+        self.send_response(401); self.end_headers(); return
+    m = re.match(r"^/jobs/([A-Za-z0-9_-][A-Za-z0-9._-]{0,127})/log$", urlsplit(self.path).path)
+    job = JOBS.get(m.group(1)) if m else None
+    qs = parse_qs(urlsplit(self.path).query)
+    if job is None or qs.get("instance_id", [""])[0] != job.instance_id:
+        self.send_response(404); self.end_headers(); return
+    offset = max(0, int(qs.get("offset", ["0"])[0]))
+    data = job.read_log(offset)
+    self.send_response(200)
+    self.send_header("Content-Type", "text/plain; charset=utf-8")
+    self.send_header("X-Log-Offset", str(offset + len(data)))
+    self.send_header("X-Job-Status", job.status)   # running | succeeded | failed
+    self.end_headers()
+    self.wfile.write(data)
+```
+
+The backend never follows a redirect, reads at most 256 KiB per call (the client gets the rest with the next offset) and waits at most 10 seconds. The full contract is in [backend/docs/hooks.md](backend/docs/hooks.md#asynchronous-actions-and-the-job-log).
+
+---
+
 ## Security
 
 ### HMAC signing
@@ -378,6 +467,8 @@ Rotate secrets by registering a new subscription alongside the old, cutting traf
 ### Replay protection
 
 Every envelope includes a unique `request_id` (`req-` + 24 hex chars). If at-least-once delivery + dedup matters, keep a small LRU of seen IDs (10 minutes is usually enough) and reject replays.
+
+The signature has no separate timestamp header. For events and action invokes, the `timestamp` field is inside the signed body: reject an envelope older than 5 minutes and a `request_id` that you saw before, else a captured request can be replayed. Job log reads carry a signed `ts` query parameter for the same check.
 
 ### Network posture
 
@@ -470,7 +561,7 @@ A "refresh-db" operation (wipe the per-instance MySQL PVC, flush Redis, restart 
 
 - Python webhook server (~340 lines, stdlib only — `http.server.ThreadingHTTPServer` + `subprocess` for kubectl)
 - kubectl orchestration for the restore sequence (scale down, truncate, flush, re-extract golden DB, scale up)
-- Per-job progress log on disk for real-time tailing
+- Per-job progress log on disk for real-time tailing, served on `log_path` (for example `/jobs/{job_id}/log`) so the web UI shows the progress
 - HMAC signature verification on every request
 - Ships as a Kubernetes Deployment + ClusterRole + Service
 - ~40 MB container (alpine + python + kubectl)
@@ -625,7 +716,7 @@ For production-ready extensions with Dockerfiles, k8s manifests, and real-world 
 ## Writing production-grade handlers
 
 - **Verify signatures first, parse envelope second.** Don't deserialise untrusted JSON before you've confirmed it came from k8s-stack-manager.
-- **Respect the timeout.** If your work can exceed the subscription's `timeout_seconds`, return 202 with a job id immediately and run the actual work on a background thread/process. Provide a status endpoint or accept polling-by-id.
+- **Respect the timeout.** If your work can exceed the subscription's `timeout_seconds`, return 202 with a `job_id` immediately and run the actual work on a background thread/process. Serve the job log on `log_path` so the web UI and the CLI can show progress (see [Asynchronous actions](#asynchronous-actions-job-id-and-job-log)).
 - **Idempotency.** Actions can be retried by the caller. Either make your operation idempotent (common case) or dedup by `request_id`.
 - **Log structured fields.** At minimum: `request_id`, `event` or `action`, outcome, duration. Correlate with k8s-stack-manager logs via `request_id`.
 - **Healthcheck endpoint.** Expose `GET /healthz` (or similar) without signature verification — lets k8s liveness/readiness probes + operators sanity-check the handler is reachable.
@@ -663,6 +754,13 @@ The action name in the URL path doesn't match any registered subscription. Compa
 kubectl -n k8s-stack-manager logs deployment/... | grep "hooks configured"
 ```
 with the name your stackctl plugin / curl is using.
+
+### The Actions menu is not shown, or the job log stays empty
+
+- The menu is hidden when `GET /api/v1/stack-instances/:id/actions` returns no actions. Check `HOOKS_CONFIG_FILE` and the `hooks configured` log line.
+- The menu items are disabled for users who are not the owner, an admin or a devops user.
+- The job log needs `log_path` in the action config and a `job_id` in the subscriber response. A 404 from the subscriber gives 404; the web UI retries a few times, because the log file can appear a moment after the job starts.
+- A 502 on the job log route means the subscriber failed (timeout, 5xx, 401 for a bad signature). The backend log has the details with the `request_id` of the response.
 
 ### Post-deploy subscriber never fires
 

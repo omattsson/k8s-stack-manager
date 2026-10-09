@@ -828,7 +828,7 @@ type invokeActionRequest struct {
 
 // InvokeAction godoc
 // @Summary     Invoke a registered action against a stack instance
-// @Description Dispatches to the action subscriber webhook and wraps its response in an envelope containing action, instance_id, status_code, and result fields. The subscriber's JSON body is nested under the result key. Returns 200 even for non-2xx subscriber responses — check status_code to distinguish.
+// @Description Dispatches to the action subscriber webhook and wraps its response in an envelope containing action, instance_id, status_code, and result fields. The subscriber's JSON body is nested under the result key. Returns 200 even for non-2xx subscriber responses — check status_code to distinguish. When the action declares parameters, they are checked (type, required, enum options) before the call; undeclared parameters pass through. When the action has a log_path, the subscriber answered 2xx and the result has a valid job_id, the envelope also has job_id: poll GET /stack-instances/{id}/actions/{name}/jobs/{job_id}/log for the job log.
 // @Tags        stack-instances
 // @Accept      json
 // @Produce     json
@@ -880,6 +880,17 @@ func (h *InstanceHandler) InvokeAction(c *gin.Context) {
 		}
 	}
 
+	// Check the declared parameter schema (when the action has one) before
+	// the subscriber is called. An unknown action falls through to Invoke,
+	// which answers 404.
+	sub, known := h.actions.Lookup(name)
+	if known {
+		if paramErr := sub.ValidateParameters(req.Parameters); paramErr != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": paramErr.Error()})
+			return
+		}
+	}
+
 	res, invokeErr := h.actions.Invoke(c.Request.Context(), name, instanceRefFor(inst), req.Parameters)
 	if invokeErr != nil {
 		var unk hooks.ErrUnknownAction
@@ -923,12 +934,18 @@ func (h *InstanceHandler) InvokeAction(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
+	envelope := gin.H{
 		"action":      name,
 		"instance_id": id,
 		"status_code": res.StatusCode,
 		"result":      json.RawMessage(result),
-	})
+	}
+	// For an asynchronous action with a job log, lift a valid result.job_id
+	// of a 2xx answer to the envelope so clients can poll the job log route.
+	if jobID := asyncJobID(sub, res.StatusCode, result); jobID != "" {
+		envelope["job_id"] = jobID
+	}
+	c.JSON(http.StatusOK, envelope)
 }
 
 // cloneInstanceRequest is the optional request body for CloneInstance.

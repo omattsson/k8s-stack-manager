@@ -109,6 +109,17 @@ Use `stopped_days:N` for "stopped for N days". The stop time (`stopped_at`) is s
 
 **Cleanup policy update.** `PUT /admin/cleanup-policies/:id` is a partial update: only the fields in the body change, for example `{"enabled": false}` or `{"dry_run": true}`. The merged policy is validated, and the scheduler reloads. The Enabled and Dry Run switches in the policy table use this.
 
+### Custom Actions
+An operator can register custom actions on the server, for example "refresh-db" or "load seed data" (see `EXTENDING.md`). A custom action runs on one stack instance.
+
+- The instance detail page shows an **Actions** menu next to Deploy, Stop and Clean. The menu is not shown when the server has no actions.
+- Every user who can see the instance sees the menu. Only the owner, an admin or a devops user can run an action. For other users the items are disabled.
+- A click opens a dialog. The dialog shows the description of the action and, if the action has one, a warning text. Read the warning before you click **Run**.
+- Some actions have parameters. The dialog shows a form: a text field, a switch or a list. A field marked with `*` is required.
+- After the run, the dialog shows the status code and the result of the action. A status code that is not 2xx is an error.
+- Some actions start a job that runs in the background. Then the dialog shows the job log and the job status (`running`, `succeeded`, `failed`). The log updates every 3 seconds until the job ends. When the server is busy or not reachable, the dialog shows "Waiting…" and tries again later. Click **Stop following** to stop the updates. The dialog stops the updates after 60 minutes and keeps the last 1 MiB of log text. Closing the dialog or stopping the updates does not stop the job; it continues on the server.
+- The CLI and other API clients use the same endpoints: `GET /api/v1/stack-instances/:id/actions`, `POST /api/v1/stack-instances/:id/actions/:name` and `GET /api/v1/stack-instances/:id/actions/:name/jobs/:job_id/log?offset=N`.
+
 ### Value Override
 Per-chart configuration overrides on a stack instance. Deep-merged with chart defaults during Helm values export. Template variables (`{{.Branch}}`, `{{.Namespace}}`, `{{.InstanceName}}`, etc.) are substituted at export time.
 
@@ -168,8 +179,8 @@ Template → (instantiate) → Definition + ChartConfigs → (create instance) �
 
 | Operation | Owner | `admin` | `devops` | Other `user` |
 |---|---|---|---|---|
-| View the instance, status, pods, deploy log, access URLs, export values, compare, clone | yes | yes | yes | yes |
-| Deploy, deploy preview, stop, clean, delete, rollback, run actions | yes | yes | yes | no (403) |
+| View the instance, status, pods, deploy log, access URLs, export values, compare, clone, list actions | yes | yes | yes | yes |
+| Deploy, deploy preview, stop, clean, delete, rollback, run actions, read action job logs | yes | yes | yes | no (403) |
 | Edit the instance, extend the TTL | yes | yes | yes | no (403) |
 | Read or change value, branch and quota overrides | yes | yes | yes | no (403) |
 | Set a quota override above the cluster quota | no (403) | yes | yes | no (403) |

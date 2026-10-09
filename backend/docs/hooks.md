@@ -214,14 +214,87 @@ Content-Type: application/json
       "url": "https://handlers.example.com/actions/refresh-db",
       "description": "Wipe MySQL PVC and flush Redis for the instance",
       "timeout_seconds": 120,
-      "secret_env": "REFRESH_DB_HOOK_SECRET"
+      "secret_env": "REFRESH_DB_HOOK_SECRET",
+      "label": "Refresh database",
+      "confirm": "This replaces the database of the stack. Unsaved data is lost.",
+      "parameters": [
+        {"name": "image", "label": "Snapshot", "type": "string", "default": "golden"},
+        {"name": "dry_run", "label": "Dry run", "type": "bool", "default": false},
+        {"name": "scope", "type": "enum", "options": ["full", "schema-only"], "required": true}
+      ],
+      "log_path": "/jobs/{job_id}/log"
     }
   ]
 }
 ```
 
-- `timeout_seconds` — optional, default 30, max 600
-- `secret_env` — optional; same fail-closed semantics as subscriptions
+| Field | Required | Meaning |
+|---|---|---|
+| `name` | yes | Action name in the URL (`/actions/:name`). |
+| `url` | yes | Subscriber URL (`http` or `https`). Never returned by the API. |
+| `description` | no | Text for the UI and the list endpoint. |
+| `timeout_seconds` | no | Default 30, max 600. |
+| `secret_env` | no | Env var with the HMAC secret. Same fail-closed semantics as subscriptions. Never returned by the API. |
+| `label` | no | Menu text in the web UI. Default: `name`. Max 100 characters. |
+| `confirm` | no | Warning text in the run dialog. Recommended for destructive actions. Max 1000 characters. |
+| `parameters` | no | Parameter schema for the UI form (see below). Max 20 parameters. |
+| `log_path` | no | Path template of the job log of an asynchronous action (see [Asynchronous actions](#asynchronous-actions-and-the-job-log)). |
+
+The UI fields are optional. A config without them stays valid, and the
+backend checks them at startup (an invalid field stops the startup).
+
+**Parameters.** Each parameter has:
+
+| Field | Meaning |
+|---|---|
+| `name` | Key in `parameters` of the ActionRequest. `^[A-Za-z_][A-Za-z0-9_.-]{0,63}$`, unique. |
+| `label` | Form label. Default: `name`. |
+| `description` | Help text under the field. |
+| `type` | `string` (default), `bool` or `enum`. |
+| `required` | A required `string` or `enum` must not be empty. |
+| `default` | A string for `string` and `enum` (must be one of `options`), a boolean for `bool`. The UI fills the form with it; the backend does not add defaults to the request. |
+| `options` | The allowed values of an `enum` (1 to 50, unique). Only for `enum`. |
+
+The invoke endpoint checks the declared parameters before it calls the
+subscriber: type, `required` and the enum `options`. A mismatch gives 400.
+Parameters that the action does not declare pass through unchanged, so
+existing API and CLI callers keep working when you add a schema. Still,
+validate all parameters in the subscriber.
+
+### Listing actions
+
+```
+GET /api/v1/stack-instances/:id/actions
+```
+
+Any authenticated user who can view the instance gets the list. The
+response never contains `url`, `secret_env`, the secret or headers:
+
+```json
+{
+  "instance_id": "6c9f1e14-...",
+  "can_invoke": true,
+  "actions": [
+    {
+      "name": "refresh-db",
+      "label": "Refresh database",
+      "description": "Wipe MySQL PVC and flush Redis for the instance",
+      "confirm": "This replaces the database of the stack. Unsaved data is lost.",
+      "parameters": [
+        {"name": "image", "label": "Snapshot", "type": "string", "required": false, "default": "golden"},
+        {"name": "dry_run", "label": "Dry run", "type": "bool", "required": false, "default": false},
+        {"name": "scope", "label": "scope", "type": "enum", "required": true, "options": ["full", "schema-only"]}
+      ],
+      "has_job_log": true,
+      "can_invoke": true
+    }
+  ]
+}
+```
+
+`can_invoke` is true for the instance owner, an admin and a devops user (the
+same rule as deploy). Actions are sorted by name. Without an action registry
+the list is empty (200).
 
 ### Request envelope
 
@@ -261,15 +334,146 @@ to the API client, wrapped in:
 }
 ```
 
+The backend does not follow a redirect from the subscriber, so a signed
+request never reaches another host. A 3xx answer with an empty or JSON body
+is returned as `status_code` (with `result` `null` for an empty body). A 3xx
+answer with a non-JSON body (for example an HTML redirect page) gives 502,
+like any other non-JSON body.
+
+When the action has a `log_path`, the subscriber answered 2xx, and `result`
+is an object with a valid `job_id` string, the envelope also has `"job_id"`. A client then polls the job
+log route.
+
 API error mappings:
 
 | API status | Meaning |
 |---|---|
 | 200 | Subscriber responded (see `result` for details, `status_code` echoes the subscriber's HTTP code) |
-| 400 | Invalid parameters / malformed body |
+| 400 | Invalid parameters / malformed body / parameter does not match the declared schema |
+| 403 | Caller is not the owner, an admin or a devops user |
 | 404 | Unknown instance OR unknown action name |
 | 502 | Subscriber unreachable or returned a transport error |
 | 503 | Action registry not configured on this server |
+
+### Asynchronous actions and the job log
+
+An action that runs longer than its timeout answers at once with a job ID and
+does the work in the background:
+
+```
+HTTP/1.1 202 Accepted
+Content-Type: application/json
+
+{"job_id": "job-0123456789ab", "status": "started"}
+```
+
+The job ID must match `^[A-Za-z0-9_-][A-Za-z0-9._-]{0,127}$` (1 to 128
+characters, not starting with a dot). The subscriber MUST create random job
+IDs (for example `job-` + 12 or more random hex characters from a secure
+random source). Do not use sequential numbers or timestamps: a guessable job
+ID lets a user try the job IDs of other instances.
+
+With `log_path` set, the backend serves the job log to API clients:
+
+```
+GET /api/v1/stack-instances/:id/actions/:name/jobs/:job_id/log?offset=<n>
+```
+
+- **Permission:** the same rule as invoke (owner, admin, devops). A job log can
+  hold sensitive output (host names, database names, error text), so a user
+  who may only view the instance cannot read it.
+- `offset` is a byte offset, a non-negative integer (default 0).
+- Response (200):
+
+```json
+{
+  "action": "refresh-db",
+  "instance_id": "6c9f1e14-...",
+  "job_id": "job-0123456789ab",
+  "status": "running",
+  "log": "step 1/4: scale down\nstep 2/4: restore snapshot\n",
+  "offset": 0,
+  "next_offset": 52,
+  "done": false,
+  "truncated": false
+}
+```
+
+- A client polls with `offset=next_offset` until `done` is true. When
+  `truncated` is true, the chunk was cut at the size cap: poll again at once.
+  The web UI polls every 3 seconds. On 429, 502, 503, 504 or a network error
+  it waits (the `Retry-After` delay, else a doubled delay up to 30 seconds)
+  and continues; on 401, 403 or 404 it stops with a message. A CLI that
+  follows the log (`--follow`) should do the same. The API rate limit
+  (`RATE_LIMIT`, default 100 requests per minute per IP) applies.
+- `status` is `running` while the job runs (also `pending`, `queued`,
+  `started`), else a final state such as `succeeded` or `failed`. `done` is
+  true for a final state, unless the chunk is truncated.
+
+| API status | Meaning |
+|---|---|
+| 200 | Log chunk (can be empty) |
+| 400 | Invalid `job_id` or `offset` |
+| 403 | Caller is not the owner, an admin or a devops user |
+| 404 | Unknown instance, unknown action, action without `log_path`, or the subscriber does not know the job (its 400, 404 or 410) |
+| 502 | Subscriber unreachable, timeout, other non-2xx status (also a 3xx redirect). The response has `request_id`, never the subscriber URL or body. |
+| 503 | Action registry not configured on this server |
+
+**Subscriber contract.** The backend calls:
+
+```
+GET <scheme>://<host of url><log_path with {job_id}>?instance_id=<instance id>&offset=<n>&ts=<unix seconds>
+Accept: text/plain, */*
+X-StackManager-Event: action-log:<name>
+X-StackManager-Request-Id: req-xxxxxxxxxxxxxxxxxxxxxxxx
+X-StackManager-Signature: sha256=<hex of HMAC-SHA256(secret, request URI)>   (when secret configured)
+Traceparent: ...
+```
+
+- `log_path` is an absolute path on the host of the action `url`. Scheme,
+  host and port always come from `url`; for `url`
+  `http://actions.example:8080/actions/refresh-db` and `log_path`
+  `/jobs/{job_id}/log` the backend calls
+  `http://actions.example:8080/jobs/<job_id>/log?...`. `log_path` must start
+  with `/`, contain `{job_id}` exactly once, and must not contain a query,
+  a fragment, `%`, `//`, `.` or `..` segments.
+- The query string of the action `url` is not sent on log reads. A subscriber
+  that authenticates invoke calls with a query key (for example `?code=...`)
+  must authenticate log reads with the signature instead.
+- The signature is the HMAC-SHA256 of the request URI as sent: path plus `?`
+  plus query, for example
+  `/jobs/job-0123456789ab/log?instance_id=6c9f1e14-...&offset=0&ts=1791547200`.
+  The GET has no body, so the request URI is the signed message. Verify it
+  against the raw request URI, not a re-encoded one.
+- `ts` is the request time in Unix seconds and is part of the signed URI.
+  Subscribers should refuse (401) a request whose `ts` is more than 5 minutes
+  from their own clock. This limits the replay of a captured request.
+- The subscriber MUST store the instance ID with each job and MUST answer 404
+  when `instance_id` does not match the job's instance. The backend checks
+  only that the caller may modify the instance in the URL, not that the job
+  belongs to it.
+- Answer 200 with the log bytes from `offset` to the end, as text. An offset
+  past the end gives an empty body.
+- Response headers:
+  - `X-Job-Status` (recommended): `running`, `succeeded`, `failed` or
+    another lowercase word (`^[a-z][a-z_]{0,31}$`).
+  - `X-Log-Offset` (optional): the next offset. The backend uses it only when
+    it is not smaller than `offset`; else it uses `offset` + body length.
+- Prefer `X-Job-Status`. Only without it, the backend reads the status from
+  the last end marker line in the chunk: a line
+  `===<NAME>-END=== status=<status>`, for example
+  `===JOB-END=== status=succeeded`. The marker is a fallback: a job that
+  prints untrusted output can print a fake marker and end the polling early.
+  Without both, the status is `running` and clients poll until they give up.
+- Offsets are byte offsets. While the job runs and `X-Log-Offset` is not set,
+  the backend drops an incomplete UTF-8 sequence at the end of a chunk; the
+  next poll reads the whole character.
+  When you set `X-Log-Offset`, end each chunk on a character boundary.
+- Answer 404 for an unknown job. The backend reads at most 256 KiB per call
+  and cuts a larger chunk at its last line end; the client gets the rest with
+  the next offset. The call times out after 10 seconds (or the action
+  timeout, when it is lower). The backend does not follow a
+  redirect (a 3xx answer gives 502), so the signed request stays on the host.
 
 ---
 
@@ -283,6 +487,9 @@ body is signed with HMAC-SHA256:
 ```
 X-StackManager-Signature: sha256=<hex-of-HMAC-SHA256(secret, body)>
 ```
+
+For a job log request (a GET without a body) the signed message is the
+request URI (path and query), see [Asynchronous actions](#asynchronous-actions-and-the-job-log).
 
 Handlers must verify the signature before trusting any envelope fields. The
 reference handler at [../examples/webhook-handler/main.go](../examples/webhook-handler/main.go)
@@ -303,6 +510,13 @@ does not care, as long as the URL is reachable from the server's network.
 The envelope includes a unique `request_id` (`req-` + 24 hex chars). Handlers
 that need at-least-once + dedup semantics should track recently-seen IDs
 (a 10-minute LRU is usually enough).
+
+The HMAC signature does not include a separate timestamp header. For events
+and action invokes, the `timestamp` field is inside the signed body: refuse
+an envelope whose `timestamp` is more than 5 minutes old, and refuse a
+`request_id` that you saw before. Without these checks, a captured signed
+request can be replayed. Job log reads carry a signed `ts` query parameter
+(see [Asynchronous actions](#asynchronous-actions-and-the-job-log)).
 
 ### Failure policy and blast radius
 
@@ -349,7 +563,8 @@ Emitted by the `hooks` OTel meter scope:
 ### Traces
 
 Spans: `hooks.dispatch` (event subscriber calls), `hooks.action` (action
-invocations). Span attributes: `hook.event` / `hook.action`,
+invocations), `hooks.action_log` (job log reads; no metrics, because clients
+poll often). Span attributes: `hook.event` / `hook.action`,
 `hook.subscription`, `hook.request_id`, `hook.outcome`, `hook.status_code`.
 
 Outbound requests carry `Traceparent` (W3C TraceContext). Subscribers with

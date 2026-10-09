@@ -118,6 +118,10 @@ vi.mock('../../../components/YamlEditor', () => ({
   ),
 }));
 
+vi.mock('../../../components/InstanceActionsMenu', () => ({
+  default: ({ instanceId }: { instanceId: string }) => <div data-testid="instance-actions-menu">{instanceId}</div>,
+}));
+
 vi.mock('../../../utils/download', () => ({
   downloadBlob: vi.fn(),
 }));
@@ -308,6 +312,21 @@ describe('StackInstances Detail', () => {
     expect(screen.getByText(/stack-test/)).toBeInTheDocument();
     // Without owner_username the owner ID is shown.
     expect(screen.getByText('Owner: user1')).toBeInTheDocument();
+  });
+
+  it('shows the actions menu for the owner', async () => {
+    setupMocks();
+    renderDetail();
+    expect(await screen.findByTestId('instance-actions-menu')).toHaveTextContent('123');
+  });
+
+  it('shows the actions menu also when the user may not modify the instance', async () => {
+    authState.user = { id: 'other', username: 'bob', role: 'user', display_name: 'Bob' };
+    setupMocks();
+    renderDetail();
+    // The menu itself disables the actions (can_invoke is false).
+    expect(await screen.findByTestId('instance-actions-menu')).toBeInTheDocument();
+    expect(screen.getByText(/Read-only/)).toBeInTheDocument();
   });
 
   it('shows the owner username instead of the owner ID', async () => {

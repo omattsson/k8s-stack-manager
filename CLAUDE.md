@@ -137,6 +137,7 @@ backend/
       shared_values.go           # SharedValuesHandler: per-cluster shared values
       stack_definitions.go       # DefinitionHandler: CRUD + chart management + import/export
       stack_instances.go         # InstanceHandler: CRUD + clone + deploy/stop/clean/rollback + deploy-preview + compare + extend TTL
+      instance_actions.go        # InstanceHandler: custom action list (UI metadata, can_invoke) + async job log proxy
       stack_templates.go         # TemplateHandler: CRUD + publish + instantiate + version snapshots
       template_charts.go         # Template chart config management
       template_versions.go       # TemplateVersionHandler: version history listing + diff
@@ -209,6 +210,8 @@ backend/
 
 **Hooks**: `hooks.Dispatcher.Fire` sends HTTP webhooks (HMAC-signed with `X-StackManager-Signature` when a subscription sets `secret_env`; omit it for unsigned dispatch, and a `secret_env` that resolves to empty is a config-load error) for the lifecycle events it actually dispatches: `pre-deploy`, `post-deploy`, `deploy-finalized`, `deploy-timeout`, `pre-rollback`, `post-rollback`, `rollback-completed`, `pre/post-instance-create`, `pre/post-instance-delete`, `stop-completed`, `clean-completed`, `delete-completed`. Other event constants (`instance-created`, `stack-expiring`, `stack-expired`, `quota-warning`, `secret-expiring`, `cleanup-policy-executed`) are accepted in subscription config but not yet fired; `pre/post-namespace-create` are reserved. `pre-*` subscribers can abort with `failure_policy: fail`; the user-safe reason (`hooks.UserMessage`: hook name + subscriber message, never the URL) goes to the instance and deploy log `error_message` and an `ERROR:` line in the log output. Subscriptions come from `HOOKS_CONFIG_FILE` (Helm: `hooks.subscriptions`). Contract in `backend/docs/hooks.md`.
 
+**Actions**: `hooks.ActionRegistry` holds the custom actions of `HOOKS_CONFIG_FILE` (Helm: `hooks.actions`). `GET /stack-instances/:id/actions` lists them for any user who can view the instance, with UI metadata (`label`, `confirm`, `parameters`: name, label, type `string|bool|enum`, required, default, options) and `can_invoke` (instance modify rule); it never returns `url`, `secret_env` or headers. `POST /stack-instances/:id/actions/:name` checks declared parameters (undeclared ones pass through) and lifts a valid `result.job_id` to the envelope when the action has `log_path`. `GET /stack-instances/:id/actions/:name/jobs/:job_id/log?offset=N` (modify rule, because job logs can hold sensitive output) proxies the job log: `log_path` resolves on the action URL host only, `job_id` must match `^[A-Za-z0-9_-][A-Za-z0-9._-]{0,127}$`, the GET is signed (HMAC of the request URI) and carries `instance_id` and `ts` (Unix seconds; subscribers check a 5-minute window and must 404 a job of another instance), 10s timeout, 256 KiB cap (cut at a line end, `truncated: true`), redirects are not followed (also on invoke), upstream failures give 502 without the URL. The response is JSON `{status, log, offset, next_offset, done, truncated}`; status comes from `X-Job-Status` (preferred) or, as a fallback, an `===<NAME>-END=== status=<s>` line; `X-Log-Offset` counts only when >= offset; `job_id` is lifted only from a 2xx invoke. The web UI (`components/InstanceActionsMenu`) polls it every 3 s and backs off on 429/502/503/504/network errors (`Retry-After`, else doubling up to 30 s); it stops on done, close, 401, 403, 404.
+
 **Telemetry**: `telemetry.Init` configures OTLP traces and metrics (`OTEL_ENABLED`, `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_SERVICE_NAME`, `OTEL_TRACE_SAMPLE_RATE`). `StartDBMetrics` and `StartBusinessMetrics` register gauges; HTTP and auth metrics come from middleware. Add tracing for new outbound calls in a `tracing.go` next to the package (see `cluster/`, `deployer/`, `gitprovider/`, `hooks/`).
 
 ## Frontend Structure
@@ -231,6 +234,7 @@ frontend/src/
     EntityLink/                # Clickable link to related entities
     ErrorBoundary/             # React error boundary wrapper
     FavoriteButton/            # Toggle bookmark on templates/instances
+    InstanceActionsMenu/       # "Actions" menu on the instance detail page: parameter form, result, job log polling
     LoadingState/              # Centered CircularProgress wrapper
     PodStatusDisplay/          # Kubernetes pod status visualization
     ProtectedRoute/            # Auth-gated route wrapper
@@ -369,7 +373,7 @@ backend/internal/
 | Quick Deploy | `/api/v1/templates/:id/quick-deploy` | One-click template deployment |
 | Bulk Template Ops | `/api/v1/templates/bulk` | Bulk delete, publish, unpublish templates (up to 50) |
 | Stack Definitions | `/api/v1/stack-definitions` | CRUD + nested chart management + import/export |
-| Stack Instances | `/api/v1/stack-instances` | CRUD + clone, deploy, deploy-preview, stop, clean, rollback, status, logs, compare, extend TTL |
+| Stack Instances | `/api/v1/stack-instances` | CRUD + clone, deploy, deploy-preview, stop, clean, rollback, status, logs, compare, extend TTL, custom actions (list, invoke, job log) |
 | Bulk Operations | `/api/v1/stack-instances/bulk` | Bulk deploy, stop, clean, delete (up to 50 instances) |
 | Value Overrides | `/api/v1/stack-instances/:id/overrides` | Per-chart value overrides |
 | Branch Overrides | `/api/v1/stack-instances/:id/branches` | Per-chart branch overrides (list, get, set, delete per chart) |
