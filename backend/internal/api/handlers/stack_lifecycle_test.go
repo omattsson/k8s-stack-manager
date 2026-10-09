@@ -14,6 +14,7 @@ import (
 	"backend/internal/deployer"
 	"backend/internal/helm"
 	"backend/internal/models"
+	"backend/pkg/dberrors"
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
@@ -299,10 +300,55 @@ func TestCloneInstance_CopiesSettings(t *testing.T) {
 			require.Len(t, bos, 1)
 			assert.Equal(t, "hotfix", bos[0].Branch)
 
+			// bob is not the owner of the source and has role user: the
+			// quota override (a resource grant) is not copied.
+			_, err = env.quota.GetByInstanceID(context.Background(), clone.ID)
+			assert.ErrorIs(t, err, dberrors.ErrNotFound)
+		})
+	}
+}
+
+func TestCloneInstance_QuotaOverrideCopyRule(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		callerID  string
+		role      string
+		wantQuota bool
+	}{
+		{name: "owner gets the quota override", callerID: "uid-1", role: "user", wantQuota: true},
+		{name: "admin gets the quota override", callerID: "uid-9", role: "admin", wantQuota: true},
+		{name: "devops gets the quota override", callerID: "uid-9", role: "devops", wantQuota: true},
+		{name: "other user gets the cluster quota", callerID: "uid-2", role: "user", wantQuota: false},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			env := newLifecycleEnv()
+			require.NoError(t, env.inst.Create(&models.StackInstance{
+				ID: "src", StackDefinitionID: "d1", Name: "zz-life", Namespace: "stack-zz-life-alice",
+				OwnerID: "uid-1", Branch: "master", Status: models.StackStatusRunning,
+			}))
+			pods := 7
+			require.NoError(t, env.quota.Upsert(context.Background(), &models.InstanceQuotaOverride{
+				StackInstanceID: "src", CPULimit: "32", MemoryLimit: "64Gi", PodLimit: &pods,
+			}))
+
+			w := serve(env.router(t, nil, tt.callerID, "caller", tt.role), http.MethodPost, "/api/v1/stack-instances/src/clone", "")
+			require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+			var clone models.StackInstance
+			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &clone))
+
 			q, err := env.quota.GetByInstanceID(context.Background(), clone.ID)
+			if !tt.wantQuota {
+				assert.ErrorIs(t, err, dberrors.ErrNotFound)
+				return
+			}
 			require.NoError(t, err)
-			assert.Equal(t, "2", q.CPULimit)
-			assert.Equal(t, "4Gi", q.MemoryLimit)
+			assert.Equal(t, "32", q.CPULimit)
+			assert.Equal(t, "64Gi", q.MemoryLimit)
 			require.NotNil(t, q.PodLimit)
 			assert.Equal(t, 7, *q.PodLimit)
 		})

@@ -5271,7 +5271,7 @@ paths:
       - application/json
       description: |-
         Create a new draft stack instance as a copy of an existing one. The clone belongs to the caller and uses the cluster and definition of the source.
-        It copies the TTL (unless ttl_minutes is given), the value overrides, the branch overrides and the instance quota override.
+        It copies the TTL (unless ttl_minutes is given), the value overrides and the branch overrides. It copies the instance quota override only when the caller owns the source or is admin or devops.
         The body is optional. Without a name, the server picks the first free name of <source>-copy, <source>-copy-2, ... (the namespace stack-<name>-<owner> must be free). A given name must be a DNS label (lowercase a-z, 0-9, '-', start and end alphanumeric, at most 50 characters).
       parameters:
       - description: Source instance ID

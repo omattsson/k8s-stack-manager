@@ -982,7 +982,7 @@ func cloneNameCandidate(base string, n int) string {
 // CloneInstance godoc
 // @Summary     Clone a stack instance
 // @Description Create a new draft stack instance as a copy of an existing one. The clone belongs to the caller and uses the cluster and definition of the source.
-// @Description It copies the TTL (unless ttl_minutes is given), the value overrides, the branch overrides and the instance quota override.
+// @Description It copies the TTL (unless ttl_minutes is given), the value overrides and the branch overrides. It copies the instance quota override only when the caller owns the source or is admin or devops.
 // @Description The body is optional. Without a name, the server picks the first free name of <source>-copy, <source>-copy-2, ... (the namespace stack-<name>-<owner> must be free). A given name must be a DNS label (lowercase a-z, 0-9, '-', start and end alphanumeric, at most 50 characters).
 // @Tags        stack-instances
 // @Accept      json
@@ -1101,9 +1101,14 @@ func (h *InstanceHandler) CloneInstance(c *gin.Context) {
 		return
 	}
 
+	// The quota override is a resource grant, not configuration: copy it only
+	// when the caller may modify the source (owner, admin or devops). Any other
+	// user gets the cluster quota on the clone.
+	copyQuota := canModifyInstance(c, source)
+
 	// Instance create + override copies are atomic.
 	txErr := h.txRunner.RunInTx(func(repos database.TxRepos) error {
-		return cloneInstanceTx(c.Request.Context(), repos, source.ID, clone, now)
+		return cloneInstanceTx(c.Request.Context(), repos, source.ID, clone, now, copyQuota)
 	})
 	if txErr != nil {
 		status, message := mapError(txErr, entityStackInstance)
@@ -1114,10 +1119,10 @@ func (h *InstanceHandler) CloneInstance(c *gin.Context) {
 	c.JSON(http.StatusCreated, clone)
 }
 
-// cloneInstanceTx creates clone and copies the value overrides, the branch
-// overrides and the quota override of the source instance. Repositories that
-// are not in repos are skipped.
-func cloneInstanceTx(ctx context.Context, repos database.TxRepos, sourceID string, clone *models.StackInstance, now time.Time) error {
+// cloneInstanceTx creates clone and copies the value overrides and the branch
+// overrides of the source instance, and the quota override when copyQuota is
+// true. Repositories that are not in repos are skipped.
+func cloneInstanceTx(ctx context.Context, repos database.TxRepos, sourceID string, clone *models.StackInstance, now time.Time, copyQuota bool) error {
 	if err := repos.StackInstance.Create(clone); err != nil {
 		return err
 	}
@@ -1155,7 +1160,7 @@ func cloneInstanceTx(ctx context.Context, repos database.TxRepos, sourceID strin
 			}
 		}
 	}
-	if repos.InstanceQuotaOverride != nil {
+	if copyQuota && repos.InstanceQuotaOverride != nil {
 		quota, err := repos.InstanceQuotaOverride.GetByInstanceID(ctx, sourceID)
 		if err != nil && !errors.Is(err, dberrors.ErrNotFound) {
 			return err

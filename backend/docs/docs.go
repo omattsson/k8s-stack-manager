@@ -5658,7 +5658,7 @@ const docTemplate = `{
         },
         "/api/v1/stack-instances/{id}/clone": {
             "post": {
-                "description": "Create a new draft stack instance as a copy of an existing one. The clone belongs to the caller and uses the cluster and definition of the source.\nIt copies the TTL (unless ttl_minutes is given), the value overrides, the branch overrides and the instance quota override.\nThe body is optional. Without a name, the server picks the first free name of \u003csource\u003e-copy, \u003csource\u003e-copy-2, ... (the namespace stack-\u003cname\u003e-\u003cowner\u003e must be free). A given name must be a DNS label (lowercase a-z, 0-9, '-', start and end alphanumeric, at most 50 characters).",
+                "description": "Create a new draft stack instance as a copy of an existing one. The clone belongs to the caller and uses the cluster and definition of the source.\nIt copies the TTL (unless ttl_minutes is given), the value overrides and the branch overrides. It copies the instance quota override only when the caller owns the source or is admin or devops.\nThe body is optional. Without a name, the server picks the first free name of \u003csource\u003e-copy, \u003csource\u003e-copy-2, ... (the namespace stack-\u003cname\u003e-\u003cowner\u003e must be free). A given name must be a DNS label (lowercase a-z, 0-9, '-', start and end alphanumeric, at most 50 characters).",
                 "consumes": [
                     "application/json"
                 ],

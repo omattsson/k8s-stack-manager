@@ -28,7 +28,7 @@ A developer's working copy of a stack definition. Each instance has:
 
 **Clone.** `POST /stack-instances/:id/clone` accepts an optional body `{"name": "...", "branch": "...", "ttl_minutes": N}`.
 - Without a name, the API uses the first free name of `<name>-copy`, `<name>-copy-2`, and so on.
-- The clone gets the cluster, the TTL, the value overrides, the branch overrides and the quota override of the source.
+- The clone gets the cluster, the TTL, the value overrides and the branch overrides of the source. It gets the quota override only when the caller owns the source or is admin or devops; any other user gets the cluster quota (a quota override is a resource grant, not configuration).
 - `branch` and `ttl_minutes` replace the values of the source. The clone is a draft and belongs to the caller.
 
 **Extend.** `POST /stack-instances/:id/extend` never makes the expiry earlier and never changes `ttl_minutes`.
