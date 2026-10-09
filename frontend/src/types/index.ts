@@ -97,6 +97,8 @@ export interface StackDefinition {
   name: string;
   description: string;
   owner_id: string;
+  /** Username of the owner. Omitted when the owner does not exist. */
+  owner_username?: string;
   source_template_id?: string;
   source_template_version?: string;
   default_branch: string;
@@ -133,6 +135,12 @@ export interface StackInstance {
   expires_at?: string;
   /** True when the stored overrides differ from the values that run (for example after a rollback). */
   values_drift?: boolean;
+  /** Username of the owner. Omitted when the owner does not exist. */
+  owner_username?: string;
+  /** Name of the stack definition. Omitted when the definition does not exist. */
+  definition_name?: string;
+  /** Name of the target cluster. Omitted when the cluster no longer exists or `cluster_id` is empty (older instances). */
+  cluster_name?: string;
   created_at: string;
   updated_at: string;
   definition?: StackDefinition;

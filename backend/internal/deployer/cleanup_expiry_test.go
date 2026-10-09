@@ -81,7 +81,7 @@ func (m *mockDefinitionRepo) List() ([]models.StackDefinition, error) {
 	return out, nil
 }
 
-func (m *mockDefinitionRepo) ListPaged(limit, offset int) ([]models.StackDefinition, int64, error) {
+func (m *mockDefinitionRepo) ListPaged(_ models.StackDefinitionFilter, limit, offset int) ([]models.StackDefinition, int64, error) {
 	all, err := m.List()
 	if err != nil {
 		return nil, 0, err
@@ -129,6 +129,10 @@ func (m *mockDefinitionRepo) Count() (int64, error) {
 
 func (m *mockDefinitionRepo) FindByIDForUpdate(id string) (*models.StackDefinition, error) {
 	return m.FindByID(id)
+}
+
+func (m *mockDefinitionRepo) NamesByIDs(_ []string) (map[string]string, error) {
+	return map[string]string{}, nil
 }
 
 func (m *mockDefinitionRepo) ListIDsByTemplateIDs(_ []string) (map[string][]string, error) {

@@ -46,6 +46,18 @@ A developer's working copy of a stack definition. Each instance has:
 - **Value overrides** per chart (merged on top of chart defaults)
 - An auto-generated **namespace** (`stack-{instance-name}-{owner}`)
 
+**List filters.** `GET /stack-instances` accepts these filters. They combine (AND). `total` is the number of instances that match.
+- `status`: one of `draft`, `queued`, `deploying`, `stabilizing`, `running`, `stopping`, `stopped`, `cleaning`, `partial`, `error`. Another value gives 400.
+- `cluster_id`, `definition_id`: an ID.
+- `owner`: `me` (you), a username, or a user ID. A value in UUID form is matched as a user ID first, then as a username. An unknown owner gives an empty list.
+- `name`: the exact instance name.
+
+`GET /stack-definitions` accepts `owner` and `name` in the same way.
+
+Both list endpoints are paged (`page`, `pageSize`; default 25, maximum 100). With `owner=me` or `name`, `total` is the real number of matches, not the page size.
+
+**Names in responses.** Instance responses include `owner_username`, `definition_name` and `cluster_name`. Definition and template responses include `owner_username`. A field is omitted when the owner, definition or cluster no longer exists (for example, after a delete). `cluster_name` is also omitted when `cluster_id` is empty (older instances).
+
 ### Stack Instance Lifecycle
 
 **Names.** An instance name must be a DNS label (RFC 1123): lowercase letters `a-z`, digits `0-9` and `-`. It must start and end with a letter or a digit. The maximum length is 50 characters. Charts build host names from `{{.InstanceName}}`, so other characters break the Ingress. The API checks the rule on create, clone, quick deploy and rename (400). Older instances with other names keep working; an update that keeps the name does not fail.
@@ -145,6 +157,8 @@ Template → (instantiate) → Definition + ChartConfigs → (create instance) �
 - The web UI hides the lifecycle buttons and shows the page read-only for a user who cannot modify the instance.
 - A clone always belongs to the user who creates it.
 - Quota override limit: an owner without the `admin` or `devops` role can set a quota override only at or below the cluster quota of the instance's cluster. Each value (`cpu_request`, `cpu_limit`, `memory_request`, `memory_limit`, `storage_limit`, `pod_limit`) is compared with the same cluster value as a Kubernetes quantity, so `16000m` equals `16`. A value above it gets 403, for example `cpu_limit 64 exceeds the cluster quota 16; only admin or devops can set a higher quota`. A value equal to the stored override passes, so an owner can change one field without losing an admin grant on another field; raising it or a new value above the cluster quota still gets 403. A field without a cluster value has no limit. `pod_limit: 0` means no pod limit, so it counts as above a cluster pod limit. Admin and devops can grant more. The check runs when the override is saved; a deploy does not check again.
+- `PUT /stack-instances/:id/quota-overrides` replaces the whole override. A field that you do not send is cleared, and the cluster quota applies to it. To change one field, read the override with `GET`, change the field and send all fields.
+- `GET /stack-instances/:id/branches/:chartId` returns the branch override of one chart (404 when there is none). The same rule as for the list applies.
 - The override restriction limits who can *edit* through the override endpoints. It is not a secrecy control: the merged values (export, compare, deploy-log values) and a clone still contain the override values. Do not put secrets in value overrides; use Kubernetes Secrets or an external secret store.
 - The same applies to cluster **shared values**: only admins can edit them, but every user sees them in the exported and compared values of any stack on that cluster. Do not put secrets in shared values.
 

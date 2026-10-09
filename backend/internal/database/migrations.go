@@ -1063,6 +1063,10 @@ func (d *Database) AutoMigrate() error {
 	// UUID).
 	migrator.AddMigration(auditEntityTypesMigration())
 
+	// Migration 48: stack_definitions (owner_id, name) index for the owner
+	// and name list filters and the per-owner name check.
+	migrator.AddMigration(definitionOwnerNameIndexMigration())
+
 	// Run migrations
 	if err := migrator.MigrateUp(); err != nil {
 		return err
@@ -1448,6 +1452,36 @@ func auditEntityTypesMigration() schema.Migration {
 			return nil
 		},
 		Down: func(_ *gorm.DB) error {
+			return nil
+		},
+	}
+}
+
+// definitionOwnerNameIndexName is the index that migration 48 creates.
+const definitionOwnerNameIndexName = "idx_stack_definitions_owner_name"
+
+// definitionOwnerNameIndexMigration is migration 48. It adds an index on
+// stack_definitions (owner_id, name) for the owner and name filters of
+// GET /stack-definitions and for the per-owner name check. Up and Down are
+// idempotent: they check whether the index exists first. It is a function so
+// tests can run its Down step.
+func definitionOwnerNameIndexMigration() schema.Migration {
+	return schema.Migration{
+		Version:     "20261009000048",
+		Name:        "add_stack_definitions_owner_name_index",
+		Description: "Add index on stack_definitions (owner_id, name) for the owner and name list filters",
+		Up: func(tx *gorm.DB) error {
+			m := tx.Migrator()
+			if !m.HasTable(&models.StackDefinition{}) || m.HasIndex(&models.StackDefinition{}, definitionOwnerNameIndexName) {
+				return nil
+			}
+			return tx.Exec("CREATE INDEX " + definitionOwnerNameIndexName + " ON stack_definitions(owner_id, name)").Error // #nosec G202 -- index name is a constant
+		},
+		Down: func(tx *gorm.DB) error {
+			m := tx.Migrator()
+			if m.HasIndex(&models.StackDefinition{}, definitionOwnerNameIndexName) {
+				return m.DropIndex(&models.StackDefinition{}, definitionOwnerNameIndexName)
+			}
 			return nil
 		},
 	}

@@ -109,19 +109,38 @@ func (r *GORMStackDefinitionRepository) List() ([]models.StackDefinition, error)
 	return definitions, nil
 }
 
-// ListPaged returns a page of stack definitions ordered by created_at DESC,
-// along with the total count. Only columns needed for list views are selected.
-func (r *GORMStackDefinitionRepository) ListPaged(limit, offset int) ([]models.StackDefinition, int64, error) {
+// applyDefinitionFilter adds a WHERE condition for each non-empty field of f.
+// ListPaged uses it for the count query and for the page query.
+func applyDefinitionFilter(q *gorm.DB, f models.StackDefinitionFilter) *gorm.DB {
+	if f.Name != "" {
+		q = q.Where("name = ?", f.Name)
+	}
+	if f.OwnerID != "" {
+		q = q.Where("owner_id = ?", f.OwnerID)
+	}
+	return q
+}
+
+// ListPaged returns a page of the stack definitions that match filter,
+// ordered by created_at DESC, along with the total count of matching
+// definitions. Only columns needed for list views are selected.
+func (r *GORMStackDefinitionRepository) ListPaged(filter models.StackDefinitionFilter, limit, offset int) ([]models.StackDefinition, int64, error) {
 	var total int64
-	if err := r.db.Model(&models.StackDefinition{}).Count(&total).Error; err != nil {
+	if err := applyDefinitionFilter(r.db.Model(&models.StackDefinition{}), filter).Count(&total).Error; err != nil {
 		return nil, 0, dberrors.NewDatabaseError("count", err)
 	}
-	var definitions []models.StackDefinition
-	if err := r.db.Select("id, name, description, owner_id, source_template_id, default_branch, owner_instance_id, created_at, updated_at").
+	definitions := []models.StackDefinition{}
+	if err := applyDefinitionFilter(r.db.Select("id, name, description, owner_id, source_template_id, default_branch, owner_instance_id, created_at, updated_at"), filter).
 		Order("created_at DESC").Limit(limit).Offset(offset).Find(&definitions).Error; err != nil {
 		return nil, 0, dberrors.NewDatabaseError("list_paged", err)
 	}
 	return definitions, total, nil
+}
+
+// NamesByIDs returns the name of each definition in ids that exists, keyed
+// by ID. It selects only the id and name columns in one query.
+func (r *GORMStackDefinitionRepository) NamesByIDs(ids []string) (map[string]string, error) {
+	return namesByIDs(r.db, &models.StackDefinition{}, ids)
 }
 
 // Count returns the total number of stack definitions.

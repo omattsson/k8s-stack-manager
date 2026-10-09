@@ -124,7 +124,7 @@ func (m *warnerMockInstanceRepo) Delete(_ string) error                { return 
 func (m *warnerMockInstanceRepo) List() ([]models.StackInstance, error) {
 	return nil, nil
 }
-func (m *warnerMockInstanceRepo) ListPaged(_, _ int) ([]models.StackInstance, int, error) {
+func (m *warnerMockInstanceRepo) ListPaged(_ models.StackInstanceFilter, _, _ int) ([]models.StackInstance, int, error) {
 	return nil, 0, nil
 }
 func (m *warnerMockInstanceRepo) ListByOwner(_ string) ([]models.StackInstance, error) {

@@ -50,6 +50,14 @@ func (h *GitHandler) ListBranches(c *gin.Context) {
 	c.JSON(http.StatusOK, branches)
 }
 
+// ValidateBranchResponse is the response of GET /git/validate-branch.
+type ValidateBranchResponse struct {
+	// Valid is true when the branch exists in the repository.
+	Valid bool `json:"valid" example:"true"`
+	// Branch is the branch name from the request.
+	Branch string `json:"branch" example:"main"`
+}
+
 // ValidateBranch godoc
 // @Summary     Validate a branch
 // @Description Check if a branch exists in the given repository
@@ -57,7 +65,7 @@ func (h *GitHandler) ListBranches(c *gin.Context) {
 // @Produce     json
 // @Param       repo   query    string true "Repository URL"
 // @Param       branch query    string true "Branch name"
-// @Success     200    {object} map[string]interface{}
+// @Success     200    {object} ValidateBranchResponse
 // @Failure     400    {object} map[string]string
 // @Failure     500    {object} map[string]string
 // @Failure     503    {object} map[string]string
@@ -80,7 +88,7 @@ func (h *GitHandler) ValidateBranch(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"valid": valid, "branch": branch})
+	c.JSON(http.StatusOK, ValidateBranchResponse{Valid: valid, Branch: branch})
 }
 
 // GetProviders godoc

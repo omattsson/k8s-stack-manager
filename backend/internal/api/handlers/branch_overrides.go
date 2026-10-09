@@ -91,6 +91,62 @@ func (h *BranchOverrideHandler) ListBranchOverrides(c *gin.Context) {
 	c.JSON(http.StatusOK, overrides)
 }
 
+// GetBranchOverride godoc
+// @Summary     Get the branch override for a chart
+// @Description Get the per-chart branch override of one chart in a stack instance. The authorization rule is the same as for the list (owner, admin or devops). An existing override is returned also when its chart is no longer part of the definition. Without an override the response is 404: "Chart not found in this stack definition" for an unknown chart, otherwise "Branch override not found".
+// @Tags        branch-overrides
+// @Produce     json
+// @Param       id      path     string true "Instance ID"
+// @Param       chartId path     string true "Chart config ID"
+// @Success     200     {object} models.ChartBranchOverride
+// @Failure     400     {object} map[string]string
+// @Failure     401     {object} map[string]string
+// @Failure     403     {object} map[string]string
+// @Failure     404     {object} map[string]string "Instance not found, chart not found in this stack definition, or no override"
+// @Failure     500     {object} map[string]string
+// @Security    BearerAuth
+// @Router      /api/v1/stack-instances/{id}/branches/{chartId} [get]
+func (h *BranchOverrideHandler) GetBranchOverride(c *gin.Context) {
+	instanceID := c.Param("id")
+	chartID := c.Param("chartId")
+
+	inst, err := h.instanceRepo.FindByID(instanceID)
+	if err != nil {
+		status, message := mapError(err, entityStackInstance)
+		if status == http.StatusInternalServerError {
+			slog.Error(msgFailedFindStackInstance, logKeyBOInstanceID, instanceID, "error", err)
+		}
+		c.JSON(status, gin.H{"error": message})
+		return
+	}
+
+	// Authorization: same rule as ListBranchOverrides (owner, admin or devops).
+	if !requireInstanceModify(c, inst) {
+		return
+	}
+
+	override, err := h.overrideRepo.Get(instanceID, chartID)
+	if err == nil && override == nil {
+		err = dberrors.NewDatabaseError("get", dberrors.ErrNotFound)
+	}
+	if err != nil {
+		if isNotFoundError(err) {
+			// No override: tell an unknown chart apart from a missing override.
+			if _, ok := requireInstanceChart(c, h.chartConfigRepo, inst, chartID); !ok {
+				return
+			}
+		}
+		status, message := mapError(err, entityBranchOverride)
+		if status == http.StatusInternalServerError {
+			slog.Error("failed to get branch override", logKeyBOInstanceID, instanceID, logKeyBOChartID, chartID, "error", err)
+		}
+		c.JSON(status, gin.H{"error": message})
+		return
+	}
+
+	c.JSON(http.StatusOK, override)
+}
+
 // setBranchOverrideRequest is the request body for setting a branch override.
 type setBranchOverrideRequest struct {
 	Branch string `json:"branch" example:"feature/my-branch"`

@@ -142,6 +142,8 @@ func TestValidateBranch(t *testing.T) {
 		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 		assert.Equal(t, true, resp["valid"])
 		assert.Equal(t, "main", resp["branch"])
+		// ValidateBranchResponse keeps the JSON shape: valid and branch only.
+		assert.Len(t, resp, 2)
 	})
 
 	t.Run("branch does not exist returns valid false", func(t *testing.T) {

@@ -144,8 +144,14 @@ func (r *notFoundClusterRepo) SetDefault(_ string) error                 { retur
 
 func (*transientErrorClusterRepo) CountAll() (int, error) { return 0, nil }
 
+func (*transientErrorClusterRepo) NamesByIDs(_ []string) (map[string]string, error) {
+	return map[string]string{}, nil
+}
 func (*transientErrorClusterRepo) CountByHealthStatus(status string) (int, error) { return 0, nil }
 
 func (*notFoundClusterRepo) CountAll() (int, error) { return 0, nil }
 
+func (*notFoundClusterRepo) NamesByIDs(_ []string) (map[string]string, error) {
+	return map[string]string{}, nil
+}
 func (*notFoundClusterRepo) CountByHealthStatus(status string) (int, error) { return 0, nil }

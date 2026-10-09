@@ -248,6 +248,7 @@ const mockInstance = {
   expires_at: undefined as string | undefined,
   error_message: undefined as string | undefined,
   values_drift: undefined as boolean | undefined,
+  owner_username: undefined as string | undefined,
 };
 
 const mockDefinition = {
@@ -299,7 +300,18 @@ describe('StackInstances Detail', () => {
       expect(screen.getByText('Test Instance')).toBeInTheDocument();
     });
     expect(screen.getByText(/stack-test/)).toBeInTheDocument();
-    expect(screen.getByText(/user1/)).toBeInTheDocument();
+    // Without owner_username the owner ID is shown.
+    expect(screen.getByText('Owner: user1')).toBeInTheDocument();
+  });
+
+  it('shows the owner username instead of the owner ID', async () => {
+    setupMocks({ owner_username: 'owner-name' });
+    renderDetail();
+
+    await waitFor(() => {
+      expect(screen.getByText('Owner: owner-name')).toBeInTheDocument();
+    });
+    expect(screen.queryByText('Owner: user1')).not.toBeInTheDocument();
   });
 
   it('shows error alert when fetch fails', async () => {

@@ -357,6 +357,7 @@ func buildHandlers(
 	if err != nil {
 		return nil, fmt.Errorf("create definition handler: %w", err)
 	}
+	definitionHandler.WithUserRepo(repos.User)
 
 	// Template version handler.
 	templateVersionHandler := handlers.NewTemplateVersionHandler(repos.TemplateVersion, repos.StackTemplate).
