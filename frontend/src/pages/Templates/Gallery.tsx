@@ -58,7 +58,7 @@ const matchesSearchAndCategory = (t: StackTemplate, search: string, category: st
   if (category !== 'All' && t.category !== category) return false;
   if (!search) return true;
   const q = search.toLowerCase();
-  return t.name.toLowerCase().includes(q) || t.description.toLowerCase().includes(q);
+  return t.name.toLowerCase().includes(q) || (t.description ?? '').toLowerCase().includes(q);
 };
 
 type BulkAction = 'delete' | 'publish' | 'unpublish';
@@ -113,9 +113,11 @@ const TemplateCard = ({ template, isSelected, bulkSelectionEnabled, isFavorite, 
           {!template.is_published && <Chip label="Draft" size="small" color="warning" />}
         </Box>
       </Box>
-      <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
-        {template.description || 'No description'}
-      </Typography>
+      {template.description && (
+        <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+          {template.description}
+        </Typography>
+      )}
       {template.owner_username && (
         <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
           By {template.owner_username}

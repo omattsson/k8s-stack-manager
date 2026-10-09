@@ -233,6 +233,10 @@ func (m *MockStackTemplateRepository) FindByID(id string) (*models.StackTemplate
 	return &cp, nil
 }
 
+func (m *MockStackTemplateRepository) FindByIDForUpdate(id string) (*models.StackTemplate, error) {
+	return m.FindByID(id)
+}
+
 func (m *MockStackTemplateRepository) Update(t *models.StackTemplate) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -272,7 +276,7 @@ func (m *MockStackTemplateRepository) List() ([]models.StackTemplate, error) {
 	return out, nil
 }
 
-func (m *MockStackTemplateRepository) ListPaged(limit, offset int) ([]models.StackTemplate, int64, error) {
+func (m *MockStackTemplateRepository) ListPaged(limit, offset int, name string) ([]models.StackTemplate, int64, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	if m.err != nil {
@@ -280,7 +284,9 @@ func (m *MockStackTemplateRepository) ListPaged(limit, offset int) ([]models.Sta
 	}
 	all := make([]models.StackTemplate, 0, len(m.items))
 	for _, t := range m.items {
-		all = append(all, *t)
+		if name == "" || t.Name == name {
+			all = append(all, *t)
+		}
 	}
 	total := int64(len(all))
 	if offset >= len(all) {
@@ -293,7 +299,7 @@ func (m *MockStackTemplateRepository) ListPaged(limit, offset int) ([]models.Sta
 	return all, total, nil
 }
 
-func (m *MockStackTemplateRepository) ListPublishedPaged(limit, offset int) ([]models.StackTemplate, int64, error) {
+func (m *MockStackTemplateRepository) ListPublishedPaged(limit, offset int, name string) ([]models.StackTemplate, int64, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	if m.err != nil {
@@ -301,7 +307,7 @@ func (m *MockStackTemplateRepository) ListPublishedPaged(limit, offset int) ([]m
 	}
 	var all []models.StackTemplate
 	for _, t := range m.items {
-		if t.IsPublished {
+		if t.IsPublished && (name == "" || t.Name == name) {
 			all = append(all, *t)
 		}
 	}
@@ -1762,7 +1768,10 @@ func (m *MockTemplateVersionRepository) ListByTemplate(_ context.Context, templa
 	}
 	// Sort by CreatedAt descending.
 	sort.Slice(out, func(i, j int) bool {
-		return out[i].CreatedAt.After(out[j].CreatedAt)
+		if !out[i].CreatedAt.Equal(out[j].CreatedAt) {
+			return out[i].CreatedAt.After(out[j].CreatedAt)
+		}
+		return out[i].ID > out[j].ID
 	})
 	return out, nil
 }
@@ -1775,7 +1784,7 @@ func (m *MockTemplateVersionRepository) GetByID(_ context.Context, templateID, i
 	}
 	v, ok := m.items[id]
 	if !ok || v.TemplateID != templateID {
-		return nil, errors.New("not found")
+		return nil, dberrors.NewDatabaseError("find", dberrors.ErrNotFound)
 	}
 	cp := *v
 	return &cp, nil
@@ -1790,14 +1799,15 @@ func (m *MockTemplateVersionRepository) GetLatestByTemplate(_ context.Context, t
 	var latest *models.TemplateVersion
 	for _, v := range m.items {
 		if v.TemplateID == templateID {
-			if latest == nil || v.CreatedAt.After(latest.CreatedAt) {
+			if latest == nil || v.CreatedAt.After(latest.CreatedAt) ||
+				(v.CreatedAt.Equal(latest.CreatedAt) && v.ID > latest.ID) {
 				cp := *v
 				latest = &cp
 			}
 		}
 	}
 	if latest == nil {
-		return nil, errors.New("not found")
+		return nil, dberrors.NewDatabaseError("find", dberrors.ErrNotFound)
 	}
 	return latest, nil
 }

@@ -50,6 +50,31 @@ export interface StackTemplate {
   charts?: TemplateChartConfig[];
   definition_count?: number;
   owner_username?: string;
+  /** Version string of the latest release snapshot. Null when the template has no release. */
+  published_version?: string | null;
+  /** ID of the latest release snapshot. Null when the template has no release. */
+  published_version_id?: string | null;
+  /** True when the working copy differs from the latest release snapshot. */
+  has_unpublished_changes?: boolean;
+  /**
+   * Charts of the latest release snapshot: what Use Template and Quick Deploy apply.
+   * Their IDs are valid `chart_overrides` keys. Null when the template has no release.
+   */
+  published_charts?: TemplateChartConfig[] | null;
+}
+
+/** Optional body for `POST /api/v1/templates/:id/publish`. */
+export interface PublishTemplateRequest {
+  /** Release version. The API uses the working copy version when this is omitted. */
+  version?: string;
+  change_summary?: string;
+}
+
+/** Normalized result of a publish call. */
+export interface PublishTemplateResult {
+  template: StackTemplate;
+  /** False when nothing changed since the latest release and the API created no snapshot. */
+  snapshotCreated: boolean;
 }
 
 export interface TemplateChartConfig {
@@ -656,6 +681,7 @@ export interface TemplateVersion {
   version: string;
   change_summary: string;
   created_by: string;
+  created_by_username?: string;
   created_at: string;
   snapshot?: TemplateSnapshot;
 }
@@ -680,16 +706,47 @@ export interface TemplateSnapshot {
   }>;
 }
 
+/** Per-chart difference between two template snapshots. */
+export interface TemplateChartDiff {
+  chart_name: string;
+  left_values?: string | null;
+  right_values?: string | null;
+  left_locked?: string;
+  right_locked?: string;
+  left_repo_url?: string;
+  right_repo_url?: string;
+  /** Omitted by the API when false. */
+  left_required?: boolean;
+  right_required?: boolean;
+  /** Omitted by the API when 0. */
+  left_sort_order?: number;
+  right_sort_order?: number;
+  /** Compared by the API only when both sides store them (snapshot schema 1 or the working copy). */
+  left_chart_version?: string;
+  right_chart_version?: string;
+  left_chart_path?: string;
+  right_chart_path?: string;
+  has_differences: boolean;
+  change_type: 'added' | 'removed' | 'modified' | 'unchanged';
+}
+
+/** One side of a version diff. `version` is the version string (for example "1.0.0"). */
+export interface VersionDiffSide {
+  /** Version ID, or "working" for the working copy. */
+  id?: string;
+  version: string;
+  snapshot: TemplateSnapshot;
+  change_summary?: string;
+  created_by?: string;
+  created_by_username?: string;
+  created_at?: string;
+  is_working_copy?: boolean;
+}
+
 export interface VersionDiffResponse {
-  left: { version: TemplateVersion; snapshot: TemplateSnapshot };
-  right: { version: TemplateVersion; snapshot: TemplateSnapshot };
-  chart_diffs: Array<{
-    chart_name: string;
-    left_values: string | null;
-    right_values: string | null;
-    has_differences: boolean;
-    change_type: 'added' | 'removed' | 'modified' | 'unchanged';
-  }>;
+  left: VersionDiffSide;
+  right: VersionDiffSide;
+  chart_diffs: TemplateChartDiff[];
 }
 
 export interface UpgradeCheckResponse {
@@ -702,6 +759,8 @@ export interface UpgradeCheckResponse {
     charts_modified: string[];
     charts_unchanged: string[];
   };
+  /** Optional per-chart value diff (current definition values vs the latest release). */
+  chart_diffs?: TemplateChartDiff[];
 }
 
 export interface ChartDeployPreview {

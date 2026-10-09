@@ -638,7 +638,7 @@ func TestQuickDeploy_UsesValuesPipeline(t *testing.T) {
 				}},
 			)
 			require.NoError(t, err)
-			h.WithSharedValues(svRepo)
+			h.WithSharedValues(svRepo).WithTemplateVersions(newWorkingCopyReleaseRepo(tmplRepo, tmplChartRepo))
 
 			r := svRouter(http.MethodPost, "/api/v1/templates/:id/quick-deploy", h.QuickDeploy)
 			body, _ := json.Marshal(quickDeployRequest{InstanceName: "shared-values-test"})

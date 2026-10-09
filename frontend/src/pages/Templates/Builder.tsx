@@ -16,9 +16,12 @@ import {
 import AddIcon from '@mui/icons-material/Add';
 import DeleteIcon from '@mui/icons-material/Delete';
 import { templateService } from '../../api/client';
-import type { StackTemplate, TemplateChartConfig } from '../../types';
+import { useNotification } from '../../context/NotificationContext';
+import type { PublishTemplateResult, StackTemplate, TemplateChartConfig } from '../../types';
 import YamlEditor from '../../components/YamlEditor';
 import LoadingState from '../../components/LoadingState';
+import { SAVED_AS_DRAFT_MESSAGE } from '../../utils/templateVersion';
+import PublishDialog from './PublishDialog';
 
 const CATEGORIES = ['Web', 'API', 'Data', 'Infrastructure', 'Other'];
 
@@ -51,6 +54,7 @@ const Builder = () => {
   const { id } = useParams<{ id: string }>();
   const isEdit = Boolean(id);
   const navigate = useNavigate();
+  const { showInfo, showSuccess } = useNotification();
 
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
@@ -58,6 +62,10 @@ const Builder = () => {
   const [version, setVersion] = useState('');
   const [defaultBranch, setDefaultBranch] = useState('master');
   const [isPublished, setIsPublished] = useState(false);
+  const [publishedVersion, setPublishedVersion] = useState<string | null>(null);
+  const [publishTarget, setPublishTarget] = useState<StackTemplate | null>(null);
+  /** IDs of saved charts the user removed; deleted on the server at save. */
+  const [removedChartIds, setRemovedChartIds] = useState<string[]>([]);
   const [charts, setCharts] = useState<ChartFormData[]>([]);
   const [loading, setLoading] = useState(isEdit);
   const [saving, setSaving] = useState(false);
@@ -74,6 +82,7 @@ const Builder = () => {
         setVersion(data.version);
         setDefaultBranch(data.default_branch);
         setIsPublished(data.is_published);
+        setPublishedVersion(data.published_version ?? null);
         if (data.charts) {
           setCharts(data.charts.map((c: TemplateChartConfig) => ({
             id: c.id,
@@ -102,6 +111,11 @@ const Builder = () => {
   };
 
   const removeChart = (index: number) => {
+    const removed = charts[index];
+    if (removed?.id) {
+      const removedId = removed.id;
+      setRemovedChartIds((prev) => (prev.includes(removedId) ? prev : [...prev, removedId]));
+    }
     setCharts(charts.filter((_c, i) => i !== index));
   };
 
@@ -109,17 +123,18 @@ const Builder = () => {
     setCharts(charts.map((c, i) => i === index ? { ...c, [field]: value } : c));
   };
 
-  const handleSave = async () => {
+  /** Save the template details and charts. Returns the saved template, or null on failure. */
+  const persist = async (): Promise<StackTemplate | null> => {
     setError(null);
     setSaving(true);
     try {
+      // Publish state is not part of the working copy: use the Publish flow instead.
       const templateData: Partial<StackTemplate> = {
         name,
         description,
         category: categoryVal,
         version,
         default_branch: defaultBranch,
-        is_published: isPublished,
       };
 
       let savedTemplate: StackTemplate;
@@ -129,56 +144,84 @@ const Builder = () => {
         savedTemplate = await templateService.create(templateData);
       }
 
-      // Save charts
-      for (const chart of charts) {
-        if (chart.id) {
-          await templateService.updateChart(savedTemplate.id, chart.id, {
-            chart_name: chart.chart_name,
-            repository_url: chart.repository_url,
-            source_repo_url: chart.source_repo_url,
-            chart_path: chart.chart_path,
-            chart_version: chart.chart_version,
-            default_values: chart.default_values,
-            locked_values: chart.locked_values,
-            deploy_order: chart.deploy_order,
-            required: chart.required,
-          });
-        } else {
-          await templateService.addChart(savedTemplate.id, {
-            chart_name: chart.chart_name,
-            repository_url: chart.repository_url,
-            source_repo_url: chart.source_repo_url,
-            chart_path: chart.chart_path,
-            chart_version: chart.chart_version,
-            default_values: chart.default_values,
-            locked_values: chart.locked_values,
-            deploy_order: chart.deploy_order,
-            required: chart.required,
-          });
-        }
+      // Delete removed charts first, so that a following publish cannot
+      // release a chart the user removed.
+      for (const chartId of removedChartIds) {
+        await templateService.deleteChart(savedTemplate.id, chartId);
+        setRemovedChartIds((prev) => prev.filter((cid) => cid !== chartId));
       }
 
-      navigate(`/templates/${savedTemplate.id}`);
+      // Save charts
+      for (const chart of charts) {
+        const chartData = {
+          chart_name: chart.chart_name,
+          repository_url: chart.repository_url,
+          source_repo_url: chart.source_repo_url,
+          chart_path: chart.chart_path,
+          chart_version: chart.chart_version,
+          default_values: chart.default_values,
+          locked_values: chart.locked_values,
+          deploy_order: chart.deploy_order,
+          required: chart.required,
+        };
+        if (chart.id) {
+          await templateService.updateChart(savedTemplate.id, chart.id, chartData);
+        } else {
+          await templateService.addChart(savedTemplate.id, chartData);
+        }
+      }
+      return savedTemplate;
     } catch {
       setError('Failed to save template');
+      return null;
     } finally {
       setSaving(false);
     }
   };
 
-  const handleTogglePublish = async () => {
-    if (!id) return;
-    try {
-      if (isPublished) {
-        await templateService.unpublish(id);
-        setIsPublished(false);
-      } else {
-        await templateService.publish(id);
-        setIsPublished(true);
-      }
-    } catch {
-      setError('Failed to update publish status');
+  /** True when users already get a release of this template, so a save only changes the draft. */
+  const hasRelease = isEdit && (isPublished || Boolean(publishedVersion));
+
+  const handleSave = async () => {
+    const savedTemplate = await persist();
+    if (!savedTemplate) return;
+    if (hasRelease) {
+      showInfo(SAVED_AS_DRAFT_MESSAGE);
     }
+    navigate(`/templates/${savedTemplate.id}`);
+  };
+
+  const handleSaveAndPublish = async () => {
+    const savedTemplate = await persist();
+    if (!savedTemplate) return;
+    try {
+      setPublishTarget(await templateService.get(savedTemplate.id));
+    } catch {
+      setPublishTarget(savedTemplate);
+    }
+  };
+
+  const handlePublishClosed = () => {
+    if (!publishTarget) return;
+    const targetId = publishTarget.id;
+    setPublishTarget(null);
+    if (hasRelease) {
+      showInfo(SAVED_AS_DRAFT_MESSAGE);
+    }
+    navigate(`/templates/${targetId}`);
+  };
+
+  const handlePublished = (result: PublishTemplateResult, requestedVersion: string) => {
+    if (!publishTarget) return;
+    const targetId = publishTarget.id;
+    const releasedVersion = result.template.published_version || requestedVersion;
+    setPublishTarget(null);
+    if (result.snapshotCreated) {
+      showSuccess(`Published version ${releasedVersion}.`);
+    } else {
+      showInfo(`No changes since version ${releasedVersion}. No new version was created.`);
+    }
+    navigate(`/templates/${targetId}`);
   };
 
   if (loading) {
@@ -213,13 +256,12 @@ const Builder = () => {
             <TextField label="Version" value={version} onChange={(e) => setVersion(e.target.value)} sx={{ minWidth: 150 }} />
             <TextField label="Default Branch" value={defaultBranch} onChange={(e) => setDefaultBranch(e.target.value)} sx={{ minWidth: 150 }} />
           </Box>
-          {isEdit && (
-            <Box sx={{ display: 'flex', gap: 2, alignItems: 'center' }}>
-              <FormControlLabel
-                control={<Switch checked={isPublished} onChange={handleTogglePublish} />}
-                label={isPublished ? 'Published' : 'Draft'}
-              />
-            </Box>
+          {hasRelease && (
+            <Alert severity="info">
+              {publishedVersion
+                ? `Users get version ${publishedVersion}. Saving changes the draft only. Publish a new version to release the changes.`
+                : 'Saving changes the draft only. Publish a new version to release the changes.'}
+            </Alert>
           )}
         </Box>
       </Paper>
@@ -279,10 +321,22 @@ const Builder = () => {
         <Button variant="contained" onClick={handleSave} disabled={saving || !name}>
           {saving ? 'Saving...' : 'Save Template'}
         </Button>
+        <Button variant="outlined" onClick={handleSaveAndPublish} disabled={saving || !name}>
+          Save and Publish
+        </Button>
         <Button variant="outlined" onClick={() => navigate('/templates')}>
           Cancel
         </Button>
       </Box>
+
+      {publishTarget && (
+        <PublishDialog
+          open
+          template={publishTarget}
+          onClose={handlePublishClosed}
+          onPublished={handlePublished}
+        />
+      )}
     </Box>
   );
 };

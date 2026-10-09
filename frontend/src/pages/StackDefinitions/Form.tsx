@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef, useMemo } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import {
   Box,
@@ -46,6 +46,49 @@ const emptyChart = (): ChartFormData => ({
   deploy_order: 0,
 });
 
+/** Map an API chart config to form data. Null fields become empty strings. */
+const toChartFormData = (c: ChartConfig): ChartFormData => ({
+  id: c.id,
+  chart_name: c.chart_name ?? '',
+  repository_url: c.repository_url ?? '',
+  source_repo_url: c.source_repo_url ?? '',
+  chart_path: c.chart_path ?? '',
+  chart_version: c.chart_version ?? '',
+  default_values: c.default_values ?? '',
+  deploy_order: c.deploy_order ?? 0,
+});
+
+interface FormValues {
+  name: string;
+  description: string;
+  defaultBranch: string;
+  charts: ChartFormData[];
+}
+
+/**
+ * Serialize the form values for the unsaved-changes check. Normalizes
+ * null/undefined to '' and ignores trailing whitespace and CRLF in YAML values,
+ * so an editor that only reformats line endings does not mark the form dirty.
+ */
+const serializeFormValues = (v: FormValues): string => {
+  const text = (s: string | null | undefined) => (s ?? '').replace(/\r\n/g, '\n').replace(/\s+$/, '');
+  return JSON.stringify({
+    name: text(v.name),
+    description: text(v.description),
+    defaultBranch: text(v.defaultBranch),
+    charts: v.charts.map((c) => ({
+      id: c.id ?? null,
+      chart_name: text(c.chart_name),
+      repository_url: text(c.repository_url),
+      source_repo_url: text(c.source_repo_url),
+      chart_path: text(c.chart_path),
+      chart_version: text(c.chart_version),
+      default_values: text(c.default_values),
+      deploy_order: Number(c.deploy_order) || 0,
+    })),
+  });
+};
+
 const Form = () => {
   const { id } = useParams<{ id: string }>();
   const isEdit = Boolean(id);
@@ -65,13 +108,14 @@ const Form = () => {
   const [exporting, setExporting] = useState(false);
   const [upgradeDialogOpen, setUpgradeDialogOpen] = useState(false);
   const [touched, setTouched] = useState<Record<string, boolean>>({});
-  const initialValuesRef = useRef({ name: '', description: '', defaultBranch: 'master', charts: [] as ChartFormData[] });
-  const isDirty = useMemo(() =>
-    name !== initialValuesRef.current.name
-    || description !== initialValuesRef.current.description
-    || defaultBranch !== initialValuesRef.current.defaultBranch
-    || JSON.stringify(charts) !== JSON.stringify(initialValuesRef.current.charts),
-    [name, description, defaultBranch, charts]
+  // Baseline for the unsaved-changes check. Kept in state (not a ref) so that
+  // isDirty recomputes when the loaded definition becomes the baseline.
+  const [baseline, setBaseline] = useState<string>(() =>
+    serializeFormValues({ name: '', description: '', defaultBranch: 'master', charts: [] }),
+  );
+  const isDirty = useMemo(
+    () => serializeFormValues({ name, description, defaultBranch, charts }) !== baseline,
+    [name, description, defaultBranch, charts, baseline],
   );
 
   useUnsavedChanges(isDirty && !saving);
@@ -81,23 +125,19 @@ const Form = () => {
     const fetchDefinition = async () => {
       try {
         const data = await definitionService.get(id);
-        setName(data.name);
-        setDescription(data.description);
-        setDefaultBranch(data.default_branch);
+        const loadedCharts = (data.charts ?? []).map(toChartFormData);
+        setName(data.name ?? '');
+        setDescription(data.description ?? '');
+        setDefaultBranch(data.default_branch ?? '');
         setSourceTemplateId(data.source_template_id);
         setSourceTemplateVersion(data.source_template_version);
-        if (data.charts) {
-          setCharts(data.charts.map((c: ChartConfig) => ({
-            id: c.id,
-            chart_name: c.chart_name,
-            repository_url: c.repository_url,
-            source_repo_url: c.source_repo_url,
-            chart_path: c.chart_path,
-            chart_version: c.chart_version,
-            default_values: c.default_values,
-            deploy_order: c.deploy_order,
-          })));
-        }
+        setCharts(loadedCharts);
+        setBaseline(serializeFormValues({
+          name: data.name ?? '',
+          description: data.description ?? '',
+          defaultBranch: data.default_branch ?? '',
+          charts: loadedCharts,
+        }));
         if (data.source_template_id) {
           try {
             const tmpl = await templateService.get(data.source_template_id);
@@ -106,21 +146,6 @@ const Form = () => {
             // Template fetch is best-effort
           }
         }
-        initialValuesRef.current = {
-          name: data.name,
-          description: data.description,
-          defaultBranch: data.default_branch,
-          charts: data.charts ? data.charts.map((c: ChartConfig) => ({
-            id: c.id,
-            chart_name: c.chart_name,
-            repository_url: c.repository_url,
-            source_repo_url: c.source_repo_url,
-            chart_path: c.chart_path,
-            chart_version: c.chart_version,
-            default_values: c.default_values,
-            deploy_order: c.deploy_order,
-          })) : [],
-        };
       } catch {
         setError('Failed to load definition');
       } finally {

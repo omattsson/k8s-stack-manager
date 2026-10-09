@@ -18,6 +18,7 @@ import { templateService, clusterService } from '../../api/client';
 import TtlSelector from '../TtlSelector';
 import type { Cluster, StackTemplate } from '../../types';
 import { trackRecentTemplate } from '../../utils/recentTemplates';
+import { isNoPublishedVersionError, NO_PUBLISHED_VERSION_MESSAGE } from '../../utils/templateVersion';
 import { INSTANCE_NAME_RULE, validateInstanceName } from '../../utils/instanceName';
 
 interface QuickDeployDialogProps {
@@ -84,9 +85,10 @@ const QuickDeployDialog = ({ open, onClose, template }: QuickDeployDialogProps) 
       onClose();
       navigate(`/stack-instances/${result.instance.id}`);
     } catch (err: unknown) {
-      const message =
-        (err as { response?: { data?: { error?: string } } })?.response?.data?.error ||
-        'Failed to deploy. Please try again.';
+      const message = isNoPublishedVersionError(err)
+        ? NO_PUBLISHED_VERSION_MESSAGE
+        : (err as { response?: { data?: { error?: string } } })?.response?.data?.error ||
+          'Failed to deploy. Please try again.';
       setError(message);
     } finally {
       setDeploying(false);

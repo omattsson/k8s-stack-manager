@@ -22,6 +22,8 @@ import CheckCircleOutlinedIcon from '@mui/icons-material/CheckCircleOutlined';
 import ArrowForwardIcon from '@mui/icons-material/ArrowForward';
 import { definitionService } from '../../api/client';
 import { useNotification } from '../../context/NotificationContext';
+import ChartDiffList from '../../components/ChartDiffList';
+import { isNoPublishedVersionError, NO_PUBLISHED_VERSION_MESSAGE } from '../../utils/templateVersion';
 import type { UpgradeCheckResponse } from '../../types';
 
 interface UpgradeDialogProps {
@@ -60,6 +62,9 @@ const UpgradeDialog = ({ definitionId, open, onClose, onUpgraded }: UpgradeDialo
     checkForUpgrade();
   }, [open, definitionId]);
 
+  const valueDiffs = checkResult?.chart_diffs ?? [];
+  const hasValueChanges = valueDiffs.some((d) => d.has_differences);
+
   const handleUpgrade = async () => {
     setUpgrading(true);
     try {
@@ -67,8 +72,8 @@ const UpgradeDialog = ({ definitionId, open, onClose, onUpgraded }: UpgradeDialo
       showSuccess('Definition upgraded successfully');
       onUpgraded?.();
       onClose();
-    } catch {
-      showError('Failed to apply upgrade');
+    } catch (err) {
+      showError(isNoPublishedVersionError(err) ? NO_PUBLISHED_VERSION_MESSAGE : 'Failed to apply upgrade');
     } finally {
       setUpgrading(false);
     }
@@ -77,7 +82,7 @@ const UpgradeDialog = ({ definitionId, open, onClose, onUpgraded }: UpgradeDialo
   const changes = checkResult?.changes;
 
   return (
-    <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth>
+    <Dialog open={open} onClose={onClose} maxWidth={hasValueChanges ? 'lg' : 'sm'} fullWidth>
       <DialogTitle>Template Upgrade</DialogTitle>
       <DialogContent>
         {loading && (
@@ -129,9 +134,9 @@ const UpgradeDialog = ({ definitionId, open, onClose, onUpgraded }: UpgradeDialo
                       </ListItemIcon>
                       <ListItemText
                         primary={name}
-                        secondary="Chart will be removed"
+                        secondary="Not in the new template version. The upgrade keeps this chart."
                       />
-                      <Chip label="Removed" size="small" color="warning" />
+                      <Chip label="Not in template" size="small" color="warning" variant="outlined" />
                     </ListItem>
                   ))}
 
@@ -163,12 +168,26 @@ const UpgradeDialog = ({ definitionId, open, onClose, onUpgraded }: UpgradeDialo
                 </List>
 
                 {(changes.charts_removed.length > 0) && (
-                  <Alert severity="warning" sx={{ mt: 2 }}>
-                    Charts marked for removal will be deleted from your definition.
+                  <Alert severity="info" sx={{ mt: 2 }}>
+                    Charts that are not in the new template version stay in your definition. Remove them yourself if you do not need them.
                   </Alert>
                 )}
               </Box>
             )}
+
+            <Box sx={{ mt: 3 }}>
+              <Typography variant="subtitle2" component="h2" gutterBottom>
+                Value Changes
+              </Typography>
+              <ChartDiffList
+                chartDiffs={valueDiffs}
+                leftTitle="Current definition"
+                rightTitle={`v${checkResult.latest_version}`}
+                hideUnchanged
+                removedIsKept
+                emptyMessage="No chart value changes."
+              />
+            </Box>
           </Box>
         )}
       </DialogContent>

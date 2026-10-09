@@ -31,12 +31,13 @@ func (r *GORMTemplateVersionRepository) Create(ctx context.Context, version *mod
 	return nil
 }
 
-// ListByTemplate returns all versions for a template, ordered newest first.
+// ListByTemplate returns all versions for a template, ordered newest first
+// (created_at, then id, descending, so equal timestamps sort the same way).
 func (r *GORMTemplateVersionRepository) ListByTemplate(ctx context.Context, templateID string) ([]models.TemplateVersion, error) {
 	var versions []models.TemplateVersion
 	if err := r.db.WithContext(ctx).
 		Where("template_id = ?", templateID).
-		Order("created_at DESC").
+		Order("created_at DESC, id DESC").
 		Find(&versions).Error; err != nil {
 		return nil, dberrors.NewDatabaseError("list", err)
 	}
@@ -55,12 +56,13 @@ func (r *GORMTemplateVersionRepository) GetByID(ctx context.Context, templateID,
 	return &version, nil
 }
 
-// GetLatestByTemplate returns the most recent version for a template.
+// GetLatestByTemplate returns the most recent version for a template (same
+// order as ListByTemplate).
 func (r *GORMTemplateVersionRepository) GetLatestByTemplate(ctx context.Context, templateID string) (*models.TemplateVersion, error) {
 	var version models.TemplateVersion
 	if err := r.db.WithContext(ctx).
 		Where("template_id = ?", templateID).
-		Order("created_at DESC").
+		Order("created_at DESC, id DESC").
 		First(&version).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, dberrors.NewDatabaseError("find", dberrors.ErrNotFound)

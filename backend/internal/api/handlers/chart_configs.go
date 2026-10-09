@@ -216,7 +216,8 @@ func (h *DefinitionHandler) DeleteChartConfig(c *gin.Context) {
 	if defID != "" && h.templateChartRepo != nil {
 		def, err := h.definitionRepo.FindByID(defID)
 		if err == nil && def.SourceTemplateID != "" {
-			templateCharts, err := h.templateChartRepo.ListByTemplate(def.SourceTemplateID)
+			// Required charts of the latest published snapshot.
+			templateCharts, err := releasedTemplateCharts(c.Request.Context(), h.versionRepo, h.templateChartRepo, def.SourceTemplateID)
 			if err == nil {
 				for _, tc := range templateCharts {
 					if tc.ChartName == chart.ChartName && tc.Required {

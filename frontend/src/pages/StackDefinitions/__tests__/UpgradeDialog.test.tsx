@@ -10,6 +10,20 @@ vi.mock('../../../api/client', () => ({
   },
 }));
 
+vi.mock('react-diff-viewer-continued', () => ({
+  default: ({ oldValue, newValue, leftTitle, rightTitle }: {
+    oldValue: string; newValue: string; leftTitle: string; rightTitle: string;
+  }) => (
+    <div data-testid="diff-viewer">
+      <span>{leftTitle}</span>
+      <span>{rightTitle}</span>
+      <span>{oldValue}</span>
+      <span>{newValue}</span>
+    </div>
+  ),
+  DiffMethod: { LINES: 'diffLines' },
+}));
+
 const mockShowSuccess = vi.fn();
 const mockShowError = vi.fn();
 vi.mock('../../../context/NotificationContext', () => ({
@@ -121,7 +135,7 @@ describe('UpgradeDialog', () => {
     });
   });
 
-  it('shows warning for charts being removed', async () => {
+  it('explains that charts not in the template are kept', async () => {
     (definitionService.checkUpgrade as ReturnType<typeof vi.fn>).mockResolvedValue({
       upgrade_available: true,
       current_version: '1.0',
@@ -138,7 +152,8 @@ describe('UpgradeDialog', () => {
     );
     await waitFor(() => {
       expect(screen.getByText('old-service')).toBeInTheDocument();
-      expect(screen.getByText(/charts marked for removal/i)).toBeInTheDocument();
+      expect(screen.getByText(/stay in your definition/i)).toBeInTheDocument();
+      expect(screen.getByText('Not in template')).toBeInTheDocument();
     });
   });
 
@@ -205,5 +220,77 @@ describe('UpgradeDialog', () => {
     await user.click(screen.getByRole('button', { name: /cancel/i }));
 
     expect(onClose).toHaveBeenCalled();
+  });
+
+  const upgradeResult = {
+    upgrade_available: true,
+    current_version: '1.0',
+    latest_version: '2.0',
+    changes: {
+      charts_added: ['monitoring'],
+      charts_removed: [],
+      charts_modified: ['frontend'],
+      charts_unchanged: ['backend'],
+    },
+  };
+
+  it('shows the value diff per chart from chart_diffs', async () => {
+    (definitionService.checkUpgrade as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...upgradeResult,
+      chart_diffs: [
+        { chart_name: 'frontend', left_values: 'replicas: 1', right_values: 'replicas: 3', has_differences: true, change_type: 'modified' },
+        { chart_name: 'backend', left_values: 'port: 80', right_values: 'port: 80', has_differences: false, change_type: 'unchanged' },
+        { chart_name: 'monitoring', left_values: '', right_values: 'enabled: true', has_differences: true, change_type: 'added' },
+      ],
+    });
+
+    render(<UpgradeDialog definitionId="d1" open={true} onClose={vi.fn()} />);
+
+    await waitFor(() => {
+      expect(screen.getByText('replicas: 3')).toBeInTheDocument();
+    });
+    expect(screen.getByText('replicas: 1')).toBeInTheDocument();
+    expect(screen.getByText('enabled: true')).toBeInTheDocument();
+    expect(screen.getAllByText('Current definition').length).toBe(2);
+    // Unchanged charts are not shown as a diff.
+    expect(screen.queryByText('port: 80')).not.toBeInTheDocument();
+  });
+
+  it('shows removed charts as kept, not as deleted lines', async () => {
+    (definitionService.checkUpgrade as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...upgradeResult,
+      chart_diffs: [
+        { chart_name: 'legacy', left_values: 'old: 1', has_differences: true, change_type: 'removed' },
+      ],
+    });
+
+    render(<UpgradeDialog definitionId="d1" open={true} onClose={vi.fn()} />);
+
+    expect(await screen.findByText('Kept (not in the new template version).')).toBeInTheDocument();
+    expect(screen.queryByText('old: 1')).not.toBeInTheDocument();
+  });
+
+  it('shows an empty state when chart_diffs is missing', async () => {
+    (definitionService.checkUpgrade as ReturnType<typeof vi.fn>).mockResolvedValue(upgradeResult);
+
+    render(<UpgradeDialog definitionId="d1" open={true} onClose={vi.fn()} />);
+
+    expect(await screen.findByText('No chart value changes.')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^upgrade$/i })).toBeInTheDocument();
+  });
+
+  it('explains a 409 for a template without a published version on apply', async () => {
+    const user = userEvent.setup();
+    (definitionService.checkUpgrade as ReturnType<typeof vi.fn>).mockResolvedValue(upgradeResult);
+    (definitionService.applyUpgrade as ReturnType<typeof vi.fn>).mockRejectedValue({
+      response: { status: 409, data: { error: 'Template has no published version' } },
+    });
+
+    render(<UpgradeDialog definitionId="d1" open={true} onClose={vi.fn()} />);
+    await user.click(await screen.findByRole('button', { name: /^upgrade$/i }));
+
+    await waitFor(() => {
+      expect(mockShowError).toHaveBeenCalledWith(expect.stringMatching(/has no published version/));
+    });
   });
 });

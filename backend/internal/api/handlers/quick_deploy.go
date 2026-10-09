@@ -43,6 +43,16 @@ type QuickDeployHandler struct {
 	defaultTTLMinutes  int
 	txRunner           database.TxRunner
 	sharedValuesRepo   models.SharedValuesRepository
+	versionRepo        models.TemplateVersionRepository
+}
+
+// WithTemplateVersions attaches the template version repository. Quick deploy
+// applies the latest published snapshot of the template; without the
+// repository every quick deploy fails with 409 (no published version).
+// Returns h for chaining.
+func (h *QuickDeployHandler) WithTemplateVersions(repo models.TemplateVersionRepository) *QuickDeployHandler {
+	h.versionRepo = repo
+	return h
 }
 
 // WithSharedValues attaches the cluster shared values repository so quick
@@ -118,6 +128,7 @@ type quickDeployResponse struct {
 // @Summary     Quick deploy from a template
 // @Description Instantiate a template, create an instance, set branch overrides, and trigger deployment in a single call.
 // @Description instance_name must be a DNS label (lowercase a-z, 0-9, '-', start and end alphanumeric, at most 50 characters).
+// @Description The template content comes from the latest published snapshot, not the working copy. A template that is not published, or has no snapshot, gives 409 "Template has no published version".
 // @Description The new stack definition is owned by the instance (owner_instance_id): deleting the instance deletes the definition when no other instance uses it. The definition is named after the instance; when the caller already has a definition with that name, the name gets the suffix " (2)", " (3)", ...
 // @Tags        templates
 // @Accept      json
@@ -129,7 +140,7 @@ type quickDeployResponse struct {
 // @Failure     401  {object} map[string]string
 // @Failure     403  {object} map[string]string
 // @Failure     404  {object} map[string]string
-// @Failure     409  {object} NamespaceConflictResponse "Namespace already exists"
+// @Failure     409  {object} NamespaceConflictResponse "Namespace already exists, or the template has no published version ({error})"
 // @Failure     500  {object} map[string]string
 // @Security    BearerAuth
 // @Router      /api/v1/templates/{id}/quick-deploy [post]
@@ -163,15 +174,23 @@ func (h *QuickDeployHandler) QuickDeploy(c *gin.Context) {
 		return
 	}
 
-	if !tmpl.IsPublished {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Template is not published"})
+	// Use the latest published snapshot, never the working copy.
+	release, err := usableTemplateRelease(c.Request.Context(), tmpl, h.versionRepo, h.templateChartRepo)
+	if err != nil {
+		if errors.Is(err, errNoPublishedVersion) {
+			c.JSON(http.StatusConflict, gin.H{"error": msgNoPublishedVersion})
+			return
+		}
+		slog.Error("Quick deploy: failed to read published template version", "template_id", tmpl.ID, "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
 		return
 	}
+	releasedDefaultBranch := release.Snapshot.Template.DefaultBranch
 
 	// Resolve branch: use request branch, fall back to template default.
 	branch := req.Branch
 	if branch == "" {
-		branch = tmpl.DefaultBranch
+		branch = releasedDefaultBranch
 	}
 	if branch == "" {
 		branch = "master"
@@ -188,19 +207,14 @@ func (h *QuickDeployHandler) QuickDeploy(c *gin.Context) {
 		Description:           req.InstanceDescription,
 		OwnerID:               userID,
 		SourceTemplateID:      tmpl.ID,
-		SourceTemplateVersion: tmpl.Version,
-		DefaultBranch:         tmpl.DefaultBranch,
+		SourceTemplateVersion: release.Version.Version,
+		DefaultBranch:         releasedDefaultBranch,
 		CreatedAt:             now,
 		UpdatedAt:             now,
 	}
 
-	// Fetch template charts (needed for chart config creation).
-	templateCharts, err := h.templateChartRepo.ListByTemplate(tmpl.ID)
-	if err != nil {
-		status, message := mapError(err, "Template charts")
-		c.JSON(status, gin.H{"error": message})
-		return
-	}
+	// Template charts of the published snapshot.
+	templateCharts := release.Charts
 
 	// Pre-build chart config models.
 	chartConfigs := make([]models.ChartConfig, 0, len(templateCharts))
@@ -445,6 +459,7 @@ func (h *QuickDeployHandler) values() *valuesBuilder {
 		overrideRepo:       h.overrideRepo,
 		branchOverrideRepo: h.branchOverrideRepo,
 		templateChartRepo:  h.templateChartRepo,
+		versionRepo:        h.versionRepo,
 		userRepo:           h.userRepo,
 		valuesGen:          h.valuesGen,
 		sharedValuesRepo:   h.sharedValuesRepo,

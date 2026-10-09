@@ -30,7 +30,8 @@ const mockVersions = [
     template_id: 't1',
     version: '2.0',
     change_summary: 'Added monitoring chart',
-    created_by: 'admin',
+    created_by: 'user-2',
+    created_by_username: 'bob',
     created_at: '2025-06-15T10:00:00Z',
   },
   {
@@ -38,7 +39,7 @@ const mockVersions = [
     template_id: 't1',
     version: '1.0',
     change_summary: 'Initial version',
-    created_by: 'admin',
+    created_by: 'user-1',
     created_at: '2025-06-01T10:00:00Z',
   },
 ];
@@ -122,8 +123,8 @@ describe('VersionHistory', () => {
     const user = userEvent.setup();
     (templateService.listVersions as ReturnType<typeof vi.fn>).mockResolvedValue(mockVersions);
     (templateService.diffVersions as ReturnType<typeof vi.fn>).mockResolvedValue({
-      left: { version: mockVersions[1], snapshot: { template: {}, charts: [] } },
-      right: { version: mockVersions[0], snapshot: { template: {}, charts: [] } },
+      left: { version: '1.0', snapshot: { template: {}, charts: [] } },
+      right: { version: '2.0', snapshot: { template: {}, charts: [] }, created_by_username: 'bob' },
       chart_diffs: [
         { chart_name: 'frontend', left_values: 'replicas: 1', right_values: 'replicas: 2', has_differences: true, change_type: 'modified' },
       ],
@@ -155,5 +156,34 @@ describe('VersionHistory', () => {
       expect(screen.getByText('Version Comparison')).toBeInTheDocument();
       expect(screen.getByText('frontend')).toBeInTheDocument();
     });
+    // Header reads the version strings; the older version is on the left.
+    expect(screen.getByText('v1.0 by user-1 vs v2.0 by bob')).toBeInTheDocument();
+    expect(screen.queryByText(/vundefined/)).not.toBeInTheDocument();
+    expect(templateService.diffVersions).toHaveBeenCalledWith('t1', 'v1', 'v2');
+  });
+
+  it('shows the author username and falls back to the user ID', async () => {
+    (templateService.listVersions as ReturnType<typeof vi.fn>).mockResolvedValue(mockVersions);
+    render(<VersionHistory templateId="t1" />);
+    await waitFor(() => {
+      expect(screen.getByText(/by bob/)).toBeInTheDocument();
+    });
+    expect(screen.getByText(/by user-1/)).toBeInTheDocument();
+    expect(screen.queryByText(/by user-2/)).not.toBeInTheDocument();
+  });
+
+  it('shows an error in the diff dialog when the diff fails', async () => {
+    const user = userEvent.setup();
+    (templateService.listVersions as ReturnType<typeof vi.fn>).mockResolvedValue(mockVersions);
+    (templateService.diffVersions as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('boom'));
+    render(<VersionHistory templateId="t1" />);
+    await waitFor(() => {
+      expect(screen.getByText('v2.0')).toBeInTheDocument();
+    });
+    const checkboxes = screen.getAllByRole('checkbox');
+    await user.click(checkboxes[0]);
+    await user.click(checkboxes[1]);
+    await user.click(screen.getByRole('button', { name: /compare selected versions/i }));
+    expect(await screen.findByText('Failed to load version diff')).toBeInTheDocument();
   });
 });

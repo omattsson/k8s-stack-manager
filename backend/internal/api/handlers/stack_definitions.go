@@ -13,6 +13,7 @@ import (
 	"backend/internal/api/middleware"
 	"backend/internal/database"
 	"backend/internal/models"
+	"backend/pkg/dberrors"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -563,12 +564,15 @@ func (h *DefinitionHandler) ImportDefinition(c *gin.Context) {
 
 // CheckUpgrade godoc
 // @Summary     Check if a template upgrade is available
-// @Description Check if the source template has a newer version than the definition's current version
+// @Description Check if the latest published snapshot of the source template has another version than the definition's current version. An unpublished template, or one without a snapshot, gives upgrade_available=false.
+// @Description chart_diffs has the shape of the version diff chart_diffs: left = the definition charts now (locked values from the current source version snapshot), right = the latest snapshot. change_type "removed" means the chart is only in the definition; the upgrade keeps it.
 // @Tags        stack-definitions
+// @Accept      json
 // @Produce     json
 // @Param       id  path     string true "Definition ID"
-// @Success     200 {object} map[string]interface{}
+// @Success     200 {object} upgradeCheckResponse
 // @Failure     400 {object} map[string]string
+// @Failure     401 {object} map[string]string
 // @Failure     404 {object} map[string]string
 // @Failure     500 {object} map[string]string
 // @Router      /api/v1/stack-definitions/{id}/check-upgrade [get]
@@ -592,23 +596,23 @@ func (h *DefinitionHandler) CheckUpgrade(c *gin.Context) {
 		return
 	}
 
-	latest, err := h.versionRepo.GetLatestByTemplate(context.Background(), def.SourceTemplateID)
+	// The upgrade target is the latest published snapshot of the template.
+	release, err := h.upgradeRelease(c.Request.Context(), def.SourceTemplateID)
 	if err != nil {
-		// No versions published yet — no upgrade.
-		c.JSON(http.StatusOK, gin.H{"upgrade_available": false})
+		if errors.Is(err, errNoPublishedVersion) {
+			// Not published, or no snapshot yet — no upgrade.
+			c.JSON(http.StatusOK, gin.H{"upgrade_available": false})
+			return
+		}
+		slog.Error("failed to read latest template version", "template_id", def.SourceTemplateID, "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
 		return
 	}
+	latest := release.Version
+	snapshot := release.Snapshot
 
 	if latest.Version == def.SourceTemplateVersion {
 		c.JSON(http.StatusOK, gin.H{"upgrade_available": false})
-		return
-	}
-
-	// Parse the latest snapshot to compute chart changes.
-	var snapshot models.TemplateSnapshot
-	if err := json.Unmarshal([]byte(latest.Snapshot), &snapshot); err != nil {
-		slog.Error("failed to unmarshal latest version snapshot", "version_id", latest.ID, "error", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
 		return
 	}
 
@@ -621,13 +625,119 @@ func (h *DefinitionHandler) CheckUpgrade(c *gin.Context) {
 	}
 
 	changes := computeUpgradeChanges(currentCharts, snapshot.Charts)
+	chartDiffs := h.upgradeChartDiffs(c.Request.Context(), def, currentCharts, snapshot)
 
-	c.JSON(http.StatusOK, gin.H{
-		"upgrade_available": true,
-		"current_version":   def.SourceTemplateVersion,
-		"latest_version":    latest.Version,
-		"changes":           changes,
+	c.JSON(http.StatusOK, upgradeCheckResponse{
+		UpgradeAvailable: true,
+		CurrentVersion:   def.SourceTemplateVersion,
+		LatestVersion:    latest.Version,
+		Changes:          &changes,
+		ChartDiffs:       chartDiffs,
 	})
+}
+
+// upgradeCheckResponse is the response of GET /stack-definitions/:id/check-upgrade.
+// Without an upgrade only upgrade_available (false) is set.
+type upgradeCheckResponse struct {
+	UpgradeAvailable bool             `json:"upgrade_available"`
+	CurrentVersion   string           `json:"current_version,omitempty"`
+	LatestVersion    string           `json:"latest_version,omitempty"`
+	Changes          *upgradeChanges  `json:"changes,omitempty"`
+	ChartDiffs       []chartDiffEntry `json:"chart_diffs,omitempty"`
+}
+
+// upgradeChartDiffs compares the definition charts (left) with the charts of
+// the upgrade target snapshot (right), in the shape of the version diff
+// chart_diffs. Left locked values and required flags come from the snapshot
+// of the definition's current source version; without that snapshot they are
+// taken from the target (shown as unchanged). change_type
+// "removed" means the chart is in the definition but not in the target; the
+// upgrade keeps such charts.
+func (h *DefinitionHandler) upgradeChartDiffs(ctx context.Context, def *models.StackDefinition, current []models.ChartConfig, target models.TemplateSnapshot) []chartDiffEntry {
+	sourceCharts := make(map[string]models.TemplateChartSnapshotData)
+	if versions, err := h.versionRepo.ListByTemplate(ctx, def.SourceTemplateID); err != nil {
+		slog.Warn("failed to list template versions for upgrade diff", "template_id", def.SourceTemplateID, "error", err)
+	} else {
+		for _, v := range versions { // newest first: the newest match wins
+			if v.Version != def.SourceTemplateVersion {
+				continue
+			}
+			var snap models.TemplateSnapshot
+			if err := json.Unmarshal([]byte(v.Snapshot), &snap); err == nil {
+				for _, ch := range snap.Charts {
+					sourceCharts[ch.ChartName] = ch
+				}
+			}
+			break
+		}
+	}
+
+	targetCharts := make(map[string]models.TemplateChartSnapshotData, len(target.Charts))
+	for _, ch := range target.Charts {
+		targetCharts[ch.ChartName] = ch
+	}
+
+	left := make([]models.TemplateChartSnapshotData, 0, len(current))
+	for _, ch := range current {
+		src, known := sourceCharts[ch.ChartName]
+		if !known {
+			// Unknown current locked values: take the target's, so they
+			// do not show as a change.
+			src = targetCharts[ch.ChartName]
+		}
+		left = append(left, models.TemplateChartSnapshotData{
+			ChartName:     ch.ChartName,
+			RepoURL:       ch.RepositoryURL,
+			DefaultValues: ch.DefaultValues,
+			LockedValues:  src.LockedValues,
+			IsRequired:    src.IsRequired,
+			SortOrder:     ch.DeployOrder,
+			ChartPath:     ch.ChartPath,
+			ChartVersion:  ch.ChartVersion,
+		})
+	}
+	// ApplyUpgrade keeps the definition's chart_version and chart_path when
+	// the target has none, so an empty target value is shown as unchanged.
+	currentByName := make(map[string]models.ChartConfig, len(current))
+	for _, ch := range current {
+		currentByName[ch.ChartName] = ch
+	}
+	right := make([]models.TemplateChartSnapshotData, 0, len(target.Charts))
+	for _, ch := range target.Charts {
+		if cur, ok := currentByName[ch.ChartName]; ok {
+			if ch.ChartVersion == "" {
+				ch.ChartVersion = cur.ChartVersion
+			}
+			if ch.ChartPath == "" {
+				ch.ChartPath = cur.ChartPath
+			}
+		}
+		right = append(right, ch)
+	}
+	diffs := computeChartDiffs(left, right, target.SchemaVersion >= 1)
+	if diffs == nil {
+		diffs = []chartDiffEntry{}
+	}
+	return diffs
+}
+
+// upgradeRelease returns the latest published snapshot of a template, the
+// target of definition upgrades. An unpublished template, or one without a
+// snapshot, gives errNoPublishedVersion.
+func (h *DefinitionHandler) upgradeRelease(ctx context.Context, templateID string) (*templateRelease, error) {
+	if h.templateRepo != nil {
+		tmpl, err := h.templateRepo.FindByID(templateID)
+		if err != nil {
+			if errors.Is(err, dberrors.ErrNotFound) {
+				return nil, errNoPublishedVersion
+			}
+			return nil, fmt.Errorf("find template: %w", err)
+		}
+		if !tmpl.IsPublished {
+			return nil, errNoPublishedVersion
+		}
+	}
+	return latestTemplateRelease(ctx, h.versionRepo, h.templateChartRepo, templateID)
 }
 
 // upgradeChanges describes chart-level differences for an upgrade.
@@ -682,15 +792,17 @@ func computeUpgradeChanges(defCharts []models.ChartConfig, templateCharts []mode
 
 // ApplyUpgrade godoc
 // @Summary     Apply a template upgrade to a definition
-// @Description Upgrade a definition to the latest template version, adding new charts and updating defaults
+// @Description Upgrade a definition to the latest published snapshot of its source template, adding new charts and updating defaults, repository URL, deploy order and (when the snapshot has them) chart version, chart path, source repo and build pipeline. Charts that are only in the definition stay.
+// @Description An unpublished template, or one without a snapshot, gives 409 "Template has no published version".
 // @Tags        stack-definitions
 // @Accept      json
 // @Produce     json
 // @Param       id  path     string true "Definition ID"
 // @Success     200 {object} DefinitionWithChartsResponse
 // @Failure     400 {object} map[string]string
+// @Failure     401 {object} map[string]string
 // @Failure     404 {object} map[string]string
-// @Failure     409 {object} map[string]string
+// @Failure     409 {object} map[string]string "Already at the latest version, or no published version"
 // @Failure     500 {object} map[string]string
 // @Router      /api/v1/stack-definitions/{id}/upgrade [post]
 func (h *DefinitionHandler) ApplyUpgrade(c *gin.Context) {
@@ -712,21 +824,21 @@ func (h *DefinitionHandler) ApplyUpgrade(c *gin.Context) {
 		return
 	}
 
-	latest, err := h.versionRepo.GetLatestByTemplate(context.Background(), def.SourceTemplateID)
+	// The upgrade target is the latest published snapshot of the template.
+	release, err := h.upgradeRelease(c.Request.Context(), def.SourceTemplateID)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "No template versions available"})
+		if errors.Is(err, errNoPublishedVersion) {
+			c.JSON(http.StatusConflict, gin.H{"error": msgNoPublishedVersion})
+			return
+		}
+		slog.Error("failed to read latest template version for upgrade", "template_id", def.SourceTemplateID, "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
 		return
 	}
+	latest := release.Version
 
 	if latest.Version == def.SourceTemplateVersion {
 		c.JSON(http.StatusConflict, gin.H{"error": "Definition is already at the latest version"})
-		return
-	}
-
-	var snapshot models.TemplateSnapshot
-	if err := json.Unmarshal([]byte(latest.Snapshot), &snapshot); err != nil {
-		slog.Error("failed to unmarshal version snapshot for upgrade", "version_id", latest.ID, "error", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
 		return
 	}
 
@@ -746,7 +858,7 @@ func (h *DefinitionHandler) ApplyUpgrade(c *gin.Context) {
 	now := time.Now().UTC()
 
 	// Apply changes: add new required charts, update existing chart defaults.
-	for _, tch := range snapshot.Charts {
+	for _, tch := range release.Charts {
 		existing, exists := defChartMap[tch.ChartName]
 		if !exists {
 			// Add new chart from template.
@@ -754,9 +866,13 @@ func (h *DefinitionHandler) ApplyUpgrade(c *gin.Context) {
 				ID:                uuid.New().String(),
 				StackDefinitionID: def.ID,
 				ChartName:         tch.ChartName,
-				RepositoryURL:     tch.RepoURL,
+				RepositoryURL:     tch.RepositoryURL,
+				SourceRepoURL:     tch.SourceRepoURL,
+				BuildPipelineID:   tch.BuildPipelineID,
+				ChartPath:         tch.ChartPath,
+				ChartVersion:      tch.ChartVersion,
 				DefaultValues:     tch.DefaultValues,
-				DeployOrder:       tch.SortOrder,
+				DeployOrder:       tch.DeployOrder,
 				CreatedAt:         now,
 			}
 			if err := h.chartRepo.Create(&newChart); err != nil {
@@ -774,8 +890,21 @@ func (h *DefinitionHandler) ApplyUpgrade(c *gin.Context) {
 
 		// Update default values for existing charts (preserve structure, update template defaults).
 		existing.DefaultValues = tch.DefaultValues
-		existing.RepositoryURL = tch.RepoURL
-		existing.DeployOrder = tch.SortOrder
+		existing.RepositoryURL = tch.RepositoryURL
+		existing.DeployOrder = tch.DeployOrder
+		// Chart source fields follow the template when the snapshot has them.
+		if tch.ChartVersion != "" {
+			existing.ChartVersion = tch.ChartVersion
+		}
+		if tch.ChartPath != "" {
+			existing.ChartPath = tch.ChartPath
+		}
+		if tch.SourceRepoURL != "" {
+			existing.SourceRepoURL = tch.SourceRepoURL
+		}
+		if tch.BuildPipelineID != "" {
+			existing.BuildPipelineID = tch.BuildPipelineID
+		}
 		if err := h.chartRepo.Update(existing); err != nil {
 			slog.Error("failed to update chart during upgrade",
 				"chart_name", tch.ChartName,

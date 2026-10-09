@@ -655,14 +655,17 @@ type stubStackTemplateRepo struct{}
 
 func (s *stubStackTemplateRepo) Create(_ *models.StackTemplate) error             { return nil }
 func (s *stubStackTemplateRepo) FindByID(_ string) (*models.StackTemplate, error) { return nil, nil }
-func (s *stubStackTemplateRepo) Update(_ *models.StackTemplate) error             { return nil }
-func (s *stubStackTemplateRepo) Delete(_ string) error                            { return nil }
-func (s *stubStackTemplateRepo) List() ([]models.StackTemplate, error)            { return nil, nil }
-func (s *stubStackTemplateRepo) ListPaged(_, _ int) ([]models.StackTemplate, int64, error) {
+func (s *stubStackTemplateRepo) FindByIDForUpdate(_ string) (*models.StackTemplate, error) {
+	return nil, nil
+}
+func (s *stubStackTemplateRepo) Update(_ *models.StackTemplate) error  { return nil }
+func (s *stubStackTemplateRepo) Delete(_ string) error                 { return nil }
+func (s *stubStackTemplateRepo) List() ([]models.StackTemplate, error) { return nil, nil }
+func (s *stubStackTemplateRepo) ListPaged(_, _ int, _ string) ([]models.StackTemplate, int64, error) {
 	return nil, 0, nil
 }
 func (s *stubStackTemplateRepo) ListPublished() ([]models.StackTemplate, error) { return nil, nil }
-func (s *stubStackTemplateRepo) ListPublishedPaged(_, _ int) ([]models.StackTemplate, int64, error) {
+func (s *stubStackTemplateRepo) ListPublishedPaged(_, _ int, _ string) ([]models.StackTemplate, int64, error) {
 	return nil, 0, nil
 }
 func (s *stubStackTemplateRepo) ListByOwner(_ string) ([]models.StackTemplate, error) {

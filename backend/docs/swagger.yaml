@@ -548,6 +548,8 @@ definitions:
         type: string
       description:
         type: string
+      has_unpublished_changes:
+        type: boolean
       id:
         type: string
       is_published:
@@ -555,6 +557,19 @@ definitions:
       name:
         type: string
       owner_id:
+        type: string
+      published_charts:
+        description: |-
+          PublishedCharts are the charts of the latest snapshot: what Use
+          Template and Quick Deploy apply. The IDs are the template chart config
+          IDs at publish time; Use Template accepts them as chart_overrides keys.
+          Null when the template has no snapshot.
+        items:
+          $ref: '#/definitions/models.TemplateChartConfig'
+        type: array
+      published_version:
+        type: string
+      published_version_id:
         type: string
       updated_at:
         type: string
@@ -669,6 +684,47 @@ definitions:
       source_repo_url:
         type: string
     type: object
+  handlers.chartDiffEntry:
+    properties:
+      change_type:
+        description: '"added", "removed", "modified", "unchanged"'
+        type: string
+      chart_name:
+        type: string
+      has_differences:
+        type: boolean
+      left_chart_path:
+        type: string
+      left_chart_version:
+        description: |-
+          Chart source fields; compared only when both sides store them
+          (snapshot schema version 1 or the working copy).
+        type: string
+      left_locked:
+        type: string
+      left_repo_url:
+        type: string
+      left_required:
+        type: boolean
+      left_sort_order:
+        type: integer
+      left_values:
+        type: string
+      right_chart_path:
+        type: string
+      right_chart_version:
+        type: string
+      right_locked:
+        type: string
+      right_repo_url:
+        type: string
+      right_required:
+        type: boolean
+      right_sort_order:
+        type: integer
+      right_values:
+        type: string
+    type: object
   handlers.cloneInstanceRequest:
     properties:
       branch:
@@ -733,6 +789,22 @@ definitions:
           the TTL to this value and the expiry to now + TTL. Use minutes instead.
         type: integer
     type: object
+  handlers.instantiateTemplateRequest:
+    properties:
+      chart_overrides:
+        additionalProperties:
+          type: string
+        description: |-
+          ChartOverrides replace the default values of charts in the new
+          definition. Key: a published_charts[].id, a working copy charts[].id
+          (mapped by chart name) or a chart name. Keys for charts that are not in
+          the published snapshot are ignored.
+        type: object
+      description:
+        type: string
+      name:
+        type: string
+    type: object
   handlers.invokeActionRequest:
     properties:
       parameters:
@@ -754,6 +826,47 @@ definitions:
       updated_at:
         type: string
       webhook_url:
+        type: string
+    type: object
+  handlers.publishTemplateRequest:
+    properties:
+      change_summary:
+        description: ChangeSummary is stored with the snapshot.
+        type: string
+      version:
+        description: 'Version of the new snapshot. Default: the version of the working
+          copy.'
+        type: string
+    type: object
+  handlers.publishTemplateResponse:
+    properties:
+      category:
+        type: string
+      created_at:
+        type: string
+      default_branch:
+        type: string
+      description:
+        type: string
+      has_unpublished_changes:
+        type: boolean
+      id:
+        type: string
+      is_published:
+        type: boolean
+      name:
+        type: string
+      owner_id:
+        type: string
+      published_version:
+        type: string
+      published_version_id:
+        type: string
+      snapshot_created:
+        type: boolean
+      updated_at:
+        type: string
+      version:
         type: string
     type: object
   handlers.quickDeployRequest:
@@ -815,6 +928,23 @@ definitions:
         example: 10Gi
         type: string
     type: object
+  handlers.templateVersionListItem:
+    properties:
+      change_summary:
+        type: string
+      created_at:
+        type: string
+      created_by:
+        type: string
+      created_by_username:
+        type: string
+      id:
+        type: string
+      template_id:
+        type: string
+      version:
+        type: string
+    type: object
   handlers.updateChannelRequest:
     properties:
       enabled:
@@ -842,6 +972,53 @@ definitions:
           type: string
         type: array
     type: object
+  handlers.updateTemplateRequest:
+    properties:
+      category:
+        type: string
+      default_branch:
+        type: string
+      description:
+        type: string
+      name:
+        type: string
+      version:
+        type: string
+    type: object
+  handlers.upgradeChanges:
+    properties:
+      charts_added:
+        items:
+          type: string
+        type: array
+      charts_modified:
+        items:
+          type: string
+        type: array
+      charts_removed:
+        items:
+          type: string
+        type: array
+      charts_unchanged:
+        items:
+          type: string
+        type: array
+    type: object
+  handlers.upgradeCheckResponse:
+    properties:
+      changes:
+        $ref: '#/definitions/handlers.upgradeChanges'
+      chart_diffs:
+        items:
+          $ref: '#/definitions/handlers.chartDiffEntry'
+        type: array
+      current_version:
+        type: string
+      latest_version:
+        type: string
+      upgrade_available:
+        type: boolean
+    type: object
   handlers.versionDetailResponse:
     properties:
       change_summary:
@@ -850,12 +1027,45 @@ definitions:
         type: string
       created_by:
         type: string
+      created_by_username:
+        description: CreatedByUsername is the author's username (omitted when unknown).
+        type: string
       id:
         type: string
       snapshot:
         $ref: '#/definitions/models.TemplateSnapshot'
       template_id:
         type: string
+      version:
+        type: string
+    type: object
+  handlers.versionDiffResponse:
+    properties:
+      chart_diffs:
+        items:
+          $ref: '#/definitions/handlers.chartDiffEntry'
+        type: array
+      left:
+        $ref: '#/definitions/handlers.versionDiffSide'
+      right:
+        $ref: '#/definitions/handlers.versionDiffSide'
+    type: object
+  handlers.versionDiffSide:
+    properties:
+      change_summary:
+        type: string
+      created_at:
+        type: string
+      created_by:
+        type: string
+      created_by_username:
+        type: string
+      id:
+        type: string
+      is_working_copy:
+        type: boolean
+      snapshot:
+        $ref: '#/definitions/models.TemplateSnapshot'
       version:
         type: string
     type: object
@@ -1600,9 +1810,21 @@ definitions:
     type: object
   models.TemplateChartSnapshotData:
     properties:
+      build_pipeline_id:
+        type: string
       chart_name:
         type: string
+      chart_path:
+        type: string
+      chart_version:
+        type: string
       default_values:
+        type: string
+      id:
+        description: |-
+          Fields below exist from schema version 1.
+          ID is the template chart config ID in the working copy at publish time.
+          It is not content: SameTemplateContent ignores it.
         type: string
       is_required:
         type: boolean
@@ -1612,6 +1834,8 @@ definitions:
         type: string
       sort_order:
         type: integer
+      source_repo_url:
+        type: string
     type: object
   models.TemplateSnapshot:
     properties:
@@ -1619,6 +1843,8 @@ definitions:
         items:
           $ref: '#/definitions/models.TemplateChartSnapshotData'
         type: array
+      schema_version:
+        type: integer
       template:
         $ref: '#/definitions/models.TemplateSnapshotData'
     type: object
@@ -1633,21 +1859,6 @@ definitions:
       is_published:
         type: boolean
       name:
-        type: string
-      version:
-        type: string
-    type: object
-  models.TemplateVersion:
-    properties:
-      change_summary:
-        type: string
-      created_at:
-        type: string
-      created_by:
-        type: string
-      id:
-        type: string
-      template_id:
         type: string
       version:
         type: string
@@ -4635,8 +4846,11 @@ paths:
       - chart-configs
   /api/v1/stack-definitions/{id}/check-upgrade:
     get:
-      description: Check if the source template has a newer version than the definition's
-        current version
+      consumes:
+      - application/json
+      description: |-
+        Check if the latest published snapshot of the source template has another version than the definition's current version. An unpublished template, or one without a snapshot, gives upgrade_available=false.
+        chart_diffs has the shape of the version diff chart_diffs: left = the definition charts now (locked values from the current source version snapshot), right = the latest snapshot. change_type "removed" means the chart is only in the definition; the upgrade keeps it.
       parameters:
       - description: Definition ID
         in: path
@@ -4649,10 +4863,15 @@ paths:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/handlers.upgradeCheckResponse'
         "400":
           description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
           schema:
             additionalProperties:
               type: string
@@ -4714,8 +4933,9 @@ paths:
     post:
       consumes:
       - application/json
-      description: Upgrade a definition to the latest template version, adding new
-        charts and updating defaults
+      description: |-
+        Upgrade a definition to the latest published snapshot of its source template, adding new charts and updating defaults, repository URL, deploy order and (when the snapshot has them) chart version, chart path, source repo and build pipeline. Charts that are only in the definition stay.
+        An unpublished template, or one without a snapshot, gives 409 "Template has no published version".
       parameters:
       - description: Definition ID
         in: path
@@ -4735,6 +4955,12 @@ paths:
             additionalProperties:
               type: string
             type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
         "404":
           description: Not Found
           schema:
@@ -4742,7 +4968,7 @@ paths:
               type: string
             type: object
         "409":
-          description: Conflict
+          description: Already at the latest version, or no published version
           schema:
             additionalProperties:
               type: string
@@ -6476,9 +6702,14 @@ paths:
     get:
       consumes:
       - application/json
-      description: List published templates for regular users, all templates for devops/admin.
-        Includes definition_count and owner_username. Supports server-side pagination.
+      description: |-
+        List published templates for regular users, all templates for devops/admin. Includes definition_count and owner_username. Supports server-side pagination.
+        name filters by exact template name (same as the stack-definitions name filter); the response keeps the paged envelope.
       parameters:
+      - description: Filter by exact name
+        in: query
+        name: name
+        type: string
       - description: Page number (default 1)
         in: query
         minimum: 1
@@ -6510,8 +6741,9 @@ paths:
     post:
       consumes:
       - application/json
-      description: Create a new stack template (devops/admin only). May include a
-        `charts` array to register the initial chart set in the same transaction.
+      description: |-
+        Create a new stack template (devops/admin only). May include a `charts` array to register the initial chart set in the same transaction.
+        With is_published=true the template is published in the same transaction (first version snapshot; version is then required). A failed publish rolls the create back.
       parameters:
       - description: Template object (may include charts[])
         in: body
@@ -6532,13 +6764,33 @@ paths:
             additionalProperties:
               type: string
             type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
       summary: Create a stack template
       tags:
       - templates
   /api/v1/templates/{id}:
     delete:
-      description: Delete a stack template if no definitions link to it (devops/admin
-        only)
+      consumes:
+      - application/json
+      description: Delete a stack template if no definitions link to it (template
+        owner or admin)
       parameters:
       - description: Template ID
         in: path
@@ -6550,6 +6802,18 @@ paths:
       responses:
         "204":
           description: No Content
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
         "404":
           description: Not Found
           schema:
@@ -6562,11 +6826,23 @@ paths:
             additionalProperties:
               type: string
             type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
       summary: Delete a stack template
       tags:
       - templates
     get:
-      description: Get a stack template by ID, including its chart configurations
+      consumes:
+      - application/json
+      description: |-
+        Get a stack template by ID, including its chart configurations. The template fields and charts are the working copy (draft).
+        published_version and published_version_id describe the latest published snapshot (null when there is none). has_unpublished_changes is true when the working copy differs from that snapshot (or there is no snapshot).
+        published_charts are the charts of that snapshot (what Use Template and Quick Deploy apply; null when there is none). Their IDs are valid chart_overrides keys for Use Template.
+        charts are the working copy charts only for the template owner and admins. For other users charts equals published_charts (an empty list without a snapshot), version is the published version (empty without a snapshot) and has_unpublished_changes is false, so draft information is not exposed.
       parameters:
       - description: Template ID
         in: path
@@ -6580,8 +6856,26 @@ paths:
           description: OK
           schema:
             $ref: '#/definitions/handlers.TemplateDetailResponse'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
         "404":
           description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
           schema:
             additionalProperties:
               type: string
@@ -6592,19 +6886,21 @@ paths:
     put:
       consumes:
       - application/json
-      description: Update an existing stack template (devops/admin only)
+      description: |-
+        Update the working copy (draft) of a stack template (template owner or admin). Allowed while the template is published: users keep getting the latest published snapshot until the next publish.
+        Partial update: only the fields in the body change. version is trimmed.
       parameters:
       - description: Template ID
         in: path
         name: id
         required: true
         type: string
-      - description: Template object
+      - description: Fields to change
         in: body
         name: template
         required: true
         schema:
-          $ref: '#/definitions/models.StackTemplate'
+          $ref: '#/definitions/handlers.updateTemplateRequest'
       produces:
       - application/json
       responses:
@@ -6618,8 +6914,26 @@ paths:
             additionalProperties:
               type: string
             type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
         "404":
           description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
           schema:
             additionalProperties:
               type: string
@@ -6631,7 +6945,9 @@ paths:
     post:
       consumes:
       - application/json
-      description: Add a new chart configuration to a stack template
+      description: Add a new chart configuration to the working copy (draft) of a
+        stack template. Users get the change after the next publish. Template owner
+        or admin only.
       parameters:
       - description: Template ID
         in: path
@@ -6657,8 +6973,26 @@ paths:
             additionalProperties:
               type: string
             type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
         "404":
           description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
           schema:
             additionalProperties:
               type: string
@@ -6668,7 +7002,9 @@ paths:
       - template-charts
   /api/v1/templates/{id}/charts/{chartId}:
     delete:
-      description: Remove a chart configuration from a stack template
+      description: Remove a chart configuration from the working copy (draft) of a
+        stack template. Users get the change after the next publish. Template owner
+        or admin only.
       parameters:
       - description: Template ID
         in: path
@@ -6685,8 +7021,26 @@ paths:
       responses:
         "204":
           description: No Content
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
         "404":
           description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
           schema:
             additionalProperties:
               type: string
@@ -6697,7 +7051,9 @@ paths:
     put:
       consumes:
       - application/json
-      description: Update a chart configuration within a stack template
+      description: Update a chart configuration in the working copy (draft) of a stack
+        template. Users get the change after the next publish. Template owner or admin
+        only.
       parameters:
       - description: Template ID
         in: path
@@ -6728,8 +7084,26 @@ paths:
             additionalProperties:
               type: string
             type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
         "404":
           description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
           schema:
             additionalProperties:
               type: string
@@ -6767,20 +7141,23 @@ paths:
     post:
       consumes:
       - application/json
-      description: Create a StackDefinition and ChartConfigs from a template. Definition
-        names are unique per owner.
+      description: |-
+        Create a StackDefinition and ChartConfigs from the latest published snapshot of a template (not the working copy). Definition names are unique per owner.
+        A template that is not published, or has no snapshot, gives 409 "Template has no published version".
+        chart_overrides replace chart default values; keys are published_charts[].id, working copy charts[].id (mapped by chart name) or chart names. Keys for charts not in the published snapshot are ignored.
       parameters:
       - description: Template ID
         in: path
         name: id
         required: true
         type: string
-      - description: Definition overrides (name, description)
+      - description: Definition name, description and optional chart_overrides (default
+          values per chart)
         in: body
         name: body
         required: true
         schema:
-          $ref: '#/definitions/models.StackDefinition'
+          $ref: '#/definitions/handlers.instantiateTemplateRequest'
       produces:
       - application/json
       responses:
@@ -6807,7 +7184,8 @@ paths:
               type: string
             type: object
         "409":
-          description: The caller already has a definition with this name
+          description: The caller already has a definition with this name, or the
+            template has no published version
           schema:
             additionalProperties:
               type: string
@@ -6823,22 +7201,64 @@ paths:
       - templates
   /api/v1/templates/{id}/publish:
     post:
-      description: Make a template visible to all users (devops/admin only)
+      consumes:
+      - application/json
+      description: |-
+        Store the working copy (template fields + charts) as a new version snapshot and make the template visible to all users (template owner or admin).
+        The body is optional. version (trimmed) defaults to the version of the working copy; the working copy takes the published version.
+        A version that already exists for the template gives 409 "Version x already exists".
+        When the working copy equals the latest snapshot (same content and version), no snapshot is created (snapshot_created=false) and the response is 200: publish is idempotent.
+        Use Template, Quick Deploy and definition upgrades read the latest snapshot, never the working copy.
       parameters:
       - description: Template ID
         in: path
         name: id
         required: true
         type: string
+      - description: Version and change summary (optional)
+        in: body
+        name: body
+        schema:
+          $ref: '#/definitions/handlers.publishTemplateRequest'
       produces:
       - application/json
       responses:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/models.StackTemplate'
+            $ref: '#/definitions/handlers.publishTemplateResponse'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
         "404":
           description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "409":
+          description: Version already exists
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
           schema:
             additionalProperties:
               type: string
@@ -6853,6 +7273,7 @@ paths:
       description: |-
         Instantiate a template, create an instance, set branch overrides, and trigger deployment in a single call.
         instance_name must be a DNS label (lowercase a-z, 0-9, '-', start and end alphanumeric, at most 50 characters).
+        The template content comes from the latest published snapshot, not the working copy. A template that is not published, or has no snapshot, gives 409 "Template has no published version".
         The new stack definition is owned by the instance (owner_instance_id): deleting the instance deletes the definition when no other instance uses it. The definition is named after the instance; when the caller already has a definition with that name, the name gets the suffix " (2)", " (3)", ...
       parameters:
       - description: Template ID
@@ -6898,7 +7319,8 @@ paths:
               type: string
             type: object
         "409":
-          description: Namespace already exists
+          description: Namespace already exists, or the template has no published
+            version ({error})
           schema:
             $ref: '#/definitions/handlers.NamespaceConflictResponse'
         "500":
@@ -6914,7 +7336,11 @@ paths:
       - templates
   /api/v1/templates/{id}/unpublish:
     post:
-      description: Hide a template from regular users (devops/admin only)
+      consumes:
+      - application/json
+      description: Hide a template from regular users (template owner or admin). Use
+        Template and Quick Deploy return 409 until the next publish. The version history
+        stays.
       parameters:
       - description: Template ID
         in: path
@@ -6928,8 +7354,26 @@ paths:
           description: OK
           schema:
             $ref: '#/definitions/models.StackTemplate'
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
         "404":
           description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
           schema:
             additionalProperties:
               type: string
@@ -6939,7 +7383,11 @@ paths:
       - templates
   /api/v1/templates/{id}/versions:
     get:
-      description: List all version snapshots for a template, ordered newest first
+      consumes:
+      - application/json
+      description: List all version snapshots for a template, ordered newest first.
+        The first entry is the published version that users get. created_by_username
+        is the author's username (omitted when unknown).
       parameters:
       - description: Template ID
         in: path
@@ -6953,10 +7401,16 @@ paths:
           description: OK
           schema:
             items:
-              $ref: '#/definitions/models.TemplateVersion'
+              $ref: '#/definitions/handlers.templateVersionListItem'
             type: array
         "400":
           description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
           schema:
             additionalProperties:
               type: string
@@ -6978,7 +7432,9 @@ paths:
       - templates
   /api/v1/templates/{id}/versions/{versionId}:
     get:
-      description: Get a specific template version with its parsed snapshot
+      consumes:
+      - application/json
+      description: Get a specific template version with its parsed snapshot and created_by_username
       parameters:
       - description: Template ID
         in: path
@@ -7003,6 +7459,12 @@ paths:
             additionalProperties:
               type: string
             type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
         "404":
           description: Not Found
           schema:
@@ -7020,19 +7482,24 @@ paths:
       - templates
   /api/v1/templates/{id}/versions/diff:
     get:
-      description: Compare two template version snapshots side by side
+      consumes:
+      - application/json
+      description: |-
+        Compare two template version snapshots side by side. Either side may be "working" to compare the working copy (draft), for example left=<latest version ID>&right=working shows the unpublished changes.
+        Only the template owner and admins can compare the working copy (others get 403).
+        left.version and right.version are version strings; the other side fields (id, created_by, created_by_username, created_at, is_working_copy) describe the side.
       parameters:
       - description: Template ID
         in: path
         name: id
         required: true
         type: string
-      - description: Left version ID
+      - description: Left version ID, or \
         in: query
         name: left
         required: true
         type: string
-      - description: Right version ID
+      - description: Right version ID, or \
         in: query
         name: right
         required: true
@@ -7043,10 +7510,21 @@ paths:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/handlers.versionDiffResponse'
         "400":
           description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
           schema:
             additionalProperties:
               type: string
@@ -7111,8 +7589,11 @@ paths:
     post:
       consumes:
       - application/json
-      description: Publish multiple stack templates in a single request, making them
-        visible to all users.
+      description: 'Publish multiple stack templates in a single request, making them
+        visible to all users. Each template is published as POST /templates/{id}/publish
+        without a body: the working copy version is used, an unchanged template creates
+        no snapshot, and a version that already exists with other content fails for
+        that template.'
       parameters:
       - description: Template IDs to publish
         in: body

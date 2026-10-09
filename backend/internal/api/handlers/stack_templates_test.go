@@ -30,9 +30,12 @@ func setupTemplateRouter(
 	r.Use(injectAuthContext(callerID, callerRole))
 
 	h := NewTemplateHandler(templateRepo, chartRepo, definitionRepo, chartConfigRepo)
+	versionRepo := newWorkingCopyReleaseRepo(templateRepo, chartRepo)
+	h.versionRepo = versionRepo
 	h.txRunner = &mockHandlerTxRunner{repos: database.TxRepos{
 		StackTemplate:   templateRepo,
 		TemplateChart:   chartRepo,
+		TemplateVersion: versionRepo,
 		StackDefinition: definitionRepo,
 		ChartConfig:     chartConfigRepo,
 	}}

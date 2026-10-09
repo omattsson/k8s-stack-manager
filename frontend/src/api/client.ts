@@ -55,6 +55,8 @@ import type {
   ClusterUtilization,
   TemplateVersion,
   VersionDiffResponse,
+  PublishTemplateRequest,
+  PublishTemplateResult,
   UpgradeCheckResponse,
   InstanceQuotaOverride,
   DeployPreviewResponse,
@@ -285,6 +287,9 @@ export const oidcService = {
   },
 };
 
+/** Version ID that selects the unpublished working copy in a version diff. */
+export const WORKING_COPY_VERSION_ID = 'working';
+
 /** Stack template service for managing reusable deployment templates. Maps to `/api/v1/templates`. */
 export const templateService = {
   /**
@@ -363,15 +368,28 @@ export const templateService = {
     }
   },
   /**
-   * Publish a template, making it available for instantiation.
+   * Publish the working copy of a template as a release. Creates a version
+   * snapshot. When nothing changed since the latest release, the API creates
+   * no snapshot (`snapshotCreated` is false). A version that already exists
+   * gives HTTP 409.
    * @param id - Template ID
-   * @returns The published template
+   * @param data - Optional release version and change summary
+   * @returns The template and whether the API created a new snapshot
    * @see POST /api/v1/templates/:id/publish
    */
-  publish: async (id: string): Promise<StackTemplate> => {
+  publish: async (id: string, data?: PublishTemplateRequest): Promise<PublishTemplateResult> => {
     try {
-      const response = await api.post(`/api/v1/templates/${id}/publish`);
-      return response.data;
+      const body = data && (data.version || data.change_summary) ? data : undefined;
+      const response = body
+        ? await api.post(`/api/v1/templates/${id}/publish`, body)
+        : await api.post(`/api/v1/templates/${id}/publish`);
+      const { snapshot_created: snapshotCreated, ...template } = (response.data ?? {}) as StackTemplate & {
+        snapshot_created?: unknown;
+      };
+      return {
+        template: template as StackTemplate,
+        snapshotCreated: typeof snapshotCreated === 'boolean' ? snapshotCreated : true,
+      };
     } catch (error) {
       console.error('Failed to publish template:', error);
       throw error;
@@ -549,13 +567,19 @@ export const templateService = {
   },
   /**
    * Diff two versions of a template, showing per-chart YAML differences.
+   * Pass `WORKING_COPY_VERSION_ID` (the default) as the right side to compare
+   * a release with the unpublished working copy.
    * @param templateId - Template ID
    * @param leftId - Left version ID
-   * @param rightId - Right version ID
+   * @param rightId - Right version ID, or `WORKING_COPY_VERSION_ID` for the working copy
    * @returns Diff response with chart-level differences
    * @see GET /api/v1/templates/:id/versions/diff?left=ID&right=ID
    */
-  diffVersions: async (templateId: string, leftId: string, rightId: string): Promise<VersionDiffResponse> => {
+  diffVersions: async (
+    templateId: string,
+    leftId: string,
+    rightId: string = WORKING_COPY_VERSION_ID,
+  ): Promise<VersionDiffResponse> => {
     try {
       const response = await api.get(`/api/v1/templates/${templateId}/versions/diff`, {
         params: { left: leftId, right: rightId },
