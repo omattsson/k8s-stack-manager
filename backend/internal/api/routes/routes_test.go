@@ -38,6 +38,13 @@ func (s *stubUserRepo) Delete(_ string) error                                 { 
 func (s *stubUserRepo) List() ([]models.User, error)                          { return nil, nil }
 func (s *stubUserRepo) Count() (int64, error)                                 { return 0, nil }
 func (s *stubUserRepo) ListByRoles(_ []string) ([]models.User, error)         { return nil, nil }
+func (s *stubUserRepo) UpdateRole(_, _, _ string) (string, error)             { return "", nil }
+func (s *stubUserRepo) SetDisabled(_, _ string, _ bool) error                 { return nil }
+func (s *stubUserRepo) DeleteGuarded(_, _ string) error                        { return nil }
+func (s *stubUserRepo) UpdatePassword(_, _ string) error { return nil }
+func (s *stubUserRepo) UpdateProfile(_ string, _ models.UserProfileUpdate) error {
+	return nil
+}
 
 type stubAPIKeyRepo struct{}
 
@@ -268,6 +275,7 @@ func TestSetupRoutes_AllRouteGroupsRegistered(t *testing.T) {
 		{"GET", "/health/live"},
 		{"GET", "/health/ready"},
 		{"GET", "/api/v1/ping"},
+		{"GET", "/api/v1/ui-config"},
 		{"GET", "/api/v1/items"},
 		{"POST", "/api/v1/items"},
 		{"GET", "/api/v1/items/:id"},
@@ -1214,6 +1222,7 @@ func TestSetupRoutes_AllHandlers_RegistersCompleteAPI(t *testing.T) {
 
 		// Ping + Items (always registered)
 		{"GET", "/api/v1/ping"},
+		{"GET", "/api/v1/ui-config"},
 		{"GET", "/api/v1/items"},
 		{"POST", "/api/v1/items"},
 		{"GET", "/api/v1/items/:id"},
@@ -1340,6 +1349,7 @@ func TestSetupRoutes_AllHandlers_RegistersCompleteAPI(t *testing.T) {
 		{"PUT", "/api/v1/users/:id/disable"},
 		{"PUT", "/api/v1/users/:id/enable"},
 		{"PUT", "/api/v1/users/:id/password"},
+		{"PUT", "/api/v1/users/:id/role"},
 
 		// API keys
 		{"GET", "/api/v1/users/:id/api-keys"},
@@ -1727,6 +1737,33 @@ func TestSetupRoutes_APIKeyRoutesWithoutUserHandler(t *testing.T) {
 
 	// User management routes should NOT be registered.
 	assert.False(t, registered["GET /api/v1/users"], "user list should not be registered when UserHandler is nil")
+}
+
+// TestSetupRoutes_UIConfigIsPublic checks that GET /api/v1/ui-config needs no
+// token, also when the authenticated routes are registered.
+func TestSetupRoutes_UIConfigIsPublic(t *testing.T) {
+	t.Parallel()
+
+	router, _ := setupFullRouter(t)
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest(http.MethodGet, "/api/v1/ui-config", nil)
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	assert.Equal(t, "public, max-age=300", w.Header().Get("Cache-Control"))
+	var body map[string]string
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+	assert.ElementsMatch(t, []string{"title", "logo_url", "favicon_url"}, keysOf(body))
+	assert.NotEmpty(t, body["title"])
+}
+
+func keysOf(m map[string]string) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	return out
 }
 
 func TestSetupRoutes_SecurityHeaders(t *testing.T) {

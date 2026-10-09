@@ -338,8 +338,11 @@ Key environment variables (see `docker-compose.yml` for full list):
 | `LEADER_ELECTION_LEASE_DURATION` / `_RENEW_DEADLINE` / `_RETRY_PERIOD` | No | Election timings (defaults: `15s` / `10s` / `2s`) |
 | `WS_FANOUT_ENABLED` | No | Share WebSocket messages between replicas through the `ws_events` table (default: `false`; the Helm chart sets `true`) |
 | `WS_FANOUT_POLL_INTERVAL` / `WS_FANOUT_RETENTION` | No | Fan-out poll interval and row retention (defaults: `500ms` / `5m`) |
+| `APP_TITLE` | No | Product name in the browser tab, sidebar, app bar, login page and setup wizard (default: `K8s Stack Manager`, max 100 characters) |
+| `APP_LOGO_URL` | No | Logo image: a same-origin path (`/branding/logo.svg`) or an `https://` URL (default: empty = built-in logo) |
+| `APP_FAVICON_URL` | No | Browser tab icon, same URL rule (default: `/favicon.svg`). Other schemes (`http:`, `javascript:`, `data:`) stop the startup with an error |
 
-See [Sessions](WIKI.md#sessions) for how the session limits work together.
+See [Sessions](WIKI.md#sessions) for how the session limits work together, and [Branding](WIKI.md#branding) for the branding settings (Helm values `branding.*`).
 
 ## Helm Chart (Kubernetes Deployment)
 

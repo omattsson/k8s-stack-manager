@@ -445,6 +445,7 @@ func TestAuditRouteFor(t *testing.T) {
 		{"PUT", "/api/v1/users/:id/disable", "disable", "user", "id", false, ""},
 		{"PUT", "/api/v1/users/:id/enable", "enable", "user", "id", false, ""},
 		{"PUT", "/api/v1/users/:id/password", "reset_password", "user", "id", false, ""},
+		{"PUT", "/api/v1/users/:id/role", "change_role", "user", "id", false, ""},
 		{"POST", "/api/v1/users/:id/api-keys", "create", "api_key", "", false, ""},
 		{"DELETE", "/api/v1/users/:id/api-keys/:keyId", "delete", "api_key", "keyId", false, ""},
 		{"DELETE", "/api/v1/admin/orphaned-namespaces/:namespace", "delete", "namespace", "namespace", false, ""},
@@ -560,6 +561,13 @@ func TestAuditMiddleware_RouteTableEntries(t *testing.T) {
 			url: "/api/v1/users/u1/api-keys/k9", status: http.StatusNoContent,
 			wantAction: "delete", wantEntity: "api_key", wantID: "k9",
 			wantDetails: map[string]any{"user_id": "u1"},
+		},
+		{
+			name: "user role change records the old and the new role", method: http.MethodPut, route: "/api/v1/users/:id/role",
+			url: "/api/v1/users/u2/role", status: http.StatusOK,
+			body:       `{"id":"u2","old_role":"user","new_role":"devops","changed":true,"message":"Role changed"}`,
+			wantAction: "change_role", wantEntity: "user", wantID: "u2",
+			wantDetails: map[string]any{"old_role": "user", "new_role": "devops"},
 		},
 		{
 			name: "cluster test connection", method: http.MethodPost, route: "/api/v1/clusters/:id/test",

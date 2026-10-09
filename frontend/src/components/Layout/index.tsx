@@ -22,6 +22,8 @@ import { Link as RouterLink, useLocation } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import { useThemeMode } from '../../context/ThemeContext';
 import { hasAtLeastRole } from '../../utils/roles';
+import { useBranding } from '../../context/BrandingContext';
+import BrandLogo from '../BrandLogo';
 import { DRAWER_WIDTH, DRAWER_COLLAPSED_WIDTH } from '../../theme';
 
 import MenuIcon from '@mui/icons-material/Menu';
@@ -42,7 +44,6 @@ import CleaningServicesOutlined from '@mui/icons-material/CleaningServicesOutlin
 import NotificationsActiveOutlined from '@mui/icons-material/NotificationsActiveOutlined';
 import AccountCircleOutlined from '@mui/icons-material/AccountCircleOutlined';
 import LogoutIcon from '@mui/icons-material/Logout';
-import HubOutlined from '@mui/icons-material/HubOutlined';
 import NotificationCenter from '../NotificationCenter';
 
 const DRAWER_MINI_WIDTH = DRAWER_COLLAPSED_WIDTH;
@@ -87,6 +88,7 @@ const isRouteActive = (pathname: string, itemPath: string): boolean => {
 const Layout = ({ children }: LayoutProps) => {
   const { user, isAuthenticated, logout } = useAuth();
   const { mode, toggleMode } = useThemeMode();
+  const { title: appTitle } = useBranding();
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('md'));
   const location = useLocation();
@@ -187,19 +189,20 @@ const Layout = ({ children }: LayoutProps) => {
       }}
     >
       {open ? (
-        <Typography
-          variant="h6"
-          noWrap
+        <Box
           component={RouterLink}
           to="/"
-          sx={{ color: 'inherit', textDecoration: 'none', fontWeight: 700 }}
+          sx={{ display: 'flex', alignItems: 'center', gap: 1, minWidth: 0, color: 'inherit', textDecoration: 'none' }}
         >
-          K8s Stack Manager
-        </Typography>
+          <BrandLogo size={28} />
+          <Typography variant="h6" noWrap component="span" sx={{ fontWeight: 700 }}>
+            {appTitle}
+          </Typography>
+        </Box>
       ) : (
-        <Tooltip title="K8s Stack Manager" placement="right" arrow>
+        <Tooltip title={appTitle} placement="right" arrow>
           <IconButton component={RouterLink} to="/" size="small" aria-label="Home">
-            <HubOutlined color="primary" />
+            <BrandLogo size={24} />
           </IconButton>
         </Tooltip>
       )}
@@ -383,9 +386,12 @@ const Layout = ({ children }: LayoutProps) => {
             >
               <MenuIcon />
             </IconButton>
-            <Typography variant="h6" noWrap sx={{ fontWeight: 700, flexGrow: 1 }}>
-              K8s Stack Manager
-            </Typography>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexGrow: 1, minWidth: 0 }}>
+              <BrandLogo size={24} />
+              <Typography variant="h6" noWrap sx={{ fontWeight: 700 }}>
+                {appTitle}
+              </Typography>
+            </Box>
             <NotificationCenter />
           </Toolbar>
         </AppBar>

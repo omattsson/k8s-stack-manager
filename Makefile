@@ -495,7 +495,44 @@ helm-test: ## Verify default and External Secrets Helm renders
 		--set backend.secrets.JWT_SECRET=dummy-jwt-secret-for-template \
 		--set ingress.traefik.tls.secretName=stack-manager-tls --set backend.env.SECURE_COOKIES=false > "$$template_file"; \
 	grep -q 'SECURE_COOKIES: "false"' "$$template_file"; \
-	[ "$$(grep -c 'SECURE_COOKIES' "$$template_file")" -eq 1 ]
+	[ "$$(grep -c 'SECURE_COOKIES' "$$template_file")" -eq 1 ]; \
+	helm template $(HELM_RELEASE) $(HELM_CHART) --namespace $(HELM_NAMESPACE) \
+		--set backend.secrets.JWT_SECRET=dummy-jwt-secret-for-template > "$$template_file"; \
+	if grep -q 'Source: k8s-stack-manager/templates/frontend/branding-configmap.yaml' "$$template_file"; then echo "unexpected branding ConfigMap without branding.files" >&2; exit 1; fi; \
+	if grep -qE 'APP_(TITLE|LOGO_URL|FAVICON_URL):|location /branding/|mountPath: /usr/share/nginx/html/branding' "$$template_file"; then echo "unexpected branding settings in the default render" >&2; exit 1; fi; \
+	helm template $(HELM_RELEASE) $(HELM_CHART) --namespace $(HELM_NAMESPACE) \
+		--values $(HELM_CHART)/tests/branding-values.yaml > "$$template_file"; \
+	grep -q 'APP_TITLE: "Platform Portal"' "$$template_file" || { echo "branding.title must render APP_TITLE" >&2; exit 1; }; \
+	grep -q 'APP_LOGO_URL: "/branding/logo.svg"' "$$template_file" || { echo "branding.logoUrl must render APP_LOGO_URL" >&2; exit 1; }; \
+	grep -q 'APP_FAVICON_URL: "/branding/favicon.png"' "$$template_file" || { echo "branding.faviconUrl must render APP_FAVICON_URL" >&2; exit 1; }; \
+	grep -q 'Source: k8s-stack-manager/templates/frontend/branding-configmap.yaml' "$$template_file" || { echo "branding ConfigMap missing" >&2; exit 1; }; \
+	grep -q '"logo.svg": "<svg' "$$template_file" || { echo "branding.files must render into data" >&2; exit 1; }; \
+	awk '/^binaryData:$$/{b=1} b && /"favicon.png": "iVBOR/{f=1} END{exit !f}' "$$template_file" || { echo "branding.binaryFiles must render into binaryData" >&2; exit 1; }; \
+	grep -q 'location /branding/' "$$template_file" || { echo "nginx /branding/ location missing" >&2; exit 1; }; \
+	grep -q 'image/svg+xml svg;' "$$template_file" || { echo "nginx must serve svg as image/svg+xml" >&2; exit 1; }; \
+	if grep -q 'svgz' "$$template_file"; then echo "nginx must not map svgz" >&2; exit 1; fi; \
+	grep -q 'add_header X-Content-Type-Options "nosniff" always;' "$$template_file" || { echo "nginx /branding/ must send nosniff" >&2; exit 1; }; \
+	for kind in deployment rollout; do \
+		helm template $(HELM_RELEASE) $(HELM_CHART) --show-only templates/frontend/$$kind.yaml \
+			--values $(HELM_CHART)/tests/branding-values.yaml \
+			--set argoRollouts.enabled=$$( [ $$kind = rollout ] && echo true || echo false ) > "$$template_file"; \
+		grep -q 'mountPath: /usr/share/nginx/html/branding' "$$template_file" || { echo "$$kind: branding mount missing" >&2; exit 1; }; \
+		grep -qE 'name: [a-z0-9-]+-frontend-branding$$' "$$template_file" || { echo "$$kind: branding volume missing" >&2; exit 1; }; \
+		grep -q 'checksum/branding:' "$$template_file" || { echo "$$kind: branding checksum missing" >&2; exit 1; }; \
+	done; \
+	helm template $(HELM_RELEASE) $(HELM_CHART) --show-only templates/backend/configmap.yaml \
+		--values $(HELM_CHART)/tests/branding-values.yaml --set backend.env.APP_TITLE=Override > "$$template_file"; \
+	grep -q 'APP_TITLE: "Override"' "$$template_file" || { echo "backend.env.APP_TITLE must win over branding.title" >&2; exit 1; }; \
+	[ "$$(grep -c 'APP_TITLE' "$$template_file")" -eq 1 ]; \
+	if helm template $(HELM_RELEASE) $(HELM_CHART) --values $(HELM_CHART)/tests/branding-values.yaml \
+		--set 'branding.files.bad/name\.svg=x' > "$$template_file" 2>&1; then echo "invalid branding file name must fail" >&2; exit 1; fi; \
+	grep -q 'branding.files: invalid file name' "$$template_file" || { echo "missing file name error" >&2; exit 1; }; \
+	big_file=$$(mktemp); \
+	head -c 930000 /dev/zero | tr '\0' a > "$$big_file"; \
+	if helm template $(HELM_RELEASE) $(HELM_CHART) --values $(HELM_CHART)/tests/branding-values.yaml \
+		--set-file "branding.files.big\.svg=$$big_file" > "$$template_file" 2>&1; then rm -f "$$big_file"; echo "branding files over 900 KiB must fail" >&2; exit 1; fi; \
+	rm -f "$$big_file"; \
+	grep -q 'the limit is 900 KiB' "$$template_file" || { echo "missing branding size error" >&2; exit 1; }
 
 helm-template: ## Render templates locally (dry-run)
 	helm template $(HELM_RELEASE) $(HELM_CHART) --namespace $(HELM_NAMESPACE) \

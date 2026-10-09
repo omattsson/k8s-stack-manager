@@ -40,6 +40,18 @@ data:
   {{- if not (hasKey .Values.backend.env "WS_FANOUT_RETENTION") }}
   WS_FANOUT_RETENTION: {{ .Values.backend.wsFanout.retention | quote }}
   {{- end }}
+  {{- /* Branding (web UI title, logo, favicon). An explicit backend.env value wins. */}}
+  {{- with .Values.branding }}
+  {{- if and .title (not (hasKey $.Values.backend.env "APP_TITLE")) }}
+  APP_TITLE: {{ .title | quote }}
+  {{- end }}
+  {{- if and .logoUrl (not (hasKey $.Values.backend.env "APP_LOGO_URL")) }}
+  APP_LOGO_URL: {{ .logoUrl | quote }}
+  {{- end }}
+  {{- if and .faviconUrl (not (hasKey $.Values.backend.env "APP_FAVICON_URL")) }}
+  APP_FAVICON_URL: {{ .faviconUrl | quote }}
+  {{- end }}
+  {{- end }}
   {{- if .Values.hooks.enabled }}
   HOOKS_CONFIG_FILE: "/etc/hooks/hooks.json"
   {{- end }}

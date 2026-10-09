@@ -273,6 +273,9 @@ type Config struct {
 
 	// WSFanout shares WebSocket messages between replicas.
 	WSFanout WSFanoutConfig
+
+	// Branding holds the display values of the web UI (title, logo, favicon).
+	Branding BrandingConfig
 }
 
 // AppConfig holds application-wide configuration
@@ -376,6 +379,10 @@ func (c *Config) Validate() error {
 
 	if err := c.LeaderElection.Validate(); err != nil {
 		return fmt.Errorf("leader election config: %w", err)
+	}
+
+	if err := c.Branding.Validate(); err != nil {
+		return fmt.Errorf("branding config: %w", err)
 	}
 
 	if err := c.WSFanout.Validate(); err != nil {
@@ -581,6 +588,7 @@ func LoadConfig() (*Config, error) {
 	}
 	cfg.LeaderElection = loadLeaderElectionConfig()
 	cfg.WSFanout = loadWSFanoutConfig()
+	cfg.Branding = loadBrandingConfig()
 
 	// Validate the configuration
 	if err := cfg.Validate(); err != nil {

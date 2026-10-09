@@ -319,6 +319,14 @@ type mockUserRepository struct {
 	rolesReceived []string
 }
 
+func (m *mockUserRepository) UpdateRole(_, _, _ string) (string, error)    { return "", nil }
+func (m *mockUserRepository) SetDisabled(_, _ string, _ bool) error        { return nil }
+func (m *mockUserRepository) DeleteGuarded(_, _ string) error               { return nil }
+func (m *mockUserRepository) UpdatePassword(_, _ string) error { return nil }
+func (m *mockUserRepository) UpdateProfile(_ string, _ models.UserProfileUpdate) error {
+	return nil
+}
+
 func (m *mockUserRepository) ListByRoles(roles []string) ([]models.User, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

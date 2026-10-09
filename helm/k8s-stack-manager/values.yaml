@@ -341,6 +341,40 @@ frontend:
     annotations: {}
 
 # ---------------------------------------------------------------------------
+# Branding (web UI title, logo and favicon)
+# ---------------------------------------------------------------------------
+# The backend serves these values at GET /api/v1/ui-config (public, no token)
+# and the web UI loads them at startup, also on the login page. The values go
+# to the backend ConfigMap as APP_TITLE, APP_LOGO_URL and APP_FAVICON_URL.
+# An explicit backend.env value wins. Empty: the built-in default.
+# A URL is a same-origin path ("/branding/logo.svg") or an https URL. The
+# backend refuses other forms at startup (http:, javascript:, data:, "//host/...").
+branding:
+  # Product name in the browser tab, sidebar, app bar, login page and setup
+  # wizard (max 100 characters). Empty: "K8s Stack Manager".
+  title: ""
+  # Logo image. Empty: the built-in logo.
+  logoUrl: ""
+  # Browser tab icon. Empty: the built-in /favicon.svg.
+  faviconUrl: ""
+  # Optional: serve the image files from the frontend pod instead of an
+  # external URL. The chart renders a ConfigMap and mounts it into the
+  # frontend nginx at /usr/share/nginx/html/branding/. Refer to a file as
+  # "/branding/<name>", for example logoUrl: /branding/logo.svg.
+  # nginx serves the files with the content type of the extension (svg, png,
+  # ico, webp, jpg, gif), X-Content-Type-Options: nosniff and a sandbox
+  # Content-Security-Policy (script in an SVG does not run).
+  # files: text files (SVG), file name -> content.
+  # binaryFiles: binary files (PNG, ICO), file name -> base64 content.
+  # A file name must match ^[-._a-zA-Z0-9]+$. The total size of all files
+  # (binaryFiles decoded) must be at most 900 KiB; the render fails otherwise.
+  files: {}
+  #   logo.svg: |
+  #     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">...</svg>
+  binaryFiles: {}
+  #   favicon.png: iVBORw0KGgo...
+
+# ---------------------------------------------------------------------------
 # MySQL Database
 # ---------------------------------------------------------------------------
 mysql:

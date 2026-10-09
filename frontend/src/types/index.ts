@@ -10,6 +10,19 @@ export interface User {
   updated_at: string;
 }
 
+/** User role, lowest to highest permission. */
+export type UserRole = 'user' | 'devops' | 'admin';
+
+/** Response of `PUT /api/v1/users/:id/role`. */
+export interface ChangeRoleResponse {
+  id: string;
+  old_role: string;
+  new_role: UserRole;
+  /** False when the user already had the role (no change, no sign-out). */
+  changed: boolean;
+  message: string;
+}
+
 export interface JwtPayload {
   user_id: string;
   username: string;
@@ -947,4 +960,17 @@ export interface ActionJobLog {
   done: boolean;
   /** True when the chunk was cut at the size cap. Poll again at once. */
   truncated: boolean;
+}
+
+/**
+ * Display values of the web UI from `GET /api/v1/ui-config` (env APP_TITLE,
+ * APP_LOGO_URL, APP_FAVICON_URL).
+ */
+export interface UIConfig {
+  /** Product name in the browser tab, sidebar, app bar, login page and setup wizard. */
+  title: string;
+  /** Logo image URL. Empty: the built-in logo. */
+  logo_url: string;
+  /** Browser tab icon URL. */
+  favicon_url: string;
 }

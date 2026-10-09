@@ -80,8 +80,8 @@ func (f *revokeFixture) apiKeyIDs(t *testing.T, userID string) []string {
 	return ids
 }
 
-// TestRevokeUserAccess_AllPaths checks that delete, disable and reset-password
-// all use revokeUserAccess: block in the session store and revoke all refresh
+// TestRevokeUserAccess_AllPaths checks that delete, disable, reset-password
+// and role change all use revokeUserAccess: block in the session store and revoke all refresh
 // tokens of the target user, and only of that user. Only delete removes the
 // API keys; disable and reset-password keep them.
 func TestRevokeUserAccess_AllPaths(t *testing.T) {
@@ -116,6 +116,14 @@ func TestRevokeUserAccess_AllPaths(t *testing.T) {
 			method:         http.MethodPut,
 			path:           "/api/v1/users/" + revokeTargetID + "/password",
 			body:           `{"password":"a-new-password-1"}`,
+			wantStatus:     http.StatusOK,
+			wantUserExists: true,
+		},
+		{
+			name:           "change role",
+			method:         http.MethodPut,
+			path:           "/api/v1/users/" + revokeTargetID + "/role",
+			body:           `{"role":"devops"}`,
 			wantStatus:     http.StatusOK,
 			wantUserExists: true,
 		},
@@ -327,6 +335,7 @@ func TestRevokeUserAccess_OldTokenRejectedByAuthMiddleware(t *testing.T) {
 			require.NoError(t, err)
 
 			// Admin action through the real handler.
+			seedCallerAdmin(userRepo, "admin-1", "admin")
 			h := NewUserHandler(userRepo, NewMockRefreshTokenRepository(), NewMockAPIKeyRepository())
 			h.SetSessionStore(store)
 			h.SetAccessTokenExpiration(15 * time.Minute)

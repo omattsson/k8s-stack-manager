@@ -591,22 +591,28 @@ func (h *OIDCHandler) updateExistingOIDCUser(user *models.User, oidcUser *auth.O
 	if user.Disabled {
 		return nil, errAccountDisabled
 	}
+	// Write only the changed profile columns: a full-row save would
+	// overwrite a concurrent change of other columns (for example disabled).
+	var upd models.UserProfileUpdate
 	changed := false
 	if oidcUser.Email != "" && user.Email != oidcUser.Email {
 		user.Email = oidcUser.Email
+		upd.Email = &user.Email
 		changed = true
 	}
 	if oidcUser.Name != "" && user.DisplayName != oidcUser.Name {
 		user.DisplayName = oidcUser.Name
+		upd.DisplayName = &user.DisplayName
 		changed = true
 	}
 	newRole := h.provider.MapRole(oidcUser.Roles)
 	if newRole != user.Role {
 		user.Role = newRole
+		upd.Role = &user.Role
 		changed = true
 	}
 	if changed {
-		if updateErr := h.userRepo.Update(user); updateErr != nil {
+		if updateErr := h.userRepo.UpdateProfile(user.ID, upd); updateErr != nil {
 			slog.Error("Failed to update OIDC user", "user_id", user.ID, "error", updateErr)
 			// Abort authentication to avoid issuing a token with
 			// unpersisted changes (e.g., elevated role or new email).
@@ -623,16 +629,20 @@ func (h *OIDCHandler) linkLocalUserToOIDC(user *models.User, oidcUser *auth.OIDC
 	}
 	user.AuthProvider = "oidc"
 	user.ExternalID = &oidcUser.Subject
+	upd := models.UserProfileUpdate{LinkProvider: &user.AuthProvider, ExternalID: user.ExternalID}
 	if oidcUser.Email != "" {
 		user.Email = oidcUser.Email
+		upd.Email = &user.Email
 	}
 	if oidcUser.Name != "" {
 		user.DisplayName = oidcUser.Name
+		upd.DisplayName = &user.DisplayName
 	}
 	user.Role = h.provider.MapRole(oidcUser.Roles)
+	upd.Role = &user.Role
 	user.PasswordHash = ""
 
-	if err := h.userRepo.Update(user); err != nil {
+	if err := h.userRepo.UpdateProfile(user.ID, upd); err != nil {
 		slog.Error("Failed to link local user to OIDC", "user_id", user.ID, "error", err)
 		return nil, fmt.Errorf(errMsgAuthFailed)
 	}

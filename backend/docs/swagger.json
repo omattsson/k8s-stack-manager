@@ -1770,7 +1770,7 @@
         },
         "/api/v1/auth/register": {
             "post": {
-                "description": "Create a new user account (admin only, or when self-registration is enabled)",
+                "description": "Create a new user account (admin only, or when self-registration is enabled) A role outside user, devops and admin gives 400.",
                 "consumes": [
                     "application/json"
                 ],
@@ -8900,6 +8900,35 @@
                 }
             }
         },
+        "/api/v1/ui-config": {
+            "get": {
+                "description": "Returns the display values of the web UI: product title, logo URL and favicon URL (APP_TITLE, APP_LOGO_URL, APP_FAVICON_URL). Public: no authentication, so the login page can use it. An empty logo_url means the built-in logo. A URL is a same-origin path or an https URL. Cached for 5 minutes.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "ui"
+                ],
+                "summary": "Web UI display config",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.UIConfigResponse"
+                        }
+                    },
+                    "429": {
+                        "description": "Too Many Requests",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/users": {
             "get": {
                 "security": [
@@ -8953,7 +8982,7 @@
                         "BearerAuth": []
                     }
                 ],
-                "description": "Permanently deletes a user account. Admin only. Cannot delete own account. Revokes the user's current access tokens and all refresh tokens, and deletes all API keys of the user.",
+                "description": "Permanently deletes a user account. Admin only. Cannot delete own account (400). The last enabled admin cannot be deleted (409). The caller must still be an enabled admin in the database (403). Revokes the user's current access tokens and all refresh tokens, and deletes all API keys of the user.",
                 "produces": [
                     "application/json"
                 ],
@@ -9003,6 +9032,24 @@
                     },
                     "404": {
                         "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {
@@ -9247,7 +9294,7 @@
                         "BearerAuth": []
                     }
                 ],
-                "description": "Disables a user account. Admin only. Revokes the user's current access tokens and all refresh tokens. API keys stop working while the user is disabled and work again after enable.",
+                "description": "Disables a user account. Admin only. The last enabled admin cannot be disabled (409). The caller must still be an enabled admin in the database (403). Revokes the user's current access tokens and all refresh tokens. API keys stop working while the user is disabled and work again after enable.",
                 "consumes": [
                     "application/json"
                 ],
@@ -9306,6 +9353,15 @@
                     },
                     "404": {
                         "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {
@@ -9485,6 +9541,106 @@
                     },
                     "404": {
                         "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/users/{id}/role": {
+            "put": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Sets the role of a local user. Admin only. The role of an SSO user comes from the identity provider and cannot be changed here (409). An admin cannot change their own role (403), the caller must still be an enabled admin in the database (403), and the last enabled admin cannot lose the admin role (409). An unchanged role is a no-op (changed=false). A change revokes the user's current access tokens, all refresh tokens and open WebSocket connections, so the next request needs a new login with the new role. API keys stay valid and use the new role at once.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "users"
+                ],
+                "summary": "Change the role of a user",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "User ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "New role",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ChangeRoleRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ChangeRoleResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {
@@ -9784,6 +9940,45 @@
             ],
             "properties": {
                 "session_id": {
+                    "type": "string"
+                }
+            }
+        },
+        "handlers.ChangeRoleRequest": {
+            "type": "object",
+            "required": [
+                "role"
+            ],
+            "properties": {
+                "role": {
+                    "description": "Role is the new role: \"user\", \"devops\" or \"admin\".",
+                    "type": "string",
+                    "enum": [
+                        "user",
+                        "devops",
+                        "admin"
+                    ],
+                    "example": "devops"
+                }
+            }
+        },
+        "handlers.ChangeRoleResponse": {
+            "type": "object",
+            "properties": {
+                "changed": {
+                    "description": "Changed is false when the user already had the role (no-op: the\nsessions of the user stay valid).",
+                    "type": "boolean"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "message": {
+                    "type": "string"
+                },
+                "new_role": {
+                    "type": "string"
+                },
+                "old_role": {
                     "type": "string"
                 }
             }
@@ -10619,6 +10814,26 @@
                 },
                 "template_name": {
                     "type": "string"
+                }
+            }
+        },
+        "handlers.UIConfigResponse": {
+            "type": "object",
+            "properties": {
+                "favicon_url": {
+                    "description": "FaviconURL is the browser tab icon (APP_FAVICON_URL).",
+                    "type": "string",
+                    "example": "/favicon.svg"
+                },
+                "logo_url": {
+                    "description": "LogoURL is the logo image (APP_LOGO_URL). Empty: the built-in logo.",
+                    "type": "string",
+                    "example": ""
+                },
+                "title": {
+                    "description": "Title is the product name (APP_TITLE).",
+                    "type": "string",
+                    "example": "K8s Stack Manager"
                 }
             }
         },

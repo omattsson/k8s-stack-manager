@@ -56,6 +56,18 @@ kubectl -n stack-manager rollout status deployment/stack-manager-k8s-stack-manag
 
 > If you enabled Argo Rollouts (`argoRollouts.enabled: true`), replace `deployment/` with `rollout/` in the commands above.
 
+Optional: show your own product name and logo. Add a `branding` block to the values file (see [Branding](../WIKI.md#branding)):
+
+```yaml
+branding:
+  title: "Platform Portal"
+  logoUrl: /branding/logo.svg      # or an https:// URL
+  faviconUrl: /branding/logo.svg
+  files:                           # served by the frontend at /branding/
+    logo.svg: |
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="6" fill="#1565c0"/></svg>
+```
+
 ## 3. Access the UI
 
 If your cluster has Traefik installed (the chart creates IngressRoutes automatically), access the UI via the Traefik load balancer IP. Otherwise, port-forward:

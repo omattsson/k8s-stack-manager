@@ -1071,6 +1071,10 @@ func (d *Database) AutoMigrate() error {
 	// per-user analytics; older deploy logs get the instance owner.
 	migrator.AddMigration(deployLogUserIDMigration())
 
+	// Migration 50: users.role index for the guarded admin changes, which
+	// lock the admin rows (role = 'admin').
+	migrator.AddMigration(userRoleIndexMigration())
+
 	// Run migrations
 	if err := migrator.MigrateUp(); err != nil {
 		return err
@@ -1578,5 +1582,35 @@ func backfillDeployLogUsers(tx *gorm.DB, batchSize int) error {
 		).Error; err != nil {
 			return fmt.Errorf("setting deploy log users: %w", err)
 		}
+	}
+}
+
+// userRoleIndexName is the index on users.role.
+const userRoleIndexName = "idx_users_role"
+
+// userRoleIndexMigration is migration 50. It adds an index on users.role.
+// The guarded admin changes (UpdateRole, SetDisabled, DeleteGuarded) lock
+// the admin rows with SELECT ... WHERE role = 'admin' FOR UPDATE; with the
+// index, InnoDB locks the admin rows only, not every scanned users row. Up
+// and Down are idempotent. It is a function so tests can run its Down step.
+func userRoleIndexMigration() schema.Migration {
+	return schema.Migration{
+		Version:     "20261009000050",
+		Name:        "add_users_role_index",
+		Description: "Add an index on users.role for the admin-row locks of role, disable and delete changes",
+		Up: func(tx *gorm.DB) error {
+			m := tx.Migrator()
+			if !m.HasTable(&models.User{}) || m.HasIndex(&models.User{}, userRoleIndexName) {
+				return nil
+			}
+			return tx.Exec("CREATE INDEX " + userRoleIndexName + " ON users (role)").Error // #nosec G202 -- index name is a constant
+		},
+		Down: func(tx *gorm.DB) error {
+			m := tx.Migrator()
+			if m.HasIndex(&models.User{}, userRoleIndexName) {
+				return m.DropIndex(&models.User{}, userRoleIndexName)
+			}
+			return nil
+		},
 	}
 }

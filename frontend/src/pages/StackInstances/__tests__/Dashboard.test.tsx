@@ -1098,7 +1098,7 @@ describe('Dashboard', () => {
         </MemoryRouter>
       );
       await waitFor(() => {
-        expect(screen.getByText('Welcome to Stack Manager')).toBeInTheDocument();
+        expect(screen.getByText('Welcome to K8s Stack Manager')).toBeInTheDocument();
       });
     });
 
@@ -1114,7 +1114,7 @@ describe('Dashboard', () => {
       await waitFor(() => {
         expect(screen.getByText('Stack Instances')).toBeInTheDocument();
       });
-      expect(screen.queryByText('Welcome to Stack Manager')).not.toBeInTheDocument();
+      expect(screen.queryByText('Welcome to K8s Stack Manager')).not.toBeInTheDocument();
     });
 
     it('shows wizard at step 2 when clusters exist but no templates', async () => {
@@ -1128,7 +1128,7 @@ describe('Dashboard', () => {
         </MemoryRouter>
       );
       await waitFor(() => {
-        expect(screen.getByText('Welcome to Stack Manager')).toBeInTheDocument();
+        expect(screen.getByText('Welcome to K8s Stack Manager')).toBeInTheDocument();
       });
       expect(screen.getByRole('button', { name: 'Create a Template' })).toBeInTheDocument();
     });
@@ -1147,7 +1147,7 @@ describe('Dashboard', () => {
       await waitFor(() => {
         expect(screen.getByText(/no stack instances found/i)).toBeInTheDocument();
       });
-      expect(screen.queryByText('Welcome to Stack Manager')).not.toBeInTheDocument();
+      expect(screen.queryByText('Welcome to K8s Stack Manager')).not.toBeInTheDocument();
     });
 
     it('hides wizard and shows dashboard when skip is clicked', async () => {
@@ -1162,11 +1162,11 @@ describe('Dashboard', () => {
         </MemoryRouter>
       );
       await waitFor(() => {
-        expect(screen.getByText('Welcome to Stack Manager')).toBeInTheDocument();
+        expect(screen.getByText('Welcome to K8s Stack Manager')).toBeInTheDocument();
       });
       await user.click(screen.getByText('Skip setup'));
       await waitFor(() => {
-        expect(screen.queryByText('Welcome to Stack Manager')).not.toBeInTheDocument();
+        expect(screen.queryByText('Welcome to K8s Stack Manager')).not.toBeInTheDocument();
       });
     });
   });

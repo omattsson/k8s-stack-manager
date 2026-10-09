@@ -22,6 +22,7 @@ func setupUserRouter(userRepo *MockUserRepository, callerID, callerRole string) 
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
 	r.Use(injectAuthContext(callerID, callerRole))
+	seedCallerAdmin(userRepo, callerID, callerRole)
 	h := NewUserHandler(userRepo, nil, nil)
 	adminMW := middleware.RequireAdmin()
 	users := r.Group("/api/v1/users")
@@ -31,8 +32,21 @@ func setupUserRouter(userRepo *MockUserRepository, callerID, callerRole string) 
 		users.PUT("/:id/disable", adminMW, h.DisableUser)
 		users.PUT("/:id/enable", adminMW, h.EnableUser)
 		users.PUT("/:id/password", adminMW, h.ResetUserPassword)
+		users.PUT("/:id/role", adminMW, h.ChangeUserRole)
 	}
 	return r
+}
+
+// seedCallerAdmin adds the caller as an enabled admin when the test did not
+// seed it: the guarded user changes check the caller in the repository.
+func seedCallerAdmin(repo *MockUserRepository, callerID, callerRole string) {
+	if callerID == "" || callerRole != "admin" {
+		return
+	}
+	if _, err := repo.FindByID(callerID); err == nil {
+		return
+	}
+	_ = repo.Create(&models.User{ID: callerID, Username: callerID + "-caller", Role: "admin"})
 }
 
 // ---- TestListUsers ----
@@ -57,7 +71,7 @@ func TestListUsers(t *testing.T) {
 				{ID: "u2", Username: "bob", Role: "devops"},
 			},
 			wantStatus: http.StatusOK,
-			wantLen:    2,
+			wantLen:    3, // two seeded users and the caller
 		},
 		{
 			name:       "non-admin gets 403",
