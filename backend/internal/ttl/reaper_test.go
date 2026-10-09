@@ -200,6 +200,10 @@ func TestReaper_ExpiredInstancesGetStopped(t *testing.T) {
 	got := repo.get("expired-1")
 	assert.Equal(t, models.StackStatusStopped, got.Status)
 	assert.Equal(t, "Expired (TTL)", got.ErrorMessage)
+	// The cleanup condition stopped_days measures from StoppedAt.
+	if assert.NotNil(t, got.StoppedAt) {
+		assert.WithinDuration(t, time.Now(), *got.StoppedAt, 5*time.Second)
+	}
 
 	gotActive := repo.get("active-1")
 	assert.Equal(t, models.StackStatusRunning, gotActive.Status)

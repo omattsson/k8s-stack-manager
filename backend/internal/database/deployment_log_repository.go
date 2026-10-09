@@ -170,6 +170,25 @@ func (r *GORMDeploymentLogRepository) GetLatestByInstance(ctx context.Context, i
 	return &log, nil
 }
 
+// ListLatestByActions returns up to limit logs of the instance whose action
+// is one of actions, newest first. It selects only the small columns (the
+// index idx_deployment_logs_instance_action_started covers the filter).
+func (r *GORMDeploymentLogRepository) ListLatestByActions(ctx context.Context, instanceID string, actions []string, limit int) ([]models.DeploymentLog, error) {
+	if limit <= 0 {
+		limit = 1
+	}
+	var logs []models.DeploymentLog
+	if err := r.db.WithContext(ctx).
+		Select("id, stack_instance_id, action, status, started_at, completed_at, target_log_id, branch").
+		Where("stack_instance_id = ? AND action IN ?", instanceID, actions).
+		Order("started_at DESC").
+		Limit(limit).
+		Find(&logs).Error; err != nil {
+		return nil, dberrors.NewDatabaseError("list_latest_by_actions", err)
+	}
+	return logs, nil
+}
+
 // SummarizeByInstance returns aggregate deployment statistics for a given stack instance.
 // Only logs from the last 90 days are considered.
 func (r *GORMDeploymentLogRepository) SummarizeByInstance(ctx context.Context, instanceID string) (*models.DeployLogSummary, error) {
@@ -324,7 +343,7 @@ func (r *GORMDeploymentLogRepository) ListRecentGlobal(ctx context.Context, limi
 	var rows []row
 	err := r.db.WithContext(ctx).
 		Table("deployment_logs dl").
-		Select("dl.id, dl.stack_instance_id, dl.action, dl.status, dl.started_at, dl.completed_at, dl.error_message, COALESCE(si.name, '(deleted)') AS instance_name, COALESCE(u.username, '(unknown)') AS owner_username").
+		Select("dl.id, dl.stack_instance_id, dl.action, dl.status, dl.branch, dl.started_at, dl.completed_at, dl.error_message, COALESCE(si.name, '(deleted)') AS instance_name, COALESCE(u.username, '(unknown)') AS owner_username").
 		Joins("LEFT JOIN stack_instances si ON dl.stack_instance_id = si.id").
 		Joins("LEFT JOIN users u ON si.owner_id = u.id").
 		Order("dl.started_at DESC").

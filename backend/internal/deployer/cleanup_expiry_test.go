@@ -127,6 +127,10 @@ func (m *mockDefinitionRepo) Count() (int64, error) {
 	return int64(len(m.items)), nil
 }
 
+func (m *mockDefinitionRepo) FindByIDForUpdate(id string) (*models.StackDefinition, error) {
+	return m.FindByID(id)
+}
+
 func (m *mockDefinitionRepo) ListIDsByTemplateIDs(_ []string) (map[string][]string, error) {
 	return nil, nil
 }
@@ -168,6 +172,13 @@ func (m *mockChartConfigRepo) Update(c *models.ChartConfig) error {
 }
 
 func (m *mockChartConfigRepo) Delete(id string) error {
+	return nil
+}
+
+func (m *mockChartConfigRepo) DeleteByDefinition(defID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	delete(m.items, defID)
 	return nil
 }
 

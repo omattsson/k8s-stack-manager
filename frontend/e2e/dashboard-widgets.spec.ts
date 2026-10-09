@@ -322,6 +322,7 @@ test.describe('Dashboard Widgets - Expiring Soon', () => {
     }).toPass({ timeout: 30_000 });
 
     await page.getByRole('button', { name: 'Extend TTL' }).first().click();
+    await page.getByRole('menuitem', { name: '+1 h' }).click();
 
     // No error toast should appear
     await expect(page.getByText(/Failed to extend TTL/)).not.toBeVisible({ timeout: 5_000 });

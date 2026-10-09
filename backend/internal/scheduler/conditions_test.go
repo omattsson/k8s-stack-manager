@@ -194,3 +194,53 @@ func TestMatchesInstance(t *testing.T) {
 		})
 	}
 }
+
+func TestStoppedDaysCondition(t *testing.T) {
+	t.Parallel()
+
+	now := time.Now()
+	ago := func(d time.Duration) *time.Time { ts := now.Add(-d); return &ts }
+	day := 24 * time.Hour
+
+	tests := []struct {
+		name      string
+		condition string
+		inst      models.StackInstance
+		want      bool
+	}{
+		{"stopped long ago matches", "stopped_days:3",
+			models.StackInstance{Status: models.StackStatusStopped, CreatedAt: now.Add(-10 * day), StoppedAt: ago(4 * day)}, true},
+		{"old instance stopped recently does not match", "stopped_days:3",
+			models.StackInstance{Status: models.StackStatusStopped, CreatedAt: now.Add(-10 * day), StoppedAt: ago(time.Minute)}, false},
+		{"new instance stopped long ago matches", "stopped_days:1",
+			models.StackInstance{Status: models.StackStatusStopped, CreatedAt: now.Add(-2 * day), StoppedAt: ago(36 * time.Hour)}, true},
+		{"stopped without stop time never matches", "stopped_days:1",
+			models.StackInstance{Status: models.StackStatusStopped, CreatedAt: now.Add(-10 * day)}, false},
+		{"running instance with an old stop time does not match", "stopped_days:1",
+			models.StackInstance{Status: models.StackStatusRunning, CreatedAt: now.Add(-10 * day), StoppedAt: ago(5 * day)}, false},
+		{"stopped_days:0 matches any recorded stop", "stopped_days:0",
+			models.StackInstance{Status: models.StackStatusStopped, StoppedAt: ago(time.Second)}, true},
+		{"combined with age_days", "stopped_days:2,age_days:30",
+			models.StackInstance{Status: models.StackStatusStopped, CreatedAt: now.Add(-5 * day), StoppedAt: ago(3 * day)}, false},
+		{"legacy status:stopped,age_days still uses the creation age", "status:stopped,age_days:3",
+			models.StackInstance{Status: models.StackStatusStopped, CreatedAt: now.Add(-7 * day), StoppedAt: ago(time.Minute)}, true},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			f, err := ParseCondition(tt.condition)
+			assert.NoError(t, err)
+			inst := tt.inst
+			assert.Equal(t, tt.want, f.MatchesInstance(&inst))
+		})
+	}
+}
+
+func TestStoppedDaysCondition_InvalidValues(t *testing.T) {
+	t.Parallel()
+	for _, cond := range []string{"stopped_days:x", "stopped_days:-1", "stopped_days"} {
+		_, err := ParseCondition(cond)
+		assert.Error(t, err, cond)
+	}
+}

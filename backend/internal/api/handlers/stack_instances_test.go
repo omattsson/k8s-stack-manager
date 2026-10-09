@@ -591,7 +591,29 @@ func TestCreateInstanceNamespaceConflict(t *testing.T) {
 func TestCloneInstanceNamespaceConflict(t *testing.T) {
 	t.Parallel()
 
-	t.Run("clone with duplicate namespace returns 409", func(t *testing.T) {
+	t.Run("generated name skips a taken namespace", func(t *testing.T) {
+		t.Parallel()
+		instRepo := NewMockStackInstanceRepository()
+		seedInstance(t, instRepo, "i1", "stack-a", "d1", "uid-1", models.StackStatusRunning)
+		require.NoError(t, instRepo.Create(&models.StackInstance{
+			ID: "i-taken", StackDefinitionID: "d1", Name: "taken",
+			Namespace: "stack-stack-a-copy-bob", OwnerID: "uid-other", Branch: "master",
+			Status: models.StackStatusRunning,
+		}))
+
+		router := setupInstanceRouter(instRepo, NewMockValueOverrideRepository(), NewMockStackDefinitionRepository(), NewMockChartConfigRepository(), NewMockStackTemplateRepository(), NewMockTemplateChartConfigRepository(), "uid-2", "bob", "user")
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest(http.MethodPost, "/api/v1/stack-instances/i1/clone", nil)
+		router.ServeHTTP(w, req)
+
+		require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+		var resp models.StackInstance
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+		assert.Equal(t, "stack-a-copy-2", resp.Name)
+		assert.Equal(t, "stack-stack-a-copy-2-bob", resp.Namespace)
+	})
+
+	t.Run("given name with duplicate namespace returns 409", func(t *testing.T) {
 		t.Parallel()
 		instRepo := NewMockStackInstanceRepository()
 		overrideRepo := NewMockValueOverrideRepository()
@@ -604,7 +626,7 @@ func TestCloneInstanceNamespaceConflict(t *testing.T) {
 			ID:                "i-taken",
 			StackDefinitionID: "d1",
 			Name:              "taken",
-			Namespace:         "stack-stack-a-copy-bob",
+			Namespace:         "stack-my-clone-bob",
 			OwnerID:           "uid-other",
 			Branch:            "master",
 			Status:            models.StackStatusRunning,
@@ -613,7 +635,8 @@ func TestCloneInstanceNamespaceConflict(t *testing.T) {
 
 		router := setupInstanceRouter(instRepo, overrideRepo, NewMockStackDefinitionRepository(), NewMockChartConfigRepository(), NewMockStackTemplateRepository(), NewMockTemplateChartConfigRepository(), "uid-2", "bob", "user")
 		w := httptest.NewRecorder()
-		req, _ := http.NewRequest(http.MethodPost, "/api/v1/stack-instances/i1/clone", nil)
+		req, _ := http.NewRequest(http.MethodPost, "/api/v1/stack-instances/i1/clone", bytes.NewBufferString(`{"name":"my-clone"}`))
+		req.Header.Set("Content-Type", "application/json")
 		router.ServeHTTP(w, req)
 
 		assert.Equal(t, http.StatusConflict, w.Code)

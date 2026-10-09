@@ -15,6 +15,7 @@ import { instanceService, definitionService, clusterService } from '../../api/cl
 import type { StackDefinition, Cluster } from '../../types';
 import TtlSelector from '../../components/TtlSelector';
 import LoadingState from '../../components/LoadingState';
+import { INSTANCE_NAME_MAX_LENGTH, INSTANCE_NAME_RULE, validateInstanceName } from '../../utils/instanceName';
 
 interface ConflictResponse {
   error: string;
@@ -58,6 +59,9 @@ const Form = () => {
       setBranch(def.default_branch || 'master');
     }
   }, [selectedDefId, definitions]);
+
+  // Show the rule violation only after the user has typed something.
+  const nameError = name ? validateInstanceName(name) : null;
 
   const handleCreate = async () => {
     setError(null);
@@ -154,9 +158,10 @@ const Form = () => {
             onChange={(e) => setName(e.target.value)}
             required
             fullWidth
-            helperText={`${name.length}/50 characters — namespace will be auto-generated from your name and owner`}
-            error={name.length > 50}
-            slotProps={{ htmlInput: { maxLength: 50 } }}
+            helperText={nameError
+              ?? `${INSTANCE_NAME_RULE} ${name.length}/${INSTANCE_NAME_MAX_LENGTH} characters. The namespace is generated from the name and the owner.`}
+            error={nameError !== null}
+            slotProps={{ htmlInput: { maxLength: INSTANCE_NAME_MAX_LENGTH } }}
           />
 
           <TextField
@@ -226,7 +231,7 @@ const Form = () => {
           <Button
             variant="contained"
             onClick={handleCreate}
-            disabled={saving || !name || !selectedDefId || name.length > 50}
+            disabled={saving || !name || !selectedDefId || nameError !== null}
           >
             {saving ? 'Creating...' : 'Create Instance'}
           </Button>

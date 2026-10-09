@@ -19,4 +19,7 @@ type ValueOverrideRepository interface {
 	Update(override *ValueOverride) error
 	Delete(id string) error
 	ListByInstance(instanceID string) ([]ValueOverride, error)
+	// DeleteByInstance deletes all value overrides of an instance (no error
+	// when there are none).
+	DeleteByInstance(instanceID string) error
 }

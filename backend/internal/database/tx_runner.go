@@ -26,6 +26,8 @@ type TxRepos struct {
 	ValueOverride   models.ValueOverrideRepository
 	BranchOverride  models.ChartBranchOverrideRepository
 	DeploymentLog   models.DeploymentLogRepository
+	// InstanceQuotaOverride is used by clone to copy the quota override.
+	InstanceQuotaOverride models.InstanceQuotaOverrideRepository
 }
 
 // GORMTxRunner implements TxRunner using GORM database transactions.
@@ -54,6 +56,8 @@ func (r *GORMTxRunner) RunInTx(fn func(repos TxRepos) error) error {
 			ValueOverride:   NewGORMValueOverrideRepository(tx),
 			BranchOverride:  NewGORMChartBranchOverrideRepository(tx),
 			DeploymentLog:   NewGORMDeploymentLogRepository(tx),
+
+			InstanceQuotaOverride: NewGORMInstanceQuotaOverrideRepository(tx),
 		}
 		return fn(repos)
 	})

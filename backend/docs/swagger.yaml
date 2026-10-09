@@ -375,6 +375,12 @@ definitions:
         type: string
       owner_id:
         type: string
+      owner_instance_id:
+        description: |-
+          OwnerInstanceID is set when quick deploy created the definition for one
+          instance. Deleting that instance also deletes the definition when no
+          other instance uses it. Empty for definitions that users create.
+        type: string
       source_template_id:
         type: string
       source_template_version:
@@ -391,6 +397,15 @@ definitions:
       instance_id:
         type: string
       instance_name:
+        type: string
+      values_drift:
+        description: |-
+          ValuesDrift is true when the running values come from a rollback (the
+          last operation was a successful rollback) and the stored overrides
+          produce different values: the next deploy undoes the rollback.
+        type: boolean
+      warning:
+        description: Warning explains ValuesDrift when it is true.
         type: string
     type: object
   handlers.LoginRequest:
@@ -495,6 +510,29 @@ definitions:
         type: string
     required:
     - password
+    type: object
+  handlers.RollbackResponse:
+    properties:
+      log_id:
+        type: string
+      message:
+        type: string
+      target_log_id:
+        description: |-
+          TargetLogID is the deploy whose values the rollback restores. Empty
+          for a rollback by one Helm revision.
+        type: string
+      values_drift:
+        description: |-
+          ValuesDrift is set for a rollback to a target: true when the values
+          built from the stored overrides differ from the target values. The
+          rollback does not change the stored overrides, so the next deploy then
+          changes the running values again. Not set for a rollback by one
+          revision; use GET /deploy-preview after the rollback.
+        type: boolean
+      warning:
+        description: Warning explains ValuesDrift when it is true.
+        type: string
     type: object
   handlers.TemplateDetailResponse:
     properties:
@@ -631,6 +669,22 @@ definitions:
       source_repo_url:
         type: string
     type: object
+  handlers.cloneInstanceRequest:
+    properties:
+      branch:
+        description: 'Branch of the clone. Default: the branch of the source.'
+        type: string
+      name:
+        description: |-
+          Name of the clone. Must be a DNS label (lowercase a-z, 0-9, '-', start
+          and end alphanumeric, at most 50 characters). When empty, the server
+          picks the first free name of <source>-copy, <source>-copy-2, ...
+        type: string
+      ttl_minutes:
+        description: 'TTLMinutes of the clone (0 = no expiry). Default: the TTL of
+          the source.'
+        type: integer
+    type: object
   handlers.createChannelRequest:
     properties:
       enabled:
@@ -668,7 +722,15 @@ definitions:
     type: object
   handlers.extendTTLRequest:
     properties:
+      minutes:
+        description: |-
+          Minutes adds this many minutes to the current expiry (or to now when
+          the instance already expired or has no expiry time). Must be > 0.
+        type: integer
       ttl_minutes:
+        description: |-
+          TTLMinutes is deprecated. Sent alone, it keeps the old behaviour: set
+          the TTL to this value and the expiry to now + TTL. Use minutes instead.
         type: integer
     type: object
   handlers.invokeActionRequest:
@@ -718,6 +780,12 @@ definitions:
       instance:
         $ref: '#/definitions/models.StackInstance'
       log_id:
+        type: string
+    type: object
+  handlers.rollbackRequest:
+    properties:
+      target_log_id:
+        description: TargetLogID is the ID of a successful deploy log of this instance.
         type: string
     type: object
   handlers.setBranchOverrideRequest:
@@ -1134,7 +1202,8 @@ definitions:
         description: or "all" for all clusters
         type: string
       condition:
-        description: e.g. "idle_days:7", "status:stopped,age_days:14", "ttl_expired"
+        description: e.g. "idle_days:7", "status:stopped,age_days:14", "stopped_days:3",
+          "ttl_expired"
         type: string
       created_at:
         type: string
@@ -1197,6 +1266,18 @@ definitions:
     properties:
       action:
         description: '"deploy", "stop", "clean", "rollback"'
+        type: string
+      branch:
+        description: |-
+          Branch is the instance branch of a deploy, or the branch of the target
+          deploy for a rollback to a target. Empty for older logs and for stop
+          and clean logs.
+        type: string
+      chart_versions:
+        description: |-
+          ChartVersions is a JSON object chart name -> chart version that a
+          deploy used. A rollback to this deploy installs the same versions.
+          Empty for logs written before the column existed.
         type: string
       completed_at:
         type: string
@@ -1407,6 +1488,12 @@ definitions:
         type: string
       owner_id:
         type: string
+      owner_instance_id:
+        description: |-
+          OwnerInstanceID is set when quick deploy created the definition for one
+          instance. Deleting that instance also deletes the definition when no
+          other instance uses it. Empty for definitions that users create.
+        type: string
       source_template_id:
         type: string
       source_template_version:
@@ -1440,10 +1527,23 @@ definitions:
         type: string
       status:
         type: string
+      stopped_at:
+        description: |-
+          StoppedAt is the time the last successful stop finished. It is nil
+          when the instance is not stopped. A deploy or a clean clears it.
+          Cleanup policies use it for the stopped_days condition.
+        type: string
       ttl_minutes:
         type: integer
       updated_at:
         type: string
+      values_drift:
+        description: |-
+          ValuesDrift is computed, not stored. GET /stack-instances/{id} sets it
+          to true when the running values come from a successful rollback and
+          the stored overrides produce different values (the next deploy undoes
+          the rollback). List responses do not compute it.
+        type: boolean
     type: object
   models.StackTemplate:
     properties:
@@ -1654,7 +1754,12 @@ paths:
     post:
       consumes:
       - application/json
-      description: Creates a new cleanup policy and reloads the scheduler
+      description: 'Creates a new cleanup policy and reloads the scheduler. condition
+        is a comma-separated list of key:value pairs (all must match): status:<status>;
+        idle_days:<N> (no deploy for N days, creation time when never deployed); age_days:<N>
+        (created more than N days ago); stopped_days:<N> (stopped, and the last stop
+        finished N or more days ago; instances without a recorded stop time never
+        match); ttl_expired.'
       parameters:
       - description: Cleanup policy
         in: body
@@ -1718,7 +1823,9 @@ paths:
     put:
       consumes:
       - application/json
-      description: Updates an existing cleanup policy and reloads the scheduler
+      description: Updates an existing cleanup policy and reloads the scheduler. See
+        the create endpoint for the condition syntax (status, idle_days, age_days,
+        stopped_days, ttl_expired).
       parameters:
       - description: Policy ID
         in: path
@@ -4219,7 +4326,8 @@ paths:
     post:
       consumes:
       - application/json
-      description: Create a new stack definition
+      description: Create a new stack definition. Definition names are unique per
+        owner.
       parameters:
       - description: Definition object
         in: body
@@ -4236,6 +4344,24 @@ paths:
             $ref: '#/definitions/models.StackDefinition'
         "400":
           description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "409":
+          description: The owner already has a definition with this name
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
           schema:
             additionalProperties:
               type: string
@@ -4299,7 +4425,8 @@ paths:
     put:
       consumes:
       - application/json
-      description: Update an existing stack definition
+      description: Update an existing stack definition. A changed name must be unique
+        for the owner of the definition.
       parameters:
       - description: Definition ID
         in: path
@@ -4325,8 +4452,26 @@ paths:
             additionalProperties:
               type: string
             type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
         "404":
           description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "409":
+          description: The owner already has a definition with this name
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
           schema:
             additionalProperties:
               type: string
@@ -4615,8 +4760,11 @@ paths:
     post:
       consumes:
       - application/json
-      description: Import a stack definition from a portable JSON bundle, creating
-        a new definition with fresh IDs
+      description: 'Import a stack definition from a portable JSON bundle, creating
+        a new definition with fresh IDs. Definition names are unique per owner: when
+        the caller already has a definition with the bundle name, the import uses
+        "<name> (imported)", then "<name> (imported 2)", ... The response holds the
+        final name (409 when no free name is found).'
       parameters:
       - description: Export bundle
         in: body
@@ -4700,7 +4848,9 @@ paths:
         (status running/stopped/error), a cleanup is initiated first — helm releases
         are uninstalled and the namespace is deleted before the database record is
         removed. Returns 204 for immediate deletion (draft instances) or 202 when
-        async cleanup is required.
+        async cleanup is required. When quick deploy created the stack definition
+        of the instance (owner_instance_id) and no other instance uses it, the definition
+        and its charts are deleted with the instance.
       parameters:
       - description: Instance ID
         in: path
@@ -4749,7 +4899,10 @@ paths:
       tags:
       - stack-instances
     get:
-      description: Get a stack instance by ID
+      description: 'Get a stack instance by ID. values_drift is true when the running
+        values come from a successful rollback and the stored overrides produce different
+        values: the next deploy undoes the rollback. Only this endpoint computes values_drift;
+        list responses omit it.'
       parameters:
       - description: Instance ID
         in: path
@@ -4763,8 +4916,26 @@ paths:
           description: OK
           schema:
             $ref: '#/definitions/models.StackInstance'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
         "404":
           description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
           schema:
             additionalProperties:
               type: string
@@ -4775,7 +4946,10 @@ paths:
     put:
       consumes:
       - application/json
-      description: Update a stack instance (branch, name, etc.)
+      description: Update a stack instance (branch, name, etc.). A changed name must
+        be a DNS label (lowercase a-z, 0-9, '-', start and end alphanumeric, at most
+        50 characters); an unchanged name is not checked, so older instances with
+        other names stay editable. A rename does not change the namespace.
       parameters:
       - description: Instance ID
         in: path
@@ -5093,13 +5267,23 @@ paths:
       - stack-instances
   /api/v1/stack-instances/{id}/clone:
     post:
-      description: Create a new stack instance as a copy of an existing one
+      consumes:
+      - application/json
+      description: |-
+        Create a new draft stack instance as a copy of an existing one. The clone belongs to the caller and uses the cluster and definition of the source.
+        It copies the TTL (unless ttl_minutes is given), the value overrides and the branch overrides. It copies the instance quota override only when the caller owns the source or is admin or devops.
+        The body is optional. Without a name, the server picks the first free name of <source>-copy, <source>-copy-2, ... (the namespace stack-<name>-<owner> must be free). A given name must be a DNS label (lowercase a-z, 0-9, '-', start and end alphanumeric, at most 50 characters).
       parameters:
-      - description: Instance ID
+      - description: Source instance ID
         in: path
         name: id
         required: true
         type: string
+      - description: Optional clone name, branch and TTL
+        in: body
+        name: body
+        schema:
+          $ref: '#/definitions/handlers.cloneInstanceRequest'
       produces:
       - application/json
       responses:
@@ -5107,6 +5291,24 @@ paths:
           description: Created
           schema:
             $ref: '#/definitions/models.StackInstance'
+        "400":
+          description: Invalid body, name or TTL
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
         "404":
           description: Not Found
           schema:
@@ -5114,15 +5316,25 @@ paths:
               type: string
             type: object
         "409":
-          description: Namespace already exists
+          description: Namespace already exists (given name), or no free generated
+            name
           schema:
             $ref: '#/definitions/handlers.NamespaceConflictResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
       summary: Clone a stack instance
       tags:
       - stack-instances
   /api/v1/stack-instances/{id}/deploy:
     post:
-      description: Trigger Helm deployment for a stack instance
+      description: Trigger Helm deployment for a stack instance. Allowed for draft,
+        stopped, error, partial and running instances (running = redeploy, a Helm
+        upgrade with the current values). With a TTL, the expiry becomes now + ttl_minutes,
+        unless the current expiry is later (a redeploy never makes the expiry earlier).
       parameters:
       - description: Instance ID
         in: path
@@ -5258,10 +5470,14 @@ paths:
       - stack-instances
   /api/v1/stack-instances/{id}/deploy-preview:
     get:
-      description: 'Compare pending merged values against last-deployed values per
-        chart. Pending values use the deploy pipeline: cluster shared values (by priority),
-        chart defaults, instance overrides, locked template values. A shared values
-        load error returns 500 (fail closed).'
+      description: 'Compare pending merged values against the running values per chart.
+        Pending values use the deploy pipeline: cluster shared values (by priority),
+        chart defaults, instance overrides, locked template values. Previous values
+        are the values of the last deploy, or of the last successful rollback. has_changes
+        compares the YAML content (key order and formatting do not matter). values_drift
+        is true when the last operation was a successful rollback and at least one
+        chart has changes: the next deploy undoes the rollback. A shared values load
+        error returns 500 (fail closed).'
       parameters:
       - description: Instance ID
         in: path
@@ -5308,15 +5524,19 @@ paths:
     post:
       consumes:
       - application/json
-      description: Extend the expiry time of a stack instance. Uses provided ttl_minutes
-        or the instance's existing TTLMinutes.
+      description: |-
+        Extend the expiry time of a stack instance. The extend never makes the expiry earlier and never changes ttl_minutes.
+        - {"minutes": N}: adds N minutes (N > 0) to the current expires_at, or to now when the instance already expired or has no expiry time. The new expiry is capped at now + 43200 minutes (30 days).
+        - Empty body: adds the instance's ttl_minutes in the same way (400 when ttl_minutes is 0).
+        - Deprecated {"ttl_minutes": N} (without minutes): the old behaviour for older clients (stackctl 0.4.0 and earlier). It sets ttl_minutes to N and expires_at to now + N, which can make the expiry earlier. The response has a Warning header; the server logs a deprecation warning.
+        An instance without TTL and without expiry time has nothing to extend (400).
       parameters:
       - description: Instance ID
         in: path
         name: id
         required: true
         type: string
-      - description: Optional TTL override
+      - description: Minutes to add (or the deprecated ttl_minutes)
         in: body
         name: body
         schema:
@@ -5325,11 +5545,21 @@ paths:
       - application/json
       responses:
         "200":
-          description: OK
+          description: The instance with the new expires_at
+          headers:
+            Warning:
+              description: Set when the deprecated ttl_minutes body is used
+              type: string
           schema:
             $ref: '#/definitions/models.StackInstance'
         "400":
           description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
           schema:
             additionalProperties:
               type: string
@@ -5342,6 +5572,12 @@ paths:
             type: object
         "404":
           description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
           schema:
             additionalProperties:
               type: string
@@ -5761,30 +5997,40 @@ paths:
     post:
       consumes:
       - application/json
-      description: Rollback all Helm releases in a stack instance to their previous
-        revision
+      description: |-
+        Without target_log_id: roll back every Helm release of the instance by one revision (helm rollback).
+        With target_log_id: restore the values of that deploy. The log must be a successful deploy of this instance with a values snapshot (404 when the log does not exist or belongs to another instance, 400 otherwise). Each chart of the target deploy is upgraded (helm upgrade --install) with the merged values of that deploy and the chart version that the deploy recorded; deploys from before the version recording use the current chart version. Charts that the target deploy did not include are left unchanged.
+        A rollback to a target restores the stored VALUES of that deploy (including the shared and locked values of that time), not the images. Image tags that are branch names can point to newer images now. A chart without a recorded version (the deploy used an empty chart version) installs the newest chart. Pre-deploy hooks do not run for a rollback; subscribe image gates to pre-rollback, which gets the same chart list (name, version, branch, image_tag) plus metadata rollback_mode, target_log_id and target_branch.
+        The pre-rollback hook runs in the background after the 202 answer, with progress streaming like pre-deploy. A rejection ends the rollback log with status error and the hook reason; the instance gets its previous status back. For a one-revision rollback the hook chart branches come from the previous successful deploy log when it recorded a branch.
+        In both modes a release stuck in pending-* is cleared before each chart, and after the rollback the instance waits for pod readiness (stabilizing) when readiness gating is configured, as for a deploy. A one-revision rollback that fails records the values of the charts that it already rolled back.
+        The rollback does not change the stored value or branch overrides. After a successful rollback the deploy preview compares against the running values; values_drift (in this response for a target, and in the deploy preview) shows that the next deploy applies the stored overrides again.
       parameters:
       - description: Instance ID
         in: path
         name: id
         required: true
         type: string
-      - description: 'Optional: {\'
+      - description: Optional rollback target
         in: body
         name: body
         schema:
-          type: object
+          $ref: '#/definitions/handlers.rollbackRequest'
       produces:
       - application/json
       responses:
         "202":
           description: Accepted
           schema:
+            $ref: '#/definitions/handlers.RollbackResponse'
+        "400":
+          description: Invalid body, no charts, or the target is not a successful
+            deploy with a values snapshot
+          schema:
             additionalProperties:
               type: string
             type: object
-        "400":
-          description: Bad Request
+        "401":
+          description: Unauthorized
           schema:
             additionalProperties:
               type: string
@@ -5796,7 +6042,7 @@ paths:
               type: string
             type: object
         "404":
-          description: Not Found
+          description: Instance or target deploy log not found
           schema:
             additionalProperties:
               type: string
@@ -6521,7 +6767,8 @@ paths:
     post:
       consumes:
       - application/json
-      description: Create a StackDefinition and ChartConfigs from a template
+      description: Create a StackDefinition and ChartConfigs from a template. Definition
+        names are unique per owner.
       parameters:
       - description: Template ID
         in: path
@@ -6547,8 +6794,26 @@ paths:
             additionalProperties:
               type: string
             type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
         "404":
           description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "409":
+          description: The caller already has a definition with this name
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
           schema:
             additionalProperties:
               type: string
@@ -6585,8 +6850,10 @@ paths:
     post:
       consumes:
       - application/json
-      description: Instantiate a template, create an instance, set branch overrides,
-        and trigger deployment in a single call
+      description: |-
+        Instantiate a template, create an instance, set branch overrides, and trigger deployment in a single call.
+        instance_name must be a DNS label (lowercase a-z, 0-9, '-', start and end alphanumeric, at most 50 characters).
+        The new stack definition is owned by the instance (owner_instance_id): deleting the instance deletes the definition when no other instance uses it. The definition is named after the instance; when the caller already has a definition with that name, the name gets the suffix " (2)", " (3)", ...
       parameters:
       - description: Template ID
         in: path
@@ -6612,12 +6879,28 @@ paths:
             additionalProperties:
               type: string
             type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
         "404":
           description: Not Found
           schema:
             additionalProperties:
               type: string
             type: object
+        "409":
+          description: Namespace already exists
+          schema:
+            $ref: '#/definitions/handlers.NamespaceConflictResponse'
         "500":
           description: Internal Server Error
           schema:

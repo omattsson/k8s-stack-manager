@@ -113,9 +113,11 @@ func (r *Reaper) processExpired() {
 		}
 
 		// No stopper or stop failed — mark as stopped directly.
+		now := time.Now().UTC()
 		inst.Status = models.StackStatusStopped
 		inst.ErrorMessage = "Expired (TTL)"
-		inst.UpdatedAt = time.Now().UTC()
+		inst.StoppedAt = &now
+		inst.UpdatedAt = now
 		if updateErr := r.instanceRepo.Update(inst); updateErr != nil {
 			slog.Error("Failed to update expired instance", "instance_id", inst.ID, "error", updateErr)
 			continue

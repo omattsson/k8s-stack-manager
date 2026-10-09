@@ -116,7 +116,9 @@ type quickDeployResponse struct {
 
 // QuickDeploy godoc
 // @Summary     Quick deploy from a template
-// @Description Instantiate a template, create an instance, set branch overrides, and trigger deployment in a single call
+// @Description Instantiate a template, create an instance, set branch overrides, and trigger deployment in a single call.
+// @Description instance_name must be a DNS label (lowercase a-z, 0-9, '-', start and end alphanumeric, at most 50 characters).
+// @Description The new stack definition is owned by the instance (owner_instance_id): deleting the instance deletes the definition when no other instance uses it. The definition is named after the instance; when the caller already has a definition with that name, the name gets the suffix " (2)", " (3)", ...
 // @Tags        templates
 // @Accept      json
 // @Produce     json
@@ -124,7 +126,10 @@ type quickDeployResponse struct {
 // @Param       body body     quickDeployRequest  true "Quick deploy options"
 // @Success     202  {object} quickDeployResponse
 // @Failure     400  {object} map[string]string
+// @Failure     401  {object} map[string]string
+// @Failure     403  {object} map[string]string
 // @Failure     404  {object} map[string]string
+// @Failure     409  {object} NamespaceConflictResponse "Namespace already exists"
 // @Failure     500  {object} map[string]string
 // @Security    BearerAuth
 // @Router      /api/v1/templates/{id}/quick-deploy [post]
@@ -143,6 +148,10 @@ func (h *QuickDeployHandler) QuickDeploy(c *gin.Context) {
 
 	if req.InstanceName == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "instance_name is required"})
+		return
+	}
+	if err := models.ValidateInstanceName(req.InstanceName); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "instance_" + err.Error()})
 		return
 	}
 
@@ -287,6 +296,23 @@ func (h *QuickDeployHandler) QuickDeploy(c *gin.Context) {
 		})
 		return
 	}
+
+	// The definition belongs to this instance: deleting the instance deletes
+	// it when no other instance uses it. Its name is unique for the owner:
+	// an existing name gets the suffix " (2)", " (3)", ...
+	def.OwnerInstanceID = inst.ID
+	defName, nameErr := uniqueDefinitionName(h.definitionRepo, userID, numberedDefinitionName(req.InstanceName))
+	if nameErr != nil {
+		slog.Error("Quick deploy: no free definition name", "instance_name", req.InstanceName, "error", nameErr)
+		if errors.Is(nameErr, errNoFreeDefinitionName) {
+			c.JSON(http.StatusConflict, gin.H{"error": fmt.Sprintf("A stack definition named %q already exists for this owner", req.InstanceName)})
+			return
+		}
+		status, message := mapError(nameErr, entityStackDefinition)
+		c.JSON(status, gin.H{"error": message})
+		return
+	}
+	def.Name = defName
 
 	// Persist definition + chart configs + instance.
 	txErr := h.txRunner.RunInTx(func(repos database.TxRepos) error {

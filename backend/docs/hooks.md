@@ -32,6 +32,9 @@ is a minimal Go starting point.
 | `pre-deploy` | Just before a deployment starts, after cluster resolution. | Synchronous. A subscriber with `failure_policy=fail` can abort. |
 | `post-deploy` | After a deployment completes **successfully**. | Fire-and-forget (default `failure_policy=ignore`). |
 | `deploy-finalized` | After a deployment ends **successfully or not**. | Fire-and-forget. |
+| `pre-rollback` | Before a rollback runs (`POST /stack-instances/:id/rollback`), in the background after the API answered 202. | Synchronous for the rollback, with progress streaming (`LOG:` lines go to the rollback log). `failure_policy=fail` aborts: the rollback log ends with status `error` and the hook reason, and the instance gets its previous status back. |
+| `post-rollback` | After a rollback completes **successfully**. | Fire-and-forget. |
+| `rollback-completed` | After a rollback ends: succeeded, failed, rejected by `pre-rollback`, or cancelled because another operation (stop, clean, deploy) started meanwhile. `metadata.outcome` is `succeeded`, `failed`, `rejected` or `cancelled`. | Fire-and-forget. |
 | `pre-instance-create` | After validation, before the instance is written to the DB. | Synchronous. `failure_policy=fail` aborts the create (HTTP 403). |
 | `post-instance-create` | After the instance is persisted. | Fire-and-forget. |
 | `pre-instance-delete` | After the instance ID is validated, before delete. | Synchronous. `failure_policy=fail` aborts (HTTP 403). |
@@ -121,6 +124,50 @@ should not assume every field is present.
 else the instance branch). `charts[].image_tag` is the Docker-safe tag of that
 branch, the same value as the `{{.ImageTag}}` template variable in the chart
 values. A CI gate checks and builds this tag, so it matches what Helm deploys.
+
+`pre-rollback` carries the same `charts` list as `pre-deploy`, so subscribe a
+CI image gate to `pre-rollback` too: pre-deploy hooks do not run for a
+rollback. The hook runs in the background like `pre-deploy` and supports the
+same streaming progress protocol. `metadata.rollback_mode` is
+`previous_revision` or `target` (the API body had `target_log_id`).
+
+For `previous_revision` each release goes back one Helm revision. `charts`
+lists all charts. Their branch and `image_tag` come from the deploy or
+rollback log of the revision that `helm rollback` goes to
+(`metadata.branch_source=previous_deploy`; the same branch for every chart,
+because per-chart branch overrides are not recorded):
+
+- the newest log failed (a failed deploy still created a Helm revision): the
+  newest successful log;
+- the newest log succeeded: the second newest successful log.
+
+When that log has no branch (older logs) or does not exist, the branches are
+the current ones (`metadata.branch_source=current`). This is a best guess per
+instance, not per release. The rollback log stores the same branch.
+
+A rejection writes a safe reason to the deployment log and the notification:
+`pre-rollback hook "<name>" denied the rollback: <subscriber message>` for a
+denial (`allowed: false`), and `pre-rollback hook "<name>" failed (unreachable
+or timed out)` for other failures. The full error (it can contain the
+subscriber URL) goes only to the server log. `pre-deploy` denials show the
+subscriber message the same way: `pre-deploy hook "<name>" denied the
+deployment: <subscriber message>`.
+
+The rollback continues after the hook only when no other operation started
+meanwhile (its deployment log is still the newest one of the instance).
+Otherwise the rollback log ends as cancelled and the instance is not touched;
+the same check guards `pre-deploy`.
+
+For `target`:
+
+- `charts` lists only the charts of the target deploy, with the chart version
+  that deploy recorded and the branch of the target deploy (`metadata.target_branch`;
+  per-chart branch overrides of that deploy are not recorded).
+- `metadata.target_log_id` is the target deploy log.
+- The rollback restores the stored **values** of that deploy (including the
+  shared and locked values of that time), not the images. An image tag that is
+  a branch name can now point to a newer image. A gate that must guarantee the
+  old image has to check it itself.
 
 ### Response
 

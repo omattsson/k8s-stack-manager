@@ -137,6 +137,28 @@ describe('QuickDeployDialog', () => {
     });
   }, 15_000);
 
+  it('validates the instance name live and blocks an invalid name', async () => {
+    const user = userEvent.setup();
+    render(
+      <MemoryRouter>
+        <QuickDeployDialog open={true} onClose={vi.fn()} template={template} />
+      </MemoryRouter>
+    );
+
+    const input = await screen.findByLabelText(/instance name/i);
+    expect(screen.getByText(/Use lowercase letters \(a-z\), digits/)).toBeInTheDocument();
+
+    await user.type(input, 'My Stack');
+    expect(screen.getByText('Use lowercase letters only')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: /deploy/i }));
+    expect(templateService.quickDeploy).not.toHaveBeenCalled();
+
+    await user.clear(input);
+    await user.type(input, 'my-stack');
+    expect(screen.queryByText('Use lowercase letters only')).not.toBeInTheDocument();
+  }, 15_000);
+
   it('shows cluster dropdown when multiple clusters exist', async () => {
     (clusterService.list as ReturnType<typeof vi.fn>).mockResolvedValue([
       { id: 'c1', name: 'Cluster A', is_default: true },

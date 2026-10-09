@@ -6,6 +6,8 @@ import {
   Accordion,
   AccordionSummary,
   AccordionDetails,
+  Button,
+  Tooltip,
 } from '@mui/material';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import type { DeploymentLog } from '../../types';
@@ -14,6 +16,10 @@ interface DeploymentLogViewerProps {
   logs: DeploymentLog[];
   loading?: boolean;
   streamingLines?: Record<string, string[]>;
+  /** ID of the deploy whose values run now. It gets a "current" label and no rollback action. */
+  currentDeployLogId?: string;
+  /** When set, successful deploys (except the current one) offer "Roll back to this deploy". */
+  onRollbackTo?: (log: DeploymentLog) => void;
 }
 
 const statusColor = (status: string): 'success' | 'error' | 'info' | 'default' => {
@@ -58,7 +64,7 @@ const terminalSx = {
   wordBreak: 'break-all',
 } as const;
 
-const DeploymentLogViewer = ({ logs, loading, streamingLines }: DeploymentLogViewerProps) => {
+const DeploymentLogViewer = ({ logs, loading, streamingLines, currentDeployLogId, onRollbackTo }: DeploymentLogViewerProps) => {
   const bottomRef = useRef<HTMLDivElement>(null);
   const streamContainerRef = useRef<HTMLDivElement>(null);
   const [expanded, setExpanded] = useState<string | false>(false);
@@ -114,6 +120,9 @@ const DeploymentLogViewer = ({ logs, loading, streamingLines }: DeploymentLogVie
         const lines = streamingLines?.[log.id];
         const isStreaming = log.status === 'running' && lines && lines.length > 0;
         const isExpanded = expanded === log.id;
+        const isCurrentDeploy = log.id === currentDeployLogId;
+        const canRollbackHere = Boolean(onRollbackTo)
+          && log.action === 'deploy' && log.status === 'success' && !isCurrentDeploy;
 
         return (
           <Accordion
@@ -135,6 +144,12 @@ const DeploymentLogViewer = ({ logs, loading, streamingLines }: DeploymentLogVie
                   size="small"
                   color={statusColor(log.status)}
                 />
+                {log.branch && (
+                  <Chip label={log.branch} size="small" variant="outlined" />
+                )}
+                {isCurrentDeploy && (
+                  <Chip label="current" size="small" color="success" variant="outlined" />
+                )}
                 {isStreaming && (
                   <Chip
                     label="LIVE"
@@ -157,6 +172,20 @@ const DeploymentLogViewer = ({ logs, loading, streamingLines }: DeploymentLogVie
               </Box>
             </AccordionSummary>
             <AccordionDetails sx={{ p: 0 }}>
+              {canRollbackHere && (
+                <Box sx={{ px: 2, pt: 1, display: 'flex', justifyContent: 'flex-end' }}>
+                  <Tooltip
+                    describeChild
+                    title={currentDeployLogId
+                      ? ''
+                      : 'The running values are unknown after a rollback without a target.'}
+                  >
+                    <Button size="small" variant="outlined" color="warning" onClick={() => onRollbackTo?.(log)}>
+                      Roll back to this deploy
+                    </Button>
+                  </Tooltip>
+                </Box>
+              )}
               {isStreaming ? (
                 <Box
                   ref={isExpanded ? streamContainerRef : undefined}

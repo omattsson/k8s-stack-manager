@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll } from 'vitest';
+import { describe, it, expect, beforeAll, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import DeploymentLogViewer from '../index';
@@ -406,5 +406,63 @@ describe('DeploymentLogViewer', () => {
   it('does not show "No deployment history" when loading is true even with empty logs', () => {
     render(<DeploymentLogViewer logs={[]} loading={true} />);
     expect(screen.queryByText('No deployment history')).not.toBeInTheDocument();
+  });
+
+  // -------------------------------------------------------------------------
+  // Roll back to this deploy
+  // -------------------------------------------------------------------------
+
+  describe('rollback action', () => {
+    const olderDeploy: DeploymentLog = {
+      ...completedDeployLog,
+      id: 'log-old',
+      branch: 'feature-x',
+      started_at: '2026-03-18T10:00:00Z',
+      completed_at: '2026-03-18T10:01:00Z',
+    };
+
+    it('offers "Roll back to this deploy" for an older successful deploy', async () => {
+      const user = userEvent.setup();
+      const onRollbackTo = vi.fn();
+      render(
+        <DeploymentLogViewer
+          logs={[completedDeployLog, olderDeploy]}
+          currentDeployLogId="log-1"
+          onRollbackTo={onRollbackTo}
+        />,
+      );
+      // The current deploy (expanded by default) has no action.
+      expect(screen.queryByRole('button', { name: 'Roll back to this deploy' })).not.toBeInTheDocument();
+      expect(screen.getByText('current')).toBeInTheDocument();
+      expect(screen.getByText('feature-x')).toBeInTheDocument();
+
+      await user.click(screen.getByText('feature-x'));
+      await user.click(await screen.findByRole('button', { name: 'Roll back to this deploy' }));
+      expect(onRollbackTo).toHaveBeenCalledWith(olderDeploy);
+    });
+
+    it('explains the action when no deploy is marked current', async () => {
+      const user = userEvent.setup();
+      render(<DeploymentLogViewer logs={[completedDeployLog, olderDeploy]} onRollbackTo={vi.fn()} />);
+      await user.hover(screen.getAllByRole('button', { name: 'Roll back to this deploy' })[0]);
+      expect(await screen.findByRole('tooltip')).toHaveTextContent(
+        'The running values are unknown after a rollback without a target.',
+      );
+    });
+
+    it('offers no action for failed deploys or other actions', () => {
+      render(
+        <DeploymentLogViewer
+          logs={[{ ...completedDeployLog, id: 'x', status: 'error' }, { ...errorStopLog, status: 'success' }]}
+          onRollbackTo={vi.fn()}
+        />,
+      );
+      expect(screen.queryByRole('button', { name: 'Roll back to this deploy' })).not.toBeInTheDocument();
+    });
+
+    it('offers no action without onRollbackTo', () => {
+      render(<DeploymentLogViewer logs={[completedDeployLog]} />);
+      expect(screen.queryByRole('button', { name: 'Roll back to this deploy' })).not.toBeInTheDocument();
+    });
   });
 });

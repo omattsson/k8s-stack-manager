@@ -313,12 +313,7 @@ func (h *InstanceHandler) BulkDelete(c *gin.Context) {
 	h.executeBulkOperation(c, "delete", func(_ *gin.Context, inst *models.StackInstance) (string, error) {
 		if h.txRunner != nil {
 			// Transactional path — branch override cleanup + instance delete are atomic.
-			txErr := h.txRunner.RunInTx(func(repos database.TxRepos) error {
-				if err := repos.BranchOverride.DeleteByInstance(inst.ID); err != nil {
-					return err
-				}
-				return repos.StackInstance.Delete(inst.ID)
-			})
+			txErr := database.DeleteInstanceWithOwnedDefinition(h.txRunner, inst)
 			if txErr != nil {
 				slog.Error("failed to delete instance in bulk operation", "instance_id", inst.ID, "error", txErr)
 				return "", fmt.Errorf("failed to delete instance")

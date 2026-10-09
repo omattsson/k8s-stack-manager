@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // Compile-time interface check.
@@ -49,6 +50,19 @@ func (r *GORMStackDefinitionRepository) FindByID(id string) (*models.StackDefini
 			return nil, dberrors.NewDatabaseError("find_by_id", dberrors.ErrNotFound)
 		}
 		return nil, dberrors.NewDatabaseError("find_by_id", err)
+	}
+	return &definition, nil
+}
+
+// FindByIDForUpdate returns a stack definition by its ID and locks its row
+// (SELECT ... FOR UPDATE) until the surrounding transaction ends.
+func (r *GORMStackDefinitionRepository) FindByIDForUpdate(id string) (*models.StackDefinition, error) {
+	var definition models.StackDefinition
+	if err := r.db.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?", id).First(&definition).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, dberrors.NewDatabaseError("find_by_id_for_update", dberrors.ErrNotFound)
+		}
+		return nil, dberrors.NewDatabaseError("find_by_id_for_update", err)
 	}
 	return &definition, nil
 }
@@ -103,7 +117,7 @@ func (r *GORMStackDefinitionRepository) ListPaged(limit, offset int) ([]models.S
 		return nil, 0, dberrors.NewDatabaseError("count", err)
 	}
 	var definitions []models.StackDefinition
-	if err := r.db.Select("id, name, description, owner_id, source_template_id, default_branch, created_at, updated_at").
+	if err := r.db.Select("id, name, description, owner_id, source_template_id, default_branch, owner_instance_id, created_at, updated_at").
 		Order("created_at DESC").Limit(limit).Offset(offset).Find(&definitions).Error; err != nil {
 		return nil, 0, dberrors.NewDatabaseError("list_paged", err)
 	}

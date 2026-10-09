@@ -18,6 +18,7 @@ import { templateService, clusterService } from '../../api/client';
 import TtlSelector from '../TtlSelector';
 import type { Cluster, StackTemplate } from '../../types';
 import { trackRecentTemplate } from '../../utils/recentTemplates';
+import { INSTANCE_NAME_RULE, validateInstanceName } from '../../utils/instanceName';
 
 interface QuickDeployDialogProps {
   open: boolean;
@@ -61,8 +62,9 @@ const QuickDeployDialog = ({ open, onClose, template }: QuickDeployDialogProps) 
 
   const handleDeploy = async () => {
     if (!template) return;
-    if (!instanceName.trim()) {
-      setNameError('Instance name is required');
+    const invalid = validateInstanceName(instanceName.trim());
+    if (invalid) {
+      setNameError(invalid);
       return;
     }
     setNameError(null);
@@ -110,12 +112,14 @@ const QuickDeployDialog = ({ open, onClose, template }: QuickDeployDialogProps) 
             label="Instance Name"
             value={instanceName}
             onChange={(e) => {
-              setInstanceName(e.target.value);
-              if (nameError) setNameError(null);
+              const value = e.target.value;
+              setInstanceName(value);
+              // Validate live once the user types; an empty field is reported on submit.
+              setNameError(value.trim() ? validateInstanceName(value.trim()) : null);
             }}
             required
             error={!!nameError}
-            helperText={nameError}
+            helperText={nameError ?? INSTANCE_NAME_RULE}
             size="small"
             autoFocus
           />

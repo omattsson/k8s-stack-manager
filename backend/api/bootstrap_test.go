@@ -514,6 +514,9 @@ func (s *stubStackDefinitionRepo) ListByTemplate(_ string) ([]models.StackDefini
 func (s *stubStackDefinitionRepo) CountByTemplateIDs(_ []string) (map[string]int, error) {
 	return nil, nil
 }
+func (s *stubStackDefinitionRepo) FindByIDForUpdate(_ string) (*models.StackDefinition, error) {
+	return nil, nil
+}
 func (s *stubStackDefinitionRepo) ListIDsByTemplateIDs(_ []string) (map[string][]string, error) {
 	return nil, nil
 }
@@ -527,6 +530,7 @@ func (s *stubChartConfigRepo) Create(_ *models.ChartConfig) error             { 
 func (s *stubChartConfigRepo) FindByID(_ string) (*models.ChartConfig, error) { return nil, nil }
 func (s *stubChartConfigRepo) Update(_ *models.ChartConfig) error             { return nil }
 func (s *stubChartConfigRepo) Delete(_ string) error                          { return nil }
+func (s *stubChartConfigRepo) DeleteByDefinition(_ string) error              { return nil }
 func (s *stubChartConfigRepo) ListByDefinition(_ string) ([]models.ChartConfig, error) {
 	return nil, nil
 }
@@ -544,6 +548,9 @@ func (s *stubDeploymentLogRepo) ListByInstance(_ context.Context, _ string) ([]m
 	return nil, nil
 }
 func (s *stubDeploymentLogRepo) ListByInstancePaginated(_ context.Context, _ models.DeploymentLogFilters) (*models.DeploymentLogResult, error) {
+	return nil, nil
+}
+func (s *stubDeploymentLogRepo) ListLatestByActions(_ context.Context, _ string, _ []string, _ int) ([]models.DeploymentLog, error) {
 	return nil, nil
 }
 func (s *stubDeploymentLogRepo) GetLatestByInstance(_ context.Context, _ string) (*models.DeploymentLog, error) {
@@ -683,6 +690,7 @@ type stubValueOverrideRepo struct{}
 
 func (s *stubValueOverrideRepo) Create(_ *models.ValueOverride) error             { return nil }
 func (s *stubValueOverrideRepo) FindByID(_ string) (*models.ValueOverride, error) { return nil, nil }
+func (s *stubValueOverrideRepo) DeleteByInstance(_ string) error                  { return nil }
 func (s *stubValueOverrideRepo) FindByInstanceAndChart(_, _ string) (*models.ValueOverride, error) {
 	return nil, nil
 }

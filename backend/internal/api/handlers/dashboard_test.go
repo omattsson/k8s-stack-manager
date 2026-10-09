@@ -40,6 +40,9 @@ func (m *dashboardMockDeployLogRepo) ListByInstance(_ context.Context, _ string)
 func (m *dashboardMockDeployLogRepo) ListByInstancePaginated(_ context.Context, _ models.DeploymentLogFilters) (*models.DeploymentLogResult, error) {
 	return nil, nil
 }
+func (m *dashboardMockDeployLogRepo) ListLatestByActions(_ context.Context, _ string, _ []string, _ int) ([]models.DeploymentLog, error) {
+	return nil, nil
+}
 func (m *dashboardMockDeployLogRepo) GetLatestByInstance(_ context.Context, _ string) (*models.DeploymentLog, error) {
 	return nil, nil
 }

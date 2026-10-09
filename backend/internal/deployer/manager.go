@@ -2,7 +2,6 @@ package deployer
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -16,7 +15,6 @@ import (
 	"time"
 
 	"backend/internal/database"
-	helmvalues "backend/internal/helm"
 	"backend/internal/hooks"
 	"backend/internal/k8s"
 	"backend/internal/models"
@@ -91,6 +89,11 @@ type Manager struct {
 	// pendingDeletes tracks instances that should be deleted from the database
 	// after their async clean operation completes successfully.
 	pendingDeletes sync.Map
+
+	// logActions maps a running deployment log ID to its action (deploy,
+	// stop, clean, rollback) for the deployment.status WebSocket payload.
+	// Entries are removed with the final status broadcast.
+	logActions sync.Map
 }
 
 // NamespaceRoleBindingSpec describes a RoleBinding that should be applied to
@@ -370,9 +373,14 @@ func (m *Manager) Deploy(ctx context.Context, req DeployRequest) (string, error)
 		Action:          models.DeployActionDeploy,
 		Status:          models.DeployLogRunning,
 		StartedAt:       now,
+		ChartVersions:   chartVersionsJSON(req.Charts),
+		Branch:          req.Instance.Branch,
 	}
+	m.logActions.Store(logID, deployLog.Action)
 	req.Instance.Status = models.StackStatusDeploying
 	req.Instance.ErrorMessage = ""
+	// A deploy ends the stopped period (cleanup condition stopped_days).
+	req.Instance.StoppedAt = nil
 
 	if m.txRunner != nil {
 		if err := m.txRunner.RunInTx(func(repos database.TxRepos) error {
@@ -400,22 +408,7 @@ func (m *Manager) Deploy(ctx context.Context, req DeployRequest) (string, error)
 
 	// Build ChartRef list for the hook payload so subscribers (e.g. CI trigger
 	// gates) know which charts are being deployed and can check/trigger builds.
-	chartRefs := make([]hooks.ChartRef, 0, len(req.Charts))
-	for _, c := range req.Charts {
-		branch := c.Branch
-		if branch == "" {
-			branch = req.Instance.Branch
-		}
-		chartRefs = append(chartRefs, hooks.ChartRef{
-			Name:            c.ChartConfig.ChartName,
-			ReleaseName:     c.ChartConfig.ChartName,
-			Version:         c.ChartConfig.ChartVersion,
-			SourceRepoURL:   c.ChartConfig.SourceRepoURL,
-			BuildPipelineID: c.ChartConfig.BuildPipelineID,
-			Branch:          branch,
-			ImageTag:        helmvalues.SanitizeImageTag(branch),
-		})
-	}
+	chartRefs := chartRefsFor(req.Charts, req.Instance.Branch, nil)
 	hookMeta := map[string]string{}
 	if regCfg != nil {
 		hookMeta["registry_url"] = regCfg.URL
@@ -487,14 +480,14 @@ func (m *Manager) executeDeploy(helm HelmExecutor, k8sClient *k8s.Client, regCfg
 	}
 
 	// A pre-deploy hook (for example a CI gate that waits for image builds)
-	// can run for many minutes. If a stop or clean changed the instance status
-	// meanwhile, do not install the charts. finalizeDeploy keeps the new status
-	// and only closes the deploy log.
-	if current, err := m.instanceRepo.FindByID(instanceID); err == nil && current.Status != models.StackStatusDeploying {
-		cancelErr := fmt.Errorf("deploy cancelled: instance status changed to %s during the pre-deploy hook", current.Status)
+	// can run for many minutes. If another operation started meanwhile (a
+	// newer deployment log exists) or the status changed, do not install the
+	// charts. finalizeDeploy keeps the new status and only closes the log.
+	if owned, current := m.ownsInstance(instanceID, deployLog.ID, models.StackStatusDeploying); !owned {
+		cancelErr := fmt.Errorf("deploy cancelled: another operation changed the instance (status %s) during the pre-deploy hook", current)
 		m.broadcastLog(instanceID, deployLog.ID, "WARNING: "+cancelErr.Error())
-		slog.Warn("deploy cancelled after pre-deploy hook: status changed",
-			"instance_id", instanceID, "log_id", deployLog.ID, "status", current.Status)
+		slog.Warn("deploy cancelled after pre-deploy hook: instance changed",
+			"instance_id", instanceID, "log_id", deployLog.ID, "status", current)
 		m.finalizeDeploy(instanceID, deployLog, "", cancelErr, false, lastDeployedValues, "")
 		return
 	}
@@ -698,15 +691,7 @@ func (m *Manager) executeDeploy(helm HelmExecutor, k8sClient *k8s.Client, regCfg
 			valuesFile = valuesPath
 		}
 
-		chartRef := chart.ChartConfig.ChartPath
-		if chartRef == "" {
-			chartRef = chart.ChartConfig.ChartName
-		}
-		repoURL := chart.ChartConfig.RepositoryURL
-		if strings.HasPrefix(repoURL, "oci://") {
-			chartRef = strings.TrimRight(repoURL, "/") + "/" + chartRef
-			repoURL = ""
-		}
+		chartRef, repoURL := chartReference(chart.ChartConfig)
 
 		// A release left in pending-* by an earlier, interrupted deploy blocks
 		// every upgrade; remove the stuck revision first.
@@ -854,6 +839,7 @@ func (m *Manager) finalizeDeploy(instanceID string, deployLog *models.Deployment
 	concurrentOp := instance.Status != models.StackStatusDeploying &&
 		instance.Status != models.StackStatusStabilizing
 	if concurrentOp {
+		m.logActions.Delete(deployLog.ID)
 		slog.Warn("finalizeDeploy: concurrent operation changed status, skipping instance update",
 			"instance_id", instanceID,
 			"current_status", instance.Status,
@@ -925,6 +911,7 @@ func (m *Manager) finalizeDeploy(instanceID string, deployLog *models.Deployment
 		}); err != nil {
 			slog.Error("failed to finalize deploy atomically",
 				"instance_id", instanceID, "error", err)
+			m.fallbackLogUpdate(instanceID, deployLog)
 		}
 	} else {
 		if err := m.instanceRepo.Update(instance); err != nil {
@@ -1015,6 +1002,7 @@ func (m *Manager) StopWithCharts(ctx context.Context, instance *models.StackInst
 		Status:          models.DeployLogRunning,
 		StartedAt:       now,
 	}
+	m.logActions.Store(logID, deployLog.Action)
 	instance.Status = models.StackStatusStopping
 	instance.ErrorMessage = ""
 
@@ -1150,6 +1138,7 @@ func (m *Manager) finalizeStop(instanceID string, deployLog *models.DeploymentLo
 	} else {
 		instance.Status = models.StackStatusStopped
 		instance.ErrorMessage = ""
+		instance.StoppedAt = &now
 		deployLog.Status = models.DeployLogSuccess
 
 		slog.Info("stop succeeded",
@@ -1170,6 +1159,7 @@ func (m *Manager) finalizeStop(instanceID string, deployLog *models.DeploymentLo
 		}); err != nil {
 			slog.Error("failed to finalize stop atomically",
 				"instance_id", instanceID, "error", err)
+			m.fallbackLogUpdate(instanceID, deployLog)
 		}
 	} else {
 		if err := m.instanceRepo.Update(instance); err != nil {
@@ -1240,6 +1230,13 @@ func isTimeoutError(err error) bool {
 
 func sanitizeDeployError(err error) string {
 	msg := err.Error()
+
+	// A failed pre-deploy hook: show the subscriber's deny reason (or a
+	// generic failure text); never the raw error, which can hold the URL.
+	var hookErr *hooks.FailedError
+	if strings.HasPrefix(msg, "pre-deploy hook") && errors.As(err, &hookErr) {
+		return hooks.UserMessage(err, hooks.EventPreDeploy, "deployment")
+	}
 
 	// Look for the pattern "deploying chart ..." or "uninstalling chart ..."
 	// which is the outermost fmt.Errorf wrapper in executeDeploy / executeStopWithCharts.
@@ -1315,6 +1312,7 @@ func (m *Manager) Clean(ctx context.Context, instance *models.StackInstance, cha
 		Status:          models.DeployLogRunning,
 		StartedAt:       now,
 	}
+	m.logActions.Store(logID, deployLog.Action)
 	instance.Status = models.StackStatusCleaning
 	instance.ErrorMessage = ""
 
@@ -1486,6 +1484,7 @@ func (m *Manager) finalizeClean(instanceID string, deployLog *models.DeploymentL
 		instance.Status = models.StackStatusDraft
 		instance.ErrorMessage = ""
 		instance.LastDeployedAt = nil
+		instance.StoppedAt = nil
 		deployLog.Status = models.DeployLogSuccess
 
 		slog.Info("clean succeeded",
@@ -1506,6 +1505,7 @@ func (m *Manager) finalizeClean(instanceID string, deployLog *models.DeploymentL
 		}); err != nil {
 			slog.Error("failed to finalize clean atomically",
 				"instance_id", instanceID, "error", err)
+			m.fallbackLogUpdate(instanceID, deployLog)
 		}
 	} else {
 		if err := m.instanceRepo.Update(instance); err != nil {
@@ -1524,12 +1524,7 @@ func (m *Manager) finalizeClean(instanceID string, deployLog *models.DeploymentL
 		m.broadcastStatusWithError(instanceID, models.StackStatusError, deployLog.ID, instance.ErrorMessage)
 	} else if shouldDelete {
 		if m.txRunner != nil {
-			if err := m.txRunner.RunInTx(func(repos database.TxRepos) error {
-				if err := repos.BranchOverride.DeleteByInstance(instanceID); err != nil {
-					return fmt.Errorf("deleting branch overrides: %w", err)
-				}
-				return repos.StackInstance.Delete(instanceID)
-			}); err != nil {
+			if err := database.DeleteInstanceWithOwnedDefinition(m.txRunner, instance); err != nil {
 				slog.Error("failed to delete instance after clean",
 					"instance_id", instanceID, "error", err)
 				m.broadcastStatus(instanceID, models.StackStatusDraft, deployLog.ID)
@@ -1564,11 +1559,28 @@ type RollbackRequest struct {
 	Instance    *models.StackInstance
 	Charts      []ChartDeployInfo
 	TargetLogID string
+	// TargetValues holds the merged values YAML per chart name from the
+	// values snapshot of the target deploy log. When it is not empty, the
+	// rollback installs these values (helm upgrade --install) instead of
+	// going back one Helm revision.
+	TargetValues map[string]string
+	// TargetChartVersions holds chart name -> chart version recorded by the
+	// target deploy. A chart without a recorded version uses the version of
+	// its current chart config.
+	TargetChartVersions map[string]string
+	// TargetBranch is the branch of the target deploy. It is stored on the
+	// rollback log. Empty: the instance branch is stored.
+	TargetBranch string
 }
 
-// Rollback starts an async rollback of all charts in a stack instance to their
-// previous Helm revision. Each chart release is rolled back by one revision.
-// Returns the deployment log ID immediately.
+// Rollback starts an async rollback of a stack instance and returns the
+// deployment log ID immediately.
+//
+// Without TargetValues each chart release is rolled back by one Helm
+// revision. With TargetValues each chart is upgraded to the values snapshot
+// of the target deploy (see rollbackToTarget). After a successful rollback the
+// instance's LastDeployedValues hold the values that now run, so the deploy
+// preview compares the stored overrides against the running values.
 func (m *Manager) Rollback(ctx context.Context, req RollbackRequest) (string, error) {
 	if err := ctx.Err(); err != nil {
 		return "", fmt.Errorf("request cancelled: %w", err)
@@ -1592,12 +1604,38 @@ func (m *Manager) Rollback(ctx context.Context, req RollbackRequest) (string, er
 		return "", fmt.Errorf("getting cluster clients: helm executor is nil")
 	}
 
-	logID := uuid.New().String()
-
-	if err := m.fireDeployHook(ctx, hooks.EventPreRollback, req.Instance, logID, time.Time{}, hookOpts{}); err != nil {
-		return "", fmt.Errorf("pre-rollback hook: %w", err)
+	// The k8s client is optional for a rollback: it is used to clear a stuck
+	// pending release before an upgrade and for readiness gating.
+	k8sClient, k8sErr := m.registry.GetK8sClient(clusterID)
+	if k8sErr != nil {
+		slog.Warn("failed to get k8s client for rollback, skipping pending-release recovery and readiness gating",
+			"cluster_id", clusterID, "error", k8sErr)
+		k8sClient = nil
+	}
+	regCfg, regErr := m.registry.GetRegistryConfig(clusterID)
+	if regErr != nil {
+		slog.Warn("failed to get registry config for rollback, skipping registry login",
+			"cluster_id", clusterID, "error", regErr)
+		regCfg = nil
 	}
 
+	var target *rollbackTarget
+	if len(req.TargetValues) > 0 {
+		// The target rollback installs charts, so OCI registries need a login.
+		target = &rollbackTarget{values: req.TargetValues, versions: req.TargetChartVersions, regCfg: regCfg}
+	}
+
+	// pre-rollback carries the same chart list as pre-deploy (name, version,
+	// branch, image_tag), so a gate (for example a CI image gate) can check
+	// the images that the rollback uses. Build it before the rollback log
+	// exists, so the previous revision lookup does not see that log.
+	var previousBranch string
+	if target == nil {
+		previousBranch = m.previousRevisionBranch(ctx, req.Instance.ID)
+	}
+	preRollbackOpts := rollbackHookOpts(req, regCfg, previousBranch)
+
+	logID := uuid.New().String()
 	now := time.Now().UTC()
 
 	deployLog := &models.DeploymentLog{
@@ -1607,7 +1645,15 @@ func (m *Manager) Rollback(ctx context.Context, req RollbackRequest) (string, er
 		Status:          models.DeployLogRunning,
 		StartedAt:       now,
 		TargetLogID:     req.TargetLogID,
+		Branch:          req.Instance.Branch,
 	}
+	m.logActions.Store(logID, deployLog.Action)
+	if req.TargetBranch != "" {
+		deployLog.Branch = req.TargetBranch
+	} else if previousBranch != "" {
+		deployLog.Branch = previousBranch
+	}
+	prevStatus, prevError := req.Instance.Status, req.Instance.ErrorMessage
 	req.Instance.Status = models.StackStatusDeploying
 	req.Instance.ErrorMessage = ""
 
@@ -1640,15 +1686,66 @@ func (m *Manager) Rollback(ctx context.Context, req RollbackRequest) (string, er
 		return charts[i].ChartConfig.DeployOrder < charts[j].ChartConfig.DeployOrder
 	})
 
+	// The pre-rollback hook fires in the goroutine (as pre-deploy does), with
+	// progress streaming, so a long gate does not block the API response.
 	m.wg.Add(1)
-	go m.executeRollback(helmExec, req.Instance.ID, deployLog, req.Instance.Namespace, charts)
+	go m.executeRollback(rollbackJob{
+		helm:       helmExec,
+		k8sClient:  k8sClient,
+		instance:   *req.Instance,
+		deployLog:  deployLog,
+		charts:     charts,
+		target:     target,
+		hookOpts:   preRollbackOpts,
+		prevStatus: prevStatus,
+		prevError:  prevError,
+	})
 
 	return logID, nil
 }
 
-// executeRollback rolls back each chart release by one Helm revision.
-func (m *Manager) executeRollback(helm HelmExecutor, instanceID string, deployLog *models.DeploymentLog, namespace string, charts []ChartDeployInfo) {
+// executeRollback fires the pre-rollback hook, then rolls back each chart
+// release by one Helm revision, or to the values of the target deploy when
+// job.target is not nil. A nil job.k8sClient disables pending-release
+// recovery and readiness gating.
+func (m *Manager) executeRollback(job rollbackJob) {
 	defer m.wg.Done()
+
+	instanceID := job.instance.ID
+	namespace := job.instance.Namespace
+	deployLog := job.deployLog
+	charts := job.charts
+	k8sClient := job.k8sClient
+
+	// Fire pre-rollback before acquiring the semaphore so a long-running gate
+	// does not hold a concurrency slot. Progress lines go to the WebSocket
+	// log and into the rollback log output.
+	var progressMu sync.Mutex
+	var progress strings.Builder
+	opts := job.hookOpts
+	opts.OnProgress = func(line string) {
+		m.broadcastLog(instanceID, deployLog.ID, line)
+		progressMu.Lock()
+		progress.WriteString(line + "\n")
+		progressMu.Unlock()
+	}
+	hookErr := m.fireDeployHook(m.shutdownCtx, hooks.EventPreRollback, &job.instance, deployLog.ID, deployLog.StartedAt, opts)
+	progressMu.Lock()
+	allOutput := progress.String()
+	progressMu.Unlock()
+	if hookErr != nil {
+		m.finalizeRollbackRejected(job, allOutput, hookErr)
+		return
+	}
+
+	// Another operation (a stop, clean or deploy) during a long hook wins:
+	// do not touch the releases or the instance.
+	if owned, current := m.ownsInstance(instanceID, deployLog.ID, models.StackStatusDeploying); !owned {
+		reason := fmt.Sprintf("rollback cancelled: another operation changed the instance (status %s) during the pre-rollback hook", current)
+		m.finalizeRollbackCancelled(instanceID, deployLog, allOutput, reason)
+		return
+	}
+
 	m.semaphore <- struct{}{}
 	defer func() { <-m.semaphore }()
 
@@ -1658,11 +1755,10 @@ func (m *Manager) executeRollback(helm HelmExecutor, instanceID string, deployLo
 		attribute.String("log.id", deployLog.ID),
 	)
 
-	var allOutput string
 	var rollbackErr error
 	defer func() { finishSpan(rollbackErr) }()
 
-	helm, streaming := m.wrapStreaming(helm, instanceID, deployLog.ID)
+	helm, streaming := m.wrapStreaming(job.helm, instanceID, deployLog.ID)
 
 	var timeout time.Duration
 	if helm != nil {
@@ -1670,9 +1766,21 @@ func (m *Manager) executeRollback(helm HelmExecutor, instanceID string, deployLo
 	} else {
 		timeout = 5 * time.Minute
 	}
-	ctx, cancel := context.WithTimeout(m.shutdownCtx, timeout)
+	if job.target != nil {
+		// One helm timeout per chart, as for a deploy.
+		ctx, cancel := context.WithTimeout(m.shutdownCtx, deployBudget(timeout, len(charts)))
+		defer cancel()
+		output, applied, err := m.rollbackToTarget(ctx, helm, k8sClient, streaming, instanceID, deployLog, namespace, charts, job.target)
+		rollbackErr = err
+		output = allOutput + output + m.rollbackReadiness(k8sClient, instanceID, namespace, deployLog.ID, rollbackErr)
+		m.finalizeRollback(instanceID, deployLog, output, rollbackErr, applied)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(m.shutdownCtx, deployBudget(timeout, len(charts)))
 	defer cancel()
 
+	var rolledBack []ChartDeployInfo
 	for _, chart := range charts {
 		releaseName := chart.ChartConfig.ChartName
 
@@ -1682,6 +1790,21 @@ func (m *Manager) executeRollback(helm HelmExecutor, instanceID string, deployLo
 			"namespace", namespace,
 		)
 
+		// A release left in pending-* blocks the rollback; remove the stuck
+		// revision first (as deploy does). The removed revision was the one
+		// to undo, so the rollback then goes to the now-current revision.
+		recovered := false
+		if k8sClient != nil {
+			msg, recErr := recoverPendingRelease(ctx, helm, k8sClient.Clientset(), releaseName, namespace)
+			if recErr != nil {
+				allOutput += fmt.Sprintf("WARNING: %s\n", recErr.Error())
+			} else if msg != "" {
+				recovered = true
+				allOutput += msg + "\n"
+				m.broadcastLog(instanceID, deployLog.ID, msg)
+			}
+		}
+
 		// Query Helm history to find the current revision, then roll back by one.
 		revisions, err := helm.History(ctx, releaseName, namespace, 2)
 		if err != nil {
@@ -1690,14 +1813,19 @@ func (m *Manager) executeRollback(helm HelmExecutor, instanceID string, deployLo
 			break
 		}
 
-		if len(revisions) < 2 {
+		if len(revisions) == 0 || (len(revisions) < 2 && !recovered) {
 			allOutput += fmt.Sprintf("=== Chart: %s === (skipped: only %d revision)\n", releaseName, len(revisions))
 			continue
 		}
 
 		// Helm history returns revisions sorted ascending (oldest first).
-		// With max=2 we get [previous, current]; index 0 is the rollback target.
+		// With max=2 we get [previous, current]; index 0 is the rollback
+		// target. After a pending revision was removed, the current revision
+		// (the last one) is the target.
 		targetRevision := revisions[0].Revision
+		if recovered {
+			targetRevision = revisions[len(revisions)-1].Revision
+		}
 
 		output, err := helm.Rollback(ctx, releaseName, namespace, targetRevision)
 		allOutput += fmt.Sprintf("=== Chart: %s (→ rev %d) ===\n%s\n", releaseName, targetRevision, output)
@@ -1710,43 +1838,43 @@ func (m *Manager) executeRollback(helm HelmExecutor, instanceID string, deployLo
 			allOutput += fmt.Sprintf("ERROR: %s\n", rollbackErr.Error())
 			break
 		}
+		rolledBack = append(rolledBack, chart)
 	}
 
-	// Collect post-rollback values for snapshot.
-	var valuesSnapshot string
-	if rollbackErr == nil {
-		valuesSnapshot = m.collectChartValues(context.Background(), helm, namespace, charts) //nolint:gosec // G118: intentional — must outlive HTTP request
+	// Collect the post-rollback values (helm get values). After a failure,
+	// collect the charts that were already rolled back, so the deploy preview
+	// compares against what runs.
+	collect := charts
+	if rollbackErr != nil {
+		collect = rolledBack
 	}
+	running := m.collectChartValues(context.Background(), helm, namespace, collect) //nolint:gosec // G118: intentional — must outlive HTTP request
+	allOutput += m.rollbackReadiness(k8sClient, instanceID, namespace, deployLog.ID, rollbackErr)
 
-	m.finalizeRollback(instanceID, deployLog, allOutput, rollbackErr, valuesSnapshot)
+	m.finalizeRollback(instanceID, deployLog, allOutput, rollbackErr, running)
 }
 
-// collectChartValues gathers the current Helm values for all charts and returns
-// them as a JSON string for storage in the deployment log values snapshot.
-func (m *Manager) collectChartValues(ctx context.Context, helm HelmExecutor, namespace string, charts []ChartDeployInfo) string {
-	allValues := make(map[string]interface{})
+// collectChartValues returns the current user-supplied values YAML of each
+// chart release (helm get values -o yaml), keyed by chart name. This is the
+// same format as the deploy values snapshot. Releases whose values cannot be
+// read are left out.
+func (m *Manager) collectChartValues(ctx context.Context, helm HelmExecutor, namespace string, charts []ChartDeployInfo) map[string]string {
+	values := make(map[string]string, len(charts))
 	for _, chart := range charts {
 		vals, err := helm.GetValues(ctx, chart.ChartConfig.ChartName, namespace, 0)
-		if err != nil {
+		if err != nil || strings.TrimSpace(vals) == "" {
 			continue
 		}
-		var parsed interface{}
-		if jsonErr := json.Unmarshal([]byte(vals), &parsed); jsonErr == nil {
-			allValues[chart.ChartConfig.ChartName] = parsed
-		}
+		values[chart.ChartConfig.ChartName] = vals
 	}
-	if len(allValues) == 0 {
-		return ""
-	}
-	data, err := json.Marshal(allValues)
-	if err != nil {
-		return ""
-	}
-	return string(data)
+	return values
 }
 
-// finalizeRollback updates the instance and deployment log with the final rollback status.
-func (m *Manager) finalizeRollback(instanceID string, deployLog *models.DeploymentLog, output string, rollbackErr error, valuesSnapshot string) {
+// finalizeRollback updates the instance and deployment log with the final
+// rollback status. On success, applied (chart name -> values YAML that now
+// run) is merged into the instance's LastDeployedValues, and the merged
+// values become the values snapshot of the rollback log.
+func (m *Manager) finalizeRollback(instanceID string, deployLog *models.DeploymentLog, output string, rollbackErr error, applied map[string]string) {
 	now := time.Now().UTC()
 
 	instance, err := m.instanceRepo.FindByID(instanceID)
@@ -1759,12 +1887,28 @@ func (m *Manager) finalizeRollback(instanceID string, deployLog *models.Deployme
 	deployLog.Output = truncateString(output, maxOutputLen)
 	deployLog.CompletedAt = &now
 
+	// If another operation (stop, clean, deploy) started during the
+	// rollback, keep its status (and stopped_at); only close the rollback log.
+	if owned, current := m.ownsInstance(instanceID, deployLog.ID, models.StackStatusDeploying, models.StackStatusStabilizing); !owned {
+		slog.Warn("finalizeRollback: another operation changed the instance, skipping instance update",
+			"instance_id", instanceID, "current_status", current)
+		m.finalizeRollbackCancelled(instanceID, deployLog, output,
+			fmt.Sprintf("rollback result not applied to the instance: another operation changed it (status %s)", current))
+		return
+	}
+
 	if rollbackErr != nil {
 		sanitized := sanitizeDeployError(rollbackErr)
 		instance.Status = models.StackStatusError
 		instance.ErrorMessage = truncateString(sanitized, maxInstanceErrorLen)
 		deployLog.Status = models.DeployLogError
 		deployLog.ErrorMessage = truncateString(sanitized, maxLogErrorLen)
+		// Charts that were upgraded before the error run their new values;
+		// record them so the deploy preview compares against reality. The
+		// failed log keeps no values snapshot.
+		if len(applied) > 0 {
+			instance.LastDeployedValues = mergeRunningValues(instance.LastDeployedValues, applied)
+		}
 
 		slog.Error("rollback failed",
 			"instance_id", instanceID,
@@ -1777,9 +1921,10 @@ func (m *Manager) finalizeRollback(instanceID string, deployLog *models.Deployme
 		instance.LastDeployedAt = &now
 		deployLog.Status = models.DeployLogSuccess
 
-		if valuesSnapshot != "" {
-			instance.LastDeployedValues = valuesSnapshot
-			deployLog.ValuesSnapshot = valuesSnapshot
+		if len(applied) > 0 {
+			running := mergeRunningValues(instance.LastDeployedValues, applied)
+			instance.LastDeployedValues = running
+			deployLog.ValuesSnapshot = running
 		}
 
 		slog.Info("rollback succeeded",
@@ -1800,6 +1945,7 @@ func (m *Manager) finalizeRollback(instanceID string, deployLog *models.Deployme
 		}); err != nil {
 			slog.Error("failed to finalize rollback atomically",
 				"instance_id", instanceID, "error", err)
+			m.fallbackLogUpdate(instanceID, deployLog)
 		}
 	} else {
 		if err := m.instanceRepo.Update(instance); err != nil {
@@ -1819,7 +1965,11 @@ func (m *Manager) finalizeRollback(instanceID string, deployLog *models.Deployme
 	}
 
 	hookCtx := m.shutdownCtx
-	_ = m.fireDeployHook(hookCtx, hooks.EventRollbackCompleted, instance, deployLog.ID, deployLog.StartedAt, hookOpts{})
+	outcome := rollbackOutcomeSucceeded
+	if rollbackErr != nil {
+		outcome = rollbackOutcomeFailed
+	}
+	_ = m.fireDeployHook(hookCtx, hooks.EventRollbackCompleted, instance, deployLog.ID, deployLog.StartedAt, outcomeOpts(outcome))
 	if rollbackErr == nil {
 		_ = m.fireDeployHook(hookCtx, hooks.EventPostRollback, instance, deployLog.ID, deployLog.StartedAt, hookOpts{})
 		m.notifyUser(instance.OwnerID, instanceID, "rollback.completed", "Rollback completed", fmt.Sprintf("Stack %s has been rolled back successfully", instance.Name))

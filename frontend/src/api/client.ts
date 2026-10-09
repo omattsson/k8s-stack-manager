@@ -14,6 +14,8 @@ import type {
   ChartConfig,
   CreateChartConfigRequest,
   StackInstance,
+  CloneInstanceRequest,
+  RollbackResponse,
   ValueOverride,
   AuditLog,
   AuditLogFilters,
@@ -892,14 +894,16 @@ export const instanceService = {
     }
   },
   /**
-   * Clone an instance, creating an independent copy.
+   * Clone an instance, creating an independent copy. The copy gets the value,
+   * branch and quota overrides of the source.
    * @param id - Instance ID to clone
+   * @param data - Optional name of the copy (RFC 1123 label; the server picks a free `<name>-copy[-N]` when omitted), branch and TTL in minutes
    * @returns The cloned instance
    * @see POST /api/v1/stack-instances/:id/clone
    */
-  clone: async (id: string): Promise<StackInstance> => {
+  clone: async (id: string, data: CloneInstanceRequest): Promise<StackInstance> => {
     try {
-      const response = await api.post(`/api/v1/stack-instances/${id}/clone`);
+      const response = await api.post(`/api/v1/stack-instances/${id}/clone`, data);
       return response.data;
     } catch (error) {
       console.error('Failed to clone instance:', error);
@@ -1043,6 +1047,26 @@ export const instanceService = {
     }
   },
   /**
+   * Roll the Helm releases of an instance back. Without a target, each chart
+   * goes back one revision.
+   * @param id - Instance ID
+   * @param targetLogId - Optional ID of a successful deploy log of this instance to roll back to
+   * @returns Deployment log ID, status message, target, values drift flag and an optional warning
+   * @see POST /api/v1/stack-instances/:id/rollback
+   */
+  rollback: async (id: string, targetLogId?: string): Promise<RollbackResponse> => {
+    try {
+      const response = await api.post(
+        `/api/v1/stack-instances/${id}/rollback`,
+        targetLogId ? { target_log_id: targetLogId } : {},
+      );
+      return response.data;
+    } catch (error) {
+      console.error('Failed to roll back instance:', error);
+      throw error;
+    }
+  },
+  /**
    * Fetch deployment logs for an instance.
    * @param id - Instance ID
    * @returns Array of deployment log entries
@@ -1089,18 +1113,17 @@ export const instanceService = {
     }
   },
   /**
-   * Extend the TTL of a running instance.
+   * Extend the expiry of an instance. Adds the minutes to the current expiry
+   * (or to now, when the instance has already expired or has no expiry).
+   * Does not change the TTL setting of the instance.
    * @param id - Instance ID
-   * @param ttlMinutes - New TTL in minutes (uses default if omitted)
-   * @returns The updated instance with new expiration
+   * @param minutes - Minutes to add to the expiry
+   * @returns The updated instance with the new `expires_at`
    * @see POST /api/v1/stack-instances/:id/extend
    */
-  extend: async (id: string, ttlMinutes?: number): Promise<StackInstance> => {
+  extend: async (id: string, minutes: number): Promise<StackInstance> => {
     try {
-      const response = await api.post(
-        `/api/v1/stack-instances/${id}/extend`,
-        ttlMinutes ? { ttl_minutes: ttlMinutes } : {},
-      );
+      const response = await api.post(`/api/v1/stack-instances/${id}/extend`, { minutes });
       return response.data;
     } catch (error) {
       console.error('Failed to extend TTL:', error);

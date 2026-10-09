@@ -3,6 +3,7 @@ package deployer
 import (
 	"log/slog"
 
+	"backend/internal/models"
 	"backend/internal/websocket"
 )
 
@@ -12,6 +13,9 @@ type deploymentStatusPayload struct {
 	Status       string `json:"status"`
 	LogID        string `json:"log_id"`
 	ErrorMessage string `json:"error_message,omitempty"`
+	// Action is the operation of the log: deploy, stop, clean or rollback.
+	// Omitted when unknown (older clients ignore the field).
+	Action string `json:"action,omitempty"`
 }
 
 // deploymentLogPayload is the WebSocket payload for real-time log streaming.
@@ -37,6 +41,7 @@ func (m *Manager) broadcastStatusWithError(instanceID, status, logID, errorMessa
 		Status:       status,
 		LogID:        logID,
 		ErrorMessage: errorMessage,
+		Action:       m.logAction(logID, status),
 	})
 	if err != nil {
 		slog.Error("failed to create deployment status message", "error", err)
@@ -96,3 +101,22 @@ func (m *Manager) notifyUser(ownerID, instanceID, notifType, title, message stri
 	}
 }
 
+
+// logAction returns the action of logID for the status payload. A final
+// status (not one of the in-progress statuses) removes the entry.
+func (m *Manager) logAction(logID, status string) string {
+	var v any
+	var ok bool
+	switch status {
+	case models.StackStatusQueued, models.StackStatusDeploying, models.StackStatusStabilizing,
+		models.StackStatusStopping, models.StackStatusCleaning:
+		v, ok = m.logActions.Load(logID)
+	default:
+		v, ok = m.logActions.LoadAndDelete(logID)
+	}
+	if !ok {
+		return ""
+	}
+	action, _ := v.(string)
+	return action
+}

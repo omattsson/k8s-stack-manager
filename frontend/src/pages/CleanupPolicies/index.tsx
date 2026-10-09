@@ -41,7 +41,12 @@ import LoadingState from '../../components/LoadingState';
 import { Link } from 'react-router-dom';
 import { useNotification } from '../../context/NotificationContext';
 
-type ConditionPreset = 'idle_days' | 'stopped_age' | 'ttl_expired' | 'custom';
+/**
+ * Condition presets. `stopped_age` is the old "status:stopped,age_days:N" form:
+ * it measures the creation age, not the time since the stop. It stays editable
+ * for existing policies; new policies use `stopped_days`.
+ */
+type ConditionPreset = 'idle_days' | 'stopped_days' | 'age_days' | 'stopped_age' | 'ttl_expired' | 'custom';
 
 interface PolicyFormState {
   name: string;
@@ -49,6 +54,8 @@ interface PolicyFormState {
   action: string;
   conditionPreset: ConditionPreset;
   idleDays: string;
+  stoppedDays: string;
+  ageDays: string;
   stoppedAgeDays: string;
   customCondition: string;
   schedule: string;
@@ -62,6 +69,8 @@ const emptyForm: PolicyFormState = {
   action: 'stop',
   conditionPreset: 'idle_days',
   idleDays: '7',
+  stoppedDays: '3',
+  ageDays: '30',
   stoppedAgeDays: '14',
   customCondition: '',
   schedule: '0 2 * * *',
@@ -85,6 +94,10 @@ function buildConditionString(form: PolicyFormState): string {
   switch (form.conditionPreset) {
     case 'idle_days':
       return `idle_days:${form.idleDays}`;
+    case 'stopped_days':
+      return `stopped_days:${form.stoppedDays}`;
+    case 'age_days':
+      return `age_days:${form.ageDays}`;
     case 'stopped_age':
       return `status:stopped,age_days:${form.stoppedAgeDays}`;
     case 'ttl_expired':
@@ -96,29 +109,50 @@ function buildConditionString(form: PolicyFormState): string {
   }
 }
 
-function parseConditionToForm(condition: string): Pick<PolicyFormState, 'conditionPreset' | 'idleDays' | 'stoppedAgeDays' | 'customCondition'> {
-  if (condition === 'ttl_expired') {
-    return { conditionPreset: 'ttl_expired', idleDays: '7', stoppedAgeDays: '14', customCondition: '' };
-  }
+type ConditionFormFields = Pick<PolicyFormState, 'conditionPreset' | 'idleDays' | 'stoppedDays' | 'ageDays' | 'stoppedAgeDays' | 'customCondition'>;
+
+function parseConditionToForm(condition: string): ConditionFormFields {
+  const defaults: ConditionFormFields = {
+    conditionPreset: 'custom',
+    idleDays: emptyForm.idleDays,
+    stoppedDays: emptyForm.stoppedDays,
+    ageDays: emptyForm.ageDays,
+    stoppedAgeDays: emptyForm.stoppedAgeDays,
+    customCondition: '',
+  };
+  if (condition === 'ttl_expired') return { ...defaults, conditionPreset: 'ttl_expired' };
   const idleMatch = /^idle_days:(\d+)$/.exec(condition);
-  if (idleMatch) {
-    return { conditionPreset: 'idle_days', idleDays: idleMatch[1], stoppedAgeDays: '14', customCondition: '' };
-  }
-  const stoppedMatch = /^status:stopped,age_days:(\d+)$/.exec(condition);
-  if (stoppedMatch) {
-    return { conditionPreset: 'stopped_age', idleDays: '7', stoppedAgeDays: stoppedMatch[1], customCondition: '' };
-  }
-  return { conditionPreset: 'custom', idleDays: '7', stoppedAgeDays: '14', customCondition: condition };
+  if (idleMatch) return { ...defaults, conditionPreset: 'idle_days', idleDays: idleMatch[1] };
+  const stoppedDaysMatch = /^stopped_days:(\d+)$/.exec(condition);
+  if (stoppedDaysMatch) return { ...defaults, conditionPreset: 'stopped_days', stoppedDays: stoppedDaysMatch[1] };
+  const ageMatch = /^age_days:(\d+)$/.exec(condition);
+  if (ageMatch) return { ...defaults, conditionPreset: 'age_days', ageDays: ageMatch[1] };
+  const stoppedAgeMatch = /^status:stopped,age_days:(\d+)$/.exec(condition);
+  if (stoppedAgeMatch) return { ...defaults, conditionPreset: 'stopped_age', stoppedAgeDays: stoppedAgeMatch[1] };
+  return { ...defaults, customCondition: condition };
 }
 
 function formatCondition(condition: string): string {
   if (condition === 'ttl_expired') return 'TTL expired';
   const idleMatch = /^idle_days:(\d+)$/.exec(condition);
   if (idleMatch) return `Idle > ${idleMatch[1]} days`;
-  const stoppedMatch = /^status:stopped,age_days:(\d+)$/.exec(condition);
-  if (stoppedMatch) return `Stopped, Age > ${stoppedMatch[1]} days`;
+  const stoppedDaysMatch = /^stopped_days:(\d+)$/.exec(condition);
+  if (stoppedDaysMatch) return `Stopped > ${stoppedDaysMatch[1]} days`;
+  const ageMatch = /^age_days:(\d+)$/.exec(condition);
+  if (ageMatch) return `Created more than ${ageMatch[1]} days ago`;
+  const stoppedAgeMatch = /^status:stopped,age_days:(\d+)$/.exec(condition);
+  if (stoppedAgeMatch) return `Stopped, created more than ${stoppedAgeMatch[1]} days ago`;
   return condition;
 }
+
+/** Meaning of each condition key, shown as help in the policy dialog. */
+const CONDITION_HELP: ReadonlyArray<{ key: string; meaning: string }> = [
+  { key: 'idle_days:N', meaning: 'Not deployed for more than N days (since the last deploy, or since creation when never deployed).' },
+  { key: 'stopped_days:N', meaning: 'Stopped for more than N days (time since the stop). Matches stopped instances only.' },
+  { key: 'age_days:N', meaning: 'Created more than N days ago (creation age, not the time since the stop).' },
+  { key: 'status:S', meaning: 'Has the status S, for example status:stopped or status:error.' },
+  { key: 'ttl_expired', meaning: 'The TTL has expired.' },
+];
 
 function describeCron(cron: string): string {
   const parts = cron.trim().split(/\s+/);
@@ -495,7 +529,11 @@ const CleanupPolicies = () => {
                 }
               >
                 <MenuItem value="idle_days">Idle for X days</MenuItem>
-                <MenuItem value="stopped_age">Stopped for X days</MenuItem>
+                <MenuItem value="stopped_days">Stopped for X days</MenuItem>
+                <MenuItem value="age_days">Created more than X days ago</MenuItem>
+                {form.conditionPreset === 'stopped_age' && (
+                  <MenuItem value="stopped_age">Stopped and created more than X days ago</MenuItem>
+                )}
                 <MenuItem value="ttl_expired">TTL expired</MenuItem>
                 <MenuItem value="custom">Custom</MenuItem>
               </Select>
@@ -511,14 +549,34 @@ const CleanupPolicies = () => {
                 helperText={`Matches instances idle for more than ${form.idleDays} days`}
               />
             )}
-            {form.conditionPreset === 'stopped_age' && (
+            {form.conditionPreset === 'stopped_days' && (
               <TextField
                 label="Days Since Stopped"
+                type="number"
+                value={form.stoppedDays}
+                onChange={(e) => setForm({ ...form, stoppedDays: e.target.value })}
+                slotProps={{ htmlInput: { min: 1 } }}
+                helperText={`Matches instances stopped more than ${form.stoppedDays} days ago`}
+              />
+            )}
+            {form.conditionPreset === 'age_days' && (
+              <TextField
+                label="Days Since Creation"
+                type="number"
+                value={form.ageDays}
+                onChange={(e) => setForm({ ...form, ageDays: e.target.value })}
+                slotProps={{ htmlInput: { min: 1 } }}
+                helperText={`Matches instances created more than ${form.ageDays} days ago, in any status`}
+              />
+            )}
+            {form.conditionPreset === 'stopped_age' && (
+              <TextField
+                label="Days Since Creation"
                 type="number"
                 value={form.stoppedAgeDays}
                 onChange={(e) => setForm({ ...form, stoppedAgeDays: e.target.value })}
                 slotProps={{ htmlInput: { min: 1 } }}
-                helperText={`Matches stopped instances older than ${form.stoppedAgeDays} days`}
+                helperText={`Matches stopped instances created more than ${form.stoppedAgeDays} days ago. To use the time since the stop, select "Stopped for X days".`}
               />
             )}
             {form.conditionPreset === 'ttl_expired' && (
@@ -532,9 +590,27 @@ const CleanupPolicies = () => {
                 value={form.customCondition}
                 onChange={(e) => setForm({ ...form, customCondition: e.target.value })}
                 fullWidth
-                helperText="e.g., idle_days:3 or status:stopped,age_days:7"
+                helperText="e.g., stopped_days:3, idle_days:7 or status:error,age_days:30"
               />
             )}
+
+            <Alert severity="info" sx={{ py: 0.5 }}>
+              <Typography variant="body2" sx={{ mb: 0.5 }}>
+                Conditions (combine with commas; all must match):
+              </Typography>
+              <Box component="ul" sx={{ m: 0, pl: 2 }}>
+                {CONDITION_HELP.map((item) => (
+                  <Typography component="li" variant="body2" key={item.key}>
+                    <Box component="code" sx={{ fontFamily: 'monospace' }}>{item.key}</Box>: {item.meaning}
+                  </Typography>
+                ))}
+              </Box>
+              <Typography variant="body2" sx={{ mt: 0.5 }}>
+                Examples: <Box component="code" sx={{ fontFamily: 'monospace' }}>stopped_days:3</Box>,{' '}
+                <Box component="code" sx={{ fontFamily: 'monospace' }}>status:stopped,idle_days:7</Box>,{' '}
+                <Box component="code" sx={{ fontFamily: 'monospace' }}>age_days:30</Box>
+              </Typography>
+            </Alert>
 
             <Typography variant="body2" color="text.secondary">
               Preview: <strong>{formatCondition(buildConditionString(form))}</strong>

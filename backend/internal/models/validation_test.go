@@ -1,6 +1,7 @@
 package models
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -910,4 +911,46 @@ func TestValidateQuotaQuantities(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestValidateInstanceName(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		input   string
+		wantErr string
+	}{
+		{"simple", "zz-life", ""},
+		{"digits", "a1-2b", ""},
+		{"single char", "a", ""},
+		{"max length", strings.Repeat("a", MaxInstanceNameLength), ""},
+		{"empty", "", "name is required"},
+		{"too long", strings.Repeat("a", MaxInstanceNameLength+1), "at most 50 characters"},
+		{"space", "zz life", "valid DNS label"},
+		{"uppercase", "ZzLife", "valid DNS label"},
+		{"legacy copy name", "zz-life (Copy)", "valid DNS label"},
+		{"underscore", "zz_life", "valid DNS label"},
+		{"dot", "zz.life", "valid DNS label"},
+		{"leading dash", "-zz", "valid DNS label"},
+		{"trailing dash", "zz-", "valid DNS label"},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			err := ValidateInstanceName(tt.input)
+			if tt.wantErr == "" {
+				assert.NoError(t, err)
+				return
+			}
+			if assert.Error(t, err) {
+				assert.Contains(t, err.Error(), tt.wantErr)
+			}
+		})
+	}
+
+	// Validate does not apply the name rule: older instances keep working.
+	legacy := &StackInstance{StackDefinitionID: "d", Name: "Legacy (Copy)", OwnerID: "u"}
+	assert.NoError(t, legacy.Validate())
 }
