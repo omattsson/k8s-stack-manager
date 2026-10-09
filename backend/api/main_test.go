@@ -5,6 +5,7 @@ import (
 	"backend/internal/config"
 	"backend/internal/deployer"
 	"backend/internal/health"
+	"backend/internal/leader"
 	"backend/internal/models"
 	"backend/internal/scheduler"
 	"backend/internal/ttl"
@@ -483,6 +484,9 @@ func (m *mockInstanceRepo) ListExpired() ([]*models.StackInstance, error) {
 func (m *mockInstanceRepo) ListExpiringSoon(_ time.Duration) ([]*models.StackInstance, error) {
 	return nil, nil
 }
+func (*mockInstanceRepo) MarkExpiryWarned(_ string, _, _ time.Time) (bool, error) {
+	return false, nil
+}
 func (m *mockInstanceRepo) ListByStatus(_ string, _ int) ([]*models.StackInstance, error) {
 	return nil, nil
 }
@@ -892,25 +896,13 @@ func TestGracefulShutdown(t *testing.T) {
 	hub := websocket.NewHub()
 	go hub.Run()
 
-	reaper := ttl.NewReaper(newMockInstanceRepo(), nil, hub, nil, 60*time.Second)
-	// Start the reaper so Stop() can signal it to exit.
-	go reaper.Start()
-
 	clusterRegistry := cluster.NewRegistry(cluster.RegistryOptions{})
-	healthPoller := cluster.NewHealthPoller(cluster.HealthPollerConfig{
-		Interval: 1 * time.Hour,
-	})
-	healthPoller.Start()
-
 	cleanupScheduler := scheduler.NewScheduler(&stubPolicyRepo{}, newMockInstanceRepo(), nil, nil, nil)
-	// Start the scheduler so Stop() can signal it to exit.
-	_ = cleanupScheduler.Start()
+	leaderRun := startTestLeaderWorkers(t, hub, cleanupScheduler)
 
 	deployManager := deployer.NewManager(deployer.ManagerConfig{
 		MaxConcurrent: 1,
 	})
-
-	_, watcherCancel := context.WithCancel(context.Background())
 
 	mockRepo := new(MockRepository)
 	mockRepo.On("Close").Return(nil)
@@ -918,14 +910,11 @@ func TestGracefulShutdown(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		gracefulShutdown(&servers{Main: srv}, 2*time.Second, shutdownDeps{
-			reaper:           reaper,
+			leader:           leaderRun,
 			cleanupScheduler: cleanupScheduler,
 			deployManager:    deployManager,
-			healthPoller:     healthPoller,
-			k8sWatcher:       nil, // nil k8sWatcher should be handled gracefully
 			hub:              hub,
 			clusterRegistry:  clusterRegistry,
-			watcherCancel:    watcherCancel,
 			sessionStore:     nil, // nil oidcStateStore should be handled gracefully
 			repo:             mockRepo,
 		})
@@ -940,6 +929,29 @@ func TestGracefulShutdown(t *testing.T) {
 	}
 
 	mockRepo.AssertCalled(t, "Close")
+	assert.False(t, leaderRun.elector.IsLeader(), "shutdown must end the leadership")
+	assert.False(t, leaderRun.workers.Running(), "shutdown must stop the leader workers")
+	assert.False(t, cleanupScheduler.Active())
+}
+
+// startTestLeaderWorkers starts a leader worker group (TTL reaper, health
+// poller, cleanup scheduler) with election disabled and waits until the
+// workers run.
+func startTestLeaderWorkers(t *testing.T, hub *websocket.Hub, sched *scheduler.Scheduler) *leaderRuntime {
+	t.Helper()
+	reaper := ttl.NewReaper(newMockInstanceRepo(), nil, hub, nil, 60*time.Second)
+	healthPoller := cluster.NewHealthPoller(cluster.HealthPollerConfig{Interval: time.Hour})
+	group := leader.NewGroup(time.Second,
+		leader.Worker{Name: "ttl-reaper", Run: reaper.Run},
+		leader.Worker{Name: "cluster-health-poller", Run: healthPoller.Run},
+		leader.Worker{Name: "cleanup-scheduler", Run: sched.Run},
+	)
+	elector, err := leader.New(leader.Config{}, nil)
+	require.NoError(t, err)
+	lr := startLeaderElection(elector, group)
+	require.Eventually(t, func() bool { return elector.IsLeader() && sched.Active() },
+		2*time.Second, 10*time.Millisecond)
+	return lr
 }
 
 func TestGracefulShutdown_RepoCloseError(t *testing.T) {
@@ -955,20 +967,11 @@ func TestGracefulShutdown_RepoCloseError(t *testing.T) {
 	hub := websocket.NewHub()
 	go hub.Run()
 
-	reaper := ttl.NewReaper(newMockInstanceRepo(), nil, hub, nil, 60*time.Second)
-	go reaper.Start()
-
 	clusterRegistry := cluster.NewRegistry(cluster.RegistryOptions{})
-	healthPoller := cluster.NewHealthPoller(cluster.HealthPollerConfig{
-		Interval: 1 * time.Hour,
-	})
-	healthPoller.Start()
-
 	cleanupScheduler := scheduler.NewScheduler(&stubPolicyRepo{}, newMockInstanceRepo(), nil, nil, nil)
-	_ = cleanupScheduler.Start()
+	leaderRun := startTestLeaderWorkers(t, hub, cleanupScheduler)
 
 	deployManager := deployer.NewManager(deployer.ManagerConfig{MaxConcurrent: 1})
-	_, watcherCancel := context.WithCancel(context.Background())
 
 	mockRepo := new(MockRepository)
 	mockRepo.On("Close").Return(errors.New("close failed"))
@@ -977,14 +980,11 @@ func TestGracefulShutdown_RepoCloseError(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		gracefulShutdown(&servers{Main: srv}, 2*time.Second, shutdownDeps{
-			reaper:           reaper,
+			leader:           leaderRun,
 			cleanupScheduler: cleanupScheduler,
 			deployManager:    deployManager,
-			healthPoller:     healthPoller,
-			k8sWatcher:       nil,
 			hub:              hub,
 			clusterRegistry:  clusterRegistry,
-			watcherCancel:    watcherCancel,
 			sessionStore:     nil,
 			repo:             mockRepo,
 		})

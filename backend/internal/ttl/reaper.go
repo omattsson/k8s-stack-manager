@@ -52,10 +52,24 @@ func NewReaper(
 }
 
 // Start begins the periodic expiry check loop. It blocks until Stop is called
-// or the stop channel is closed. Call this in a goroutine.
+// or the stop channel is closed. Call this in a goroutine. Start and Stop
+// work once; use Run to start the reaper again after a stop.
 func (r *Reaper) Start() {
 	defer close(r.doneCh)
+	ctx, cancel := contextUntilClosed(r.stopCh)
+	defer cancel()
+	r.Run(ctx)
+}
 
+// Stop signals the reaper to shut down and waits for it to finish.
+func (r *Reaper) Stop() {
+	r.once.Do(func() { close(r.stopCh) })
+	<-r.doneCh
+}
+
+// Run runs the periodic expiry check loop until ctx is done. It blocks. Run
+// can be called again after it returned (one call per leadership term).
+func (r *Reaper) Run(ctx context.Context) {
 	ticker := time.NewTicker(r.interval)
 	defer ticker.Stop()
 
@@ -66,7 +80,7 @@ func (r *Reaper) Start() {
 
 	for {
 		select {
-		case <-r.stopCh:
+		case <-ctx.Done():
 			slog.Info("TTL reaper stopped")
 			return
 		case <-ticker.C:
@@ -75,10 +89,18 @@ func (r *Reaper) Start() {
 	}
 }
 
-// Stop signals the reaper to shut down and waits for it to finish.
-func (r *Reaper) Stop() {
-	r.once.Do(func() { close(r.stopCh) })
-	<-r.doneCh
+// contextUntilClosed returns a context that is cancelled when stopCh is
+// closed or when cancel is called.
+func contextUntilClosed(stopCh <-chan struct{}) (context.Context, context.CancelFunc) {
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		select {
+		case <-stopCh:
+			cancel()
+		case <-ctx.Done():
+		}
+	}()
+	return ctx, cancel
 }
 
 func (r *Reaper) processExpired() {

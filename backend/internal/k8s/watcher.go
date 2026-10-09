@@ -88,10 +88,26 @@ func (w *Watcher) GetStatus(instanceID string) (*NamespaceStatus, bool) {
 	return s, ok
 }
 
-// run is the main polling loop.
+// run is the main polling loop of Start.
 func (w *Watcher) run(ctx context.Context) {
 	defer w.wg.Done()
+	w.loop(ctx)
+}
 
+// Run polls until ctx is done. It blocks. Run can be called again after it
+// returned (one call per leadership term). When Run returns, it clears the
+// cached statuses: a replica that does not run the watcher must not serve
+// old statuses from GetStatus (the instance status handler then reads the
+// cluster directly). Do not mix Run with Start and Stop on the same value.
+func (w *Watcher) Run(ctx context.Context) {
+	defer w.clearStatuses()
+	slog.Info("K8s status watcher started", "interval", w.interval)
+	w.loop(ctx)
+	slog.Info("K8s status watcher stopped")
+}
+
+// loop polls at once and then every interval until ctx is done.
+func (w *Watcher) loop(ctx context.Context) {
 	ticker := time.NewTicker(w.interval)
 	defer ticker.Stop()
 
@@ -106,6 +122,13 @@ func (w *Watcher) run(ctx context.Context) {
 			w.poll(ctx)
 		}
 	}
+}
+
+// clearStatuses removes all cached statuses.
+func (w *Watcher) clearStatuses() {
+	w.mu.Lock()
+	w.lastStatus = make(map[string]*NamespaceStatus)
+	w.mu.Unlock()
 }
 
 // poll checks the status of all active instances.

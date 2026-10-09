@@ -85,3 +85,15 @@ WARNING: mysql.auth.rootPassword is still the placeholder value!
 WARNING: CORS_ALLOWED_ORIGINS is set to "*" (allow all origins).
   For production, restrict it: --set backend.env.CORS_ALLOWED_ORIGINS="https://your-domain.com"
 {{- end }}
+
+{{- if .Values.backend.leaderElection.enabled }}
+
+Leader election: one backend replica runs the background workers (Lease "{{ include "k8s-stack-manager.leaderElection.leaseName" . }}" in namespace {{ .Release.Namespace }}).
+{{- if .Values.backend.serviceAccount.create }}
+  The chart created a Role and RoleBinding for leases (get, create, update).
+{{- else }}
+WARNING: backend.serviceAccount.create=false, so the chart created no Role for leases.
+  Grant the backend service account get, create and update on coordination.k8s.io leases
+  in namespace {{ .Release.Namespace }}, or no replica runs the background workers.
+{{- end }}
+{{- end }}

@@ -11,6 +11,7 @@ import (
 	"backend/internal/helm"
 	"backend/internal/hooks"
 	"backend/internal/k8s"
+	"backend/internal/leader"
 	"backend/internal/models"
 	"backend/internal/notifier"
 	"backend/internal/scheduler"
@@ -149,7 +150,6 @@ func TestDomainServicesFieldTypes(t *testing.T) {
 	var _ *deployer.CleanupExecutor = ds.CleanupExecutor
 	var _ *scheduler.Scheduler = ds.CleanupScheduler
 	var _ *helm.ValuesGenerator = ds.ValuesGen
-	var _ context.CancelFunc = ds.WatcherCancel
 }
 
 func TestHandlerSetFieldTypes(t *testing.T) {
@@ -193,16 +193,16 @@ func TestRouterDepsFieldTypes(t *testing.T) {
 	var _ *domainServices = rd.Svc
 }
 
-func TestBackgroundServicesFieldTypes(t *testing.T) {
+func TestLeaderWorkersFieldTypes(t *testing.T) {
 	t.Parallel()
 
-	var bg backgroundServices
+	var lw leaderWorkers
 
-	var _ *ttl.Reaper = bg.Reaper
-	var _ *ttl.Warner = bg.ExpiryWarner
-	var _ *cluster.QuotaMonitor = bg.QuotaMonitor
-	var _ *cluster.SecretMonitor = bg.SecretMonitor
-	var _ context.CancelFunc = bg.RefreshTokenCleanupCancel
+	var _ *leader.Group = lw.Group
+	var _ *ttl.Reaper = lw.Reaper
+	var _ *ttl.Warner = lw.ExpiryWarner
+	var _ *cluster.QuotaMonitor = lw.QuotaMonitor
+	var _ *cluster.SecretMonitor = lw.SecretMonitor
 }
 
 // ---- startHTTPServer tests ----
@@ -483,6 +483,9 @@ func (s *stubStackInstanceRepo) ExistsByDefinitionAndStatus(_, _ string) (bool, 
 func (s *stubStackInstanceRepo) ListExpired() ([]*models.StackInstance, error) { return nil, nil }
 func (s *stubStackInstanceRepo) ListExpiringSoon(_ time.Duration) ([]*models.StackInstance, error) {
 	return nil, nil
+}
+func (*stubStackInstanceRepo) MarkExpiryWarned(_ string, _, _ time.Time) (bool, error) {
+	return false, nil
 }
 func (s *stubStackInstanceRepo) ListByStatus(_ string, _ int) ([]*models.StackInstance, error) {
 	return nil, nil
@@ -908,14 +911,6 @@ func TestBuildDomainServices_ReturnsAllFields(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, svc)
 
-	// Clean up background goroutines started by buildDomainServices.
-	t.Cleanup(func() {
-		svc.WatcherCancel()
-		svc.K8sWatcher.Stop()
-		svc.HealthPoller.Stop()
-		svc.SecretRefresher.Stop()
-	})
-
 	// Every non-optional field must be populated.
 	assert.NotNil(t, svc.GitRegistry, "GitRegistry")
 	assert.NotNil(t, svc.ClusterRegistry, "ClusterRegistry")
@@ -927,7 +922,7 @@ func TestBuildDomainServices_ReturnsAllFields(t *testing.T) {
 	assert.NotNil(t, svc.CleanupExecutor, "CleanupExecutor")
 	assert.NotNil(t, svc.CleanupScheduler, "CleanupScheduler")
 	assert.NotNil(t, svc.ValuesGen, "ValuesGen")
-	assert.NotNil(t, svc.WatcherCancel, "WatcherCancel")
+	assert.False(t, svc.CleanupScheduler.Active(), "the scheduler runs only in a leadership term")
 
 	// HookDispatcher and ActionRegistry are nil when HooksConfigFile is empty.
 	assert.Nil(t, svc.HookDispatcher, "HookDispatcher should be nil when no hooks config")
@@ -960,14 +955,8 @@ func TestBuildDomainServices_AddsHealthChecks(t *testing.T) {
 	healthChecker := health.New()
 	healthChecker.SetReady(true)
 
-	svc, err := buildDomainServices(cfg, repos, hub, healthChecker)
+	_, err := buildDomainServices(cfg, repos, hub, healthChecker)
 	require.NoError(t, err)
-	t.Cleanup(func() {
-		svc.WatcherCancel()
-		svc.K8sWatcher.Stop()
-		svc.HealthPoller.Stop()
-		svc.SecretRefresher.Stop()
-	})
 
 	// HealthChecker should have at least the three checks added by buildDomainServices:
 	// "cluster_registry", "git_provider", "helm". We verify by running readiness
@@ -995,12 +984,6 @@ func TestBuildHandlers_ReturnsAllFields(t *testing.T) {
 
 	svc, err := buildDomainServices(cfg, repos, hub, healthChecker)
 	require.NoError(t, err)
-	t.Cleanup(func() {
-		svc.WatcherCancel()
-		svc.K8sWatcher.Stop()
-		svc.HealthPoller.Stop()
-		svc.SecretRefresher.Stop()
-	})
 
 	sessStore := sessionstore.NewMemoryStore()
 	t.Cleanup(func() { sessStore.Stop() })
@@ -1047,12 +1030,6 @@ func TestBuildHandlers_OIDCDisabled(t *testing.T) {
 
 	svc, err := buildDomainServices(cfg, repos, hub, healthChecker)
 	require.NoError(t, err)
-	t.Cleanup(func() {
-		svc.WatcherCancel()
-		svc.K8sWatcher.Stop()
-		svc.HealthPoller.Stop()
-		svc.SecretRefresher.Stop()
-	})
 
 	sessStore := sessionstore.NewMemoryStore()
 	t.Cleanup(func() { sessStore.Stop() })
@@ -1078,12 +1055,6 @@ func TestBuildRouter_ReturnsEngineAndRateLimiters(t *testing.T) {
 
 	svc, err := buildDomainServices(cfg, repos, hub, healthChecker)
 	require.NoError(t, err)
-	t.Cleanup(func() {
-		svc.WatcherCancel()
-		svc.K8sWatcher.Stop()
-		svc.HealthPoller.Stop()
-		svc.SecretRefresher.Stop()
-	})
 
 	sessStore := sessionstore.NewMemoryStore()
 	t.Cleanup(func() { sessStore.Stop() })
@@ -1121,12 +1092,6 @@ func TestBuildRouter_HealthEndpointResponds(t *testing.T) {
 
 	svc, err := buildDomainServices(cfg, repos, hub, healthChecker)
 	require.NoError(t, err)
-	t.Cleanup(func() {
-		svc.WatcherCancel()
-		svc.K8sWatcher.Stop()
-		svc.HealthPoller.Stop()
-		svc.SecretRefresher.Stop()
-	})
 
 	sessStore := sessionstore.NewMemoryStore()
 	t.Cleanup(func() { sessStore.Stop() })
@@ -1152,56 +1117,69 @@ func TestBuildRouter_HealthEndpointResponds(t *testing.T) {
 }
 
 // ============================================================================
-// startBackgroundServices tests
+// buildLeaderWorkers / startLeaderElection tests
 // ============================================================================
 
-func TestStartBackgroundServices_ReturnsAllFields(t *testing.T) {
+func TestBuildLeaderWorkers_ReturnsAllWorkers(t *testing.T) {
 	t.Parallel()
 	gin.SetMode(gin.TestMode)
 
 	cfg := buildTestConfig()
 	repos := buildTestRepositorySet()
 	hub := buildTestHub(t)
-	healthChecker := health.New()
 
-	svc, err := buildDomainServices(cfg, repos, hub, healthChecker)
+	svc, err := buildDomainServices(cfg, repos, hub, health.New())
 	require.NoError(t, err)
-	t.Cleanup(func() {
-		svc.WatcherCancel()
-		svc.K8sWatcher.Stop()
-		svc.HealthPoller.Stop()
-		svc.SecretRefresher.Stop()
-	})
-
 	sessStore := sessionstore.NewMemoryStore()
 	t.Cleanup(func() { sessStore.Stop() })
-
 	hs, err := buildHandlers(cfg, repos, svc, sessStore, hub)
 	require.NoError(t, err)
 
-	bg, err := startBackgroundServices(svc, hs, repos, hub)
+	lw := buildLeaderWorkers(svc, hs, repos, hub, time.Second)
+	require.NotNil(t, lw)
+	assert.NotNil(t, lw.Reaper, "Reaper")
+	assert.NotNil(t, lw.ExpiryWarner, "ExpiryWarner")
+	assert.NotNil(t, lw.QuotaMonitor, "QuotaMonitor")
+	assert.NotNil(t, lw.SecretMonitor, "SecretMonitor")
+	assert.Equal(t, []string{
+		"ttl-reaper", "expiry-warner", "cleanup-scheduler", "quota-monitor", "secret-monitor",
+		"secret-refresher", "cluster-health-poller", "k8s-status-watcher", "refresh-token-cleanup",
+	}, lw.Group.Names())
+	assert.False(t, lw.Group.Running(), "buildLeaderWorkers must not start the workers")
+}
+
+func TestStartLeaderElection_DisabledRunsWorkersUntilShutdown(t *testing.T) {
+	t.Parallel()
+	gin.SetMode(gin.TestMode)
+
+	cfg := buildTestConfig()
+	repos := buildTestRepositorySet()
+	hub := buildTestHub(t)
+
+	svc, err := buildDomainServices(cfg, repos, hub, health.New())
 	require.NoError(t, err)
-	require.NotNil(t, bg)
+	sessStore := sessionstore.NewMemoryStore()
+	t.Cleanup(func() { sessStore.Stop() })
+	hs, err := buildHandlers(cfg, repos, svc, sessStore, hub)
+	require.NoError(t, err)
 
-	// Clean up all background services.
-	t.Cleanup(func() {
-		bg.RefreshTokenCleanupCancel()
-		bg.Reaper.Stop()
-		bg.ExpiryWarner.Stop()
-		bg.QuotaMonitor.Stop()
-		bg.SecretMonitor.Stop()
-		svc.CleanupScheduler.Stop()
-	})
+	elector, err := leader.NewInCluster(leaderConfig(cfg.LeaderElection))
+	require.NoError(t, err, "election is disabled by default: no cluster needed")
+	lw := buildLeaderWorkers(svc, hs, repos, hub, time.Second)
+	lr := startLeaderElection(elector, lw.Group)
 
-	assert.NotNil(t, bg.Reaper, "Reaper")
-	assert.NotNil(t, bg.ExpiryWarner, "ExpiryWarner")
-	assert.NotNil(t, bg.QuotaMonitor, "QuotaMonitor")
-	assert.NotNil(t, bg.SecretMonitor, "SecretMonitor")
-	assert.NotNil(t, bg.RefreshTokenCleanupCancel, "RefreshTokenCleanupCancel")
+	require.Eventually(t, func() bool {
+		return elector.IsLeader() && lw.Group.Running() && svc.CleanupScheduler.Active()
+	}, 2*time.Second, 10*time.Millisecond)
+
+	lr.Shutdown(2 * time.Second)
+	assert.False(t, elector.IsLeader())
+	assert.False(t, lw.Group.Running())
+	assert.False(t, svc.CleanupScheduler.Active())
 }
 
 // ============================================================================
-// Full integration: buildDomainServices -> buildHandlers -> buildRouter -> startBackgroundServices
+// Full integration: buildDomainServices -> buildHandlers -> buildRouter -> leader workers
 // ============================================================================
 
 func TestBootstrapFullPipeline(t *testing.T) {
@@ -1217,12 +1195,6 @@ func TestBootstrapFullPipeline(t *testing.T) {
 	// Step 1: Domain services.
 	svc, err := buildDomainServices(cfg, repos, hub, healthChecker)
 	require.NoError(t, err)
-	t.Cleanup(func() {
-		svc.WatcherCancel()
-		svc.K8sWatcher.Stop()
-		svc.HealthPoller.Stop()
-		svc.SecretRefresher.Stop()
-	})
 
 	// Step 2: Handlers.
 	sessStore := sessionstore.NewMemoryStore()
@@ -1243,17 +1215,11 @@ func TestBootstrapFullPipeline(t *testing.T) {
 	require.NotNil(t, router)
 	t.Cleanup(func() { rateLimiters.Stop() })
 
-	// Step 4: Background services.
-	bg, err := startBackgroundServices(svc, hs, repos, hub)
+	// Step 4: Leader workers (election disabled: this process leads).
+	elector, err := leader.New(leaderConfig(cfg.LeaderElection), nil)
 	require.NoError(t, err)
-	t.Cleanup(func() {
-		bg.RefreshTokenCleanupCancel()
-		bg.Reaper.Stop()
-		bg.ExpiryWarner.Stop()
-		bg.QuotaMonitor.Stop()
-		bg.SecretMonitor.Stop()
-		svc.CleanupScheduler.Stop()
-	})
+	lr := startLeaderElection(elector, buildLeaderWorkers(svc, hs, repos, hub, time.Second).Group)
+	t.Cleanup(func() { lr.Shutdown(2 * time.Second) })
 
 	// Verify full pipeline produced working endpoints.
 	w := httptest.NewRecorder()

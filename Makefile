@@ -444,7 +444,31 @@ helm-test: ## Verify default and External Secrets Helm renders
 	done; \
 	helm template $(HELM_RELEASE) $(HELM_CHART) --show-only templates/backend/deployment.yaml \
 		--set backend.secrets.JWT_SECRET=dummy-jwt-secret-for-template > "$$template_file"; \
-	if grep -q '^          env:' "$$template_file"; then echo "unexpected match: ^          env:" >&2; exit 1; fi; \
+	if grep -q 'name: HELM_REGISTRY_CONFIG' "$$template_file"; then echo "unexpected match: HELM_REGISTRY_CONFIG" >&2; exit 1; fi; \
+	for kind in deployment rollout; do \
+		helm template $(HELM_RELEASE) $(HELM_CHART) --show-only templates/backend/$$kind.yaml \
+			--set backend.secrets.JWT_SECRET=dummy-jwt-secret-for-template \
+			--set argoRollouts.enabled=$$( [ $$kind = rollout ] && echo true || echo false ) > "$$template_file"; \
+		awk '/- name: POD_NAME$$/{n=1} n==1 && /fieldPath: metadata.name$$/{name=1; n=0} /- name: POD_NAMESPACE$$/{s=1} s==1 && /fieldPath: metadata.namespace$$/{ns=1; s=0} END{exit !(name && ns)}' "$$template_file" \
+			|| { echo "$$kind: POD_NAME/POD_NAMESPACE downward API env missing" >&2; exit 1; }; \
+	done; \
+	helm template $(HELM_RELEASE) $(HELM_CHART) --namespace $(HELM_NAMESPACE) \
+		--set backend.secrets.JWT_SECRET=dummy-jwt-secret-for-template > "$$template_file"; \
+	grep -q 'Source: k8s-stack-manager/templates/backend/leader-election-rbac.yaml' "$$template_file" \
+		|| { echo "leader election Role/RoleBinding missing" >&2; exit 1; }; \
+	awk '/^kind: Role$$/{role=1} role && /apiGroups: \["coordination.k8s.io"\]/{api=1} role && api && /verbs: \["create"\]/{create=1} role && api && /verbs: \["get", "update"\]/{getupd=1} /^---/{role=0} END{exit !(create && getupd)}' "$$template_file" \
+		|| { echo "leader election Role must allow leases create, get, update" >&2; exit 1; }; \
+	awk '/^kind: RoleBinding$$/{rb=1} rb && /kind: Role$$/{ref=1} rb && /kind: ServiceAccount$$/{sa=1} rb && sa && /name: .*-backend$$/{name=1} /^---/{rb=0; sa=0} END{exit !(ref && name)}' "$$template_file" \
+		|| { echo "leader election RoleBinding must bind the backend service account" >&2; exit 1; }; \
+	grep -q 'LEADER_ELECTION_ENABLED: "true"' "$$template_file" \
+		|| { echo "LEADER_ELECTION_ENABLED must default to true in the chart" >&2; exit 1; }; \
+	grep -q 'LEADER_ELECTION_LEASE_NAME: "$(HELM_RELEASE)-workers"' "$$template_file" \
+		|| { echo "LEADER_ELECTION_LEASE_NAME missing" >&2; exit 1; }; \
+	helm template $(HELM_RELEASE) $(HELM_CHART) --namespace $(HELM_NAMESPACE) \
+		--set backend.secrets.JWT_SECRET=dummy-jwt-secret-for-template \
+		--set backend.leaderElection.enabled=false > "$$template_file"; \
+	if grep -q 'Source: k8s-stack-manager/templates/backend/leader-election-rbac.yaml' "$$template_file"; then echo "unexpected leader election Role with leaderElection.enabled=false" >&2; exit 1; fi; \
+	grep -q 'LEADER_ELECTION_ENABLED: "false"' "$$template_file"; \
 	helm template $(HELM_RELEASE) $(HELM_CHART) --show-only templates/backend/configmap.yaml \
 		--set backend.secrets.JWT_SECRET=dummy-jwt-secret-for-template > "$$template_file"; \
 	if grep -q 'SECURE_COOKIES' "$$template_file"; then echo "unexpected match: SECURE_COOKIES" >&2; exit 1; fi; \

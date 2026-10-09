@@ -14,6 +14,7 @@ import (
 	"backend/internal/helm"
 	"backend/internal/hooks"
 	"backend/internal/k8s"
+	"backend/internal/leader"
 	"backend/internal/models"
 	"backend/internal/notifier"
 	"backend/internal/notifier/channel"
@@ -35,6 +36,9 @@ import (
 )
 
 // domainServices holds all domain-layer services wired during bootstrap.
+// HealthPoller, SecretRefresher, K8sWatcher and CleanupScheduler are
+// leader-only workers: buildLeaderWorkers adds them to the leader worker
+// group, and only the leader replica runs them.
 type domainServices struct {
 	GitRegistry       *gitprovider.Registry
 	ClusterRegistry   *cluster.Registry
@@ -48,7 +52,6 @@ type domainServices struct {
 	CleanupExecutor   *deployer.CleanupExecutor
 	CleanupScheduler  *scheduler.Scheduler
 	ValuesGen         *helm.ValuesGenerator
-	WatcherCancel     context.CancelFunc
 }
 
 // handlerSet holds all HTTP handlers wired during bootstrap.
@@ -87,13 +90,14 @@ type routerDeps struct {
 	Svc           *domainServices
 }
 
-// backgroundServices holds services started after the router is ready.
-type backgroundServices struct {
-	Reaper                    *ttl.Reaper
-	ExpiryWarner              *ttl.Warner
-	QuotaMonitor              *cluster.QuotaMonitor
-	SecretMonitor             *cluster.SecretMonitor
-	RefreshTokenCleanupCancel context.CancelFunc
+// leaderWorkers holds the background workers that only the leader replica
+// runs. Group runs all of them for one leadership term at a time.
+type leaderWorkers struct {
+	Group         *leader.Group
+	Reaper        *ttl.Reaper
+	ExpiryWarner  *ttl.Warner
+	QuotaMonitor  *cluster.QuotaMonitor
+	SecretMonitor *cluster.SecretMonitor
 }
 
 // initDatabase opens the GORM database connection and returns the generic
@@ -205,26 +209,25 @@ func buildDomainServices(
 	}
 
 	// Cluster health poller.
+	// Leader-only worker: started by the leader worker group.
 	healthPoller := cluster.NewHealthPoller(cluster.HealthPollerConfig{
 		ClusterRepo: repos.Cluster,
 		Registry:    clusterRegistry,
 		Interval:    cfg.Deployment.ClusterHealthPollInterval,
 		Hub:         hub,
 	})
-	healthPoller.Start()
 
-	// Image pull secret refresher.
+	// Image pull secret refresher. Leader-only worker.
 	secretRefresher := cluster.NewSecretRefresher(cluster.SecretRefresherConfig{
 		ClusterRepo:  repos.Cluster,
 		InstanceRepo: repos.StackInstance,
 		Registry:     clusterRegistry,
 	})
-	secretRefresher.Start()
 
-	// K8s watcher for multi-cluster monitoring.
+	// K8s watcher for multi-cluster monitoring. Leader-only worker. On other
+	// replicas, GetStatus has no cached status and the status handler reads
+	// the cluster directly.
 	k8sWatcher := k8s.NewWatcher(clusterRegistry, repos.StackInstance, hub, 30*time.Second)
-	watcherCtx, watcherCancel := context.WithCancel(context.Background())
-	k8sWatcher.Start(watcherCtx)
 
 	var subscribedEvents []string
 	if hookDispatcher != nil {
@@ -283,7 +286,8 @@ func buildDomainServices(
 		Notifier:                   lifecycleNotifier,
 	})
 
-	// Cleanup executor + scheduler.
+	// Cleanup executor + scheduler. The scheduler runs cron jobs only on the
+	// leader replica (leader worker group).
 	cleanupExecutor := deployer.NewCleanupExecutor(deployManager, repos.StackDefinition, repos.ChartConfig, repos.StackInstance)
 	cleanupScheduler := scheduler.NewScheduler(repos.CleanupPolicy, repos.StackInstance, repos.AuditLog, cleanupExecutor, lifecycleNotifier)
 
@@ -300,7 +304,6 @@ func buildDomainServices(
 		CleanupExecutor:   cleanupExecutor,
 		CleanupScheduler:  cleanupScheduler,
 		ValuesGen:         valuesGen,
-		WatcherCancel:     watcherCancel,
 	}, nil
 }
 
@@ -535,23 +538,29 @@ func buildRouter(cfg *config.Config, hs *handlerSet, deps routerDeps) (*gin.Engi
 	return router, rateLimiters
 }
 
-// startBackgroundServices starts all background goroutines (TTL reaper, expiry
-// warner, quota monitor, secret monitor, refresh token cleanup, cleanup scheduler)
-// and returns a struct the caller can use to stop them.
-func startBackgroundServices(
+// refreshTokenCleanupInterval is how often the leader deletes expired
+// refresh tokens.
+const refreshTokenCleanupInterval = time.Hour
+
+// buildLeaderWorkers creates the background workers that run on the leader
+// replica only (TTL reaper, expiry warner, cleanup scheduler, quota and
+// secret monitors, secret refresher, cluster health poller, k8s status
+// watcher, refresh token cleanup). It does not start them: the leader
+// election starts the group for each leadership term. Every replica runs
+// the HTTP server, the WebSocket hub and its revalidation.
+func buildLeaderWorkers(
 	svc *domainServices,
 	hs *handlerSet,
 	repos *database.RepositorySet,
 	hub *websocket.Hub,
-) (*backgroundServices, error) {
+	stopTimeout time.Duration,
+) *leaderWorkers {
 	// TTL reaper for auto-expiring stack instances.
 	expiryStopper := deployer.NewExpiryStopper(svc.DeployManager, repos.StackDefinition, repos.ChartConfig)
 	reaper := ttl.NewReaper(repos.StackInstance, repos.AuditLog, hub, expiryStopper, 60*time.Second)
-	go reaper.Start()
 
 	// TTL expiry warner — warns users before their stack expires.
 	expiryWarner := ttl.NewWarner(repos.StackInstance, svc.LifecycleNotifier, 30*time.Minute, 60*time.Second)
-	go expiryWarner.Start()
 
 	// Quota monitor — alerts admins when cluster resource usage is high.
 	quotaMonitor := cluster.NewQuotaMonitor(cluster.QuotaMonitorConfig{
@@ -561,7 +570,6 @@ func startBackgroundServices(
 		Registry:     svc.ClusterRegistry,
 		Notifier:     svc.LifecycleNotifier,
 	})
-	quotaMonitor.Start()
 
 	// Secret expiry monitor — alerts admins before secrets expire.
 	secretMonitor := cluster.NewSecretMonitor(cluster.SecretMonitorConfig{
@@ -570,40 +578,91 @@ func startBackgroundServices(
 		Registry:     svc.ClusterRegistry,
 		Notifier:     svc.LifecycleNotifier,
 	})
-	secretMonitor.Start()
 
-	// Periodically clean up expired refresh tokens (every hour).
-	refreshTokenCleanupCtx, refreshTokenCleanupCancel := context.WithCancel(context.Background())
-	go func(ctx context.Context) {
-		ticker := time.NewTicker(time.Hour)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-				hs.Auth.CleanupExpiredTokens()
+	group := leader.NewGroup(stopTimeout,
+		leader.Worker{Name: "ttl-reaper", Run: reaper.Run},
+		leader.Worker{Name: "expiry-warner", Run: expiryWarner.Run},
+		leader.Worker{Name: "cleanup-scheduler", Run: svc.CleanupScheduler.Run},
+		leader.Worker{Name: "quota-monitor", Run: quotaMonitor.Run},
+		leader.Worker{Name: "secret-monitor", Run: secretMonitor.Run},
+		leader.Worker{Name: "secret-refresher", Run: svc.SecretRefresher.Run},
+		leader.Worker{Name: "cluster-health-poller", Run: svc.HealthPoller.Run},
+		leader.Worker{Name: "k8s-status-watcher", Run: svc.K8sWatcher.Run},
+		leader.Worker{Name: "refresh-token-cleanup", Run: func(ctx context.Context) {
+			// Once at the start of the term, then hourly: a leader change
+			// must not delay the cleanup by up to one interval each time.
+			hs.Auth.CleanupExpiredTokens()
+			ticker := time.NewTicker(refreshTokenCleanupInterval)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-ticker.C:
+					hs.Auth.CleanupExpiredTokens()
+				}
 			}
-		}
-	}(refreshTokenCleanupCtx)
+		}},
+	)
 
-	// Start cleanup scheduler.
-	if err := svc.CleanupScheduler.Start(); err != nil {
-		refreshTokenCleanupCancel()
-		reaper.Stop()
-		expiryWarner.Stop()
-		quotaMonitor.Stop()
-		secretMonitor.Stop()
-		return nil, fmt.Errorf("start cleanup scheduler: %w", err)
+	return &leaderWorkers{
+		Group:         group,
+		Reaper:        reaper,
+		ExpiryWarner:  expiryWarner,
+		QuotaMonitor:  quotaMonitor,
+		SecretMonitor: secretMonitor,
 	}
+}
 
-	return &backgroundServices{
-		Reaper:                    reaper,
-		ExpiryWarner:              expiryWarner,
-		QuotaMonitor:              quotaMonitor,
-		SecretMonitor:             secretMonitor,
-		RefreshTokenCleanupCancel: refreshTokenCleanupCancel,
-	}, nil
+// leaderConfig converts the configuration to the leader package settings.
+func leaderConfig(c config.LeaderElectionConfig) leader.Config {
+	return leader.Config{
+		Enabled:       c.Enabled,
+		LeaseName:     c.LeaseName,
+		Namespace:     c.Namespace,
+		Identity:      c.Identity,
+		LeaseDuration: c.LeaseDuration,
+		RenewDeadline: c.RenewDeadline,
+		RetryPeriod:   c.RetryPeriod,
+	}
+}
+
+// leaderRuntime runs the leader election and the leader worker group.
+type leaderRuntime struct {
+	elector *leader.Elector
+	workers *leader.Group
+	cancel  context.CancelFunc
+	done    chan struct{}
+}
+
+// startLeaderElection campaigns for the lease in a goroutine. The leader
+// starts workers for each leadership term and stops them (and waits for
+// them) when the term ends. With election disabled, this process is the
+// leader until shutdown.
+func startLeaderElection(elector *leader.Elector, workers *leader.Group) *leaderRuntime {
+	ctx, cancel := context.WithCancel(context.Background())
+	r := &leaderRuntime{elector: elector, workers: workers, cancel: cancel, done: make(chan struct{})}
+	slog.Info("Leader workers configured", "workers", workers.Names(), "election_enabled", elector.Enabled())
+	go func() {
+		defer close(r.done)
+		elector.Run(ctx, workers.Start, workers.Stop)
+	}()
+	return r
+}
+
+// Shutdown stops the leader workers first and then ends the election. The
+// leader releases the lease only after its workers stopped, so the next
+// leader does not run the same jobs at the same time.
+func (r *leaderRuntime) Shutdown(timeout time.Duration) {
+	r.workers.Close(timeout)
+	r.cancel()
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case <-r.done:
+	case <-timer.C:
+		slog.Error("Leader election did not stop in time", "timeout", timeout)
+	}
 }
 
 // servers holds the HTTP servers started during bootstrap.

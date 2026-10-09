@@ -61,6 +61,11 @@ func (e *CleanupExecutor) CleanInstance(ctx context.Context, inst *models.StackI
 // stop/clean operation, because those workflows need to read/update the record.
 // Callers should ensure the instance is stopped/cleaned before requesting deletion.
 func (e *CleanupExecutor) DeleteInstance(ctx context.Context, inst *models.StackInstance) error {
+	// Do not start a delete when the caller stopped (for example the cleanup
+	// scheduler at the end of a leadership term).
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	switch inst.Status {
 	case models.StackStatusRunning, models.StackStatusPartial, models.StackStatusDeploying, models.StackStatusStabilizing,
 		models.StackStatusStopping, models.StackStatusCleaning:

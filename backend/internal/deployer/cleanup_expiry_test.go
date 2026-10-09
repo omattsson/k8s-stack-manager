@@ -620,3 +620,20 @@ func TestExpiryStopper_StopInstance_ChartListError(t *testing.T) {
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "listing charts")
 }
+
+func TestCleanupExecutor_DeleteInstance_CancelledContext(t *testing.T) {
+	t.Parallel()
+
+	instRepo := newMockInstanceRepo()
+	inst := &models.StackInstance{ID: "inst-del-cancelled", Name: "test", Status: models.StackStatusStopped}
+	require.NoError(t, instRepo.Create(inst))
+	exec := &CleanupExecutor{instanceRepo: instRepo}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	err := exec.DeleteInstance(ctx, inst)
+	require.ErrorIs(t, err, context.Canceled)
+
+	_, findErr := instRepo.FindByID(inst.ID)
+	assert.NoError(t, findErr, "a cancelled delete must not remove the instance")
+}

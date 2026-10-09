@@ -149,6 +149,9 @@ func (m *mockInstanceRepo) ListExpired() ([]*models.StackInstance, error) {
 func (m *mockInstanceRepo) ListExpiringSoon(_ time.Duration) ([]*models.StackInstance, error) {
 	return nil, nil
 }
+func (*mockInstanceRepo) MarkExpiryWarned(_ string, _, _ time.Time) (bool, error) {
+	return false, nil
+}
 func (m *mockInstanceRepo) ListByStatus(_ string, _ int) ([]*models.StackInstance, error) {
 	return nil, nil
 }
@@ -819,3 +822,36 @@ func TestWatcherContextCancellation(t *testing.T) {
 }
 
 func (*mockInstanceRepo) CountByStatuses(statuses []string) (int, error) { return 0, nil }
+
+func TestWatcherRun_RestartsAndClearsCacheOnStop(t *testing.T) {
+	t.Parallel()
+
+	cs := fake.NewSimpleClientset(&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "ns-1"}})
+	repo := newMockInstanceRepo()
+	require.NoError(t, repo.Create(&models.StackInstance{
+		ID: "inst-1", Name: "one", Namespace: "ns-1", Status: models.StackStatusRunning,
+	}))
+	w := NewWatcher(&mockClientProvider{client: NewClientFromInterface(cs)}, repo, nil, time.Hour)
+
+	for term := 0; term < 2; term++ {
+		ctx, cancel := context.WithCancel(context.Background())
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			w.Run(ctx)
+		}()
+		require.Eventually(t, func() bool {
+			_, ok := w.GetStatus("inst-1")
+			return ok
+		}, 2*time.Second, 10*time.Millisecond, "term %d must poll", term)
+
+		cancel()
+		select {
+		case <-done:
+		case <-time.After(2 * time.Second):
+			t.Fatal("Run did not return after cancel")
+		}
+		_, ok := w.GetStatus("inst-1")
+		assert.False(t, ok, "a stopped watcher must not serve cached statuses")
+	}
+}

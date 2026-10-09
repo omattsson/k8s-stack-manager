@@ -63,6 +63,37 @@ app.kubernetes.io/name: {{ include "k8s-stack-manager.fullname" . }}-frontend
 {{- end }}
 
 {{/*
+Name of the Lease for the backend leader election: backend.env
+LEADER_ELECTION_LEASE_NAME, else backend.leaderElection.leaseName, else
+"<fullname>-workers".
+*/}}
+{{- define "k8s-stack-manager.leaderElection.leaseName" -}}
+{{- if hasKey .Values.backend.env "LEADER_ELECTION_LEASE_NAME" }}
+{{- index .Values.backend.env "LEADER_ELECTION_LEASE_NAME" }}
+{{- else }}
+{{- default (printf "%s-workers" (include "k8s-stack-manager.fullname" .)) .Values.backend.leaderElection.leaseName | trunc 63 | trimSuffix "-" }}
+{{- end }}
+{{- end }}
+
+{{/*
+Backend container env: the pod name and namespace (downward API; the leader
+election identity and Lease namespace), then backend.extraEnv.
+*/}}
+{{- define "k8s-stack-manager.backend.env" -}}
+- name: POD_NAME
+  valueFrom:
+    fieldRef:
+      fieldPath: metadata.name
+- name: POD_NAMESPACE
+  valueFrom:
+    fieldRef:
+      fieldPath: metadata.namespace
+{{- with .Values.backend.extraEnv }}
+{{ toYaml . }}
+{{- end }}
+{{- end }}
+
+{{/*
 Backend service names.
 */}}
 {{- define "k8s-stack-manager.backend.stableService" -}}

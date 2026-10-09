@@ -8,6 +8,11 @@ type StackInstance struct {
 	UpdatedAt      time.Time  `json:"updated_at"`
 	LastDeployedAt *time.Time `json:"last_deployed_at,omitempty"`
 	ExpiresAt      *time.Time `json:"expires_at,omitempty"`
+	// ExpiryWarnedAt is the time the TTL expiry warning for the current
+	// ExpiresAt was sent; nil when no warning was sent. Only the expiry
+	// warner sets it (MarkExpiryWarned). Update never writes it, and an
+	// Update that changes ExpiresAt clears it.
+	ExpiryWarnedAt *time.Time `json:"-"`
 	// StoppedAt is the time the last successful stop finished. It is nil
 	// when the instance is not stopped. A deploy or a clean clears it.
 	// Cleanup policies use it for the stopped_days condition.
@@ -66,6 +71,12 @@ type StackInstanceRepository interface {
 	ListIDsByOwnerIDs(ownerIDs []string) (map[string][]string, error)
 	ExistsByDefinitionAndStatus(definitionID, status string) (bool, error)
 	ListExpired() ([]*StackInstance, error)
+	// ListExpiringSoon returns running or partial instances that expire
+	// within threshold and have no expiry warning yet.
 	ListExpiringSoon(threshold time.Duration) ([]*StackInstance, error)
+	// MarkExpiryWarned sets ExpiryWarnedAt to warnedAt when the instance has
+	// no expiry warning and its ExpiresAt is still expiresAt. It reports
+	// whether it changed the row: only one caller gets true.
+	MarkExpiryWarned(id string, expiresAt, warnedAt time.Time) (bool, error)
 	ListByStatus(status string, limit int) ([]*StackInstance, error)
 }

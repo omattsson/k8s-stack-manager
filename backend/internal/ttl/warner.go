@@ -17,6 +17,12 @@ type ExpiryNotifier interface {
 
 // Warner periodically checks for stack instances approaching TTL expiry and
 // sends a one-time warning notification to the instance owner.
+//
+// The "already warned" state is stack_instances.expiry_warned_at in the
+// database, not process memory. A conditional update marks the instance
+// before the warning is sent, so a new leader does not warn again, and two
+// warners that run at the same time (a short leader overlap) send one
+// warning. A new expiry time (deploy, extend) clears the mark.
 type Warner struct {
 	instanceRepo models.StackInstanceRepository
 	notifier     ExpiryNotifier
@@ -25,12 +31,6 @@ type Warner struct {
 	stopCh       chan struct{}
 	doneCh       chan struct{}
 	once         sync.Once
-
-	// warned tracks instances for which a warning has already been sent.
-	// Key: instanceID + "|" + ExpiresAt (so a TTL extension resets the warning).
-	// Value: the ExpiresAt time, used for pruning entries once they've passed.
-	mu     sync.Mutex
-	warned map[string]time.Time
 }
 
 // NewWarner creates a TTL expiry warner. threshold is how far before expiry to
@@ -49,14 +49,27 @@ func NewWarner(instanceRepo models.StackInstanceRepository, notifier ExpiryNotif
 		interval:     interval,
 		stopCh:       make(chan struct{}),
 		doneCh:       make(chan struct{}),
-		warned:       make(map[string]time.Time),
 	}
 }
 
 // Start begins the periodic warning check loop. Blocks until Stop is called.
+// Start and Stop work once; use Run to start the warner again after a stop.
 func (w *Warner) Start() {
 	defer close(w.doneCh)
+	ctx, cancel := contextUntilClosed(w.stopCh)
+	defer cancel()
+	w.Run(ctx)
+}
 
+// Stop signals the warner to shut down and waits for it to finish.
+func (w *Warner) Stop() {
+	w.once.Do(func() { close(w.stopCh) })
+	<-w.doneCh
+}
+
+// Run runs the periodic warning check loop until ctx is done. It blocks. Run
+// can be called again after it returned (one call per leadership term).
+func (w *Warner) Run(ctx context.Context) {
 	ticker := time.NewTicker(w.interval)
 	defer ticker.Stop()
 
@@ -66,7 +79,7 @@ func (w *Warner) Start() {
 
 	for {
 		select {
-		case <-w.stopCh:
+		case <-ctx.Done():
 			slog.Info("TTL warner stopped")
 			return
 		case <-ticker.C:
@@ -75,15 +88,9 @@ func (w *Warner) Start() {
 	}
 }
 
-// Stop signals the warner to shut down and waits for it to finish.
-func (w *Warner) Stop() {
-	w.once.Do(func() { close(w.stopCh) })
-	<-w.doneCh
-}
-
 func (w *Warner) check() {
-	w.pruneWarned()
-
+	// The repository returns only instances without a warning for the
+	// current expiry time.
 	instances, err := w.instanceRepo.ListExpiringSoon(w.threshold)
 	if err != nil {
 		slog.Error("TTL warner: failed to list expiring instances", "error", err)
@@ -91,16 +98,17 @@ func (w *Warner) check() {
 	}
 
 	for _, inst := range instances {
-		key := inst.ID + "|" + inst.ExpiresAt.Format(time.RFC3339)
-
-		w.mu.Lock()
-		_, already := w.warned[key]
-		if !already {
-			w.warned[key] = *inst.ExpiresAt
+		if inst.ExpiresAt == nil {
+			continue
 		}
-		w.mu.Unlock()
-
-		if already {
+		// Mark first, then notify: the mark succeeds for one warner only,
+		// and it fails when the expiry time changed after the list.
+		marked, markErr := w.instanceRepo.MarkExpiryWarned(inst.ID, *inst.ExpiresAt, time.Now().UTC())
+		if markErr != nil {
+			slog.Error("TTL warner: failed to mark expiry warning", "instance_id", inst.ID, "error", markErr)
+			continue
+		}
+		if !marked {
 			continue
 		}
 
@@ -115,17 +123,5 @@ func (w *Warner) check() {
 			inst.ID,
 		)
 		slog.Info("TTL warner: sent expiry warning", "instance_id", inst.ID, "expires_at", inst.ExpiresAt)
-	}
-}
-
-// pruneWarned removes entries whose ExpiresAt has passed.
-func (w *Warner) pruneWarned() {
-	now := time.Now()
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	for key, expiresAt := range w.warned {
-		if expiresAt.Before(now) {
-			delete(w.warned, key)
-		}
 	}
 }
