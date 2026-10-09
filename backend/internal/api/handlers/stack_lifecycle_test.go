@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -32,6 +33,9 @@ type lifecycleEnv struct {
 	cc    *MockChartConfigRepository
 	logs  *MockDeploymentLogRepository
 	quota *MockInstanceQuotaOverrideRepository
+	// clusterQuota is optional; when set the handler checks clone quota
+	// copies against it.
+	clusterQuota *MockResourceQuotaRepository
 }
 
 func newLifecycleEnv() *lifecycleEnv {
@@ -73,6 +77,9 @@ func (e *lifecycleEnv) router(t *testing.T, mgr *deployer.Manager, callerID, use
 		}},
 	)
 	require.NoError(t, err)
+	if e.clusterQuota != nil {
+		h.WithClusterQuotas(e.clusterQuota)
+	}
 	g := r.Group("/api/v1/stack-instances")
 	g.POST("", h.CreateInstance)
 	g.GET("/:id", h.GetInstance)
@@ -351,6 +358,68 @@ func TestCloneInstance_QuotaOverrideCopyRule(t *testing.T) {
 			assert.Equal(t, "64Gi", q.MemoryLimit)
 			require.NotNil(t, q.PodLimit)
 			assert.Equal(t, 7, *q.PodLimit)
+		})
+	}
+}
+
+// TestCloneInstance_QuotaOverrideClusterCap checks that the owner cannot get
+// a quota override above the cluster quota through a clone (for example an
+// admin grant on the source). Admin and devops still get the copy.
+func TestCloneInstance_QuotaOverrideClusterCap(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		callerID    string
+		role        string
+		cpuLimit    string
+		quotaErr    error
+		wantQuota   bool
+		wantWarning string
+	}{
+		{name: "owner, override above the cluster quota", callerID: "uid-1", role: "user", cpuLimit: "32", wantQuota: false,
+			wantWarning: "The quota override of the source was not copied: it exceeds the cluster quota (cpu_limit 32 exceeds the cluster quota 16). The clone uses the cluster quota; only admin or devops can grant more."},
+		{name: "owner, override within the cluster quota", callerID: "uid-1", role: "user", cpuLimit: "16000m", wantQuota: true},
+		{name: "owner, cluster quota lookup fails", callerID: "uid-1", role: "user", cpuLimit: "8", quotaErr: errors.New("connection refused"), wantQuota: false,
+			wantWarning: "The quota override of the source was not copied: the cluster quota could not be checked. The clone uses the cluster quota."},
+		{name: "admin, override above the cluster quota", callerID: "uid-9", role: "admin", cpuLimit: "32", wantQuota: true},
+		{name: "devops, override above the cluster quota", callerID: "uid-9", role: "devops", cpuLimit: "32", wantQuota: true},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			env := newLifecycleEnv()
+			env.clusterQuota = NewMockResourceQuotaRepository()
+			require.NoError(t, env.clusterQuota.Upsert(context.Background(), &models.ResourceQuotaConfig{ClusterID: "cl-1", CPULimit: "16"}))
+			if tt.quotaErr != nil {
+				env.clusterQuota.SetError(tt.quotaErr)
+			}
+			require.NoError(t, env.inst.Create(&models.StackInstance{
+				ID: "src", StackDefinitionID: "d1", Name: "zz-life", Namespace: "stack-zz-life-alice",
+				OwnerID: "uid-1", Branch: "master", Status: models.StackStatusRunning, ClusterID: "cl-1",
+			}))
+			require.NoError(t, env.quota.Upsert(context.Background(), &models.InstanceQuotaOverride{
+				StackInstanceID: "src", CPULimit: tt.cpuLimit,
+			}))
+
+			w := serve(env.router(t, nil, tt.callerID, "caller", tt.role), http.MethodPost, "/api/v1/stack-instances/src/clone", "")
+			require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+			var clone CloneInstanceResponse
+			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &clone))
+			assert.Equal(t, tt.wantWarning, clone.Warning)
+			assert.Equal(t, "zz-life-copy", clone.Name, "the instance fields stay at the top level")
+			if tt.wantWarning == "" {
+				assert.NotContains(t, w.Body.String(), `"warning"`)
+			}
+
+			q, err := env.quota.GetByInstanceID(context.Background(), clone.ID)
+			if !tt.wantQuota {
+				assert.ErrorIs(t, err, dberrors.ErrNotFound)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.cpuLimit, q.CPULimit)
 		})
 	}
 }

@@ -147,7 +147,10 @@ func SetupRoutes(router *gin.Engine, deps Deps) *RateLimiters {
 	router.Use(middleware.MaxBodySize(1 << 20)) // 1 MB default
 
 	// WebSocket endpoint (top-level, outside rate limiter — connections are long-lived)
-	wsHandler := handlers.NewWebSocketHandler(deps.Hub, cfg.CORS.AllowedOrigins, cfg.Auth.JWTSecret)
+	// The upgrade runs the same token and user revocation checks as the
+	// HTTP JWT auth (session store blocklists, deleted or disabled user).
+	wsHandler := handlers.NewWebSocketHandler(deps.Hub, cfg.CORS.AllowedOrigins, cfg.Auth.JWTSecret).
+		WithRevocationChecks(deps.SessionStore, deps.UserRepo)
 	router.GET("/ws", wsHandler.HandleWebSocket)
 
 	// Swagger UI (only when explicitly enabled via ENABLE_SWAGGER=true)

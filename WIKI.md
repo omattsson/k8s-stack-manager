@@ -50,7 +50,7 @@ A developer's working copy of a stack definition. Each instance has:
 
 **Clone.** `POST /stack-instances/:id/clone` accepts an optional body `{"name": "...", "branch": "...", "ttl_minutes": N}`.
 - Without a name, the API uses the first free name of `<name>-copy`, `<name>-copy-2`, and so on.
-- The clone gets the cluster, the TTL, the value overrides and the branch overrides of the source. It gets the quota override only when the caller owns the source or is admin or devops; any other user gets the cluster quota (a quota override is a resource grant, not configuration).
+- The clone gets the cluster, the TTL, the value overrides and the branch overrides of the source. It gets the quota override only when the caller owns the source or is admin or devops; any other user gets the cluster quota (a quota override is a resource grant, not configuration). An owner without the admin or devops role gets the quota override only when it stays within the cluster quota (the same rule as setting a quota override, see below); otherwise the clone uses the cluster quota, the response has a `warning` field that says so, and the backend logs the skip. The clone still succeeds.
 - `branch` and `ttl_minutes` replace the values of the source. The clone is a draft and belongs to the caller.
 
 **Extend.** `POST /stack-instances/:id/extend` never makes the expiry earlier and never changes `ttl_minutes`.
@@ -123,10 +123,12 @@ Template → (instantiate) → Definition + ChartConfigs → (create instance) �
 | Deploy, deploy preview, stop, clean, delete, rollback, run actions | yes | yes | yes | no (403) |
 | Edit the instance, extend the TTL | yes | yes | yes | no (403) |
 | Read or change value, branch and quota overrides | yes | yes | yes | no (403) |
+| Set a quota override above the cluster quota | no (403) | yes | yes | no (403) |
 
 - A refused request returns 403 before any side effect: no hook, no status change, no deploy-log entry, no Helm call. The backend logs the refused attempt.
 - The web UI hides the lifecycle buttons and shows the page read-only for a user who cannot modify the instance.
 - A clone always belongs to the user who creates it.
+- Quota override limit: an owner without the `admin` or `devops` role can set a quota override only at or below the cluster quota of the instance's cluster. Each value (`cpu_request`, `cpu_limit`, `memory_request`, `memory_limit`, `storage_limit`, `pod_limit`) is compared with the same cluster value as a Kubernetes quantity, so `16000m` equals `16`. A value above it gets 403, for example `cpu_limit 64 exceeds the cluster quota 16; only admin or devops can set a higher quota`. A value equal to the stored override passes, so an owner can change one field without losing an admin grant on another field; raising it or a new value above the cluster quota still gets 403. A field without a cluster value has no limit. `pod_limit: 0` means no pod limit, so it counts as above a cluster pod limit. Admin and devops can grant more. The check runs when the override is saved; a deploy does not check again.
 - The override restriction limits who can *edit* through the override endpoints. It is not a secrecy control: the merged values (export, compare, deploy-log values) and a clone still contain the override values. Do not put secrets in value overrides; use Kubernetes Secrets or an external secret store.
 - The same applies to cluster **shared values**: only admins can edit them, but every user sees them in the exported and compared values of any stack on that cluster. Do not put secrets in shared values.
 
@@ -158,20 +160,28 @@ Exceptions to the session limits:
 
 - **CLI token from the SSO CLI login** (`stackctl login` through the browser): a long-lived access token (`JWT_EXPIRATION`, default 24h) without a session. `SESSION_IDLE_TIMEOUT` and `SESSION_MAX_LIFETIME` do not apply. It keeps the role it had at the login until it expires. Revoking the user (table below) still rejects it.
 - **API keys** have no session. They use the user's current role in the database and stay valid until they expire or are revoked.
-- **WebSocket** traffic (`/ws`) does not count as activity for the idle limit. A tab that only receives live updates idles out after `SESSION_IDLE_TIMEOUT`.
+- **WebSocket** traffic (`/ws`) does not count as activity for the idle limit. A tab that only receives live updates idles out after `SESSION_IDLE_TIMEOUT`. The server closes a socket when its access token expires; the web UI reconnects with the current token.
 - **Lost refresh response:** if the server rotates the refresh token but the browser never gets the response (network drop, client timeout), the browser keeps the used cookie. A retry within `REFRESH_REUSE_GRACE` still works, but sets no new cookie. The next refresh after the grace window counts as a replay and ends the session; the user must log in again. This fails safe by design.
 
 ### Revoking a User
 
-| Action | Access tokens issued before | Refresh tokens | API keys |
-|---|---|---|---|
-| Delete the user | rejected (401) | revoked | deleted |
-| Disable the user | rejected (401) | revoked | kept, but rejected while the user is disabled |
-| Reset the password | rejected (401) | revoked | kept |
+| Action | Access tokens issued before | Refresh tokens | API keys | Open WebSocket connections |
+|---|---|---|---|---|
+| Delete the user | rejected (401) | revoked | deleted | closed |
+| Disable the user | rejected (401) | revoked | kept, but rejected while the user is disabled | closed |
+| Reset the password | rejected (401) | revoked | kept | closed |
+| Log out (`/auth/logout`) | the current token is rejected (401) | the presented token is revoked | kept | the sockets of the current token are closed |
+| Log out of all sessions (`/auth/logout-all`) | the current token is rejected (401) | all revoked | kept | all sockets of the user are closed |
 
 A new login after a password reset works at once. Only tokens issued before the action are rejected. Enabling a disabled user does not bring back the tokens issued before the disable.
 
-Known gap: the WebSocket connection (`/ws`) does not check the blocklists yet (#466).
+WebSocket connections (`/ws`):
+
+- The upgrade runs the same checks as the HTTP API. A revoked token, a token issued at or before a user block, a deleted user and a disabled user get 401. If the session store fails, the check passes and the backend logs the error (same policy as the HTTP API).
+- The server closes an open socket (close code 1008) when the user is revoked or the session logs out (table above), and when the access token of the socket expires. The web UI then reconnects. It refreshes the token first when the server closed the socket with 1008 or the token expires within 30 seconds, and stops when the refresh is rejected. The refresh does not count as activity for `SESSION_IDLE_TIMEOUT`.
+- Every minute each backend replica checks its open sockets again (token blocklist, user blocklist, deleted or disabled user) and closes the revoked ones. If the session store or the database fails, the check passes and the backend logs the error.
+- After `/auth/logout-all`, the other sessions of the user keep a valid access token until it expires, so their sockets can reconnect until then.
+- With more than one backend replica, only the replica that handles the revoke request closes its sockets at once. The other replicas close them at the next check, within about one minute, or at token expiry if that is earlier. The check also covers long-lived tokens (`JWT_EXPIRATION`, for example the CLI token and the mode without refresh tokens). This stays so until the WebSocket fan-out across replicas (#428).
 
 ### Multi-Cluster
 - Clusters are registered via the API with a kubeconfig path or kubeconfig data (encrypted at rest with AES-GCM)

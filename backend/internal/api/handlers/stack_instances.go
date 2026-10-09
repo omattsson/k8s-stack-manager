@@ -140,6 +140,16 @@ type InstanceHandler struct {
 	actions            *hooks.ActionRegistry
 	notifier           deployer.LifecycleNotifier
 	sharedValuesRepo   models.SharedValuesRepository
+	clusterQuotaRepo   models.ResourceQuotaRepository
+}
+
+// WithClusterQuotas attaches the cluster quota repository. Clone then copies
+// the quota override for a caller without the admin or devops role only when
+// the override stays within the cluster quota. Returns h for chaining.
+// Without it the clone copies the override without this check.
+func (h *InstanceHandler) WithClusterQuotas(repo models.ResourceQuotaRepository) *InstanceHandler {
+	h.clusterQuotaRepo = repo
+	return h
 }
 
 // WithSharedValues attaches the cluster shared values repository. Every values
@@ -992,14 +1002,14 @@ func cloneNameCandidate(base string, n int) string {
 // CloneInstance godoc
 // @Summary     Clone a stack instance
 // @Description Create a new draft stack instance as a copy of an existing one. The clone belongs to the caller and uses the cluster and definition of the source.
-// @Description It copies the TTL (unless ttl_minutes is given), the value overrides and the branch overrides. It copies the instance quota override only when the caller owns the source or is admin or devops.
+// @Description It copies the TTL (unless ttl_minutes is given), the value overrides and the branch overrides. It copies the instance quota override only when the caller owns the source or is admin or devops; for an owner without the admin or devops role only when the override stays within the cluster quota. When it is not copied for that reason (or the cluster quota lookup fails), the response has a warning and the clone uses the cluster quota.
 // @Description The body is optional. Without a name, the server picks the first free name of <source>-copy, <source>-copy-2, ... (the namespace stack-<name>-<owner> must be free). A given name must be a DNS label (lowercase a-z, 0-9, '-', start and end alphanumeric, at most 50 characters).
 // @Tags        stack-instances
 // @Accept      json
 // @Produce     json
 // @Param       id   path     string               true  "Source instance ID"
 // @Param       body body     cloneInstanceRequest false "Optional clone name, branch and TTL"
-// @Success     201  {object} models.StackInstance
+// @Success     201  {object} CloneInstanceResponse
 // @Failure     400  {object} map[string]string "Invalid body, name or TTL"
 // @Failure     401  {object} map[string]string
 // @Failure     403  {object} map[string]string
@@ -1111,14 +1121,14 @@ func (h *InstanceHandler) CloneInstance(c *gin.Context) {
 		return
 	}
 
-	// The quota override is a resource grant, not configuration: copy it only
-	// when the caller may modify the source (owner, admin or devops). Any other
-	// user gets the cluster quota on the clone.
-	copyQuota := canModifyInstance(c, source)
+	quotaPolicy := h.cloneQuotaPolicy(c, source)
 
 	// Instance create + override copies are atomic.
+	var warning string
 	txErr := h.txRunner.RunInTx(func(repos database.TxRepos) error {
-		return cloneInstanceTx(c.Request.Context(), repos, source.ID, clone, now, copyQuota)
+		var err error
+		warning, err = cloneInstanceTx(c.Request.Context(), repos, source.ID, clone, now, quotaPolicy)
+		return err
 	})
 	if txErr != nil {
 		status, message := mapError(txErr, entityStackInstance)
@@ -1126,20 +1136,83 @@ func (h *InstanceHandler) CloneInstance(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusCreated, clone)
+	c.JSON(http.StatusCreated, CloneInstanceResponse{StackInstance: *clone, Warning: warning})
+}
+
+// CloneInstanceResponse is the response of the clone endpoint: the new
+// instance and an optional warning.
+type CloneInstanceResponse struct {
+	models.StackInstance
+	// Warning is set when the clone did not get the quota override of the
+	// source (above the cluster quota, or the cluster quota lookup failed).
+	// The clone then uses the cluster quota.
+	Warning string `json:"warning,omitempty"`
+}
+
+// Clone warnings for a quota override that is not copied.
+const (
+	msgCloneQuotaAboveCluster = "The quota override of the source was not copied: it exceeds the cluster quota (%s). The clone uses the cluster quota; only admin or devops can grant more."
+	msgCloneQuotaLookupFailed = "The quota override of the source was not copied: the cluster quota could not be checked. The clone uses the cluster quota."
+)
+
+// cloneQuotaPolicy returns the rule that decides whether the clone gets the
+// quota override of source. The quota override is a resource grant, not
+// configuration:
+//   - A caller who may not modify the source gets no copy (nil policy): the
+//     clone uses the cluster quota.
+//   - Admin and devops get the copy.
+//   - The owner gets the copy only when it stays within the cluster quota
+//     (models.CheckOverrideWithinClusterQuota), the same rule as
+//     SetQuotaOverride. Otherwise the clone uses the cluster quota and the
+//     clone still succeeds. The skip is logged.
+//   - If the cluster quota lookup fails, the owner gets no copy (fail closed);
+//     the clone still succeeds.
+//
+// The policy returns whether to copy and, when it skips a copy for the owner,
+// a warning for the clone response.
+func (h *InstanceHandler) cloneQuotaPolicy(c *gin.Context, source *models.StackInstance) func(*models.InstanceQuotaOverride) (bool, string) {
+	if !canModifyInstance(c, source) {
+		return nil
+	}
+	copyAll := func(*models.InstanceQuotaOverride) (bool, string) { return true, "" }
+	if isPrivilegedRole(c) || h.clusterQuotaRepo == nil {
+		return copyAll
+	}
+	var resolver clusterIDResolver
+	if h.registry != nil {
+		resolver = h.registry
+	}
+	userID := middleware.GetUserIDFromContext(c)
+	clusterQuota, err := lookupClusterQuota(c.Request.Context(), h.clusterQuotaRepo, resolver, source.ClusterID)
+	if err != nil {
+		return func(*models.InstanceQuotaOverride) (bool, string) {
+			slog.Error("Clone skips the quota override: cluster quota lookup failed",
+				"source_instance_id", source.ID, "user_id", userID, "error", err)
+			return false, msgCloneQuotaLookupFailed
+		}
+	}
+	return func(q *models.InstanceQuotaOverride) (bool, string) {
+		if checkErr := models.CheckOverrideWithinClusterQuota(clusterQuota, q, nil); checkErr != nil {
+			slog.Warn("Clone skips the quota override: it exceeds the cluster quota",
+				"source_instance_id", source.ID, "user_id", userID, "reason", checkErr.Error())
+			return false, fmt.Sprintf(msgCloneQuotaAboveCluster, checkErr.Error())
+		}
+		return true, ""
+	}
 }
 
 // cloneInstanceTx creates clone and copies the value overrides and the branch
-// overrides of the source instance, and the quota override when copyQuota is
-// true. Repositories that are not in repos are skipped.
-func cloneInstanceTx(ctx context.Context, repos database.TxRepos, sourceID string, clone *models.StackInstance, now time.Time, copyQuota bool) error {
+// overrides of the source instance, and the quota override when quotaPolicy is
+// set and allows it. Repositories that are not in repos are skipped. It
+// returns the warning of quotaPolicy when the policy skips the quota override.
+func cloneInstanceTx(ctx context.Context, repos database.TxRepos, sourceID string, clone *models.StackInstance, now time.Time, quotaPolicy func(*models.InstanceQuotaOverride) (bool, string)) (string, error) {
 	if err := repos.StackInstance.Create(clone); err != nil {
-		return err
+		return "", err
 	}
 	if repos.ValueOverride != nil {
 		overrides, err := repos.ValueOverride.ListByInstance(sourceID)
 		if err != nil {
-			return err
+			return "", err
 		}
 		for _, ov := range overrides {
 			if err := repos.ValueOverride.Create(&models.ValueOverride{
@@ -1149,14 +1222,14 @@ func cloneInstanceTx(ctx context.Context, repos database.TxRepos, sourceID strin
 				Values:          ov.Values,
 				UpdatedAt:       now,
 			}); err != nil {
-				return err
+				return "", err
 			}
 		}
 	}
 	if repos.BranchOverride != nil {
 		branches, err := repos.BranchOverride.List(sourceID)
 		if err != nil {
-			return err
+			return "", err
 		}
 		for _, bo := range branches {
 			if err := repos.BranchOverride.Set(&models.ChartBranchOverride{
@@ -1166,16 +1239,20 @@ func cloneInstanceTx(ctx context.Context, repos database.TxRepos, sourceID strin
 				Branch:          bo.Branch,
 				UpdatedAt:       now,
 			}); err != nil {
-				return err
+				return "", err
 			}
 		}
 	}
-	if copyQuota && repos.InstanceQuotaOverride != nil {
+	if quotaPolicy != nil && repos.InstanceQuotaOverride != nil {
 		quota, err := repos.InstanceQuotaOverride.GetByInstanceID(ctx, sourceID)
 		if err != nil && !errors.Is(err, dberrors.ErrNotFound) {
-			return err
+			return "", err
 		}
 		if err == nil && quota != nil {
+			copyQuota, warning := quotaPolicy(quota)
+			if !copyQuota {
+				return warning, nil
+			}
 			copied := *quota
 			copied.ID = uuid.New().String()
 			copied.StackInstanceID = clone.ID
@@ -1186,11 +1263,11 @@ func cloneInstanceTx(ctx context.Context, repos database.TxRepos, sourceID strin
 				copied.PodLimit = &pods
 			}
 			if err := repos.InstanceQuotaOverride.Upsert(ctx, &copied); err != nil {
-				return err
+				return "", err
 			}
 		}
 	}
-	return nil
+	return "", nil
 }
 
 // ExportChartValues godoc

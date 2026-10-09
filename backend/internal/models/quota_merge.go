@@ -117,3 +117,79 @@ func ValidateEffectiveQuota(cluster *ResourceQuotaConfig, override *InstanceQuot
 	}
 	return nil
 }
+
+// CheckOverrideWithinClusterQuota checks that each value of the override is
+// not above the same value of the cluster quota. Callers apply it to users
+// that are not admin or devops: those users may lower a quota, not raise it.
+//
+// Rules:
+//
+//   - A field that is empty in the override has no check (the cluster value
+//     applies).
+//   - A field without a cluster value (empty string, or pod_limit 0) has no
+//     cap.
+//   - Quantities are compared as Kubernetes quantities, so "16" equals
+//     "16000m" and "24Gi" equals "25769803776".
+//   - An override pod_limit of 0 means no pod limit, so it is above any
+//     cluster pod_limit.
+//   - A field equal to the same field of existing (the stored override, may be
+//     nil) passes, also above the cluster quota. So an owner can change one
+//     field without losing an admin grant on another field. A raise or a new
+//     value above the cluster quota still fails.
+//
+// A nil cluster or nil override passes. The error names the field and both
+// values, for example "cpu_limit 64 exceeds the cluster quota 16". Call it
+// after Validate on the override, so the override quantities are valid. A
+// cluster value that does not parse gives no cap for that field.
+func CheckOverrideWithinClusterQuota(cluster *ResourceQuotaConfig, override, existing *InstanceQuotaOverride) error {
+	if cluster == nil || override == nil {
+		return nil
+	}
+	if existing == nil {
+		existing = &InstanceQuotaOverride{}
+	}
+	fields := []struct {
+		name, overrideVal, clusterVal, existingVal string
+	}{
+		{"cpu_request", override.CPURequest, cluster.CPURequest, existing.CPURequest},
+		{"cpu_limit", override.CPULimit, cluster.CPULimit, existing.CPULimit},
+		{"memory_request", override.MemoryRequest, cluster.MemoryRequest, existing.MemoryRequest},
+		{"memory_limit", override.MemoryLimit, cluster.MemoryLimit, existing.MemoryLimit},
+		{"storage_limit", override.StorageLimit, cluster.StorageLimit, existing.StorageLimit},
+	}
+	for _, f := range fields {
+		if f.overrideVal == "" || f.clusterVal == "" {
+			continue
+		}
+		capQty, err := resource.ParseQuantity(f.clusterVal)
+		if err != nil {
+			continue
+		}
+		qty, err := resource.ParseQuantity(f.overrideVal)
+		if err != nil {
+			return fmt.Errorf("%s %q: invalid quantity", f.name, f.overrideVal)
+		}
+		if qty.Cmp(capQty) <= 0 {
+			continue
+		}
+		if f.existingVal != "" {
+			if prev, prevErr := resource.ParseQuantity(f.existingVal); prevErr == nil && qty.Cmp(prev) == 0 {
+				continue
+			}
+		}
+		return fmt.Errorf("%s %s exceeds the cluster quota %s", f.name, f.overrideVal, f.clusterVal)
+	}
+	if override.PodLimit != nil && cluster.PodLimit > 0 {
+		pods := *override.PodLimit
+		if existing.PodLimit != nil && *existing.PodLimit == pods {
+			return nil
+		}
+		if pods == 0 {
+			return fmt.Errorf("pod_limit 0 (no limit) exceeds the cluster quota %d", cluster.PodLimit)
+		}
+		if pods > cluster.PodLimit {
+			return fmt.Errorf("pod_limit %d exceeds the cluster quota %d", pods, cluster.PodLimit)
+		}
+	}
+	return nil
+}

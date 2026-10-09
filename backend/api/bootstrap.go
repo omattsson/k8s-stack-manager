@@ -315,6 +315,9 @@ func buildHandlers(
 	// Auth handler.
 	authHandler := handlers.NewAuthHandler(repos.User, &cfg.Auth, &cfg.OIDC)
 	authHandler.SetSessionStore(sessStore)
+	if hub != nil {
+		authHandler.SetWebSocketRevoker(hub)
+	}
 	if repos.RefreshToken != nil {
 		authHandler.SetRefreshTokenRepo(repos.RefreshToken)
 	}
@@ -369,7 +372,7 @@ func buildHandlers(
 		return nil, fmt.Errorf("create instance handler: %w", err)
 	}
 	instanceHandler.WithHooks(svc.HookDispatcher).WithActions(svc.ActionRegistry).WithNotifier(svc.LifecycleNotifier).WithSharedValues(repos.SharedValues).
-		WithTemplateVersions(repos.TemplateVersion)
+		WithTemplateVersions(repos.TemplateVersion).WithClusterQuotas(repos.ResourceQuota)
 
 	// Git handler.
 	gitHandler := handlers.NewGitHandler(svc.GitRegistry)
@@ -382,6 +385,9 @@ func buildHandlers(
 	userHandler.SetSessionStore(sessStore)
 	userHandler.SetAccessTokenExpiration(cfg.Auth.AccessTokenExpiration)
 	userHandler.SetJWTExpiration(cfg.Auth.JWTExpiration)
+	if hub != nil {
+		userHandler.SetWebSocketRevoker(hub)
+	}
 
 	// API key handler.
 	apiKeyHandler := handlers.NewAPIKeyHandler(repos.APIKey, repos.User, &cfg.Auth)

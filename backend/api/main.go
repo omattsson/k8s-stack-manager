@@ -126,6 +126,12 @@ func main() {
 	hs, err := buildHandlers(cfg, repos, svc, sessStore, hub)
 	must("handlers", err)
 
+	// Close revoked WebSocket connections that this replica did not revoke
+	// itself (revoke on another replica, token blocklist). Stops on hub
+	// shutdown.
+	hub.StartRevalidation(websocket.DefaultRevalidateInterval,
+		handlers.NewWebSocketRevocationChecker(sessStore, repos.User))
+
 	// Router.
 	router, rateLimiters := buildRouter(cfg, hs, routerDeps{
 		Repo:          repo,

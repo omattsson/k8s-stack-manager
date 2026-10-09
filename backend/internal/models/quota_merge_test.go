@@ -60,3 +60,46 @@ func TestMergeQuotaOverride_NilArguments(t *testing.T) {
 	merged.CPULimit = "8"
 	assert.Equal(t, "4", cluster.CPULimit, "merge must not modify the cluster quota")
 }
+
+func TestCheckOverrideWithinClusterQuota(t *testing.T) {
+	t.Parallel()
+
+	n := func(v int) *int { return &v }
+	tests := []struct {
+		name     string
+		cluster  *ResourceQuotaConfig
+		override *InstanceQuotaOverride
+		existing *InstanceQuotaOverride
+		wantErr  string
+	}{
+		{name: "unchanged value above the cap", cluster: &ResourceQuotaConfig{CPULimit: "16", PodLimit: 20}, override: &InstanceQuotaOverride{CPULimit: "32000m", PodLimit: n(0)}, existing: &InstanceQuotaOverride{CPULimit: "32", PodLimit: n(0)}},
+		{name: "raise above the existing value", cluster: &ResourceQuotaConfig{CPULimit: "16"}, override: &InstanceQuotaOverride{CPULimit: "33"}, existing: &InstanceQuotaOverride{CPULimit: "32"}, wantErr: "cpu_limit 33 exceeds the cluster quota 16"},
+		{name: "lower but still above the cap", cluster: &ResourceQuotaConfig{CPULimit: "16"}, override: &InstanceQuotaOverride{CPULimit: "24"}, existing: &InstanceQuotaOverride{CPULimit: "32"}, wantErr: "cpu_limit 24 exceeds the cluster quota 16"},
+		{name: "nil cluster", override: &InstanceQuotaOverride{CPULimit: "64"}},
+		{name: "nil override", cluster: &ResourceQuotaConfig{CPULimit: "16"}},
+		{name: "empty override field", cluster: &ResourceQuotaConfig{CPULimit: "16"}, override: &InstanceQuotaOverride{}},
+		{name: "no cluster value", cluster: &ResourceQuotaConfig{}, override: &InstanceQuotaOverride{CPULimit: "64", PodLimit: n(0)}},
+		{name: "equal in other units", cluster: &ResourceQuotaConfig{CPULimit: "16", MemoryLimit: "24Gi"}, override: &InstanceQuotaOverride{CPULimit: "16000m", MemoryLimit: "25769803776"}},
+		{name: "below", cluster: &ResourceQuotaConfig{CPURequest: "2"}, override: &InstanceQuotaOverride{CPURequest: "500m"}},
+		{name: "cpu request above", cluster: &ResourceQuotaConfig{CPURequest: "2"}, override: &InstanceQuotaOverride{CPURequest: "2001m"}, wantErr: "cpu_request 2001m exceeds the cluster quota 2"},
+		{name: "storage above", cluster: &ResourceQuotaConfig{StorageLimit: "100Gi"}, override: &InstanceQuotaOverride{StorageLimit: "1Ti"}, wantErr: "storage_limit 1Ti exceeds the cluster quota 100Gi"},
+		{name: "memory request above", cluster: &ResourceQuotaConfig{MemoryRequest: "1Gi"}, override: &InstanceQuotaOverride{MemoryRequest: "1025Mi"}, wantErr: "memory_request 1025Mi exceeds the cluster quota 1Gi"},
+		{name: "pod limit equal", cluster: &ResourceQuotaConfig{PodLimit: 20}, override: &InstanceQuotaOverride{PodLimit: n(20)}},
+		{name: "pod limit above", cluster: &ResourceQuotaConfig{PodLimit: 20}, override: &InstanceQuotaOverride{PodLimit: n(21)}, wantErr: "pod_limit 21 exceeds the cluster quota 20"},
+		{name: "pod limit zero is no limit", cluster: &ResourceQuotaConfig{PodLimit: 20}, override: &InstanceQuotaOverride{PodLimit: n(0)}, wantErr: "pod_limit 0 (no limit) exceeds the cluster quota 20"},
+		{name: "unparsable cluster value has no cap", cluster: &ResourceQuotaConfig{CPULimit: "lots"}, override: &InstanceQuotaOverride{CPULimit: "64"}},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			err := CheckOverrideWithinClusterQuota(tt.cluster, tt.override, tt.existing)
+			if tt.wantErr == "" {
+				assert.NoError(t, err)
+				return
+			}
+			require.Error(t, err)
+			assert.Equal(t, tt.wantErr, err.Error())
+		})
+	}
+}

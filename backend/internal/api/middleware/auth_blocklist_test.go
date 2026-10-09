@@ -237,3 +237,81 @@ func TestAuthRequired_UserBlock_IssuedAt(t *testing.T) {
 		})
 	}
 }
+
+// TestValidateJWT_ExpirationRequired checks that a token without an exp claim
+// is rejected.
+func TestValidateJWT_ExpirationRequired(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		exp     *jwt.NumericDate
+		wantErr bool
+	}{
+		{name: "with exp", exp: jwt.NewNumericDate(time.Now().Add(time.Hour))},
+		{name: "without exp", wantErr: true},
+		{name: "expired", exp: jwt.NewNumericDate(time.Now().Add(-time.Minute)), wantErr: true},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			tok := jwt.NewWithClaims(jwt.SigningMethodHS256, Claims{
+				UserID: "u1", Role: "user",
+				RegisteredClaims: jwt.RegisteredClaims{ID: "jti-1", IssuedAt: jwt.NewNumericDate(time.Now()), ExpiresAt: tt.exp},
+			})
+			signed, err := tok.SignedString([]byte(testSecret))
+			require.NoError(t, err)
+			_, err = ValidateJWT(signed, testSecret)
+			if tt.wantErr {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestRevocationStatus(t *testing.T) {
+	t.Parallel()
+
+	dbDown := errors.New("db down")
+	tests := []struct {
+		name        string
+		setup       func(*mockSessionStore)
+		nilStore    bool
+		wantRevoked error
+		wantLookup  bool
+	}{
+		{name: "nothing revoked"},
+		{name: "nil store", nilStore: true},
+		{name: "token revoked", setup: func(m *mockSessionStore) { m.blockedTokens["jti-1"] = true }, wantRevoked: ErrTokenRevoked},
+		{name: "user revoked", setup: func(m *mockSessionStore) { m.blockedUsers["u1"] = true }, wantRevoked: ErrSessionRevoked},
+		{name: "token check fails, user revoked", setup: func(m *mockSessionStore) { m.tokenBlockErr = dbDown; m.blockedUsers["u1"] = true }, wantRevoked: ErrSessionRevoked, wantLookup: true},
+		{name: "both checks fail", setup: func(m *mockSessionStore) { m.tokenBlockErr = dbDown; m.userBlockErr = dbDown }, wantLookup: true},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			m := newMockSessionStore()
+			if tt.setup != nil {
+				tt.setup(m)
+			}
+			var store sessionstore.SessionStore = m
+			if tt.nilStore {
+				store = nil
+			}
+			claims := &Claims{UserID: "u1", RegisteredClaims: jwt.RegisteredClaims{ID: "jti-1", IssuedAt: jwt.NewNumericDate(time.Now())}}
+			revoked, lookupErr := RevocationStatus(context.Background(), store, claims)
+			assert.Equal(t, tt.wantRevoked, revoked)
+			if tt.wantLookup {
+				assert.ErrorIs(t, lookupErr, dbDown)
+			} else {
+				assert.NoError(t, lookupErr)
+			}
+			// CheckRevocation returns the same revocation and fails open.
+			assert.Equal(t, tt.wantRevoked, CheckRevocation(context.Background(), store, claims))
+		})
+	}
+}
