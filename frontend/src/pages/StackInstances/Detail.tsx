@@ -48,6 +48,7 @@ import { canModifyInstance } from '../../utils/roles';
 import { describeApiError } from '../../utils/apiError';
 import { downloadBlob } from '../../utils/download';
 import ExtendTtlMenu from '../../components/ExtendTtlMenu';
+import InstanceActionsMenu from '../../components/InstanceActionsMenu';
 import { successfulDeploys, currentDeployLogId, defaultRollbackTarget } from '../../utils/deployHistory';
 import CloneDialog from './CloneDialog';
 import RollbackDialog from './RollbackDialog';
@@ -781,6 +782,7 @@ const Detail = () => {
           </Box>
           <Box sx={{ display: 'flex', gap: 1 }}>
             {canModify && renderStatusActions(instance.status)}
+            <InstanceActionsMenu instanceId={instance.id} />
             <Button
               variant="outlined"
               id="export-values-button"

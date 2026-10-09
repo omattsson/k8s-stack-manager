@@ -5374,9 +5374,86 @@
                 }
             }
         },
+        "/api/v1/stack-instances/{id}/actions": {
+            "get": {
+                "description": "Returns the registered actions with their UI metadata (label, description, confirmation text, parameter schema) and a can_invoke flag. Any authenticated user who can view the instance gets the list; can_invoke is true for the owner, an admin and a devops user. The response never contains the subscriber URL, secret or headers. Without an action registry the list is empty.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "stack-instances"
+                ],
+                "summary": "List the actions that can run on a stack instance",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Instance ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.actionListResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Instance not found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/stack-instances/{id}/actions/{name}": {
             "post": {
-                "description": "Dispatches to the action subscriber webhook and wraps its response in an envelope containing action, instance_id, status_code, and result fields. The subscriber's JSON body is nested under the result key. Returns 200 even for non-2xx subscriber responses — check status_code to distinguish.",
+                "description": "Dispatches to the action subscriber webhook and wraps its response in an envelope containing action, instance_id, status_code, and result fields. The subscriber's JSON body is nested under the result key. Returns 200 even for non-2xx subscriber responses — check status_code to distinguish. When the action declares parameters, they are checked (type, required, enum options) before the call; undeclared parameters pass through. When the action has a log_path, the subscriber answered 2xx and the result has a valid job_id, the envelope also has job_id: poll GET /stack-instances/{id}/actions/{name}/jobs/{job_id}/log for the job log.",
                 "consumes": [
                     "application/json"
                 ],
@@ -5448,6 +5525,121 @@
                     },
                     "502": {
                         "description": "Subscriber unreachable",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "503": {
+                        "description": "Action registry not configured",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/stack-instances/{id}/actions/{name}/jobs/{job_id}/log": {
+            "get": {
+                "description": "Fetches the job log of an asynchronous action from the action subscriber, from the byte offset to the end (at most 256 KiB per call). The action config must have a log_path. Poll with next_offset until done is true. Only the instance owner, an admin or a devops user may read the job log (the same rule as invoke). The backend signs the subscriber request like an invoke call and never returns the subscriber URL.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "stack-instances"
+                ],
+                "summary": "Read the job log of an asynchronous action",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Instance ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Action name",
+                        "name": "name",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Job ID (1-128 characters: A-Z a-z 0-9 . _ -, not starting with a dot)",
+                        "name": "job_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Byte offset to read from (default 0)",
+                        "name": "offset",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.actionJobLogResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid job_id or offset",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Caller is not the owner, an admin or a devops user",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Instance, action, job log route or job not found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "502": {
+                        "description": "Subscriber unreachable or returned an error",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {
@@ -10532,6 +10724,124 @@
                     "description": "Valid is true when the branch exists in the repository.",
                     "type": "boolean",
                     "example": true
+                }
+            }
+        },
+        "handlers.actionInfo": {
+            "type": "object",
+            "properties": {
+                "can_invoke": {
+                    "description": "CanInvoke is true when the caller may run the action on this instance.",
+                    "type": "boolean"
+                },
+                "confirm": {
+                    "type": "string"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "has_job_log": {
+                    "description": "HasJobLog is true when the backend proxies the job log of the action\n(the action config has a log_path).",
+                    "type": "boolean"
+                },
+                "label": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "parameters": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/handlers.actionParameterInfo"
+                    }
+                }
+            }
+        },
+        "handlers.actionJobLogResponse": {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string"
+                },
+                "done": {
+                    "description": "Done is true when the job has ended and the log is read to the end.",
+                    "type": "boolean"
+                },
+                "instance_id": {
+                    "type": "string"
+                },
+                "job_id": {
+                    "type": "string"
+                },
+                "log": {
+                    "description": "Log is the log text from Offset to NextOffset.",
+                    "type": "string"
+                },
+                "next_offset": {
+                    "description": "NextOffset is the offset for the next poll.",
+                    "type": "integer"
+                },
+                "offset": {
+                    "description": "Offset is the requested byte offset.",
+                    "type": "integer"
+                },
+                "status": {
+                    "description": "Status is the job state from the subscriber: running while the job\nruns, else a final state such as succeeded or failed.",
+                    "type": "string"
+                },
+                "truncated": {
+                    "description": "Truncated is true when the chunk was cut at the size cap; poll again\nat once with next_offset.",
+                    "type": "boolean"
+                }
+            }
+        },
+        "handlers.actionListResponse": {
+            "type": "object",
+            "properties": {
+                "actions": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/handlers.actionInfo"
+                    }
+                },
+                "can_invoke": {
+                    "type": "boolean"
+                },
+                "instance_id": {
+                    "type": "string"
+                }
+            }
+        },
+        "handlers.actionParameterInfo": {
+            "type": "object",
+            "properties": {
+                "default": {},
+                "description": {
+                    "type": "string"
+                },
+                "label": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "options": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "required": {
+                    "type": "boolean"
+                },
+                "type": {
+                    "type": "string",
+                    "enum": [
+                        "string",
+                        "bool",
+                        "enum"
+                    ]
                 }
             }
         },

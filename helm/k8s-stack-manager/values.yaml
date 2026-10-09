@@ -416,6 +416,14 @@ hooks:
   #   description: "Flush and reseed Redis cache"
   #   timeout_seconds: 120
   #   secret_env: REDIS_SYNC_HOOK_SECRET
+  #   # Optional UI metadata (see EXTENDING.md "Actions in the web UI"):
+  #   label: "Sync Redis"
+  #   confirm: "This flushes the Redis cache of the stack."
+  #   parameters:
+  #     - name: dry_run
+  #       type: bool
+  #   # Optional job log of an asynchronous action (path on the host of url):
+  #   log_path: "/jobs/{job_id}/log"
 
 # ---------------------------------------------------------------------------
 # Ingress

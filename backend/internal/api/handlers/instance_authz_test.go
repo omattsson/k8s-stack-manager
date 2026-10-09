@@ -119,13 +119,18 @@ func newAuthzFixture(t *testing.T, instStatus, callerID, callerRole string) *aut
 	require.NoError(t, err)
 
 	// Action subscriber that counts invocations.
-	actionSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	// GET requests are job log reads (log_path below).
+	actionSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		f.actionCalls.Add(1)
+		if r.Method == http.MethodGet {
+			_, _ = w.Write([]byte("step 1\n"))
+			return
+		}
 		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
 	}))
 	t.Cleanup(actionSrv.Close)
 	actions, err := hooks.NewActionRegistry([]hooks.ActionSubscription{{
-		Name: "refresh-db", URL: actionSrv.URL, TimeoutSeconds: 5,
+		Name: "refresh-db", URL: actionSrv.URL, TimeoutSeconds: 5, LogPath: "/jobs/{job_id}/log",
 	}}, actionSrv.Client())
 	require.NoError(t, err)
 
@@ -181,7 +186,9 @@ func newAuthzFixture(t *testing.T, instStatus, callerID, callerRole string) *aut
 		insts.POST("/:id/extend", h.ExtendTTL)
 		insts.GET("/:id/deploy-preview", h.DeployPreview)
 		insts.GET("/:id/deploy-log", h.GetDeployLog)
+		insts.GET("/:id/actions", h.ListActions)
 		insts.POST("/:id/actions/:name", h.InvokeAction)
+		insts.GET("/:id/actions/:name/jobs/:job_id/log", h.GetActionJobLog)
 		insts.GET("/:id/overrides", h.GetOverrides)
 		insts.PUT("/:id/overrides/:chartId", h.SetOverride)
 		insts.GET("/:id/branches", boHandler.ListBranchOverrides)
@@ -247,6 +254,7 @@ func TestInstanceAuthorization_ProtectedEndpoints(t *testing.T) {
 		{"delete", http.MethodDelete, base, "", models.StackStatusDraft, http.StatusNoContent},
 		{"rollback", http.MethodPost, base + "/rollback", "", models.StackStatusRunning, http.StatusAccepted},
 		{"invoke action", http.MethodPost, base + "/actions/refresh-db", `{"parameters":{"k":"v"}}`, models.StackStatusRunning, http.StatusOK},
+		{"action job log", http.MethodGet, base + "/actions/refresh-db/jobs/job-1/log", "", models.StackStatusRunning, http.StatusOK},
 		{"update", http.MethodPut, base, `{"branch":"feature/b","ttl_minutes":30}`, models.StackStatusRunning, http.StatusOK},
 		{"extend TTL", http.MethodPost, base + "/extend", `{"ttl_minutes":120}`, models.StackStatusRunning, http.StatusOK},
 		{"deploy preview", http.MethodGet, base + "/deploy-preview", "", models.StackStatusRunning, http.StatusOK},
@@ -326,8 +334,8 @@ func TestInstanceAuthorization_ProtectedEndpoints(t *testing.T) {
 
 // TestInstanceAuthorization_ReadEndpointsOpen checks that any authenticated
 // user can still read another user's instance: details, deploy log, exported
-// values, compare, clone (creates a copy owned by the caller), status and pods.
-// The fixture has no cluster client, so status and pods return the no-cluster
+// values, compare, clone (creates a copy owned by the caller), status, pods
+// and the action list (with can_invoke false). The fixture has no cluster client, so status and pods return the no-cluster
 // 503 after the instance lookup (a 200 needs a k8s client).
 func TestInstanceAuthorization_ReadEndpointsOpen(t *testing.T) {
 	t.Parallel()
@@ -345,6 +353,7 @@ func TestInstanceAuthorization_ReadEndpointsOpen(t *testing.T) {
 		{"export chart values", http.MethodGet, base + "/values/" + authzChartID, http.StatusOK},
 		{"compare", http.MethodGet, "/api/v1/stack-instances/compare?left=" + authzInstanceID + "&right=inst-authz-2", http.StatusOK},
 		{"clone", http.MethodPost, base + "/clone", http.StatusCreated},
+		{"list actions", http.MethodGet, base + "/actions", http.StatusOK},
 		// No cluster client in the fixture: 503 "K8s monitoring not configured",
 		// reached after the lookup, so no ownership rule blocked the read.
 		{"status", http.MethodGet, base + "/status", http.StatusServiceUnavailable},

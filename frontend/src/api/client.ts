@@ -64,6 +64,9 @@ import type {
   NotificationChannel,
   NotificationChannelWithCount,
   NotificationDeliveryLog,
+  InstanceActionList,
+  ActionInvokeResult,
+  ActionJobLog,
 } from '../types';
 
 // Extend Axios config to include our retry flag (avoids `any` cast).
@@ -1213,6 +1216,68 @@ export const instanceService = {
       return response.data;
     } catch (error) {
       console.error('Failed to roll back instance:', error);
+      throw error;
+    }
+  },
+  /**
+   * List the custom actions that can run on an instance, with their UI
+   * metadata and a can_invoke flag for the current user.
+   * @param id - Instance ID
+   * @returns The actions (empty when no action is registered)
+   * @see GET /api/v1/stack-instances/:id/actions
+   */
+  listActions: async (id: string): Promise<InstanceActionList> => {
+    try {
+      const response = await api.get(`/api/v1/stack-instances/${id}/actions`);
+      return response.data;
+    } catch (error) {
+      console.error('Failed to list actions:', error);
+      throw error;
+    }
+  },
+  /**
+   * Run a custom action on an instance.
+   * @param id - Instance ID
+   * @param name - Action name
+   * @param parameters - Optional parameters for the action subscriber
+   * @returns The subscriber status code and result; job_id for an asynchronous action with a job log
+   * @see POST /api/v1/stack-instances/:id/actions/:name
+   */
+  invokeAction: async (
+    id: string,
+    name: string,
+    parameters?: Record<string, string | boolean>,
+  ): Promise<ActionInvokeResult> => {
+    try {
+      const response = await api.post(
+        `/api/v1/stack-instances/${id}/actions/${encodeURIComponent(name)}`,
+        parameters && Object.keys(parameters).length > 0 ? { parameters } : {},
+      );
+      return response.data;
+    } catch (error) {
+      console.error('Failed to run action:', error);
+      throw error;
+    }
+  },
+  /**
+   * Read one chunk of the job log of an asynchronous action. Poll with
+   * next_offset until done is true.
+   * @param id - Instance ID
+   * @param name - Action name
+   * @param jobId - Job ID from the invoke result
+   * @param offset - Byte offset to read from
+   * @returns The log chunk, the next offset, the job status and the done flag
+   * @see GET /api/v1/stack-instances/:id/actions/:name/jobs/:job_id/log
+   */
+  getActionJobLog: async (id: string, name: string, jobId: string, offset = 0): Promise<ActionJobLog> => {
+    try {
+      const response = await api.get(
+        `/api/v1/stack-instances/${id}/actions/${encodeURIComponent(name)}/jobs/${encodeURIComponent(jobId)}/log`,
+        { params: { offset } },
+      );
+      return response.data;
+    } catch (error) {
+      console.error('Failed to read action job log:', error);
       throw error;
     }
   },

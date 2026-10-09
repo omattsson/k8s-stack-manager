@@ -879,3 +879,72 @@ export interface NotificationDeliveryLog {
   error_message?: string;
   created_at: string;
 }
+
+/** Type of an action parameter: a text field, a switch or a select. */
+export type ActionParameterType = 'string' | 'bool' | 'enum';
+
+/** One input of a custom action, from the action config. */
+export interface ActionParameter {
+  name: string;
+  /** Form label. The server sets it to the name when the config has no label. */
+  label: string;
+  description?: string;
+  type: ActionParameterType;
+  required: boolean;
+  /** A string for `string` and `enum`, a boolean for `bool`. */
+  default?: string | boolean;
+  /** The allowed values of an `enum` parameter. */
+  options?: string[];
+}
+
+/** A custom action that can run on a stack instance (`GET /stack-instances/:id/actions`). */
+export interface InstanceAction {
+  name: string;
+  /** Menu text. The server sets it to the name when the config has no label. */
+  label: string;
+  description?: string;
+  /** Confirmation text to show before the action runs. */
+  confirm?: string;
+  parameters: ActionParameter[];
+  /** True when the backend proxies the job log of the action. */
+  has_job_log: boolean;
+  /** True when the current user may run the action on this instance. */
+  can_invoke: boolean;
+}
+
+/** Response of `GET /stack-instances/:id/actions`. */
+export interface InstanceActionList {
+  instance_id: string;
+  can_invoke: boolean;
+  actions: InstanceAction[];
+}
+
+/** Response of `POST /stack-instances/:id/actions/:name`. */
+export interface ActionInvokeResult {
+  action: string;
+  instance_id: string;
+  /** HTTP status of the action subscriber. A non-2xx value is an action failure. */
+  status_code: number;
+  /** JSON body of the action subscriber. */
+  result: unknown;
+  /** Job ID of an asynchronous action with a job log. */
+  job_id?: string;
+}
+
+/** Response of `GET /stack-instances/:id/actions/:name/jobs/:job_id/log`. */
+export interface ActionJobLog {
+  action: string;
+  instance_id: string;
+  job_id: string;
+  /** `running` while the job runs, else a final state such as `succeeded` or `failed`. */
+  status: string;
+  /** Log text from `offset` to `next_offset`. */
+  log: string;
+  offset: number;
+  /** Offset for the next poll. */
+  next_offset: number;
+  /** True when the job has ended and the log is read to the end. */
+  done: boolean;
+  /** True when the chunk was cut at the size cap. Poll again at once. */
+  truncated: boolean;
+}

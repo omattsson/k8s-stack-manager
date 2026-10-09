@@ -74,6 +74,9 @@ curl -s -X POST http://localhost:8080/actions/my-action \
   the stackctl caller verbatim under `result`.
 
 For operations longer than ~30s, return 202 immediately with a job id and run
-the work on a background thread. See [../../../examples/webhook-handler/](../webhook-handler/)
+the work on a background thread. The job id MUST be random (not sequential and
+not a timestamp). To show progress in the web UI, serve the job log on the
+action's `log_path` and answer 404 when `instance_id` does not match the job's
+instance (see [../../docs/hooks.md](../../docs/hooks.md#asynchronous-actions-and-the-job-log)). See [../../../examples/webhook-handler/](../webhook-handler/)
 for a Go reference. Production-grade Python handlers typically add threading,
 per-job progress logs, and kubectl orchestration on top of this skeleton.
