@@ -111,6 +111,25 @@ describe('Template Gallery', () => {
     });
   });
 
+  it('does not show "No description" when the list omits the description', async () => {
+    const { description: _omitted, ...withoutDescription } = publishedTemplate;
+    void _omitted;
+    (templateService.list as ReturnType<typeof vi.fn>).mockResolvedValue([
+      withoutDescription,
+      { ...apiTemplate, description: '' },
+    ]);
+    render(
+      <MemoryRouter>
+        <Gallery />
+      </MemoryRouter>
+    );
+    await waitFor(() => {
+      expect(screen.getByText('My Template')).toBeInTheDocument();
+      expect(screen.getByText('API Service')).toBeInTheDocument();
+    });
+    expect(screen.queryByText('No description')).not.toBeInTheDocument();
+  });
+
   it('shows error on fetch failure', async () => {
     (templateService.list as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('error'));
     render(

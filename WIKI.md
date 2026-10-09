@@ -5,6 +5,28 @@
 ### Stack Template
 A reusable blueprint created by DevOps engineers. Contains a set of Helm chart configurations with default values. Templates can be **published** for developers to use, and individual chart values can be **locked** to prevent modification.
 
+### Template Life Cycle (Draft and Release)
+
+A template has a **working copy** and a **version history**.
+
+- **Working copy (draft).** The template fields and its charts. DevOps users edit the working copy, also while the template is published. An edit never changes what users get. `PUT /templates/:id` is a partial update: only the fields in the body change.
+- **Who can change a template.** Edit, delete, publish, unpublish and chart changes need the DevOps role and the template owner or an admin (same rule as the bulk operations). Other users get 403.
+- **Scripts.** A deployment script that changes a template (for example `stackctl template update-chart`) changes only the working copy. Publish a new version afterwards (`POST /templates/:id/publish` with a new `version`), else users keep getting the old content.
+- **Publish.** `POST /templates/:id/publish` with the optional body `{"version": "x.y.z", "change_summary": "..."}` stores the working copy as a **snapshot** (a version). Without `version`, the API uses the version of the working copy. The working copy then takes the published version.
+  - A version string is unique per template. A version that already exists gives 409 `Version x already exists`. Set a new version to publish changes.
+  - When the working copy equals the latest snapshot (same content and version), publish creates no snapshot and returns 200 (`snapshot_created: false`). Publish is idempotent.
+  - Bulk publish and create with `is_published: true` follow the same rules.
+- **What users get.** Use Template, Quick Deploy, the definition upgrade (check-upgrade and upgrade) and the template locked values at deploy time read the **latest snapshot**, never the working copy.
+- **Unpublish.** `POST /templates/:id/unpublish` hides the template. Use Template and Quick Deploy return 409 `Template has no published version`, and upgrades are not offered. The history stays. A template that was never published also gives 409, for the owner too.
+- **Template detail.** `GET /templates/:id` returns the template fields plus `published_version`, `published_version_id`, `published_charts` (the snapshot charts; null without a snapshot) and `has_unpublished_changes`. Only the owner and admins get the working copy in `charts`. For other users `charts` is the same as `published_charts` (an empty list without a snapshot), `version` is the published version (empty without a snapshot) and `has_unpublished_changes` is false, so draft information stays hidden.
+- **Find by name.** `GET /templates?name=<name>` filters by exact name (same as the stack-definitions filter). The response keeps the paged envelope. stackctl uses it to resolve template names.
+- **Unpublished changes.** `GET /templates/:id/versions/diff?left=<version id>&right=working` compares a snapshot with the working copy. Either side can be `working`. Only the owner and admins can compare the working copy (others get 403).
+- **Old-format snapshots.** A latest snapshot in the old format (no chart version or chart path) always counts as changed. The next publish stores the full format and can reuse the version string of that snapshot once.
+- **Use Template overrides.** `chart_overrides` replace chart default values in the new definition. Keys are `published_charts[].id`, working copy `charts[].id` (mapped by chart name) or chart names. Keys for charts that are not in the snapshot are ignored.
+- **Upgrade.** Check-upgrade returns `chart_diffs` (same shape as the version diff): left is the definition now, right is the latest snapshot.
+- **Existing data.** The upgrade migration stores the working copy as a new snapshot for each template that is published, or used by a stack definition, when its latest snapshot is missing (published templates only), in the old format, or different from the working copy. So users keep getting the content they got before the upgrade. These snapshots have the summary `Backfill: release of the working copy at upgrade` and can repeat an existing version string. A template without a version gets `1.0.0` (snapshot and working copy). Duplicate versions from older releases stay in the history.
+- **Value comparison.** Publish, `has_unpublished_changes` and the diffs ignore trailing spaces and line breaks in values.
+
 ### Stack Definition
 A concrete collection of Helm chart configurations. Created by instantiating a template or from scratch. Owns the chart configs (chart name, repository, version, default values).
 

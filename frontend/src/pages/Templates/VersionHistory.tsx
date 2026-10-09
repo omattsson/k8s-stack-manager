@@ -24,9 +24,9 @@ import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import ExpandLessIcon from '@mui/icons-material/ExpandLess';
 import CompareArrowsIcon from '@mui/icons-material/CompareArrows';
 import HistoryIcon from '@mui/icons-material/History';
-import ReactDiffViewer, { DiffMethod } from 'react-diff-viewer-continued';
 import { templateService } from '../../api/client';
-import type { TemplateVersion, VersionDiffResponse } from '../../types';
+import ChartDiffList from '../../components/ChartDiffList';
+import type { TemplateVersion, VersionDiffResponse, VersionDiffSide } from '../../types';
 
 interface VersionHistoryProps {
   templateId: string;
@@ -47,13 +47,15 @@ const formatRelativeTime = (dateString: string): string => {
   return date.toLocaleDateString();
 };
 
-const changeTypeColor = (changeType: string): 'success' | 'error' | 'info' | 'default' => {
-  switch (changeType) {
-    case 'added': return 'success';
-    case 'removed': return 'error';
-    case 'modified': return 'info';
-    default: return 'default';
-  }
+/** Display name of the version author: username, else the user ID. */
+const authorName = (v: { created_by?: string; created_by_username?: string }): string =>
+  v.created_by_username || v.created_by || 'unknown';
+
+/** Label for one side of a diff, for example "v1.0.0 by alice". */
+const diffSideLabel = (side: VersionDiffSide, fallbackAuthor?: string): string => {
+  if (side.is_working_copy) return 'Working copy';
+  const author = side.created_by_username || fallbackAuthor || side.created_by;
+  return author ? `v${side.version} by ${author}` : `v${side.version}`;
 };
 
 const VersionHistory = ({ templateId }: VersionHistoryProps) => {
@@ -127,18 +129,25 @@ const VersionHistory = ({ templateId }: VersionHistoryProps) => {
     setDiffError(null);
     setDiffData(null);
 
+    // Older version on the left, newer on the right (the list is newest first).
+    const [leftId, rightId] = [...selectedForCompare].sort(
+      (a, b) => versions.findIndex((v) => v.id === b) - versions.findIndex((v) => v.id === a),
+    );
+
     try {
-      const data = await templateService.diffVersions(
-        templateId,
-        selectedForCompare[0],
-        selectedForCompare[1],
-      );
+      const data = await templateService.diffVersions(templateId, leftId, rightId);
       setDiffData(data);
     } catch {
       setDiffError('Failed to load version diff');
     } finally {
       setDiffLoading(false);
     }
+  };
+
+  /** Author name from the loaded version list, for diff sides without a username. */
+  const authorOf = (versionString: string): string | undefined => {
+    const match = versions.find((v) => v.version === versionString);
+    return match ? authorName(match) : undefined;
   };
 
   const handleCloseDiff = () => {
@@ -233,7 +242,7 @@ const VersionHistory = ({ templateId }: VersionHistoryProps) => {
                 }
                 secondary={
                   <Typography variant="caption" color="text.secondary" component="span">
-                    by {version.created_by} {formatRelativeTime(version.created_at)}
+                    by {authorName(version)} {formatRelativeTime(version.created_at)}
                     {' '}({new Date(version.created_at).toLocaleString()})
                   </Typography>
                 }
@@ -306,8 +315,10 @@ const VersionHistory = ({ templateId }: VersionHistoryProps) => {
         <DialogTitle>
           Version Comparison
           {diffData && (
-            <Typography variant="body2" color="text.secondary">
-              v{diffData.left.version.version} vs v{diffData.right.version.version}
+            <Typography variant="body2" color="text.secondary" component="span" sx={{ display: 'block' }}>
+              {diffSideLabel(diffData.left, authorOf(diffData.left.version))}
+              {' vs '}
+              {diffSideLabel(diffData.right, authorOf(diffData.right.version))}
             </Typography>
           )}
         </DialogTitle>
@@ -319,42 +330,11 @@ const VersionHistory = ({ templateId }: VersionHistoryProps) => {
           )}
           {diffError && <Alert severity="error">{diffError}</Alert>}
           {diffData && (
-            <Box>
-              {diffData.chart_diffs.length === 0 ? (
-                <Typography color="text.secondary">No differences found.</Typography>
-              ) : (
-                diffData.chart_diffs.map((chartDiff) => (
-                  <Box key={chartDiff.chart_name} sx={{ mb: 3 }}>
-                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
-                      <Typography variant="subtitle1" sx={{ fontWeight: 'bold' }}>
-                        {chartDiff.chart_name}
-                      </Typography>
-                      <Chip
-                        label={chartDiff.change_type}
-                        size="small"
-                        color={changeTypeColor(chartDiff.change_type)}
-                      />
-                    </Box>
-                    {chartDiff.has_differences ? (
-                      <Box sx={{ border: 1, borderColor: 'divider', borderRadius: 1, overflow: 'hidden' }}>
-                        <ReactDiffViewer
-                          oldValue={chartDiff.left_values || ''}
-                          newValue={chartDiff.right_values || ''}
-                          splitView={true}
-                          compareMethod={DiffMethod.LINES}
-                          leftTitle={`v${diffData.left.version.version}`}
-                          rightTitle={`v${diffData.right.version.version}`}
-                        />
-                      </Box>
-                    ) : (
-                      <Typography variant="body2" color="text.secondary">
-                        No value changes.
-                      </Typography>
-                    )}
-                  </Box>
-                ))
-              )}
-            </Box>
+            <ChartDiffList
+              chartDiffs={diffData.chart_diffs}
+              leftTitle={`v${diffData.left.version}`}
+              rightTitle={`v${diffData.right.version}`}
+            />
           )}
         </DialogContent>
         <DialogActions>

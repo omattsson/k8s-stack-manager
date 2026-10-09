@@ -4452,7 +4452,10 @@ const docTemplate = `{
         },
         "/api/v1/stack-definitions/{id}/check-upgrade": {
             "get": {
-                "description": "Check if the source template has a newer version than the definition's current version",
+                "description": "Check if the latest published snapshot of the source template has another version than the definition's current version. An unpublished template, or one without a snapshot, gives upgrade_available=false.\nchart_diffs has the shape of the version diff chart_diffs: left = the definition charts now (locked values from the current source version snapshot), right = the latest snapshot. change_type \"removed\" means the chart is only in the definition; the upgrade keeps it.",
+                "consumes": [
+                    "application/json"
+                ],
                 "produces": [
                     "application/json"
                 ],
@@ -4473,12 +4476,20 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "type": "object",
-                            "additionalProperties": true
+                            "$ref": "#/definitions/handlers.upgradeCheckResponse"
                         }
                     },
                     "400": {
                         "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {
@@ -4565,7 +4576,7 @@ const docTemplate = `{
         },
         "/api/v1/stack-definitions/{id}/upgrade": {
             "post": {
-                "description": "Upgrade a definition to the latest template version, adding new charts and updating defaults",
+                "description": "Upgrade a definition to the latest published snapshot of its source template, adding new charts and updating defaults, repository URL, deploy order and (when the snapshot has them) chart version, chart path, source repo and build pipeline. Charts that are only in the definition stay.\nAn unpublished template, or one without a snapshot, gives 409 \"Template has no published version\".",
                 "consumes": [
                     "application/json"
                 ],
@@ -4601,6 +4612,15 @@ const docTemplate = `{
                             }
                         }
                     },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
                     "404": {
                         "description": "Not Found",
                         "schema": {
@@ -4611,7 +4631,7 @@ const docTemplate = `{
                         }
                     },
                     "409": {
-                        "description": "Conflict",
+                        "description": "Already at the latest version, or no published version",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {
@@ -7060,7 +7080,7 @@ const docTemplate = `{
         },
         "/api/v1/templates": {
             "get": {
-                "description": "List published templates for regular users, all templates for devops/admin. Includes definition_count and owner_username. Supports server-side pagination.",
+                "description": "List published templates for regular users, all templates for devops/admin. Includes definition_count and owner_username. Supports server-side pagination.\nname filters by exact template name (same as the stack-definitions name filter); the response keeps the paged envelope.",
                 "consumes": [
                     "application/json"
                 ],
@@ -7072,6 +7092,12 @@ const docTemplate = `{
                 ],
                 "summary": "List stack templates",
                 "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Filter by exact name",
+                        "name": "name",
+                        "in": "query"
+                    },
                     {
                         "minimum": 1,
                         "type": "integer",
@@ -7108,7 +7134,7 @@ const docTemplate = `{
                 }
             },
             "post": {
-                "description": "Create a new stack template (devops/admin only). May include a ` + "`" + `charts` + "`" + ` array to register the initial chart set in the same transaction.",
+                "description": "Create a new stack template (devops/admin only). May include a ` + "`" + `charts` + "`" + ` array to register the initial chart set in the same transaction.\nWith is_published=true the template is published in the same transaction (first version snapshot; version is then required). A failed publish rolls the create back.",
                 "consumes": [
                     "application/json"
                 ],
@@ -7139,6 +7165,33 @@ const docTemplate = `{
                     },
                     "400": {
                         "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {
@@ -7212,7 +7265,7 @@ const docTemplate = `{
         },
         "/api/v1/templates/bulk/publish": {
             "post": {
-                "description": "Publish multiple stack templates in a single request, making them visible to all users.",
+                "description": "Publish multiple stack templates in a single request, making them visible to all users. Each template is published as POST /templates/{id}/publish without a body: the working copy version is used, an unchanged template creates no snapshot, and a version that already exists with other content fails for that template.",
                 "consumes": [
                     "application/json"
                 ],
@@ -7334,7 +7387,10 @@ const docTemplate = `{
         },
         "/api/v1/templates/{id}": {
             "get": {
-                "description": "Get a stack template by ID, including its chart configurations",
+                "description": "Get a stack template by ID, including its chart configurations. The template fields and charts are the working copy (draft).\npublished_version and published_version_id describe the latest published snapshot (null when there is none). has_unpublished_changes is true when the working copy differs from that snapshot (or there is no snapshot).\npublished_charts are the charts of that snapshot (what Use Template and Quick Deploy apply; null when there is none). Their IDs are valid chart_overrides keys for Use Template.\ncharts are the working copy charts only for the template owner and admins. For other users charts equals published_charts (an empty list without a snapshot), version is the published version (empty without a snapshot) and has_unpublished_changes is false, so draft information is not exposed.",
+                "consumes": [
+                    "application/json"
+                ],
                 "produces": [
                     "application/json"
                 ],
@@ -7358,8 +7414,35 @@ const docTemplate = `{
                             "$ref": "#/definitions/handlers.TemplateDetailResponse"
                         }
                     },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
                     "404": {
                         "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {
@@ -7370,7 +7453,7 @@ const docTemplate = `{
                 }
             },
             "put": {
-                "description": "Update an existing stack template (devops/admin only)",
+                "description": "Update the working copy (draft) of a stack template (template owner or admin). Allowed while the template is published: users keep getting the latest published snapshot until the next publish.\nPartial update: only the fields in the body change. version is trimmed.",
                 "consumes": [
                     "application/json"
                 ],
@@ -7390,12 +7473,12 @@ const docTemplate = `{
                         "required": true
                     },
                     {
-                        "description": "Template object",
+                        "description": "Fields to change",
                         "name": "template",
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/models.StackTemplate"
+                            "$ref": "#/definitions/handlers.updateTemplateRequest"
                         }
                     }
                 ],
@@ -7415,8 +7498,35 @@ const docTemplate = `{
                             }
                         }
                     },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
                     "404": {
                         "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {
@@ -7427,7 +7537,10 @@ const docTemplate = `{
                 }
             },
             "delete": {
-                "description": "Delete a stack template if no definitions link to it (devops/admin only)",
+                "description": "Delete a stack template if no definitions link to it (template owner or admin)",
+                "consumes": [
+                    "application/json"
+                ],
                 "produces": [
                     "application/json"
                 ],
@@ -7448,6 +7561,24 @@ const docTemplate = `{
                     "204": {
                         "description": "No Content"
                     },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
                     "404": {
                         "description": "Not Found",
                         "schema": {
@@ -7465,13 +7596,22 @@ const docTemplate = `{
                                 "type": "string"
                             }
                         }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
                     }
                 }
             }
         },
         "/api/v1/templates/{id}/charts": {
             "post": {
-                "description": "Add a new chart configuration to a stack template",
+                "description": "Add a new chart configuration to the working copy (draft) of a stack template. Users get the change after the next publish. Template owner or admin only.",
                 "consumes": [
                     "application/json"
                 ],
@@ -7516,8 +7656,35 @@ const docTemplate = `{
                             }
                         }
                     },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
                     "404": {
                         "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {
@@ -7530,7 +7697,7 @@ const docTemplate = `{
         },
         "/api/v1/templates/{id}/charts/{chartId}": {
             "put": {
-                "description": "Update a chart configuration within a stack template",
+                "description": "Update a chart configuration in the working copy (draft) of a stack template. Users get the change after the next publish. Template owner or admin only.",
                 "consumes": [
                     "application/json"
                 ],
@@ -7582,8 +7749,35 @@ const docTemplate = `{
                             }
                         }
                     },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
                     "404": {
                         "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {
@@ -7594,7 +7788,7 @@ const docTemplate = `{
                 }
             },
             "delete": {
-                "description": "Remove a chart configuration from a stack template",
+                "description": "Remove a chart configuration from the working copy (draft) of a stack template. Users get the change after the next publish. Template owner or admin only.",
                 "produces": [
                     "application/json"
                 ],
@@ -7622,8 +7816,35 @@ const docTemplate = `{
                     "204": {
                         "description": "No Content"
                     },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
                     "404": {
                         "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {
@@ -7674,7 +7895,7 @@ const docTemplate = `{
         },
         "/api/v1/templates/{id}/instantiate": {
             "post": {
-                "description": "Create a StackDefinition and ChartConfigs from a template. Definition names are unique per owner.",
+                "description": "Create a StackDefinition and ChartConfigs from the latest published snapshot of a template (not the working copy). Definition names are unique per owner.\nA template that is not published, or has no snapshot, gives 409 \"Template has no published version\".\nchart_overrides replace chart default values; keys are published_charts[].id, working copy charts[].id (mapped by chart name) or chart names. Keys for charts not in the published snapshot are ignored.",
                 "consumes": [
                     "application/json"
                 ],
@@ -7694,12 +7915,12 @@ const docTemplate = `{
                         "required": true
                     },
                     {
-                        "description": "Definition overrides (name, description)",
+                        "description": "Definition name, description and optional chart_overrides (default values per chart)",
                         "name": "body",
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/models.StackDefinition"
+                            "$ref": "#/definitions/handlers.instantiateTemplateRequest"
                         }
                     }
                 ],
@@ -7738,7 +7959,7 @@ const docTemplate = `{
                         }
                     },
                     "409": {
-                        "description": "The caller already has a definition with this name",
+                        "description": "The caller already has a definition with this name, or the template has no published version",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {
@@ -7760,7 +7981,10 @@ const docTemplate = `{
         },
         "/api/v1/templates/{id}/publish": {
             "post": {
-                "description": "Make a template visible to all users (devops/admin only)",
+                "description": "Store the working copy (template fields + charts) as a new version snapshot and make the template visible to all users (template owner or admin).\nThe body is optional. version (trimmed) defaults to the version of the working copy; the working copy takes the published version.\nA version that already exists for the template gives 409 \"Version x already exists\".\nWhen the working copy equals the latest snapshot (same content and version), no snapshot is created (snapshot_created=false) and the response is 200: publish is idempotent.\nUse Template, Quick Deploy and definition upgrades read the latest snapshot, never the working copy.",
+                "consumes": [
+                    "application/json"
+                ],
                 "produces": [
                     "application/json"
                 ],
@@ -7775,17 +7999,70 @@ const docTemplate = `{
                         "name": "id",
                         "in": "path",
                         "required": true
+                    },
+                    {
+                        "description": "Version and change summary (optional)",
+                        "name": "body",
+                        "in": "body",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.publishTemplateRequest"
+                        }
                     }
                 ],
                 "responses": {
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/models.StackTemplate"
+                            "$ref": "#/definitions/handlers.publishTemplateResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
                         }
                     },
                     "404": {
                         "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "409": {
+                        "description": "Version already exists",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {
@@ -7803,7 +8080,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Instantiate a template, create an instance, set branch overrides, and trigger deployment in a single call.\ninstance_name must be a DNS label (lowercase a-z, 0-9, '-', start and end alphanumeric, at most 50 characters).\nThe new stack definition is owned by the instance (owner_instance_id): deleting the instance deletes the definition when no other instance uses it. The definition is named after the instance; when the caller already has a definition with that name, the name gets the suffix \" (2)\", \" (3)\", ...",
+                "description": "Instantiate a template, create an instance, set branch overrides, and trigger deployment in a single call.\ninstance_name must be a DNS label (lowercase a-z, 0-9, '-', start and end alphanumeric, at most 50 characters).\nThe template content comes from the latest published snapshot, not the working copy. A template that is not published, or has no snapshot, gives 409 \"Template has no published version\".\nThe new stack definition is owned by the instance (owner_instance_id): deleting the instance deletes the definition when no other instance uses it. The definition is named after the instance; when the caller already has a definition with that name, the name gets the suffix \" (2)\", \" (3)\", ...",
                 "consumes": [
                     "application/json"
                 ],
@@ -7876,7 +8153,7 @@ const docTemplate = `{
                         }
                     },
                     "409": {
-                        "description": "Namespace already exists",
+                        "description": "Namespace already exists, or the template has no published version ({error})",
                         "schema": {
                             "$ref": "#/definitions/handlers.NamespaceConflictResponse"
                         }
@@ -7895,7 +8172,10 @@ const docTemplate = `{
         },
         "/api/v1/templates/{id}/unpublish": {
             "post": {
-                "description": "Hide a template from regular users (devops/admin only)",
+                "description": "Hide a template from regular users (template owner or admin). Use Template and Quick Deploy return 409 until the next publish. The version history stays.",
+                "consumes": [
+                    "application/json"
+                ],
                 "produces": [
                     "application/json"
                 ],
@@ -7919,8 +8199,35 @@ const docTemplate = `{
                             "$ref": "#/definitions/models.StackTemplate"
                         }
                     },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
                     "404": {
                         "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {
@@ -7933,7 +8240,10 @@ const docTemplate = `{
         },
         "/api/v1/templates/{id}/versions": {
             "get": {
-                "description": "List all version snapshots for a template, ordered newest first",
+                "description": "List all version snapshots for a template, ordered newest first. The first entry is the published version that users get. created_by_username is the author's username (omitted when unknown).",
+                "consumes": [
+                    "application/json"
+                ],
                 "produces": [
                     "application/json"
                 ],
@@ -7956,12 +8266,21 @@ const docTemplate = `{
                         "schema": {
                             "type": "array",
                             "items": {
-                                "$ref": "#/definitions/models.TemplateVersion"
+                                "$ref": "#/definitions/handlers.templateVersionListItem"
                             }
                         }
                     },
                     "400": {
                         "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {
@@ -7992,7 +8311,10 @@ const docTemplate = `{
         },
         "/api/v1/templates/{id}/versions/diff": {
             "get": {
-                "description": "Compare two template version snapshots side by side",
+                "description": "Compare two template version snapshots side by side. Either side may be \"working\" to compare the working copy (draft), for example left=\u003clatest version ID\u003e\u0026right=working shows the unpublished changes.\nOnly the template owner and admins can compare the working copy (others get 403).\nleft.version and right.version are version strings; the other side fields (id, created_by, created_by_username, created_at, is_working_copy) describe the side.",
+                "consumes": [
+                    "application/json"
+                ],
                 "produces": [
                     "application/json"
                 ],
@@ -8010,14 +8332,14 @@ const docTemplate = `{
                     },
                     {
                         "type": "string",
-                        "description": "Left version ID",
+                        "description": "Left version ID, or \\",
                         "name": "left",
                         "in": "query",
                         "required": true
                     },
                     {
                         "type": "string",
-                        "description": "Right version ID",
+                        "description": "Right version ID, or \\",
                         "name": "right",
                         "in": "query",
                         "required": true
@@ -8027,12 +8349,29 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "type": "object",
-                            "additionalProperties": true
+                            "$ref": "#/definitions/handlers.versionDiffResponse"
                         }
                     },
                     "400": {
                         "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {
@@ -8063,7 +8402,10 @@ const docTemplate = `{
         },
         "/api/v1/templates/{id}/versions/{versionId}": {
             "get": {
-                "description": "Get a specific template version with its parsed snapshot",
+                "description": "Get a specific template version with its parsed snapshot and created_by_username",
+                "consumes": [
+                    "application/json"
+                ],
                 "produces": [
                     "application/json"
                 ],
@@ -8096,6 +8438,15 @@ const docTemplate = `{
                     },
                     "400": {
                         "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {
@@ -9673,6 +10024,9 @@ const docTemplate = `{
                 "description": {
                     "type": "string"
                 },
+                "has_unpublished_changes": {
+                    "type": "boolean"
+                },
                 "id": {
                     "type": "string"
                 },
@@ -9683,6 +10037,19 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "owner_id": {
+                    "type": "string"
+                },
+                "published_charts": {
+                    "description": "PublishedCharts are the charts of the latest snapshot: what Use\nTemplate and Quick Deploy apply. The IDs are the template chart config\nIDs at publish time; Use Template accepts them as chart_overrides keys.\nNull when the template has no snapshot.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/models.TemplateChartConfig"
+                    }
+                },
+                "published_version": {
+                    "type": "string"
+                },
+                "published_version_id": {
                     "type": "string"
                 },
                 "updated_at": {
@@ -9858,6 +10225,64 @@ const docTemplate = `{
                 }
             }
         },
+        "handlers.chartDiffEntry": {
+            "type": "object",
+            "properties": {
+                "change_type": {
+                    "description": "\"added\", \"removed\", \"modified\", \"unchanged\"",
+                    "type": "string"
+                },
+                "chart_name": {
+                    "type": "string"
+                },
+                "has_differences": {
+                    "type": "boolean"
+                },
+                "left_chart_path": {
+                    "type": "string"
+                },
+                "left_chart_version": {
+                    "description": "Chart source fields; compared only when both sides store them\n(snapshot schema version 1 or the working copy).",
+                    "type": "string"
+                },
+                "left_locked": {
+                    "type": "string"
+                },
+                "left_repo_url": {
+                    "type": "string"
+                },
+                "left_required": {
+                    "type": "boolean"
+                },
+                "left_sort_order": {
+                    "type": "integer"
+                },
+                "left_values": {
+                    "type": "string"
+                },
+                "right_chart_path": {
+                    "type": "string"
+                },
+                "right_chart_version": {
+                    "type": "string"
+                },
+                "right_locked": {
+                    "type": "string"
+                },
+                "right_repo_url": {
+                    "type": "string"
+                },
+                "right_required": {
+                    "type": "boolean"
+                },
+                "right_sort_order": {
+                    "type": "integer"
+                },
+                "right_values": {
+                    "type": "string"
+                }
+            }
+        },
         "handlers.cloneInstanceRequest": {
             "type": "object",
             "properties": {
@@ -9941,6 +10366,24 @@ const docTemplate = `{
                 }
             }
         },
+        "handlers.instantiateTemplateRequest": {
+            "type": "object",
+            "properties": {
+                "chart_overrides": {
+                    "description": "ChartOverrides replace the default values of charts in the new\ndefinition. Key: a published_charts[].id, a working copy charts[].id\n(mapped by chart name) or a chart name. Keys for charts that are not in\nthe published snapshot are ignored.",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                },
+                "description": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                }
+            }
+        },
         "handlers.invokeActionRequest": {
             "type": "object",
             "properties": {
@@ -9972,6 +10415,66 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "webhook_url": {
+                    "type": "string"
+                }
+            }
+        },
+        "handlers.publishTemplateRequest": {
+            "type": "object",
+            "properties": {
+                "change_summary": {
+                    "description": "ChangeSummary is stored with the snapshot.",
+                    "type": "string"
+                },
+                "version": {
+                    "description": "Version of the new snapshot. Default: the version of the working copy.",
+                    "type": "string"
+                }
+            }
+        },
+        "handlers.publishTemplateResponse": {
+            "type": "object",
+            "properties": {
+                "category": {
+                    "type": "string"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "default_branch": {
+                    "type": "string"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "has_unpublished_changes": {
+                    "type": "boolean"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "is_published": {
+                    "type": "boolean"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "owner_id": {
+                    "type": "string"
+                },
+                "published_version": {
+                    "type": "string"
+                },
+                "published_version_id": {
+                    "type": "string"
+                },
+                "snapshot_created": {
+                    "type": "boolean"
+                },
+                "updated_at": {
+                    "type": "string"
+                },
+                "version": {
                     "type": "string"
                 }
             }
@@ -10063,6 +10566,32 @@ const docTemplate = `{
                 }
             }
         },
+        "handlers.templateVersionListItem": {
+            "type": "object",
+            "properties": {
+                "change_summary": {
+                    "type": "string"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "created_by": {
+                    "type": "string"
+                },
+                "created_by_username": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "template_id": {
+                    "type": "string"
+                },
+                "version": {
+                    "type": "string"
+                }
+            }
+        },
         "handlers.updateChannelRequest": {
             "type": "object",
             "properties": {
@@ -10105,6 +10634,78 @@ const docTemplate = `{
                 }
             }
         },
+        "handlers.updateTemplateRequest": {
+            "type": "object",
+            "properties": {
+                "category": {
+                    "type": "string"
+                },
+                "default_branch": {
+                    "type": "string"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "version": {
+                    "type": "string"
+                }
+            }
+        },
+        "handlers.upgradeChanges": {
+            "type": "object",
+            "properties": {
+                "charts_added": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "charts_modified": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "charts_removed": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "charts_unchanged": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
+        "handlers.upgradeCheckResponse": {
+            "type": "object",
+            "properties": {
+                "changes": {
+                    "$ref": "#/definitions/handlers.upgradeChanges"
+                },
+                "chart_diffs": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/handlers.chartDiffEntry"
+                    }
+                },
+                "current_version": {
+                    "type": "string"
+                },
+                "latest_version": {
+                    "type": "string"
+                },
+                "upgrade_available": {
+                    "type": "boolean"
+                }
+            }
+        },
         "handlers.versionDetailResponse": {
             "type": "object",
             "properties": {
@@ -10117,6 +10718,10 @@ const docTemplate = `{
                 "created_by": {
                     "type": "string"
                 },
+                "created_by_username": {
+                    "description": "CreatedByUsername is the author's username (omitted when unknown).",
+                    "type": "string"
+                },
                 "id": {
                     "type": "string"
                 },
@@ -10125,6 +10730,52 @@ const docTemplate = `{
                 },
                 "template_id": {
                     "type": "string"
+                },
+                "version": {
+                    "type": "string"
+                }
+            }
+        },
+        "handlers.versionDiffResponse": {
+            "type": "object",
+            "properties": {
+                "chart_diffs": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/handlers.chartDiffEntry"
+                    }
+                },
+                "left": {
+                    "$ref": "#/definitions/handlers.versionDiffSide"
+                },
+                "right": {
+                    "$ref": "#/definitions/handlers.versionDiffSide"
+                }
+            }
+        },
+        "handlers.versionDiffSide": {
+            "type": "object",
+            "properties": {
+                "change_summary": {
+                    "type": "string"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "created_by": {
+                    "type": "string"
+                },
+                "created_by_username": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "is_working_copy": {
+                    "type": "boolean"
+                },
+                "snapshot": {
+                    "$ref": "#/definitions/models.TemplateSnapshot"
                 },
                 "version": {
                     "type": "string"
@@ -11216,10 +11867,23 @@ const docTemplate = `{
         "models.TemplateChartSnapshotData": {
             "type": "object",
             "properties": {
+                "build_pipeline_id": {
+                    "type": "string"
+                },
                 "chart_name": {
                     "type": "string"
                 },
+                "chart_path": {
+                    "type": "string"
+                },
+                "chart_version": {
+                    "type": "string"
+                },
                 "default_values": {
+                    "type": "string"
+                },
+                "id": {
+                    "description": "Fields below exist from schema version 1.\nID is the template chart config ID in the working copy at publish time.\nIt is not content: SameTemplateContent ignores it.",
                     "type": "string"
                 },
                 "is_required": {
@@ -11233,6 +11897,9 @@ const docTemplate = `{
                 },
                 "sort_order": {
                     "type": "integer"
+                },
+                "source_repo_url": {
+                    "type": "string"
                 }
             }
         },
@@ -11244,6 +11911,9 @@ const docTemplate = `{
                     "items": {
                         "$ref": "#/definitions/models.TemplateChartSnapshotData"
                     }
+                },
+                "schema_version": {
+                    "type": "integer"
                 },
                 "template": {
                     "$ref": "#/definitions/models.TemplateSnapshotData"
@@ -11266,29 +11936,6 @@ const docTemplate = `{
                     "type": "boolean"
                 },
                 "name": {
-                    "type": "string"
-                },
-                "version": {
-                    "type": "string"
-                }
-            }
-        },
-        "models.TemplateVersion": {
-            "type": "object",
-            "properties": {
-                "change_summary": {
-                    "type": "string"
-                },
-                "created_at": {
-                    "type": "string"
-                },
-                "created_by": {
-                    "type": "string"
-                },
-                "id": {
-                    "type": "string"
-                },
-                "template_id": {
                     "type": "string"
                 },
                 "version": {

@@ -137,6 +137,30 @@ describe('QuickDeployDialog', () => {
     });
   }, 15_000);
 
+  it('explains a 409 for a template without a published version', async () => {
+    const user = userEvent.setup();
+    (templateService.quickDeploy as ReturnType<typeof vi.fn>).mockRejectedValue({
+      response: { status: 409, data: { error: 'Template has no published version' } },
+    });
+
+    render(
+      <MemoryRouter>
+        <QuickDeployDialog open={true} onClose={vi.fn()} template={template} />
+      </MemoryRouter>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByLabelText(/instance name/i)).toBeInTheDocument();
+    });
+
+    await user.type(screen.getByLabelText(/instance name/i), 'new-instance');
+    await user.click(screen.getByRole('button', { name: /deploy/i }));
+
+    await waitFor(() => {
+      expect(screen.getByRole('alert')).toHaveTextContent(/has no published version\. ask the template owner to publish/i);
+    });
+  }, 15_000);
+
   it('validates the instance name live and blocks an invalid name', async () => {
     const user = userEvent.setup();
     render(

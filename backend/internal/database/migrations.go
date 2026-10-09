@@ -2,13 +2,17 @@ package database
 
 import (
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
+	"time"
 
 	"backend/internal/database/schema"
 	"backend/internal/models"
 
+	"github.com/google/uuid"
 	"gorm.io/gorm"
 )
 
@@ -1037,6 +1041,12 @@ func (d *Database) AutoMigrate() error {
 	// deployment_logs (rollback to a deploy) and branch on deployment_logs.
 	migrator.AddMigration(stackLifecycleColumnsMigration())
 
+	// Migration 44: release the working copy of published (or referenced)
+	// templates whose latest snapshot is missing, legacy or stale. Use
+	// Template, Quick Deploy, upgrades and locked values now read the latest
+	// snapshot, never the working copy.
+	migrator.AddMigration(backfillPublishedTemplateSnapshotsMigration())
+
 	// Run migrations
 	if err := migrator.MigrateUp(); err != nil {
 		return err
@@ -1196,4 +1206,131 @@ func stackLifecycleColumnsMigration() schema.Migration {
 			return nil
 		},
 	}
+}
+
+// backfillSnapshotChangeSummary marks the snapshots that migration 44 creates.
+const backfillSnapshotChangeSummary = "Backfill: release of the working copy at upgrade"
+
+// backfillDefaultVersion is the version of a migration 44 snapshot when the
+// template has no version string; the working copy takes it too.
+const backfillDefaultVersion = "1.0.0"
+
+// backfillPublishedTemplateSnapshotsMigration is migration 44. Before the
+// "draft and release" model, Use Template and Quick Deploy read the working
+// copy of a template. Now they (and the deploy-time locked values) read the
+// latest snapshot. So that nobody gets stale content after the upgrade, this
+// migration stores the working copy (template fields + template charts) as a
+// new snapshot, with the template version string and the owner as author,
+// for every template where:
+//   - the template is published and has no snapshot, or
+//   - the template is published or referenced by a stack definition
+//     (source_template_id), has a snapshot, and the latest snapshot uses the
+//     legacy format (schema_version < 1) or differs from the working copy.
+//
+// A template without a version string gets backfillDefaultVersion (snapshot
+// and working copy). Duplicate version strings are accepted here. The migration is idempotent:
+// after it, the latest snapshot equals the working copy. Down is a no-op: the
+// snapshots stay valid history.
+func backfillPublishedTemplateSnapshotsMigration() schema.Migration {
+	return schema.Migration{
+		Version:     "20261009000044",
+		Name:        "release_template_working_copies",
+		Description: "Snapshot the working copy of published or referenced templates whose latest snapshot is missing, legacy or stale",
+		Up:          releaseTemplateWorkingCopies,
+		Down: func(_ *gorm.DB) error {
+			return nil
+		},
+	}
+}
+
+// releaseTemplateWorkingCopies is the Up step of migration 44.
+func releaseTemplateWorkingCopies(tx *gorm.DB) error {
+	m := tx.Migrator()
+	if !m.HasTable(&models.StackTemplate{}) || !m.HasTable(&models.TemplateVersion{}) || !m.HasTable(&models.TemplateChartConfig{}) {
+		return nil
+	}
+
+	referenced := make(map[string]bool)
+	if m.HasTable(&models.StackDefinition{}) {
+		var ids []string
+		if err := tx.Model(&models.StackDefinition{}).
+			Where("source_template_id IS NOT NULL AND source_template_id <> ''").
+			Distinct("source_template_id").
+			Pluck("source_template_id", &ids).Error; err != nil {
+			return err
+		}
+		for _, id := range ids {
+			referenced[id] = true
+		}
+	}
+
+	var templates []models.StackTemplate
+	if err := tx.Order("id").Find(&templates).Error; err != nil {
+		return err
+	}
+	for i := range templates {
+		tmpl := &templates[i]
+		if !tmpl.IsPublished && !referenced[tmpl.ID] {
+			continue
+		}
+
+		var latest models.TemplateVersion
+		hasSnapshot := true
+		if err := tx.Where("template_id = ?", tmpl.ID).Order("created_at DESC, id DESC").First(&latest).Error; err != nil {
+			if !errors.Is(err, gorm.ErrRecordNotFound) {
+				return err
+			}
+			hasSnapshot = false
+		}
+		if !hasSnapshot && !tmpl.IsPublished {
+			continue // never released: readers fall back to the working copy
+		}
+
+		var charts []models.TemplateChartConfig
+		if err := tx.Where("stack_template_id = ?", tmpl.ID).Order("deploy_order ASC").Find(&charts).Error; err != nil {
+			return err
+		}
+		// A release needs a version string: an empty one becomes the default.
+		emptyVersion := strings.TrimSpace(tmpl.Version) == ""
+		if emptyVersion {
+			tmpl.Version = backfillDefaultVersion
+		}
+		working := models.NewTemplateSnapshot(tmpl, charts)
+
+		if hasSnapshot {
+			var current models.TemplateSnapshot
+			if err := json.Unmarshal([]byte(latest.Snapshot), &current); err == nil &&
+				current.SchemaVersion >= models.TemplateSnapshotSchemaVersion &&
+				models.SameTemplateContent(current, working) {
+				continue // the latest snapshot is the working copy already
+			}
+		}
+
+		snapshot, err := json.Marshal(working)
+		if err != nil {
+			return fmt.Errorf("marshal snapshot of template %s: %w", tmpl.ID, err)
+		}
+		createdAt := time.Now().UTC()
+		if hasSnapshot && !createdAt.After(latest.CreatedAt) {
+			createdAt = latest.CreatedAt.Add(time.Millisecond)
+		}
+		version := models.TemplateVersion{
+			ID:            uuid.New().String(),
+			TemplateID:    tmpl.ID,
+			Version:       tmpl.Version,
+			Snapshot:      string(snapshot),
+			ChangeSummary: backfillSnapshotChangeSummary,
+			CreatedBy:     tmpl.OwnerID,
+			CreatedAt:     createdAt,
+		}
+		if err := tx.Create(&version).Error; err != nil {
+			return err
+		}
+		if emptyVersion {
+			if err := tx.Model(&models.StackTemplate{}).Where("id = ?", tmpl.ID).Update("version", tmpl.Version).Error; err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }

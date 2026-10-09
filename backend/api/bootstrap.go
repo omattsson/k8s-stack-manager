@@ -352,7 +352,9 @@ func buildHandlers(
 	}
 
 	// Template version handler.
-	templateVersionHandler := handlers.NewTemplateVersionHandler(repos.TemplateVersion, repos.StackTemplate)
+	templateVersionHandler := handlers.NewTemplateVersionHandler(repos.TemplateVersion, repos.StackTemplate).
+		WithTemplateCharts(repos.TemplateChartConfig).
+		WithUserRepo(repos.User)
 
 	// Instance handler.
 	instanceHandler, err := handlers.NewInstanceHandlerWithDeployer(
@@ -366,7 +368,8 @@ func buildHandlers(
 	if err != nil {
 		return nil, fmt.Errorf("create instance handler: %w", err)
 	}
-	instanceHandler.WithHooks(svc.HookDispatcher).WithActions(svc.ActionRegistry).WithNotifier(svc.LifecycleNotifier).WithSharedValues(repos.SharedValues)
+	instanceHandler.WithHooks(svc.HookDispatcher).WithActions(svc.ActionRegistry).WithNotifier(svc.LifecycleNotifier).WithSharedValues(repos.SharedValues).
+		WithTemplateVersions(repos.TemplateVersion)
 
 	// Git handler.
 	gitHandler := handlers.NewGitHandler(svc.GitRegistry)
@@ -418,7 +421,7 @@ func buildHandlers(
 	if err != nil {
 		return nil, fmt.Errorf("create quick deploy handler: %w", err)
 	}
-	quickDeployHandler.WithSharedValues(repos.SharedValues)
+	quickDeployHandler.WithSharedValues(repos.SharedValues).WithTemplateVersions(repos.TemplateVersion)
 
 	// Cluster shared values are the lowest values layer of every deploy.
 	// Warn loudly if they are not wired: deploys would silently skip them.

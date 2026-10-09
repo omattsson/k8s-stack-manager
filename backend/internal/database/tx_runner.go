@@ -23,6 +23,8 @@ type TxRepos struct {
 	StackInstance   models.StackInstanceRepository
 	StackTemplate   models.StackTemplateRepository
 	TemplateChart   models.TemplateChartConfigRepository
+	// TemplateVersion is used by publish (snapshot + template row together).
+	TemplateVersion models.TemplateVersionRepository
 	ValueOverride   models.ValueOverrideRepository
 	BranchOverride  models.ChartBranchOverrideRepository
 	DeploymentLog   models.DeploymentLogRepository
@@ -53,6 +55,7 @@ func (r *GORMTxRunner) RunInTx(fn func(repos TxRepos) error) error {
 			StackInstance:   NewGORMStackInstanceRepository(tx),
 			StackTemplate:   NewGORMStackTemplateRepository(tx),
 			TemplateChart:   NewGORMTemplateChartConfigRepository(tx),
+			TemplateVersion: NewGORMTemplateVersionRepository(tx),
 			ValueOverride:   NewGORMValueOverrideRepository(tx),
 			BranchOverride:  NewGORMChartBranchOverrideRepository(tx),
 			DeploymentLog:   NewGORMDeploymentLogRepository(tx),

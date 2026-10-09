@@ -126,6 +126,7 @@ type InstanceHandler struct {
 	chartConfigRepo    models.ChartConfigRepository
 	templateRepo       models.StackTemplateRepository
 	templateChartRepo  models.TemplateChartConfigRepository
+	versionRepo        models.TemplateVersionRepository
 	valuesGen          *helm.ValuesGenerator
 	userRepo           models.UserRepository
 	deployManager      *deployer.Manager
@@ -147,6 +148,15 @@ type InstanceHandler struct {
 // Returns h for chaining. Without it no shared values are applied.
 func (h *InstanceHandler) WithSharedValues(repo models.SharedValuesRepository) *InstanceHandler {
 	h.sharedValuesRepo = repo
+	return h
+}
+
+// WithTemplateVersions attaches the template version repository. Template
+// locked values then come from the latest published snapshot of the source
+// template, not from its working copy. Returns h for chaining. Without it the
+// working copy is used (legacy behaviour).
+func (h *InstanceHandler) WithTemplateVersions(repo models.TemplateVersionRepository) *InstanceHandler {
+	h.versionRepo = repo
 	return h
 }
 
@@ -1265,7 +1275,7 @@ func (h *InstanceHandler) ExportAllValues(c *gin.Context) {
 		return
 	}
 
-	layers, templateVars, _, err := h.chartValueLayers(inst, def, charts)
+	layers, templateVars, _, err := h.chartValueLayers(c.Request.Context(), inst, def, charts)
 	if err != nil {
 		slog.Error("export values: failed to collect values layers", logKeyInstanceID, instanceID, "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
@@ -2283,13 +2293,13 @@ func (h *InstanceHandler) buildChartValuesAndBranches(ctx context.Context, inst 
 
 // chartValueLayers returns the values layers of each chart (see
 // valuesBuilder.layers).
-func (h *InstanceHandler) chartValueLayers(inst *models.StackInstance, def *models.StackDefinition, charts []models.ChartConfig) ([]helm.ChartValues, helm.TemplateVars, map[string]string, error) {
-	return h.values().layers(inst, def, charts, "")
+func (h *InstanceHandler) chartValueLayers(ctx context.Context, inst *models.StackInstance, def *models.StackDefinition, charts []models.ChartConfig) ([]helm.ChartValues, helm.TemplateVars, map[string]string, error) {
+	return h.values().layers(ctx, inst, def, charts, "")
 }
 
 // buildLockedValuesMap returns chartName → lockedValues for a definition's source template.
-func (h *InstanceHandler) buildLockedValuesMap(def *models.StackDefinition) (map[string]string, error) {
-	return h.values().lockedValues(def)
+func (h *InstanceHandler) buildLockedValuesMap(ctx context.Context, def *models.StackDefinition) (map[string]string, error) {
+	return h.values().lockedValues(ctx, def)
 }
 
 // values returns the values pipeline over the handler's repositories.
@@ -2298,6 +2308,7 @@ func (h *InstanceHandler) values() *valuesBuilder {
 		overrideRepo:       h.overrideRepo,
 		branchOverrideRepo: h.branchOverrideRepo,
 		templateChartRepo:  h.templateChartRepo,
+		versionRepo:        h.versionRepo,
 		userRepo:           h.userRepo,
 		valuesGen:          h.valuesGen,
 		sharedValuesRepo:   h.sharedValuesRepo,

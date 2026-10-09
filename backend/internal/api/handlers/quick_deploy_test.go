@@ -72,6 +72,7 @@ func setupQuickDeployRouter(
 		}},
 	)
 	require.NoError(t, err)
+	h.WithTemplateVersions(newWorkingCopyReleaseRepo(templateRepo, templateChartRepo))
 
 	tpl := r.Group("/api/v1/templates")
 	{
@@ -146,7 +147,7 @@ func TestQuickDeploy(t *testing.T) {
 			wantStatus: http.StatusNotFound,
 		},
 		{
-			name:       "template not published returns 400",
+			name:       "template not published returns 409",
 			templateID: "t1",
 			body:       quickDeployRequest{InstanceName: "my-instance"},
 			setup: func(
@@ -158,11 +159,11 @@ func TestQuickDeploy(t *testing.T) {
 			) {
 				seedTemplate(t, tmplRepo, "t1", "Draft Template", "owner-1", false)
 			},
-			wantStatus: http.StatusBadRequest,
+			wantStatus: http.StatusConflict,
 			checkFn: func(t *testing.T, w *httptest.ResponseRecorder, _ *MockStackInstanceRepository, _ *MockChartBranchOverrideRepository, _ *MockAuditLogRepository) {
 				var body map[string]string
 				require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
-				assert.Contains(t, body["error"], "not published")
+				assert.Equal(t, msgNoPublishedVersion, body["error"])
 			},
 		},
 		{

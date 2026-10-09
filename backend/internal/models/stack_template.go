@@ -20,12 +20,18 @@ type StackTemplate struct {
 type StackTemplateRepository interface {
 	Create(template *StackTemplate) error
 	FindByID(id string) (*StackTemplate, error)
+	// FindByIDForUpdate reads the template and locks its row until the end of
+	// the transaction (SELECT ... FOR UPDATE). Publish uses it.
+	FindByIDForUpdate(id string) (*StackTemplate, error)
 	Update(template *StackTemplate) error
 	Delete(id string) error
 	List() ([]StackTemplate, error)
-	ListPaged(limit, offset int) ([]StackTemplate, int64, error)
+	// ListPaged returns a page of templates; a non-empty name filters by
+	// exact name.
+	ListPaged(limit, offset int, name string) ([]StackTemplate, int64, error)
 	ListPublished() ([]StackTemplate, error)
-	ListPublishedPaged(limit, offset int) ([]StackTemplate, int64, error)
+	// ListPublishedPaged is ListPaged for published templates only.
+	ListPublishedPaged(limit, offset int, name string) ([]StackTemplate, int64, error)
 	ListByOwner(ownerID string) ([]StackTemplate, error)
 	Count() (int64, error)
 }

@@ -86,9 +86,6 @@ func (h *TemplateHandler) executeBulkTemplateOperation(c *gin.Context, opName st
 		Results: make([]BulkTemplateResultItem, 0, len(uniqueIDs)),
 	}
 
-	userID := middleware.GetUserIDFromContext(c)
-	role := middleware.GetRoleFromContext(c)
-
 	for _, id := range uniqueIDs {
 		result := BulkTemplateResultItem{
 			TemplateID: id,
@@ -114,7 +111,7 @@ func (h *TemplateHandler) executeBulkTemplateOperation(c *gin.Context, opName st
 		result.TemplateName = tmpl.Name
 
 		// Authorization: admin can operate on any template; others only their own.
-		if role != "admin" && tmpl.OwnerID != userID {
+		if !canManageTemplate(c, tmpl) {
 			result.Status = "error"
 			result.Error = "not authorized"
 			resp.Failed++
@@ -182,7 +179,7 @@ func (h *TemplateHandler) BulkDeleteTemplates(c *gin.Context) {
 
 // BulkPublishTemplates godoc
 // @Summary     Bulk publish stack templates
-// @Description Publish multiple stack templates in a single request, making them visible to all users.
+// @Description Publish multiple stack templates in a single request, making them visible to all users. Each template is published as POST /templates/{id}/publish without a body: the working copy version is used, an unchanged template creates no snapshot, and a version that already exists with other content fails for that template.
 // @Tags        templates
 // @Accept      json
 // @Produce     json
@@ -194,24 +191,20 @@ func (h *TemplateHandler) BulkDeleteTemplates(c *gin.Context) {
 // @Router      /api/v1/templates/bulk/publish [post]
 func (h *TemplateHandler) BulkPublishTemplates(c *gin.Context) {
 	h.executeBulkTemplateOperation(c, "publish", func(c *gin.Context, tmpl *models.StackTemplate) error {
-		if tmpl.IsPublished {
-			return nil // already published, treat as success
+		// Same rules as POST /templates/:id/publish with the working copy
+		// version: no new snapshot when nothing changed, an error when the
+		// version already exists with other content.
+		_, _, _, err := h.publishWorkingCopy(c.Request.Context(), tmpl.ID, "", "", middleware.GetUserIDFromContext(c))
+		if err == nil {
+			return nil
 		}
-
-		tmpl.IsPublished = true
-		tmpl.UpdatedAt = timeNow()
-
-		if err := h.templateRepo.Update(tmpl); err != nil {
-			slog.Error("bulk publish: failed to update template", logKeyBulkTemplateID, tmpl.ID, "error", err)
-			return fmt.Errorf("failed to publish template")
+		var exists *errVersionExists
+		var invalid *errPublishValidation
+		if errors.As(err, &exists) || errors.As(err, &invalid) {
+			return err
 		}
-
-		// Auto-create a version snapshot on publish.
-		if h.versionRepo != nil {
-			h.createVersionSnapshot(c, tmpl)
-		}
-
-		return nil
+		slog.Error("bulk publish: failed to publish template", logKeyBulkTemplateID, tmpl.ID, "error", err)
+		return fmt.Errorf("failed to publish template")
 	})
 }
 

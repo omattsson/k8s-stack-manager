@@ -79,37 +79,28 @@ test.describe('Template Management', () => {
 
     const templateId = page.url().split('/templates/')[1];
 
-    // Edit and publish
-    await page.goto(`/templates/${templateId}/edit`);
-    await expect(page.getByRole('heading', { level: 1, name: 'Edit Template' })).toBeVisible({
-      timeout: 10_000,
-    });
-    const publishSwitch = page.getByRole('switch', { name: /Draft|Published/ });
-    await publishSwitch.click();
-    // Wait for the async publish API call to complete
-    await expect(publishSwitch).toBeChecked({ timeout: 5_000 });
+    // Publish from the detail page
+    await expect(page.getByRole('heading', { level: 1, name })).toBeVisible({ timeout: 10_000 });
+    await page.getByRole('button', { name: 'Publish', exact: true }).click();
+    const dialog = page.getByRole('dialog');
+    await expect(dialog.getByRole('textbox', { name: /^Version/ })).toBeVisible();
+    await dialog.getByRole('textbox', { name: /^Version/ }).fill('1.0.0');
+    await dialog.getByRole('button', { name: 'Publish', exact: true }).click();
+    await expect(page.getByText('Published version 1.0.0.')).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText('Released: v1.0.0')).toBeVisible();
+    await expect(page.getByText('Published', { exact: true })).toBeVisible();
 
-    // Save
-    await page.getByRole('button', { name: 'Save Template' }).click();
-    await page.waitForURL(/\/templates\//, { timeout: 10_000 });
+    // Publishing the same version again without changes creates no new version
+    // (a new version string counts as a change and would create a snapshot)
+    await page.getByRole('button', { name: 'Publish', exact: true }).click();
+    await expect(dialog.getByRole('textbox', { name: /^Version/ })).toHaveValue('1.0.0');
+    await dialog.getByRole('button', { name: 'Publish', exact: true }).click();
+    await expect(page.getByText(/No changes since version 1\.0\.0\. No new version was created/)).toBeVisible({ timeout: 10_000 });
 
-    // Verify published on preview page
-    await page.goto(`/templates/${templateId}`);
-    await expect(page.getByText('Published')).toBeVisible({ timeout: 10_000 });
-
-    // Unpublish
-    await page.goto(`/templates/${templateId}/edit`);
-    await expect(page.getByRole('heading', { level: 1, name: 'Edit Template' })).toBeVisible({
-      timeout: 10_000,
-    });
-    const unpublishSwitch = page.getByRole('switch', { name: /Draft|Published/ });
-    await unpublishSwitch.click();
-    await expect(unpublishSwitch).not.toBeChecked({ timeout: 5_000 });
-    await page.getByRole('button', { name: 'Save Template' }).click();
-    await page.waitForURL(/\/templates\//, { timeout: 10_000 });
-
-    await page.goto(`/templates/${templateId}`);
-    await expect(page.getByText('Draft')).toBeVisible({ timeout: 10_000 });
+    // Unpublish (asks for confirmation)
+    await page.getByRole('button', { name: 'Unpublish', exact: true }).click();
+    await page.getByRole('dialog').getByRole('button', { name: 'Unpublish', exact: true }).click();
+    await expect(page.getByText('Draft', { exact: true })).toBeVisible({ timeout: 10_000 });
   });
 
   test('clone a template', async ({ page }) => {

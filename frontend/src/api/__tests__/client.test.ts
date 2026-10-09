@@ -37,6 +37,7 @@ import {
   authService,
   oidcService,
   templateService,
+  WORKING_COPY_VERSION_ID,
   definitionService,
   instanceService,
   clusterService,
@@ -206,7 +207,27 @@ describe('templateService', () => {
     const result = await templateService.publish('1');
 
     expect(api.post).toHaveBeenCalledWith('/api/v1/templates/1/publish');
-    expect(result).toEqual(published);
+    expect(result).toEqual({ template: published, snapshotCreated: true });
+  });
+
+  it('publish sends the version and change summary in the body', async () => {
+    const api = mockApi;
+    api.post.mockResolvedValueOnce(mockResponse({ id: '1', published_version: '1.1.0', snapshot_created: true }));
+
+    const result = await templateService.publish('1', { version: '1.1.0', change_summary: 'New values' });
+
+    expect(api.post).toHaveBeenCalledWith('/api/v1/templates/1/publish', { version: '1.1.0', change_summary: 'New values' });
+    expect(result).toEqual({ template: { id: '1', published_version: '1.1.0' }, snapshotCreated: true });
+  });
+
+  it('publish reports snapshotCreated false when the API created no snapshot', async () => {
+    const api = mockApi;
+    api.post.mockResolvedValueOnce(mockResponse({ id: '1', published_version: '1.0.0', snapshot_created: false }));
+
+    const result = await templateService.publish('1', { version: '1.0.0' });
+
+    expect(result.snapshotCreated).toBe(false);
+    expect(result.template.published_version).toBe('1.0.0');
   });
 
   it('unpublish sends POST to unpublish endpoint', async () => {
@@ -1399,6 +1420,17 @@ describe('templateService — bulk & versioning', () => {
     const result = await templateService.diffVersions('t1', 'v1', 'v2');
     expect(api.get).toHaveBeenCalledWith('/api/v1/templates/t1/versions/diff', { params: { left: 'v1', right: 'v2' } });
     expect(result).toEqual(data);
+  });
+
+  it('diffVersions compares with the working copy by default', async () => {
+    const api = mockApi;
+    api.get.mockResolvedValueOnce(mockResponse({ left: {}, right: {}, chart_diffs: [] }));
+
+    await templateService.diffVersions('t1', 'v1');
+    expect(api.get).toHaveBeenCalledWith('/api/v1/templates/t1/versions/diff', {
+      params: { left: 'v1', right: WORKING_COPY_VERSION_ID },
+    });
+    expect(WORKING_COPY_VERSION_ID).toBe('working');
   });
 });
 

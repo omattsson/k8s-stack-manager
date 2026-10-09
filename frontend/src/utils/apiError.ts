@@ -52,3 +52,21 @@ export async function describeApiError(error: unknown, fallback: string): Promis
     ? `${fallback} (HTTP ${response.status}: ${reason})`
     : `${fallback} (HTTP ${response.status})`;
 }
+
+/**
+ * Read the HTTP status and the server error message from a thrown error
+ * without async body parsing (JSON object bodies only).
+ * @param error - The thrown error (usually an AxiosError)
+ * @returns The status (undefined without an HTTP response) and the server message (undefined when absent)
+ */
+export function getApiErrorInfo(error: unknown): { status?: number; message?: string } {
+  const response = (error as HttpErrorLike | null)?.response;
+  if (!response) return {};
+  const data = response.data as { error?: unknown; message?: unknown } | null | undefined;
+  let message: string | undefined;
+  if (data && typeof data === 'object') {
+    if (typeof data.error === 'string' && data.error) message = data.error;
+    else if (typeof data.message === 'string' && data.message) message = data.message;
+  }
+  return { status: typeof response.status === 'number' ? response.status : undefined, message };
+}

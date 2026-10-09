@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -115,7 +116,7 @@ func (h *InstanceHandler) SetOverride(c *gin.Context) {
 	}
 
 	// Check for locked values from the source template.
-	if err := h.checkLockedValues(inst, chartID, input.Values); err != nil {
+	if err := h.checkLockedValues(c.Request.Context(), inst, chartID, input.Values); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
@@ -311,7 +312,7 @@ func (h *InstanceHandler) DeleteOverride(c *gin.Context) {
 
 // checkLockedValues verifies that the submitted override values do not conflict
 // with locked values from the source template. Returns an error if conflicts exist.
-func (h *InstanceHandler) checkLockedValues(inst *models.StackInstance, chartID, overrideYAML string) error {
+func (h *InstanceHandler) checkLockedValues(ctx context.Context, inst *models.StackInstance, chartID, overrideYAML string) error {
 	if overrideYAML == "" {
 		return nil
 	}
@@ -328,8 +329,9 @@ func (h *InstanceHandler) checkLockedValues(inst *models.StackInstance, chartID,
 		return nil
 	}
 
-	// Find the matching template chart config by ChartName.
-	templateCharts, err := h.templateChartRepo.ListByTemplate(def.SourceTemplateID)
+	// Find the matching template chart config by ChartName (latest
+	// published snapshot of the source template).
+	templateCharts, err := releasedTemplateCharts(ctx, h.versionRepo, h.templateChartRepo, def.SourceTemplateID)
 	if err != nil {
 		return nil
 	}

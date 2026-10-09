@@ -44,7 +44,8 @@ vi.mock('../../../components/YamlEditor', () => ({
   ),
 }));
 
-import { definitionService } from '../../../api/client';
+import { definitionService, templateService } from '../../../api/client';
+import { useUnsavedChanges } from '../../../hooks/useUnsavedChanges';
 
 const mockDefinitionWithCharts = {
   id: '123',
@@ -426,5 +427,61 @@ describe('StackDefinitions Form', () => {
     expect(screen.getByRole('textbox', { name: /^name$/i })).toBeInTheDocument();
     expect(screen.getByRole('textbox', { name: /description/i })).toBeInTheDocument();
     expect(screen.getByRole('textbox', { name: /default branch/i })).toBeInTheDocument();
+  });
+
+  const lastDirtyFlag = () => {
+    const calls = (useUnsavedChanges as ReturnType<typeof vi.fn>).mock.calls;
+    return calls[calls.length - 1]?.[0];
+  };
+
+  const renderEdit = () =>
+    render(
+      <MemoryRouter initialEntries={['/stack-definitions/123/edit']}>
+        <NotificationProvider>
+          <Routes>
+            <Route path="/stack-definitions/:id/edit" element={<Form />} />
+          </Routes>
+        </NotificationProvider>
+      </MemoryRouter>
+    );
+
+  it('is not dirty after loading a definition created from a template', async () => {
+    // Shape after Use Template: source template set, some fields null.
+    (definitionService.get as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...mockDefinitionWithCharts,
+      description: null,
+      source_template_id: 't1',
+      source_template_version: '1.0.0',
+      charts: [{ ...mockDefinitionWithCharts.charts[0], source_repo_url: null, chart_path: null }],
+    });
+    (templateService.get as ReturnType<typeof vi.fn>).mockResolvedValue({ id: 't1', charts: [] });
+
+    renderEdit();
+
+    await waitFor(() => {
+      expect(screen.getByDisplayValue('Test Def')).toBeInTheDocument();
+      expect(templateService.get).toHaveBeenCalledWith('t1');
+    });
+    await waitFor(() => {
+      expect(lastDirtyFlag()).toBe(false);
+    });
+  });
+
+  it('is dirty after a change to a loaded definition', async () => {
+    const user = userEvent.setup();
+    (definitionService.get as ReturnType<typeof vi.fn>).mockResolvedValue(mockDefinitionWithCharts);
+
+    renderEdit();
+
+    await waitFor(() => {
+      expect(screen.getByDisplayValue('Test Def')).toBeInTheDocument();
+    });
+    expect(lastDirtyFlag()).toBe(false);
+
+    await user.type(screen.getByDisplayValue('Test Def'), ' changed');
+
+    await waitFor(() => {
+      expect(lastDirtyFlag()).toBe(true);
+    });
   });
 });

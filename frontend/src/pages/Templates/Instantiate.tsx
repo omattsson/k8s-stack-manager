@@ -17,6 +17,11 @@ import type { StackTemplate, TemplateChartConfig } from '../../types';
 import YamlEditor from '../../components/YamlEditor';
 import LoadingState from '../../components/LoadingState';
 import { trackRecentTemplate } from '../../utils/recentTemplates';
+import {
+  isNoPublishedVersionError,
+  NO_PUBLISHED_VERSION_MESSAGE,
+  UNPUBLISHED_TEMPLATE_MESSAGE,
+} from '../../utils/templateVersion';
 
 interface ChartOverride {
   chart: TemplateChartConfig;
@@ -45,9 +50,12 @@ const Instantiate = () => {
         setTemplate(data);
         setDefName(`${data.name} - My Stack`);
         setDefDescription(data.description);
-        if (data.charts) {
+        // Show what users get: the release charts. Fall back to the working
+        // copy only when there is no release (the API then rejects the submit).
+        const charts = Array.isArray(data.published_charts) ? data.published_charts : data.charts;
+        if (charts) {
           setChartOverrides(
-            data.charts.map((chart) => ({
+            charts.map((chart) => ({
               chart,
               values: chart.default_values,
               enabled: chart.required || true,
@@ -89,7 +97,9 @@ const Instantiate = () => {
         .filter((co) => co.enabled)
         .forEach((co) => {
           if (co.values !== co.chart.default_values) {
-            overridesMap[co.chart.id] = co.values;
+            // Key by chart name: the API accepts names, and legacy release
+            // charts can lack IDs.
+            overridesMap[co.chart.chart_name] = co.values;
           }
         });
 
@@ -103,12 +113,18 @@ const Instantiate = () => {
         trackRecentTemplate({ id: template.id, name: template.name });
       }
       navigate(`/stack-definitions/${definition.id}/edit`);
-    } catch {
-      setError('Failed to instantiate template');
+    } catch (err) {
+      setError(isNoPublishedVersionError(err) ? NO_PUBLISHED_VERSION_MESSAGE : 'Failed to instantiate template');
     } finally {
       setSaving(false);
     }
   };
+
+  /** True when the API reports that the template has no release. */
+  const noRelease = Boolean(
+    template
+    && (template.is_published === false || template.published_charts === null || template.published_version === null),
+  );
 
   if (loading) {
     return <LoadingState label="Loading template..." />;
@@ -125,6 +141,19 @@ const Instantiate = () => {
       </Typography>
 
       {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
+
+      {noRelease && !error && (
+        <Alert severity="warning" sx={{ mb: 2 }}>
+          {template?.is_published === false && template.published_version
+            ? UNPUBLISHED_TEMPLATE_MESSAGE
+            : NO_PUBLISHED_VERSION_MESSAGE}
+        </Alert>
+      )}
+      {template?.published_version && (
+        <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+          Creates a definition from version {template.published_version}.
+        </Typography>
+      )}
 
       <Paper sx={{ p: 3, mb: 3 }}>
         <Typography variant="h6" gutterBottom>Stack Definition Details</Typography>
@@ -158,7 +187,7 @@ const Instantiate = () => {
       </Typography>
 
       {chartOverrides.map((co, index) => (
-        <Paper key={co.chart.id} sx={{ p: 3, mb: 2, opacity: co.enabled ? 1 : 0.5 }}>
+        <Paper key={co.chart.id || co.chart.chart_name} sx={{ p: 3, mb: 2, opacity: co.enabled ? 1 : 0.5 }}>
           <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
               <Typography variant="h6">{co.chart.chart_name}</Typography>
@@ -202,7 +231,7 @@ const Instantiate = () => {
         <Button variant="outlined" onClick={() => navigate(`/templates/${id}`)}>
           Cancel
         </Button>
-        <Button variant="contained" onClick={handleInstantiate} disabled={saving || !defName.trim()}>
+        <Button variant="contained" onClick={handleInstantiate} disabled={saving || !defName.trim() || noRelease}>
           {saving ? 'Creating...' : 'Create Stack Definition'}
         </Button>
       </Box>

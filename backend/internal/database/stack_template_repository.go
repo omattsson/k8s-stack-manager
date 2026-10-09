@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // Compile-time interface check.
@@ -39,6 +40,19 @@ func (r *GORMStackTemplateRepository) Create(template *models.StackTemplate) err
 		return dberrors.NewDatabaseError("create", err)
 	}
 	return nil
+}
+
+// FindByIDForUpdate returns a stack template by its ID and locks the row
+// (SELECT ... FOR UPDATE). Use it inside a transaction.
+func (r *GORMStackTemplateRepository) FindByIDForUpdate(id string) (*models.StackTemplate, error) {
+	var template models.StackTemplate
+	if err := r.db.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?", id).First(&template).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, dberrors.NewDatabaseError("find_by_id_for_update", dberrors.ErrNotFound)
+		}
+		return nil, dberrors.NewDatabaseError("find_by_id_for_update", err)
+	}
+	return &template, nil
 }
 
 // FindByID returns a stack template by its ID.
@@ -93,28 +107,40 @@ var templateListColumns = []string{
 	"default_branch", "is_published", "created_at", "updated_at",
 }
 
-// ListPaged returns a page of stack templates ordered by created_at DESC.
-func (r *GORMStackTemplateRepository) ListPaged(limit, offset int) ([]models.StackTemplate, int64, error) {
+// nameScope filters by exact name when name is not empty.
+func nameScope(name string) func(*gorm.DB) *gorm.DB {
+	return func(db *gorm.DB) *gorm.DB {
+		if name == "" {
+			return db
+		}
+		return db.Where("name = ?", name)
+	}
+}
+
+// ListPaged returns a page of stack templates ordered by created_at DESC. A
+// non-empty name filters by exact name.
+func (r *GORMStackTemplateRepository) ListPaged(limit, offset int, name string) ([]models.StackTemplate, int64, error) {
 	var total int64
-	if err := r.db.Model(&models.StackTemplate{}).Count(&total).Error; err != nil {
+	if err := r.db.Model(&models.StackTemplate{}).Scopes(nameScope(name)).Count(&total).Error; err != nil {
 		return nil, 0, dberrors.NewDatabaseError("count", err)
 	}
 	var templates []models.StackTemplate
-	if err := r.db.Select(templateListColumns).
+	if err := r.db.Select(templateListColumns).Scopes(nameScope(name)).
 		Order("created_at DESC").Limit(limit).Offset(offset).Find(&templates).Error; err != nil {
 		return nil, 0, dberrors.NewDatabaseError("list_paged", err)
 	}
 	return templates, total, nil
 }
 
-// ListPublishedPaged returns a page of published stack templates ordered by created_at DESC.
-func (r *GORMStackTemplateRepository) ListPublishedPaged(limit, offset int) ([]models.StackTemplate, int64, error) {
+// ListPublishedPaged returns a page of published stack templates ordered by
+// created_at DESC. A non-empty name filters by exact name.
+func (r *GORMStackTemplateRepository) ListPublishedPaged(limit, offset int, name string) ([]models.StackTemplate, int64, error) {
 	var total int64
-	if err := r.db.Model(&models.StackTemplate{}).Where("is_published = ?", true).Count(&total).Error; err != nil {
+	if err := r.db.Model(&models.StackTemplate{}).Where("is_published = ?", true).Scopes(nameScope(name)).Count(&total).Error; err != nil {
 		return nil, 0, dberrors.NewDatabaseError("count_published", err)
 	}
 	var templates []models.StackTemplate
-	if err := r.db.Select(templateListColumns).Where("is_published = ?", true).
+	if err := r.db.Select(templateListColumns).Where("is_published = ?", true).Scopes(nameScope(name)).
 		Order("created_at DESC").Limit(limit).Offset(offset).Find(&templates).Error; err != nil {
 		return nil, 0, dberrors.NewDatabaseError("list_published_paged", err)
 	}
