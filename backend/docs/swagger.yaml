@@ -791,6 +791,12 @@ definitions:
           the source.'
         type: integer
     type: object
+  handlers.cloneTemplateRequest:
+    properties:
+      name:
+        description: 'Name of the clone. Default: "<source name> (Copy)".'
+        type: string
+    type: object
   handlers.createChannelRequest:
     properties:
       enabled:
@@ -1004,6 +1010,23 @@ definitions:
       secret:
         type: string
       webhook_url:
+        type: string
+    type: object
+  handlers.updateCleanupPolicyRequest:
+    properties:
+      action:
+        type: string
+      cluster_id:
+        type: string
+      condition:
+        type: string
+      dry_run:
+        type: boolean
+      enabled:
+        type: boolean
+      name:
+        type: string
+      schedule:
         type: string
     type: object
   handlers.updatePreferenceRequest:
@@ -1402,6 +1425,7 @@ definitions:
       details:
         type: string
       entity_id:
+        description: '63: RFC 1123 label (namespace name); a UUID has 36'
         type: string
       entity_type:
         type: string
@@ -2084,21 +2108,22 @@ paths:
     put:
       consumes:
       - application/json
-      description: Updates an existing cleanup policy and reloads the scheduler. See
-        the create endpoint for the condition syntax (status, idle_days, age_days,
-        stopped_days, ttl_expired).
+      description: 'Updates an existing cleanup policy and reloads the scheduler.
+        Partial update: only the fields in the body change (for example {"enabled":
+        false}); the merged policy is validated. See the create endpoint for the condition
+        syntax (status, idle_days, age_days, stopped_days, ttl_expired).'
       parameters:
       - description: Policy ID
         in: path
         name: id
         required: true
         type: string
-      - description: Cleanup policy
+      - description: Fields to change
         in: body
         name: policy
         required: true
         schema:
-          $ref: '#/definitions/models.CleanupPolicy'
+          $ref: '#/definitions/handlers.updateCleanupPolicyRequest'
       produces:
       - application/json
       responses:
@@ -2108,6 +2133,18 @@ paths:
             $ref: '#/definitions/models.CleanupPolicy'
         "400":
           description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
           schema:
             additionalProperties:
               type: string
@@ -7171,14 +7208,22 @@ paths:
       - template-charts
   /api/v1/templates/{id}/clone:
     post:
-      description: Create a new draft template that is a copy of the source (devops/admin
-        only)
+      consumes:
+      - application/json
+      description: |-
+        Create a new draft template that is a copy of the source (devops/admin only).
+        The body is optional. name sets the name of the clone (trimmed, same rules as create); the default is "<source name> (Copy)".
       parameters:
       - description: Template ID
         in: path
         name: id
         required: true
         type: string
+      - description: Clone options
+        in: body
+        name: body
+        schema:
+          $ref: '#/definitions/handlers.cloneTemplateRequest'
       produces:
       - application/json
       responses:
@@ -7186,8 +7231,32 @@ paths:
           description: Created
           schema:
             $ref: '#/definitions/models.StackTemplate'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
         "404":
           description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
           schema:
             additionalProperties:
               type: string

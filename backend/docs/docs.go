@@ -117,7 +117,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Updates an existing cleanup policy and reloads the scheduler. See the create endpoint for the condition syntax (status, idle_days, age_days, stopped_days, ttl_expired).",
+                "description": "Updates an existing cleanup policy and reloads the scheduler. Partial update: only the fields in the body change (for example {\"enabled\": false}); the merged policy is validated. See the create endpoint for the condition syntax (status, idle_days, age_days, stopped_days, ttl_expired).",
                 "consumes": [
                     "application/json"
                 ],
@@ -137,12 +137,12 @@ const docTemplate = `{
                         "required": true
                     },
                     {
-                        "description": "Cleanup policy",
+                        "description": "Fields to change",
                         "name": "policy",
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/models.CleanupPolicy"
+                            "$ref": "#/definitions/handlers.updateCleanupPolicyRequest"
                         }
                     }
                 ],
@@ -155,6 +155,24 @@ const docTemplate = `{
                     },
                     "400": {
                         "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {
@@ -7857,7 +7875,10 @@ const docTemplate = `{
         },
         "/api/v1/templates/{id}/clone": {
             "post": {
-                "description": "Create a new draft template that is a copy of the source (devops/admin only)",
+                "description": "Create a new draft template that is a copy of the source (devops/admin only).\nThe body is optional. name sets the name of the clone (trimmed, same rules as create); the default is \"\u003csource name\u003e (Copy)\".",
+                "consumes": [
+                    "application/json"
+                ],
                 "produces": [
                     "application/json"
                 ],
@@ -7872,6 +7893,14 @@ const docTemplate = `{
                         "name": "id",
                         "in": "path",
                         "required": true
+                    },
+                    {
+                        "description": "Clone options",
+                        "name": "body",
+                        "in": "body",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.cloneTemplateRequest"
+                        }
                     }
                 ],
                 "responses": {
@@ -7881,8 +7910,44 @@ const docTemplate = `{
                             "$ref": "#/definitions/models.StackTemplate"
                         }
                     },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
                     "404": {
                         "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {
@@ -10368,6 +10433,15 @@ const docTemplate = `{
                 }
             }
         },
+        "handlers.cloneTemplateRequest": {
+            "type": "object",
+            "properties": {
+                "name": {
+                    "description": "Name of the clone. Default: \"\u003csource name\u003e (Copy)\".",
+                    "type": "string"
+                }
+            }
+        },
         "handlers.createChannelRequest": {
             "type": "object",
             "required": [
@@ -10673,6 +10747,32 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "webhook_url": {
+                    "type": "string"
+                }
+            }
+        },
+        "handlers.updateCleanupPolicyRequest": {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string"
+                },
+                "cluster_id": {
+                    "type": "string"
+                },
+                "condition": {
+                    "type": "string"
+                },
+                "dry_run": {
+                    "type": "boolean"
+                },
+                "enabled": {
+                    "type": "boolean"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "schedule": {
                     "type": "string"
                 }
             }
@@ -11279,6 +11379,7 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "entity_id": {
+                    "description": "63: RFC 1123 label (namespace name); a UUID has 36",
                     "type": "string"
                 },
                 "entity_type": {

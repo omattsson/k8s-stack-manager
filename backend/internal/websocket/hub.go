@@ -366,8 +366,10 @@ func (h *Hub) disconnectUserLocal(userID string) int {
 }
 
 // disconnectUserIssuedBefore closes the local connections of the user whose
-// token was issued at or before t (second precision, the same rule as the
-// session store user block; an unknown issue time counts as before). The
+// token was issued at or before t (millisecond precision, the same rule as
+// the session store user block; an unknown issue time counts as before). A
+// token without the iat_ms claim has a whole-second issue time, so for it the
+// rule is "issued in the second of t or before". The
 // fan-out poller calls it for a user revocation from another replica, with
 // the row time: a session that the user opened after the revocation stays
 // open.
@@ -376,7 +378,7 @@ func (h *Hub) disconnectUserIssuedBefore(userID string, t time.Time) int {
 		if c.identity.UserID != userID {
 			return false
 		}
-		return c.identity.IssuedAt.IsZero() || t.IsZero() || c.identity.IssuedAt.Unix() <= t.Unix()
+		return c.identity.IssuedAt.IsZero() || t.IsZero() || c.identity.IssuedAt.UnixMilli() <= t.UnixMilli()
 	})
 }
 

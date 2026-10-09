@@ -25,8 +25,29 @@ import EntityLink from '../../components/EntityLink';
 import { useAuth } from '../../context/AuthContext';
 import LoadingState from '../../components/LoadingState';
 
-const ENTITY_TYPES = ['All', 'stack_template', 'stack_definition', 'stack_instance', 'value_override', 'user'];
-const ACTIONS = ['All', 'create', 'update', 'delete', 'publish', 'unpublish', 'clone', 'instantiate'];
+/**
+ * Filter options. They mirror KnownAuditEntityTypes and KnownAuditActions in
+ * backend/internal/api/middleware/audit.go. Entries written before the audit
+ * route table (for example "create" with entity type "deploy") keep their
+ * old values.
+ */
+const ENTITY_TYPES = [
+  'All',
+  'stack_template', 'stack_definition', 'stack_instance', 'chart_config',
+  'value_override', 'branch_override', 'quota_override', 'user', 'api_key',
+  'cluster', 'quota', 'shared_values', 'cleanup_policy',
+  'notification_channel', 'notification_subscription', 'notification_preference',
+  'favorite', 'namespace',
+];
+const ACTIONS = [
+  'All',
+  'create', 'update', 'delete',
+  'deploy', 'stop', 'clean', 'rollback', 'extend_ttl', 'clone', 'invoke_action',
+  'publish', 'unpublish', 'instantiate', 'quick_deploy', 'import', 'upgrade',
+  'test', 'test_connection', 'set_default', 'run',
+  'disable', 'enable', 'reset_password',
+  'expired', 'cleanup_policy_executed',
+];
 
 const AuditLog = () => {
   const { user } = useAuth();
@@ -37,6 +58,7 @@ const AuditLog = () => {
   const [entityType, setEntityType] = useState('All');
   const [action, setAction] = useState('All');
   const [userID, setUserID] = useState('');
+  const [entityID, setEntityID] = useState('');
   const [page, setPage] = useState(0);
   const [rowsPerPage, setRowsPerPage] = useState(25);
   const [exportAnchor, setExportAnchor] = useState<null | HTMLElement>(null);
@@ -54,6 +76,7 @@ const AuditLog = () => {
       if (entityType !== 'All') filters.entity_type = entityType;
       if (action !== 'All') filters.action = action;
       if (userID) filters.user_id = userID;
+      if (entityID) filters.entity_id = entityID;
       if (startDate) filters.start_date = startDate;
       if (endDate) filters.end_date = endDate;
 
@@ -65,7 +88,7 @@ const AuditLog = () => {
     } finally {
       setLoading(false);
     }
-  }, [entityType, action, userID, page, rowsPerPage, startDate, endDate]);
+  }, [entityType, action, userID, entityID, page, rowsPerPage, startDate, endDate]);
 
   useEffect(() => {
     fetchLogs();
@@ -83,6 +106,7 @@ const AuditLog = () => {
       if (entityType !== 'All') filters.entity_type = entityType;
       if (action !== 'All') filters.action = action;
       if (userID) filters.user_id = userID;
+      if (entityID) filters.entity_id = entityID;
       if (startDate) filters.start_date = startDate;
       if (endDate) filters.end_date = endDate;
       await auditService.export(filters, format);
@@ -118,6 +142,13 @@ const AuditLog = () => {
               <MenuItem key={t} value={t}>{t === 'All' ? 'All Types' : t}</MenuItem>
             ))}
           </TextField>
+          <TextField
+            label="Entity ID"
+            value={entityID}
+            onChange={(e) => { setEntityID(e.target.value.trim()); setPage(0); }}
+            size="small"
+            sx={{ minWidth: 150 }}
+          />
           <TextField
             label="Action"
             value={action}

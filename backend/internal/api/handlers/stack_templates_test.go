@@ -697,6 +697,50 @@ func TestCloneTemplate(t *testing.T) {
 		assert.Equal(t, "uid-2", resp.OwnerID, "clone owner should be the caller")
 	})
 
+	nameTests := []struct {
+		name     string
+		body     string
+		wantCode int
+		wantName string
+	}{
+		{name: "no body uses default name", body: "", wantCode: http.StatusCreated, wantName: "Original (Copy)"},
+		{name: "empty object uses default name", body: `{}`, wantCode: http.StatusCreated, wantName: "Original (Copy)"},
+		{name: "name from body", body: `{"name":"retest-template"}`, wantCode: http.StatusCreated, wantName: "retest-template"},
+		{name: "name is trimmed", body: `{"name":"  spaced  "}`, wantCode: http.StatusCreated, wantName: "spaced"},
+		{name: "empty name is rejected", body: `{"name":"   "}`, wantCode: http.StatusBadRequest},
+		{name: "invalid JSON is rejected", body: `{"name":`, wantCode: http.StatusBadRequest},
+	}
+	for _, tt := range nameTests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			tmplRepo := NewMockStackTemplateRepository()
+			seedTemplate(t, tmplRepo, "t1", "Original", "owner-1", true)
+			router := setupTemplateRouter(tmplRepo, NewMockTemplateChartConfigRepository(), NewMockStackDefinitionRepository(), NewMockChartConfigRepository(), "uid-2", "devops")
+
+			w := httptest.NewRecorder()
+			var req *http.Request
+			if tt.body == "" {
+				req, _ = http.NewRequest(http.MethodPost, "/api/v1/templates/t1/clone", nil)
+			} else {
+				req, _ = http.NewRequest(http.MethodPost, "/api/v1/templates/t1/clone", bytes.NewBufferString(tt.body))
+				req.Header.Set("Content-Type", "application/json")
+			}
+			router.ServeHTTP(w, req)
+
+			require.Equal(t, tt.wantCode, w.Code, w.Body.String())
+			if tt.wantCode != http.StatusCreated {
+				return
+			}
+			var resp models.StackTemplate
+			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+			assert.Equal(t, tt.wantName, resp.Name)
+			stored, err := tmplRepo.FindByID(resp.ID)
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantName, stored.Name)
+		})
+	}
+
 	t.Run("template not found returns 404", func(t *testing.T) {
 		t.Parallel()
 		router := setupTemplateRouter(

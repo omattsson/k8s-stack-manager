@@ -790,3 +790,118 @@ func (r *cleanupMockAuditRepo) List(_ models.AuditLogFilters) (*models.AuditLogR
 }
 
 func (*cleanupMockInstanceRepo) CountByStatuses(statuses []string) (int, error) { return 0, nil }
+
+// countingPolicyRepo counts ListEnabled calls: the scheduler calls it on
+// every Reload.
+type countingPolicyRepo struct {
+	*mockCleanupPolicyRepo
+	listEnabled int
+}
+
+func (r *countingPolicyRepo) ListEnabled() ([]models.CleanupPolicy, error) {
+	r.mu.Lock()
+	r.listEnabled++
+	r.mu.Unlock()
+	return r.mockCleanupPolicyRepo.ListEnabled()
+}
+
+func (r *countingPolicyRepo) listEnabledCalls() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.listEnabled
+}
+
+// TestUpdateCleanupPolicy_PartialUpdate checks that PUT changes only the
+// fields in the body (issue #440: the Enabled switch sends {"enabled": x}),
+// validates the merged policy and reloads the scheduler.
+func TestUpdateCleanupPolicy_PartialUpdate(t *testing.T) {
+	t.Parallel()
+
+	base := models.CleanupPolicy{
+		ID: "p1", Name: "stop-idle", Action: "stop", Condition: "idle_days:7",
+		Schedule: "0 2 * * *", ClusterID: "all", Enabled: true, DryRun: false,
+	}
+	tests := []struct {
+		name       string
+		body       string
+		wantStatus int
+		want       func(p models.CleanupPolicy) models.CleanupPolicy
+		wantReload bool
+	}{
+		{
+			name: "enabled only", body: `{"enabled":false}`, wantStatus: http.StatusOK, wantReload: true,
+			want: func(p models.CleanupPolicy) models.CleanupPolicy { p.Enabled = false; return p },
+		},
+		{
+			name: "dry_run only", body: `{"dry_run":true}`, wantStatus: http.StatusOK, wantReload: true,
+			want: func(p models.CleanupPolicy) models.CleanupPolicy { p.DryRun = true; return p },
+		},
+		{
+			name: "empty body object changes nothing", body: `{}`, wantStatus: http.StatusOK, wantReload: true,
+			want: func(p models.CleanupPolicy) models.CleanupPolicy { return p },
+		},
+		{
+			name: "full body replaces every field", wantStatus: http.StatusOK, wantReload: true,
+			body: `{"name":"clean-stopped","action":"clean","condition":"status:stopped","schedule":"0 3 * * *","cluster_id":"c1","enabled":false,"dry_run":true}`,
+			want: func(p models.CleanupPolicy) models.CleanupPolicy {
+				p.Name, p.Action, p.Condition, p.Schedule, p.ClusterID, p.Enabled, p.DryRun = "clean-stopped", "clean", "status:stopped", "0 3 * * *", "c1", false, true
+				return p
+			},
+		},
+		{name: "empty name in body is rejected", body: `{"name":""}`, wantStatus: http.StatusBadRequest},
+		{name: "invalid schedule is rejected", body: `{"schedule":"not a cron"}`, wantStatus: http.StatusBadRequest},
+		{name: "invalid condition is rejected", body: `{"condition":"unknown_key:1"}`, wantStatus: http.StatusBadRequest},
+		{name: "invalid action is rejected", body: `{"action":"explode"}`, wantStatus: http.StatusBadRequest},
+		{name: "wrong type is rejected", body: `{"enabled":"yes"}`, wantStatus: http.StatusBadRequest},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			repo := &countingPolicyRepo{mockCleanupPolicyRepo: newMockCleanupPolicyRepo()}
+			seed := base
+			_ = repo.Create(&seed)
+			stored := seed // copy with the timestamps of Create
+
+			sched := scheduler.NewScheduler(repo, &cleanupMockInstanceRepo{}, &cleanupMockAuditRepo{}, nil, nil)
+			_ = sched.Start()
+			defer sched.Stop()
+			callsBefore := repo.listEnabledCalls()
+
+			router := setupCleanupPolicyRouter(repo, sched)
+			w := httptest.NewRecorder()
+			req, _ := http.NewRequest(http.MethodPut, "/api/v1/admin/cleanup-policies/p1", bytes.NewBufferString(tt.body))
+			req.Header.Set("Content-Type", "application/json")
+			router.ServeHTTP(w, req)
+
+			assert.Equal(t, tt.wantStatus, w.Code, w.Body.String())
+			got, err := repo.FindByID("p1")
+			assert.NoError(t, err)
+			want := stored
+			if tt.want != nil {
+				want = tt.want(stored)
+			}
+			// Compare the writable fields; timestamps change on update.
+			assert.Equal(t, want.Name, got.Name)
+			assert.Equal(t, want.Action, got.Action)
+			assert.Equal(t, want.Condition, got.Condition)
+			assert.Equal(t, want.Schedule, got.Schedule)
+			assert.Equal(t, want.ClusterID, got.ClusterID)
+			assert.Equal(t, want.Enabled, got.Enabled)
+			assert.Equal(t, want.DryRun, got.DryRun)
+			assert.Equal(t, stored.CreatedAt, got.CreatedAt)
+
+			if tt.wantReload {
+				assert.Greater(t, repo.listEnabledCalls(), callsBefore, "the scheduler reloads after an update")
+				var resp models.CleanupPolicy
+				assert.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+				assert.Equal(t, want.Enabled, resp.Enabled)
+				assert.Equal(t, want.DryRun, resp.DryRun)
+				assert.Equal(t, want.Name, resp.Name)
+			} else {
+				assert.Equal(t, callsBefore, repo.listEnabledCalls(), "a rejected update does not reload")
+			}
+		})
+	}
+}

@@ -13,7 +13,6 @@ import {
   Button,
   IconButton,
   Switch,
-  Checkbox,
   Chip,
   Dialog,
   DialogTitle,
@@ -40,6 +39,7 @@ import type { CleanupPolicy, CleanupResult, Cluster } from '../../types';
 import LoadingState from '../../components/LoadingState';
 import { Link } from 'react-router-dom';
 import { useNotification } from '../../context/NotificationContext';
+import { describeApiError } from '../../utils/apiError';
 
 /**
  * Condition presets. `stopped_age` is the old "status:stopped,age_days:N" form:
@@ -306,14 +306,22 @@ const CleanupPolicies = () => {
     }
   };
 
-  const handleToggleEnabled = async (policy: CleanupPolicy) => {
+  /**
+   * Flip one boolean field of a policy from the table. The API does a partial
+   * update, so only the changed field is sent. The switch shows the new state
+   * only after the API accepts it; on error it keeps the old state.
+   */
+  const handleToggleField = async (policy: CleanupPolicy, field: 'enabled' | 'dry_run') => {
     try {
-      await cleanupPolicyService.update(policy.id, { enabled: !policy.enabled });
+      const updated = await cleanupPolicyService.update(policy.id, { [field]: !policy[field] });
       setPolicies((prev) =>
-        prev.map((p) => (p.id === policy.id ? { ...p, enabled: !p.enabled } : p)),
+        prev.map((p) =>
+          p.id === policy.id ? { ...p, [field]: updated?.[field] ?? !policy[field] } : p,
+        ),
       );
-    } catch {
-      showError('Failed to toggle policy');
+    } catch (err) {
+      const label = field === 'enabled' ? 'Failed to toggle policy' : 'Failed to toggle dry run';
+      showError(await describeApiError(err, label));
     }
   };
 
@@ -437,13 +445,18 @@ const CleanupPolicies = () => {
                   <TableCell>
                     <Switch
                       checked={policy.enabled}
-                      onChange={() => handleToggleEnabled(policy)}
+                      onChange={() => handleToggleField(policy, 'enabled')}
                       size="small"
                       slotProps={{ input: { 'aria-label': `Toggle ${policy.name}` } }}
                     />
                   </TableCell>
                   <TableCell>
-                    <Checkbox checked={policy.dry_run} disabled size="small" />
+                    <Switch
+                      checked={policy.dry_run}
+                      onChange={() => handleToggleField(policy, 'dry_run')}
+                      size="small"
+                      slotProps={{ input: { 'aria-label': `Dry run ${policy.name}` } }}
+                    />
                   </TableCell>
                   <TableCell sx={{ display: { xs: 'none', md: 'table-cell' } }}>
                     {policy.last_run_at ? timeAgo(policy.last_run_at) : 'Never'}

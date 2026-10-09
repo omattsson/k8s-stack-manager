@@ -1365,7 +1365,7 @@ export interface PaginatedAuditLogs {
 export const auditService = {
   /**
    * Fetch a paginated, filterable list of audit log entries.
-   * @param filters - Optional filters (user, entity type, action, date range, pagination)
+   * @param filters - Optional filters (user, entity type, entity ID, action, date range, pagination)
    * @returns Paginated audit log response
    * @see GET /api/v1/audit-logs
    */
@@ -1389,6 +1389,7 @@ export const auditService = {
     params.set('format', format);
     if (filters.user_id) params.set('user_id', filters.user_id);
     if (filters.entity_type) params.set('entity_type', filters.entity_type);
+    if (filters.entity_id) params.set('entity_id', filters.entity_id);
     if (filters.action) params.set('action', filters.action);
     if (filters.start_date) params.set('start_date', filters.start_date);
     if (filters.end_date) params.set('end_date', filters.end_date);

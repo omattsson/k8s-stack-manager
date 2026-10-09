@@ -2,13 +2,17 @@ package sessionstore
 
 import (
 	"context"
+	"strconv"
 	"sync"
 	"time"
 )
 
 type memBlockEntry struct {
 	expiresAt time.Time
-	blockedAt int64 // Unix seconds; user blocks only
+	// User blocks only: the two entries of the MySQL store (see
+	// userBlockTime). blockedAtMs 0 means no milliseconds entry.
+	blockedAtSec int64 // Unix seconds
+	blockedAtMs  int64 // Unix milliseconds
 }
 
 type memOIDCEntry struct {
@@ -29,6 +33,9 @@ type MemoryStore struct {
 	cliAuths   map[string]memCLIAuthEntry
 	done       chan struct{}
 	stopOnce   sync.Once
+	// blockClock returns the time that BlockUser stores. Tests set a fixed
+	// clock with NewMemoryStoreWithBlockClock.
+	blockClock func() time.Time
 }
 
 func NewMemoryStore() *MemoryStore {
@@ -38,8 +45,18 @@ func NewMemoryStore() *MemoryStore {
 		oidcStates: make(map[string]memOIDCEntry),
 		cliAuths:   make(map[string]memCLIAuthEntry),
 		done:       make(chan struct{}),
+		blockClock: time.Now,
 	}
 	go s.cleanupLoop()
+	return s
+}
+
+// NewMemoryStoreWithBlockClock returns a MemoryStore whose BlockUser stores
+// the time of now instead of the current time. Expiry checks still use the
+// current time. For tests of the user block rule.
+func NewMemoryStoreWithBlockClock(now func() time.Time) *MemoryStore {
+	s := NewMemoryStore()
+	s.blockClock = now
 	return s
 }
 
@@ -62,7 +79,8 @@ func (s *MemoryStore) IsTokenBlocked(_ context.Context, jti string) (bool, error
 
 func (s *MemoryStore) BlockUser(_ context.Context, userID string, until time.Time) error {
 	s.mu.Lock()
-	s.userBlocks[userID] = memBlockEntry{expiresAt: until, blockedAt: time.Now().Unix()}
+	now := s.blockClock()
+	s.userBlocks[userID] = memBlockEntry{expiresAt: until, blockedAtSec: now.Unix(), blockedAtMs: now.UnixMilli()}
 	s.mu.Unlock()
 	return nil
 }
@@ -74,7 +92,11 @@ func (s *MemoryStore) IsUserBlocked(_ context.Context, userID string, issuedAt t
 	if !ok || !time.Now().Before(entry.expiresAt) {
 		return false, nil
 	}
-	return userBlockApplies(entry.blockedAt, issuedAt), nil
+	blockedAt := userBlockTime(
+		strconv.FormatInt(entry.blockedAtSec, 10), true,
+		strconv.FormatInt(entry.blockedAtMs, 10), entry.blockedAtMs > 0,
+	)
+	return userBlockApplies(blockedAt, issuedAt), nil
 }
 
 func (s *MemoryStore) UnblockUser(_ context.Context, userID string) error {

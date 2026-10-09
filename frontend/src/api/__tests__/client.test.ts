@@ -1655,6 +1655,24 @@ describe('auditService — export', () => {
     expect(mockLink.click).toHaveBeenCalled();
     expect(mockRevokeObjectURL).toHaveBeenCalledWith('blob:url');
   });
+
+  it('export sends the entity type and entity ID filters', async () => {
+    const api = mockApi;
+    api.get.mockResolvedValueOnce({ ...mockResponse(new Blob(['data'])), headers: {} });
+    const mockLink = { href: '', setAttribute: vi.fn(), click: vi.fn(), remove: vi.fn() };
+    vi.spyOn(document, 'createElement').mockReturnValue(mockLink as unknown as HTMLElement);
+    vi.spyOn(document.body, 'appendChild').mockReturnValue(document.body);
+    globalThis.URL.createObjectURL = vi.fn().mockReturnValue('blob:url');
+    globalThis.URL.revokeObjectURL = vi.fn();
+
+    await auditService.export({ entity_type: 'stack_instance', entity_id: 'inst-1', action: 'deploy' }, 'json');
+
+    const params = api.get.mock.calls[api.get.mock.calls.length - 1][1].params as URLSearchParams;
+    expect(params.get('entity_type')).toBe('stack_instance');
+    expect(params.get('entity_id')).toBe('inst-1');
+    expect(params.get('action')).toBe('deploy');
+    expect(params.get('format')).toBe('json');
+  });
 });
 
 // ---------------------------------------------------------------------------

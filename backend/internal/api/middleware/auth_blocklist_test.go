@@ -315,3 +315,105 @@ func TestRevocationStatus(t *testing.T) {
 		})
 	}
 }
+
+// signTokenAt signs a token for userID issued at iat. withMs adds the
+// iat_ms claim (current tokens); without it the token is a legacy token
+// (whole-second iat only).
+func signTokenAt(t *testing.T, userID string, iat time.Time, withMs bool) string {
+	t.Helper()
+	claims := Claims{
+		UserID: userID, Username: "alice", Role: "user",
+		RegisteredClaims: jwt.RegisteredClaims{
+			ID:        "jti-" + strings.ReplaceAll(iat.Format(time.RFC3339Nano), ":", ""),
+			IssuedAt:  jwt.NewNumericDate(iat),
+			ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
+			Subject:   userID,
+		},
+	}
+	if withMs {
+		claims.IssuedAtMs = iat.UnixMilli()
+	}
+	signed, err := jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString([]byte(testSecret))
+	require.NoError(t, err)
+	return signed
+}
+
+// TestAuthRequired_UserBlock_SameSecond checks the millisecond rule of the
+// iat_ms claim (issue #478) with a fixed block time: a login just after a
+// block in the same second is valid, and a token issued just before the
+// block in the same second is revoked. A legacy token without iat_ms keeps
+// the second rule.
+func TestAuthRequired_UserBlock_SameSecond(t *testing.T) {
+	t.Parallel()
+
+	// The block happens 300 ms into a second.
+	blockTime := time.Date(2026, 1, 2, 3, 4, 5, 300*int(time.Millisecond), time.UTC)
+	blockSecond := blockTime.Truncate(time.Second)
+	tests := []struct {
+		name       string
+		iat        time.Time
+		withMs     bool
+		wantStatus int
+	}{
+		{name: "login 1 ms after the block in the same second", iat: blockTime.Add(time.Millisecond), withMs: true, wantStatus: http.StatusOK},
+		{name: "token issued 1 ms before the block in the same second", iat: blockTime.Add(-time.Millisecond), withMs: true, wantStatus: http.StatusUnauthorized},
+		{name: "token issued in the block millisecond", iat: blockTime, withMs: true, wantStatus: http.StatusUnauthorized},
+		{name: "legacy token in the block second after the block", iat: blockTime.Add(500 * time.Millisecond), withMs: false, wantStatus: http.StatusUnauthorized},
+		{name: "legacy token in the next second", iat: blockSecond.Add(time.Second), withMs: false, wantStatus: http.StatusOK},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			const userID = "user-same-second"
+			store := sessionstore.NewMemoryStoreWithBlockClock(func() time.Time { return blockTime })
+			t.Cleanup(store.Stop)
+			require.NoError(t, store.BlockUser(context.Background(), userID, time.Now().Add(time.Hour)))
+
+			gin.SetMode(gin.TestMode)
+			r := gin.New()
+			r.Use(AuthRequiredWithSessionStore(testSecret, store))
+			r.GET("/protected", func(c *gin.Context) { c.Status(http.StatusOK) })
+			w := httptest.NewRecorder()
+			req, _ := http.NewRequest(http.MethodGet, "/protected", nil)
+			req.Header.Set("Authorization", "Bearer "+signTokenAt(t, userID, tt.iat, tt.withMs))
+			r.ServeHTTP(w, req)
+			assert.Equal(t, tt.wantStatus, w.Code, w.Body.String())
+		})
+	}
+}
+
+func TestClaimsIssueTime(t *testing.T) {
+	t.Parallel()
+
+	sec := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	tests := []struct {
+		name   string
+		claims *Claims
+		want   time.Time
+	}{
+		{name: "nil claims", claims: nil, want: time.Time{}},
+		{name: "no iat", claims: &Claims{}, want: time.Time{}},
+		{name: "iat only gives whole seconds", claims: &Claims{RegisteredClaims: jwt.RegisteredClaims{IssuedAt: jwt.NewNumericDate(sec.Add(700 * time.Millisecond))}}, want: sec},
+		{name: "iat_ms wins", claims: &Claims{IssuedAtMs: sec.UnixMilli() + 450, RegisteredClaims: jwt.RegisteredClaims{IssuedAt: jwt.NewNumericDate(sec)}}, want: sec.Add(450 * time.Millisecond)},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			assert.True(t, tt.want.Equal(tt.claims.IssueTime()), "got %v", tt.claims.IssueTime())
+		})
+	}
+}
+
+func TestGenerateTokenWithOpts_SetsIssuedAtMs(t *testing.T) {
+	t.Parallel()
+	before := time.Now().UnixMilli()
+	tok, err := GenerateTokenWithOpts(GenerateTokenOptions{UserID: "u1", Username: "alice", Role: "user", Secret: testSecret, Expiration: time.Hour})
+	require.NoError(t, err)
+	claims, err := ValidateJWT(tok, testSecret)
+	require.NoError(t, err)
+	assert.GreaterOrEqual(t, claims.IssuedAtMs, before)
+	assert.LessOrEqual(t, claims.IssuedAtMs, time.Now().UnixMilli())
+	assert.Equal(t, claims.IssuedAt.Unix(), claims.IssuedAtMs/1000, "iat and iat_ms describe the same second")
+}

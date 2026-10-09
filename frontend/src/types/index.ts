@@ -279,6 +279,7 @@ export interface AuditLog {
 export interface AuditLogFilters {
   user_id?: string;
   entity_type?: string;
+  entity_id?: string;
   action?: string;
   start_date?: string;
   end_date?: string;

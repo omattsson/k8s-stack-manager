@@ -29,7 +29,7 @@ is a minimal Go starting point.
 
 | Event | Fires when | Semantics |
 |---|---|---|
-| `pre-deploy` | Just before a deployment starts, after cluster resolution. | Synchronous. A subscriber with `failure_policy=fail` can abort. |
+| `pre-deploy` | Just before a deployment starts, after cluster resolution. | Synchronous, with progress streaming (`LOG:` lines go to the deploy log). A subscriber with `failure_policy=fail` can abort: the deploy log ends with status `error` and the hook reason, and the instance gets status `error` with the reason in `error_message`. |
 | `post-deploy` | After a deployment completes **successfully**. | Fire-and-forget (default `failure_policy=ignore`). |
 | `deploy-finalized` | After a deployment ends **successfully or not**. | Fire-and-forget. |
 | `pre-rollback` | Before a rollback runs (`POST /stack-instances/:id/rollback`), in the background after the API answered 202. | Synchronous for the rollback, with progress streaming (`LOG:` lines go to the rollback log). `failure_policy=fail` aborts: the rollback log ends with status `error` and the hook reason, and the instance gets its previous status back. |
@@ -151,7 +151,11 @@ denial (`allowed: false`), and `pre-rollback hook "<name>" failed (unreachable
 or timed out)` for other failures. The full error (it can contain the
 subscriber URL) goes only to the server log. `pre-deploy` denials show the
 subscriber message the same way: `pre-deploy hook "<name>" denied the
-deployment: <subscriber message>`.
+deployment: <subscriber message>`. For `pre-deploy` the reason goes to the
+`error_message` of the instance and of the deploy log, and as an `ERROR:`
+line to the deploy log output (after the `LOG:` progress lines of the hook).
+The subscriber message is flattened to one line and cut at 500 characters
+(the instance `error_message` at 256 characters).
 
 The rollback continues after the hook only when no other operation started
 meanwhile (its deployment log is still the newest one of the instance).
