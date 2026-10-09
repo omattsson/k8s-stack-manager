@@ -468,6 +468,7 @@ Traceparent: ...
 - Offsets are byte offsets. While the job runs and `X-Log-Offset` is not set,
   the backend drops an incomplete UTF-8 sequence at the end of a chunk; the
   next poll reads the whole character.
+  When you set `X-Log-Offset`, end each chunk on a character boundary.
 - Answer 404 for an unknown job. The backend reads at most 256 KiB per call
   and cuts a larger chunk at its last line end; the client gets the rest with
   the next offset. The call times out after 10 seconds (or the action

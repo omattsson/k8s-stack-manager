@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { act, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import InstanceActionsMenu from '..';
 import {
@@ -8,6 +8,7 @@ import {
   JOB_LOG_MAX_CHARS,
   JOB_LOG_MAX_POLL_MS,
   JOB_LOG_POLL_INTERVAL_MS,
+  cutLogTail,
   retryAfterMs,
 } from '../ActionDialog';
 import { instanceService } from '../../../api/client';
@@ -267,7 +268,7 @@ describe('InstanceActionsMenu', () => {
     await waitFor(() => expect(within(dialog).getByTestId('job-log')).toHaveTextContent('working'));
     await advance(JOB_LOG_POLL_INTERVAL_MS);
     await waitFor(() => expect(getActionJobLog).toHaveBeenCalledTimes(2));
-    expect(getActionJobLog).toHaveBeenLastCalledWith('i1', 'refresh-db', 'job-1', 8);
+    expect(getActionJobLog).toHaveBeenLastCalledWith('i1', 'refresh-db', 'job-1', 8, expect.any(AbortSignal));
 
     await user.click(within(dialog).getByRole('button', { name: 'Close' }));
     await advance(JOB_LOG_POLL_INTERVAL_MS * 5);
@@ -328,6 +329,98 @@ describe('InstanceActionsMenu', () => {
     expect(text.endsWith('TAIL\n')).toBe(true);
     expect(text).not.toContain('HEAD');
     expect(text.length).toBe(JOB_LOG_CUT_MARKER.length + JOB_LOG_MAX_CHARS);
+  });
+
+  it('cuts the kept log after a line end, so no partial first line remains', async () => {
+    const user = setupFakeTimers();
+    startAsyncJob();
+    const line = 'y'.repeat(99) + '\n';
+    const lines = Array.from({ length: Math.ceil(JOB_LOG_MAX_CHARS / line.length) + 3 }, (_, i) =>
+      `${String(i).padStart(6, '0')}${line.slice(6)}`).join('');
+    getActionJobLog.mockResolvedValueOnce(
+      chunk({ log: lines, next_offset: lines.length, status: 'succeeded', done: true }),
+    );
+    const dialog = await runJob(user);
+
+    await advance(JOB_LOG_POLL_INTERVAL_MS);
+    await waitFor(() => expect(within(dialog).getByTestId('job-status')).toHaveTextContent('succeeded'));
+    const text = within(dialog).getByTestId('job-log').textContent ?? '';
+    expect(text.startsWith(JOB_LOG_CUT_MARKER)).toBe(true);
+    const kept = text.slice(JOB_LOG_CUT_MARKER.length);
+    expect(kept.length).toBeLessThanOrEqual(JOB_LOG_MAX_CHARS);
+    expect(kept.length % line.length).toBe(0);
+    expect(kept.split('\n').slice(0, -1).every((l) => /^\d{6}y{93}$/.test(l))).toBe(true);
+    expect(kept.endsWith(lines.slice(-line.length))).toBe(true);
+  });
+
+  it('aborts the request in flight on Stop following', async () => {
+    const user = setupFakeTimers();
+    startAsyncJob();
+    const signals: AbortSignal[] = [];
+    getActionJobLog.mockImplementation((_i: string, _n: string, _j: string, _o: number, signal: AbortSignal) => {
+      signals.push(signal);
+      return new Promise(() => {});
+    });
+    const dialog = await runJob(user);
+
+    await advance(JOB_LOG_POLL_INTERVAL_MS);
+    await waitFor(() => expect(signals).toHaveLength(1));
+    expect(signals[0].aborted).toBe(false);
+    await user.click(within(dialog).getByRole('button', { name: 'Stop following' }));
+    expect(signals[0].aborted).toBe(true);
+  });
+
+  it('aborts the request in flight at the 60-minute limit', async () => {
+    const user = setupFakeTimers();
+    startAsyncJob();
+    const signals: AbortSignal[] = [];
+    getActionJobLog.mockImplementation((_i: string, _n: string, _j: string, _o: number, signal: AbortSignal) => {
+      signals.push(signal);
+      return new Promise(() => {});
+    });
+    const dialog = await runJob(user);
+
+    await advance(JOB_LOG_POLL_INTERVAL_MS);
+    await waitFor(() => expect(signals).toHaveLength(1));
+    await advance(JOB_LOG_MAX_POLL_MS);
+    expect(signals[0].aborted).toBe(true);
+    expect(
+      within(dialog).getByText('Stopped following the job log after 60 minutes. The job can still run on the server.'),
+    ).toBeInTheDocument();
+  });
+
+  it('aborts the request in flight when the dialog closes', async () => {
+    const user = setupFakeTimers();
+    startAsyncJob();
+    const signals: AbortSignal[] = [];
+    getActionJobLog.mockImplementation((_i: string, _n: string, _j: string, _o: number, signal: AbortSignal) => {
+      signals.push(signal);
+      return new Promise(() => {});
+    });
+    const dialog = await runJob(user);
+
+    await advance(JOB_LOG_POLL_INTERVAL_MS);
+    await waitFor(() => expect(signals).toHaveLength(1));
+    await user.click(within(dialog).getByRole('button', { name: 'Close' }));
+    expect(signals[0].aborted).toBe(true);
+  });
+
+  it('aborts the request in flight on unmount', async () => {
+    const user = setupFakeTimers();
+    startAsyncJob();
+    const signals: AbortSignal[] = [];
+    getActionJobLog.mockImplementation((_i: string, _n: string, _j: string, _o: number, signal: AbortSignal) => {
+      signals.push(signal);
+      return new Promise(() => {});
+    });
+    render(<InstanceActionsMenu instanceId="i1" />);
+    const dialog = await openAction(user, 'Refresh database');
+    await user.click(within(dialog).getByRole('button', { name: 'Run' }));
+    await within(dialog).findByTestId('job-log');
+    await advance(JOB_LOG_POLL_INTERVAL_MS);
+    await waitFor(() => expect(signals).toHaveLength(1));
+    cleanup();
+    expect(signals[0].aborted).toBe(true);
   });
 
   it('stops following on Stop following and keeps the log', async () => {
@@ -408,5 +501,19 @@ describe('retryAfterMs', () => {
 
   it('returns undefined without a response', () => {
     expect(retryAfterMs(new Error('Network Error'), now)).toBeUndefined();
+  });
+});
+
+describe('cutLogTail', () => {
+  it.each([
+    ['short text unchanged', 'abc', 10, 'abc'],
+    ['cut after the next line end', 'aaaa\nbbbb\ncc', 6, 'cc'],
+    ['cut right after a line end at the cut', 'aaaa\nbbbb\ncc', 8, 'bbbb\ncc'],
+    ['line end as last character keeps the tail', 'aaaaaaaa\n', 5, 'aaaa\n'],
+    ['no line end keeps the tail', 'abcdefgh', 3, 'fgh'],
+    ['drops a lone low surrogate', 'ab\u{1F600}cd', 3, 'cd'],
+    ['keeps a whole surrogate pair', 'ab\u{1F600}cd', 4, '\u{1F600}cd'],
+  ])('%s', (_name, text, max, want) => {
+    expect(cutLogTail(text, max)).toBe(want);
   });
 });

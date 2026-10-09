@@ -36,6 +36,25 @@ export const JOB_LOG_MAX_CHARS = 1024 * 1024;
 /** Marker at the top of the log when older output was cut. */
 export const JOB_LOG_CUT_MARKER = '[earlier output cut]\n';
 
+/**
+ * Keep the last max characters of text. When a newline follows the cut
+ * (and is not the last character), start after it, so the kept text has no
+ * partial first line. Else drop a lone low surrogate at the start, so a
+ * surrogate pair is never split.
+ */
+export const cutLogTail = (text: string, max: number): string => {
+  if (text.length <= max) return text;
+  let tail = text.slice(text.length - max);
+  const nl = tail.indexOf('\n');
+  if (nl >= 0 && nl < tail.length - 1) {
+    tail = tail.slice(nl + 1);
+  } else {
+    const first = tail.charCodeAt(0);
+    if (first >= 0xdc00 && first <= 0xdfff) tail = tail.slice(1);
+  }
+  return tail;
+};
+
 /** Longest back-off delay without a Retry-After header, in milliseconds. */
 export const JOB_LOG_MAX_BACKOFF_MS = 30000;
 
@@ -144,19 +163,34 @@ const ActionDialog = ({ instanceId, action, onClose }: ActionDialogProps) => {
     let offset = 0;
     let backoff = JOB_LOG_POLL_INTERVAL_MS;
     let text = '';
+    let controller: AbortController | null = null;
     const startedAt = Date.now();
+    const maxTimeNotice = 'Stopped following the job log after 60 minutes. The job can still run on the server.';
 
-    const stop = () => {
+    // Cancel the timers and abort the request in flight.
+    const halt = () => {
       cancelled = true;
       if (timer) clearTimeout(timer);
+      clearTimeout(deadline);
+      controller?.abort();
+    };
+
+    const stop = () => {
+      halt();
       setJobWaiting(false);
     };
     stopPollingRef.current = stop;
 
+    const stopAtLimit = () => {
+      stop();
+      setJobNotice(maxTimeNotice);
+    };
+    // Hard limit: also ends a request that is still in flight.
+    const deadline = setTimeout(stopAtLimit, JOB_LOG_MAX_POLL_MS);
+
     const schedule = (delay: number) => {
       if (Date.now() - startedAt + delay > JOB_LOG_MAX_POLL_MS) {
-        stop();
-        setJobNotice('Stopped following the job log after 60 minutes. The job can still run on the server.');
+        stopAtLimit();
         return;
       }
       timer = setTimeout(() => { void poll(); }, delay);
@@ -165,14 +199,16 @@ const ActionDialog = ({ instanceId, action, onClose }: ActionDialogProps) => {
     const appendLog = (chunkText: string) => {
       text += chunkText;
       if (text.length > JOB_LOG_MAX_CHARS) {
-        text = JOB_LOG_CUT_MARKER + text.slice(text.length - JOB_LOG_MAX_CHARS);
+        text = JOB_LOG_CUT_MARKER + cutLogTail(text, JOB_LOG_MAX_CHARS);
       }
       setJobLog(text);
     };
 
     const poll = async () => {
       try {
-        const chunk = await instanceService.getActionJobLog(instanceId, action.name, jobId, offset);
+        controller = new AbortController();
+        const chunk = await instanceService.getActionJobLog(instanceId, action.name, jobId, offset, controller.signal);
+        controller = null;
         if (cancelled) return;
         backoff = JOB_LOG_POLL_INTERVAL_MS;
         setJobWaiting(false);
@@ -180,11 +216,13 @@ const ActionDialog = ({ instanceId, action, onClose }: ActionDialogProps) => {
         if (chunk.log) appendLog(chunk.log);
         setJobStatus(chunk.status);
         if (chunk.done) {
+          halt();
           setJobDone(true);
           return;
         }
         schedule(chunk.truncated ? 0 : JOB_LOG_POLL_INTERVAL_MS);
       } catch (err) {
+        controller = null;
         if (cancelled) return;
         const { status } = getApiErrorInfo(err);
         if (status === undefined || BACKOFF_STATUSES.has(status)) {
@@ -200,8 +238,7 @@ const ActionDialog = ({ instanceId, action, onClose }: ActionDialogProps) => {
     schedule(JOB_LOG_POLL_INTERVAL_MS);
 
     return () => {
-      cancelled = true;
-      if (timer) clearTimeout(timer);
+      halt();
       stopPollingRef.current = null;
     };
   }, [instanceId, action.name, jobId]);

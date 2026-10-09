@@ -1266,18 +1266,25 @@ export const instanceService = {
    * @param name - Action name
    * @param jobId - Job ID from the invoke result
    * @param offset - Byte offset to read from
+   * @param signal - Optional AbortSignal; aborting it cancels the request (the promise rejects with a cancel error)
    * @returns The log chunk, the next offset, the job status and the done flag
    * @see GET /api/v1/stack-instances/:id/actions/:name/jobs/:job_id/log
    */
-  getActionJobLog: async (id: string, name: string, jobId: string, offset = 0): Promise<ActionJobLog> => {
+  getActionJobLog: async (
+    id: string,
+    name: string,
+    jobId: string,
+    offset = 0,
+    signal?: AbortSignal,
+  ): Promise<ActionJobLog> => {
     try {
       const response = await api.get(
         `/api/v1/stack-instances/${id}/actions/${encodeURIComponent(name)}/jobs/${encodeURIComponent(jobId)}/log`,
-        { params: { offset } },
+        { params: { offset }, signal },
       );
       return response.data;
     } catch (error) {
-      console.error('Failed to read action job log:', error);
+      if (!axios.isCancel(error)) console.error('Failed to read action job log:', error);
       throw error;
     }
   },
