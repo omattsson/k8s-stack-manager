@@ -870,6 +870,9 @@ func (s *stubChartConfigRepo) DeleteByDefinition(_ string) error {
 func (s *stubChartConfigRepo) ListByDefinition(_ string) ([]models.ChartConfig, error) {
 	return nil, nil
 }
+func (s *stubChartConfigRepo) CountByDefinitionIDs(_ []string) (map[string]int, error) {
+	return nil, nil
+}
 
 type stubTemplateChartConfigRepo struct{}
 
@@ -1015,6 +1018,10 @@ func (s *stubDeploymentLogRepo) SummarizeByInstance(_ context.Context, _ string)
 	return nil, nil
 }
 func (s *stubDeploymentLogRepo) SummarizeBatch(_ context.Context, _ []string) (map[string]*models.DeployLogSummary, error) {
+	return nil, nil
+}
+
+func (s *stubDeploymentLogRepo) SummarizeByUsers(_ context.Context, _ []string) (map[string]*models.DeployLogSummary, error) {
 	return nil, nil
 }
 func (s *stubDeploymentLogRepo) CountByAction(_ context.Context, _ string) (int, error) {

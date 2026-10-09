@@ -535,18 +535,13 @@ test.describe('Dashboard Widgets - Role-Based Visibility', () => {
     }
   });
 
-  test('regular user sees cluster card without node metrics', async ({ page }) => {
+  test('regular user does not see the cluster health widget', async ({ page }) => {
     await loginAsUser(page);
     await page.goto('/');
 
-    const widget = accordion(page, 'Cluster Health');
-    const card = widget.locator('.MuiCard-root').first();
-    await expect(card).toBeVisible({ timeout: 10_000 });
-
-    // Regular user should see the health chip showing "unknown" (backend strips health_status)
-    await expect(card.locator('.MuiChip-root')).toBeVisible();
-
-    // Regular user should NOT see node metrics (backend strips them for non-privileged)
-    await expect(card.getByText(/Nodes:/)).toBeHidden();
+    // The API sends cluster health only to admin and devops, so the widget
+    // is hidden for role user (no "unknown" chip).
+    await expect(accordionHeader(page, 'Recent Deployments')).toBeVisible({ timeout: 10_000 });
+    await expect(accordionHeader(page, 'Cluster Health')).toBeHidden();
   });
 });

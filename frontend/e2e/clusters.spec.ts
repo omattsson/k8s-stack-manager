@@ -140,7 +140,7 @@ test.describe('Cluster Management', () => {
     await expect(page.getByText(name)).not.toBeVisible({ timeout: 10_000 });
   });
 
-  test('create dialog requires name and API Server URL', async ({ page }) => {
+  test('create dialog requires a name', async ({ page }) => {
     await page.getByRole('button', { name: 'Add Cluster' }).click();
 
     const dialog = page.getByRole('dialog');
@@ -150,7 +150,7 @@ test.describe('Cluster Management', () => {
     await dialog.getByRole('button', { name: 'Create' }).click();
 
     // Validation error should appear in dialog
-    await expect(dialog.getByText('Name and API Server URL are required')).toBeVisible();
+    await expect(dialog.getByText('Name is required')).toBeVisible();
   });
 
   test('create dialog requires kubeconfig', async ({ page }) => {

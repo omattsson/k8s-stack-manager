@@ -427,6 +427,12 @@ definitions:
     type: object
   handlers.DefinitionWithChartsResponse:
     properties:
+      chart_count:
+        description: |-
+          ChartCount is the number of charts. It is computed, not stored; the
+          paged list sets it (the list does not load the charts).
+        readOnly: true
+        type: integer
       charts:
         items:
           $ref: '#/definitions/models.ChartConfig'
@@ -536,6 +542,12 @@ definitions:
         items:
           type: string
         type: array
+      managed:
+        description: |-
+          Managed is true when the namespace has the label
+          managed-by=k8s-stack-manager. An unmanaged namespace can belong to
+          another team or tool; deleting it requires ?confirm=<namespace>.
+        type: boolean
       name:
         type: string
       phase:
@@ -1243,6 +1255,15 @@ definitions:
         type: integer
       ready_node_count:
         type: integer
+      requested_cpu:
+        description: |-
+          RequestedCPU and RequestedMemory are the sums of the pod requests
+          (scheduler rule) of all scheduled pods that are not finished. They are
+          not real use (metrics-server). Only GET /clusters/:id/health/summary
+          sets them (GetClusterRequests); empty when the pod list fails.
+        type: string
+      requested_memory:
+        type: string
       total_cpu:
         type: string
       total_memory:
@@ -1298,6 +1319,11 @@ definitions:
     properties:
       created_at:
         type: string
+      managed:
+        description: |-
+          Managed is true when the namespace has the label
+          managed-by=k8s-stack-manager (set by the deployer).
+        type: boolean
       name:
         type: string
       phase:
@@ -1630,6 +1656,15 @@ definitions:
         type: string
       target_log_id:
         type: string
+      user_id:
+        description: |-
+          UserID is the user who started a deploy. Per-user analytics count
+          deploys by this field, so the history stays after the instance is
+          deleted. Empty for system deploys and for other actions. Migration 49
+          sets it for older deploy logs to the owner of the instance and adds
+          the composite index idx_deployment_logs_user_action (user_id, action,
+          started_at, completed_at, status) for SummarizeByUsers.
+        type: string
       values_snapshot:
         type: string
     type: object
@@ -1810,6 +1845,12 @@ definitions:
     type: object
   models.StackDefinition:
     properties:
+      chart_count:
+        description: |-
+          ChartCount is the number of charts. It is computed, not stored; the
+          paged list sets it (the list does not load the charts).
+        readOnly: true
+        type: integer
       created_at:
         type: string
       default_branch:
@@ -2660,7 +2701,8 @@ paths:
     get:
       description: Lists all Kubernetes namespaces matching the stack-* pattern that
         have no corresponding stack instance in the database. Pass ?details=true to
-        include resource counts and helm releases per namespace (expensive).
+        include resource counts and helm releases per namespace (expensive). The managed
+        field is true when the namespace has the label managed-by=k8s-stack-manager.
       parameters:
       - description: Include resource counts and helm releases (true/false)
         in: query
@@ -2695,12 +2737,18 @@ paths:
   /api/v1/admin/orphaned-namespaces/{namespace}:
     delete:
       description: Verifies the namespace is orphaned, uninstalls all Helm releases,
-        and deletes the Kubernetes namespace
+        and deletes the Kubernetes namespace. A namespace without the label managed-by=k8s-stack-manager
+        is deleted only when the confirm query parameter is the full namespace name.
       parameters:
       - description: Namespace name
         in: path
         name: namespace
         required: true
+        type: string
+      - description: Full namespace name; required when the namespace is not managed
+          by k8s-stack-manager
+        in: query
+        name: confirm
         type: string
       produces:
       - application/json
@@ -2713,6 +2761,12 @@ paths:
             type: object
         "400":
           description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
           schema:
             additionalProperties:
               type: string
@@ -3562,7 +3616,8 @@ paths:
   /api/v1/clusters/{id}/health/summary:
     get:
       description: Returns node count, CPU/memory totals, and namespace count for
-        a cluster.
+        a cluster. requested_cpu and requested_memory are the sums of the pod requests
+        of scheduled, unfinished pods (not real use); omitted when the pod list fails.
       parameters:
       - description: Cluster ID
         in: path
@@ -4659,7 +4714,7 @@ paths:
     get:
       description: |-
         List stack definitions with server-side pagination, newest first. The filters name and owner combine (AND); total is the number of definitions that match.
-        owner is "me" (the authenticated user), a username, or a user ID. A value in UUID form is matched as a user ID first, then as a username. An unknown username or ID gives an empty list. Each definition includes owner_username (omitted when the owner no longer exists).
+        owner is "me" (the authenticated user), a username, or a user ID. A value in UUID form is matched as a user ID first, then as a username. An unknown username or ID gives an empty list. Each definition includes owner_username (omitted when the owner no longer exists) and chart_count (the number of charts; omitted when the count fails).
         The list is paged (default pageSize 25); with owner=me or name the total is the real number of matches, not the page size.
       parameters:
       - description: Filter by exact name

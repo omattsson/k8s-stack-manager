@@ -1067,6 +1067,10 @@ func (d *Database) AutoMigrate() error {
 	// and name list filters and the per-owner name check.
 	migrator.AddMigration(definitionOwnerNameIndexMigration())
 
+	// Migration 49: deployment_logs.user_id (who started a deploy) for the
+	// per-user analytics; older deploy logs get the instance owner.
+	migrator.AddMigration(deployLogUserIDMigration())
+
 	// Run migrations
 	if err := migrator.MigrateUp(); err != nil {
 		return err
@@ -1484,5 +1488,95 @@ func definitionOwnerNameIndexMigration() schema.Migration {
 			}
 			return nil
 		},
+	}
+}
+
+// deployLogUserIndexName is the composite index that migration 49 creates.
+// It covers SummarizeByUsers (filter user_id and action, read the times and
+// the status) without a table read.
+const deployLogUserIndexName = "idx_deployment_logs_user_action"
+
+// deployLogUserBackfillBatch is the number of deploy logs that one backfill
+// UPDATE of migration 49 changes.
+const deployLogUserBackfillBatch = 1000
+
+// deployLogUserIDMigration is migration 49. It adds deployment_logs.user_id
+// and a composite index on (user_id, action, started_at, completed_at,
+// status). Older deploy logs get the owner of their instance when the
+// instance still exists (the best value available; a deploy by another user
+// counts for the owner). Logs of deleted instances stay without a user. The
+// backfill runs in batches, so no statement locks the whole table. Up and
+// Down are idempotent. It is a function so tests can run its Down step.
+func deployLogUserIDMigration() schema.Migration {
+	return schema.Migration{
+		Version:     "20261009000049",
+		Name:        "add_deployment_logs_user_id",
+		Description: "Add deployment_logs.user_id with a composite index for per-user deploy analytics and fill it from the instance owner",
+		Up: func(tx *gorm.DB) error {
+			m := tx.Migrator()
+			if !m.HasTable(&models.DeploymentLog{}) {
+				return nil
+			}
+			if !m.HasColumn(&models.DeploymentLog{}, "UserID") {
+				if err := m.AddColumn(&models.DeploymentLog{}, "UserID"); err != nil {
+					return err
+				}
+			}
+			if !m.HasIndex(&models.DeploymentLog{}, deployLogUserIndexName) {
+				if err := tx.Exec("CREATE INDEX " + deployLogUserIndexName + // #nosec G202 -- index name is a constant
+					" ON deployment_logs(user_id, action, started_at, completed_at, status)").Error; err != nil {
+					return err
+				}
+			}
+			if !m.HasTable(&models.StackInstance{}) {
+				return nil
+			}
+			return backfillDeployLogUsers(tx, deployLogUserBackfillBatch)
+		},
+		Down: func(tx *gorm.DB) error {
+			m := tx.Migrator()
+			if m.HasIndex(&models.DeploymentLog{}, deployLogUserIndexName) {
+				if err := m.DropIndex(&models.DeploymentLog{}, deployLogUserIndexName); err != nil {
+					return err
+				}
+			}
+			if m.HasColumn(&models.DeploymentLog{}, "UserID") {
+				return m.DropColumn(&models.DeploymentLog{}, "UserID")
+			}
+			return nil
+		},
+	}
+}
+
+// backfillDeployLogUsers sets user_id of deploy logs without a user to the
+// owner of their instance, batchSize rows per UPDATE, until no row is left.
+// It selects the IDs first and updates by ID: MySQL does not allow LIMIT in
+// an IN subquery on the updated table, and SQLite has no UPDATE ... LIMIT.
+// Only logs of an existing instance with an owner are selected, so each
+// batch changes every selected row and the loop ends.
+func backfillDeployLogUsers(tx *gorm.DB, batchSize int) error {
+	for {
+		var ids []string
+		if err := tx.Raw(
+			`SELECT dl.id FROM deployment_logs dl
+			JOIN stack_instances si ON si.id = dl.stack_instance_id
+			WHERE (dl.user_id IS NULL OR dl.user_id = '') AND dl.action = ?
+			AND si.owner_id IS NOT NULL AND si.owner_id <> ''
+			LIMIT ?`,
+			models.DeployActionDeploy, batchSize,
+		).Scan(&ids).Error; err != nil {
+			return fmt.Errorf("selecting deploy logs without a user: %w", err)
+		}
+		if len(ids) == 0 {
+			return nil
+		}
+		if err := tx.Exec(
+			`UPDATE deployment_logs SET user_id = (
+				SELECT si.owner_id FROM stack_instances si WHERE si.id = deployment_logs.stack_instance_id
+			) WHERE id IN ?`,
+			ids,
+		).Error; err != nil {
+			return fmt.Errorf("setting deploy log users: %w", err)
+		}
 	}
 }

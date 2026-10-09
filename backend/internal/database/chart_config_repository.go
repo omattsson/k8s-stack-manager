@@ -84,6 +84,30 @@ func (r *GORMChartConfigRepository) ListByDefinition(definitionID string) ([]mod
 	return configs, nil
 }
 
+// CountByDefinitionIDs returns the number of chart configs per definition in
+// one grouped query. Definitions without charts are not in the map.
+func (r *GORMChartConfigRepository) CountByDefinitionIDs(definitionIDs []string) (map[string]int, error) {
+	result := make(map[string]int, len(definitionIDs))
+	if len(definitionIDs) == 0 {
+		return result, nil
+	}
+	var rows []struct {
+		StackDefinitionID string
+		Count             int
+	}
+	if err := r.db.Model(&models.ChartConfig{}).
+		Select("stack_definition_id, COUNT(*) as count").
+		Where("stack_definition_id IN ?", definitionIDs).
+		Group("stack_definition_id").
+		Find(&rows).Error; err != nil {
+		return nil, dberrors.NewDatabaseError("count_by_definition_ids", err)
+	}
+	for _, row := range rows {
+		result[row.StackDefinitionID] = row.Count
+	}
+	return result, nil
+}
+
 // DeleteByDefinition deletes all chart configs of a definition in one statement.
 func (r *GORMChartConfigRepository) DeleteByDefinition(definitionID string) error {
 	if err := r.db.Where("stack_definition_id = ?", definitionID).Delete(&models.ChartConfig{}).Error; err != nil {

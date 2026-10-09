@@ -141,8 +141,9 @@ describe('ClusterHealth Page', () => {
     expect(screen.getByText('stack-myapp-dev')).toBeInTheDocument();
     expect(screen.getByText('stack-api-staging')).toBeInTheDocument();
     // Check CPU usage text is rendered
-    expect(screen.getByText(/200m \/ 2000m/)).toBeInTheDocument();
-    expect(screen.getByText(/1800m \/ 2000m/)).toBeInTheDocument();
+    expect(screen.getByText('0.2 / 2 cores (10%)')).toBeInTheDocument();
+    expect(screen.getByText('1.8 / 2 cores (90%)')).toBeInTheDocument();
+    expect(screen.getByText('128 MiB / 1 GiB (13%)')).toBeInTheDocument();
     // Check pod counts
     expect(screen.getByText('5 / 50')).toBeInTheDocument();
     expect(screen.getByText('48 / 50')).toBeInTheDocument();
@@ -174,5 +175,72 @@ describe('ClusterHealth Page', () => {
     await waitFor(() => {
       expect(screen.getByText('No clusters registered. Add a cluster first.')).toBeInTheDocument();
     });
+  });
+
+  it('calculates percentages across units and shows readable memory', async () => {
+    (clusterService.list as ReturnType<typeof vi.fn>).mockResolvedValue(mockClusters);
+    (clusterService.getHealthSummary as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...mockSummary,
+      total_cpu: '192000m',
+      allocatable_cpu: '192000m',
+      total_memory: '741.1Gi',
+      allocatable_memory: '740.8Gi',
+      requested_cpu: '19200m',
+      requested_memory: '74.1Gi',
+    });
+    (clusterService.getNodes as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { ...mockNodes[0], capacity: { cpu: '64', memory: '259033492Ki', pods: '110' } },
+    ]);
+    (clusterService.getNamespaces as ReturnType<typeof vi.fn>).mockResolvedValue(mockNamespaces);
+    (clusterService.getUtilization as ReturnType<typeof vi.fn>).mockResolvedValue({
+      namespaces: [
+        {
+          namespace: 'stack-big-quota',
+          cpu_used: '1620m',
+          cpu_limit: '16',
+          memory_used: '2560Mi',
+          memory_limit: '24Gi',
+          pod_count: 3,
+          pod_limit: 0,
+        },
+      ],
+    });
+
+    render(
+      <MemoryRouter>
+        <ClusterHealth />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText('1.62 / 16 cores (10%)')).toBeInTheDocument();
+    expect(screen.getByText('2.5 GiB / 24 GiB (10%)')).toBeInTheDocument();
+    // Node capacity in readable units, not raw Ki.
+    expect(screen.getByText('64 cores')).toBeInTheDocument();
+    expect(screen.getByText('247 GiB')).toBeInTheDocument();
+    expect(screen.queryByText('259033492Ki')).not.toBeInTheDocument();
+    // Summary shows requests against allocatable, not allocatable against capacity.
+    expect(screen.getByText('Requested 10% of allocatable. Capacity 192 cores.')).toBeInTheDocument();
+    expect(screen.getByText('19.2 cores / 192 cores')).toBeInTheDocument();
+    expect(screen.getByRole('progressbar', { name: 'CPU requested 10% of allocatable' })).toHaveAttribute('aria-valuenow', '10');
+    expect(screen.getByRole('progressbar', { name: 'Memory requested 10% of allocatable' })).toHaveAttribute('aria-valuenow', '10');
+  });
+
+  it('shows allocatable without a bar when the API sends no requests', async () => {
+    (clusterService.list as ReturnType<typeof vi.fn>).mockResolvedValue(mockClusters);
+    (clusterService.getHealthSummary as ReturnType<typeof vi.fn>).mockResolvedValue(mockSummary);
+    (clusterService.getNodes as ReturnType<typeof vi.fn>).mockResolvedValue(mockNodes);
+    (clusterService.getNamespaces as ReturnType<typeof vi.fn>).mockResolvedValue(mockNamespaces);
+    (clusterService.getUtilization as ReturnType<typeof vi.fn>).mockResolvedValue({ namespaces: [] });
+
+    render(
+      <MemoryRouter>
+        <ClusterHealth />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText('7.2 cores')).toBeInTheDocument();
+    expect(screen.getByText('Allocatable. Capacity 8 cores.')).toBeInTheDocument();
+    expect(screen.getByText('CPU', { exact: true })).toBeInTheDocument();
+    expect(screen.queryByRole('progressbar', { name: /requested/ })).not.toBeInTheDocument();
   });
 });

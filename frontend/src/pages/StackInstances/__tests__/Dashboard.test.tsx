@@ -814,6 +814,51 @@ describe('Dashboard', () => {
         expect(screen.getByText('No clusters registered.')).toBeInTheDocument();
       });
     });
+
+    it('formats cluster capacity in cores and binary units', async () => {
+      const { dashboardService } = await import('../../../api/client');
+      (dashboardService.getOverview as ReturnType<typeof vi.fn>).mockResolvedValue({
+        clusters: [{
+          id: 'c1', name: 'prod', health_status: 'healthy', node_count: 3, ready_node_count: 3,
+          allocatable_cpu: '191000m', total_cpu: '192000m', allocatable_memory: '740.8Gi', total_memory: '741.1Gi',
+        }],
+        recent_deployments: [],
+        expiring_soon: [],
+        failing_instances: [],
+      });
+      (instanceService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue([mockInstance()]);
+      render(
+        <MemoryRouter>
+          <NotificationProvider>
+            <Dashboard />
+          </NotificationProvider>
+        </MemoryRouter>
+      );
+      expect(await screen.findByText('CPU: 191 allocatable / 192 cores')).toBeInTheDocument();
+      expect(screen.getByText('Memory: 741 GiB allocatable / 741 GiB')).toBeInTheDocument();
+    });
+
+    it('hides the cluster health widget for role user', async () => {
+      authState.user = { id: '2', username: 'alice', role: 'user', display_name: 'Alice' };
+      const { dashboardService } = await import('../../../api/client');
+      (dashboardService.getOverview as ReturnType<typeof vi.fn>).mockResolvedValue({
+        clusters: [{ id: 'c1', name: 'prod', health_status: '' }],
+        recent_deployments: [],
+        expiring_soon: [],
+        failing_instances: [],
+      });
+      (instanceService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue([mockInstance()]);
+      render(
+        <MemoryRouter>
+          <NotificationProvider>
+            <Dashboard />
+          </NotificationProvider>
+        </MemoryRouter>
+      );
+      expect(await screen.findByText('Recent Deployments')).toBeInTheDocument();
+      expect(screen.queryByText('Cluster Health')).not.toBeInTheDocument();
+      expect(screen.queryByText('unknown')).not.toBeInTheDocument();
+    });
   });
 
   describe('Filtering and Search', () => {

@@ -83,3 +83,60 @@ export function parseCpuMillicores(input: string): number | null {
 export function parseMemoryBytes(input: string): number | null {
   return parseQuantity(input);
 }
+
+const trimNumber = (value: number, decimals: number): string =>
+  Number.parseFloat(value.toFixed(decimals)).toString();
+
+/**
+ * Format a CPU quantity as cores for display.
+ * @param input - CPU quantity, for example `1620m`, `16`, `0.5`
+ * @returns The number of cores with at most two decimals (for example `1.62`), or the input when it is not a valid quantity
+ */
+export function formatCpuCores(input: string): string {
+  const cores = parseQuantity(input);
+  if (cores === null) return input;
+  return trimNumber(cores, 2);
+}
+
+const BINARY_UNITS = ['B', 'KiB', 'MiB', 'GiB', 'TiB', 'PiB'];
+
+/**
+ * Format a byte count with a binary unit for display.
+ * @param bytes - Number of bytes
+ * @returns A short string, for example `512 MiB`, `2.5 GiB` or `247 GiB`
+ */
+export function formatBytes(bytes: number): string {
+  let value = Math.abs(bytes);
+  let unit = 0;
+  while (value >= 1024 && unit < BINARY_UNITS.length - 1) {
+    value /= 1024;
+    unit += 1;
+  }
+  const text = value < 10 ? trimNumber(value, 1) : Math.round(value).toString();
+  return `${bytes < 0 ? '-' : ''}${text} ${BINARY_UNITS[unit]}`;
+}
+
+/**
+ * Format a memory or storage quantity with a binary unit for display.
+ * @param input - Memory quantity, for example `259033492Ki`, `24Gi`, `1G`
+ * @returns A short string such as `247 GiB`, or the input when it is not a valid quantity
+ */
+export function formatMemoryQuantity(input: string): string {
+  const bytes = parseMemoryBytes(input);
+  return bytes === null ? input : formatBytes(bytes);
+}
+
+/**
+ * Calculate how many percent one quantity is of another. Both values can use
+ * different suffixes, for example `1620m` of `16`.
+ * @param used - Used or requested quantity
+ * @param total - Limit or capacity quantity
+ * @returns The rounded percentage, or 0 when a value is missing, invalid or the total is 0
+ */
+export function quantityPercent(used: string, total: string): number {
+  if (!used || !total) return 0;
+  const u = parseQuantity(used);
+  const t = parseQuantity(total);
+  if (u === null || t === null || t === 0) return 0;
+  return Math.round((u / t) * 100);
+}

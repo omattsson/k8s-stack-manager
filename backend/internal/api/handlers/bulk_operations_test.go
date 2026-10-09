@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -282,6 +283,44 @@ func TestBulkDeploy(t *testing.T) {
 				tt.checkFn(t, w)
 			}
 		})
+	}
+}
+
+// TestBulkDeploy_RecordsCaller checks that each deploy log of a bulk deploy
+// stores the user who started it (per-user analytics), also for an instance
+// of another owner.
+func TestBulkDeploy_RecordsCaller(t *testing.T) {
+	t.Parallel()
+
+	instRepo := NewMockStackInstanceRepository()
+	defRepo := NewMockStackDefinitionRepository()
+	ccRepo := NewMockChartConfigRepository()
+	logRepo := NewMockDeploymentLogRepository()
+	seedInstance(t, instRepo, "i1", "stack-a", "d1", "uid-1", models.StackStatusDraft)
+	seedInstance(t, instRepo, "i2", "stack-b", "d1", "uid-2", models.StackStatusDraft)
+	seedDefinition(t, defRepo, "d1", "My Def", "uid-1")
+	require.NoError(t, ccRepo.Create(&models.ChartConfig{
+		ID: "c1", StackDefinitionID: "d1", ChartName: "nginx", RepositoryURL: "oci://example.com/charts/nginx", DeployOrder: 1,
+	}))
+
+	router := setupBulkRouter(t, instRepo, NewMockValueOverrideRepository(), defRepo, ccRepo,
+		NewMockStackTemplateRepository(), NewMockTemplateChartConfigRepository(),
+		newBulkTestManager(instRepo, logRepo), logRepo, "uid-ops", "ops", "devops")
+
+	body, _ := json.Marshal(BulkOperationRequest{InstanceIDs: []string{"i1", "i2"}})
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest(http.MethodPost, "/api/v1/stack-instances/bulk/deploy", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var resp BulkOperationResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	require.Equal(t, 2, resp.Succeeded)
+	for _, r := range resp.Results {
+		log, err := logRepo.FindByID(context.Background(), r.LogID)
+		require.NoError(t, err)
+		assert.Equal(t, "uid-ops", log.UserID, "instance %s", r.InstanceID)
 	}
 }
 

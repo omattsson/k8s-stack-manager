@@ -136,7 +136,7 @@ const List = () => {
                     </Typography>
                   </TableCell>
                   <TableCell>{def.default_branch}</TableCell>
-                  <TableCell>{def.charts ? def.charts.length : '—'}</TableCell>
+                  <TableCell>{def.chart_count ?? def.charts?.length ?? '—'}</TableCell>
                   <TableCell>
                     {def.source_template_id ? (
                       <Box sx={{ display: 'flex', gap: 0.5, alignItems: 'center', flexWrap: 'wrap' }}>

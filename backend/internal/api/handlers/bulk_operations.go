@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 
+	"backend/internal/api/middleware"
 	"backend/internal/database"
 	"backend/internal/deployer"
 	"backend/internal/models"
@@ -185,6 +186,7 @@ func (h *InstanceHandler) BulkDeploy(c *gin.Context) {
 			Definition:         def,
 			Charts:             chartInfos,
 			LastDeployedValues: lastDeployedValues,
+			UserID:             middleware.GetUserIDFromContext(c),
 		}
 
 		logID, err := h.deployManager.Deploy(c.Request.Context(), req)

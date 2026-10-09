@@ -1,5 +1,14 @@
 import { describe, it, expect } from 'vitest';
-import { isValidQuantity, parseQuantity, parseCpuMillicores, parseMemoryBytes } from '../quantity';
+import {
+  isValidQuantity,
+  parseQuantity,
+  parseCpuMillicores,
+  parseMemoryBytes,
+  formatCpuCores,
+  formatMemoryQuantity,
+  formatBytes,
+  quantityPercent,
+} from '../quantity';
 
 describe('isValidQuantity', () => {
   it.each([
@@ -87,5 +96,49 @@ describe('parseMemoryBytes', () => {
 
   it('returns null for an invalid quantity', () => {
     expect(parseMemoryBytes('1 GB')).toBeNull();
+  });
+});
+
+describe('display helpers', () => {
+  it.each([
+    ['1620m', '1.62'],
+    ['16', '16'],
+    ['0.5', '0.5'],
+    ['500m', '0.5'],
+    ['192000m', '192'],
+    ['1e3', '1000'],
+    ['bogus', 'bogus'],
+  ])('formatCpuCores(%s) = %s', (input, expected) => {
+    expect(formatCpuCores(input)).toBe(expected);
+  });
+
+  it.each([
+    ['259033492Ki', '247 GiB'],
+    ['24Gi', '24 GiB'],
+    ['256Mi', '256 MiB'],
+    ['1Gi', '1 GiB'],
+    ['2560Mi', '2.5 GiB'],
+    ['1G', '954 MiB'],
+    ['512', '512 B'],
+    ['bogus', 'bogus'],
+  ])('formatMemoryQuantity(%s) = %s', (input, expected) => {
+    expect(formatMemoryQuantity(input)).toBe(expected);
+  });
+
+  it.each([
+    ['1620m', '16', 10],
+    ['8', '16', 50],
+    ['500m', '2', 25],
+    ['2560Mi', '24Gi', 10],
+    ['1Gi', '1Gi', 100],
+    ['1', '0', 0],
+    ['', '16', 0],
+    ['bogus', '16', 0],
+  ])('quantityPercent(%s, %s) = %d', (used, total, expected) => {
+    expect(quantityPercent(used, total)).toBe(expected);
+  });
+
+  it('formats a negative byte count', () => {
+    expect(formatBytes(-2048)).toBe('-2 KiB');
   });
 });

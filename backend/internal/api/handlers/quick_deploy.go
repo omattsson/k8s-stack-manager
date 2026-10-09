@@ -448,6 +448,7 @@ func (h *QuickDeployHandler) triggerDeploy(
 		Definition:         def,
 		Charts:             chartInfos,
 		LastDeployedValues: lastDeployedValues,
+		UserID:             middleware.GetUserIDFromContext(c),
 	}
 
 	return h.deployManager.Deploy(c.Request.Context(), req)

@@ -37,6 +37,9 @@ type NamespaceInfo struct {
 	CreatedAt time.Time `json:"created_at"`
 	Name      string    `json:"name"`
 	Phase     string    `json:"phase"`
+	// Managed is true when the namespace has the label
+	// managed-by=k8s-stack-manager (set by the deployer).
+	Managed bool `json:"managed"`
 }
 
 // ResourceCounts summarizes the number of key resource types in a namespace.
@@ -60,6 +63,7 @@ func (c *Client) ListStackNamespaces(ctx context.Context) ([]NamespaceInfo, erro
 				Name:      ns.Name,
 				CreatedAt: ns.CreationTimestamp.Time,
 				Phase:     string(ns.Status.Phase),
+				Managed:   ns.Labels[ManagedByLabelKey] == ManagedByLabelValue,
 			})
 		}
 	}
@@ -638,7 +642,13 @@ type ClusterSummary struct {
 	TotalMemory       string `json:"total_memory"`
 	AllocatableCPU    string `json:"allocatable_cpu"`
 	AllocatableMemory string `json:"allocatable_memory"`
-	NamespaceCount    int    `json:"namespace_count"`
+	// RequestedCPU and RequestedMemory are the sums of the pod requests
+	// (scheduler rule) of all scheduled pods that are not finished. They are
+	// not real use (metrics-server). Only GET /clusters/:id/health/summary
+	// sets them (GetClusterRequests); empty when the pod list fails.
+	RequestedCPU    string `json:"requested_cpu,omitempty"`
+	RequestedMemory string `json:"requested_memory,omitempty"`
+	NamespaceCount  int    `json:"namespace_count"`
 }
 
 // NodeStatus represents the health and capacity of a single cluster node.
@@ -710,7 +720,7 @@ func (c *Client) GetClusterSummary(ctx context.Context) (*ClusterSummary, error)
 		}
 	}
 
-	return &ClusterSummary{
+	summary := &ClusterSummary{
 		NodeCount:         len(nodeList.Items),
 		ReadyNodeCount:    readyCount,
 		TotalCPU:          fmt.Sprintf("%dm", totalCPUMillis),
@@ -718,7 +728,86 @@ func (c *Client) GetClusterSummary(ctx context.Context) (*ClusterSummary, error)
 		AllocatableCPU:    fmt.Sprintf("%dm", allocatableCPUMillis),
 		AllocatableMemory: formatMemoryBytes(allocatableMemBytes),
 		NamespaceCount:    nsCount,
-	}, nil
+	}
+
+	return summary, nil
+}
+
+// ClusterRequests is the sum of the pod requests of a cluster.
+type ClusterRequests struct {
+	CPUMillis   int64
+	MemoryBytes int64
+}
+
+// GetClusterRequests sums the requests of all scheduled pods that are not
+// finished (phase Succeeded or Failed), with the scheduler rule of
+// podEffectiveRequests. It lists the pods from the API server cache
+// (ResourceVersion "0"), so the result can be a little stale.
+func (c *Client) GetClusterRequests(ctx context.Context) (*ClusterRequests, error) {
+	podList, err := c.clientset.CoreV1().Pods("").List(ctx, metav1.ListOptions{
+		FieldSelector:   "status.phase!=Succeeded,status.phase!=Failed",
+		ResourceVersion: "0",
+	})
+	if err != nil {
+		return nil, fmt.Errorf("list pods: %w", err)
+	}
+	result := &ClusterRequests{}
+	for i := range podList.Items {
+		pod := &podList.Items[i]
+		if pod.Spec.NodeName == "" || pod.Status.Phase == corev1.PodSucceeded || pod.Status.Phase == corev1.PodFailed {
+			continue
+		}
+		cpu, mem := podEffectiveRequests(pod)
+		result.CPUMillis += cpu
+		result.MemoryBytes += mem
+	}
+	return result, nil
+}
+
+// FormatCPUMillis formats millicores like the summary ("1620m").
+func FormatCPUMillis(m int64) string { return fmt.Sprintf("%dm", m) }
+
+// FormatMemoryBytes formats bytes like the summary ("2.5Gi", "512Mi").
+func FormatMemoryBytes(b int64) string { return formatMemoryBytes(b) }
+
+// podEffectiveRequests returns the CPU (millicores) and memory (bytes)
+// requests of a pod with the rule of the kube-scheduler:
+//   - Init containers run one after the other. A restartable init container
+//     (native sidecar, restartPolicy Always) keeps running, so its request
+//     adds to all later init containers and to the app containers.
+//   - The init phase needs, for each regular init container, its request plus
+//     the sidecars started before it.
+//   - The pod needs max(init phase, app containers + all sidecars), plus the
+//     pod overhead.
+func podEffectiveRequests(pod *corev1.Pod) (cpuMillis, memBytes int64) {
+	var appCPU, appMem int64
+	for _, ctr := range pod.Spec.Containers {
+		appCPU += ctr.Resources.Requests.Cpu().MilliValue()
+		appMem += ctr.Resources.Requests.Memory().Value()
+	}
+
+	var sidecarCPU, sidecarMem, initCPU, initMem int64
+	for _, ctr := range pod.Spec.InitContainers {
+		cpu := ctr.Resources.Requests.Cpu().MilliValue()
+		mem := ctr.Resources.Requests.Memory().Value()
+		if ctr.RestartPolicy != nil && *ctr.RestartPolicy == corev1.ContainerRestartPolicyAlways {
+			sidecarCPU += cpu
+			sidecarMem += mem
+			initCPU = max(initCPU, sidecarCPU)
+			initMem = max(initMem, sidecarMem)
+			continue
+		}
+		initCPU = max(initCPU, sidecarCPU+cpu)
+		initMem = max(initMem, sidecarMem+mem)
+	}
+
+	cpuMillis = max(initCPU, appCPU+sidecarCPU)
+	memBytes = max(initMem, appMem+sidecarMem)
+	if pod.Spec.Overhead != nil {
+		cpuMillis += pod.Spec.Overhead.Cpu().MilliValue()
+		memBytes += pod.Spec.Overhead.Memory().Value()
+	}
+	return cpuMillis, memBytes
 }
 
 // GetNodeStatuses returns per-node health, conditions, and capacity.

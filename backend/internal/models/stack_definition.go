@@ -21,6 +21,9 @@ type StackDefinition struct {
 	// stored; the API sets it in list and detail responses. Omitted when
 	// the owner no longer exists (for example, after a delete).
 	OwnerUsername string `json:"owner_username,omitempty" gorm:"-" readonly:"true"`
+	// ChartCount is the number of charts. It is computed, not stored; the
+	// paged list sets it (the list does not load the charts).
+	ChartCount *int `json:"chart_count,omitempty" gorm:"-" readonly:"true"`
 }
 
 // StackDefinitionFilter selects the stack definitions that ListPaged

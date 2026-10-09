@@ -769,6 +769,23 @@ func (m *MockChartConfigRepository) ListByDefinition(definitionID string) ([]mod
 	return out, nil
 }
 
+func (m *MockChartConfigRepository) CountByDefinitionIDs(definitionIDs []string) (map[string]int, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.err != nil {
+		return nil, m.err
+	}
+	out := make(map[string]int)
+	for _, c := range m.items {
+		for _, id := range definitionIDs {
+			if c.StackDefinitionID == id {
+				out[id]++
+			}
+		}
+	}
+	return out, nil
+}
+
 func (m *MockChartConfigRepository) SetError(err error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

@@ -178,6 +178,26 @@ func (c *Client) GetNamespacePhase(ctx context.Context, name string) (string, er
 	return string(ns.Status.Phase), nil
 }
 
+// ManagedByLabelKey and ManagedByLabelValue form the label that marks a
+// namespace as created by k8s-stack-manager.
+const (
+	ManagedByLabelKey   = "managed-by"
+	ManagedByLabelValue = "k8s-stack-manager"
+)
+
+// GetNamespaceManaged reports whether a namespace exists and whether it has
+// the label managed-by=k8s-stack-manager.
+func (c *Client) GetNamespaceManaged(ctx context.Context, name string) (found, managed bool, err error) {
+	ns, err := c.clientset.CoreV1().Namespaces().Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		if k8serrors.IsNotFound(err) {
+			return false, false, nil
+		}
+		return false, false, fmt.Errorf("get namespace %q: %w", name, err)
+	}
+	return true, ns.Labels[ManagedByLabelKey] == ManagedByLabelValue, nil
+}
+
 // Clientset returns the underlying kubernetes.Interface for advanced operations.
 func (c *Client) Clientset() kubernetes.Interface {
 	return c.clientset

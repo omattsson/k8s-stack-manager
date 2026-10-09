@@ -20,6 +20,7 @@ import {
   Tooltip,
   Breadcrumbs,
   Link as MuiLink,
+  TextField,
 } from '@mui/material';
 import DeleteIcon from '@mui/icons-material/Delete';
 import RefreshIcon from '@mui/icons-material/Refresh';
@@ -29,6 +30,7 @@ import { useAuth } from '../../../context/AuthContext';
 import { useNotification } from '../../../context/NotificationContext';
 import type { OrphanedNamespace } from '../../../types';
 import LoadingState from '../../../components/LoadingState';
+import { getApiErrorInfo } from '../../../utils/apiError';
 import { Link } from 'react-router-dom';
 
 const formatAge = (dateStr: string): string => {
@@ -51,6 +53,7 @@ const OrphanedNamespaces = () => {
   const [error, setError] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<OrphanedNamespace | null>(null);
   const [deleteLoading, setDeleteLoading] = useState(false);
+  const [confirmName, setConfirmName] = useState('');
   const { showSuccess, showError } = useNotification();
 
   const fetchNamespaces = useCallback(async () => {
@@ -72,21 +75,122 @@ const OrphanedNamespaces = () => {
     }
   }, [fetchNamespaces, user]);
 
+  const openDelete = (ns: OrphanedNamespace) => {
+    setConfirmName('');
+    setDeleteTarget(ns);
+  };
+
+  const closeDelete = () => {
+    setDeleteTarget(null);
+    setConfirmName('');
+  };
+
   const handleDelete = async () => {
     if (!deleteTarget) return;
+    const target = deleteTarget;
     setDeleteLoading(true);
     try {
-      await adminService.deleteOrphanedNamespace(deleteTarget.name);
-      showSuccess(`Namespace "${deleteTarget.name}" deleted successfully`);
-      setDeleteTarget(null);
-      await fetchNamespaces();
-    } catch {
-      showError(`Failed to delete namespace "${deleteTarget.name}"`);
-      setDeleteTarget(null);
+      // An unmanaged namespace needs the typed full name as confirmation.
+      await adminService.deleteOrphanedNamespace(target.name, target.managed ? undefined : confirmName);
+      showSuccess(`Namespace "${target.name}" deleted successfully`);
+      // The namespace stays in phase Terminating for some time. Remove the row
+      // now, so that the list shows the result of the delete.
+      setNamespaces((prev) => prev.filter((ns) => ns.name !== target.name));
+    } catch (err) {
+      // 409 (not orphaned, or unmanaged without confirmation) and 404 (already
+      // gone) carry a message that tells the admin what to do.
+      const { status, message } = getApiErrorInfo(err);
+      if ((status === 409 || status === 404) && message) {
+        showError(`Failed to delete namespace "${target.name}": ${message}`);
+      } else {
+        showError(`Failed to delete namespace "${target.name}"`);
+      }
+      if (status === 404) {
+        setNamespaces((prev) => prev.filter((ns) => ns.name !== target.name));
+      }
     } finally {
       setDeleteLoading(false);
+      closeDelete();
     }
   };
+
+  const managedNamespaces = namespaces.filter((ns) => ns.managed);
+  const unmanagedNamespaces = namespaces.filter((ns) => !ns.managed);
+  const confirmRequired = Boolean(deleteTarget && !deleteTarget.managed);
+  const confirmMatches = !confirmRequired || confirmName === deleteTarget?.name;
+
+  const renderTable = (rows: OrphanedNamespace[], label: string) => (
+    <TableContainer component={Paper} sx={{ mb: 3 }}>
+      <Table aria-label={label}>
+        <TableHead>
+          <TableRow>
+            <TableCell>Namespace</TableCell>
+            <TableCell>Age</TableCell>
+            <TableCell>Phase</TableCell>
+            <TableCell>Pods</TableCell>
+            <TableCell>Deployments</TableCell>
+            <TableCell>Services</TableCell>
+            <TableCell>Helm Releases</TableCell>
+            <TableCell>Actions</TableCell>
+          </TableRow>
+        </TableHead>
+        <TableBody>
+          {rows.map((ns) => {
+            const terminating = ns.phase === 'Terminating';
+            return (
+              <TableRow key={ns.name} hover>
+                <TableCell>
+                  <Typography variant="body2" sx={{ fontWeight: 'medium', fontFamily: 'monospace' }}>
+                    {ns.name}
+                  </Typography>
+                </TableCell>
+                <TableCell>
+                  <Tooltip title={new Date(ns.created_at).toLocaleString()}>
+                    <span>{formatAge(ns.created_at)}</span>
+                  </Tooltip>
+                </TableCell>
+                <TableCell>
+                  <Chip
+                    label={ns.phase}
+                    size="small"
+                    color={ns.phase === 'Active' ? 'success' : 'warning'}
+                    variant="outlined"
+                  />
+                </TableCell>
+                <TableCell>{ns.resource_counts?.pods ?? '-'}</TableCell>
+                <TableCell>{ns.resource_counts?.deployments ?? '-'}</TableCell>
+                <TableCell>{ns.resource_counts?.services ?? '-'}</TableCell>
+                <TableCell>
+                  {ns.helm_releases.length > 0 ? (
+                    <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap' }}>
+                      {ns.helm_releases.map((r) => (
+                        <Chip key={r} label={r} size="small" variant="outlined" />
+                      ))}
+                    </Box>
+                  ) : (
+                    <Typography variant="body2" color="text.secondary">None</Typography>
+                  )}
+                </TableCell>
+                <TableCell>
+                  <Button
+                    size="small"
+                    color="error"
+                    variant="outlined"
+                    startIcon={<DeleteIcon />}
+                    onClick={() => openDelete(ns)}
+                    disabled={terminating}
+                    aria-label={`Delete namespace ${ns.name}`}
+                  >
+                    Delete
+                  </Button>
+                </TableCell>
+              </TableRow>
+            );
+          })}
+        </TableBody>
+      </Table>
+    </TableContainer>
+  );
 
   // Access guard
   if (user?.role !== 'admin') {
@@ -133,75 +237,25 @@ const OrphanedNamespaces = () => {
           </Typography>
         </Paper>
       ) : (
-        <TableContainer component={Paper}>
-          <Table>
-            <TableHead>
-              <TableRow>
-                <TableCell>Namespace</TableCell>
-                <TableCell>Age</TableCell>
-                <TableCell>Phase</TableCell>
-                <TableCell>Pods</TableCell>
-                <TableCell>Deployments</TableCell>
-                <TableCell>Services</TableCell>
-                <TableCell>Helm Releases</TableCell>
-                <TableCell>Actions</TableCell>
-              </TableRow>
-            </TableHead>
-            <TableBody>
-              {namespaces.map((ns) => (
-                <TableRow key={ns.name} hover>
-                  <TableCell>
-                    <Typography variant="body2" sx={{ fontWeight: 'medium', fontFamily: 'monospace' }}>
-                      {ns.name}
-                    </Typography>
-                  </TableCell>
-                  <TableCell>
-                    <Tooltip title={new Date(ns.created_at).toLocaleString()}>
-                      <span>{formatAge(ns.created_at)}</span>
-                    </Tooltip>
-                  </TableCell>
-                  <TableCell>
-                    <Chip
-                      label={ns.phase}
-                      size="small"
-                      color={ns.phase === 'Active' ? 'success' : 'warning'}
-                      variant="outlined"
-                    />
-                  </TableCell>
-                  <TableCell>{ns.resource_counts?.pods ?? '-'}</TableCell>
-                  <TableCell>{ns.resource_counts?.deployments ?? '-'}</TableCell>
-                  <TableCell>{ns.resource_counts?.services ?? '-'}</TableCell>
-                  <TableCell>
-                    {ns.helm_releases.length > 0 ? (
-                      <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap' }}>
-                        {ns.helm_releases.map((r) => (
-                          <Chip key={r} label={r} size="small" variant="outlined" />
-                        ))}
-                      </Box>
-                    ) : (
-                      <Typography variant="body2" color="text.secondary">None</Typography>
-                    )}
-                  </TableCell>
-                  <TableCell>
-                    <Button
-                      size="small"
-                      color="error"
-                      variant="outlined"
-                      startIcon={<DeleteIcon />}
-                      onClick={() => setDeleteTarget(ns)}
-                    >
-                      Delete
-                    </Button>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </TableContainer>
+        <>
+          {managedNamespaces.length > 0 && renderTable(managedNamespaces, 'Orphaned namespaces')}
+          {unmanagedNamespaces.length > 0 && (
+            <>
+              <Typography variant="h6" component="h2" sx={{ mb: 1 }}>
+                Unmanaged namespaces
+              </Typography>
+              <Alert severity="warning" sx={{ mb: 2 }}>
+                These namespaces have the stack- prefix but not the label managed-by=k8s-stack-manager.
+                Another team or tool can own them. To delete one, type its full name.
+              </Alert>
+              {renderTable(unmanagedNamespaces, 'Unmanaged namespaces')}
+            </>
+          )}
+        </>
       )}
 
       {/* Delete confirmation dialog */}
-      <Dialog open={Boolean(deleteTarget)} onClose={() => !deleteLoading && setDeleteTarget(null)}>
+      <Dialog open={Boolean(deleteTarget)} onClose={() => !deleteLoading && closeDelete()}>
         <DialogTitle>Delete Orphaned Namespace</DialogTitle>
         <DialogContent>
           <Typography>
@@ -217,21 +271,35 @@ const OrphanedNamespaces = () => {
               {' '}{deleteTarget.helm_releases.join(', ')}
             </Alert>
           )}
+          {confirmRequired && (
+            <>
+              <Alert severity="error" sx={{ mt: 2 }}>
+                k8s-stack-manager did not create this namespace (no managed-by label).
+              </Alert>
+              <TextField
+                label="Type the namespace name to confirm"
+                value={confirmName}
+                onChange={(e) => setConfirmName(e.target.value)}
+                fullWidth
+                size="small"
+                autoComplete="off"
+                sx={{ mt: 2 }}
+              />
+            </>
+          )}
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setDeleteTarget(null)} disabled={deleteLoading}>Cancel</Button>
+          <Button onClick={closeDelete} disabled={deleteLoading}>Cancel</Button>
           <Button
             variant="contained"
             color="error"
             onClick={handleDelete}
-            disabled={deleteLoading}
+            disabled={deleteLoading || !confirmMatches}
           >
             {deleteLoading ? <CircularProgress size={20} /> : 'Delete Namespace'}
           </Button>
         </DialogActions>
       </Dialog>
-
-
     </Box>
   );
 };

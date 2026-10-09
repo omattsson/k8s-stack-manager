@@ -38,6 +38,7 @@ A concrete collection of Helm chart configurations. Created by instantiating a t
 - Editing a quick deploy definition (for example adding a chart) does not keep it. It is still deleted with its owner instance when no instance uses it. To keep a setup, create your own definition (for example export and import it).
 - Older databases can contain duplicate names. They stay until you rename or delete them.
 - On MySQL the check is not case-sensitive (the default collation): `My-Def` and `my-def` are the same name. The in-memory test repositories compare exactly.
+- The paged list (`GET /stack-definitions`) does not load the charts. It returns `chart_count` (one grouped count query for the page); the definitions page shows it in the Charts column.
 
 ### Stack Instance
 A developer's working copy of a stack definition. Each instance has:
@@ -125,7 +126,27 @@ Every mutating API call (POST, PUT, DELETE) is recorded with user, action, entit
 ### Cluster
 A registered Kubernetes cluster that stack instances can be deployed to. Each cluster stores connection details (kubeconfig path or encrypted kubeconfig data) and is monitored via periodic health checks. One cluster can be designated as the **default** target. Clusters are managed by admins through `/admin/clusters`.
 
+A cluster with **in-cluster configuration** (`use_in_cluster`) uses the service account of the backend pod. It has no API server URL and no kubeconfig. The admin cluster dialog has a checkbox for it; the URL is then optional, and the list shows "in-cluster".
+
+**Cluster Health page** (`/admin/cluster-health`, admin and devops): CPU and memory are parsed as Kubernetes quantities (`1620m` of `16` is 10 %) and shown in cores and binary units (`247 GiB`). The summary cards show the sum of the pod requests of the scheduled, unfinished pods (`requested_cpu`, `requested_memory` from `GET /clusters/:id/health/summary`) against the allocatable amount, with the capacity below. A pod counts like in the kube-scheduler: the larger of its init phase and its app containers plus native sidecars, plus the pod overhead. Only this endpoint lists the pods (from the API server cache); the dashboard does not. Requests are not real use; the page does not read metrics-server. "Namespace Resource Usage" shows the quota requests (`requests.cpu`, `requests.memory` used) against the quota.
+
+The dashboard Cluster Health widget shows only to admin and devops. The API sends the health status only to these roles (same rule as `GET /clusters`), so role `user` does not see the widget.
+
 Clusters can optionally store **container registry credentials** (`registry_url`, `registry_username`, `registry_password`, `image_pull_secret_name`) for automatic image pull secret provisioning. When configured, a `kubernetes.io/dockerconfigjson` secret is created in each stack namespace before chart installs and refreshed periodically (every 4 hours) by a background service to handle short-lived tokens (e.g. ACR). The registry password is encrypted at rest using the same AES-GCM scheme as kubeconfig data.
+
+### Orphaned Namespaces
+`/admin/orphaned-namespaces` (admin) lists `stack-*` namespaces without a stack instance, with pod, deployment and service counts and Helm releases (`?details=true`).
+- The deployer labels each namespace it creates `managed-by=k8s-stack-manager`. The page lists labelled namespaces as orphans and unlabelled `stack-*` namespaces in a separate "Unmanaged namespaces" table.
+- `DELETE /admin/orphaned-namespaces/:namespace` deletes a labelled namespace. An unlabelled namespace can belong to another team or tool: the delete returns 409 unless `?confirm=<full namespace name>` is set. The page asks the admin to type the full name. A missing namespace gives 404.
+- After a delete the page removes the row. The namespace can stay in phase `Terminating` for some time; a refresh then shows it with the delete button disabled.
+
+### Analytics
+`/admin/analytics` shows the overview and the template statistics to admin and devops. User activity (`GET /analytics/users`) is admin only; the page does not request it for devops. Each section loads on its own, so one failed request does not hide the others. A template without deploys shows "—" as success rate.
+
+Per-user deploy counts and last activity come from the deploy logs: each deploy log stores the user who started it (`user_id`). They stay after the instance is deleted, and a deploy on another user's instance counts for the user who started it. Migration 49 adds an index on (`user_id`, `action`, `started_at`, `completed_at`, `status`) and sets `user_id` on older deploy logs to the owner of the instance (in batches of 1000), when the instance still exists; deploys of instances deleted before the upgrade stay without a user. "Instances" is the number of instances the user owns now.
+
+### Users
+`/admin/users` (admin) shows the sign-in method (Local or SSO) and the status (Active or Disabled) of each user. Disable (with a confirmation) and Enable call `PUT /users/:id/disable` and `/enable`. An admin cannot disable, enable or delete the own account; the buttons on the own row are disabled. Reset password shows only for local users.
 
 ## Architecture
 

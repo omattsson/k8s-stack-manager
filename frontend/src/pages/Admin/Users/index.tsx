@@ -34,6 +34,8 @@ import ExpandLessIcon from '@mui/icons-material/ExpandLess';
 import CheckIcon from '@mui/icons-material/Check';
 import NavigateNextIcon from '@mui/icons-material/NavigateNext';
 import LockResetIcon from '@mui/icons-material/LockReset';
+import PersonOffIcon from '@mui/icons-material/PersonOff';
+import HowToRegIcon from '@mui/icons-material/HowToReg';
 import { userService, apiKeyService } from '../../../api/client';
 import { useAuth } from '../../../context/AuthContext';
 import type { User, APIKey, CreateUserRequest, CreateAPIKeyRequest, CreateAPIKeyResponse } from '../../../types';
@@ -47,6 +49,10 @@ const getRoleChipColor = (role: string): 'error' | 'warning' | 'default' => {
   if (role === 'devops') return 'warning';
   return 'default';
 };
+
+/** Label for the sign-in method: "Local" for a password account, otherwise "SSO". */
+const authProviderLabel = (provider: string | undefined): string =>
+  !provider || provider === 'local' ? 'Local' : 'SSO';
 
 const AdminUsers = () => {
   const { user: currentUser } = useAuth();
@@ -75,6 +81,9 @@ const AdminUsers = () => {
 
   // Delete user confirm
   const [deleteUserTarget, setDeleteUserTarget] = useState<User | null>(null);
+  // Disable user confirm; enable needs no confirmation.
+  const [disableUserTarget, setDisableUserTarget] = useState<User | null>(null);
+  const [statusLoadingId, setStatusLoadingId] = useState<string | null>(null);
 
   // Generate API key dialog
   const [generateKeyUserId, setGenerateKeyUserId] = useState<string | null>(null);
@@ -166,6 +175,24 @@ const AdminUsers = () => {
       setCreateUserError('Failed to create user');
     } finally {
       setCreateUserLoading(false);
+    }
+  };
+
+  const setUserDisabled = async (target: User, disabled: boolean) => {
+    setStatusLoadingId(target.id);
+    setError(null);
+    try {
+      if (disabled) {
+        await userService.disable(target.id);
+      } else {
+        await userService.enable(target.id);
+      }
+      setUsers((prev) => prev.map((u) => (u.id === target.id ? { ...u, disabled } : u)));
+    } catch {
+      setError(disabled ? `Failed to disable user ${target.username}` : `Failed to enable user ${target.username}`);
+    } finally {
+      setStatusLoadingId(null);
+      setDisableUserTarget(null);
     }
   };
 
@@ -284,6 +311,8 @@ const AdminUsers = () => {
                 <TableCell>Username</TableCell>
                 <TableCell>Display Name</TableCell>
                 <TableCell>Role</TableCell>
+                <TableCell>Sign-in</TableCell>
+                <TableCell>Status</TableCell>
                 <TableCell sx={{ display: { xs: 'none', md: 'table-cell' } }}>Created At</TableCell>
                 <TableCell>Actions</TableCell>
               </TableRow>
@@ -291,7 +320,7 @@ const AdminUsers = () => {
             <TableBody>
               {users.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={6} align="center">
+                  <TableCell colSpan={8} align="center">
                     <Typography color="text.secondary" sx={{ py: 2 }}>
                       No users found.
                     </Typography>
@@ -319,6 +348,17 @@ const AdminUsers = () => {
                       <TableCell>
                         <Chip label={u.role} size="small" color={getRoleChipColor(u.role)} />
                       </TableCell>
+                      <TableCell>
+                        <Chip label={authProviderLabel(u.auth_provider)} size="small" variant="outlined" />
+                      </TableCell>
+                      <TableCell>
+                        <Chip
+                          label={u.disabled ? 'Disabled' : 'Active'}
+                          size="small"
+                          color={u.disabled ? 'default' : 'success'}
+                          variant="outlined"
+                        />
+                      </TableCell>
                       <TableCell sx={{ display: { xs: 'none', md: 'table-cell' } }}>{new Date(u.created_at).toLocaleDateString()}</TableCell>
                       <TableCell>
                         {(!u.auth_provider || u.auth_provider === 'local') && (
@@ -336,6 +376,22 @@ const AdminUsers = () => {
                             </IconButton>
                           </Tooltip>
                         )}
+                        <Tooltip
+                          title={u.id === currentUser.id
+                            ? 'Cannot change your own account status'
+                            : u.disabled ? 'Enable user' : 'Disable user'}
+                        >
+                          <span>
+                            <IconButton
+                              size="small"
+                              disabled={u.id === currentUser.id || statusLoadingId === u.id}
+                              onClick={() => (u.disabled ? setUserDisabled(u, false) : setDisableUserTarget(u))}
+                              aria-label={`${u.disabled ? 'Enable' : 'Disable'} user ${u.username}`}
+                            >
+                              {u.disabled ? <HowToRegIcon fontSize="small" /> : <PersonOffIcon fontSize="small" />}
+                            </IconButton>
+                          </span>
+                        </Tooltip>
                         <Tooltip title={u.id === currentUser.id ? 'Cannot delete your own account' : 'Delete user'}>
                           <span>
                             <IconButton
@@ -353,7 +409,7 @@ const AdminUsers = () => {
                     </TableRow>
                     <TableRow>
                       <TableCell
-                        colSpan={6}
+                        colSpan={8}
                         sx={{ py: 0, borderBottom: expandedUsers.has(u.id) ? undefined : 'none' }}
                       >
                         <Collapse in={expandedUsers.has(u.id)} timeout="auto" unmountOnExit>
@@ -496,6 +552,31 @@ const AdminUsers = () => {
           <Button onClick={() => setCreateUserOpen(false)}>Cancel</Button>
           <Button variant="contained" onClick={handleCreateUser} disabled={createUserLoading}>
             {createUserLoading ? <CircularProgress size={20} /> : 'Create'}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* ── Disable User Confirm ───────────────────────────────────── */}
+      <Dialog open={Boolean(disableUserTarget)} onClose={() => !statusLoadingId && setDisableUserTarget(null)}>
+        <DialogTitle>Disable User</DialogTitle>
+        <DialogContent>
+          <Typography>
+            Disable user <strong>{disableUserTarget?.username}</strong>?
+          </Typography>
+          <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+            The user is signed out and cannot sign in. API keys of the user stop working.
+            Enable the user to give access again. The user keeps all instances and data.
+          </Typography>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setDisableUserTarget(null)} disabled={Boolean(statusLoadingId)}>Cancel</Button>
+          <Button
+            variant="contained"
+            color="warning"
+            onClick={() => disableUserTarget && setUserDisabled(disableUserTarget, true)}
+            disabled={Boolean(statusLoadingId)}
+          >
+            Disable
           </Button>
         </DialogActions>
       </Dialog>

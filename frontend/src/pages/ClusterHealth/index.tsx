@@ -32,6 +32,7 @@ import type {
   NamespaceResourceUsage,
 } from '../../types';
 import LoadingState from '../../components/LoadingState';
+import { formatCpuCores, formatMemoryQuantity, quantityPercent } from '../../utils/quantity';
 
 const AUTO_REFRESH_INTERVAL = 30000;
 
@@ -46,11 +47,54 @@ const ResourceBar = ({ percent, used, limit, minLabelWidth }: { percent: number;
   </Box>
 );
 
+interface SummaryResourceCardProps {
+  title: string;
+  requested?: string;
+  allocatable: string;
+  capacity: string;
+  format: (quantity: string) => string;
+}
+
+/**
+ * Summary card for one resource. It shows the sum of the pod requests against
+ * the allocatable amount. Requests are not real use. When the API sends no
+ * requested value, the card shows only the allocatable amount and no bar.
+ */
+const SummaryResourceCard = ({ title, requested, allocatable, capacity, format }: SummaryResourceCardProps) => {
+  const percent = requested ? quantityPercent(requested, allocatable) : 0;
+  return (
+    <Card>
+      <CardContent>
+        <Typography color="text.secondary" gutterBottom>
+          {title}
+        </Typography>
+        <Typography variant="h5">
+          {requested ? `${format(requested)} / ${format(allocatable)}` : format(allocatable)}
+        </Typography>
+        {requested && (
+          <LinearProgress
+            variant="determinate"
+            value={Math.min(percent, 100)}
+            color={getUsageColor(percent)}
+            aria-label={`${title} requested ${percent}% of allocatable`}
+            sx={{ mt: 1 }}
+          />
+        )}
+        <Typography variant="caption" color="text.secondary">
+          {requested
+            ? `Requested ${percent}% of allocatable. Capacity ${format(capacity)}.`
+            : `Allocatable. Capacity ${format(capacity)}.`}
+        </Typography>
+      </CardContent>
+    </Card>
+  );
+};
+
 const NamespaceUsageRow = ({ ns }: { ns: NamespaceResourceUsage }) => {
   const hasCpuQuota = hasQuota(ns.cpu_used, ns.cpu_limit);
   const hasMemQuota = hasQuota(ns.memory_used, ns.memory_limit);
-  const cpuPercent = resourcePercent(ns.cpu_used, ns.cpu_limit);
-  const memPercent = resourcePercent(ns.memory_used, ns.memory_limit);
+  const cpuPercent = quantityPercent(ns.cpu_used, ns.cpu_limit);
+  const memPercent = quantityPercent(ns.memory_used, ns.memory_limit);
   const podPercent = ns.pod_limit > 0 ? Math.round((ns.pod_count / ns.pod_limit) * 100) : 0;
 
   return (
@@ -60,12 +104,12 @@ const NamespaceUsageRow = ({ ns }: { ns: NamespaceResourceUsage }) => {
       </TableCell>
       <TableCell>
         {hasCpuQuota
-          ? <ResourceBar percent={cpuPercent} used={ns.cpu_used} limit={ns.cpu_limit} minLabelWidth={110} />
+          ? <ResourceBar percent={cpuPercent} used={formatCpuCores(ns.cpu_used || '0')} limit={ns.cpu_limit ? `${formatCpuCores(ns.cpu_limit)} cores` : 'no limit'} minLabelWidth={140} />
           : <Typography variant="body2" color="text.secondary">No quota</Typography>}
       </TableCell>
       <TableCell>
         {hasMemQuota
-          ? <ResourceBar percent={memPercent} used={ns.memory_used} limit={ns.memory_limit} minLabelWidth={130} />
+          ? <ResourceBar percent={memPercent} used={formatMemoryQuantity(ns.memory_used || '0')} limit={ns.memory_limit ? formatMemoryQuantity(ns.memory_limit) : 'no limit'} minLabelWidth={160} />
           : <Typography variant="body2" color="text.secondary">No quota</Typography>}
       </TableCell>
       <TableCell>
@@ -86,23 +130,6 @@ const NamespaceUsageRow = ({ ns }: { ns: NamespaceResourceUsage }) => {
       </TableCell>
     </TableRow>
   );
-};
-
-const parseResource = (value: string): number => {
-  if (!value) return 0;
-  if (value.endsWith('Gi')) return Number.parseFloat(value) * 1024;
-  if (value.endsWith('Mi')) return Number.parseFloat(value);
-  if (value.endsWith('m')) return Number.parseFloat(value);
-  const n = Number.parseFloat(value);
-  return Number.isFinite(n) ? n : 0;
-};
-
-const resourcePercent = (used: string, total: string): number => {
-  if (!used || !total) return 0;
-  const u = parseResource(used);
-  const t = parseResource(total);
-  if (t === 0) return 0;
-  return Math.round((u / t) * 100);
 };
 
 const hasQuota = (used: string, limit: string): boolean => !!(used || limit);
@@ -298,38 +325,22 @@ const ClusterHealth = () => {
               </Card>
             </Grid>
             <Grid size={{ xs: 12, sm: 6, md: 3 }}>
-              <Card>
-                <CardContent>
-                  <Typography color="text.secondary" gutterBottom>
-                    CPU
-                  </Typography>
-                  <Typography variant="h5">
-                    {summary.allocatable_cpu} / {summary.total_cpu}
-                  </Typography>
-                  <LinearProgress
-                    variant="determinate"
-                    value={resourcePercent(summary.allocatable_cpu, summary.total_cpu)}
-                    sx={{ mt: 1 }}
-                  />
-                </CardContent>
-              </Card>
+              <SummaryResourceCard
+                title="CPU"
+                requested={summary.requested_cpu}
+                allocatable={summary.allocatable_cpu}
+                capacity={summary.total_cpu}
+                format={(v) => `${formatCpuCores(v)} cores`}
+              />
             </Grid>
             <Grid size={{ xs: 12, sm: 6, md: 3 }}>
-              <Card>
-                <CardContent>
-                  <Typography color="text.secondary" gutterBottom>
-                    Memory
-                  </Typography>
-                  <Typography variant="h5">
-                    {summary.allocatable_memory} / {summary.total_memory}
-                  </Typography>
-                  <LinearProgress
-                    variant="determinate"
-                    value={resourcePercent(summary.allocatable_memory, summary.total_memory)}
-                    sx={{ mt: 1 }}
-                  />
-                </CardContent>
-              </Card>
+              <SummaryResourceCard
+                title="Memory"
+                requested={summary.requested_memory}
+                allocatable={summary.allocatable_memory}
+                capacity={summary.total_memory}
+                format={formatMemoryQuantity}
+              />
             </Grid>
             <Grid size={{ xs: 12, sm: 6, md: 3 }}>
               <Card>
@@ -372,8 +383,8 @@ const ClusterHealth = () => {
                         color={node.status === 'Ready' ? 'success' : 'error'}
                       />
                     </TableCell>
-                    <TableCell>{node.capacity.cpu}</TableCell>
-                    <TableCell>{node.capacity.memory}</TableCell>
+                    <TableCell>{formatCpuCores(node.capacity.cpu)} cores</TableCell>
+                    <TableCell>{formatMemoryQuantity(node.capacity.memory)}</TableCell>
                     <TableCell>{node.pod_count}</TableCell>
                     <TableCell>{getNodeConditionChips(node)}</TableCell>
                   </TableRow>
@@ -439,8 +450,8 @@ const ClusterHealth = () => {
                   <TableHead>
                     <TableRow>
                       <TableCell>Namespace</TableCell>
-                      <TableCell>CPU Usage</TableCell>
-                      <TableCell>Memory Usage</TableCell>
+                      <TableCell>CPU Requests / Quota</TableCell>
+                      <TableCell>Memory Requests / Quota</TableCell>
                       <TableCell>Pods</TableCell>
                     </TableRow>
                   </TableHead>
