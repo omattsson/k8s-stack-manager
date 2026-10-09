@@ -1013,17 +1013,39 @@ func copyTemplateChartsToDefinitionTx(templateCharts []models.TemplateChartConfi
 	return chartConfigs, nil
 }
 
+// cloneTemplateRequest is the optional body of POST /templates/:id/clone.
+type cloneTemplateRequest struct {
+	// Name of the clone. Default: "<source name> (Copy)".
+	Name *string `json:"name"`
+}
+
 // CloneTemplate godoc
 // @Summary     Clone a stack template
-// @Description Create a new draft template that is a copy of the source (devops/admin only)
+// @Description Create a new draft template that is a copy of the source (devops/admin only).
+// @Description The body is optional. name sets the name of the clone (trimmed, same rules as create); the default is "<source name> (Copy)".
 // @Tags        templates
+// @Accept      json
 // @Produce     json
-// @Param       id  path     string true "Template ID"
-// @Success     201 {object} models.StackTemplate
-// @Failure     404 {object} map[string]string
+// @Param       id   path     string               true  "Template ID"
+// @Param       body body     cloneTemplateRequest false "Clone options"
+// @Success     201  {object} models.StackTemplate
+// @Failure     400  {object} map[string]string
+// @Failure     401  {object} map[string]string
+// @Failure     403  {object} map[string]string
+// @Failure     404  {object} map[string]string
+// @Failure     500  {object} map[string]string
 // @Router      /api/v1/templates/{id}/clone [post]
 func (h *TemplateHandler) CloneTemplate(c *gin.Context) {
 	id := c.Param("id")
+
+	var req cloneTemplateRequest
+	if c.Request.Body != nil && c.Request.Body != http.NoBody {
+		if bindErr := c.ShouldBindJSON(&req); bindErr != nil && !errors.Is(bindErr, io.EOF) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": msgInvalidRequestFormat})
+			return
+		}
+	}
+
 	source, err := h.templateRepo.FindByID(id)
 	if err != nil {
 		status, message := mapError(err, entityTemplate)
@@ -1031,10 +1053,15 @@ func (h *TemplateHandler) CloneTemplate(c *gin.Context) {
 		return
 	}
 
+	name := source.Name + " (Copy)"
+	if req.Name != nil {
+		name = strings.TrimSpace(*req.Name)
+	}
+
 	now := time.Now().UTC()
 	clone := &models.StackTemplate{
 		ID:            uuid.New().String(),
-		Name:          source.Name + " (Copy)",
+		Name:          name,
 		Description:   source.Description,
 		Category:      source.Category,
 		Version:       source.Version,
@@ -1043,6 +1070,10 @@ func (h *TemplateHandler) CloneTemplate(c *gin.Context) {
 		IsPublished:   false,
 		CreatedAt:     now,
 		UpdatedAt:     now,
+	}
+	if err := clone.Validate(); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
 	}
 
 	// Fetch source charts before any writes so we fail early on read errors.

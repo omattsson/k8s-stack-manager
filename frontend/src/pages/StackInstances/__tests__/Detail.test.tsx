@@ -2302,6 +2302,34 @@ describe('StackInstances Detail redeploy, rollback and drift', () => {
     });
   });
 
+  it('shows the error message of an instance in error (denied pre-deploy hook)', async () => {
+    const reason = 'pre-deploy hook "ci-gate" denied the deployment: frontend: build failed';
+    setupMocks({ status: 'error', error_message: reason }, { logs: threeDeploys });
+    renderDetail();
+    await waitForPage();
+
+    expect(await screen.findByText('Instance is error', { exact: false })).toBeInTheDocument();
+    expect(screen.getByTestId('instance-error-message')).toHaveTextContent(reason);
+  });
+
+  it('shows the error message from the WebSocket status message', async () => {
+    const inst = setupMocks({ status: 'deploying' }, { logs: threeDeploys });
+    renderDetail();
+    await waitForPage();
+    expect(screen.queryByTestId('instance-error-message')).not.toBeInTheDocument();
+
+    const reason = 'pre-deploy hook "ci-gate" denied the deployment: no image';
+    // The refetch is slow; the message from the status message shows first.
+    (instanceService.get as MockFn).mockImplementation(() => new Promise(() => {}));
+    act(() => {
+      wsState.handler?.({
+        type: 'deployment.status',
+        payload: { instance_id: inst.id, status: 'error', error_message: reason },
+      });
+    });
+    expect(await screen.findByTestId('instance-error-message')).toHaveTextContent(reason);
+  });
+
   it('rolls back to a selected older deploy', async () => {
     const user = userEvent.setup();
     setupMocks({ status: 'running' }, { logs: threeDeploys });

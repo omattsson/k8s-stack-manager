@@ -470,12 +470,30 @@ func (m *Manager) executeDeploy(helm HelmExecutor, k8sClient *k8s.Client, regCfg
 	}
 
 	// Fire pre-deploy hook BEFORE acquiring the semaphore so a long-running
-	// hook (e.g. CI trigger gate) doesn't hold a concurrency slot.
-	if err := m.fireDeployHook(m.shutdownCtx, hooks.EventPreDeploy, instance, deployLog.ID, deployLog.StartedAt, preDeployOpts); err != nil {
-		deployErr := fmt.Errorf("pre-deploy hook: %w", err)
+	// hook (e.g. CI trigger gate) doesn't hold a concurrency slot. Progress
+	// lines go to the WebSocket log (OnProgress of Deploy) and into the
+	// deployment log output, the same as for pre-rollback.
+	progress := newHookProgress(maxHookProgressLen)
+	if broadcast := preDeployOpts.OnProgress; broadcast != nil {
+		preDeployOpts.OnProgress = func(line string) {
+			broadcast(line)
+			progress.add(line)
+		}
+	}
+	hookErr := m.fireDeployHook(m.shutdownCtx, hooks.EventPreDeploy, instance, deployLog.ID, deployLog.StartedAt, preDeployOpts)
+	hookOutput := progress.String()
+	if hookErr != nil {
+		deployErr := fmt.Errorf("pre-deploy hook: %w", hookErr)
+		// The user-safe reason: the hook name and the subscriber's deny
+		// message, or a generic text for a transport error (never the
+		// subscriber URL). It goes into the log output, so the log viewer
+		// and "stackctl stack logs" show it; finalizeDeploy puts the same
+		// text into error_message of the log and the instance.
+		reason := hooks.UserMessage(hookErr, hooks.EventPreDeploy, "deployment")
 		slog.Error("pre-deploy hook denied deployment",
-			"instance_id", instanceID, "log_id", deployLog.ID, "error", err)
-		m.finalizeDeploy(instanceID, deployLog, "", deployErr, false, lastDeployedValues, "")
+			"instance_id", instanceID, "log_id", deployLog.ID, "error", hookErr)
+		m.broadcastLog(instanceID, deployLog.ID, "ERROR: "+reason)
+		m.finalizeDeploy(instanceID, deployLog, hookOutput+"ERROR: "+reason+"\n", deployErr, false, lastDeployedValues, "")
 		return
 	}
 
@@ -488,7 +506,7 @@ func (m *Manager) executeDeploy(helm HelmExecutor, k8sClient *k8s.Client, regCfg
 		m.broadcastLog(instanceID, deployLog.ID, "WARNING: "+cancelErr.Error())
 		slog.Warn("deploy cancelled after pre-deploy hook: instance changed",
 			"instance_id", instanceID, "log_id", deployLog.ID, "status", current)
-		m.finalizeDeploy(instanceID, deployLog, "", cancelErr, false, lastDeployedValues, "")
+		m.finalizeDeploy(instanceID, deployLog, hookOutput+"WARNING: "+cancelErr.Error()+"\n", cancelErr, false, lastDeployedValues, "")
 		return
 	}
 
@@ -504,7 +522,7 @@ func (m *Manager) executeDeploy(helm HelmExecutor, k8sClient *k8s.Client, regCfg
 		attribute.String("log.id", deployLog.ID),
 	)
 
-	var allOutput string
+	allOutput := hookOutput
 	var deployErr error
 	defer func() { finishSpan(deployErr) }()
 
@@ -1720,19 +1738,14 @@ func (m *Manager) executeRollback(job rollbackJob) {
 	// Fire pre-rollback before acquiring the semaphore so a long-running gate
 	// does not hold a concurrency slot. Progress lines go to the WebSocket
 	// log and into the rollback log output.
-	var progressMu sync.Mutex
-	var progress strings.Builder
+	progress := newHookProgress(maxHookProgressLen)
 	opts := job.hookOpts
 	opts.OnProgress = func(line string) {
 		m.broadcastLog(instanceID, deployLog.ID, line)
-		progressMu.Lock()
-		progress.WriteString(line + "\n")
-		progressMu.Unlock()
+		progress.add(line)
 	}
 	hookErr := m.fireDeployHook(m.shutdownCtx, hooks.EventPreRollback, &job.instance, deployLog.ID, deployLog.StartedAt, opts)
-	progressMu.Lock()
 	allOutput := progress.String()
-	progressMu.Unlock()
 	if hookErr != nil {
 		m.finalizeRollbackRejected(job, allOutput, hookErr)
 		return

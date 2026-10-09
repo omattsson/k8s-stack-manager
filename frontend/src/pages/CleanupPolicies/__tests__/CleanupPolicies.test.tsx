@@ -264,6 +264,68 @@ describe('CleanupPolicies Page', () => {
     });
   });
 
+  const renderPage = () =>
+    render(
+      <MemoryRouter>
+        <NotificationProvider>
+          <CleanupPolicies />
+        </NotificationProvider>
+      </MemoryRouter>,
+    );
+
+  it('sends only the enabled field and shows the new state', async () => {
+    const user = userEvent.setup();
+    (cleanupPolicyService.update as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...mockPolicies[0], enabled: false,
+    });
+    renderPage();
+
+    const toggle = await screen.findByRole('switch', { name: 'Toggle Idle Cleanup' });
+    expect(toggle).toBeChecked();
+    await user.click(toggle);
+
+    await waitFor(() => {
+      expect(cleanupPolicyService.update).toHaveBeenCalledWith('p1', { enabled: false });
+    });
+    await waitFor(() => {
+      expect(screen.getByRole('switch', { name: 'Toggle Idle Cleanup' })).not.toBeChecked();
+    });
+  });
+
+  it('keeps the old state and shows the API error when the toggle fails', async () => {
+    const user = userEvent.setup();
+    (cleanupPolicyService.update as ReturnType<typeof vi.fn>).mockRejectedValue({
+      response: { status: 400, data: { error: 'name is required' } },
+    });
+    renderPage();
+
+    const toggle = await screen.findByRole('switch', { name: 'Toggle Idle Cleanup' });
+    await user.click(toggle);
+
+    expect(await screen.findByText(/Failed to toggle policy \(HTTP 400: name is required\)/)).toBeInTheDocument();
+    expect(screen.getByRole('switch', { name: 'Toggle Idle Cleanup' })).toBeChecked();
+  });
+
+  it('toggles dry run from the table with an accessible switch', async () => {
+    const user = userEvent.setup();
+    (cleanupPolicyService.update as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...mockPolicies[1], dry_run: false,
+    });
+    renderPage();
+
+    const dryRun = await screen.findByRole('switch', { name: 'Dry run TTL Enforcer' });
+    expect(dryRun).toBeChecked();
+    expect(dryRun).toBeEnabled();
+    await user.click(dryRun);
+
+    await waitFor(() => {
+      expect(cleanupPolicyService.update).toHaveBeenCalledWith('p2', { dry_run: false });
+    });
+    await waitFor(() => {
+      expect(screen.getByRole('switch', { name: 'Dry run TTL Enforcer' })).not.toBeChecked();
+    });
+  });
+
   it('shows delete confirmation and deletes policy', async () => {
     const user = userEvent.setup();
     (cleanupPolicyService.delete as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);

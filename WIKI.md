@@ -5,6 +5,8 @@
 ### Stack Template
 A reusable blueprint created by DevOps engineers. Contains a set of Helm chart configurations with default values. Templates can be **published** for developers to use, and individual chart values can be **locked** to prevent modification.
 
+**Clone.** `POST /templates/:id/clone` (devops and admin) copies the template and its charts into a new draft that belongs to the caller. The optional body `{"name": "..."}` sets the name (trimmed; an empty name gives 400). Without a name the clone is called `<source name> (Copy)`. Template names do not have to be unique.
+
 ### Template Life Cycle (Draft and Release)
 
 A template has a **working copy** and a **version history**.
@@ -60,6 +62,8 @@ A developer's working copy of a stack definition. Each instance has:
 - Deprecated: a body with only `ttl_minutes` keeps the old behaviour (expiry = now + `ttl_minutes`, and `ttl_minutes` changes). stackctl 0.4.0 and earlier send this body. The response has a `Warning` header.
 - The response is the instance with the new `expires_at`.
 
+**Denied deploy.** When a `pre-deploy` hook with `failure_policy: fail` denies a deploy, the instance gets the status `error`. The reason, `pre-deploy hook "<name>" denied the deployment: <subscriber message>`, is in the `error_message` of the instance (shown on the detail page), in the `error_message` of the deploy log, and as an `ERROR:` line in the deploy log output (`stackctl stack logs`). Hook progress lines (`LOG:`) are also kept in the output. A hook that cannot be reached gives `pre-deploy hook "<name>" failed (unreachable or timed out)`. The subscriber URL is never shown.
+
 **Rollback.** `POST /stack-instances/:id/rollback`:
 - Without a body, each Helm release goes back one revision.
 - With `{"target_log_id": "<log id>"}`, each chart gets the values of that deploy again (`helm upgrade --install` with the stored values snapshot). The chart version is the version that the deploy recorded. Older deploy logs have no recorded versions; then the current chart version is used. A deploy with an empty chart version records no version, so the rollback installs the newest chart. Charts that the target deploy did not include do not change.
@@ -90,11 +94,21 @@ A developer's working copy of a stack definition. Each instance has:
 
 Use `stopped_days:N` for "stopped for N days". The stop time (`stopped_at`) is set when a stop finishes (API, TTL reaper, cleanup policy). A deploy or a clean clears it. The upgrade sets `stopped_at` for instances that are already stopped, from the last successful stop log or else from `updated_at`. Existing policies with `status:stopped,age_days:N` keep their meaning: created more than N days ago.
 
+**Cleanup policy update.** `PUT /admin/cleanup-policies/:id` is a partial update: only the fields in the body change, for example `{"enabled": false}` or `{"dry_run": true}`. The merged policy is validated, and the scheduler reloads. The Enabled and Dry Run switches in the policy table use this.
+
 ### Value Override
 Per-chart configuration overrides on a stack instance. Deep-merged with chart defaults during Helm values export. Template variables (`{{.Branch}}`, `{{.Namespace}}`, `{{.InstanceName}}`, etc.) are substituted at export time.
 
 ### Audit Log
 Every mutating API call (POST, PUT, DELETE) is recorded with user, action, entity type, entity ID, and timestamp.
+
+- Plain create, update and delete calls get the action `create`, `update` or `delete` and the entity type of the resource (singular, for example `cluster`, `cleanup_policy`, `api_key`).
+- Other operations get their own action, with the entity they act on. For example `POST /stack-instances/:id/deploy` gives `deploy | stack_instance | <instance id>`. The same applies to `stop`, `clean`, `rollback`, `extend_ttl`, `clone`, `invoke_action` (the action name is in the details), template `publish`, `unpublish`, `instantiate` and `clone`, definition `import` and `upgrade`, notification channel `test`, cluster `test_connection` and `set_default`, cleanup policy `run`, and user `disable`, `enable` and `reset_password`. Deploy, stop, clean and rollback store the deployment log ID in the details.
+- A bulk operation writes one entry for each instance or template that succeeded, with `"bulk": true` in the details.
+- Marking notifications as read writes no entry. Quick deploy writes its own entry (`quick_deploy | stack_instance`).
+- Filter on the entity type `stack_instance` and an instance ID to see all operations on that instance.
+- A change of a nested resource keeps the parent ID as entity ID and adds the child ID to the details, for example `PUT /clusters/:id/shared-values/:valueId` gives entity ID `<cluster id>` and `{"value_id": "..."}`; a nested create adds `created_id`. A deleted orphaned namespace has the namespace name as entity ID.
+- The upgrade renames the plural entity types of old create, update and delete entries to the singular names (`clusters` to `cluster`, `api_keys` to `api_key`, `quotas` to `quota`, and so on). Old operation entries keep their old values (for example `create | deploy`), because the old entry does not identify the operation reliably.
 
 ### Cluster
 A registered Kubernetes cluster that stack instances can be deployed to. Each cluster stores connection details (kubeconfig path or encrypted kubeconfig data) and is monitored via periodic health checks. One cluster can be designated as the **default** target. Clusters are managed by admins through `/admin/clusters`.
@@ -175,7 +189,7 @@ Exceptions to the session limits:
 | Log out (`/auth/logout`) | the current token is rejected (401) | the presented token is revoked | kept | the sockets of the current token are closed |
 | Log out of all sessions (`/auth/logout-all`) | the current token is rejected (401) | all revoked | kept | all sockets of the user are closed |
 
-A new login after a password reset works at once. Only tokens issued before the action are rejected. Enabling a disabled user does not bring back the tokens issued before the disable.
+A new login after a password reset works at once, also in the same second. Only tokens issued before the action are rejected. Access tokens have an `iat_ms` claim (issue time in milliseconds), and the user block stores its time in milliseconds, so the check has millisecond precision. A token without `iat_ms` (issued by an older version) is rejected when it was issued in the second of the block or before it. The block time and the token issue time come from the clocks of different replicas, so the replicas need synchronized clocks (NTP). During a rolling update with replicas of different versions, two blocks of the same user in the same second use the millisecond time of the block from the newer version. Enabling a disabled user does not bring back the tokens issued before the disable.
 
 WebSocket connections (`/ws`):
 

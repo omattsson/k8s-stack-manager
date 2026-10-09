@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -498,6 +499,56 @@ func TestRollback_StreamingPreRollbackGate(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestRollback_LongPreRollbackOutputIsCapped checks that a chatty
+// pre-rollback gate keeps only the tail of its progress lines (at most
+// maxHookProgressLen), so the ERROR line always fits in the log output.
+func TestRollback_LongPreRollbackOutputIsCapped(t *testing.T) {
+	t.Parallel()
+	lines := longProgressLines(400)
+	var body strings.Builder
+	for _, l := range lines {
+		body.WriteString("LOG: " + l + "\n")
+	}
+	body.WriteString(`{"allowed":false,"message":"image web:old is missing"}` + "\n")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/x-ndjson")
+		_, _ = w.Write([]byte(body.String()))
+	}))
+	t.Cleanup(srv.Close)
+	d, err := hooks.NewDispatcher(hooks.Config{Subscriptions: []hooks.Subscription{{
+		Name: "ci-gate", Events: []string{hooks.EventPreRollback}, URL: srv.URL, FailurePolicy: hooks.FailurePolicyFail,
+	}}}, srv.Client())
+	require.NoError(t, err)
+
+	instanceRepo := newMockInstanceRepo()
+	logRepo := newMockDeployLogRepo()
+	inst := &models.StackInstance{ID: "inst-long", Name: "long", Namespace: "stack-long-a", OwnerID: "u", Branch: "main", Status: models.StackStatusRunning}
+	require.NoError(t, instanceRepo.Create(inst))
+	mgr := NewManager(ManagerConfig{
+		Registry:      &mockClusterResolver{helm: &mockHelmExecutor{}},
+		InstanceRepo:  instanceRepo,
+		DeployLogRepo: logRepo,
+		TxRunner:      &mockTxRunner{instanceRepo: instanceRepo, logRepo: logRepo},
+		MaxConcurrent: 2,
+		Hooks:         d,
+	})
+	logID, err := mgr.Rollback(context.Background(), RollbackRequest{
+		Instance:     inst,
+		Charts:       []ChartDeployInfo{{ChartConfig: models.ChartConfig{ChartName: "web"}}},
+		TargetLogID:  "dep-a",
+		TargetValues: map[string]string{"web": "a: 1\n"},
+	})
+	require.NoError(t, err)
+
+	rbLog := waitForLogDone(t, logRepo, logID)
+	assert.Equal(t, models.DeployLogError, rbLog.Status)
+	assert.True(t, strings.HasPrefix(rbLog.Output, "[hook output truncated"), "long hook output is marked as cut")
+	assert.Contains(t, rbLog.Output, lines[len(lines)-1]+"\n", "the newest progress line stays")
+	assert.NotContains(t, rbLog.Output, lines[0]+"\n", "the oldest progress lines are dropped")
+	assert.True(t, strings.HasSuffix(rbLog.Output, "image web:old is missing\n"), "the ERROR line is the last line")
+	assert.LessOrEqual(t, len(rbLog.Output), maxHookProgressLen+500)
 }
 
 func TestRollback_PreviousRevisionUsesPreviousDeployBranch(t *testing.T) {

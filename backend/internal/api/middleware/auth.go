@@ -37,7 +37,30 @@ type Claims struct {
 	// SessionID is the refresh-token family of the login session ("sid").
 	// Empty for tokens outside a refresh session (for example CLI tokens).
 	SessionID string `json:"sid,omitempty"`
+	// IssuedAtMs is the issue time in Unix milliseconds ("iat_ms"). The JWT
+	// iat has one-second precision; the user blocklist compares this claim
+	// with the block time, so a login just after a password reset in the
+	// same second is not revoked. 0 for tokens issued before the claim
+	// existed.
+	IssuedAtMs int64 `json:"iat_ms,omitempty"`
 	jwt.RegisteredClaims
+}
+
+// IssueTime returns the issue time of the token for the user blocklist: the
+// iat_ms claim (millisecond precision) when it is set, else the iat claim
+// truncated to whole seconds. It returns the zero time when the token has
+// neither claim.
+func (c *Claims) IssueTime() time.Time {
+	if c == nil {
+		return time.Time{}
+	}
+	if c.IssuedAtMs > 0 {
+		return time.UnixMilli(c.IssuedAtMs)
+	}
+	if c.IssuedAt != nil {
+		return c.IssuedAt.Time.Truncate(time.Second)
+	}
+	return time.Time{}
 }
 
 // ValidateJWT parses and validates a JWT token string, returning the claims if
@@ -193,9 +216,11 @@ var (
 // CheckRevocation checks validated claims against the session store. The JWT
 // middleware and the WebSocket upgrade both use it. It checks:
 //  1. The token blocklist (jti). A match returns ErrTokenRevoked.
-//  2. The user blocklist (user ID and iat). A block revokes tokens issued at
-//     or before the block. A token without iat gets a zero time and counts as
-//     blocked. A match returns ErrSessionRevoked.
+//  2. The user blocklist (user ID and issue time, see Claims.IssueTime). A
+//     block revokes tokens issued at or before the block (millisecond
+//     precision with the iat_ms claim, else the block second). A token
+//     without iat gets a zero time and counts as blocked. A match returns
+//     ErrSessionRevoked.
 //
 // A nil store or nil claims pass. On a store error the function logs the
 // error and continues (fail open): access tokens are short-lived, and a
@@ -228,11 +253,7 @@ func RevocationStatus(ctx context.Context, store sessionstore.SessionStore, clai
 		}
 	}
 	if claims.UserID != "" {
-		var issuedAt time.Time
-		if claims.IssuedAt != nil {
-			issuedAt = claims.IssuedAt.Time
-		}
-		blocked, err := store.IsUserBlocked(ctx, claims.UserID, issuedAt)
+		blocked, err := store.IsUserBlocked(ctx, claims.UserID, claims.IssueTime())
 		if err != nil {
 			errs = append(errs, fmt.Errorf("user blocklist: %w", err))
 		} else if blocked {
@@ -275,6 +296,7 @@ func GenerateTokenWithOpts(opts GenerateTokenOptions) (string, error) {
 		AuthProvider: opts.AuthProvider,
 		Email:        opts.Email,
 		SessionID:    opts.SessionID,
+		IssuedAtMs:   now.UnixMilli(),
 		RegisteredClaims: jwt.RegisteredClaims{
 			ID:        uuid.New().String(),
 			ExpiresAt: jwt.NewNumericDate(now.Add(opts.Expiration)),

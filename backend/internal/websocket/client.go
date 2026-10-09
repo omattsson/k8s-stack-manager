@@ -44,7 +44,7 @@ const (
 // ExpiresAt to close the socket when the token expires.
 type ClientIdentity struct {
 	ExpiresAt time.Time // zero: the socket does not expire
-	IssuedAt  time.Time // iat claim; the user blocklist compares it with the block time
+	IssuedAt  time.Time // iat_ms claim (ms) or iat (whole seconds); the user blocklist compares it with the block time
 	UserID    string
 	TokenID   string // jti claim
 }

@@ -213,3 +213,46 @@ func TestClient_NoExpiryWithoutIdentity(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, `{"type":"ping"}`, string(msg))
 }
+
+// TestHub_DisconnectUserIssuedBefore checks the issue-time rule of a user
+// revoke row from another replica: millisecond precision for tokens with the
+// iat_ms claim, the block second for legacy tokens (whole-second issue time).
+func TestHub_DisconnectUserIssuedBefore(t *testing.T) {
+	t.Parallel()
+
+	// The revoke row is written 300 ms into a second.
+	rowTime := time.Date(2026, 1, 2, 3, 4, 5, 300*int(time.Millisecond), time.UTC)
+	second := rowTime.Truncate(time.Second)
+	tests := []struct {
+		name       string
+		issuedAt   time.Time
+		wantClosed bool
+	}{
+		{name: "token issued 1 ms before the row", issuedAt: rowTime.Add(-time.Millisecond), wantClosed: true},
+		{name: "token issued in the row millisecond", issuedAt: rowTime, wantClosed: true},
+		{name: "token issued 1 ms after the row in the same second", issuedAt: rowTime.Add(time.Millisecond), wantClosed: false},
+		{name: "legacy token in the row second", issuedAt: second, wantClosed: true},
+		{name: "legacy token in the next second", issuedAt: second.Add(time.Second), wantClosed: false},
+		{name: "unknown issue time", issuedAt: time.Time{}, wantClosed: true},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			hub := NewHub()
+			go hub.Run()
+			defer hub.Shutdown()
+
+			c := &Client{hub: hub, identity: ClientIdentity{UserID: "u1", TokenID: "jti", IssuedAt: tt.issuedAt}, send: make(chan []byte, 1)}
+			require.NoError(t, hub.Register(c))
+			waitForClientCount(t, hub, 1)
+
+			closed := hub.disconnectUserIssuedBefore("u1", rowTime)
+			if tt.wantClosed {
+				assert.Equal(t, 1, closed)
+			} else {
+				assert.Zero(t, closed)
+			}
+		})
+	}
+}

@@ -147,9 +147,8 @@ func (h *WebSocketHandler) HandleWebSocket(c *gin.Context) {
 	if claims.ExpiresAt != nil {
 		identity.ExpiresAt = claims.ExpiresAt.Time
 	}
-	if claims.IssuedAt != nil {
-		identity.IssuedAt = claims.IssuedAt.Time
-	}
+	// Millisecond issue time with the iat_ms claim, else whole seconds.
+	identity.IssuedAt = claims.IssueTime()
 	client, err := websocket.NewClientWithIdentity(h.hub, conn, identity)
 	if err != nil {
 		slog.Error("WebSocket client creation failed", "error", err)
@@ -238,6 +237,10 @@ func NewWebSocketRevocationChecker(store sessionstore.SessionStore, userRepo mod
 			claims.ID = id.TokenID
 			if !id.IssuedAt.IsZero() {
 				claims.IssuedAt = jwt.NewNumericDate(id.IssuedAt)
+				// Keep the millisecond precision of the identity. For a
+				// legacy token the identity time is a whole second, and
+				// the millisecond rule gives the old second rule.
+				claims.IssuedAtMs = id.IssuedAt.UnixMilli()
 			}
 			revokedErr, lookupErr := middleware.RevocationStatus(ctx, store, claims)
 			if revokedErr != nil {

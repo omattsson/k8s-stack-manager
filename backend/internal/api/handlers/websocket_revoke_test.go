@@ -16,6 +16,7 @@ import (
 	"backend/internal/api/middleware"
 	"backend/internal/config"
 	"backend/internal/models"
+	"backend/internal/sessionstore"
 	"backend/internal/websocket"
 
 	"github.com/gin-gonic/gin"
@@ -544,4 +545,26 @@ func TestHandleWebSocket_RevokedDuringUpgrade(t *testing.T) {
 	require.True(t, errors.As(err, &closeErr), "want a close frame, got %v", err)
 	assert.Equal(t, gorilla.ClosePolicyViolation, closeErr.Code)
 	waitForHubClients(t, hub, 0)
+}
+
+// TestNewWebSocketRevocationChecker_MillisecondIssueTime checks that the
+// periodic check keeps the millisecond issue time of a socket (iat_ms): a
+// socket opened just after a user block stays open, one opened just before
+// it closes (issue #478).
+func TestNewWebSocketRevocationChecker_MillisecondIssueTime(t *testing.T) {
+	t.Parallel()
+
+	store := sessionstore.NewMemoryStore()
+	t.Cleanup(store.Stop)
+	before := time.Now()
+	require.NoError(t, store.BlockUser(context.Background(), "u1", time.Now().Add(time.Hour)))
+	after := time.Now()
+
+	check := NewWebSocketRevocationChecker(store, nil)
+	require.NotNil(t, check)
+	identities := []websocket.ClientIdentity{
+		{UserID: "u1", TokenID: "jti-before", IssuedAt: before.Add(-time.Millisecond)},
+		{UserID: "u1", TokenID: "jti-after", IssuedAt: after.Add(time.Millisecond)},
+	}
+	assert.Equal(t, []bool{true, false}, check(context.Background(), identities))
 }

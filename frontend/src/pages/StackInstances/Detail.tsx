@@ -192,7 +192,9 @@ const Detail = () => {
       // Refresh instance data and K8s status when deployment status changes.
       const newStatus = payload.status as string;
       wsStatusSeqRef.current += 1;
-      setInstance((prev) => prev ? { ...prev, status: newStatus } : prev);
+      // The status message carries the error message of the instance (empty
+      // when the operation clears it).
+      setInstance((prev) => prev ? { ...prev, status: newStatus, error_message: payload.error_message || undefined } : prev);
 
       // Clear stale K8s status at the start of any operation or when resources are gone.
       // The watcher will push fresh status via instance.status messages as pods come up.
@@ -633,9 +635,15 @@ const Detail = () => {
 
   const LIFECYCLE_STEPS = ['draft', 'deploying', 'stabilizing', 'running'];
 
-  const renderLifecycle = (status: string) => {
+  /**
+   * Render the status lifecycle. For an error or a partial deploy the alert
+   * also shows the error message of the instance (for example the reason of
+   * a pre-deploy hook that denied the deploy).
+   */
+  const renderLifecycle = (status: string, errorMessage?: string) => {
     const activeStep = status === 'partial' ? LIFECYCLE_STEPS.indexOf('running') : LIFECYCLE_STEPS.indexOf(status);
     const isTerminal = status === 'error' || status === 'partial' || status === 'stopped' || status === 'stopping' || status === 'cleaning';
+    const showError = (status === 'error' || status === 'partial') && !!errorMessage;
 
     return (
       <Box sx={{ mb: 2 }}>
@@ -643,6 +651,15 @@ const Detail = () => {
         {isTerminal ? (
           <Alert severity={status === 'error' ? 'error' : 'warning'} sx={{ py: 0.5 }}>
             Instance is {status}
+            {showError && (
+              <Typography
+                variant="body2"
+                data-testid="instance-error-message"
+                sx={{ mt: 0.5, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}
+              >
+                {errorMessage}
+              </Typography>
+            )}
           </Alert>
         ) : (
           <Stepper activeStep={activeStep} alternativeLabel>
@@ -773,7 +790,7 @@ const Detail = () => {
 
         <Divider sx={{ my: 2 }} />
 
-        {renderLifecycle(instance.status)}
+        {renderLifecycle(instance.status, instance.error_message)}
 
         {(instance.status === 'running' || instance.status === 'partial' || instance.status === 'deploying' || instance.status === 'stabilizing' || instance.status === 'error' || instance.status === 'stopping' || instance.status === 'cleaning') && (
           <Box sx={{ mb: 2 }}>

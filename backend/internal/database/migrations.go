@@ -1057,6 +1057,12 @@ func (d *Database) AutoMigrate() error {
 	// clients (WS_FANOUT_ENABLED).
 	migrator.AddMigration(wsEventsMigration())
 
+	// Migration 47: audit_logs. Rename the plural, route-derived entity
+	// types of old CRUD entries to the singular names of the audit route
+	// table, and widen entity_id to 63 (namespace names are longer than a
+	// UUID).
+	migrator.AddMigration(auditEntityTypesMigration())
+
 	// Run migrations
 	if err := migrator.MigrateUp(); err != nil {
 		return err
@@ -1389,6 +1395,59 @@ func wsEventsMigration() schema.Migration {
 			if tx.Migrator().HasTable(&models.WSEvent{}) {
 				return tx.Migrator().DropTable(&models.WSEvent{})
 			}
+			return nil
+		},
+	}
+}
+
+// auditEntityTypeRenames maps the plural entity types that the audit
+// middleware derived from the route before the audit route table to the
+// singular names it writes now (see middleware.KnownAuditEntityTypes). Only
+// plain CRUD entries used these names.
+var auditEntityTypeRenames = map[string]string{
+	"api_keys":              "api_key",
+	"branches":              "branch_override",
+	"cleanup_policies":      "cleanup_policy",
+	"clusters":              "cluster",
+	"favorites":             "favorite",
+	"notification_channels": "notification_channel",
+	"orphaned_namespaces":   "namespace",
+	"preferences":           "notification_preference",
+	"quota_overrides":       "quota_override",
+	"quotas":                "quota",
+	"subscriptions":         "notification_subscription",
+}
+
+// auditEntityTypesMigration is migration 47. It renames the plural entity
+// types of old audit entries (auditEntityTypeRenames) and widens
+// audit_logs.entity_id from 36 to 63 characters (an in-place ALTER on
+// MySQL; 63 is the RFC 1123 label maximum, for namespace names). Entries of non-CRUD operations
+// written before the route table (for example "create | deploy") keep their
+// values: the old entry does not tell the operation apart reliably. Down is a
+// no-op: new entries use the singular names too, and a narrower entity_id
+// could cut values.
+func auditEntityTypesMigration() schema.Migration {
+	return schema.Migration{
+		Version:     "20261009000047",
+		Name:        "audit_logs_singular_entity_types",
+		Description: "Rename plural audit entity types to singular names and widen audit_logs.entity_id to 63",
+		Up: func(tx *gorm.DB) error {
+			if !tx.Migrator().HasTable(&models.AuditLog{}) {
+				return nil
+			}
+			if err := tx.Migrator().AlterColumn(&models.AuditLog{}, "EntityID"); err != nil {
+				return fmt.Errorf("widening audit_logs.entity_id: %w", err)
+			}
+			for from, to := range auditEntityTypeRenames {
+				if err := tx.Model(&models.AuditLog{}).
+					Where("entity_type = ?", from).
+					Update("entity_type", to).Error; err != nil {
+					return fmt.Errorf("renaming audit entity type %q: %w", from, err)
+				}
+			}
+			return nil
+		},
+		Down: func(_ *gorm.DB) error {
 			return nil
 		},
 	}
