@@ -92,6 +92,7 @@ func TestAutoMigrate(t *testing.T) {
 			"notification_channels",
 			"notification_channel_subscriptions",
 			"notification_delivery_logs",
+			"ws_events",
 			"schema_versions",
 		}
 		for _, table := range expectedTables {

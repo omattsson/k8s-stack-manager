@@ -112,7 +112,8 @@ func (n *Notifier) notify(ctx context.Context, userID, notifType, title, message
 		return err
 	}
 
-	// Broadcast via WebSocket if hub is available.
+	// Send via WebSocket to the clients of the user only (with fan-out, also
+	// on the other replicas).
 	if n.hub != nil {
 		msg, err := websocket.NewMessage(MessageTypeNotificationNew, notification)
 		if err != nil {
@@ -124,7 +125,7 @@ func (n *Notifier) notify(ctx context.Context, userID, notifType, title, message
 			slog.Error("Failed to marshal WebSocket notification message", "error", err)
 			return nil
 		}
-		n.hub.Broadcast(data)
+		n.hub.BroadcastToUser(userID, data)
 	}
 
 	// Dispatch to external channels (Teams, Slack, etc.) in background.

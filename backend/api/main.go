@@ -101,6 +101,12 @@ func main() {
 	repos, err := initRepositories(cfg, mysqlGormDB)
 	must("domain repositories", err)
 
+	// WebSocket fan-out between replicas (WS_FANOUT_ENABLED). Each hub send
+	// also writes a ws_events row; a poller delivers the rows of the other
+	// replicas to the local clients. Disabled: no database writes.
+	wsFanout, wsEventCleanup := buildWSFanout(cfg, hub, repos.WSEvent)
+	wsFanout.Start()
+
 	// Register database/sql pool metrics with OTel after repositories are available.
 	if cfg.Otel.Enabled || cfg.Otel.MetricsEnabled {
 		sqlDB, dbErr := mysqlGormDB.DB()
@@ -154,6 +160,9 @@ func main() {
 	// scheduler, monitors, pollers, k8s watcher). Only the leader replica
 	// runs them; readiness does not depend on leadership.
 	workers := buildLeaderWorkers(svc, hs, repos, hub, leader.DefaultStopTimeout)
+	if wsEventCleanup != nil {
+		workers.Group.Add(*wsEventCleanup)
+	}
 	leaderRun := startLeaderElection(elector, workers.Group)
 
 	// HTTP server.
@@ -176,6 +185,7 @@ func main() {
 		cleanupScheduler: svc.CleanupScheduler,
 		deployManager:    svc.DeployManager,
 		hub:              hub,
+		wsFanout:         wsFanout,
 		clusterRegistry:  svc.ClusterRegistry,
 		sessionStore:     sessStore,
 		dashboardHandler: hs.Dashboard,
@@ -191,6 +201,7 @@ type shutdownDeps struct {
 	cleanupScheduler *scheduler.Scheduler
 	deployManager    *deployer.Manager
 	hub              *websocket.Hub
+	wsFanout         *websocket.Fanout // nil: fan-out disabled
 	clusterRegistry  *cluster.Registry
 	sessionStore     sessionstore.SessionStore
 	dashboardHandler *handlers.DashboardHandler
@@ -231,7 +242,9 @@ func gracefulShutdown(srvs *servers, timeout time.Duration, deps shutdownDeps) {
 	// 3. Now safe to wait for in-flight deploys.
 	deps.deployManager.Shutdown()
 
-	// 4. Stop remaining services.
+	// 4. Stop remaining services. The fan-out writes its queued rows
+	//    before the hub and the database close.
+	deps.wsFanout.Stop()
 	deps.hub.Shutdown()
 	deps.clusterRegistry.Close()
 	if deps.notifier != nil {

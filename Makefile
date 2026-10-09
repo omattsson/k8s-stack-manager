@@ -464,6 +464,17 @@ helm-test: ## Verify default and External Secrets Helm renders
 		|| { echo "LEADER_ELECTION_ENABLED must default to true in the chart" >&2; exit 1; }; \
 	grep -q 'LEADER_ELECTION_LEASE_NAME: "$(HELM_RELEASE)-workers"' "$$template_file" \
 		|| { echo "LEADER_ELECTION_LEASE_NAME missing" >&2; exit 1; }; \
+	grep -q 'WS_FANOUT_ENABLED: "true"' "$$template_file" \
+		|| { echo "WS_FANOUT_ENABLED must default to true in the chart" >&2; exit 1; }; \
+	grep -q 'WS_FANOUT_POLL_INTERVAL: "500ms"' "$$template_file" \
+		|| { echo "WS_FANOUT_POLL_INTERVAL missing" >&2; exit 1; }; \
+	grep -q 'WS_FANOUT_RETENTION: "5m"' "$$template_file" \
+		|| { echo "WS_FANOUT_RETENTION missing" >&2; exit 1; }; \
+	helm template $(HELM_RELEASE) $(HELM_CHART) --show-only templates/backend/configmap.yaml \
+		--set backend.secrets.JWT_SECRET=dummy-jwt-secret-for-template \
+		--set backend.wsFanout.enabled=false > "$$template_file"; \
+	grep -q 'WS_FANOUT_ENABLED: "false"' "$$template_file" \
+		|| { echo "backend.wsFanout.enabled=false must render WS_FANOUT_ENABLED false" >&2; exit 1; }; \
 	helm template $(HELM_RELEASE) $(HELM_CHART) --namespace $(HELM_NAMESPACE) \
 		--set backend.secrets.JWT_SECRET=dummy-jwt-secret-for-template \
 		--set backend.leaderElection.enabled=false > "$$template_file"; \

@@ -34,6 +34,7 @@ type RepositorySet struct {
 	Cluster               models.ClusterRepository
 	RefreshToken          models.RefreshTokenRepository
 	NotificationChannel   models.NotificationChannelRepository
+	WSEvent               models.WSEventRepository
 	TxRunner              TxRunner
 }
 
@@ -94,6 +95,7 @@ func newGORMRepositorySet(cfg *config.Config, db *gorm.DB) (*RepositorySet, erro
 		CleanupPolicy:         cleanupPolicyRepo,
 		RefreshToken:          refreshTokenRepo,
 		NotificationChannel:   notificationChannelRepo,
+		WSEvent:               NewGORMWSEventRepository(db),
 		TxRunner:              NewGORMTxRunner(db),
 	}, nil
 }

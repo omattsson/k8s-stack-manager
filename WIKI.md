@@ -183,7 +183,7 @@ WebSocket connections (`/ws`):
 - The server closes an open socket (close code 1008) when the user is revoked or the session logs out (table above), and when the access token of the socket expires. The web UI then reconnects. It refreshes the token first when the server closed the socket with 1008 or the token expires within 30 seconds, and stops when the refresh is rejected. The refresh does not count as activity for `SESSION_IDLE_TIMEOUT`.
 - Every minute each backend replica checks its open sockets again (token blocklist, user blocklist, deleted or disabled user) and closes the revoked ones. If the session store or the database fails, the check passes and the backend logs the error.
 - After `/auth/logout-all`, the other sessions of the user keep a valid access token until it expires, so their sockets can reconnect until then.
-- With more than one backend replica, only the replica that handles the revoke request closes its sockets at once. The other replicas close them at the next check, within about one minute, or at token expiry if that is earlier. The check also covers long-lived tokens (`JWT_EXPIRATION`, for example the CLI token and the mode without refresh tokens). This stays so until the WebSocket fan-out across replicas (#428).
+- With more than one backend replica and WebSocket fan-out on (`WS_FANOUT_ENABLED=true`, the Helm default), a revoke closes the sockets on all replicas within about half a second. The replica that handles the revoke request closes its own sockets at once. Without fan-out, the other replicas close them at the next check, within about one minute, or at token expiry if that is earlier. The check stays on as a fallback in both cases. It also covers long-lived tokens (`JWT_EXPIRATION`, for example the CLI token and the mode without refresh tokens).
 
 ### Multi-Cluster
 - Clusters are registered via the API with a kubeconfig path or kubeconfig data (encrypted at rest with AES-GCM)
@@ -201,6 +201,10 @@ WebSocket connections (`/ws`):
 - A cleanup policy change takes effect on the leader within one minute. A scheduled policy run that fell into a leader change runs when the new leader starts (when it was due in the last 5 minutes).
 - After a leader change, one quota or secret warning can come again (the cooldown of these warnings is in memory).
 - Metric `stackmanager_leader` is 1 on the leader. See [ARCHITECTURE.md](ARCHITECTURE.md#replica-model).
+- The replicas share live updates (deploy logs, status changes, cluster health, notifications, socket revocations) through the database table `ws_events` (`WS_FANOUT_ENABLED=true`, on in the Helm chart). A client on any replica sees the events of all replicas. Events from another replica arrive up to about half a second later (`WS_FANOUT_POLL_INTERVAL`, 500ms).
+- Without fan-out (`WS_FANOUT_ENABLED=false`, the default for docker-compose and local development), a client sees only the events of its own replica. Use one replica then.
+- A message larger than 512 KiB, or a message sent while the fan-out buffer is full, reaches only the clients of the replica that sent it. After a database outage, events older than 30 seconds are not delivered. The page shows the current state after a reload.
+- An in-app notification goes only to the sockets of the notified user.
 
 ### Git Integration
 - Auto-detects provider from repository URL (`dev.azure.com` → Azure DevOps, `gitlab.com` → GitLab)

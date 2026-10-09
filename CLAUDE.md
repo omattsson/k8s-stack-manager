@@ -4,7 +4,7 @@
 
 Full-stack app: **Go (Gin) backend** + **React (TypeScript, Vite, MUI) frontend**, with **MySQL** (GORM) as the data store. Docker Compose orchestrates all services. Go 1.26 (`backend/go.mod`), Node 22+ (images use `node:26-alpine`).
 
-**Bootstrap flow**: `backend/api/main.go` → `config.LoadConfig()` → `telemetry.Init(cfg.Otel)` → `leader.NewInCluster` (fails startup when `LEADER_ELECTION_ENABLED=true` outside a pod) → `database.NewRepositoryWithGormDB(cfg)` → session store (`sessionstore`) → `routes.SetupRoutes(router, routes.Deps{...})` → `buildLeaderWorkers` + `startLeaderElection` (leader-only background workers) → `http.Server` with graceful shutdown (`SIGINT`/`SIGTERM`: stops HTTP, stops the leader workers, releases the lease, stops rate limiters and flushes telemetry).
+**Bootstrap flow**: `backend/api/main.go` → `config.LoadConfig()` → `telemetry.Init(cfg.Otel)` → `leader.NewInCluster` (fails startup when `LEADER_ELECTION_ENABLED=true` outside a pod) → `database.NewRepositoryWithGormDB(cfg)` → `buildWSFanout` (WebSocket fan-out, when `WS_FANOUT_ENABLED`) → session store (`sessionstore`) → `routes.SetupRoutes(router, routes.Deps{...})` → `buildLeaderWorkers` + `startLeaderElection` (leader-only background workers) → `http.Server` with graceful shutdown (`SIGINT`/`SIGTERM`: stops HTTP, stops the leader workers, releases the lease, flushes the fan-out queue, stops rate limiters and flushes telemetry).
 
 **Ports**: Backend `:8081` on host, frontend `:3000` in dev. Inside Docker, nginx (`location /api/` → `proxy_pass http://backend:8081/api/`) and the Vite dev proxy (`/api` → backend, no rewrite) both keep the `/api` prefix; backend routes are registered under `/api/v1`. Local non-Docker dev hits `localhost:8081` directly (`frontend/src/api/config.ts`). With `make dev-otel`: Grafana `:3001`, Prometheus `:9090`.
 
@@ -86,6 +86,7 @@ helm/k8s-stack-manager/
 - **Security contexts** — backend runs as non-root (uid 65532), readOnlyRootFilesystem; frontend drops all capabilities.
 - **Observability** — `otel.enabled` deploys a collector; `metrics.enabled` exposes Prometheus metrics, `metrics.serviceMonitor.enabled` adds a ServiceMonitor.
 - **Leader election** — `backend.leaderElection.enabled` (default true) sets `LEADER_ELECTION_ENABLED`, `POD_NAME`/`POD_NAMESPACE` (downward API, Deployment and Rollout) and a Lease Role; only the leader replica runs the background workers, every replica serves HTTP and WebSocket.
+- **WebSocket fan-out** — `backend.wsFanout.enabled` (default true) sets `WS_FANOUT_ENABLED`; `backend.wsFanout.pollInterval` (500ms) and `retention` (5m) set `WS_FANOUT_POLL_INTERVAL` and `WS_FANOUT_RETENTION`. The replicas share WebSocket messages through the `ws_events` table, so clients on every replica get deploy logs and leader events.
 
 ### Configuration
 Key values in `values.yaml`:
@@ -94,6 +95,7 @@ Key values in `values.yaml`:
 - `backend.secrets.*` — Secret env vars like `JWT_SECRET` (required), `ADMIN_PASSWORD`, `KUBECONFIG_ENCRYPTION_KEY`, `DB_PASSWORD` (Secret or ExternalSecret)
 - `backend.replicas` / `frontend.replicas`, `*.autoscaling`, `*.pdb` — Independently scalable
 - `backend.leaderElection.enabled`, `backend.leaderElection.leaseName` — Leader election for the background workers (Lease `<fullname>-workers`)
+- `backend.wsFanout.enabled`, `backend.wsFanout.pollInterval`, `backend.wsFanout.retention` — WebSocket fan-out between replicas (`ws_events`)
 - `mysql.enabled`, `mysql.auth.*`, `mysql.persistence.enabled` — Bundled database
 - `ingress.type`, `ingress.host`, `ingress.traefik.*`, `ingress.className`, `ingress.tls` — Ingress settings
 - `otel.enabled`, `metrics.enabled`, `metrics.serviceMonitor.enabled` — Observability
@@ -180,7 +182,7 @@ backend/
     notifier/                    # Notification dispatch (in-app notifications + outbound notification channels)
     sessionstore/                # Token blocklist + OIDC state persistence (mysql default, memory)
     telemetry/                   # OpenTelemetry bootstrap, DB pool metrics, business metrics, leader gauge
-    websocket/                   # WebSocket hub, client, message types
+    websocket/                   # WebSocket hub, client, message types, fan-out between replicas (ws_events writer + poller, cleanup worker)
     scheduler/                   # Cron-based cleanup policy execution
     ttl/                         # TTL reaper for auto-expiring stack instances
   pkg/dberrors/errors.go         # Canonical error types: ErrNotFound, ErrDuplicateKey, ErrValidation, ErrConnectionFailed, ErrNotImplemented
@@ -342,7 +344,7 @@ backend/internal/
 - **Analytics and dashboard**: Read-only aggregation of instance counts, deployment stats, template usage, and user activity (`/analytics/*`); `/dashboard` serves the landing page overview.
 - **Quick deploy**: One-click flow: template → new instance → deploy. Generates instance name and namespace automatically. The definition it creates has `OwnerInstanceID` set; deleting the instance deletes that definition when no other instance uses it, also when its owner instance is already gone (`database.DeleteInstanceWithOwnedDefinition`: instance + overrides in one transaction, definition cleanup in a second, best-effort transaction that locks the definition row).
 - **Per-chart branch overrides**: Instances can override the branch per chart (default uses the definition's `DefaultBranch`). Substituted in Helm values via `{{.Branch}}`.
-- **Notifications**: In-app notifications for deploy/stop/clean events. Per-user notification preferences. Unread count for badge display. Notification dispatch via `notifier` package.
+- **Notifications**: In-app notifications for deploy/stop/clean events. Per-user notification preferences. Unread count for badge display. Notification dispatch via `notifier` package; the WebSocket `notification.new` message goes only to the sockets of the notified user (`Hub.BroadcastToUser`).
 - **Template versioning (draft and release)**: The template row and its template charts are the working copy (draft); edits are allowed while published and never change what users get. `POST /templates/:id/publish` (optional `{"version","change_summary"}`, default the working copy version) stores a snapshot; an existing version gives 409, an unchanged working copy creates no snapshot (idempotent). Use Template, Quick Deploy, definition upgrades and deploy-time locked values read the latest snapshot (`template_releases.go`); unpublished or never published gives 409 "Template has no published version". `GET /templates/:id` adds `published_version`, `published_version_id`, `published_charts`, `has_unpublished_changes`; version diff accepts `working` on either side. Publish runs in one transaction (template row locked). Template edit/delete/publish/unpublish/chart changes require the owner or an admin (plus `RequireDevOps`); `PUT /templates/:id` is a partial update.
 - **Resource quotas**: Per-cluster resource quotas (CPU, memory, storage, pods) enforced via Kubernetes ResourceQuota and LimitRange objects. Admin-configurable via API. An instance quota override by a user without the admin or devops role must stay at or below each cluster quota value (`models.CheckOverrideWithinClusterQuota`, 403; checked on write and on clone; a value equal to the stored override passes; `pod_limit: 0` counts as no limit). The quota monitor raises quota warnings through the notifier (the `quota-warning` hook constant is defined but not yet dispatched).
 - **Bulk operations**: Bulk deploy/stop/clean/delete supports up to 50 instances per request. Returns per-instance success/failure results.
@@ -382,7 +384,7 @@ backend/internal/
 | Notifications | `/api/v1/notifications` | List, read/unread, count, preferences |
 | Analytics | `/api/v1/analytics` | Usage overview, template stats, user stats |
 | Health | `/health/*` | Liveness + readiness |
-| WebSocket | `/ws` | Real-time status and log events (token via query param, redacted in logs) |
+| WebSocket | `/ws` | Real-time status and log events (token via query param, redacted in logs); shared between replicas through `ws_events` when `WS_FANOUT_ENABLED` |
 
 ## Security Rules
 
@@ -404,7 +406,7 @@ backend/internal/
 - DB retry: 5 attempts, 2s delay on startup
 - Docker networks: `backend-net` (db, backend) and `frontend-net` (backend, frontend) — maintain separation
 - Health checks: register for all external dependencies via `healthChecker.AddCheck()`
-- Background workers run on the leader replica only (`internal/leader`, Kubernetes Lease); add a periodic job as a `leader.Worker` with a restartable `Run(ctx)`, and keep state that must survive a leader change in the database. Readiness does not depend on leadership
+- Background workers run on the leader replica only (`internal/leader`, Kubernetes Lease); add a periodic job as a `leader.Worker` with a restartable `Run(ctx)`, and keep state that must survive a leader change in the database. WebSocket messages and socket revocations reach all replicas through the hub fan-out (`WS_FANOUT_ENABLED`, `ws_events`, 500ms poll; the hub send never blocks, a full buffer drops the row; ws_events writes also go to the MySQL binary log); send through `Broadcast`, `BroadcastToInstance` or `BroadcastToUser`, revoke through `DisconnectUser` or `DisconnectToken`. Readiness does not depend on leadership
 - Always implement pagination for new list endpoints — `page`/`pageSize` query params (default 25, max 100) backed by `ListPaged(limit, offset)`, as in stack instances, definitions and templates (stack instances and definitions also accept a `limit`/`offset` fallback; templates take `page`/`pageSize` only). Older endpoints (items, audit logs, notifications, delivery logs) take `limit`/`offset`; small admin lists are unpaged. Select only columns needed for list views (omit TEXT fields like `description`). Use batch queries (`CountByTemplateIDs`, `FindByIDs`) instead of N+1 loops for enrichment data.
 - Use `internal/cache` for short-lived in-memory caching instead of ad-hoc maps (used by combined auth, login, dashboard and analytics handlers; `LOGIN_CACHE_TTL`). `gitprovider.Registry` keeps its own 5-minute branch cache
 - Struct field ordering: optimize for memory alignment (8-byte fields first)

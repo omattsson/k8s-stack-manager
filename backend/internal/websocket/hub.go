@@ -6,6 +6,10 @@ import (
 	"context"
 	"log/slog"
 	"sync"
+	"sync/atomic"
+	"time"
+
+	"backend/internal/models"
 )
 
 // broadcastBufferSize is the capacity of the Hub's broadcast channel.
@@ -34,13 +38,26 @@ type TargetedSender interface {
 	BroadcastToInstance(instanceID string, message []byte)
 }
 
+// UserSender sends a message only to the clients of one user (for example
+// an in-app notification).
+type UserSender interface {
+	BroadcastToUser(userID string, message []byte)
+}
+
+var (
+	_ TargetedSender = (*Hub)(nil)
+	_ UserSender     = (*Hub)(nil)
+)
+
 // ClientRevoker closes open WebSocket connections after a revocation. Auth
 // and user handlers depend on it, not on *Hub. Each method returns the number
 // of closed connections. *Hub implements it; a nil *Hub is safe and closes
 // nothing.
 //
-// The hub only knows the connections of this process. With more than one
-// replica, the other replicas close their sockets at token expiry.
+// The hub only knows the connections of this process. With fan-out, the
+// revocation also goes to the other replicas through ws_events, and they
+// close their sockets within about one poll interval. Without fan-out, the
+// other replicas close them at the next revalidation or at token expiry.
 type ClientRevoker interface {
 	// DisconnectUser closes all connections of the user (user deleted,
 	// disabled, password reset, logout of all sessions).
@@ -81,6 +98,10 @@ type Hub struct {
 	revalidateOnce sync.Once
 	// revalidateDone is closed when the revalidation loop exits (tests).
 	revalidateDone chan struct{}
+
+	// fanout shares the messages of this hub with the hubs of the other
+	// replicas. Nil: no fan-out (single replica).
+	fanout atomic.Pointer[Fanout]
 }
 
 // NewHub creates a new Hub ready to accept clients.
@@ -137,8 +158,15 @@ func (h *Hub) Run() {
 }
 
 // Broadcast sends a message to all connected clients.
-// It is safe for concurrent use and implements BroadcastSender.
+// It is safe for concurrent use and implements BroadcastSender. With fan-out,
+// the clients of the other replicas get the message too.
 func (h *Hub) Broadcast(message []byte) {
+	h.deliverAll(message)
+	h.publish(models.WSEventTargetAll, message)
+}
+
+// deliverAll queues a message for all local clients.
+func (h *Hub) deliverAll(message []byte) {
 	select {
 	case h.broadcast <- message:
 	default:
@@ -223,9 +251,17 @@ func (h *Hub) Unsubscribe(c *Client, instanceID string) {
 }
 
 // BroadcastToInstance sends a message only to clients subscribed to the given
-// instance. If no clients are subscribed, the message is silently dropped
-// (no point broadcasting deployment logs nobody is watching).
+// instance. If no local clients are subscribed, no local client gets the
+// message (no point broadcasting deployment logs nobody is watching). With
+// fan-out, the subscribed clients of the other replicas get the message too.
 func (h *Hub) BroadcastToInstance(instanceID string, message []byte) {
+	h.deliverInstance(instanceID, message)
+	h.publish(models.WSEventTargetInstancePrefix+instanceID, message)
+}
+
+// deliverInstance sends a message to the local clients subscribed to the
+// instance.
+func (h *Hub) deliverInstance(instanceID string, message []byte) {
 	h.mu.RLock()
 	subs := h.instanceSubs[instanceID]
 	if len(subs) == 0 {
@@ -248,6 +284,43 @@ func (h *Hub) BroadcastToInstance(instanceID string, message []byte) {
 		}
 	}
 	h.mu.RUnlock()
+	h.finishSend(sent, slow)
+}
+
+// BroadcastToUser sends a message only to the clients of the user. An empty
+// user ID sends nothing. With fan-out, the clients of the user on the other
+// replicas get the message too. It implements UserSender.
+func (h *Hub) BroadcastToUser(userID string, message []byte) {
+	if userID == "" {
+		return
+	}
+	h.deliverUser(userID, message)
+	h.publish(models.WSEventTargetUserPrefix+userID, message)
+}
+
+// deliverUser sends a message to the local clients of the user.
+func (h *Hub) deliverUser(userID string, message []byte) {
+	h.mu.RLock()
+	var slow []*Client
+	var sent int64
+	for client := range h.clients {
+		if client.identity.UserID != userID {
+			continue
+		}
+		select {
+		case client.send <- message:
+			sent++
+		default:
+			slow = append(slow, client)
+		}
+	}
+	h.mu.RUnlock()
+	h.finishSend(sent, slow)
+}
+
+// finishSend counts the sent messages and removes the slow clients (full
+// send buffer).
+func (h *Hub) finishSend(sent int64, slow []*Client) {
 	if sent > 0 {
 		hubMetrics.messagesSentTotal.Add(context.Background(), sent)
 	}
@@ -261,21 +334,55 @@ func (h *Hub) BroadcastToInstance(instanceID string, message []byte) {
 }
 
 // DisconnectUser closes all connections of the user. It implements
-// ClientRevoker. An empty user ID or a nil hub closes nothing.
+// ClientRevoker. With fan-out, the other replicas close the sockets of the
+// user too. The return value counts the local connections only. An empty
+// user ID or a nil hub closes nothing.
 func (h *Hub) DisconnectUser(userID string) int {
 	if h == nil || userID == "" {
 		return 0
 	}
-	return h.disconnectMatching(func(c *Client) bool { return c.identity.UserID == userID })
+	closed := h.disconnectUserLocal(userID)
+	h.publish(models.WSEventTargetRevokeUserPrefix+userID, nil)
+	return closed
 }
 
 // DisconnectToken closes all connections opened with the access token that
-// has this jti. It implements ClientRevoker. An empty token ID or a nil hub
-// closes nothing.
+// has this jti. It implements ClientRevoker. With fan-out, the other
+// replicas close the sockets of the token too. The return value counts the
+// local connections only. An empty token ID or a nil hub closes nothing.
 func (h *Hub) DisconnectToken(tokenID string) int {
 	if h == nil || tokenID == "" {
 		return 0
 	}
+	closed := h.disconnectTokenLocal(tokenID)
+	h.publish(models.WSEventTargetRevokeTokenPrefix+tokenID, nil)
+	return closed
+}
+
+// disconnectUserLocal closes the local connections of the user without a
+// fan-out row.
+func (h *Hub) disconnectUserLocal(userID string) int {
+	return h.disconnectMatching(func(c *Client) bool { return c.identity.UserID == userID })
+}
+
+// disconnectUserIssuedBefore closes the local connections of the user whose
+// token was issued at or before t (second precision, the same rule as the
+// session store user block; an unknown issue time counts as before). The
+// fan-out poller calls it for a user revocation from another replica, with
+// the row time: a session that the user opened after the revocation stays
+// open.
+func (h *Hub) disconnectUserIssuedBefore(userID string, t time.Time) int {
+	return h.disconnectMatching(func(c *Client) bool {
+		if c.identity.UserID != userID {
+			return false
+		}
+		return c.identity.IssuedAt.IsZero() || t.IsZero() || c.identity.IssuedAt.Unix() <= t.Unix()
+	})
+}
+
+// disconnectTokenLocal closes the local connections of the token. See
+// disconnectUserLocal.
+func (h *Hub) disconnectTokenLocal(tokenID string) int {
 	return h.disconnectMatching(func(c *Client) bool { return c.identity.TokenID == tokenID })
 }
 

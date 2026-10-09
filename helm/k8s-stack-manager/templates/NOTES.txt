@@ -97,3 +97,11 @@ WARNING: backend.serviceAccount.create=false, so the chart created no Role for l
   in namespace {{ .Release.Namespace }}, or no replica runs the background workers.
 {{- end }}
 {{- end }}
+
+{{- $hpaMulti := and .Values.backend.autoscaling.enabled (gt (int .Values.backend.autoscaling.maxReplicas) 1) }}
+{{- if and (or (gt (int .Values.backend.replicas) 1) $hpaMulti) (not .Values.backend.wsFanout.enabled) }}
+
+WARNING: the backend can run more than one replica ({{ if $hpaMulti }}autoscaling up to {{ .Values.backend.autoscaling.maxReplicas }}{{ else }}backend.replicas={{ .Values.backend.replicas }}{{ end }}) and backend.wsFanout.enabled=false.
+  A WebSocket client sees only the events of its own replica (deploy logs, status updates).
+  Set --set backend.wsFanout.enabled=true.
+{{- end }}

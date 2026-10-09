@@ -88,8 +88,9 @@ type revokeOptions struct {
 //     foreign-key cascade).
 //  3. If opts.deleteAPIKeys is set, delete all API keys of the user in one
 //     statement.
-//  4. Close the open WebSocket connections of the user on this replica.
-//     The block from step 1 refuses a reconnect.
+//  4. Close the open WebSocket connections of the user on this replica,
+//     and with WebSocket fan-out also on the other replicas. The block from
+//     step 1 refuses a reconnect.
 //
 // Error policy: log and continue. Each step runs even when an earlier step
 // fails, and the request still succeeds. The caller has already committed its

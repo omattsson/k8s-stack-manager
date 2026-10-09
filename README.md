@@ -336,6 +336,8 @@ Key environment variables (see `docker-compose.yml` for full list):
 | `LEADER_ELECTION_LEASE_NAME` | No | Name of the Lease (default: `k8s-stack-manager-workers`) |
 | `LEADER_ELECTION_NAMESPACE` | No | Namespace of the Lease (default: `POD_NAMESPACE`, else the service account namespace) |
 | `LEADER_ELECTION_LEASE_DURATION` / `_RENEW_DEADLINE` / `_RETRY_PERIOD` | No | Election timings (defaults: `15s` / `10s` / `2s`) |
+| `WS_FANOUT_ENABLED` | No | Share WebSocket messages between replicas through the `ws_events` table (default: `false`; the Helm chart sets `true`) |
+| `WS_FANOUT_POLL_INTERVAL` / `WS_FANOUT_RETENTION` | No | Fan-out poll interval and row retention (defaults: `500ms` / `5m`) |
 
 See [Sessions](WIKI.md#sessions) for how the session limits work together.
 

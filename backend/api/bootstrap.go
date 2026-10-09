@@ -32,6 +32,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"gorm.io/gorm"
 )
 
@@ -612,6 +613,40 @@ func buildLeaderWorkers(
 		QuotaMonitor:  quotaMonitor,
 		SecretMonitor: secretMonitor,
 	}
+}
+
+// buildWSFanout creates the WebSocket fan-out between replicas when
+// WS_FANOUT_ENABLED is true. It returns the fan-out (not started) and the
+// leader-only cleanup worker for ws_events. When fan-out is disabled it
+// returns nil for both: the hub then serves its own clients only and writes
+// nothing to the database.
+func buildWSFanout(cfg *config.Config, hub *websocket.Hub, repo models.WSEventRepository) (*websocket.Fanout, *leader.Worker) {
+	// Config validation requires an identity when fan-out is on.
+	if !cfg.WSFanout.Enabled || repo == nil || cfg.LeaderElection.Identity == "" {
+		return nil, nil
+	}
+	fanout := websocket.NewFanout(hub, repo, websocket.FanoutConfig{
+		Origin:       wsFanoutOrigin(cfg.LeaderElection.Identity),
+		PollInterval: cfg.WSFanout.PollInterval,
+	})
+	if fanout == nil {
+		return nil, nil
+	}
+	cleaner := websocket.NewEventCleaner(repo, cfg.WSFanout.Retention, websocket.DefaultFanoutCleanupInterval)
+	return fanout, &leader.Worker{Name: "ws-event-cleanup", Run: cleaner.Run}
+}
+
+// wsFanoutOrigin returns the fan-out origin of this process: the replica
+// identity (POD_NAME or host name) plus a random suffix. The suffix keeps two
+// processes with the same host name (local development, a restarted pod with
+// a reused name) from skipping each other's rows. The leader election keeps
+// the plain identity. The result fits the 253-character origin column.
+func wsFanoutOrigin(identity string) string {
+	const maxIdentity = 253 - 9 // "-" + 8 hex characters
+	if len(identity) > maxIdentity {
+		identity = identity[:maxIdentity]
+	}
+	return identity + "-" + uuid.New().String()[:8]
 }
 
 // leaderConfig converts the configuration to the leader package settings.
