@@ -199,6 +199,18 @@ func (m *mockChartConfigRepo) ListByDefinition(defID string) ([]models.ChartConf
 	return charts, nil
 }
 
+func (m *mockChartConfigRepo) CountByDefinitionIDs(defIDs []string) (map[string]int, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	out := make(map[string]int)
+	for _, id := range defIDs {
+		if n := len(m.items[id]); n > 0 {
+			out[id] = n
+		}
+	}
+	return out, nil
+}
+
 // ---- CleanupExecutor tests ----
 
 func TestNewCleanupExecutor(t *testing.T) {

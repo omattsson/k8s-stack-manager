@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import AdminUsers from '../index';
@@ -10,6 +10,8 @@ vi.mock('../../../../api/client', () => ({
     create: vi.fn(),
     delete: vi.fn(),
     resetPassword: vi.fn(),
+    disable: vi.fn(),
+    enable: vi.fn(),
   },
   apiKeyService: {
     list: vi.fn(),
@@ -318,6 +320,83 @@ describe('AdminUsers Page', () => {
       await waitFor(() => {
         expect(screen.queryByRole('heading', { name: 'Reset Password' })).not.toBeInTheDocument();
       });
+    });
+  });
+
+  describe('account status and sign-in method', () => {
+    const renderPage = () =>
+      render(
+        <MemoryRouter>
+          <AdminUsers />
+        </MemoryRouter>
+      );
+
+    it('shows the sign-in method and the status of each user', async () => {
+      (userService.list as ReturnType<typeof vi.fn>).mockResolvedValue([
+        mockUsers[0],
+        mockUsers[1],
+        { ...mockUsers[2], disabled: true },
+      ]);
+      renderPage();
+
+      const aliceRow = (await screen.findByText('alice')).closest('tr') as HTMLElement;
+      expect(within(aliceRow).getByText('Local')).toBeInTheDocument();
+      expect(within(aliceRow).getByText('Active')).toBeInTheDocument();
+      const bobRow = screen.getByText('oidc-bob').closest('tr') as HTMLElement;
+      expect(within(bobRow).getByText('SSO')).toBeInTheDocument();
+      expect(within(bobRow).getByText('Disabled')).toBeInTheDocument();
+    });
+
+    it('disables a user after confirmation', async () => {
+      const user = userEvent.setup();
+      (userService.list as ReturnType<typeof vi.fn>).mockResolvedValue(mockUsers);
+      (userService.disable as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+      renderPage();
+
+      await user.click(await screen.findByRole('button', { name: 'Disable user alice' }));
+      const dialog = await screen.findByRole('dialog');
+      expect(within(dialog).getByText(/cannot sign in/)).toBeInTheDocument();
+      await user.click(within(dialog).getByRole('button', { name: 'Disable' }));
+
+      await waitFor(() => {
+        expect(userService.disable).toHaveBeenCalledWith('2');
+      });
+      const aliceRow = screen.getByText('alice').closest('tr') as HTMLElement;
+      expect(await within(aliceRow).findByText('Disabled')).toBeInTheDocument();
+      expect(await within(aliceRow).findByRole('button', { name: 'Enable user alice' })).toBeInTheDocument();
+    });
+
+    it('enables a disabled user without a dialog', async () => {
+      const user = userEvent.setup();
+      (userService.list as ReturnType<typeof vi.fn>).mockResolvedValue([mockUsers[0], { ...mockUsers[1], disabled: true }]);
+      (userService.enable as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+      renderPage();
+
+      await user.click(await screen.findByRole('button', { name: 'Enable user alice' }));
+      await waitFor(() => {
+        expect(userService.enable).toHaveBeenCalledWith('2');
+      });
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+      const aliceRow = screen.getByText('alice').closest('tr') as HTMLElement;
+      expect(await within(aliceRow).findByText('Active')).toBeInTheDocument();
+    });
+
+    it('shows an error when the status change fails', async () => {
+      const user = userEvent.setup();
+      (userService.list as ReturnType<typeof vi.fn>).mockResolvedValue([mockUsers[0], { ...mockUsers[1], disabled: true }]);
+      (userService.enable as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('boom'));
+      renderPage();
+
+      await user.click(await screen.findByRole('button', { name: 'Enable user alice' }));
+      expect(await screen.findByText('Failed to enable user alice')).toBeInTheDocument();
+    });
+
+    it('does not allow a status change or delete on the own row', async () => {
+      (userService.list as ReturnType<typeof vi.fn>).mockResolvedValue(mockUsers);
+      renderPage();
+
+      expect(await screen.findByRole('button', { name: 'Disable user admin' })).toBeDisabled();
+      expect(screen.getByRole('button', { name: 'Delete user admin' })).toBeDisabled();
     });
   });
 });

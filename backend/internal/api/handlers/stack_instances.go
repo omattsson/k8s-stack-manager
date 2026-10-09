@@ -1450,6 +1450,7 @@ func (h *InstanceHandler) DeployInstance(c *gin.Context) {
 		Definition:         def,
 		Charts:             chartInfos,
 		LastDeployedValues: lastDeployedValuesJSON,
+		UserID:             middleware.GetUserIDFromContext(c),
 	}
 
 	logID, err := h.deployManager.Deploy(c.Request.Context(), req)

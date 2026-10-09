@@ -14,6 +14,7 @@ import (
 
 	"backend/internal/api/middleware"
 	"backend/internal/cluster"
+	"backend/internal/k8s"
 	"backend/internal/models"
 	"backend/pkg/dberrors"
 
@@ -621,7 +622,7 @@ func (h *ClusterHandler) SetDefaultCluster(c *gin.Context) {
 
 // GetClusterHealthSummary godoc
 // @Summary      Get cluster health summary
-// @Description  Returns node count, CPU/memory totals, and namespace count for a cluster.
+// @Description  Returns node count, CPU/memory totals, and namespace count for a cluster. requested_cpu and requested_memory are the sums of the pod requests of scheduled, unfinished pods (not real use); omitted when the pod list fails.
 // @Tags         clusters
 // @Produce      json
 // @Security     BearerAuth
@@ -661,6 +662,15 @@ func (h *ClusterHandler) GetClusterHealthSummary(c *gin.Context) {
 		slog.Error("Failed to get cluster summary", "error", err, logKeyClusterID, id)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to retrieve cluster health"})
 		return
+	}
+
+	// Best-effort: the pod requests need a list of all pods, so only this
+	// endpoint reads them (not the dashboard).
+	if requests, reqErr := k8sClient.GetClusterRequests(c.Request.Context()); reqErr != nil {
+		slog.Warn("Failed to sum cluster pod requests", "error", reqErr, logKeyClusterID, id)
+	} else {
+		summary.RequestedCPU = k8s.FormatCPUMillis(requests.CPUMillis)
+		summary.RequestedMemory = k8s.FormatMemoryBytes(requests.MemoryBytes)
 	}
 
 	c.JSON(http.StatusOK, summary)

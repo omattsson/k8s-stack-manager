@@ -884,7 +884,7 @@
                         "BearerAuth": []
                     }
                 ],
-                "description": "Lists all Kubernetes namespaces matching the stack-* pattern that have no corresponding stack instance in the database. Pass ?details=true to include resource counts and helm releases per namespace (expensive).",
+                "description": "Lists all Kubernetes namespaces matching the stack-* pattern that have no corresponding stack instance in the database. Pass ?details=true to include resource counts and helm releases per namespace (expensive). The managed field is true when the namespace has the label managed-by=k8s-stack-manager.",
                 "produces": [
                     "application/json"
                 ],
@@ -938,7 +938,7 @@
                         "BearerAuth": []
                     }
                 ],
-                "description": "Verifies the namespace is orphaned, uninstalls all Helm releases, and deletes the Kubernetes namespace",
+                "description": "Verifies the namespace is orphaned, uninstalls all Helm releases, and deletes the Kubernetes namespace. A namespace without the label managed-by=k8s-stack-manager is deleted only when the confirm query parameter is the full namespace name.",
                 "produces": [
                     "application/json"
                 ],
@@ -953,6 +953,12 @@
                         "name": "namespace",
                         "in": "path",
                         "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Full namespace name; required when the namespace is not managed by k8s-stack-manager",
+                        "name": "confirm",
+                        "in": "query"
                     }
                 ],
                 "responses": {
@@ -967,6 +973,15 @@
                     },
                     "400": {
                         "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {
@@ -2220,7 +2235,7 @@
                         "BearerAuth": []
                     }
                 ],
-                "description": "Returns node count, CPU/memory totals, and namespace count for a cluster.",
+                "description": "Returns node count, CPU/memory totals, and namespace count for a cluster. requested_cpu and requested_memory are the sums of the pod requests of scheduled, unfinished pods (not real use); omitted when the pod list fails.",
                 "produces": [
                     "application/json"
                 ],
@@ -3889,7 +3904,7 @@
         },
         "/api/v1/stack-definitions": {
             "get": {
-                "description": "List stack definitions with server-side pagination, newest first. The filters name and owner combine (AND); total is the number of definitions that match.\nowner is \"me\" (the authenticated user), a username, or a user ID. A value in UUID form is matched as a user ID first, then as a username. An unknown username or ID gives an empty list. Each definition includes owner_username (omitted when the owner no longer exists).\nThe list is paged (default pageSize 25); with owner=me or name the total is the real number of matches, not the page size.",
+                "description": "List stack definitions with server-side pagination, newest first. The filters name and owner combine (AND); total is the number of definitions that match.\nowner is \"me\" (the authenticated user), a username, or a user ID. A value in UUID form is matched as a user ID first, then as a username. An unknown username or ID gives an empty list. Each definition includes owner_username (omitted when the owner no longer exists) and chart_count (the number of charts; omitted when the count fails).\nThe list is paged (default pageSize 25); with owner=me or name the total is the real number of matches, not the page size.",
                 "produces": [
                     "application/json"
                 ],
@@ -10059,6 +10074,11 @@
         "handlers.DefinitionWithChartsResponse": {
             "type": "object",
             "properties": {
+                "chart_count": {
+                    "description": "ChartCount is the number of charts. It is computed, not stored; the\npaged list sets it (the list does not load the charts).",
+                    "type": "integer",
+                    "readOnly": true
+                },
                 "charts": {
                     "type": "array",
                     "items": {
@@ -10208,6 +10228,10 @@
                     "items": {
                         "type": "string"
                     }
+                },
+                "managed": {
+                    "description": "Managed is true when the namespace has the label\nmanaged-by=k8s-stack-manager. An unmanaged namespace can belong to\nanother team or tool; deleting it requires ?confirm=\u003cnamespace\u003e.",
+                    "type": "boolean"
                 },
                 "name": {
                     "type": "string"
@@ -11226,6 +11250,13 @@
                 "ready_node_count": {
                     "type": "integer"
                 },
+                "requested_cpu": {
+                    "description": "RequestedCPU and RequestedMemory are the sums of the pod requests\n(scheduler rule) of all scheduled pods that are not finished. They are\nnot real use (metrics-server). Only GET /clusters/:id/health/summary\nsets them (GetClusterRequests); empty when the pod list fails.",
+                    "type": "string"
+                },
+                "requested_memory": {
+                    "type": "string"
+                },
                 "total_cpu": {
                     "type": "string"
                 },
@@ -11309,6 +11340,10 @@
             "properties": {
                 "created_at": {
                     "type": "string"
+                },
+                "managed": {
+                    "description": "Managed is true when the namespace has the label\nmanaged-by=k8s-stack-manager (set by the deployer).",
+                    "type": "boolean"
                 },
                 "name": {
                     "type": "string"
@@ -11791,6 +11826,10 @@
                 "target_log_id": {
                     "type": "string"
                 },
+                "user_id": {
+                    "description": "UserID is the user who started a deploy. Per-user analytics count\ndeploys by this field, so the history stays after the instance is\ndeleted. Empty for system deploys and for other actions. Migration 49\nsets it for older deploy logs to the owner of the instance and adds\nthe composite index idx_deployment_logs_user_action (user_id, action,\nstarted_at, completed_at, status) for SummarizeByUsers.",
+                    "type": "string"
+                },
                 "values_snapshot": {
                     "type": "string"
                 }
@@ -12063,6 +12102,11 @@
         "models.StackDefinition": {
             "type": "object",
             "properties": {
+                "chart_count": {
+                    "description": "ChartCount is the number of charts. It is computed, not stored; the\npaged list sets it (the list does not load the charts).",
+                    "type": "integer",
+                    "readOnly": true
+                },
                 "created_at": {
                     "type": "string"
                 },

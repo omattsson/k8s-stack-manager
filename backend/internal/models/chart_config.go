@@ -24,6 +24,9 @@ type ChartConfigRepository interface {
 	Update(config *ChartConfig) error
 	Delete(id string) error
 	ListByDefinition(definitionID string) ([]ChartConfig, error)
+	// CountByDefinitionIDs returns the number of chart configs per definition
+	// in one query. Definitions without charts are not in the map.
+	CountByDefinitionIDs(definitionIDs []string) (map[string]int, error)
 	// DeleteByDefinition deletes all chart configs of a definition (no error
 	// when there are none).
 	DeleteByDefinition(definitionID string) error

@@ -50,6 +50,7 @@ const emptyCreateForm: CreateClusterRequest = {
   max_namespaces: 0,
   max_instances_per_user: 0,
   is_default: false,
+  use_in_cluster: false,
 };
 
 const healthColor = (status: string): 'success' | 'warning' | 'error' | 'default' => {
@@ -123,21 +124,28 @@ const Clusters = () => {
       max_namespaces: cluster.max_namespaces,
       max_instances_per_user: cluster.max_instances_per_user,
       is_default: cluster.is_default,
+      use_in_cluster: cluster.use_in_cluster ?? false,
     });
     setDialogError(null);
     setDialogOpen(true);
   };
 
   const handleSave = async () => {
-    if (!form.name.trim() || !form.api_server_url.trim()) {
-      setDialogError('Name and API Server URL are required');
+    const inCluster = form.use_in_cluster ?? false;
+    if (!form.name.trim()) {
+      setDialogError('Name is required');
+      return;
+    }
+    // An in-cluster cluster uses the backend service account and has no URL.
+    if (!inCluster && !form.api_server_url.trim()) {
+      setDialogError('API Server URL is required unless the cluster uses in-cluster configuration');
       return;
     }
     if (!isValidClusterUrl(form.api_server_url)) {
       setDialogError('API Server URL must start with https://');
       return;
     }
-    if (!editingCluster && !(form.kubeconfig_data ?? '').trim() && !(form.kubeconfig_path ?? '').trim()) {
+    if (!inCluster && !editingCluster && !(form.kubeconfig_data ?? '').trim() && !(form.kubeconfig_path ?? '').trim()) {
       setDialogError('Either kubeconfig data or kubeconfig path is required when creating a cluster');
       return;
     }
@@ -154,17 +162,20 @@ const Clusters = () => {
           max_namespaces: form.max_namespaces,
           max_instances_per_user: form.max_instances_per_user,
           is_default: form.is_default,
+          use_in_cluster: inCluster,
         };
-        if ((form.kubeconfig_data ?? '').trim()) {
+        if (!inCluster && (form.kubeconfig_data ?? '').trim()) {
           update.kubeconfig_data = form.kubeconfig_data;
         }
-        if ((form.kubeconfig_path ?? '').trim()) {
+        if (!inCluster && (form.kubeconfig_path ?? '').trim()) {
           update.kubeconfig_path = form.kubeconfig_path;
         }
         await clusterService.update(editingCluster.id, update);
         showSuccess('Cluster updated');
       } else {
-        await clusterService.create(form);
+        await clusterService.create(
+          inCluster ? { ...form, kubeconfig_data: '', kubeconfig_path: '' } : form,
+        );
         showSuccess('Cluster created');
       }
       setDialogOpen(false);
@@ -269,9 +280,13 @@ const Clusters = () => {
                   </TableCell>
                   <TableCell sx={{ display: { xs: 'none', md: 'table-cell' } }}>{cluster.region || '—'}</TableCell>
                   <TableCell sx={{ display: { xs: 'none', md: 'table-cell' } }}>
-                    <Typography variant="body2" sx={{ fontFamily: 'monospace', fontSize: '0.8rem' }}>
-                      {cluster.api_server_url}
-                    </Typography>
+                    {cluster.use_in_cluster && !cluster.api_server_url ? (
+                      <Chip label="in-cluster" size="small" variant="outlined" />
+                    ) : (
+                      <Typography variant="body2" sx={{ fontFamily: 'monospace', fontSize: '0.8rem' }}>
+                        {cluster.api_server_url}
+                      </Typography>
+                    )}
                   </TableCell>
                   <TableCell>
                     <Chip
@@ -339,38 +354,57 @@ const Clusters = () => {
               onChange={(e) => setForm({ ...form, description: e.target.value })}
               fullWidth
             />
+            <FormControlLabel
+              control={
+                <Checkbox
+                  checked={form.use_in_cluster ?? false}
+                  onChange={(e) => setForm({
+                    ...form,
+                    use_in_cluster: e.target.checked,
+                    ...(e.target.checked ? { kubeconfig_data: '', kubeconfig_path: '' } : {}),
+                  })}
+                />
+              }
+              label="Use in-cluster configuration (the backend service account)"
+            />
             <TextField
               label="API Server URL"
               value={form.api_server_url}
               onChange={(e) => setForm({ ...form, api_server_url: e.target.value })}
-              required
+              required={!form.use_in_cluster}
               fullWidth
               placeholder="https://my-cluster.example.com:6443"
               error={!!form.api_server_url.trim() && !isValidClusterUrl(form.api_server_url)}
-              helperText={form.api_server_url.trim() && !isValidClusterUrl(form.api_server_url) ? 'URL must start with https://' : ''}
+              helperText={form.api_server_url.trim() && !isValidClusterUrl(form.api_server_url)
+                ? 'URL must start with https://'
+                : form.use_in_cluster ? 'Optional with in-cluster configuration' : ''}
             />
-            <TextField
-              label={editingCluster ? 'Kubeconfig Data (leave blank to keep current)' : 'Kubeconfig Data'}
-              value={form.kubeconfig_data}
-              onChange={(e) => setForm({ ...form, kubeconfig_data: e.target.value, kubeconfig_path: '' })}
-              fullWidth
-              multiline
-              minRows={4}
-              maxRows={10}
-              placeholder="Paste kubeconfig YAML here"
-              disabled={!!(form.kubeconfig_path ?? '').trim()}
-              slotProps={{ htmlInput: { style: { fontFamily: 'monospace', fontSize: '0.85rem' } } }}
-              helperText="Paste kubeconfig content directly, or use the path field below"
-            />
-            <TextField
-              label={editingCluster ? 'Kubeconfig Path (leave blank to keep current)' : 'Kubeconfig Path'}
-              value={form.kubeconfig_path}
-              onChange={(e) => setForm({ ...form, kubeconfig_path: e.target.value, kubeconfig_data: '' })}
-              fullWidth
-              placeholder="/path/to/kubeconfig"
-              disabled={!!(form.kubeconfig_data ?? '').trim()}
-              helperText="Path to kubeconfig file on the backend server"
-            />
+            {!form.use_in_cluster && (
+              <>
+                <TextField
+                  label={editingCluster ? 'Kubeconfig Data (leave blank to keep current)' : 'Kubeconfig Data'}
+                  value={form.kubeconfig_data}
+                  onChange={(e) => setForm({ ...form, kubeconfig_data: e.target.value, kubeconfig_path: '' })}
+                  fullWidth
+                  multiline
+                  minRows={4}
+                  maxRows={10}
+                  placeholder="Paste kubeconfig YAML here"
+                  disabled={!!(form.kubeconfig_path ?? '').trim()}
+                  slotProps={{ htmlInput: { style: { fontFamily: 'monospace', fontSize: '0.85rem' } } }}
+                  helperText="Paste kubeconfig content directly, or use the path field below"
+                />
+                <TextField
+                  label={editingCluster ? 'Kubeconfig Path (leave blank to keep current)' : 'Kubeconfig Path'}
+                  value={form.kubeconfig_path}
+                  onChange={(e) => setForm({ ...form, kubeconfig_path: e.target.value, kubeconfig_data: '' })}
+                  fullWidth
+                  placeholder="/path/to/kubeconfig"
+                  disabled={!!(form.kubeconfig_data ?? '').trim()}
+                  helperText="Path to kubeconfig file on the backend server"
+                />
+              </>
+            )}
             <TextField
               label="Region"
               value={form.region}

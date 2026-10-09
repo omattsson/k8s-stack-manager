@@ -319,47 +319,30 @@ func (h *AnalyticsHandler) computeUserStats(ctx context.Context, users []models.
 	return h.computeUserStatsOptimized(ctx, users, ownerIDs)
 }
 
-// computeUserStatsOptimized uses batch aggregation queries.
+// computeUserStatsOptimized uses batch aggregation queries. The instance
+// count is the number of instances the user owns now. The deploy count and
+// the last activity come from the deploy logs the user started, so they stay
+// after an instance is deleted and a deploy on another user's instance counts
+// for the user who started it.
 func (h *AnalyticsHandler) computeUserStatsOptimized(ctx context.Context, users []models.User, ownerIDs []string) ([]UserStats, error) {
 	instanceCountsByOwner, err := h.instanceRepo.CountByOwnerIDs(ownerIDs)
 	if err != nil {
 		return nil, err
 	}
 
-	instanceIDsByOwner, err := h.instanceRepo.ListIDsByOwnerIDs(ownerIDs)
+	summaries, err := h.deployLogRepo.SummarizeByUsers(ctx, ownerIDs)
 	if err != nil {
 		return nil, err
 	}
 
-	var allInstanceIDs []string
-	for _, ids := range instanceIDsByOwner {
-		allInstanceIDs = append(allInstanceIDs, ids...)
-	}
-
-	summaries, err := h.collectDeploySummariesOrError(ctx, allInstanceIDs)
-	if err != nil {
-		return nil, err
-	}
-
-	userLogs := make(map[string]*userLogInfo)
-
-	for ownerID, instIDs := range instanceIDsByOwner {
-		for _, instID := range instIDs {
-			s, ok := summaries[instID]
-			if !ok {
-				continue
-			}
-			info := userLogs[ownerID]
-			if info == nil {
-				info = &userLogInfo{}
-				userLogs[ownerID] = info
-			}
-			info.deployCount += s.DeployCount
-			if s.LastDeployAt != nil && (info.lastActive == nil || s.LastDeployAt.After(*info.lastActive)) {
-				cp := *s.LastDeployAt
-				info.lastActive = &cp
-			}
+	userLogs := make(map[string]*userLogInfo, len(summaries))
+	for userID, s := range summaries {
+		info := &userLogInfo{deployCount: s.DeployCount}
+		if s.LastDeployAt != nil {
+			cp := *s.LastDeployAt
+			info.lastActive = &cp
 		}
+		userLogs[userID] = info
 	}
 
 	return h.buildUserStatsResult(users, instanceCountsByOwner, userLogs), nil

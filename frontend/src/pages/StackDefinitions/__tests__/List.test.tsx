@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import List from '../List';
@@ -118,6 +118,23 @@ describe('Stack Definitions List', () => {
     expect(definitionService.listAll).toHaveBeenCalledTimes(1);
     expect(templateService.listAll).toHaveBeenCalledTimes(1);
     (templateService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+  });
+
+  it('shows the chart count from the list response', async () => {
+    (definitionService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { ...mockDefinitions[0], chart_count: 8 },
+      { ...mockDefinitions[1], chart_count: 0 },
+    ]);
+    render(
+      <MemoryRouter>
+        <List />
+      </MemoryRouter>
+    );
+    const firstRow = (await screen.findByText('My Stack')).closest('tr') as HTMLElement;
+    expect(within(firstRow).getByText('8')).toBeInTheDocument();
+    const secondRow = screen.getByText('API Stack').closest('tr') as HTMLElement;
+    expect(within(secondRow).getByText('0')).toBeInTheDocument();
+    expect(within(secondRow).queryByText('—')).not.toBeInTheDocument();
   });
 
   it('shows Import button', async () => {

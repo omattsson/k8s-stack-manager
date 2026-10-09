@@ -274,6 +274,72 @@ func (r *GORMDeploymentLogRepository) SummarizeBatch(ctx context.Context, instan
 	return result, nil
 }
 
+// SummarizeByUsers returns deploy statistics per user who started the deploy
+// (DeploymentLog.UserID), over all deploy logs and also for deleted instances.
+// User IDs are processed in chunks of 500 to stay within MySQL's IN clause
+// limits. Users without deploys are not in the result.
+func (r *GORMDeploymentLogRepository) SummarizeByUsers(ctx context.Context, userIDs []string) (map[string]*models.DeployLogSummary, error) {
+	result := make(map[string]*models.DeployLogSummary, len(userIDs))
+	const chunkSize = 500
+	for start := 0; start < len(userIDs); start += chunkSize {
+		end := start + chunkSize
+		if end > len(userIDs) {
+			end = len(userIDs)
+		}
+		var rows []summarizeByUserRow
+		err := r.db.WithContext(ctx).Model(&models.DeploymentLog{}).
+			Select(`user_id,
+				COUNT(*) as deploy_count,
+				COALESCE(SUM(CASE WHEN status = ? THEN 1 ELSE 0 END), 0) as success_count,
+				COALESCE(SUM(CASE WHEN status = ? THEN 1 ELSE 0 END), 0) as error_count,
+				MAX(COALESCE(completed_at, started_at)) as last_deploy`,
+				models.DeployLogSuccess, models.DeployLogError).
+			Where("user_id IN ? AND action = ?", userIDs[start:end], models.DeployActionDeploy).
+			Group("user_id").
+			Find(&rows).Error
+		if err != nil {
+			return nil, dberrors.NewDatabaseError("summarize_by_users", err)
+		}
+		for _, row := range rows {
+			summary := &models.DeployLogSummary{
+				UserID:       row.UserID,
+				DeployCount:  row.DeployCount,
+				SuccessCount: row.SuccessCount,
+				ErrorCount:   row.ErrorCount,
+			}
+			if t, ok := parseAggregateTime(row.LastDeploy); ok {
+				summary.LastDeployAt = &t
+			}
+			result[row.UserID] = summary
+		}
+	}
+	return result, nil
+}
+
+// summarizeByUserRow holds the raw scan results of SummarizeByUsers.
+type summarizeByUserRow struct {
+	UserID       string
+	DeployCount  int
+	SuccessCount int
+	ErrorCount   int
+	LastDeploy   sql.NullString
+}
+
+// parseAggregateTime parses the result of MAX() over a datetime column,
+// scanned as text. MySQL (parseTime=true) returns a time.Time, which
+// database/sql converts to RFC 3339 text; SQLite returns its own text format.
+func parseAggregateTime(v sql.NullString) (time.Time, bool) {
+	if !v.Valid {
+		return time.Time{}, false
+	}
+	for _, layout := range []string{time.RFC3339Nano, "2006-01-02 15:04:05.999999999-07:00", "2006-01-02 15:04:05.999999999"} {
+		if t, err := time.Parse(layout, v.String); err == nil {
+			return t.UTC(), true
+		}
+	}
+	return time.Time{}, false
+}
+
 // summarizeBatchRow holds the raw scan results from the batch summary query.
 // Uses sql.NullTime for LastDeploy — MySQL with parseTime=true returns
 // time.Time natively for computed datetime columns.

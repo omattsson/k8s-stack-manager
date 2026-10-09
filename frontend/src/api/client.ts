@@ -1603,6 +1603,35 @@ export const userService = {
       throw error;
     }
   },
+  /**
+   * Disable a user. Admin only. Revokes the user's access tokens and refresh
+   * tokens; API keys stop working until the user is enabled again.
+   * @param id - User ID (not the caller's own ID)
+   * @returns Resolves when the user is disabled
+   * @see PUT /api/v1/users/:id/disable
+   */
+  disable: async (id: string): Promise<void> => {
+    try {
+      await api.put(`/api/v1/users/${id}/disable`);
+    } catch (error) {
+      console.error('Failed to disable user:', error);
+      throw error;
+    }
+  },
+  /**
+   * Enable a disabled user. Admin only. The user must log in again.
+   * @param id - User ID (not the caller's own ID)
+   * @returns Resolves when the user is enabled
+   * @see PUT /api/v1/users/:id/enable
+   */
+  enable: async (id: string): Promise<void> => {
+    try {
+      await api.put(`/api/v1/users/${id}/enable`);
+    } catch (error) {
+      console.error('Failed to enable user:', error);
+      throw error;
+    }
+  },
 };
 
 /** API key management service for per-user key CRUD. Maps to `/api/v1/users/:id/api-keys`. */
@@ -1658,12 +1687,15 @@ export const apiKeyService = {
 export const adminService = {
   /**
    * List Kubernetes namespaces not associated with any stack instance.
-   * @returns Array of orphaned namespaces
+   * @param details - When true (default), include resource counts and Helm releases per namespace
+   * @returns Array of orphaned namespaces; `managed` is true for namespaces labelled managed-by=k8s-stack-manager
    * @see GET /api/v1/admin/orphaned-namespaces
    */
-  listOrphanedNamespaces: async (): Promise<OrphanedNamespace[]> => {
+  listOrphanedNamespaces: async (details = true): Promise<OrphanedNamespace[]> => {
     try {
-      const response = await api.get('/api/v1/admin/orphaned-namespaces');
+      const response = await api.get('/api/v1/admin/orphaned-namespaces', {
+        params: details ? { details: 'true' } : undefined,
+      });
       return response.data;
     } catch (error) {
       console.error('Failed to fetch orphaned namespaces:', error);
@@ -1673,11 +1705,15 @@ export const adminService = {
   /**
    * Delete an orphaned namespace from the cluster.
    * @param namespace - Namespace name to delete
+   * @param confirm - Full namespace name; the API requires it when the namespace is not managed by k8s-stack-manager
+   * @returns Resolves when the namespace deletion has started
    * @see DELETE /api/v1/admin/orphaned-namespaces/:namespace
    */
-  deleteOrphanedNamespace: async (namespace: string): Promise<void> => {
+  deleteOrphanedNamespace: async (namespace: string, confirm?: string): Promise<void> => {
     try {
-      await api.delete(`/api/v1/admin/orphaned-namespaces/${namespace}`);
+      await api.delete(`/api/v1/admin/orphaned-namespaces/${encodeURIComponent(namespace)}`, {
+        params: confirm ? { confirm } : undefined,
+      });
     } catch (error) {
       console.error('Failed to delete orphaned namespace:', error);
       throw error;

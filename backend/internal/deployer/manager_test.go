@@ -319,6 +319,10 @@ func (m *mockDeployLogRepo) SummarizeBatch(ctx context.Context, instanceIDs []st
 	return result, nil
 }
 
+func (m *mockDeployLogRepo) SummarizeByUsers(_ context.Context, _ []string) (map[string]*models.DeployLogSummary, error) {
+	return map[string]*models.DeployLogSummary{}, nil
+}
+
 func (m *mockDeployLogRepo) CountByAction(_ context.Context, _ string) (int, error) {
 	return 0, nil
 }
@@ -520,6 +524,7 @@ func TestManager_Deploy_CreatesLogAndUpdatesStatus(t *testing.T) {
 		Instance:   inst,
 		Definition: &models.StackDefinition{ID: "def-1", Name: "test-def"},
 		Charts:     []ChartDeployInfo{}, // No charts = quick finish.
+		UserID:     "user-2",
 	}
 
 	logID, err := mgr.Deploy(context.Background(), req)
@@ -532,6 +537,7 @@ func TestManager_Deploy_CreatesLogAndUpdatesStatus(t *testing.T) {
 	assert.Equal(t, models.DeployActionDeploy, log.Action)
 	assert.Equal(t, models.DeployLogRunning, log.Status)
 	assert.Equal(t, inst.ID, log.StackInstanceID)
+	assert.Equal(t, "user-2", log.UserID, "the log records who started the deploy")
 
 	// Verify instance status was updated to deploying.
 	updated, err := instanceRepo.FindByID(inst.ID)

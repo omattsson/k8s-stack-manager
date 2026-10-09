@@ -164,6 +164,8 @@ type DeployRequest struct {
 	Definition         *models.StackDefinition
 	Charts             []ChartDeployInfo
 	LastDeployedValues string // JSON-serialized merged values for deploy preview
+	// UserID is the user who started the deploy; stored on the deploy log.
+	UserID string
 }
 
 // ChartDeployInfo holds chart configuration and pre-generated merged values.
@@ -375,6 +377,7 @@ func (m *Manager) Deploy(ctx context.Context, req DeployRequest) (string, error)
 		StartedAt:       now,
 		ChartVersions:   chartVersionsJSON(req.Charts),
 		Branch:          req.Instance.Branch,
+		UserID:          req.UserID,
 	}
 	m.logActions.Store(logID, deployLog.Action)
 	req.Instance.Status = models.StackStatusDeploying

@@ -25,6 +25,7 @@ import { analyticsService } from '../../api/client';
 import type { OverviewStats, TemplateStats, UserStats } from '../../types';
 import LoadingState from '../../components/LoadingState';
 import { Link } from 'react-router-dom';
+import { useAuth } from '../../context/AuthContext';
 
 const formatRelativeTime = (dateStr: string | null): string => {
   if (!dateStr) return 'N/A';
@@ -52,30 +53,59 @@ const successRateColor = (rate: number): 'success' | 'warning' | 'error' => {
 };
 
 const Analytics = () => {
+  const { user } = useAuth();
+  // GET /analytics/users is admin-only. Devops users see the overview and
+  // the template statistics only.
+  const isAdmin = user?.role === 'admin';
   const [overview, setOverview] = useState<OverviewStats | null>(null);
   const [templates, setTemplates] = useState<TemplateStats[]>([]);
   const [users, setUsers] = useState<UserStats[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [templatesError, setTemplatesError] = useState(false);
+  const [usersError, setUsersError] = useState(false);
+  const [allFailed, setAllFailed] = useState(false);
 
   const fetchData = useCallback(async () => {
     setLoading(true);
     setError(null);
-    try {
-      const [overviewData, templateData, userData] = await Promise.all([
-        analyticsService.getOverview(),
-        analyticsService.getTemplateStats(),
-        analyticsService.getUserStats(),
-      ]);
-      setOverview(overviewData);
-      setTemplates(templateData || []);
-      setUsers(userData || []);
-    } catch {
-      setError('Failed to load analytics data');
-    } finally {
-      setLoading(false);
+    setTemplatesError(false);
+    setUsersError(false);
+    // Load each section on its own, so that one failed request does not
+    // hide the sections that loaded.
+    const [overviewResult, templateResult, userResult] = await Promise.allSettled([
+      analyticsService.getOverview(),
+      analyticsService.getTemplateStats(),
+      isAdmin ? analyticsService.getUserStats() : Promise.resolve([] as UserStats[]),
+    ]);
+    if (overviewResult.status === 'fulfilled') {
+      setOverview(overviewResult.value);
+    } else {
+      setOverview(null);
     }
-  }, []);
+    if (templateResult.status === 'fulfilled') {
+      setTemplates(templateResult.value || []);
+    } else {
+      setTemplates([]);
+      setTemplatesError(true);
+    }
+    if (userResult.status === 'fulfilled') {
+      setUsers(userResult.value || []);
+    } else {
+      setUsers([]);
+      setUsersError(true);
+    }
+    const failed = overviewResult.status === 'rejected'
+      && templateResult.status === 'rejected'
+      && (!isAdmin || userResult.status === 'rejected');
+    setAllFailed(failed);
+    if (failed) {
+      setError('Failed to load analytics data');
+    } else if (overviewResult.status === 'rejected') {
+      setError('Failed to load the analytics overview');
+    }
+    setLoading(false);
+  }, [isAdmin]);
 
   useEffect(() => {
     fetchData();
@@ -105,177 +135,198 @@ const Analytics = () => {
 
       {loading && <LoadingState label="Loading analytics..." />}
 
-      {!loading && overview && (
+      {!loading && !allFailed && (
         <>
           {/* Overview Cards */}
-          <Grid container spacing={2} sx={{ mb: 4 }}>
-            <Grid size={{ xs: 12, sm: 6, md: 4 }}>
-              <Card>
-                <CardContent>
-                  <Typography color="text.secondary" gutterBottom>
-                    Templates
-                  </Typography>
-                  <Typography variant="h4">{overview.total_templates}</Typography>
-                </CardContent>
-              </Card>
+          {overview && (
+            <Grid container spacing={2} sx={{ mb: 4 }}>
+              <Grid size={{ xs: 12, sm: 6, md: 4 }}>
+                <Card>
+                  <CardContent>
+                    <Typography color="text.secondary" gutterBottom>
+                      Templates
+                    </Typography>
+                    <Typography variant="h4">{overview.total_templates}</Typography>
+                  </CardContent>
+                </Card>
+              </Grid>
+              <Grid size={{ xs: 12, sm: 6, md: 4 }}>
+                <Card>
+                  <CardContent>
+                    <Typography color="text.secondary" gutterBottom>
+                      Definitions
+                    </Typography>
+                    <Typography variant="h4">{overview.total_definitions}</Typography>
+                  </CardContent>
+                </Card>
+              </Grid>
+              <Grid size={{ xs: 12, sm: 6, md: 4 }}>
+                <Card>
+                  <CardContent>
+                    <Typography color="text.secondary" gutterBottom>
+                      Instances
+                    </Typography>
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                      <Typography variant="h4">{overview.total_instances}</Typography>
+                      <Chip
+                        label={`${overview.running_instances} running`}
+                        size="small"
+                        color="success"
+                      />
+                    </Box>
+                  </CardContent>
+                </Card>
+              </Grid>
+              <Grid size={{ xs: 12, sm: 6, md: 4 }}>
+                <Card>
+                  <CardContent>
+                    <Typography color="text.secondary" gutterBottom>
+                      Running Instances
+                    </Typography>
+                    <Typography variant="h4">{overview.running_instances}</Typography>
+                  </CardContent>
+                </Card>
+              </Grid>
+              <Grid size={{ xs: 12, sm: 6, md: 4 }}>
+                <Card>
+                  <CardContent>
+                    <Typography color="text.secondary" gutterBottom>
+                      Total Deploys
+                    </Typography>
+                    <Typography variant="h4">{overview.total_deploys}</Typography>
+                  </CardContent>
+                </Card>
+              </Grid>
+              <Grid size={{ xs: 12, sm: 6, md: 4 }}>
+                <Card>
+                  <CardContent>
+                    <Typography color="text.secondary" gutterBottom>
+                      Users
+                    </Typography>
+                    <Typography variant="h4">{overview.total_users}</Typography>
+                  </CardContent>
+                </Card>
+              </Grid>
             </Grid>
-            <Grid size={{ xs: 12, sm: 6, md: 4 }}>
-              <Card>
-                <CardContent>
-                  <Typography color="text.secondary" gutterBottom>
-                    Definitions
-                  </Typography>
-                  <Typography variant="h4">{overview.total_definitions}</Typography>
-                </CardContent>
-              </Card>
-            </Grid>
-            <Grid size={{ xs: 12, sm: 6, md: 4 }}>
-              <Card>
-                <CardContent>
-                  <Typography color="text.secondary" gutterBottom>
-                    Instances
-                  </Typography>
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                    <Typography variant="h4">{overview.total_instances}</Typography>
-                    <Chip
-                      label={`${overview.running_instances} running`}
-                      size="small"
-                      color="success"
-                    />
-                  </Box>
-                </CardContent>
-              </Card>
-            </Grid>
-            <Grid size={{ xs: 12, sm: 6, md: 4 }}>
-              <Card>
-                <CardContent>
-                  <Typography color="text.secondary" gutterBottom>
-                    Running Instances
-                  </Typography>
-                  <Typography variant="h4">{overview.running_instances}</Typography>
-                </CardContent>
-              </Card>
-            </Grid>
-            <Grid size={{ xs: 12, sm: 6, md: 4 }}>
-              <Card>
-                <CardContent>
-                  <Typography color="text.secondary" gutterBottom>
-                    Total Deploys
-                  </Typography>
-                  <Typography variant="h4">{overview.total_deploys}</Typography>
-                </CardContent>
-              </Card>
-            </Grid>
-            <Grid size={{ xs: 12, sm: 6, md: 4 }}>
-              <Card>
-                <CardContent>
-                  <Typography color="text.secondary" gutterBottom>
-                    Users
-                  </Typography>
-                  <Typography variant="h4">{overview.total_users}</Typography>
-                </CardContent>
-              </Card>
-            </Grid>
-          </Grid>
+          )}
 
           {/* Template Usage Table */}
           <Typography variant="h6" sx={{ mb: 1 }}>
             Template Usage
           </Typography>
-          <TableContainer component={Paper} sx={{ mb: 4 }}>
-            <Table size="small">
-              <TableHead>
-                <TableRow>
-                  <TableCell>Name</TableCell>
-                  <TableCell>Category</TableCell>
-                  <TableCell>Published</TableCell>
-                  <TableCell align="right">Definitions</TableCell>
-                  <TableCell align="right">Instances</TableCell>
-                  <TableCell align="right">Deploys</TableCell>
-                  <TableCell>Success Rate</TableCell>
-                </TableRow>
-              </TableHead>
-              <TableBody>
-                {templates.length === 0 ? (
+          {templatesError ? (
+            <Alert severity="error" sx={{ mb: 4 }}>Failed to load template statistics</Alert>
+          ) : (
+            <TableContainer component={Paper} sx={{ mb: 4 }}>
+              <Table size="small">
+                <TableHead>
                   <TableRow>
-                    <TableCell colSpan={7} align="center">
-                      <Typography color="text.secondary" sx={{ py: 2 }}>
-                        No template data available
-                      </Typography>
-                    </TableCell>
+                    <TableCell>Name</TableCell>
+                    <TableCell>Category</TableCell>
+                    <TableCell>Published</TableCell>
+                    <TableCell align="right">Definitions</TableCell>
+                    <TableCell align="right">Instances</TableCell>
+                    <TableCell align="right">Deploys</TableCell>
+                    <TableCell>Success Rate</TableCell>
                   </TableRow>
-                ) : (
-                  templates.map((t) => (
-                    <TableRow key={t.template_id}>
-                      <TableCell>{t.template_name}</TableCell>
-                      <TableCell>{t.category || '—'}</TableCell>
-                      <TableCell>
-                        <Chip
-                          label={t.is_published ? 'Published' : 'Draft'}
-                          size="small"
-                          color={t.is_published ? 'success' : 'default'}
-                          variant="outlined"
-                        />
+                </TableHead>
+                <TableBody>
+                  {templates.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={7} align="center">
+                        <Typography color="text.secondary" sx={{ py: 2 }}>
+                          No template data available
+                        </Typography>
                       </TableCell>
-                      <TableCell align="right">{t.definition_count}</TableCell>
-                      <TableCell align="right">{t.instance_count}</TableCell>
-                      <TableCell align="right">{t.deploy_count}</TableCell>
-                      <TableCell sx={{ minWidth: 150 }}>
-                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                          <LinearProgress
-                            variant="determinate"
-                            value={t.success_rate}
-                            color={successRateColor(t.success_rate)}
-                            sx={{ flexGrow: 1 }}
+                    </TableRow>
+                  ) : (
+                    templates.map((t) => (
+                      <TableRow key={t.template_id}>
+                        <TableCell>{t.template_name}</TableCell>
+                        <TableCell>{t.category || '—'}</TableCell>
+                        <TableCell>
+                          <Chip
+                            label={t.is_published ? 'Published' : 'Draft'}
+                            size="small"
+                            color={t.is_published ? 'success' : 'default'}
+                            variant="outlined"
                           />
-                          <Typography variant="body2" sx={{ minWidth: 40 }}>
-                            {t.success_rate.toFixed(0)}%
-                          </Typography>
-                        </Box>
-                      </TableCell>
-                    </TableRow>
-                  ))
-                )}
-              </TableBody>
-            </Table>
-          </TableContainer>
+                        </TableCell>
+                        <TableCell align="right">{t.definition_count}</TableCell>
+                        <TableCell align="right">{t.instance_count}</TableCell>
+                        <TableCell align="right">{t.deploy_count}</TableCell>
+                        <TableCell sx={{ minWidth: 150 }}>
+                          {t.deploy_count === 0 ? (
+                            <Typography variant="body2" color="text.secondary" aria-label="No deploys">
+                              —
+                            </Typography>
+                          ) : (
+                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                              <LinearProgress
+                                variant="determinate"
+                                value={t.success_rate}
+                                color={successRateColor(t.success_rate)}
+                                sx={{ flexGrow: 1 }}
+                                aria-label={`Success rate ${t.template_name}`}
+                              />
+                              <Typography variant="body2" sx={{ minWidth: 40 }}>
+                                {t.success_rate.toFixed(0)}%
+                              </Typography>
+                            </Box>
+                          )}
+                        </TableCell>
+                      </TableRow>
+                    ))
+                  )}
+                </TableBody>
+              </Table>
+            </TableContainer>
+          )}
 
-          {/* User Activity Table */}
-          <Typography variant="h6" sx={{ mb: 1 }}>
-            User Activity
-          </Typography>
-          <TableContainer component={Paper}>
-            <Table size="small">
-              <TableHead>
-                <TableRow>
-                  <TableCell>Username</TableCell>
-                  <TableCell align="right">Instances</TableCell>
-                  <TableCell align="right">Deploys</TableCell>
-                  <TableCell>Last Active</TableCell>
-                </TableRow>
-              </TableHead>
-              <TableBody>
-                {users.length === 0 ? (
-                  <TableRow>
-                    <TableCell colSpan={4} align="center">
-                      <Typography color="text.secondary" sx={{ py: 2 }}>
-                        No user data available
-                      </Typography>
-                    </TableCell>
-                  </TableRow>
-                ) : (
-                  users.map((u) => (
-                    <TableRow key={u.user_id}>
-                      <TableCell>{u.username}</TableCell>
-                      <TableCell align="right">{u.instance_count}</TableCell>
-                      <TableCell align="right">{u.deploy_count}</TableCell>
-                      <TableCell>{formatRelativeTime(u.last_active)}</TableCell>
-                    </TableRow>
-                  ))
-                )}
-              </TableBody>
-            </Table>
-          </TableContainer>
+          {/* User Activity Table (admin only) */}
+          {isAdmin && (
+            <>
+              <Typography variant="h6" sx={{ mb: 1 }}>
+                User Activity
+              </Typography>
+              {usersError ? (
+                <Alert severity="error">Failed to load user activity</Alert>
+              ) : (
+                <TableContainer component={Paper}>
+                  <Table size="small">
+                    <TableHead>
+                      <TableRow>
+                        <TableCell>Username</TableCell>
+                        <TableCell align="right">Instances</TableCell>
+                        <TableCell align="right">Deploys</TableCell>
+                        <TableCell>Last Active</TableCell>
+                      </TableRow>
+                    </TableHead>
+                    <TableBody>
+                      {users.length === 0 ? (
+                        <TableRow>
+                          <TableCell colSpan={4} align="center">
+                            <Typography color="text.secondary" sx={{ py: 2 }}>
+                              No user data available
+                            </Typography>
+                          </TableCell>
+                        </TableRow>
+                      ) : (
+                        users.map((u) => (
+                          <TableRow key={u.user_id}>
+                            <TableCell>{u.username}</TableCell>
+                            <TableCell align="right">{u.instance_count}</TableCell>
+                            <TableCell align="right">{u.deploy_count}</TableCell>
+                            <TableCell>{formatRelativeTime(u.last_active)}</TableCell>
+                          </TableRow>
+                        ))
+                      )}
+                    </TableBody>
+                  </Table>
+                </TableContainer>
+              )}
+            </>
+          )}
         </>
       )}
     </Box>

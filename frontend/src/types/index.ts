@@ -105,6 +105,8 @@ export interface StackDefinition {
   created_at: string;
   updated_at: string;
   charts?: ChartConfig[];
+  /** Number of charts; set by the paged list, which does not load the charts. */
+  chart_count?: number;
 }
 
 export interface ChartConfig {
@@ -370,6 +372,8 @@ export interface OrphanedNamespace {
   phase: string;
   resource_counts?: ResourceCounts;
   helm_releases: string[];
+  /** True when the namespace has the label managed-by=k8s-stack-manager. */
+  managed: boolean;
 }
 
 export interface Cluster {
@@ -382,6 +386,8 @@ export interface Cluster {
   max_namespaces: number;
   max_instances_per_user: number;
   is_default: boolean;
+  /** True when the backend uses its own service account (in-cluster config); api_server_url is then empty. */
+  use_in_cluster?: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -396,6 +402,7 @@ export interface CreateClusterRequest {
   max_namespaces: number;
   max_instances_per_user?: number;
   is_default: boolean;
+  use_in_cluster?: boolean;
 }
 
 export interface UpdateClusterRequest {
@@ -408,6 +415,7 @@ export interface UpdateClusterRequest {
   max_namespaces?: number;
   max_instances_per_user?: number;
   is_default?: boolean;
+  use_in_cluster?: boolean;
 }
 
 export interface ClusterTestResult {
@@ -454,6 +462,10 @@ export interface ClusterSummary {
   total_memory: string;
   allocatable_cpu: string;
   allocatable_memory: string;
+  /** Sum of the CPU requests of scheduled, unfinished pods (not real use). */
+  requested_cpu?: string;
+  /** Sum of the memory requests of scheduled, unfinished pods (not real use). */
+  requested_memory?: string;
   namespace_count: number;
 }
 

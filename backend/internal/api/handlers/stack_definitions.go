@@ -119,7 +119,7 @@ func NewDefinitionHandlerWithVersions(
 // ListDefinitions godoc
 // @Summary     List stack definitions
 // @Description List stack definitions with server-side pagination, newest first. The filters name and owner combine (AND); total is the number of definitions that match.
-// @Description owner is "me" (the authenticated user), a username, or a user ID. A value in UUID form is matched as a user ID first, then as a username. An unknown username or ID gives an empty list. Each definition includes owner_username (omitted when the owner no longer exists).
+// @Description owner is "me" (the authenticated user), a username, or a user ID. A value in UUID form is matched as a user ID first, then as a username. An unknown username or ID gives an empty list. Each definition includes owner_username (omitted when the owner no longer exists) and chart_count (the number of charts; omitted when the count fails).
 // @Description The list is paged (default pageSize 25); with owner=me or name the total is the real number of matches, not the page size.
 // @Tags        stack-definitions
 // @Produce     json
@@ -157,6 +157,7 @@ func (h *DefinitionHandler) ListDefinitions(c *gin.Context) {
 		ptrs[i] = &defs[i]
 	}
 	setDefinitionOwnerNames(h.userRepo, ptrs...)
+	h.setDefinitionChartCounts(defs)
 
 	c.JSON(http.StatusOK, gin.H{
 		"data":     defs,
@@ -164,6 +165,27 @@ func (h *DefinitionHandler) ListDefinitions(c *gin.Context) {
 		"page":     page,
 		"pageSize": pageSize,
 	})
+}
+
+// setDefinitionChartCounts sets ChartCount on each definition with one batch
+// query. On an error it logs and leaves the field out; the list still returns.
+func (h *DefinitionHandler) setDefinitionChartCounts(defs []models.StackDefinition) {
+	if len(defs) == 0 || h.chartRepo == nil {
+		return
+	}
+	ids := make([]string, len(defs))
+	for i := range defs {
+		ids[i] = defs[i].ID
+	}
+	counts, err := h.chartRepo.CountByDefinitionIDs(ids)
+	if err != nil {
+		slog.Warn("Failed to count charts for definition list", "error", err)
+		return
+	}
+	for i := range defs {
+		n := counts[defs[i].ID]
+		defs[i].ChartCount = &n
+	}
 }
 
 // CreateDefinition godoc

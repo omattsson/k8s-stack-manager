@@ -1105,6 +1105,23 @@ describe('userService', () => {
 
     expect(api.delete).toHaveBeenCalledWith('/api/v1/users/2');
   });
+
+  it('disable sends PUT to /api/v1/users/:id/disable', async () => {
+    mockApi.put.mockResolvedValueOnce(mockResponse(undefined));
+    await userService.disable('u1');
+    expect(mockApi.put).toHaveBeenCalledWith('/api/v1/users/u1/disable');
+  });
+
+  it('enable sends PUT to /api/v1/users/:id/enable', async () => {
+    mockApi.put.mockResolvedValueOnce(mockResponse(undefined));
+    await userService.enable('u1');
+    expect(mockApi.put).toHaveBeenCalledWith('/api/v1/users/u1/enable');
+  });
+
+  it('disable throws on error', async () => {
+    mockApi.put.mockRejectedValueOnce(new Error('Cannot change your own account status'));
+    await expect(userService.disable('me')).rejects.toThrow('Cannot change your own account status');
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -1155,8 +1172,17 @@ describe('adminService', () => {
 
     const result = await adminService.listOrphanedNamespaces();
 
-    expect(api.get).toHaveBeenCalledWith('/api/v1/admin/orphaned-namespaces');
+    expect(api.get).toHaveBeenCalledWith('/api/v1/admin/orphaned-namespaces', { params: { details: 'true' } });
     expect(result).toEqual(orphans);
+  });
+
+  it('listOrphanedNamespaces can skip the details', async () => {
+    const api = mockApi;
+    api.get.mockResolvedValueOnce(mockResponse([]));
+
+    await adminService.listOrphanedNamespaces(false);
+
+    expect(api.get).toHaveBeenCalledWith('/api/v1/admin/orphaned-namespaces', { params: undefined });
   });
 
   it('deleteOrphanedNamespace sends DELETE with namespace', async () => {
@@ -1165,7 +1191,18 @@ describe('adminService', () => {
 
     await adminService.deleteOrphanedNamespace('stack-old-user1');
 
-    expect(api.delete).toHaveBeenCalledWith('/api/v1/admin/orphaned-namespaces/stack-old-user1');
+    expect(api.delete).toHaveBeenCalledWith('/api/v1/admin/orphaned-namespaces/stack-old-user1', { params: undefined });
+  });
+
+  it('deleteOrphanedNamespace sends the confirm name for an unmanaged namespace', async () => {
+    const api = mockApi;
+    api.delete.mockResolvedValueOnce(mockResponse(undefined));
+
+    await adminService.deleteOrphanedNamespace('stack-foreign', 'stack-foreign');
+
+    expect(api.delete).toHaveBeenCalledWith('/api/v1/admin/orphaned-namespaces/stack-foreign', {
+      params: { confirm: 'stack-foreign' },
+    });
   });
 
   it('listOrphanedNamespaces throws on error', async () => {

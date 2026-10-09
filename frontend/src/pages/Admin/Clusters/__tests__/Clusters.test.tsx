@@ -447,4 +447,71 @@ describe('Clusters Page', () => {
       );
     });
   });
+
+  it('edits an in-cluster cluster without an API Server URL', async () => {
+    const user = userEvent.setup();
+    const inCluster = { ...mockClusters[0], id: 'c-in', name: 'local', api_server_url: '', use_in_cluster: true };
+    (clusterService.list as ReturnType<typeof vi.fn>).mockResolvedValue([inCluster]);
+    (clusterService.update as ReturnType<typeof vi.fn>).mockResolvedValue(inCluster);
+
+    render(
+      <MemoryRouter>
+        <NotificationProvider>
+          <Clusters />
+        </NotificationProvider>
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByText('in-cluster')).toBeInTheDocument();
+    await user.click(screen.getByLabelText('Edit local'));
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByRole('checkbox', { name: /in-cluster configuration/i })).toBeChecked();
+    expect(within(dialog).queryByLabelText(/Kubeconfig Data/)).not.toBeInTheDocument();
+
+    const maxField = within(dialog).getByRole('spinbutton', { name: /max instances per user/i });
+    await user.clear(maxField);
+    await user.type(maxField, '3');
+    await user.click(within(dialog).getByRole('button', { name: /update/i }));
+
+    await waitFor(() => {
+      expect(clusterService.update).toHaveBeenCalledWith(
+        'c-in',
+        expect.objectContaining({ max_instances_per_user: 3, use_in_cluster: true, api_server_url: '' }),
+      );
+    });
+    const sent = (clusterService.update as ReturnType<typeof vi.fn>).mock.calls[0][1];
+    expect(sent).not.toHaveProperty('kubeconfig_data');
+    expect(sent).not.toHaveProperty('kubeconfig_path');
+  });
+
+  it('still requires the API Server URL when in-cluster is off', async () => {
+    const user = userEvent.setup();
+    (clusterService.list as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+
+    render(
+      <MemoryRouter>
+        <NotificationProvider>
+          <Clusters />
+        </NotificationProvider>
+      </MemoryRouter>
+    );
+
+    await user.click(await screen.findByRole('button', { name: /add cluster/i }));
+    const dialog = await screen.findByRole('dialog');
+    await user.type(within(dialog).getByRole('textbox', { name: /^name/i }), 'remote');
+    await user.click(within(dialog).getByRole('button', { name: /create/i }));
+
+    expect(await within(dialog).findByText(/API Server URL is required unless/)).toBeInTheDocument();
+    expect(clusterService.create).not.toHaveBeenCalled();
+
+    // With in-cluster on, neither URL nor kubeconfig is required.
+    (clusterService.create as ReturnType<typeof vi.fn>).mockResolvedValue({});
+    await user.click(within(dialog).getByRole('checkbox', { name: /in-cluster configuration/i }));
+    await user.click(within(dialog).getByRole('button', { name: /create/i }));
+    await waitFor(() => {
+      expect(clusterService.create).toHaveBeenCalledWith(
+        expect.objectContaining({ name: 'remote', use_in_cluster: true, kubeconfig_data: '', kubeconfig_path: '' }),
+      );
+    });
+  });
 });

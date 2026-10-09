@@ -25,6 +25,13 @@ type DeploymentLog struct {
 	// deploy used. A rollback to this deploy installs the same versions.
 	// Empty for logs written before the column existed.
 	ChartVersions string `json:"chart_versions,omitempty" gorm:"type:text"`
+	// UserID is the user who started a deploy. Per-user analytics count
+	// deploys by this field, so the history stays after the instance is
+	// deleted. Empty for system deploys and for other actions. Migration 49
+	// sets it for older deploy logs to the owner of the instance and adds
+	// the composite index idx_deployment_logs_user_action (user_id, action,
+	// started_at, completed_at, status) for SummarizeByUsers.
+	UserID string `json:"user_id,omitempty" gorm:"size:36"`
 }
 
 // Deployment log action constants.
@@ -63,6 +70,8 @@ type DeploymentLogResult struct {
 type DeployLogSummary struct {
 	LastDeployAt *time.Time
 	InstanceID   string
+	// UserID is set by SummarizeByUsers; InstanceID stays empty there.
+	UserID       string
 	DeployCount  int
 	SuccessCount int
 	ErrorCount   int
@@ -90,6 +99,10 @@ type DeploymentLogRepository interface {
 	ListLatestByActions(ctx context.Context, instanceID string, actions []string, limit int) ([]DeploymentLog, error)
 	SummarizeByInstance(ctx context.Context, instanceID string) (*DeployLogSummary, error)
 	SummarizeBatch(ctx context.Context, instanceIDs []string) (map[string]*DeployLogSummary, error)
+	// SummarizeByUsers returns deploy statistics per user (DeploymentLog.UserID)
+	// over all deploy logs, also of deleted instances. Users without deploys
+	// are not in the map.
+	SummarizeByUsers(ctx context.Context, userIDs []string) (map[string]*DeployLogSummary, error)
 	CountByAction(ctx context.Context, action string) (int, error)
 	ListRecentGlobal(ctx context.Context, limit int) ([]DeploymentLogWithContext, error)
 }

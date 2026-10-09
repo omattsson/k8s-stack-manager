@@ -204,6 +204,44 @@ func (m *MockDeploymentLogRepository) SummarizeBatch(ctx context.Context, instan
 	return result, nil
 }
 
+func (m *MockDeploymentLogRepository) SummarizeByUsers(_ context.Context, userIDs []string) (map[string]*models.DeployLogSummary, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.err != nil {
+		return nil, m.err
+	}
+	result := make(map[string]*models.DeployLogSummary)
+	add := func(l models.DeploymentLog) {
+		if l.Action != models.DeployActionDeploy || l.UserID == "" || !containsString(userIDs, l.UserID) {
+			return
+		}
+		s := result[l.UserID]
+		if s == nil {
+			s = &models.DeployLogSummary{UserID: l.UserID}
+			result[l.UserID] = s
+		}
+		s.DeployCount++
+		switch l.Status {
+		case models.DeployLogSuccess:
+			s.SuccessCount++
+		case models.DeployLogError:
+			s.ErrorCount++
+		}
+		ts := l.StartedAt
+		if l.CompletedAt != nil {
+			ts = *l.CompletedAt
+		}
+		if s.LastDeployAt == nil || ts.After(*s.LastDeployAt) {
+			cp := ts
+			s.LastDeployAt = &cp
+		}
+	}
+	for _, l := range m.items {
+		add(*l)
+	}
+	return result, nil
+}
+
 func (m *MockDeploymentLogRepository) CountByAction(_ context.Context, _ string) (int, error) {
 	return 0, nil
 }

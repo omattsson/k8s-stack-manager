@@ -175,6 +175,31 @@ func TestListOrphanedNamespaces(t *testing.T) {
 		assert.Equal(t, "stack-orphan-bob", result[0].Name)
 		assert.Equal(t, []string{"nginx", "redis"}, result[0].HelmReleases)
 		assert.NotNil(t, result[0].ResourceCounts)
+		assert.False(t, result[0].Managed)
+	})
+
+	t.Run("reports the managed-by label", func(t *testing.T) {
+		t.Parallel()
+		clientset := fake.NewSimpleClientset()
+		ctx := context.Background()
+		for _, meta := range []metav1.ObjectMeta{managedNamespaceMeta("stack-ours-a"), {Name: "stack-theirs-a"}} {
+			_, err := clientset.CoreV1().Namespaces().Create(ctx, &corev1.Namespace{ObjectMeta: meta}, metav1.CreateOptions{})
+			require.NoError(t, err)
+		}
+
+		router := setupAdminRouter(k8s.NewClientFromInterface(clientset), &mockAdminHelmExecutor{}, NewMockStackInstanceRepository(), "admin")
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest(http.MethodGet, "/api/v1/admin/orphaned-namespaces", nil)
+		router.ServeHTTP(w, req)
+
+		require.Equal(t, http.StatusOK, w.Code)
+		var result []OrphanedNamespaceResponse
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &result))
+		managed := map[string]bool{}
+		for _, r := range result {
+			managed[r.Name] = r.Managed
+		}
+		assert.Equal(t, map[string]bool{"stack-ours-a": true, "stack-theirs-a": false}, managed)
 	})
 
 	t.Run("non-admin gets 403", func(t *testing.T) {
@@ -239,7 +264,7 @@ func TestListOrphanedNamespaces(t *testing.T) {
 		ctx := context.Background()
 
 		_, err := clientset.CoreV1().Namespaces().Create(ctx, &corev1.Namespace{
-			ObjectMeta: metav1.ObjectMeta{Name: "stack-orphan-nohelm"},
+			ObjectMeta: managedNamespaceMeta("stack-orphan-nohelm"),
 		}, metav1.CreateOptions{})
 		require.NoError(t, err)
 
@@ -321,6 +346,67 @@ func TestListOrphanedNamespaces(t *testing.T) {
 	})
 }
 
+// managedNamespaceMeta returns namespace metadata with the label that the
+// deployer sets on the namespaces it creates.
+func managedNamespaceMeta(name string) metav1.ObjectMeta {
+	return metav1.ObjectMeta{
+		Name:   name,
+		Labels: map[string]string{k8s.ManagedByLabelKey: k8s.ManagedByLabelValue},
+	}
+}
+
+func TestDeleteOrphanedNamespaceManagedGuard(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		namespace  string
+		labelled   bool
+		create     bool
+		query      string
+		wantStatus int
+		wantGone   bool
+	}{
+		{name: "managed namespace without confirm", namespace: "stack-managed-a", labelled: true, create: true, wantStatus: http.StatusOK, wantGone: true},
+		{name: "unmanaged namespace without confirm", namespace: "stack-foreign-a", create: true, wantStatus: http.StatusConflict},
+		{name: "unmanaged namespace with wrong confirm", namespace: "stack-foreign-b", create: true, query: "?confirm=stack-foreign", wantStatus: http.StatusConflict},
+		{name: "unmanaged namespace with full-name confirm", namespace: "stack-foreign-c", create: true, query: "?confirm=stack-foreign-c", wantStatus: http.StatusOK, wantGone: true},
+		{name: "missing namespace", namespace: "stack-missing-a", wantStatus: http.StatusNotFound},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			clientset := fake.NewSimpleClientset()
+			ctx := context.Background()
+			if tt.create {
+				meta := metav1.ObjectMeta{Name: tt.namespace}
+				if tt.labelled {
+					meta = managedNamespaceMeta(tt.namespace)
+				}
+				_, err := clientset.CoreV1().Namespaces().Create(ctx, &corev1.Namespace{ObjectMeta: meta}, metav1.CreateOptions{})
+				require.NoError(t, err)
+			}
+			helmExec := &mockAdminHelmExecutor{}
+			router := setupAdminRouter(k8s.NewClientFromInterface(clientset), helmExec, NewMockStackInstanceRepository(), "admin")
+
+			w := httptest.NewRecorder()
+			req, _ := http.NewRequest(http.MethodDelete, "/api/v1/admin/orphaned-namespaces/"+tt.namespace+tt.query, nil)
+			router.ServeHTTP(w, req)
+
+			assert.Equal(t, tt.wantStatus, w.Code)
+			_, getErr := clientset.CoreV1().Namespaces().Get(ctx, tt.namespace, metav1.GetOptions{})
+			if tt.wantGone {
+				assert.Error(t, getErr)
+			} else if tt.create {
+				assert.NoError(t, getErr, "namespace must not be deleted")
+				assert.Empty(t, helmExec.uninstallCalls, "no release may be uninstalled")
+			}
+		})
+	}
+}
+
 func TestDeleteOrphanedNamespace(t *testing.T) {
 	t.Parallel()
 
@@ -330,7 +416,7 @@ func TestDeleteOrphanedNamespace(t *testing.T) {
 		ctx := context.Background()
 
 		_, err := clientset.CoreV1().Namespaces().Create(ctx, &corev1.Namespace{
-			ObjectMeta: metav1.ObjectMeta{Name: "stack-orphan-bob"},
+			ObjectMeta: managedNamespaceMeta("stack-orphan-bob"),
 		}, metav1.CreateOptions{})
 		require.NoError(t, err)
 
@@ -459,7 +545,7 @@ func TestDeleteOrphanedNamespace(t *testing.T) {
 		ctx := context.Background()
 
 		_, err := clientset.CoreV1().Namespaces().Create(ctx, &corev1.Namespace{
-			ObjectMeta: metav1.ObjectMeta{Name: "stack-orphan-helmerr"},
+			ObjectMeta: managedNamespaceMeta("stack-orphan-helmerr"),
 		}, metav1.CreateOptions{})
 		require.NoError(t, err)
 
@@ -486,7 +572,7 @@ func TestDeleteOrphanedNamespace(t *testing.T) {
 		ctx := context.Background()
 
 		_, err := clientset.CoreV1().Namespaces().Create(ctx, &corev1.Namespace{
-			ObjectMeta: metav1.ObjectMeta{Name: "stack-orphan-unierr"},
+			ObjectMeta: managedNamespaceMeta("stack-orphan-unierr"),
 		}, metav1.CreateOptions{})
 		require.NoError(t, err)
 
@@ -516,7 +602,7 @@ func TestDeleteOrphanedNamespace(t *testing.T) {
 		ctx := context.Background()
 
 		_, err := clientset.CoreV1().Namespaces().Create(ctx, &corev1.Namespace{
-			ObjectMeta: metav1.ObjectMeta{Name: "stack-orphan-nohelm"},
+			ObjectMeta: managedNamespaceMeta("stack-orphan-nohelm"),
 		}, metav1.CreateOptions{})
 		require.NoError(t, err)
 

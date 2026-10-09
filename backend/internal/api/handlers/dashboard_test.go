@@ -52,6 +52,10 @@ func (m *dashboardMockDeployLogRepo) SummarizeByInstance(_ context.Context, _ st
 func (m *dashboardMockDeployLogRepo) SummarizeBatch(_ context.Context, _ []string) (map[string]*models.DeployLogSummary, error) {
 	return nil, nil
 }
+
+func (m *dashboardMockDeployLogRepo) SummarizeByUsers(_ context.Context, _ []string) (map[string]*models.DeployLogSummary, error) {
+	return nil, nil
+}
 func (m *dashboardMockDeployLogRepo) CountByAction(_ context.Context, _ string) (int, error) {
 	return 0, nil
 }

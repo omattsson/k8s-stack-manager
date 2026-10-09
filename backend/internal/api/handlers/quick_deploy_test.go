@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -511,4 +512,40 @@ func TestQuickDeploy_DuplicateInstanceName(t *testing.T) {
 	router.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusConflict, w.Code)
+}
+
+// TestQuickDeploy_RecordsCaller checks that the deploy log of a quick deploy
+// stores the user who started it (per-user analytics).
+func TestQuickDeploy_RecordsCaller(t *testing.T) {
+	t.Parallel()
+
+	tmplRepo := NewMockStackTemplateRepository()
+	tmplChartRepo := NewMockTemplateChartConfigRepository()
+	instRepo := NewMockStackInstanceRepository()
+	seedTemplate(t, tmplRepo, "t1", "My Template", "owner-1", true)
+	require.NoError(t, tmplChartRepo.Create(&models.TemplateChartConfig{
+		ID: "tc1", StackTemplateID: "t1", ChartName: "nginx", RepositoryURL: "oci://example.com/charts/nginx", DeployOrder: 1,
+	}))
+	logRepo := NewMockDeploymentLogRepository()
+	mgr := newTestManager(instRepo, logRepo)
+	registry := cluster.NewRegistryForTest("test-cluster", nil, &noopHelmExecutor{})
+
+	router := setupQuickDeployRouter(t,
+		tmplRepo, tmplChartRepo, NewMockStackDefinitionRepository(), NewMockChartConfigRepository(), instRepo,
+		NewMockChartBranchOverrideRepository(), NewMockValueOverrideRepository(), NewMockAuditLogRepository(),
+		mgr, registry, "uid-1", "alice", "user", 0,
+	)
+
+	body, _ := json.Marshal(quickDeployRequest{InstanceName: "my-instance"})
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest(http.MethodPost, "/api/v1/templates/t1/quick-deploy", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusAccepted, w.Code)
+	var resp quickDeployResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	log, err := logRepo.FindByID(context.Background(), resp.LogID)
+	require.NoError(t, err)
+	assert.Equal(t, "uid-1", log.UserID)
 }
