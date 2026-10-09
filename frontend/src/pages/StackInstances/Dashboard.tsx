@@ -220,10 +220,12 @@ const Dashboard = () => {
   const [bulkResultOpen, setBulkResultOpen] = useState(false);
   const [bulkResult, setBulkResult] = useState<BulkOperationResponse | null>(null);
 
+  // The page searches and filters in the browser, so it loads all instances
+  // (all pages), not only the first page of the API.
   const refreshInstances = useCallback(async () => {
     try {
       const [instData, recentData] = await Promise.all([
-        instanceService.list(),
+        instanceService.listAll(),
         instanceService.recent().catch(() => [] as StackInstance[]),
       ]);
       setInstances(instData || []);
@@ -237,7 +239,7 @@ const Dashboard = () => {
     const fetchData = async () => {
       try {
         const [instData, clsData, tmplData, favData, recentData] = await Promise.all([
-          instanceService.list(),
+          instanceService.listAll(),
           clusterService.list().catch(() => [] as Cluster[]),
           templateService.list().catch(() => [] as StackTemplate[]),
           favoriteService.list().catch(() => [] as UserFavorite[]),
@@ -719,6 +721,14 @@ const Dashboard = () => {
             ))}
           </Box>
         </Box>
+      )}
+
+      {instances.length > 0 && (
+        <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }} aria-live="polite">
+          {filtered.length === instances.length
+            ? `${instances.length} instance${instances.length === 1 ? '' : 's'}`
+            : `Showing ${filtered.length} of ${instances.length} instances`}
+        </Typography>
       )}
 
       {filtered.length === 0 ? (

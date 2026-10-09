@@ -42,7 +42,7 @@ const Compare = () => {
   useEffect(() => {
     const fetchInstances = async () => {
       try {
-        const data = await instanceService.list();
+        const data = await instanceService.listAll();
         setInstances(data || []);
       } catch {
         showError('Failed to load instance list');

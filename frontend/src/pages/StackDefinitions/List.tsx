@@ -42,11 +42,11 @@ const List = () => {
 
   const fetchDefinitions = useCallback(async () => {
     try {
-      const data = await definitionService.list();
+      const data = await definitionService.listAll();
       setDefinitions(data || []);
       // Fetch templates and favorites in parallel (best-effort)
       const [tmplList, favs] = await Promise.all([
-        templateService.list().catch(() => [] as StackTemplate[]),
+        templateService.listAll().catch(() => [] as StackTemplate[]),
         favoriteService.list().catch(() => []),
       ]);
       const tmplMap: Record<string, StackTemplate> = {};

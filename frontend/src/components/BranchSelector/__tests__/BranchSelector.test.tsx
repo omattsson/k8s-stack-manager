@@ -1,5 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
+import { useState } from 'react';
 import { render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import BranchSelector from '../index';
 
 vi.mock('../../../api/client', () => ({
@@ -53,7 +55,7 @@ describe('BranchSelector', () => {
     (gitService.branches as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('Network error'));
     render(<BranchSelector {...defaultProps} />);
     await waitFor(() => {
-      expect(screen.getByText('Could not load branches. Enter branch name manually.')).toBeInTheDocument();
+      expect(screen.getByText('Could not load branches. Enter the branch name and press Enter.')).toBeInTheDocument();
     });
   });
 
@@ -66,19 +68,147 @@ describe('BranchSelector', () => {
     });
   });
 
-  it('calls onChange when text is typed in error fallback input', async () => {
-    const { default: userEvent } = await import('@testing-library/user-event');
+  it('commits text in the error fallback input only on Enter or blur', async () => {
     const user = userEvent.setup();
     (gitService.branches as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('fail'));
     const onChange = vi.fn();
     render(<BranchSelector {...defaultProps} value="" onChange={onChange} />);
 
     await waitFor(() => {
-      expect(screen.getByText('Could not load branches. Enter branch name manually.')).toBeInTheDocument();
+      expect(screen.getByText('Could not load branches. Enter the branch name and press Enter.')).toBeInTheDocument();
     });
 
     const input = screen.getByLabelText('Branch');
     await user.type(input, 'feature/new');
-    expect(onChange).toHaveBeenCalled();
+    expect(onChange).not.toHaveBeenCalled();
+
+    await user.keyboard('{Enter}');
+    expect(onChange).toHaveBeenCalledTimes(1);
+    expect(onChange).toHaveBeenCalledWith('feature/new');
+  });
+
+  describe('typing, clearing and selecting', () => {
+    /** Parent that stores the committed branch, as the detail page does. */
+    const Controlled = ({ onCommit, initial = 'main' }: { onCommit: (b: string) => void; initial?: string }) => {
+      const [branch, setBranch] = useState(initial);
+      return (
+        <BranchSelector
+          repoUrl={defaultProps.repoUrl}
+          value={branch}
+          onChange={(b) => { onCommit(b); setBranch(b); }}
+        />
+      );
+    };
+
+    const setup = async (onCommit = vi.fn()) => {
+      (gitService.branches as ReturnType<typeof vi.fn>).mockResolvedValue(['main', 'develop', 'fix/login-page']);
+      const user = userEvent.setup();
+      render(<Controlled onCommit={onCommit} />);
+      await waitFor(() => {
+        expect(gitService.branches).toHaveBeenCalled();
+      });
+      return { user, onCommit, input: screen.getByRole('combobox') };
+    };
+
+    it('keeps the box empty after the user clears it', async () => {
+      const { user, onCommit, input } = await setup();
+
+      await user.clear(input);
+
+      expect(input).toHaveValue('');
+      expect(onCommit).not.toHaveBeenCalled();
+    });
+
+    it('does not commit while the user types', async () => {
+      const { user, onCommit, input } = await setup();
+
+      await user.clear(input);
+      await user.type(input, 'fix/lo');
+
+      expect(input).toHaveValue('fix/lo');
+      expect(onCommit).not.toHaveBeenCalled();
+      // Text that matches a branch does not show a warning while typing.
+      expect(screen.queryByText(/is not in the loaded branch list/)).not.toBeInTheDocument();
+    });
+
+    it('shows how to commit or cancel typed text', async () => {
+      const { user, input } = await setup();
+
+      await user.clear(input);
+      await user.type(input, 'dev');
+
+      expect(screen.getByText('Press Enter to use typed text. Escape restores the current branch.')).toBeInTheDocument();
+      await user.keyboard('{Escape}{Escape}');
+      expect(screen.queryByText(/Press Enter to use typed text/)).not.toBeInTheDocument();
+    });
+
+    it('commits exactly the selected option', async () => {
+      const { user, onCommit, input } = await setup();
+
+      await user.clear(input);
+      await user.type(input, 'fix/lo');
+      await user.click(await screen.findByRole('option', { name: 'fix/login-page' }));
+
+      expect(onCommit).toHaveBeenCalledTimes(1);
+      expect(onCommit).toHaveBeenCalledWith('fix/login-page');
+      expect(input).toHaveValue('fix/login-page');
+    });
+
+    it('restores the selected branch when the box is empty on blur', async () => {
+      const { user, onCommit, input } = await setup();
+
+      await user.clear(input);
+      await user.tab();
+
+      expect(input).toHaveValue('main');
+      expect(onCommit).not.toHaveBeenCalled();
+    });
+
+    it('restores the selected branch on Escape', async () => {
+      const { user, onCommit, input } = await setup();
+
+      await user.clear(input);
+      await user.type(input, 'dev');
+      await user.keyboard('{Escape}{Escape}');
+
+      expect(input).toHaveValue('main');
+      expect(onCommit).not.toHaveBeenCalled();
+    });
+
+    it('warns about free text that is not a branch and commits it on Enter', async () => {
+      const { user, onCommit, input } = await setup();
+
+      await user.clear(input);
+      await user.type(input, 'no-such-branch');
+
+      // No branch matches: the warning shows before the commit.
+      expect(screen.getByText('Branch "no-such-branch" is not in the loaded branch list.')).toBeInTheDocument();
+      expect(onCommit).not.toHaveBeenCalled();
+
+      await user.keyboard('{Enter}');
+
+      expect(onCommit).toHaveBeenCalledTimes(1);
+      expect(onCommit).toHaveBeenCalledWith('no-such-branch');
+      expect(screen.getByText('Branch "no-such-branch" is not in the loaded branch list.')).toBeInTheDocument();
+    });
+
+    it('warns after a blur commits a partial branch name', async () => {
+      const { user, onCommit, input } = await setup();
+
+      await user.clear(input);
+      await user.type(input, 'fix/lo');
+      await user.tab();
+
+      expect(onCommit).toHaveBeenCalledWith('fix/lo');
+      expect(screen.getByText('Branch "fix/lo" is not in the loaded branch list.')).toBeInTheDocument();
+    });
+
+    it('does not warn for a known branch', async () => {
+      await setup();
+      await waitFor(() => {
+        expect(screen.getByRole('combobox')).toHaveValue('main');
+      });
+      expect(screen.queryByText(/is not in the loaded branch list/)).not.toBeInTheDocument();
+    });
   });
 });

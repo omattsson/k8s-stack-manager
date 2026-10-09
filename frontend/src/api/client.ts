@@ -75,6 +75,83 @@ declare module 'axios' {
 
 const api = axios.create(axiosConfig);
 
+/** Largest page size that the paginated list endpoints accept. */
+export const MAX_PAGE_SIZE = 100;
+
+/** Upper limit of pages that fetchAllPages reads (protects against a server that never ends the list). */
+const MAX_PAGES = 100;
+
+/** Number of page requests that fetchAllPages sends at the same time after the first page. */
+const PAGE_FETCH_CONCURRENCY = 4;
+
+/**
+ * Read all pages of a paginated list endpoint (`page`/`pageSize`, envelope
+ * `{ data, total }`) with the largest page size. Page 1 gives `total`; the
+ * remaining pages load in parallel, PAGE_FETCH_CONCURRENCY at a time.
+ *
+ * The read stops when the rows reach `total`, when a page is shorter than the
+ * page size, when a batch of pages adds no new ID (for example a server that
+ * ignores `page`), or after MAX_PAGES pages.
+ *
+ * Note: offset paging is not a snapshot. When rows are created or deleted
+ * while the pages load, a row can be skipped or show twice. The result keeps
+ * the first row of each ID, so a row never shows twice; a skipped row shows on
+ * the next load.
+ * @param url - List endpoint, for example `/api/v1/stack-instances`
+ * @returns All rows of the list
+ */
+async function fetchAllPages<T extends { id: string }>(url: string): Promise<T[]> {
+  const fetchPage = async (page: number): Promise<{ data: T[]; total?: number; plain: boolean }> => {
+    const response = await api.get(url, { params: { page, pageSize: MAX_PAGE_SIZE } });
+    const body = response.data as { data?: T[]; total?: number } | T[] | null;
+    // An endpoint without pagination returns a plain array.
+    if (Array.isArray(body)) return { data: body, plain: true };
+    return {
+      data: Array.isArray(body?.data) ? body.data : [],
+      total: typeof body?.total === 'number' ? body.total : undefined,
+      plain: false,
+    };
+  };
+
+  const rows: T[] = [];
+  const seen = new Set<string>();
+  /** Add the new rows of a page. Returns the number of new rows. */
+  const addRows = (data: T[]): number => {
+    let added = 0;
+    for (const row of data) {
+      if (!seen.has(row.id)) {
+        seen.add(row.id);
+        rows.push(row);
+        added += 1;
+      }
+    }
+    return added;
+  };
+
+  const first = await fetchPage(1);
+  if (first.plain) return first.data;
+  addRows(first.data);
+  const total = first.total ?? rows.length;
+  if (first.data.length < MAX_PAGE_SIZE || rows.length >= total) return rows;
+
+  const lastPage = Math.min(Math.ceil(total / MAX_PAGE_SIZE), MAX_PAGES);
+  for (let start = 2; start <= lastPage; start += PAGE_FETCH_CONCURRENCY) {
+    const pages: number[] = [];
+    for (let page = start; page < start + PAGE_FETCH_CONCURRENCY && page <= lastPage; page += 1) {
+      pages.push(page);
+    }
+    const results = await Promise.all(pages.map(fetchPage));
+    let added = 0;
+    let shortPage = false;
+    for (const result of results) {
+      added += addRows(result.data);
+      if (result.data.length < MAX_PAGE_SIZE) shortPage = true;
+    }
+    if (added === 0 || shortPage || rows.length >= total) break;
+  }
+  return rows;
+}
+
 /** A downloaded file: the raw body and the file name to save it under. */
 export interface ValuesExport {
   blob: Blob;
@@ -302,6 +379,22 @@ export const templateService = {
       const response = await api.get('/api/v1/templates');
       const body = response.data;
       return Array.isArray(body) ? body : body.data ?? [];
+    } catch (error) {
+      console.error('Failed to fetch templates:', error);
+      throw error;
+    }
+  },
+  /**
+   * List all stack templates that the user may see. Reads all pages with the
+   * largest page size (the API returns 25 templates without `pageSize`).
+   * Offset paging can skip a row when templates change during the load (see
+   * fetchAllPages).
+   * @returns All stack templates
+   * @see GET /api/v1/templates?page=N&pageSize=100
+   */
+  listAll: async (): Promise<StackTemplate[]> => {
+    try {
+      return await fetchAllPages<StackTemplate>('/api/v1/templates');
     } catch (error) {
       console.error('Failed to fetch templates:', error);
       throw error;
@@ -620,6 +713,22 @@ export const definitionService = {
   },
 
   /**
+   * List all stack definitions. Reads all pages with the largest page size.
+   * Use it for pickers that must offer every definition. Offset paging can
+   * skip a row when definitions change during the load (see fetchAllPages).
+   * @returns All stack definitions
+   * @see GET /api/v1/stack-definitions?page=N&pageSize=100
+   */
+  listAll: async (): Promise<StackDefinition[]> => {
+    try {
+      return await fetchAllPages<StackDefinition>('/api/v1/stack-definitions');
+    } catch (error) {
+      console.error('Failed to fetch definitions:', error);
+      throw error;
+    }
+  },
+
+  /**
    * List stack definitions with full pagination metadata.
    * @param params - Optional pagination parameters (page, pageSize)
    * @returns Paginated response envelope with data, total, page, pageSize
@@ -832,6 +941,23 @@ export const instanceService = {
       }
       // Fallback for unexpected shapes.
       return Array.isArray(body) ? body : [];
+    } catch (error) {
+      console.error('Failed to fetch instances:', error);
+      throw error;
+    }
+  },
+
+  /**
+   * List all stack instances. Reads all pages with the largest page size.
+   * Use it where the page must see every instance (client-side search and
+   * filters, instance pickers). Offset paging can skip a row when instances
+   * change during the load (see fetchAllPages).
+   * @returns All stack instances
+   * @see GET /api/v1/stack-instances?page=N&pageSize=100
+   */
+  listAll: async (): Promise<StackInstance[]> => {
+    try {
+      return await fetchAllPages<StackInstance>('/api/v1/stack-instances');
     } catch (error) {
       console.error('Failed to fetch instances:', error);
       throw error;

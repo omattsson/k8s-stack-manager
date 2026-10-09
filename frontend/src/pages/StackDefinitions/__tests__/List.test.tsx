@@ -15,14 +15,14 @@ vi.mock('react-router-dom', async () => {
 
 vi.mock('../../../api/client', () => ({
   definitionService: {
-    list: vi.fn(),
+    listAll: vi.fn(),
     delete: vi.fn(),
     importDefinition: vi.fn(),
     exportDefinition: vi.fn(),
     checkUpgrade: vi.fn(),
   },
   templateService: {
-    list: vi.fn().mockResolvedValue([]),
+    listAll: vi.fn().mockResolvedValue([]),
   },
   favoriteService: {
     list: vi.fn().mockResolvedValue([]),
@@ -50,7 +50,7 @@ vi.mock('../../../context/AuthContext', () => ({
   }),
 }));
 
-import { definitionService } from '../../../api/client';
+import { definitionService, templateService } from '../../../api/client';
 
 const mockDefinitions = [
   {
@@ -65,7 +65,7 @@ const mockDefinitions = [
 
 describe('Stack Definitions List', () => {
   beforeEach(() => {
-    (definitionService.list as ReturnType<typeof vi.fn>).mockResolvedValue(mockDefinitions);
+    (definitionService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue(mockDefinitions);
   });
 
   afterEach(() => {
@@ -73,7 +73,7 @@ describe('Stack Definitions List', () => {
   });
 
   it('shows loading spinner initially', () => {
-    (definitionService.list as ReturnType<typeof vi.fn>).mockReturnValue(new Promise(() => {}));
+    (definitionService.listAll as ReturnType<typeof vi.fn>).mockReturnValue(new Promise(() => {}));
     render(
       <MemoryRouter>
         <List />
@@ -94,8 +94,34 @@ describe('Stack Definitions List', () => {
     expect(screen.getByText('API Stack')).toBeInTheDocument();
   });
 
+  it('loads all definitions and all templates for the update check', async () => {
+    const many = Array.from({ length: 30 }, (_, i) => ({
+      ...mockDefinitions[1],
+      id: `def-${i}`,
+      name: `Definition ${String(i).padStart(2, '0')}`,
+      source_template_id: i === 29 ? 'tpl-late' : undefined,
+      source_template_version: i === 29 ? '1.0.0' : undefined,
+    }));
+    (definitionService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue(many);
+    (templateService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { id: 'tpl-late', name: 'Late Template', version: '2.0.0' },
+    ]);
+    render(
+      <MemoryRouter>
+        <List />
+      </MemoryRouter>
+    );
+    await waitFor(() => {
+      expect(screen.getByText('Definition 29')).toBeInTheDocument();
+    });
+    expect(screen.getByText('Update available')).toBeInTheDocument();
+    expect(definitionService.listAll).toHaveBeenCalledTimes(1);
+    expect(templateService.listAll).toHaveBeenCalledTimes(1);
+    (templateService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+  });
+
   it('shows Import button', async () => {
-    (definitionService.list as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    (definitionService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue([]);
     render(
       <MemoryRouter>
         <List />
@@ -107,7 +133,7 @@ describe('Stack Definitions List', () => {
   });
 
   it('shows error on failure', async () => {
-    (definitionService.list as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('error'));
+    (definitionService.listAll as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('error'));
     render(
       <MemoryRouter>
         <List />
@@ -187,7 +213,7 @@ describe('Stack Definitions List', () => {
   });
 
   it('shows empty state when no definitions exist', async () => {
-    (definitionService.list as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    (definitionService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue([]);
     render(
       <MemoryRouter>
         <List />

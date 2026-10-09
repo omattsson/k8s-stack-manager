@@ -19,7 +19,7 @@ vi.mock('../../../api/client', () => ({
     create: vi.fn(),
   },
   definitionService: {
-    list: vi.fn(),
+    listAll: vi.fn(),
   },
   clusterService: {
     list: vi.fn().mockResolvedValue([]),
@@ -56,7 +56,7 @@ describe('StackInstances Form', () => {
   });
 
   it('shows loading spinner while fetching definitions', () => {
-    (definitionService.list as ReturnType<typeof vi.fn>).mockReturnValue(new Promise(() => {}));
+    (definitionService.listAll as ReturnType<typeof vi.fn>).mockReturnValue(new Promise(() => {}));
     render(
       <MemoryRouter>
         <Form />
@@ -66,7 +66,7 @@ describe('StackInstances Form', () => {
   });
 
   it('displays the form when definitions load', async () => {
-    (definitionService.list as ReturnType<typeof vi.fn>).mockResolvedValue(mockDefinitions);
+    (definitionService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue(mockDefinitions);
     render(
       <MemoryRouter>
         <Form />
@@ -79,7 +79,7 @@ describe('StackInstances Form', () => {
   });
 
   it('shows error alert when definitions fetch fails', async () => {
-    (definitionService.list as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('Network'));
+    (definitionService.listAll as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('Network'));
     render(
       <MemoryRouter>
         <Form />
@@ -91,8 +91,30 @@ describe('StackInstances Form', () => {
     });
   });
 
+  it('offers all definitions, also past the first API page', async () => {
+    const user = userEvent.setup();
+    const many = Array.from({ length: 30 }, (_, i) => ({
+      ...mockDefinitions[0],
+      id: `def-${i}`,
+      name: `Definition ${String(i).padStart(2, '0')}`,
+    }));
+    (definitionService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue(many);
+    render(
+      <MemoryRouter>
+        <Form />
+      </MemoryRouter>
+    );
+    await waitFor(() => {
+      expect(screen.getByText('Create Stack Instance')).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole('combobox', { name: /stack definition/i }));
+    expect(screen.getByRole('option', { name: /Definition 29/ })).toBeInTheDocument();
+    expect(definitionService.listAll).toHaveBeenCalledTimes(1);
+  });
+
   it('shows helper text about auto-generated namespace', async () => {
-    (definitionService.list as ReturnType<typeof vi.fn>).mockResolvedValue(mockDefinitions);
+    (definitionService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue(mockDefinitions);
     render(
       <MemoryRouter>
         <Form />
@@ -107,7 +129,7 @@ describe('StackInstances Form', () => {
 
   it('creates an instance on form submit', async () => {
     const user = userEvent.setup();
-    (definitionService.list as ReturnType<typeof vi.fn>).mockResolvedValue(mockDefinitions);
+    (definitionService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue(mockDefinitions);
     (instanceService.create as ReturnType<typeof vi.fn>).mockResolvedValue({
       id: 'inst-new',
       name: 'My App',
@@ -142,7 +164,7 @@ describe('StackInstances Form', () => {
 
   it('navigates home when Cancel is clicked', async () => {
     const user = userEvent.setup();
-    (definitionService.list as ReturnType<typeof vi.fn>).mockResolvedValue(mockDefinitions);
+    (definitionService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue(mockDefinitions);
     render(
       <MemoryRouter>
         <Form />
@@ -158,7 +180,7 @@ describe('StackInstances Form', () => {
 
   it('shows error on generic create failure', async () => {
     const user = userEvent.setup();
-    (definitionService.list as ReturnType<typeof vi.fn>).mockResolvedValue(mockDefinitions);
+    (definitionService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue(mockDefinitions);
     (instanceService.create as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('Server error'));
 
     render(
@@ -186,7 +208,7 @@ describe('StackInstances Form', () => {
 
   it('shows name conflict error with suggestions on 409 response', async () => {
     const user = userEvent.setup();
-    (definitionService.list as ReturnType<typeof vi.fn>).mockResolvedValue(mockDefinitions);
+    (definitionService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue(mockDefinitions);
 
     const axiosError = new Error('Conflict') as Error & {
       isAxiosError: boolean;
@@ -231,7 +253,7 @@ describe('StackInstances Form', () => {
 
   it('applies suggestion name when suggestion chip is clicked', async () => {
     const user = userEvent.setup();
-    (definitionService.list as ReturnType<typeof vi.fn>).mockResolvedValue(mockDefinitions);
+    (definitionService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue(mockDefinitions);
 
     const axiosError = new Error('Conflict') as Error & {
       isAxiosError: boolean;
@@ -282,7 +304,7 @@ describe('StackInstances Form', () => {
 
   it('shows 409 error without suggestions when no suggestions returned', async () => {
     const user = userEvent.setup();
-    (definitionService.list as ReturnType<typeof vi.fn>).mockResolvedValue(mockDefinitions);
+    (definitionService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue(mockDefinitions);
 
     const axiosError = new Error('Conflict') as Error & {
       isAxiosError: boolean;
@@ -325,7 +347,7 @@ describe('StackInstances Form', () => {
 
   it('updates branch when definition changes', async () => {
     const user = userEvent.setup();
-    (definitionService.list as ReturnType<typeof vi.fn>).mockResolvedValue(mockDefinitions);
+    (definitionService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue(mockDefinitions);
 
     render(
       <MemoryRouter>
@@ -349,7 +371,7 @@ describe('StackInstances Form', () => {
   });
 
   it('displays cluster selector when clusters are available', async () => {
-    (definitionService.list as ReturnType<typeof vi.fn>).mockResolvedValue(mockDefinitions);
+    (definitionService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue(mockDefinitions);
     (clusterService.list as ReturnType<typeof vi.fn>).mockResolvedValue([
       {
         id: 'c1',
@@ -383,7 +405,7 @@ describe('StackInstances Form', () => {
   });
 
   it('shows instance limit info when cluster with limit is selected', async () => {
-    (definitionService.list as ReturnType<typeof vi.fn>).mockResolvedValue(mockDefinitions);
+    (definitionService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue(mockDefinitions);
     (clusterService.list as ReturnType<typeof vi.fn>).mockResolvedValue([
       {
         id: 'c1',
@@ -411,7 +433,7 @@ describe('StackInstances Form', () => {
   });
 
   it('disables Create button when name is empty', async () => {
-    (definitionService.list as ReturnType<typeof vi.fn>).mockResolvedValue(mockDefinitions);
+    (definitionService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue(mockDefinitions);
     const user = userEvent.setup();
     render(
       <MemoryRouter>
@@ -431,7 +453,7 @@ describe('StackInstances Form', () => {
   });
 
   it('disables Create button when no definition is selected', async () => {
-    (definitionService.list as ReturnType<typeof vi.fn>).mockResolvedValue(mockDefinitions);
+    (definitionService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue(mockDefinitions);
     const user = userEvent.setup();
     render(
       <MemoryRouter>
@@ -451,7 +473,7 @@ describe('StackInstances Form', () => {
 
   it('shows the name rule and blocks an invalid name', async () => {
     const user = userEvent.setup();
-    (definitionService.list as ReturnType<typeof vi.fn>).mockResolvedValue(mockDefinitions);
+    (definitionService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue(mockDefinitions);
     render(
       <MemoryRouter>
         <Form />

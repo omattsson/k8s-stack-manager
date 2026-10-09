@@ -15,7 +15,7 @@ vi.mock('react-router-dom', async () => {
 
 vi.mock('../../../api/client', () => ({
   templateService: {
-    list: vi.fn(),
+    listAll: vi.fn(),
     publish: vi.fn(),
     unpublish: vi.fn(),
     quickDeploy: vi.fn(),
@@ -89,7 +89,7 @@ describe('Template Gallery', () => {
   });
 
   it('shows loading spinner initially', () => {
-    (templateService.list as ReturnType<typeof vi.fn>).mockReturnValue(new Promise(() => {}));
+    (templateService.listAll as ReturnType<typeof vi.fn>).mockReturnValue(new Promise(() => {}));
     render(
       <MemoryRouter>
         <Gallery />
@@ -99,7 +99,7 @@ describe('Template Gallery', () => {
   });
 
   it('displays published templates', async () => {
-    (templateService.list as ReturnType<typeof vi.fn>).mockResolvedValue([publishedTemplate]);
+    (templateService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue([publishedTemplate]);
     render(
       <MemoryRouter>
         <Gallery />
@@ -111,10 +111,28 @@ describe('Template Gallery', () => {
     });
   });
 
+  it('shows all templates, also past the first API page', async () => {
+    const many = Array.from({ length: 30 }, (_, i) => ({
+      ...publishedTemplate,
+      id: `tpl-${i}`,
+      name: `Template ${String(i).padStart(2, '0')}`,
+    }));
+    (templateService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue(many);
+    render(
+      <MemoryRouter>
+        <Gallery />
+      </MemoryRouter>
+    );
+    await waitFor(() => {
+      expect(screen.getByText('Template 29')).toBeInTheDocument();
+    });
+    expect(templateService.listAll).toHaveBeenCalledTimes(1);
+  });
+
   it('does not show "No description" when the list omits the description', async () => {
     const { description: _omitted, ...withoutDescription } = publishedTemplate;
     void _omitted;
-    (templateService.list as ReturnType<typeof vi.fn>).mockResolvedValue([
+    (templateService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue([
       withoutDescription,
       { ...apiTemplate, description: '' },
     ]);
@@ -131,7 +149,7 @@ describe('Template Gallery', () => {
   });
 
   it('shows error on fetch failure', async () => {
-    (templateService.list as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('error'));
+    (templateService.listAll as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('error'));
     render(
       <MemoryRouter>
         <Gallery />
@@ -143,7 +161,7 @@ describe('Template Gallery', () => {
   });
 
   it('shows empty state when no templates match', async () => {
-    (templateService.list as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    (templateService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue([]);
     render(
       <MemoryRouter>
         <Gallery />
@@ -156,7 +174,7 @@ describe('Template Gallery', () => {
 
   it('filters templates by search text', async () => {
     const user = userEvent.setup();
-    (templateService.list as ReturnType<typeof vi.fn>).mockResolvedValue([publishedTemplate, apiTemplate]);
+    (templateService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue([publishedTemplate, apiTemplate]);
     render(
       <MemoryRouter>
         <Gallery />
@@ -175,7 +193,7 @@ describe('Template Gallery', () => {
 
   it('filters templates by category chip', async () => {
     const user = userEvent.setup();
-    (templateService.list as ReturnType<typeof vi.fn>).mockResolvedValue([publishedTemplate, apiTemplate]);
+    (templateService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue([publishedTemplate, apiTemplate]);
     render(
       <MemoryRouter>
         <Gallery />
@@ -193,7 +211,7 @@ describe('Template Gallery', () => {
 
   it('switches between Published and My Templates tabs', async () => {
     const user = userEvent.setup();
-    (templateService.list as ReturnType<typeof vi.fn>).mockResolvedValue([publishedTemplate, draftTemplate]);
+    (templateService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue([publishedTemplate, draftTemplate]);
     render(
       <MemoryRouter>
         <Gallery />
@@ -213,7 +231,7 @@ describe('Template Gallery', () => {
   });
 
   it('shows Quick Deploy button on published templates', async () => {
-    (templateService.list as ReturnType<typeof vi.fn>).mockResolvedValue([publishedTemplate]);
+    (templateService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue([publishedTemplate]);
     render(
       <MemoryRouter>
         <Gallery />
@@ -226,7 +244,7 @@ describe('Template Gallery', () => {
 
   it('opens Quick Deploy dialog when button is clicked', async () => {
     const user = userEvent.setup();
-    (templateService.list as ReturnType<typeof vi.fn>).mockResolvedValue([publishedTemplate]);
+    (templateService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue([publishedTemplate]);
     render(
       <MemoryRouter>
         <Gallery />
@@ -243,7 +261,7 @@ describe('Template Gallery', () => {
   });
 
   it('shows Use Template button on published templates', async () => {
-    (templateService.list as ReturnType<typeof vi.fn>).mockResolvedValue([publishedTemplate]);
+    (templateService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue([publishedTemplate]);
     render(
       <MemoryRouter>
         <Gallery />
@@ -256,7 +274,7 @@ describe('Template Gallery', () => {
   });
 
   it('shows favorite button on templates', async () => {
-    (templateService.list as ReturnType<typeof vi.fn>).mockResolvedValue([publishedTemplate]);
+    (templateService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue([publishedTemplate]);
     render(
       <MemoryRouter>
         <Gallery />
@@ -270,7 +288,7 @@ describe('Template Gallery', () => {
 
   it('selects templates for bulk operations on All Drafts tab', async () => {
     const user = userEvent.setup();
-    (templateService.list as ReturnType<typeof vi.fn>).mockResolvedValue([draftTemplate]);
+    (templateService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue([draftTemplate]);
     render(
       <MemoryRouter>
         <Gallery />
@@ -295,7 +313,7 @@ describe('Template Gallery', () => {
 
   it('executes bulk delete on selected templates', async () => {
     const user = userEvent.setup();
-    (templateService.list as ReturnType<typeof vi.fn>).mockResolvedValue([draftTemplate]);
+    (templateService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue([draftTemplate]);
     (templateService.bulkDelete as ReturnType<typeof vi.fn>).mockResolvedValue({
       total: 1, succeeded: 1, failed: 0, results: [{ template_id: '2', template_name: 'Draft Template', status: 'success' }],
     });
@@ -332,7 +350,7 @@ describe('Template Gallery', () => {
 
   it('executes bulk publish on selected templates', async () => {
     const user = userEvent.setup();
-    (templateService.list as ReturnType<typeof vi.fn>).mockResolvedValue([draftTemplate]);
+    (templateService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue([draftTemplate]);
     (templateService.bulkPublish as ReturnType<typeof vi.fn>).mockResolvedValue({
       total: 1, succeeded: 1, failed: 0, results: [{ template_id: '2', template_name: 'Draft Template', status: 'success' }],
     });
@@ -366,7 +384,7 @@ describe('Template Gallery', () => {
 
   it('shows bulk result dialog after operation completes', async () => {
     const user = userEvent.setup();
-    (templateService.list as ReturnType<typeof vi.fn>).mockResolvedValue([draftTemplate]);
+    (templateService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue([draftTemplate]);
     (templateService.bulkDelete as ReturnType<typeof vi.fn>).mockResolvedValue({
       total: 1, succeeded: 1, failed: 0,
       results: [{ template_id: '2', template_name: 'Draft Template', status: 'success' }],
@@ -399,7 +417,7 @@ describe('Template Gallery', () => {
 
   it('shows select all checkbox on bulk-enabled tabs', async () => {
     const user = userEvent.setup();
-    (templateService.list as ReturnType<typeof vi.fn>).mockResolvedValue([draftTemplate]);
+    (templateService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue([draftTemplate]);
     render(
       <MemoryRouter>
         <Gallery />
@@ -422,7 +440,7 @@ describe('Template Gallery', () => {
   });
 
   it('shows All Drafts tab for devops/admin users', async () => {
-    (templateService.list as ReturnType<typeof vi.fn>).mockResolvedValue([publishedTemplate, draftTemplate]);
+    (templateService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue([publishedTemplate, draftTemplate]);
     render(
       <MemoryRouter>
         <Gallery />
@@ -435,7 +453,7 @@ describe('Template Gallery', () => {
   });
 
   it('displays template category chips', async () => {
-    (templateService.list as ReturnType<typeof vi.fn>).mockResolvedValue([publishedTemplate]);
+    (templateService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue([publishedTemplate]);
     render(
       <MemoryRouter>
         <Gallery />
@@ -451,7 +469,7 @@ describe('Template Gallery', () => {
   });
 
   it('shows template version badge', async () => {
-    (templateService.list as ReturnType<typeof vi.fn>).mockResolvedValue([publishedTemplate]);
+    (templateService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue([publishedTemplate]);
     render(
       <MemoryRouter>
         <Gallery />
@@ -463,7 +481,7 @@ describe('Template Gallery', () => {
   });
 
   it('shows favorite templates in favorites tab when favorites exist', async () => {
-    (templateService.list as ReturnType<typeof vi.fn>).mockResolvedValue([publishedTemplate]);
+    (templateService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue([publishedTemplate]);
     (favoriteService.list as ReturnType<typeof vi.fn>).mockResolvedValue([
       { id: 'f1', user_id: '1', entity_type: 'template', entity_id: '1' },
     ]);
@@ -479,7 +497,7 @@ describe('Template Gallery', () => {
 
   it('handles bulk operation error gracefully', async () => {
     const user = userEvent.setup();
-    (templateService.list as ReturnType<typeof vi.fn>).mockResolvedValue([draftTemplate]);
+    (templateService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue([draftTemplate]);
     (templateService.bulkDelete as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('Bulk op failed'));
     render(
       <MemoryRouter>
@@ -507,7 +525,7 @@ describe('Template Gallery', () => {
 
   it('displays templates with draft status on My Templates tab', async () => {
     const user = userEvent.setup();
-    (templateService.list as ReturnType<typeof vi.fn>).mockResolvedValue([draftTemplate]);
+    (templateService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue([draftTemplate]);
     render(
       <MemoryRouter>
         <Gallery />
@@ -524,7 +542,7 @@ describe('Template Gallery', () => {
   });
 
   it('shows Create Template button', async () => {
-    (templateService.list as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    (templateService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue([]);
     render(
       <MemoryRouter>
         <Gallery />
