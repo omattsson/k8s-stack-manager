@@ -833,7 +833,8 @@ func (h *AuthHandler) LogoutAll(c *gin.Context) {
 		}
 	}
 
-	// Close the open sockets of all sessions of the user on this replica.
+	// Close the open sockets of all sessions of the user on this replica
+	// (with WebSocket fan-out, also on the other replicas).
 	// The refresh tokens are revoked next, so a reconnect works only until
 	// the access token of a session expires.
 	if h.wsRevoker != nil {

@@ -30,6 +30,16 @@ data:
   {{- if not (hasKey .Values.backend.env "LEADER_ELECTION_LEASE_NAME") }}
   LEADER_ELECTION_LEASE_NAME: {{ include "k8s-stack-manager.leaderElection.leaseName" . | quote }}
   {{- end }}
+  {{- /* WebSocket fan-out: replicas share WebSocket messages through the ws_events table. An explicit backend.env value wins. */}}
+  {{- if not (hasKey .Values.backend.env "WS_FANOUT_ENABLED") }}
+  WS_FANOUT_ENABLED: {{ .Values.backend.wsFanout.enabled | toString | quote }}
+  {{- end }}
+  {{- if not (hasKey .Values.backend.env "WS_FANOUT_POLL_INTERVAL") }}
+  WS_FANOUT_POLL_INTERVAL: {{ .Values.backend.wsFanout.pollInterval | quote }}
+  {{- end }}
+  {{- if not (hasKey .Values.backend.env "WS_FANOUT_RETENTION") }}
+  WS_FANOUT_RETENTION: {{ .Values.backend.wsFanout.retention | quote }}
+  {{- end }}
   {{- if .Values.hooks.enabled }}
   HOOKS_CONFIG_FILE: "/etc/hooks/hooks.json"
   {{- end }}

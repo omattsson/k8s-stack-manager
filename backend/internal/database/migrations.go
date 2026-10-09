@@ -1052,6 +1052,11 @@ func (d *Database) AutoMigrate() error {
 	// replica does not warn again.
 	migrator.AddMigration(expiryWarnedAtMigration())
 
+	// Migration 46: ws_events. Each replica writes its WebSocket messages
+	// there; the other replicas poll the table and deliver them to their
+	// clients (WS_FANOUT_ENABLED).
+	migrator.AddMigration(wsEventsMigration())
+
 	// Run migrations
 	if err := migrator.MigrateUp(); err != nil {
 		return err
@@ -1362,6 +1367,27 @@ func expiryWarnedAtMigration() schema.Migration {
 			m := tx.Migrator()
 			if m.HasColumn(&models.StackInstance{}, "ExpiryWarnedAt") {
 				return m.DropColumn(&models.StackInstance{}, "ExpiryWarnedAt")
+			}
+			return nil
+		},
+	}
+}
+
+// wsEventsMigration is migration 46. It creates the ws_events table for the
+// WebSocket fan-out between replicas: an auto-increment id (the read position
+// of the pollers) and an index on created_at for the cleanup. It is a
+// function so tests can run its Down step.
+func wsEventsMigration() schema.Migration {
+	return schema.Migration{
+		Version:     "20261009000046",
+		Name:        "create_ws_events",
+		Description: "Create ws_events (WebSocket fan-out between replicas)",
+		Up: func(tx *gorm.DB) error {
+			return tx.AutoMigrate(&models.WSEvent{})
+		},
+		Down: func(tx *gorm.DB) error {
+			if tx.Migrator().HasTable(&models.WSEvent{}) {
+				return tx.Migrator().DropTable(&models.WSEvent{})
 			}
 			return nil
 		},

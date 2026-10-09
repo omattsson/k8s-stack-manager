@@ -227,6 +227,28 @@ func (c *LeaderElectionConfig) Validate() error {
 	return nil
 }
 
+// WSFanoutConfig holds the settings for the WebSocket fan-out between
+// replicas (table ws_events).
+type WSFanoutConfig struct {
+	PollInterval time.Duration // env: WS_FANOUT_POLL_INTERVAL (default 500ms)
+	Retention    time.Duration // env: WS_FANOUT_RETENTION (default 5m)
+	Enabled      bool          // env: WS_FANOUT_ENABLED (default false: one process, no ws_events writes)
+}
+
+// Validate checks the fan-out settings when fan-out is enabled.
+func (c *WSFanoutConfig) Validate() error {
+	if !c.Enabled {
+		return nil
+	}
+	if c.PollInterval < 50*time.Millisecond || c.PollInterval > time.Minute {
+		return errors.New("WS_FANOUT_POLL_INTERVAL must be between 50ms and 1m")
+	}
+	if c.Retention < time.Minute {
+		return errors.New("WS_FANOUT_RETENTION must be at least 1m")
+	}
+	return nil
+}
+
 // Config holds all configuration for the application
 //
 //nolint:govet // Struct field alignment has been optimized for better memory usage
@@ -248,6 +270,9 @@ type Config struct {
 
 	// LeaderElection selects the replica that runs the background workers.
 	LeaderElection LeaderElectionConfig
+
+	// WSFanout shares WebSocket messages between replicas.
+	WSFanout WSFanoutConfig
 }
 
 // AppConfig holds application-wide configuration
@@ -351,6 +376,15 @@ func (c *Config) Validate() error {
 
 	if err := c.LeaderElection.Validate(); err != nil {
 		return fmt.Errorf("leader election config: %w", err)
+	}
+
+	if err := c.WSFanout.Validate(); err != nil {
+		return fmt.Errorf("WebSocket fan-out config: %w", err)
+	}
+	// The fan-out marks its rows with the replica identity (as the leader
+	// election does) to skip its own rows.
+	if c.WSFanout.Enabled && c.LeaderElection.Identity == "" {
+		return errors.New("WebSocket fan-out config: POD_NAME (or a host name) is required when WS_FANOUT_ENABLED is true")
 	}
 
 	return nil
@@ -546,6 +580,7 @@ func LoadConfig() (*Config, error) {
 		SessionStore: SessionStoreConfig{Backend: strings.TrimSpace(strings.ToLower(getEnv("SESSION_STORE", "mysql")))},
 	}
 	cfg.LeaderElection = loadLeaderElectionConfig()
+	cfg.WSFanout = loadWSFanoutConfig()
 
 	// Validate the configuration
 	if err := cfg.Validate(); err != nil {
@@ -737,6 +772,14 @@ func loadLeaderElectionConfig() LeaderElectionConfig {
 		LeaseDuration: getEnvDuration("LEADER_ELECTION_LEASE_DURATION", 15*time.Second),
 		RenewDeadline: getEnvDuration("LEADER_ELECTION_RENEW_DEADLINE", 10*time.Second),
 		RetryPeriod:   getEnvDuration("LEADER_ELECTION_RETRY_PERIOD", 2*time.Second),
+	}
+}
+
+func loadWSFanoutConfig() WSFanoutConfig {
+	return WSFanoutConfig{
+		Enabled:      getEnvBool("WS_FANOUT_ENABLED", false),
+		PollInterval: getEnvDuration("WS_FANOUT_POLL_INTERVAL", 500*time.Millisecond),
+		Retention:    getEnvDuration("WS_FANOUT_RETENTION", 5*time.Minute),
 	}
 }
 

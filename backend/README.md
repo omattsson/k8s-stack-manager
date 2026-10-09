@@ -104,7 +104,10 @@ Key environment variables (see `docker-compose.yml` for full list):
 | `LEADER_ELECTION_LEASE_DURATION` | `15s` | Lease duration |
 | `LEADER_ELECTION_RENEW_DEADLINE` | `10s` | The leader stops its workers when it cannot renew for this time |
 | `LEADER_ELECTION_RETRY_PERIOD` | `2s` | Time between acquire and renew attempts |
-| `POD_NAME` | host name | Leader election identity |
+| `POD_NAME` | host name | Replica identity: leader election and the origin of `ws_events` rows |
+| `WS_FANOUT_ENABLED` | `false` | Share WebSocket messages between replicas through the `ws_events` table. `false`: no `ws_events` reads or writes (one replica) |
+| `WS_FANOUT_POLL_INTERVAL` | `500ms` | Time between two `ws_events` polls (50ms to 1m) |
+| `WS_FANOUT_RETENTION` | `5m` | The leader deletes `ws_events` rows older than this (at least 1m) |
 
 See [Sessions](../WIKI.md#sessions) for how the session limits work together.
 

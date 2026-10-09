@@ -25,10 +25,9 @@ backend:
     tag: ""  # Empty = uses Chart.AppVersion
     pullPolicy: IfNotPresent
   # Every replica serves the HTTP API and WebSocket clients. Only the leader
-  # replica (see leaderElection) runs the background workers. Note: until
-  # WebSocket events are shared between replicas, a WebSocket client sees
-  # only the events of its own replica (for example deploy logs of a deploy
-  # that runs on another replica, or status events from the leader).
+  # replica (see leaderElection) runs the background workers. The replicas
+  # share WebSocket events through the database (see wsFanout), so a client
+  # on any replica sees deploy logs and status events of all replicas.
   replicas: 2
   port: 8081
 
@@ -48,6 +47,26 @@ backend:
     enabled: true
     # Lease name. Empty = "<fullname>-workers".
     leaseName: ""
+
+  # WebSocket fan-out between replicas (env WS_FANOUT_*). Each replica
+  # delivers a WebSocket message to its own clients at once and writes one
+  # row to the ws_events table. Every replica polls the table each
+  # pollInterval and delivers the rows of the other replicas to its clients
+  # (delay up to about one pollInterval). The leader deletes rows older than
+  # retention every minute. Enabled by default: with one replica the cost is
+  # one small indexed query per pollInterval, and a scale-up needs no change.
+  # Set enabled: false only for a single replica that must not write to the
+  # database. The replica identity is POD_NAME (downward API).
+  # Note: the rows go to the MySQL binary log like all writes. The bundled
+  # MySQL 8 keeps binary logs for 30 days by default, so deploy log lines add
+  # to the binary log size on the MySQL volume for that time
+  # (binlog_expire_logs_seconds in mysql.config sets a shorter expiry).
+  wsFanout:
+    enabled: true
+    # Time between two polls (50ms to 1m).
+    pollInterval: 500ms
+    # Age after which the leader deletes rows (at least 1m).
+    retention: 5m
 
   resources:
     requests:
