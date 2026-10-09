@@ -17,6 +17,7 @@ import (
 	"backend/internal/config"
 	"backend/internal/models"
 	"backend/internal/sessionstore"
+	"backend/internal/websocket"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -40,6 +41,7 @@ type AuthHandler struct {
 	cfg              *config.AuthConfig
 	oidcCfg          *config.OIDCConfig
 	sessionStore     sessionstore.SessionStore
+	wsRevoker        websocket.ClientRevoker
 	loginCache       *cache.TTLCache[*models.User]
 }
 
@@ -60,6 +62,12 @@ func (h *AuthHandler) SetRefreshTokenRepo(repo models.RefreshTokenRepository) {
 // SetSessionStore sets the session store for token blocklist and OIDC state persistence.
 func (h *AuthHandler) SetSessionStore(store sessionstore.SessionStore) {
 	h.sessionStore = store
+}
+
+// SetWebSocketRevoker sets the hub that closes open WebSocket connections on
+// logout. nil: sockets close at access-token expiry only.
+func (h *AuthHandler) SetWebSocketRevoker(r websocket.ClientRevoker) {
+	h.wsRevoker = r
 }
 
 // loginCacheKey derives a cache key from the username, stored password hash,
@@ -756,18 +764,24 @@ func authProviderOf(user *models.User) string {
 // @Failure     401 {object} map[string]string
 // @Router      /api/v1/auth/logout [post]
 func (h *AuthHandler) Logout(c *gin.Context) {
-	// Best-effort blocklist of the access token. The route is public (no auth
-	// middleware) so we parse the Authorization header ourselves.
-	if h.sessionStore != nil {
+	// Best-effort blocklist of the access token and close of the sockets
+	// opened with it. The route is public (no auth middleware) so we parse
+	// the Authorization header ourselves.
+	if h.sessionStore != nil || h.wsRevoker != nil {
 		if authHeader := c.GetHeader("Authorization"); authHeader != "" {
 			if parts := strings.SplitN(authHeader, " ", 2); len(parts) == 2 && strings.EqualFold(parts[0], "Bearer") {
 				if claims, err := middleware.ValidateJWT(parts[1], h.cfg.JWTSecret); err == nil && claims.ID != "" {
-					expiry := time.Now().Add(h.cfg.AccessTokenExpiration)
-					if claims.ExpiresAt != nil {
-						expiry = claims.ExpiresAt.Time
+					if h.sessionStore != nil {
+						expiry := time.Now().Add(h.cfg.AccessTokenExpiration)
+						if claims.ExpiresAt != nil {
+							expiry = claims.ExpiresAt.Time
+						}
+						if blockErr := h.sessionStore.BlockToken(c.Request.Context(), claims.ID, expiry); blockErr != nil {
+							slog.Error("Failed to blocklist token on logout", "jti", claims.ID, "error", blockErr)
+						}
 					}
-					if blockErr := h.sessionStore.BlockToken(c.Request.Context(), claims.ID, expiry); blockErr != nil {
-						slog.Error("Failed to blocklist token on logout", "jti", claims.ID, "error", blockErr)
+					if h.wsRevoker != nil {
+						h.wsRevoker.DisconnectToken(claims.ID)
 					}
 				}
 			}
@@ -819,6 +833,13 @@ func (h *AuthHandler) LogoutAll(c *gin.Context) {
 		}
 	}
 
+	// Close the open sockets of all sessions of the user on this replica.
+	// The refresh tokens are revoked next, so a reconnect works only until
+	// the access token of a session expires.
+	if h.wsRevoker != nil {
+		h.wsRevoker.DisconnectUser(userID)
+	}
+
 	if h.refreshTokenRepo != nil {
 		if err := h.refreshTokenRepo.RevokeAllForUser(userID); err != nil {
 			slog.Error("Failed to revoke all refresh tokens", "user_id", userID, "error", err)
@@ -851,8 +872,14 @@ func (h *AuthHandler) CleanupExpiredTokens() {
 // new refresh token belongs to.
 type refreshSession struct {
 	startedAt time.Time // login time; the absolute lifetime counts from here
-	familyID  string    // ID of the first token of the session; the "sid" claim
-	isNew     bool      // true at login: the first token uses familyID as its ID
+	// lastActivity is the LastActivity of the rotated token. The new token
+	// keeps it, so a refresh does not count as activity for the idle limit:
+	// idle time counts from the last authenticated request (TouchFamily), not
+	// from the last refresh. Zero at login (and for legacy rows): the new
+	// token uses now.
+	lastActivity time.Time
+	familyID     string // ID of the first token of the session; the "sid" claim
+	isNew        bool   // true at login: the first token uses familyID as its ID
 }
 
 // newRefreshSession starts a new session at login.
@@ -860,9 +887,10 @@ func newRefreshSession() refreshSession {
 	return refreshSession{familyID: uuid.New().String(), startedAt: time.Now().UTC(), isNew: true}
 }
 
-// continuedSession keeps the family and the start time of a rotated token.
+// continuedSession keeps the family, the start time and the last activity of
+// a rotated token.
 func continuedSession(rt *models.RefreshToken) refreshSession {
-	return refreshSession{familyID: rt.SessionFamily(), startedAt: rt.SessionStart()}
+	return refreshSession{familyID: rt.SessionFamily(), startedAt: rt.SessionStart(), lastActivity: rt.LastActivity}
 }
 
 // sessionDeadline returns the end of a session that started at start, or the
@@ -927,6 +955,10 @@ func createRefreshToken(c *gin.Context, repo models.RefreshTokenRepository, cfg 
 	if startedAt.IsZero() {
 		startedAt = now
 	}
+	lastActivity := sess.lastActivity
+	if lastActivity.IsZero() {
+		lastActivity = now
+	}
 	expiresAt := now.Add(cfg.RefreshTokenExpiration)
 	if deadline := sessionDeadline(cfg, startedAt); !deadline.IsZero() && deadline.Before(expiresAt) {
 		expiresAt = deadline
@@ -938,7 +970,7 @@ func createRefreshToken(c *gin.Context, repo models.RefreshTokenRepository, cfg 
 		FamilyID:         familyID,
 		TokenHash:        hashRefreshToken(rawToken),
 		ExpiresAt:        expiresAt,
-		LastActivity:     now,
+		LastActivity:     lastActivity,
 		CreatedAt:        now,
 		SessionStartedAt: startedAt,
 		UserAgent:        truncate(c.GetHeader("User-Agent"), 500),

@@ -482,6 +482,78 @@ func TestSessionActivity_AuthenticatedRequestKeepsSessionAlive(t *testing.T) {
 	assert.Equal(t, http.StatusOK, env.postRefresh(raw0).Code)
 }
 
+// A refresh is not activity: the rotated token keeps the LastActivity of the
+// old token. Only an authenticated request moves it forward (TouchFamily).
+func TestRefresh_RotationKeepsLastActivity(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		// lastActivity is the age of the last request when the first refresh runs.
+		lastActivity time.Duration
+		// request makes an authenticated request with the new access token
+		// after the first refresh.
+		request bool
+		// elapsed is the time that passes between the two refreshes.
+		elapsed      time.Duration
+		wantSecond   int
+		wantErrorMsg string
+	}{
+		{name: "refresh after 20 min idle, second refresh 5 min later", lastActivity: 20 * time.Minute, elapsed: 5 * time.Minute, wantSecond: http.StatusOK},
+		{name: "refresh, then idle beyond the timeout since the last request", lastActivity: 29 * time.Minute, elapsed: 2 * time.Minute, wantSecond: http.StatusUnauthorized, wantErrorMsg: "Session idle timeout exceeded"},
+		{name: "authenticated request between the refreshes", lastActivity: 29 * time.Minute, request: true, elapsed: 2 * time.Minute, wantSecond: http.StatusOK},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			env := newSessionTestEnv(t)
+			env.seedUser(t, "local", "")
+			lastRequest := time.Now().UTC().Add(-tt.lastActivity)
+			raw := env.seedToken(t, "rt-rotate", func(rt *models.RefreshToken) { rt.LastActivity = lastRequest })
+
+			w := env.postRefresh(raw)
+			require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+			cookie := findRefreshCookie(w)
+			require.NotNil(t, cookie)
+			rotated := env.tokenByRaw(t, cookie.Value)
+			assert.True(t, rotated.LastActivity.Equal(lastRequest),
+				"rotated token LastActivity = %v, want the old value %v (not now)", rotated.LastActivity, lastRequest)
+
+			if tt.request {
+				var resp RefreshResponse
+				require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+				require.Equal(t, http.StatusOK, env.getMe(resp.Token).Code)
+				assert.Eventually(t, func() bool {
+					return time.Since(env.tokenByRaw(t, cookie.Value).LastActivity) < 5*time.Second
+				}, 2*time.Second, 10*time.Millisecond, "the request must update last_activity")
+			}
+
+			// Let time pass: move the stored times back by elapsed.
+			env.updateToken(t, cookie.Value, func(rt *models.RefreshToken) {
+				rt.LastActivity = rt.LastActivity.Add(-tt.elapsed)
+				rt.CreatedAt = rt.CreatedAt.Add(-tt.elapsed)
+			})
+
+			second := env.postRefresh(cookie.Value)
+			assert.Equal(t, tt.wantSecond, second.Code, second.Body.String())
+			if tt.wantErrorMsg != "" {
+				assert.Contains(t, second.Body.String(), tt.wantErrorMsg)
+			}
+		})
+	}
+}
+
+// A login starts the idle clock at now.
+func TestLogin_RefreshTokenLastActivityIsNow(t *testing.T) {
+	t.Parallel()
+	env := newSessionTestEnv(t)
+	env.seedUser(t, "local", "")
+	_, raw := env.login(t)
+	assert.WithinDuration(t, time.Now().UTC(), env.tokenByRaw(t, raw).LastActivity, 5*time.Second)
+}
+
 // ---- #462: absolute session lifetime ----
 
 func TestRefresh_SessionMaxLifetime(t *testing.T) {

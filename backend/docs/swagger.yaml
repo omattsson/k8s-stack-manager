@@ -125,6 +125,56 @@ definitions:
       previous_values:
         type: string
     type: object
+  handlers.CloneInstanceResponse:
+    properties:
+      branch:
+        type: string
+      cluster_id:
+        type: string
+      created_at:
+        type: string
+      error_message:
+        type: string
+      expires_at:
+        type: string
+      id:
+        type: string
+      last_deployed_at:
+        type: string
+      name:
+        type: string
+      namespace:
+        type: string
+      owner_id:
+        type: string
+      stack_definition_id:
+        type: string
+      status:
+        type: string
+      stopped_at:
+        description: |-
+          StoppedAt is the time the last successful stop finished. It is nil
+          when the instance is not stopped. A deploy or a clean clears it.
+          Cleanup policies use it for the stopped_days condition.
+        type: string
+      ttl_minutes:
+        type: integer
+      updated_at:
+        type: string
+      values_drift:
+        description: |-
+          ValuesDrift is computed, not stored. GET /stack-instances/{id} sets it
+          to true when the running values come from a successful rollback and
+          the stored overrides produce different values (the next deploy undoes
+          the rollback). List responses do not compute it.
+        type: boolean
+      warning:
+        description: |-
+          Warning is set when the clone did not get the quota override of the
+          source (above the cluster quota, or the cluster quota lookup failed).
+          The clone then uses the cluster quota.
+        type: string
+    type: object
   handlers.ClusterSummary:
     properties:
       id:
@@ -5497,7 +5547,7 @@ paths:
       - application/json
       description: |-
         Create a new draft stack instance as a copy of an existing one. The clone belongs to the caller and uses the cluster and definition of the source.
-        It copies the TTL (unless ttl_minutes is given), the value overrides and the branch overrides. It copies the instance quota override only when the caller owns the source or is admin or devops.
+        It copies the TTL (unless ttl_minutes is given), the value overrides and the branch overrides. It copies the instance quota override only when the caller owns the source or is admin or devops; for an owner without the admin or devops role only when the override stays within the cluster quota. When it is not copied for that reason (or the cluster quota lookup fails), the response has a warning and the clone uses the cluster quota.
         The body is optional. Without a name, the server picks the first free name of <source>-copy, <source>-copy-2, ... (the namespace stack-<name>-<owner> must be free). A given name must be a DNS label (lowercase a-z, 0-9, '-', start and end alphanumeric, at most 50 characters).
       parameters:
       - description: Source instance ID
@@ -5516,7 +5566,7 @@ paths:
         "201":
           description: Created
           schema:
-            $ref: '#/definitions/models.StackInstance'
+            $ref: '#/definitions/handlers.CloneInstanceResponse'
         "400":
           description: Invalid body, name or TTL
           schema:
@@ -6163,14 +6213,22 @@ paths:
     put:
       consumes:
       - application/json
-      description: Upsert the per-instance resource quota override for a stack instance.
+      description: 'Upsert the per-instance resource quota override for a stack instance.
         Each non-empty quantity must be a valid Kubernetes quantity (for example 500m,
         2, 512Mi, 10Gi) and not negative; cpu_request must not exceed cpu_limit and
         memory_request must not exceed memory_limit; pod_limit must not be negative.
-        Values are trimmed. The effective quota (cluster quota of the instance's cluster
-        merged with this override) must follow the same rules, for example "cpu_request
-        4 (instance override) exceeds the effective cpu_limit 2 (cluster quota)".
-        Invalid input returns 400 with the field name.
+        Values are trimmed. The effective quota (cluster quota of the instance''s
+        cluster merged with this override) must follow the same rules, for example
+        "cpu_request 4 (instance override) exceeds the effective cpu_limit 2 (cluster
+        quota)". Invalid input returns 400 with the field name. Authorization: the
+        instance owner, admin or devops. An owner without the admin or devops role
+        cannot set a value above the cluster quota of the instance''s cluster (403,
+        for example "cpu_limit 64 exceeds the cluster quota 16; only admin or devops
+        can set a higher quota"); a field without a cluster value has no cap, and
+        pod_limit 0 (no limit) counts as above a cluster pod_limit. A value equal
+        to the stored override passes, so an owner can change one field without losing
+        an admin grant. Admin and devops may exceed the cluster quota. The check runs
+        on write (and on clone), not on deploy.'
       parameters:
       - description: Stack Instance ID
         in: path
@@ -8127,7 +8185,12 @@ paths:
         Authenticate via one of: `Sec-WebSocket-Protocol: bearer, <jwt>` subprotocol
         header, `Authorization: Bearer <jwt>` header, or `?token=<jwt>` query parameter
         (the query token is redacted from access logs and traces by middleware before
-        the handler runs).'
+        the handler runs). The upgrade runs the same checks as the HTTP JWT auth:
+        a revoked token (logout), a token issued at or before a user block (user deleted,
+        disabled or password reset), a deleted user and a disabled user get 401. The
+        server closes an open socket with close code 1008 when the session is revoked
+        and when the access token expires; the client must reconnect with a fresh
+        token.'
       parameters:
       - description: JWT authentication token (also accepted via Authorization header
           or Sec-WebSocket-Protocol subprotocol)
@@ -8151,6 +8214,12 @@ paths:
             type: object
         "403":
           description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
           schema:
             additionalProperties:
               type: string

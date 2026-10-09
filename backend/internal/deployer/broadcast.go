@@ -64,6 +64,13 @@ func (m *Manager) broadcastLog(instanceID, logID, line string) {
 	if m.hub == nil {
 		return
 	}
+	// A panic in the hub must not stop the deploy goroutine or the process.
+	// The log line is lost; the deploy log in the database still has it.
+	defer func() {
+		if r := recover(); r != nil {
+			slog.Error("Panic in deployment log broadcast", "instance_id", instanceID, "recover", r)
+		}
+	}()
 
 	msg, err := websocket.NewMessage("deployment.log", deploymentLogPayload{
 		InstanceID: instanceID,

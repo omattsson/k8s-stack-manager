@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strings"
 
+	"backend/internal/api/middleware"
 	"backend/internal/cluster"
 	"backend/internal/models"
 
@@ -20,6 +21,10 @@ const (
 )
 
 const logKeyIQOInstanceID = "instance_id"
+
+// msgQuotaAboveClusterSuffix ends the 403 message for an override above the
+// cluster quota.
+const msgQuotaAboveClusterSuffix = "; only admin or devops can set a higher quota"
 
 
 
@@ -49,12 +54,21 @@ func (h *InstanceQuotaOverrideHandler) WithClusterQuotas(repo models.ResourceQuo
 // default cluster when the instance has none), or nil when no cluster or no
 // quota is configured. Other lookup errors are returned.
 func (h *InstanceQuotaOverrideHandler) clusterQuotaFor(ctx context.Context, inst *models.StackInstance) (*models.ResourceQuotaConfig, error) {
-	clusterID := inst.ClusterID
+	return lookupClusterQuota(ctx, h.clusterQuotaRepo, h.clusterResolver, inst.ClusterID)
+}
+
+// lookupClusterQuota returns the cluster quota of clusterID (the default
+// cluster when clusterID is empty and resolver is set), or nil when no cluster
+// or no quota is configured. Other lookup errors are returned.
+func lookupClusterQuota(ctx context.Context, repo models.ResourceQuotaRepository, resolver clusterIDResolver, clusterID string) (*models.ResourceQuotaConfig, error) {
+	if repo == nil {
+		return nil, nil
+	}
 	if clusterID == "" {
-		if h.clusterResolver == nil {
+		if resolver == nil {
 			return nil, nil
 		}
-		resolved, err := h.clusterResolver.ResolveClusterID("")
+		resolved, err := resolver.ResolveClusterID("")
 		if err != nil {
 			if errors.Is(err, cluster.ErrNoDefaultCluster) || isNotFoundError(err) {
 				return nil, nil
@@ -63,7 +77,7 @@ func (h *InstanceQuotaOverrideHandler) clusterQuotaFor(ctx context.Context, inst
 		}
 		clusterID = resolved
 	}
-	quota, err := h.clusterQuotaRepo.GetByClusterID(ctx, clusterID)
+	quota, err := repo.GetByClusterID(ctx, clusterID)
 	if err != nil {
 		if isNotFoundError(err) {
 			return nil, nil
@@ -139,7 +153,7 @@ func (h *InstanceQuotaOverrideHandler) GetQuotaOverride(c *gin.Context) {
 
 // SetQuotaOverride godoc
 // @Summary     Set or update quota override for an instance
-// @Description Upsert the per-instance resource quota override for a stack instance. Each non-empty quantity must be a valid Kubernetes quantity (for example 500m, 2, 512Mi, 10Gi) and not negative; cpu_request must not exceed cpu_limit and memory_request must not exceed memory_limit; pod_limit must not be negative. Values are trimmed. The effective quota (cluster quota of the instance's cluster merged with this override) must follow the same rules, for example "cpu_request 4 (instance override) exceeds the effective cpu_limit 2 (cluster quota)". Invalid input returns 400 with the field name.
+// @Description Upsert the per-instance resource quota override for a stack instance. Each non-empty quantity must be a valid Kubernetes quantity (for example 500m, 2, 512Mi, 10Gi) and not negative; cpu_request must not exceed cpu_limit and memory_request must not exceed memory_limit; pod_limit must not be negative. Values are trimmed. The effective quota (cluster quota of the instance's cluster merged with this override) must follow the same rules, for example "cpu_request 4 (instance override) exceeds the effective cpu_limit 2 (cluster quota)". Invalid input returns 400 with the field name. Authorization: the instance owner, admin or devops. An owner without the admin or devops role cannot set a value above the cluster quota of the instance's cluster (403, for example "cpu_limit 64 exceeds the cluster quota 16; only admin or devops can set a higher quota"); a field without a cluster value has no cap, and pod_limit 0 (no limit) counts as above a cluster pod_limit. A value equal to the stored override passes, so an owner can change one field without losing an admin grant. Admin and devops may exceed the cluster quota. The check runs on write (and on clone), not on deploy.
 // @Tags        stack-instances
 // @Accept      json
 // @Produce     json
@@ -206,6 +220,32 @@ func (h *InstanceQuotaOverrideHandler) SetQuotaOverride(c *gin.Context) {
 		if err := models.ValidateEffectiveQuota(clusterQuota, override); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
+		}
+		// Only admin and devops may set a value above the cluster quota. The
+		// check runs at write time only; the deploy applies the stored
+		// override without a new check.
+		if !isPrivilegedRole(c) {
+			// A value equal to the stored override passes, so an owner can
+			// change one field without losing an admin grant on another.
+			existing, err := h.overrideRepo.GetByInstanceID(c.Request.Context(), instanceID)
+			if err != nil {
+				if !isNotFoundError(err) {
+					slog.Error("failed to load quota override for cluster quota check", logKeyIQOInstanceID, instanceID, "error", err)
+					c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
+					return
+				}
+				existing = nil
+			}
+			if err := models.CheckOverrideWithinClusterQuota(clusterQuota, override, existing); err != nil {
+				slog.Warn("Quota override above cluster quota denied",
+					"user_id", middleware.GetUserIDFromContext(c),
+					"role", middleware.GetRoleFromContext(c),
+					logKeyIQOInstanceID, instanceID,
+					"error", err,
+				)
+				c.JSON(http.StatusForbidden, gin.H{"error": err.Error() + msgQuotaAboveClusterSuffix})
+				return
+			}
 		}
 	}
 

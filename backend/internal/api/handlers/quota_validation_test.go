@@ -183,6 +183,7 @@ func TestSetQuotaOverride_EffectiveQuota(t *testing.T) {
 	tests := []struct {
 		name         string
 		instCluster  string // instance cluster ID; empty resolves the default
+		role         string // caller role; empty means "developer"
 		clusterQuota *models.ResourceQuotaConfig
 		quotaErr     error
 		body         setQuotaOverrideRequest
@@ -223,6 +224,7 @@ func TestSetQuotaOverride_EffectiveQuota(t *testing.T) {
 		{
 			name:         "override raises the cluster limit",
 			instCluster:  "cl-1",
+			role:         "admin",
 			clusterQuota: &models.ResourceQuotaConfig{ClusterID: "cl-1", CPURequest: "1", CPULimit: "2"},
 			body:         setQuotaOverrideRequest{CPURequest: "4", CPULimit: "8"},
 			wantStatus:   http.StatusOK,
@@ -264,7 +266,11 @@ func TestSetQuotaOverride_EffectiveQuota(t *testing.T) {
 				WithClusterQuotas(quotaRepo, cluster.NewRegistryForTest("cl-1", nil, nil))
 			gin.SetMode(gin.TestMode)
 			r := gin.New()
-			r.Use(injectAuthContext("uid-1", "developer"))
+			role := tt.role
+			if role == "" {
+				role = "developer"
+			}
+			r.Use(injectAuthContext("uid-1", role))
 			r.PUT("/api/v1/stack-instances/:id/quota-overrides", h.SetQuotaOverride)
 
 			body, _ := json.Marshal(tt.body)
@@ -409,6 +415,208 @@ func TestUpdateQuotas_InstanceOverrideConflicts(t *testing.T) {
 				assert.NoError(t, getErr)
 			} else {
 				assert.Error(t, getErr, "rejected quota must not be saved")
+			}
+		})
+	}
+}
+
+// TestSetQuotaOverride_ClusterQuotaCap checks that an owner without the admin
+// or devops role cannot set an override above the cluster quota, and that
+// admin and devops can.
+func TestSetQuotaOverride_ClusterQuotaCap(t *testing.T) {
+	t.Parallel()
+
+	pods := func(n int) *int { return &n }
+	clusterQuota := &models.ResourceQuotaConfig{
+		ClusterID:     "cl-1",
+		CPURequest:    "8",
+		CPULimit:      "16",
+		MemoryRequest: "12Gi",
+		MemoryLimit:   "24Gi",
+		PodLimit:      20,
+	}
+
+	tests := []struct {
+		name         string
+		role         string
+		clusterQuota *models.ResourceQuotaConfig
+		existing     *models.InstanceQuotaOverride // stored override before the request
+		body         setQuotaOverrideRequest
+		wantStatus   int
+		wantError    string
+	}{
+		{
+			name:       "user keeps an admin grant and lowers another field",
+			role:       "user",
+			existing:   &models.InstanceQuotaOverride{CPULimit: "64", MemoryLimit: "20Gi"},
+			body:       setQuotaOverrideRequest{CPULimit: "64000m", MemoryLimit: "16Gi"},
+			wantStatus: http.StatusOK,
+		},
+		{
+			name:       "user raises an admin grant",
+			role:       "user",
+			existing:   &models.InstanceQuotaOverride{CPULimit: "64"},
+			body:       setQuotaOverrideRequest{CPULimit: "65"},
+			wantStatus: http.StatusForbidden,
+			wantError:  "cpu_limit 65 exceeds the cluster quota 16; only admin or devops can set a higher quota",
+		},
+		{
+			name:       "user adds a new value above the cap next to an admin grant",
+			role:       "user",
+			existing:   &models.InstanceQuotaOverride{CPULimit: "64"},
+			body:       setQuotaOverrideRequest{CPULimit: "64", MemoryLimit: "48Gi"},
+			wantStatus: http.StatusForbidden,
+			wantError:  "memory_limit 48Gi exceeds the cluster quota 24Gi; only admin or devops can set a higher quota",
+		},
+		{
+			name:       "user above the cpu limit",
+			role:       "user",
+			body:       setQuotaOverrideRequest{CPULimit: "64"},
+			wantStatus: http.StatusForbidden,
+			wantError:  "cpu_limit 64 exceeds the cluster quota 16; only admin or devops can set a higher quota",
+		},
+		{
+			name:       "user above the memory limit",
+			role:       "user",
+			body:       setQuotaOverrideRequest{MemoryLimit: "256Gi"},
+			wantStatus: http.StatusForbidden,
+			wantError:  "memory_limit 256Gi exceeds the cluster quota 24Gi; only admin or devops can set a higher quota",
+		},
+		{
+			name:       "user above the pod limit",
+			role:       "user",
+			body:       setQuotaOverrideRequest{PodLimit: pods(50)},
+			wantStatus: http.StatusForbidden,
+			wantError:  "pod_limit 50 exceeds the cluster quota 20; only admin or devops can set a higher quota",
+		},
+		{
+			name:       "user removes the pod limit",
+			role:       "user",
+			body:       setQuotaOverrideRequest{PodLimit: pods(0)},
+			wantStatus: http.StatusForbidden,
+			wantError:  "pod_limit 0 (no limit) exceeds the cluster quota 20; only admin or devops can set a higher quota",
+		},
+		{
+			name:       "user lowers the quota",
+			role:       "user",
+			body:       setQuotaOverrideRequest{CPURequest: "1", CPULimit: "2", MemoryRequest: "2Gi", MemoryLimit: "4Gi", PodLimit: pods(5)},
+			wantStatus: http.StatusOK,
+		},
+		{
+			name:       "user equal to the cluster quota in millicores",
+			role:       "user",
+			body:       setQuotaOverrideRequest{CPULimit: "16000m"},
+			wantStatus: http.StatusOK,
+		},
+		{
+			name:       "user one millicore above the cluster quota",
+			role:       "user",
+			body:       setQuotaOverrideRequest{CPULimit: "16001m"},
+			wantStatus: http.StatusForbidden,
+			wantError:  "cpu_limit 16001m exceeds the cluster quota 16; only admin or devops can set a higher quota",
+		},
+		{
+			name:       "user equal to the cluster quota in bytes",
+			role:       "user",
+			body:       setQuotaOverrideRequest{MemoryLimit: "25769803776"},
+			wantStatus: http.StatusOK,
+		},
+		{
+			name:       "user one byte above the cluster quota",
+			role:       "user",
+			body:       setQuotaOverrideRequest{MemoryLimit: "25769803777"},
+			wantStatus: http.StatusForbidden,
+			wantError:  "memory_limit 25769803777 exceeds the cluster quota 24Gi; only admin or devops can set a higher quota",
+		},
+		{
+			name:       "field without a cluster value has no cap",
+			role:       "user",
+			body:       setQuotaOverrideRequest{StorageLimit: "1Ti"},
+			wantStatus: http.StatusOK,
+		},
+		{
+			name:         "no cluster quota has no cap",
+			role:         "user",
+			clusterQuota: &models.ResourceQuotaConfig{ClusterID: "cl-other", CPULimit: "1"},
+			body:         setQuotaOverrideRequest{CPULimit: "64"},
+			wantStatus:   http.StatusOK,
+		},
+		{
+			name:       "developer above the cpu limit",
+			role:       "developer",
+			body:       setQuotaOverrideRequest{CPULimit: "17"},
+			wantStatus: http.StatusForbidden,
+			wantError:  "cpu_limit 17 exceeds the cluster quota 16; only admin or devops can set a higher quota",
+		},
+		{
+			name:       "devops above the cluster quota",
+			role:       "devops",
+			body:       setQuotaOverrideRequest{CPULimit: "64", MemoryLimit: "256Gi", PodLimit: pods(0)},
+			wantStatus: http.StatusOK,
+		},
+		{
+			name:       "admin above the cluster quota",
+			role:       "admin",
+			body:       setQuotaOverrideRequest{CPULimit: "64", MemoryLimit: "256Gi", PodLimit: pods(100)},
+			wantStatus: http.StatusOK,
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			instRepo := NewMockStackInstanceRepository()
+			inst := seedInstance(t, instRepo, "inst-1", "my-stack", "def-1", "uid-1", models.StackStatusRunning)
+			inst.ClusterID = "cl-1"
+			require.NoError(t, instRepo.Update(inst))
+			oRepo := NewMockInstanceQuotaOverrideRepository()
+			if tt.existing != nil {
+				existing := *tt.existing
+				existing.StackInstanceID = "inst-1"
+				require.NoError(t, oRepo.Upsert(context.Background(), &existing))
+			}
+			quotaRepo := NewMockResourceQuotaRepository()
+			// Copy: the mock Upsert writes to the stored value.
+			cq := *clusterQuota
+			if tt.clusterQuota != nil {
+				cq = *tt.clusterQuota
+			}
+			require.NoError(t, quotaRepo.Upsert(context.Background(), &cq))
+
+			h := NewInstanceQuotaOverrideHandler(oRepo, instRepo).
+				WithClusterQuotas(quotaRepo, cluster.NewRegistryForTest("cl-1", nil, nil))
+			gin.SetMode(gin.TestMode)
+			r := gin.New()
+			// The caller owns the instance, so the modify rule passes for
+			// every role.
+			r.Use(injectAuthContext("uid-1", tt.role))
+			r.PUT("/api/v1/stack-instances/:id/quota-overrides", h.SetQuotaOverride)
+
+			body, _ := json.Marshal(tt.body)
+			w := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodPut, "/api/v1/stack-instances/inst-1/quota-overrides", bytes.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			r.ServeHTTP(w, req)
+
+			require.Equal(t, tt.wantStatus, w.Code, w.Body.String())
+			if tt.wantError != "" {
+				var resp map[string]string
+				require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+				assert.Equal(t, tt.wantError, resp["error"])
+			}
+			stored, getErr := oRepo.GetByInstanceID(context.Background(), "inst-1")
+			switch {
+			case tt.wantStatus == http.StatusOK:
+				require.NoError(t, getErr)
+				assert.Equal(t, tt.body.CPULimit, stored.CPULimit)
+				assert.Equal(t, tt.body.MemoryLimit, stored.MemoryLimit)
+			case tt.existing != nil:
+				require.NoError(t, getErr)
+				assert.Equal(t, tt.existing.CPULimit, stored.CPULimit, "rejected override must not be saved")
+				assert.Equal(t, tt.existing.MemoryLimit, stored.MemoryLimit, "rejected override must not be saved")
+			default:
+				assert.Error(t, getErr, "rejected override must not be saved")
 			}
 		})
 	}

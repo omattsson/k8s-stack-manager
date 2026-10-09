@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -39,14 +40,16 @@ type Claims struct {
 	jwt.RegisteredClaims
 }
 
-// ValidateJWT parses and validates a JWT token string, returning the claims if valid.
+// ValidateJWT parses and validates a JWT token string, returning the claims if
+// valid. The token must have an exp claim: every token the app issues has one
+// (GenerateTokenWithOpts), and a token without exp would never expire.
 func ValidateJWT(tokenStr string, jwtSecret string) (*Claims, error) {
 	token, err := jwt.ParseWithClaims(tokenStr, &Claims{}, func(token *jwt.Token) (interface{}, error) {
 		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
 			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
 		}
 		return []byte(jwtSecret), nil
-	})
+	}, jwt.WithExpirationRequired())
 	if err != nil || !token.Valid {
 		return nil, fmt.Errorf("invalid or expired token")
 	}
@@ -152,36 +155,12 @@ func AuthRequiredWithOptions(opts JWTAuthOptions) gin.HandlerFunc {
 			return
 		}
 
-		if store != nil && claims.ID != "" {
-			blocked, blockErr := store.IsTokenBlocked(c.Request.Context(), claims.ID)
-			if blockErr != nil {
-				slog.Error("Failed to check token blocklist", "jti", claims.ID, "error", blockErr)
-				// Fail open — access tokens expire in ≤15 min, don't lock everyone out on DB blip.
-			} else if blocked {
-				c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Token has been revoked"})
-				return
-			}
-		}
-
-		if store != nil && claims.UserID != "" {
-			// A user block revokes tokens issued at or before the block (user
-			// deleted, disabled or password reset). A token without iat gets a
-			// zero time and counts as blocked.
-			var issuedAt time.Time
-			if claims.IssuedAt != nil {
-				issuedAt = claims.IssuedAt.Time
-			}
-			userBlocked, userBlockErr := store.IsUserBlocked(c.Request.Context(), claims.UserID, issuedAt)
-			if userBlockErr != nil {
-				slog.Error("Failed to check user blocklist", "user_id", claims.UserID, "error", userBlockErr)
-				// Fail open — same policy as token blocklist check
-			} else if userBlocked {
-				// 401 (not 403) so the frontend sends the user back to login.
-				// Login itself still answers 403 "Account disabled" for a
-				// disabled user.
-				c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Session revoked"})
-				return
-			}
+		if revokeErr := CheckRevocation(c.Request.Context(), store, claims); revokeErr != nil {
+			// 401 (not 403) so the frontend sends the user back to login.
+			// Login itself still answers 403 "Account disabled" for a
+			// disabled user.
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": RevocationMessage(revokeErr)})
+			return
 		}
 
 		c.Set(contextKeyUserID, claims.UserID)
@@ -199,6 +178,77 @@ func AuthRequiredWithOptions(opts JWTAuthOptions) gin.HandlerFunc {
 		}
 		c.Next()
 	}
+}
+
+// Revocation errors returned by CheckRevocation.
+var (
+	// ErrTokenRevoked means the jti of the token is on the token blocklist
+	// (logout).
+	ErrTokenRevoked = errors.New("token revoked")
+	// ErrSessionRevoked means a user block covers the token: the token was
+	// issued at or before the block (user deleted, disabled or password reset).
+	ErrSessionRevoked = errors.New("session revoked")
+)
+
+// CheckRevocation checks validated claims against the session store. The JWT
+// middleware and the WebSocket upgrade both use it. It checks:
+//  1. The token blocklist (jti). A match returns ErrTokenRevoked.
+//  2. The user blocklist (user ID and iat). A block revokes tokens issued at
+//     or before the block. A token without iat gets a zero time and counts as
+//     blocked. A match returns ErrSessionRevoked.
+//
+// A nil store or nil claims pass. On a store error the function logs the
+// error and continues (fail open): access tokens are short-lived, and a
+// database blip must not lock out every user.
+func CheckRevocation(ctx context.Context, store sessionstore.SessionStore, claims *Claims) error {
+	revoked, lookupErr := RevocationStatus(ctx, store, claims)
+	if lookupErr != nil {
+		slog.Error("Failed to check token or user blocklist",
+			"jti", claims.ID, "user_id", claims.UserID, "error", lookupErr)
+	}
+	return revoked
+}
+
+// RevocationStatus runs the checks of CheckRevocation without logging. It
+// returns the revocation (ErrTokenRevoked, ErrSessionRevoked or nil) and the
+// store errors (nil when both checks ran). A failed check counts as not
+// revoked (fail open); the other check still runs. Callers that check many
+// tokens (the WebSocket revalidation) use lookupErr to stop early.
+func RevocationStatus(ctx context.Context, store sessionstore.SessionStore, claims *Claims) (revoked error, lookupErr error) {
+	if store == nil || claims == nil {
+		return nil, nil
+	}
+	var errs []error
+	if claims.ID != "" {
+		blocked, err := store.IsTokenBlocked(ctx, claims.ID)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("token blocklist: %w", err))
+		} else if blocked {
+			return ErrTokenRevoked, errors.Join(errs...)
+		}
+	}
+	if claims.UserID != "" {
+		var issuedAt time.Time
+		if claims.IssuedAt != nil {
+			issuedAt = claims.IssuedAt.Time
+		}
+		blocked, err := store.IsUserBlocked(ctx, claims.UserID, issuedAt)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("user blocklist: %w", err))
+		} else if blocked {
+			return ErrSessionRevoked, errors.Join(errs...)
+		}
+	}
+	return nil, errors.Join(errs...)
+}
+
+// RevocationMessage returns the client message for an error from
+// CheckRevocation.
+func RevocationMessage(err error) string {
+	if errors.Is(err, ErrTokenRevoked) {
+		return "Token has been revoked"
+	}
+	return "Session revoked"
 }
 
 // GenerateTokenOptions holds all parameters for JWT generation.

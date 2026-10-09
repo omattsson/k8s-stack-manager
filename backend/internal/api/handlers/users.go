@@ -9,6 +9,7 @@ import (
 	"backend/internal/api/middleware"
 	"backend/internal/models"
 	"backend/internal/sessionstore"
+	"backend/internal/websocket"
 
 	"github.com/gin-gonic/gin"
 	"golang.org/x/crypto/bcrypt"
@@ -22,6 +23,7 @@ type UserHandler struct {
 	sessionStore          sessionstore.SessionStore
 	refreshTokenRepo      models.RefreshTokenRepository
 	apiKeyRepo            models.APIKeyRepository
+	wsRevoker             websocket.ClientRevoker
 	accessTokenExpiration time.Duration
 	jwtExpiration         time.Duration
 }
@@ -43,6 +45,10 @@ func NewUserHandler(
 func (h *UserHandler) SetSessionStore(store sessionstore.SessionStore) { h.sessionStore = store }
 func (h *UserHandler) SetAccessTokenExpiration(d time.Duration)        { h.accessTokenExpiration = d }
 func (h *UserHandler) SetJWTExpiration(d time.Duration)                { h.jwtExpiration = d }
+
+// SetWebSocketRevoker sets the hub that closes the open WebSocket connections
+// of a revoked user. nil: sockets close at access-token expiry only.
+func (h *UserHandler) SetWebSocketRevoker(r websocket.ClientRevoker) { h.wsRevoker = r }
 
 // blockIssuedTokens writes a user block that revokes every access token of
 // the user issued at or before now. It lives until the longest access-token
@@ -82,6 +88,8 @@ type revokeOptions struct {
 //     foreign-key cascade).
 //  3. If opts.deleteAPIKeys is set, delete all API keys of the user in one
 //     statement.
+//  4. Close the open WebSocket connections of the user on this replica.
+//     The block from step 1 refuses a reconnect.
 //
 // Error policy: log and continue. Each step runs even when an earlier step
 // fails, and the request still succeeds. The caller has already committed its
@@ -104,6 +112,12 @@ func (h *UserHandler) revokeUserAccess(ctx context.Context, userID string, opts 
 	if opts.deleteAPIKeys && h.apiKeyRepo != nil {
 		if _, err := h.apiKeyRepo.DeleteAllForUser(userID); err != nil {
 			slog.Warn("Failed to delete API keys", "user_id", userID, "error", err)
+		}
+	}
+
+	if h.wsRevoker != nil {
+		if n := h.wsRevoker.DisconnectUser(userID); n > 0 {
+			slog.Info("Closed WebSocket connections of revoked user", "user_id", userID, "connections", n)
 		}
 	}
 }
