@@ -98,6 +98,13 @@ Key environment variables (see `docker-compose.yml` for full list):
 | `SESSION_MAX_LIFETIME` | `12h` | Absolute session lifetime from login; refresh never extends it (at least `ACCESS_TOKEN_EXPIRATION`) |
 | `REFRESH_REUSE_GRACE` | `30s` | A just-rotated refresh token still gets a new access token (no new cookie) for this time; `0` disables, max `5m` |
 | `SECURE_COOKIES` | `false` | `Secure` flag on the refresh-token cookie; set `true` behind HTTPS |
+| `LEADER_ELECTION_ENABLED` | `false` | Elect one replica (Kubernetes Lease) to run the background workers; `true` needs the in-cluster service account. `false`: this process always runs them |
+| `LEADER_ELECTION_LEASE_NAME` | `k8s-stack-manager-workers` | Name of the Lease |
+| `LEADER_ELECTION_NAMESPACE` | `POD_NAMESPACE` | Namespace of the Lease (else the service account namespace file) |
+| `LEADER_ELECTION_LEASE_DURATION` | `15s` | Lease duration |
+| `LEADER_ELECTION_RENEW_DEADLINE` | `10s` | The leader stops its workers when it cannot renew for this time |
+| `LEADER_ELECTION_RETRY_PERIOD` | `2s` | Time between acquire and renew attempts |
+| `POD_NAME` | host name | Leader election identity |
 
 See [Sessions](../WIKI.md#sessions) for how the session limits work together.
 

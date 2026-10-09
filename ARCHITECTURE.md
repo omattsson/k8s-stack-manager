@@ -39,6 +39,7 @@ backend/internal/
 ├── helm/             # Values deep-merge, template variable substitution
 ├── hooks/            # Event dispatcher, action routing, HMAC signing
 ├── k8s/              # K8s client, namespace status, watcher, pod exec, scaling
+├── leader/           # Leader election (Kubernetes Lease) + leader worker group
 ├── models/           # GORM model structs + repository interfaces
 ├── notifier/         # In-app notifications + outbound notification channels
 ├── scheduler/        # Cleanup policy scheduler (cron)
@@ -113,6 +114,30 @@ Kubeconfig data encrypted at rest with AES-256-GCM (`KUBECONFIG_ENCRYPTION_KEY`)
 - **User.Disabled**: Admin can disable accounts. Blocks login, token refresh, OIDC login, and API key auth immediately.
 - **Sessions**: a login starts a refresh-token family (`refresh_tokens.family_id`, also the access-token `sid` claim). Rotation keeps the family and its start time; a session ends after `SESSION_MAX_LIFETIME` or after `SESSION_IDLE_TIMEOUT` without requests (the JWT middleware records request activity, throttled to one write per minute per session). A just-rotated token gets an access token inside `REFRESH_REUSE_GRACE`; other reuse revokes the family. See [WIKI.md](WIKI.md#sessions).
 - **Rate limits**: per-IP limiter on `/api/v1` (`RATE_LIMIT`, default 100/min) and a stricter login limiter (`LOGIN_RATE_LIMIT`, default 10/min).
+
+## Replica Model
+
+The backend can run with more than one replica. Every replica serves the HTTP API, the WebSocket hub and the WebSocket revalidation, and runs the deploy, stop, clean and rollback goroutines of the requests it handles. Only one replica, the leader, runs the background workers:
+
+| Worker | Runs in |
+|---|---|
+| TTL reaper, expiry warner | leader |
+| Cleanup scheduler (cron jobs) | leader |
+| Quota monitor, secret monitor | leader |
+| Pull secret refresher | leader |
+| Cluster health poller | leader |
+| k8s status watcher | leader |
+| Refresh token cleanup | leader |
+| HTTP API, WebSocket hub and revalidation | every replica |
+
+- **Election**: `internal/leader` wraps client-go leader election with a `coordination.k8s.io/v1` Lease (`LEADER_ELECTION_LEASE_NAME`, default `k8s-stack-manager-workers`) in the pod namespace (`LEADER_ELECTION_NAMESPACE`, else `POD_NAMESPACE`, else the service account namespace file). The identity is `POD_NAME` (else the host name). Timings: lease 15s, renew deadline 10s, retry 2s (`LEADER_ELECTION_LEASE_DURATION`, `_RENEW_DEADLINE`, `_RETRY_PERIOD`). `LEADER_ELECTION_ENABLED=false` (default; docker-compose and local development) makes the process always the leader. With `true`, the backend needs the in-cluster service account configuration, or startup fails. The Helm chart enables it and creates a Role and RoleBinding for `leases` (get, create, update).
+- **Terms**: `leader.Group` starts every worker with a term context (`Run(ctx)`, which can run again after it returned). When the term ends, the group cancels the context and waits for the workers (30s limit; a next term waits for workers that did not stop), and the replica campaigns again; it does not exit. A watchdog ends the term when the lease was not renewed for the renew deadline. The workers then stop at most renew deadline + retry period / 2 after the last renewal, which is before the lease expires for the other replicas (lease duration), when the workers stop within that margin (about 4s with the defaults). The backend releases the lease itself (client-go `ReleaseOnCancel` is off), and only after the workers stopped: on SIGTERM, on a watchdog stop and after a failed renewal. When the workers did not stop within the stop timeout, the backend does not release the lease; the other replicas wait for the lease duration. A Conflict on the release means that another replica already holds the lease. Another replica then takes over after about one retry period.
+- **Cleanup scheduler**: only the leader has an active cron scheduler. A policy change on another replica does not start cron jobs there (`Reload` does nothing when the scheduler is not active); the leader reads the enabled policies when it becomes leader and every minute, and a scheduled run reads the policy again before it runs. When it becomes leader, the scheduler runs a policy once if its last scheduled time is within the last 5 minutes and after its last run (or its creation), so a run that fell into a leader change is not lost (cron expressions only, not `@every`; the dry-run flag applies). When the term ends during a run, the run stops before the next instance: no audit entry for the remaining instances, no `last_run_at` update and no summary notification. A run that the term end cancels after its actions but before it saved `last_run_at` can run again on the new leader (catch-up). Each run checks the condition again, so an instance that is already stopped or cleaned no longer matches a status condition, and stop and clean are idempotent. The catch-up looks only at scheduled times strictly before the time read before the cron instance starts, so the cron instance and the catch-up never run the same scheduled time. Manual runs (`POST /admin/cleanup-policies/:id/run`) work on every replica.
+- **State in the database**: the expiry warner marks `stack_instances.expiry_warned_at` with a conditional update before it sends the warning: `expiry_warned_at IS NULL` and `expires_at` within 1 second of the listed value (the database can store less precision than Go). So a new leader or a short overlap of two leaders sends one warning. A repository `Update` never writes the column. In the same transaction it clears the column when the stored `expires_at` and the new value differ by 1 second or more (deploy, extend, TTL change), or when one of them is NULL and the other is not.
+- **State in memory**: the quota monitor and the secret monitor keep their warning cooldowns in memory. After a leader change, the new leader can repeat one quota or secret warning.
+- **k8s status cache**: the status watcher cache is on the leader only. On other replicas `GET /stack-instances/:id/status` reads the cluster directly.
+- **Observability**: gauge `stackmanager_leader` (1 on the leader); a log line on each leadership change. Readiness does not depend on leadership.
+- **Limit**: the WebSocket hub is in memory per replica. Events from the leader workers (status, cluster health) and deploy logs reach only the clients of the replica that sends them, until the WebSocket fan-out (#428).
 
 ## Observability
 

@@ -182,6 +182,51 @@ type OtelConfig struct {
 	MetricsEnabled bool // env: METRICS_ENABLED (default: false)
 }
 
+// LeaderElectionConfig holds the settings for the election of the replica
+// that runs the leader-only background workers.
+type LeaderElectionConfig struct {
+	// 8-byte aligned fields first
+	LeaseDuration time.Duration // env: LEADER_ELECTION_LEASE_DURATION (default 15s)
+	RenewDeadline time.Duration // env: LEADER_ELECTION_RENEW_DEADLINE (default 10s)
+	RetryPeriod   time.Duration // env: LEADER_ELECTION_RETRY_PERIOD (default 2s)
+	// String fields
+	LeaseName string // env: LEADER_ELECTION_LEASE_NAME (default "k8s-stack-manager-workers")
+	Namespace string // env: LEADER_ELECTION_NAMESPACE, else POD_NAMESPACE, else the service account namespace file
+	Identity  string // env: POD_NAME, else the host name
+	// Bool fields
+	Enabled bool // env: LEADER_ELECTION_ENABLED (default false: this process is always the leader)
+}
+
+// Validate checks the leader election settings when election is enabled.
+func (c *LeaderElectionConfig) Validate() error {
+	if !c.Enabled {
+		return nil
+	}
+	if c.LeaseName == "" {
+		return errors.New("LEADER_ELECTION_LEASE_NAME is required when leader election is enabled")
+	}
+	if c.Namespace == "" {
+		return errors.New("LEADER_ELECTION_NAMESPACE (or POD_NAMESPACE) is required when leader election is enabled and the service account namespace file is not available")
+	}
+	if c.Identity == "" {
+		return errors.New("POD_NAME (or a host name) is required when leader election is enabled")
+	}
+	if c.LeaseDuration < time.Second {
+		return errors.New("LEADER_ELECTION_LEASE_DURATION must be at least 1s")
+	}
+	if c.RenewDeadline <= 0 || c.RetryPeriod <= 0 {
+		return errors.New("LEADER_ELECTION_RENEW_DEADLINE and LEADER_ELECTION_RETRY_PERIOD must be greater than zero")
+	}
+	if c.LeaseDuration <= c.RenewDeadline {
+		return errors.New("LEADER_ELECTION_LEASE_DURATION must be greater than LEADER_ELECTION_RENEW_DEADLINE")
+	}
+	// client-go needs renew deadline > 1.2 x retry period (jitter factor).
+	if c.RenewDeadline*10 <= c.RetryPeriod*12 {
+		return errors.New("LEADER_ELECTION_RENEW_DEADLINE must be greater than 1.2 x LEADER_ELECTION_RETRY_PERIOD")
+	}
+	return nil
+}
+
 // Config holds all configuration for the application
 //
 //nolint:govet // Struct field alignment has been optimized for better memory usage
@@ -200,6 +245,9 @@ type Config struct {
 	Deployment   DeploymentConfig
 	Otel         OtelConfig
 	SessionStore SessionStoreConfig
+
+	// LeaderElection selects the replica that runs the background workers.
+	LeaderElection LeaderElectionConfig
 }
 
 // AppConfig holds application-wide configuration
@@ -299,6 +347,10 @@ func (c *Config) Validate() error {
 		if err := c.OIDC.Validate(); err != nil {
 			return fmt.Errorf("OIDC config: %w", err)
 		}
+	}
+
+	if err := c.LeaderElection.Validate(); err != nil {
+		return fmt.Errorf("leader election config: %w", err)
 	}
 
 	return nil
@@ -493,6 +545,7 @@ func LoadConfig() (*Config, error) {
 		Otel:         loadOtelConfig(),
 		SessionStore: SessionStoreConfig{Backend: strings.TrimSpace(strings.ToLower(getEnv("SESSION_STORE", "mysql")))},
 	}
+	cfg.LeaderElection = loadLeaderElectionConfig()
 
 	// Validate the configuration
 	if err := cfg.Validate(); err != nil {
@@ -656,6 +709,34 @@ func loadOIDCConfig() OIDCConfig {
 		AutoProvision: getEnvBool("OIDC_AUTO_PROVISION", true),
 		LocalAuth:     getEnvBool("OIDC_LOCAL_AUTH", false),
 		StateTTL:      getEnvDuration("OIDC_STATE_TTL", 5*time.Minute),
+	}
+}
+
+// serviceAccountNamespaceFile holds the pod namespace in a Kubernetes pod.
+// It is a variable so tests can change it.
+var serviceAccountNamespaceFile = "/var/run/secrets/kubernetes.io/serviceaccount/namespace"
+
+func loadLeaderElectionConfig() LeaderElectionConfig {
+	namespace := getEnv("LEADER_ELECTION_NAMESPACE", os.Getenv("POD_NAMESPACE"))
+	if namespace == "" {
+		if b, err := os.ReadFile(serviceAccountNamespaceFile); err == nil {
+			namespace = strings.TrimSpace(string(b))
+		}
+	}
+	identity := os.Getenv("POD_NAME")
+	if identity == "" {
+		if host, err := os.Hostname(); err == nil {
+			identity = host
+		}
+	}
+	return LeaderElectionConfig{
+		Enabled:       getEnvBool("LEADER_ELECTION_ENABLED", false),
+		LeaseName:     getEnv("LEADER_ELECTION_LEASE_NAME", "k8s-stack-manager-workers"),
+		Namespace:     namespace,
+		Identity:      identity,
+		LeaseDuration: getEnvDuration("LEADER_ELECTION_LEASE_DURATION", 15*time.Second),
+		RenewDeadline: getEnvDuration("LEADER_ELECTION_RENEW_DEADLINE", 10*time.Second),
+		RetryPeriod:   getEnvDuration("LEADER_ELECTION_RETRY_PERIOD", 2*time.Second),
 	}
 }
 

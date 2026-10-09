@@ -72,7 +72,15 @@ func (p *HealthPoller) Stop() {
 
 func (p *HealthPoller) run() {
 	defer close(p.done)
+	ctx, cancel := contextUntilClosed(p.stopCh)
+	defer cancel()
+	p.Run(ctx)
+}
 
+// Run runs the cluster health poller loop until ctx is done. It blocks. Run can be
+// called again after it returned (one call per leadership term). Do not
+// mix Run with Start and Stop on the same value.
+func (p *HealthPoller) Run(ctx context.Context) {
 	// Run an initial poll immediately.
 	p.poll()
 
@@ -81,7 +89,7 @@ func (p *HealthPoller) run() {
 
 	for {
 		select {
-		case <-p.stopCh:
+		case <-ctx.Done():
 			return
 		case <-ticker.C:
 			p.poll()
@@ -202,4 +210,18 @@ func (p *HealthPoller) broadcastChange(cl *models.Cluster) {
 	}
 
 	p.hub.Broadcast(data)
+}
+
+// contextUntilClosed returns a context that is cancelled when stopCh is
+// closed or when cancel is called.
+func contextUntilClosed(stopCh <-chan struct{}) (context.Context, context.CancelFunc) {
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		select {
+		case <-stopCh:
+			cancel()
+		case <-ctx.Done():
+		}
+	}()
+	return ctx, cancel
 }

@@ -106,6 +106,9 @@ func (m *mockInstanceRepo) ListExpired() ([]*models.StackInstance, error) {
 func (m *mockInstanceRepo) ListExpiringSoon(_ time.Duration) ([]*models.StackInstance, error) {
 	return nil, nil
 }
+func (*mockInstanceRepo) MarkExpiryWarned(_ string, _, _ time.Time) (bool, error) {
+	return false, nil
+}
 func (m *mockInstanceRepo) ListByStatus(_ string, _ int) ([]*models.StackInstance, error) {
 	return nil, nil
 }

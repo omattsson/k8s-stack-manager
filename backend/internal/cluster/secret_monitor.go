@@ -92,7 +92,15 @@ func (m *SecretMonitor) Stop() {
 
 func (m *SecretMonitor) run() {
 	defer close(m.done)
+	ctx, cancel := contextUntilClosed(m.stopCh)
+	defer cancel()
+	m.Run(ctx)
+}
 
+// Run runs the secret monitor loop until ctx is done. It blocks. Run can be
+// called again after it returned (one call per leadership term). Do not
+// mix Run with Start and Stop on the same value.
+func (m *SecretMonitor) Run(ctx context.Context) {
 	ticker := time.NewTicker(m.interval)
 	defer ticker.Stop()
 
@@ -102,7 +110,7 @@ func (m *SecretMonitor) run() {
 
 	for {
 		select {
-		case <-m.stopCh:
+		case <-ctx.Done():
 			slog.Info("Secret monitor stopped")
 			return
 		case <-ticker.C:

@@ -847,6 +847,9 @@ func (s *stubStackInstanceRepo) ListExpired() ([]*models.StackInstance, error)  
 func (s *stubStackInstanceRepo) ListExpiringSoon(_ time.Duration) ([]*models.StackInstance, error) {
 	return nil, nil
 }
+func (*stubStackInstanceRepo) MarkExpiryWarned(_ string, _, _ time.Time) (bool, error) {
+	return false, nil
+}
 func (s *stubStackInstanceRepo) ListByStatus(_ string, _ int) ([]*models.StackInstance, error) {
 	return nil, nil
 }

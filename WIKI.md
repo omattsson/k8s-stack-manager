@@ -72,6 +72,8 @@ A developer's working copy of a stack definition. Each instance has:
 - The rollback does not change the stored value or branch overrides. After a rollback, the deploy preview compares against the values that now run (a failed rollback records the charts that it already upgraded). `values_drift: true` (in the rollback response for a target, in the deploy preview and in `GET /stack-instances/:id`) means that the next deploy applies the stored overrides again and undoes the rollback.
 - Each deploy and rollback log records the branch (`branch`). A rollback to a target records the branch of the target deploy.
 
+**Expiry warning.** About 30 minutes before the expiry, the owner gets one "Stack expiring soon" notification. The backend records the warning in the database (`expiry_warned_at`), so a restart or a second backend replica does not send it again. A new expiry time (deploy, extend, TTL change) allows a new warning.
+
 **Redeploy.** `POST /stack-instances/:id/deploy` also works for a `running` instance. It upgrades the releases with the current values. With a TTL, the expiry becomes now + `ttl_minutes`, unless the current expiry is later: a redeploy never makes the expiry earlier.
 
 **Delete.** Deleting an instance also deletes its value overrides, branch overrides and quota override. Then, in a separate step, the quick deploy definition is deleted when no instance uses it any more: the definition of the deleted instance, or a definition whose owner instance no longer exists (for example a clone of a deleted quick deploy instance). An error in that step is logged and does not undo the instance delete.
@@ -190,6 +192,15 @@ WebSocket connections (`/ws`):
 - Stack instances target a specific cluster (or the default cluster)
 - The `deployer` package routes deploy/undeploy/status operations through the registry to the correct cluster
 - Per-cluster container registry credentials enable automatic image pull secret provisioning; a `SecretRefresher` runs every 4 hours to keep tokens current
+
+### Backend Replicas
+- Every backend replica serves the API and WebSocket clients.
+- Only one replica, the leader, runs the background jobs: TTL reaper, expiry warning, cleanup policies, quota and secret warnings, pull secret refresh, cluster health checks and the k8s status watcher. So each job runs once, also with 2 or more replicas.
+- The replicas elect the leader with a Kubernetes Lease (`LEADER_ELECTION_ENABLED=true`, on in the Helm chart). When the leader stops or loses the lease, another replica takes over after a few seconds (about 2 seconds on a normal shutdown, at most about 15 seconds after a crash).
+- Without election (`LEADER_ELECTION_ENABLED=false`, the default for docker-compose and local development), every process runs the jobs. Use one replica then.
+- A cleanup policy change takes effect on the leader within one minute. A scheduled policy run that fell into a leader change runs when the new leader starts (when it was due in the last 5 minutes).
+- After a leader change, one quota or secret warning can come again (the cooldown of these warnings is in memory).
+- Metric `stackmanager_leader` is 1 on the leader. See [ARCHITECTURE.md](ARCHITECTURE.md#replica-model).
 
 ### Git Integration
 - Auto-detects provider from repository URL (`dev.azure.com` → Azure DevOps, `gitlab.com` → GitLab)

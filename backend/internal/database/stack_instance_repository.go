@@ -65,16 +65,67 @@ func (r *GORMStackInstanceRepository) FindByNamespace(namespace string) (*models
 	return &instance, nil
 }
 
+// columnExpiryWarnedAt is written only by MarkExpiryWarned and by the clear
+// step in Update.
+const columnExpiryWarnedAt = "expiry_warned_at"
+
+// expiryMatchTolerance is the tolerance for "the same expiry time". The
+// database can store expires_at with less precision than time.Time.
+const expiryMatchTolerance = time.Second
+
 // Update persists changes to an existing stack instance.
+//
+// Update never writes expiry_warned_at: a copy of the instance that was read
+// before the expiry warning must not reset the mark. When Update changes
+// expires_at (deploy, extend, TTL change), it clears the mark in the same
+// transaction, so the new expiry time gets a new warning.
 func (r *GORMStackInstanceRepository) Update(instance *models.StackInstance) error {
 	instance.UpdatedAt = time.Now().UTC()
-	if err := r.db.Save(instance).Error; err != nil {
+	err := r.db.Transaction(func(tx *gorm.DB) error {
+		if err := clearExpiryWarningIfExpiryChanged(tx, instance); err != nil {
+			return err
+		}
+		return tx.Omit(columnExpiryWarnedAt).Save(instance).Error
+	})
+	if err != nil {
 		if isDuplicateKeyError(err) {
 			return dberrors.NewDatabaseError("update", dberrors.ErrDuplicateKey)
 		}
 		return dberrors.NewDatabaseError("update", err)
 	}
 	return nil
+}
+
+// clearExpiryWarningIfExpiryChanged clears expiry_warned_at when the stored
+// expires_at differs from instance.ExpiresAt by at least
+// expiryMatchTolerance (or one of them is NULL and the other is not).
+func clearExpiryWarningIfExpiryChanged(tx *gorm.DB, instance *models.StackInstance) error {
+	q := tx.Model(&models.StackInstance{}).
+		Where("id = ? AND expiry_warned_at IS NOT NULL", instance.ID)
+	if instance.ExpiresAt == nil {
+		q = q.Where("expires_at IS NOT NULL")
+	} else {
+		exp := instance.ExpiresAt.UTC()
+		q = q.Where("(expires_at IS NULL OR expires_at <= ? OR expires_at >= ?)",
+			exp.Add(-expiryMatchTolerance), exp.Add(expiryMatchTolerance))
+	}
+	return q.UpdateColumn(columnExpiryWarnedAt, nil).Error
+}
+
+// MarkExpiryWarned sets expiry_warned_at when the instance has no expiry
+// warning and its expires_at still matches expiresAt. The conditional update
+// makes sure that only one caller gets true, also when two replicas run the
+// expiry warner at the same time.
+func (r *GORMStackInstanceRepository) MarkExpiryWarned(id string, expiresAt, warnedAt time.Time) (bool, error) {
+	exp := expiresAt.UTC()
+	res := r.db.Model(&models.StackInstance{}).
+		Where("id = ? AND expiry_warned_at IS NULL AND expires_at > ? AND expires_at < ?",
+			id, exp.Add(-expiryMatchTolerance), exp.Add(expiryMatchTolerance)).
+		UpdateColumn(columnExpiryWarnedAt, warnedAt.UTC())
+	if res.Error != nil {
+		return false, dberrors.NewDatabaseError("mark_expiry_warned", res.Error)
+	}
+	return res.RowsAffected == 1, nil
 }
 
 // Delete removes a stack instance by ID.
@@ -220,12 +271,13 @@ func (r *GORMStackInstanceRepository) ListExpired() ([]*models.StackInstance, er
 }
 
 // ListExpiringSoon returns running/partial instances whose ExpiresAt is within the given
-// threshold from now (i.e., will expire soon but haven't expired yet).
+// threshold from now (i.e., will expire soon but haven't expired yet) and
+// that have no expiry warning yet (expiry_warned_at IS NULL).
 func (r *GORMStackInstanceRepository) ListExpiringSoon(threshold time.Duration) ([]*models.StackInstance, error) {
 	now := time.Now().UTC()
 	deadline := now.Add(threshold)
 	var instances []*models.StackInstance
-	if err := r.db.Where("status IN ? AND expires_at IS NOT NULL AND expires_at > ? AND expires_at <= ?",
+	if err := r.db.Where("status IN ? AND expires_at IS NOT NULL AND expires_at > ? AND expires_at <= ? AND expiry_warned_at IS NULL",
 		[]string{models.StackStatusRunning, models.StackStatusPartial}, now, deadline).
 		Order("expires_at ASC").
 		Find(&instances).Error; err != nil {

@@ -24,8 +24,30 @@ backend:
     repository: k8s-stack-manager/backend
     tag: ""  # Empty = uses Chart.AppVersion
     pullPolicy: IfNotPresent
+  # Every replica serves the HTTP API and WebSocket clients. Only the leader
+  # replica (see leaderElection) runs the background workers. Note: until
+  # WebSocket events are shared between replicas, a WebSocket client sees
+  # only the events of its own replica (for example deploy logs of a deploy
+  # that runs on another replica, or status events from the leader).
   replicas: 2
   port: 8081
+
+  # Leader election (env LEADER_ELECTION_*). The replicas compete for a
+  # coordination.k8s.io Lease in the release namespace. Only the leader runs
+  # the background workers: TTL reaper, expiry warner, cleanup scheduler,
+  # quota and secret monitors, pull secret refresher, cluster health poller,
+  # k8s status watcher. A replica that loses the lease stops its workers and
+  # campaigns again; on shutdown the leader releases the lease.
+  # The chart creates a Role + RoleBinding (leases: get, create, update) for
+  # the backend service account when serviceAccount.create is true; otherwise
+  # grant these permissions yourself. POD_NAME and POD_NAMESPACE come from the
+  # downward API. Timings: backend.env LEADER_ELECTION_LEASE_DURATION (15s),
+  # LEADER_ELECTION_RENEW_DEADLINE (10s), LEADER_ELECTION_RETRY_PERIOD (2s).
+  # With enabled: false, every replica runs the workers (use one replica).
+  leaderElection:
+    enabled: true
+    # Lease name. Empty = "<fullname>-workers".
+    leaseName: ""
 
   resources:
     requests:

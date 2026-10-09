@@ -23,6 +23,13 @@ data:
   DB_MAX_IDLE_CONNS: "5"
   DB_CONN_MAX_LIFETIME: "5m"
   {{- end }}
+  {{- /* Leader election: one replica runs the background workers. An explicit backend.env value wins. */}}
+  {{- if not (hasKey .Values.backend.env "LEADER_ELECTION_ENABLED") }}
+  LEADER_ELECTION_ENABLED: {{ .Values.backend.leaderElection.enabled | toString | quote }}
+  {{- end }}
+  {{- if not (hasKey .Values.backend.env "LEADER_ELECTION_LEASE_NAME") }}
+  LEADER_ELECTION_LEASE_NAME: {{ include "k8s-stack-manager.leaderElection.leaseName" . | quote }}
+  {{- end }}
   {{- if .Values.hooks.enabled }}
   HOOKS_CONFIG_FILE: "/etc/hooks/hooks.json"
   {{- end }}

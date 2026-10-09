@@ -4,7 +4,7 @@
 
 Full-stack app: **Go (Gin) backend** + **React (TypeScript, Vite, MUI) frontend**, with **MySQL** (GORM) as the data store. Docker Compose orchestrates all services. Go 1.26 (`backend/go.mod`), Node 22+ (images use `node:26-alpine`).
 
-**Bootstrap flow**: `backend/api/main.go` → `config.LoadConfig()` → `telemetry.Init(cfg.Otel)` → `database.NewRepositoryWithGormDB(cfg)` → session store (`sessionstore`) → `routes.SetupRoutes(router, routes.Deps{...})` → `http.Server` with graceful shutdown (`SIGINT`/`SIGTERM`, stops rate limiters and flushes telemetry).
+**Bootstrap flow**: `backend/api/main.go` → `config.LoadConfig()` → `telemetry.Init(cfg.Otel)` → `leader.NewInCluster` (fails startup when `LEADER_ELECTION_ENABLED=true` outside a pod) → `database.NewRepositoryWithGormDB(cfg)` → session store (`sessionstore`) → `routes.SetupRoutes(router, routes.Deps{...})` → `buildLeaderWorkers` + `startLeaderElection` (leader-only background workers) → `http.Server` with graceful shutdown (`SIGINT`/`SIGTERM`: stops HTTP, stops the leader workers, releases the lease, stops rate limiters and flushes telemetry).
 
 **Ports**: Backend `:8081` on host, frontend `:3000` in dev. Inside Docker, nginx (`location /api/` → `proxy_pass http://backend:8081/api/`) and the Vite dev proxy (`/api` → backend, no rewrite) both keep the `/api` prefix; backend routes are registered under `/api/v1`. Local non-Docker dev hits `localhost:8081` directly (`frontend/src/api/config.ts`). With `make dev-otel`: Grafana `:3001`, Prometheus `:9090`.
 
@@ -60,6 +60,7 @@ helm/k8s-stack-manager/
     configmap.yaml                         # Non-secret env vars
     secret.yaml                            # Secret env vars (skipped when externalSecrets.enabled)
     serviceaccount.yaml, clusterrole.yaml  # Identity + RBAC for managing target clusters
+    leader-election-rbac.yaml              # Role + RoleBinding: leases get/create/update (backend.leaderElection.enabled)
     deployment.yaml                        # Used when argoRollouts.enabled=false (default)
     rollout.yaml                           # Argo Rollout, canary 20%→50%→80% (argoRollouts.enabled=true)
     service.yaml, service-canary.yaml      # Stable + canary services
@@ -84,6 +85,7 @@ helm/k8s-stack-manager/
 - **ConfigMap/Secret checksums** in pod annotations trigger a rollout on config changes.
 - **Security contexts** — backend runs as non-root (uid 65532), readOnlyRootFilesystem; frontend drops all capabilities.
 - **Observability** — `otel.enabled` deploys a collector; `metrics.enabled` exposes Prometheus metrics, `metrics.serviceMonitor.enabled` adds a ServiceMonitor.
+- **Leader election** — `backend.leaderElection.enabled` (default true) sets `LEADER_ELECTION_ENABLED`, `POD_NAME`/`POD_NAMESPACE` (downward API, Deployment and Rollout) and a Lease Role; only the leader replica runs the background workers, every replica serves HTTP and WebSocket.
 
 ### Configuration
 Key values in `values.yaml`:
@@ -91,6 +93,7 @@ Key values in `values.yaml`:
 - `backend.env.*` — Non-secret env vars (ConfigMap)
 - `backend.secrets.*` — Secret env vars like `JWT_SECRET` (required), `ADMIN_PASSWORD`, `KUBECONFIG_ENCRYPTION_KEY`, `DB_PASSWORD` (Secret or ExternalSecret)
 - `backend.replicas` / `frontend.replicas`, `*.autoscaling`, `*.pdb` — Independently scalable
+- `backend.leaderElection.enabled`, `backend.leaderElection.leaseName` — Leader election for the background workers (Lease `<fullname>-workers`)
 - `mysql.enabled`, `mysql.auth.*`, `mysql.persistence.enabled` — Bundled database
 - `ingress.type`, `ingress.host`, `ingress.traefik.*`, `ingress.className`, `ingress.tls` — Ingress settings
 - `otel.enabled`, `metrics.enabled`, `metrics.serviceMonitor.enabled` — Observability
@@ -173,9 +176,10 @@ backend/
     helm/                        # Values deep-merge, template variable substitution
     hooks/                       # Outbound lifecycle webhooks: dispatcher, HMAC-signed client, actions, config file (see docs/hooks.md, EXTENDING.md)
     k8s/                         # Kubernetes cluster client, status watcher, resource quotas, pod exec, scaling
+    leader/                      # Leader election (coordination.k8s.io Lease via client-go) + leader worker group (Run(ctx) per term)
     notifier/                    # Notification dispatch (in-app notifications + outbound notification channels)
     sessionstore/                # Token blocklist + OIDC state persistence (mysql default, memory)
-    telemetry/                   # OpenTelemetry bootstrap, DB pool metrics, business metrics
+    telemetry/                   # OpenTelemetry bootstrap, DB pool metrics, business metrics, leader gauge
     websocket/                   # WebSocket hub, client, message types
     scheduler/                   # Cron-based cleanup policy execution
     ttl/                         # TTL reaper for auto-expiring stack instances
@@ -304,6 +308,7 @@ backend/internal/
   helm/                  # Values deep-merge, template variable substitution, YAML export
   deployer/              # Helm CLI wrapper for deploy/undeploy/rollback/status (multi-cluster via registry), cleanup executor, expiry stopper
   k8s/                   # Kubernetes cluster client, status watcher, resource quota management, pod exec, scaling
+  leader/                # Leader election: only the leader replica runs the background workers
   hooks/                 # Outbound lifecycle webhooks (HMAC signed), actions
   notifier/              # Notification dispatch (in-app + outbound notification channels on deploy/stop/clean events)
   scheduler/             # Cron-based cleanup policy execution with condition parsing
@@ -330,8 +335,8 @@ backend/internal/
 - **Hooks**: Lifecycle events go to HMAC-signed webhook subscribers; `pre-*` events can gate the operation (`failure_policy: fail`). Organization-specific behaviour (Slack, DB refresh, approval gates) belongs in hook subscribers, not in core (see `EXTENDING.md`)
 - **Notification channels**: DevOps and admin users register outbound webhook channels (`/admin/notification-channels`, guarded by `RequireDevOps`) with per-event subscriptions, test send, and delivery logs. In-app notifications remain per user
 - **Generic design**: No company-specific hardcoding; all branding and configurable values via environment variables
-- **Cleanup policies**: Cron-scheduled actions (stop/clean/delete) on instances matching a condition (`status:`, `idle_days:`, `age_days:` = creation age, `stopped_days:` = time since `StoppedAt`, `ttl_expired`). Policies target a cluster (or "all"). Scheduler reloads on policy changes. Manual run supported with dry-run mode. `StoppedAt` is set when a stop completes (API, TTL reaper, policy) and cleared on deploy and clean.
-- **TTL auto-expiry**: Instances with `TTLMinutes > 0` get `ExpiresAt` set on deploy. Background reaper checks every minute and stops expired instances. `POST /:id/extend` with `{"minutes": N}` adds N minutes to the expiry (never shortens, never changes `ttl_minutes`, capped at now + 30 days); an empty body adds one TTL; the deprecated `{"ttl_minutes": N}` alone keeps the old reset behaviour.
+- **Cleanup policies**: Cron-scheduled actions (stop/clean/delete) on instances matching a condition (`status:`, `idle_days:`, `age_days:` = creation age, `stopped_days:` = time since `StoppedAt`, `ttl_expired`). Policies target a cluster (or "all"). Only the leader replica runs cron jobs; it reloads on policy changes it handles, when it becomes leader and every minute (a scheduled run reads the policy again). Manual run (any replica) supported with dry-run mode. `StoppedAt` is set when a stop completes (API, TTL reaper, policy) and cleared on deploy and clean.
+- **TTL auto-expiry**: Instances with `TTLMinutes > 0` get `ExpiresAt` set on deploy. Background reaper (leader replica only) checks every minute and stops expired instances. The expiry warner sends one warning 30 minutes before expiry: it marks `stack_instances.expiry_warned_at` with a conditional update before it notifies; the repository `Update` never writes that column and clears it when `ExpiresAt` changes (deploy, extend). `POST /:id/extend` with `{"minutes": N}` adds N minutes to the expiry (never shortens, never changes `ttl_minutes`, capped at now + 30 days); an empty body adds one TTL; the deprecated `{"ttl_minutes": N}` alone keeps the old reset behaviour.
 - **Favorites**: Users can bookmark templates and instances. Stored as `UserFavorite` entities.
 - **Shared values**: Per-cluster Helm values applied to all instances in that cluster, merged by priority (lowest first) before chart defaults and instance overrides.
 - **Analytics and dashboard**: Read-only aggregation of instance counts, deployment stats, template usage, and user activity (`/analytics/*`); `/dashboard` serves the landing page overview.
@@ -399,6 +404,7 @@ backend/internal/
 - DB retry: 5 attempts, 2s delay on startup
 - Docker networks: `backend-net` (db, backend) and `frontend-net` (backend, frontend) — maintain separation
 - Health checks: register for all external dependencies via `healthChecker.AddCheck()`
+- Background workers run on the leader replica only (`internal/leader`, Kubernetes Lease); add a periodic job as a `leader.Worker` with a restartable `Run(ctx)`, and keep state that must survive a leader change in the database. Readiness does not depend on leadership
 - Always implement pagination for new list endpoints — `page`/`pageSize` query params (default 25, max 100) backed by `ListPaged(limit, offset)`, as in stack instances, definitions and templates (stack instances and definitions also accept a `limit`/`offset` fallback; templates take `page`/`pageSize` only). Older endpoints (items, audit logs, notifications, delivery logs) take `limit`/`offset`; small admin lists are unpaged. Select only columns needed for list views (omit TEXT fields like `description`). Use batch queries (`CountByTemplateIDs`, `FindByIDs`) instead of N+1 loops for enrichment data.
 - Use `internal/cache` for short-lived in-memory caching instead of ad-hoc maps (used by combined auth, login, dashboard and analytics handlers; `LOGIN_CACHE_TTL`). `gitprovider.Registry` keeps its own 5-minute branch cache
 - Struct field ordering: optimize for memory alignment (8-byte fields first)

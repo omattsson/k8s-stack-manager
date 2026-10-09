@@ -2,6 +2,7 @@ package ttl
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -57,11 +58,18 @@ func (m *mockExpiryNotifier) getCalls() []notifyCall {
 // Mock instance repo for warner tests (separate from reaper's mockInstanceRepo)
 // ---------------------------------------------------------------------------
 
+// warnerMockInstanceRepo keeps the expiry warning mark per instance, like
+// stack_instances.expiry_warned_at. It is safe for concurrent use.
 type warnerMockInstanceRepo struct {
-	mu              sync.Mutex
+	mu                sync.Mutex
 	expiringSoonItems []*models.StackInstance
+	markErr           error
+	markCalls         int
+	listCalls         int
 }
 
+// setExpiringSoon replaces the instances. New instances have no mark, as
+// after an Update that changed ExpiresAt.
 func (m *warnerMockInstanceRepo) setExpiringSoon(items []*models.StackInstance) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -71,9 +79,35 @@ func (m *warnerMockInstanceRepo) setExpiringSoon(items []*models.StackInstance) 
 func (m *warnerMockInstanceRepo) ListExpiringSoon(_ time.Duration) ([]*models.StackInstance, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	cp := make([]*models.StackInstance, len(m.expiringSoonItems))
-	copy(cp, m.expiringSoonItems)
-	return cp, nil
+	m.listCalls++
+	var out []*models.StackInstance
+	for _, inst := range m.expiringSoonItems {
+		if inst.ExpiryWarnedAt == nil {
+			cp := *inst
+			out = append(out, &cp)
+		}
+	}
+	return out, nil
+}
+
+func (m *warnerMockInstanceRepo) MarkExpiryWarned(id string, expiresAt, warnedAt time.Time) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.markCalls++
+	if m.markErr != nil {
+		return false, m.markErr
+	}
+	for _, inst := range m.expiringSoonItems {
+		if inst.ID != id {
+			continue
+		}
+		if inst.ExpiryWarnedAt != nil || inst.ExpiresAt == nil || !inst.ExpiresAt.Equal(expiresAt) {
+			return false, nil
+		}
+		inst.ExpiryWarnedAt = &warnedAt
+		return true, nil
+	}
+	return false, nil
 }
 
 // --- no-op stubs for the rest of the interface ---
@@ -179,29 +213,91 @@ func TestWarner_DeduplicatesWarnings(t *testing.T) {
 	assert.Equal(t, 1, notifier.count(), "notifier should have been called only once; second check should deduplicate")
 }
 
-func TestWarner_PrunesExpiredEntries(t *testing.T) {
+func TestWarner_TwoWarnersOneDatabaseSendOneWarning(t *testing.T) {
 	t.Parallel()
 
-	pastExpiry := time.Now().Add(-5 * time.Minute)
-	repo := &warnerMockInstanceRepo{}
+	// Two replicas (for example a short leader overlap) check the same
+	// database at the same time.
+	expiresAt := time.Now().Add(4 * time.Minute)
+	repo := &warnerMockInstanceRepo{
+		expiringSoonItems: []*models.StackInstance{
+			{ID: "inst-1", Name: "my-stack", OwnerID: "user-42", Status: models.StackStatusRunning, ExpiresAt: &expiresAt},
+			{ID: "inst-2", Name: "other", OwnerID: "user-7", Status: models.StackStatusRunning, ExpiresAt: &expiresAt},
+		},
+	}
+	notifier := &mockExpiryNotifier{}
+	w1 := NewWarner(repo, notifier, 30*time.Minute, time.Minute)
+	w2 := NewWarner(repo, notifier, 30*time.Minute, time.Minute)
+
+	var wg sync.WaitGroup
+	for _, w := range []*Warner{w1, w2, w1, w2} {
+		wg.Add(1)
+		go func(w *Warner) {
+			defer wg.Done()
+			w.check()
+		}(w)
+	}
+	wg.Wait()
+
+	assert.Equal(t, 2, notifier.count(), "one warning per instance")
+	ids := map[string]int{}
+	for _, c := range notifier.getCalls() {
+		ids[c.entityID]++
+	}
+	assert.Equal(t, map[string]int{"inst-1": 1, "inst-2": 1}, ids)
+}
+
+func TestWarner_MarkErrorSendsNoWarning(t *testing.T) {
+	t.Parallel()
+
+	expiresAt := time.Now().Add(10 * time.Minute)
+	repo := &warnerMockInstanceRepo{
+		expiringSoonItems: []*models.StackInstance{
+			{ID: "inst-1", Name: "my-stack", OwnerID: "user-42", Status: models.StackStatusRunning, ExpiresAt: &expiresAt},
+		},
+		markErr: errors.New("database unavailable"),
+	}
 	notifier := &mockExpiryNotifier{}
 
-	w := NewWarner(repo, notifier, 30*time.Minute, 60*time.Second)
+	NewWarner(repo, notifier, 30*time.Minute, time.Minute).check()
 
-	// Pre-populate the warned map with an entry whose ExpiresAt is in the past.
-	key := "inst-old|" + pastExpiry.Format(time.RFC3339)
-	w.mu.Lock()
-	w.warned[key] = pastExpiry
-	w.mu.Unlock()
+	assert.Equal(t, 0, notifier.count())
+	assert.Equal(t, 1, repo.markCalls)
+}
 
-	// check() calls pruneWarned() internally.
-	w.check()
+func TestWarner_RunStartStopStartAgain(t *testing.T) {
+	t.Parallel()
 
-	w.mu.Lock()
-	remaining := len(w.warned)
-	w.mu.Unlock()
+	expiresAt := time.Now().Add(10 * time.Minute)
+	repo := &warnerMockInstanceRepo{
+		expiringSoonItems: []*models.StackInstance{
+			{ID: "inst-1", Name: "my-stack", OwnerID: "user-42", Status: models.StackStatusRunning, ExpiresAt: &expiresAt},
+		},
+	}
+	notifier := &mockExpiryNotifier{}
+	w := NewWarner(repo, notifier, 30*time.Minute, time.Hour)
 
-	assert.Equal(t, 0, remaining, "expired entries should be pruned from the warned map")
+	for term := 0; term < 2; term++ {
+		ctx, cancel := context.WithCancel(context.Background())
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			w.Run(ctx)
+		}()
+		require.Eventually(t, func() bool {
+			repo.mu.Lock()
+			defer repo.mu.Unlock()
+			return repo.listCalls >= term+1
+		}, time.Second, 5*time.Millisecond)
+		cancel()
+		select {
+		case <-done:
+		case <-time.After(time.Second):
+			t.Fatal("Run did not return after cancel")
+		}
+	}
+	// The second term (a new leader) does not warn again.
+	assert.Equal(t, 1, notifier.count())
 }
 
 func TestWarner_TTLExtensionResetsWarning(t *testing.T) {

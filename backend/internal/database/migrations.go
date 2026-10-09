@@ -1047,6 +1047,11 @@ func (d *Database) AutoMigrate() error {
 	// snapshot, never the working copy.
 	migrator.AddMigration(backfillPublishedTemplateSnapshotsMigration())
 
+	// Migration 45: stack_instances.expiry_warned_at. The TTL expiry warner
+	// keeps its "already warned" state in the database, so a new leader
+	// replica does not warn again.
+	migrator.AddMigration(expiryWarnedAtMigration())
+
 	// Run migrations
 	if err := migrator.MigrateUp(); err != nil {
 		return err
@@ -1333,4 +1338,32 @@ func releaseTemplateWorkingCopies(tx *gorm.DB) error {
 		}
 	}
 	return nil
+}
+
+// expiryWarnedAtMigration is migration 45. It adds the nullable
+// stack_instances.expiry_warned_at column. Before, the expiry warner kept
+// this state in process memory, so every replica (and every restart) sent the
+// warning again. No backfill: an instance in its warning window at upgrade
+// time gets one more warning, as after a restart before. It is a function so
+// tests can run its Down step.
+func expiryWarnedAtMigration() schema.Migration {
+	return schema.Migration{
+		Version:     "20261009000045",
+		Name:        "add_stack_instance_expiry_warned_at",
+		Description: "Add expiry_warned_at to stack_instances (TTL expiry warning sent for the current expires_at)",
+		Up: func(tx *gorm.DB) error {
+			m := tx.Migrator()
+			if m.HasTable(&models.StackInstance{}) && !m.HasColumn(&models.StackInstance{}, "ExpiryWarnedAt") {
+				return m.AddColumn(&models.StackInstance{}, "ExpiryWarnedAt")
+			}
+			return nil
+		},
+		Down: func(tx *gorm.DB) error {
+			m := tx.Migrator()
+			if m.HasColumn(&models.StackInstance{}, "ExpiryWarnedAt") {
+				return m.DropColumn(&models.StackInstance{}, "ExpiryWarnedAt")
+			}
+			return nil
+		},
+	}
 }

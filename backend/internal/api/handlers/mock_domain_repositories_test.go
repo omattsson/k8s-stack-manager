@@ -1001,12 +1001,28 @@ func (m *MockStackInstanceRepository) ListExpiringSoon(threshold time.Duration) 
 	deadline := now.Add(threshold)
 	var out []*models.StackInstance
 	for _, i := range m.items {
-		if i.Status == models.StackStatusRunning && i.ExpiresAt != nil && i.ExpiresAt.After(now) && !i.ExpiresAt.After(deadline) {
+		if i.Status == models.StackStatusRunning && i.ExpiresAt != nil && i.ExpiresAt.After(now) && !i.ExpiresAt.After(deadline) && i.ExpiryWarnedAt == nil {
 			cp := *i
 			out = append(out, &cp)
 		}
 	}
 	return out, nil
+}
+
+// MarkExpiryWarned sets ExpiryWarnedAt when it is nil and ExpiresAt still
+// equals expiresAt, like the conditional update of the GORM repository.
+func (m *MockStackInstanceRepository) MarkExpiryWarned(id string, expiresAt, warnedAt time.Time) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.err != nil {
+		return false, m.err
+	}
+	i, ok := m.items[id]
+	if !ok || i.ExpiryWarnedAt != nil || i.ExpiresAt == nil || !i.ExpiresAt.Equal(expiresAt) {
+		return false, nil
+	}
+	i.ExpiryWarnedAt = &warnedAt
+	return true, nil
 }
 
 func (m *MockStackInstanceRepository) CountByDefinitionIDs(definitionIDs []string) (map[string]int, error) {

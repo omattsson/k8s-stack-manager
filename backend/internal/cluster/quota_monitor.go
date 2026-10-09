@@ -97,7 +97,15 @@ func (m *QuotaMonitor) Stop() {
 
 func (m *QuotaMonitor) run() {
 	defer close(m.done)
+	ctx, cancel := contextUntilClosed(m.stopCh)
+	defer cancel()
+	m.Run(ctx)
+}
 
+// Run runs the quota monitor loop until ctx is done. It blocks. Run can be
+// called again after it returned (one call per leadership term). Do not
+// mix Run with Start and Stop on the same value.
+func (m *QuotaMonitor) Run(ctx context.Context) {
 	ticker := time.NewTicker(m.interval)
 	defer ticker.Stop()
 
@@ -107,7 +115,7 @@ func (m *QuotaMonitor) run() {
 
 	for {
 		select {
-		case <-m.stopCh:
+		case <-ctx.Done():
 			slog.Info("Quota monitor stopped")
 			return
 		case <-ticker.C:

@@ -102,10 +102,8 @@ spec:
                 name: {{ include "k8s-stack-manager.fullname" . }}-backend
             - secretRef:
                 name: {{ include "k8s-stack-manager.fullname" . }}-backend
-          {{- with .Values.backend.extraEnv }}
           env:
-            {{- toYaml . | nindent 12 }}
-          {{- end }}
+            {{- include "k8s-stack-manager.backend.env" . | nindent 12 }}
           lifecycle:
             preStop:
               exec:

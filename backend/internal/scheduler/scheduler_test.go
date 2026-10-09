@@ -123,6 +123,9 @@ func (r *mockInstanceRepo) ExistsByDefinitionAndStatus(string, string) (bool, er
 }
 func (r *mockInstanceRepo) ListExpired() ([]*models.StackInstance, error)                        { return nil, nil }
 func (r *mockInstanceRepo) ListExpiringSoon(_ time.Duration) ([]*models.StackInstance, error) { return nil, nil }
+func (*mockInstanceRepo) MarkExpiryWarned(_ string, _, _ time.Time) (bool, error) {
+	return false, nil
+}
 func (r *mockInstanceRepo) CountByDefinitionIDs(_ []string) (map[string]int, error) { return nil, nil }
 func (r *mockInstanceRepo) CountByOwnerIDs(_ []string) (map[string]int, error)      { return nil, nil }
 func (r *mockInstanceRepo) ListIDsByDefinitionIDs(_ []string) (map[string][]string, error) {
