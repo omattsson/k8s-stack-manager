@@ -27,6 +27,29 @@ type MessageHandler = (msg: WsMessage) => void;
 const listeners = new Set<MessageHandler>();
 let sharedWs: ReconnectingWebSocket | null = null;
 
+/**
+ * Instance subscriptions of this tab: instance ID to the number of active
+ * subscribers. The server forgets the subscriptions of a connection when the
+ * connection closes, so the hook sends them again on each open.
+ */
+const instanceSubscriptions = new Map<string, number>();
+
+function encode(type: string, payload: Record<string, unknown>): string {
+  return JSON.stringify({ type, payload });
+}
+
+/** True when the shared socket exists and is open. */
+function isOpen(ws: ReconnectingWebSocket | null): ws is ReconnectingWebSocket {
+  return ws?.readyState === WebSocket.OPEN;
+}
+
+/** Send the instance subscriptions on `ws`. Runs on each open, also after a reconnect. */
+function handleOpen(ws: ReconnectingWebSocket): void {
+  instanceSubscriptions.forEach((_count, instanceId) => {
+    ws.send(encode('subscribe', { instance_id: instanceId }));
+  });
+}
+
 /** Refresh the access token when it expires within this time before a connect. */
 const TOKEN_REFRESH_MARGIN_MS = 30_000;
 
@@ -132,6 +155,7 @@ function getSharedWs(): ReconnectingWebSocket | null {
     ws = new ReconnectingWebSocket(() => nextUrl(() => ws, initialToken, state));
     ws.addEventListener('open', () => {
       state.forceRefresh = false;
+      if (ws && sharedWs === ws) handleOpen(ws);
     });
     ws.addEventListener('close', (event) => {
       if (event.code === CLOSE_POLICY_VIOLATION) {
@@ -164,6 +188,39 @@ function subscribe(handler: MessageHandler): () => void {
 }
 
 /**
+ * Subscribe to the instance-scoped messages of an instance (for example
+ * `deployment.log`). The subscription stays active over reconnects: the hook
+ * sends it again each time the socket opens. More than one caller can
+ * subscribe to the same instance; the server gets an unsubscribe when the
+ * last caller unsubscribes.
+ * @param instanceId - Instance ID
+ * @returns Function that removes this subscription
+ */
+export function subscribeInstance(instanceId: string): () => void {
+  const count = instanceSubscriptions.get(instanceId) ?? 0;
+  instanceSubscriptions.set(instanceId, count + 1);
+  // When the socket is not open, the open handler sends the subscription.
+  if (count === 0 && isOpen(sharedWs)) {
+    sharedWs.send(encode('subscribe', { instance_id: instanceId }));
+  }
+  let active = true;
+  return () => {
+    if (!active) return;
+    active = false;
+    const current = instanceSubscriptions.get(instanceId) ?? 0;
+    if (current > 1) {
+      instanceSubscriptions.set(instanceId, current - 1);
+      return;
+    }
+    instanceSubscriptions.delete(instanceId);
+    // A socket that is not open has no subscriptions on the server.
+    if (isOpen(sharedWs)) {
+      sharedWs.send(encode('unsubscribe', { instance_id: instanceId }));
+    }
+  };
+}
+
+/**
  * Reconnect the shared WebSocket with a fresh token.
  * Call this after login or token refresh so the connection uses
  * the latest JWT from localStorage.
@@ -185,6 +242,11 @@ export function reconnectWebSocket(): void {
  * incoming messages to the provided handler. The connection auto-reconnects
  * on failure via reconnecting-websocket. All hook invocations share the
  * same underlying connection.
+ *
+ * Returns `send` (sends only when the socket is open; drops the message
+ * otherwise) and `subscribeInstance` (see the module function of the same
+ * name; use it for instance-scoped messages, because it subscribes again
+ * after a reconnect).
  */
 export function useWebSocket(onMessage: MessageHandler) {
   const handlerRef = useRef(onMessage);
@@ -197,10 +259,10 @@ export function useWebSocket(onMessage: MessageHandler) {
   }, []);
 
   const send = useCallback((type: string, payload: Record<string, unknown>) => {
-    if (sharedWs?.readyState === WebSocket.OPEN) {
-      sharedWs.send(JSON.stringify({ type, payload }));
+    if (isOpen(sharedWs)) {
+      sharedWs.send(encode(type, payload));
     }
   }, []);
 
-  return { send };
+  return { send, subscribeInstance };
 }

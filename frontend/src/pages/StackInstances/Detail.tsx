@@ -19,6 +19,11 @@ import {
   Tooltip,
   Menu,
   MenuItem,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogContentText,
+  DialogActions,
 } from '@mui/material';
 import CloseIcon from '@mui/icons-material/Close';
 import ArrowDropDownIcon from '@mui/icons-material/ArrowDropDown';
@@ -50,6 +55,12 @@ import RollbackDialog from './RollbackDialog';
 /** Statuses in which releases run, so a deploy is a redeploy and a rollback is possible. */
 const DEPLOYED_STATUSES = new Set(['running', 'partial', 'error']);
 
+/** True when both records have the same keys with the same values. */
+const sameRecord = (a: Record<string, string>, b: Record<string, string>): boolean => {
+  const keys = Object.keys(a);
+  return keys.length === Object.keys(b).length && keys.every((k) => b[k] === a[k]);
+};
+
 const Detail = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -71,6 +82,7 @@ const Detail = () => {
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [exportMenuAnchor, setExportMenuAnchor] = useState<HTMLElement | null>(null);
   const [deployPreviewOpen, setDeployPreviewOpen] = useState(false);
+  const [unsavedDeployOpen, setUnsavedDeployOpen] = useState(false);
   const [deploying, setDeploying] = useState(false);
   const [stopping, setStopping] = useState(false);
   const [cleaning, setCleaning] = useState(false);
@@ -94,10 +106,16 @@ const Detail = () => {
   const pendingActionRef = useRef<DeploymentLog['action'] | null>(null);
   const initialOverridesRef = useRef<Record<string, string>>({});
   const initialBranchRef = useRef('');
+  const initialBranchOverridesRef = useRef<Record<string, string>>({});
+  // Changes after each save, so isDirty compares with the saved state again.
+  const [saveCount, setSaveCount] = useState(0);
   const isDirty = useMemo(() =>
     branch !== initialBranchRef.current
-    || JSON.stringify(editedOverrides) !== JSON.stringify(initialOverridesRef.current),
-    [branch, editedOverrides]
+    || JSON.stringify(editedOverrides) !== JSON.stringify(initialOverridesRef.current)
+    || !sameRecord(branchOverrides, initialBranchOverridesRef.current),
+    // saveCount: the saved state is in refs; a save changes them.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [branch, editedOverrides, branchOverrides, saveCount]
   );
 
   useUnsavedChanges(isDirty);
@@ -130,6 +148,7 @@ const Detail = () => {
           boMap[bo.chart_config_id] = bo.branch;
         });
         setBranchOverrides(boMap);
+        initialBranchOverridesRef.current = { ...boMap };
 
         // Pre-populate edited overrides with existing values
         const overrideMap: Record<string, string> = {};
@@ -301,51 +320,37 @@ const Detail = () => {
 
   }, [id, refreshInstance]);
 
-  const { send } = useWebSocket(handleWsMessage);
+  const { subscribeInstance } = useWebSocket(handleWsMessage);
 
+  // The hook sends the subscription when the socket opens and again after
+  // each reconnect, so log lines also arrive after a page load.
   useEffect(() => {
     if (!id) return;
-    send('subscribe', { instance_id: id });
-    return () => {
-      send('unsubscribe', { instance_id: id });
-    };
-  }, [id, send]);
+    return subscribeInstance(id);
+  }, [id, subscribeInstance]);
 
-  const chartBranchTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
-
+  /**
+   * Set the branch override of a chart in the page state. Save Changes stores
+   * it. An empty branch or the instance branch removes the override.
+   */
   const handleChartBranchChange = (chartId: string, newBranch: string) => {
-    if (!id) return;
     setBranchOverrides((prev) => {
+      const next = { ...prev };
       if (!newBranch || newBranch === branch) {
-        const next = { ...prev };
         delete next[chartId];
-        return next;
+      } else {
+        next[chartId] = newBranch;
       }
-      return { ...prev, [chartId]: newBranch };
+      return next;
     });
-
-    if (chartBranchTimers.current[chartId]) {
-      clearTimeout(chartBranchTimers.current[chartId]);
-    }
-
-    chartBranchTimers.current[chartId] = setTimeout(async () => {
-      delete chartBranchTimers.current[chartId];
-      const effectiveBranch = newBranch;
-      try {
-        if (!effectiveBranch || effectiveBranch === branch) {
-          await branchOverrideService.delete(id, chartId);
-        } else {
-          await branchOverrideService.set(id, chartId, effectiveBranch);
-          showSuccess('Branch override saved');
-        }
-      } catch {
-        setError('Failed to update branch override');
-      }
-    }, 800);
   };
 
-  const handleSave = async () => {
-    if (!id || !instance) return;
+  /**
+   * Save the branch, the value overrides and the branch overrides.
+   * @returns True when all changes are saved
+   */
+  const handleSave = async (): Promise<boolean> => {
+    if (!id || !instance) return false;
     setSaving(true);
     setError(null);
     const hadChanges = isDirty;
@@ -385,6 +390,33 @@ const Detail = () => {
         }
       }
 
+      // Save changed branch overrides. An override equal to the instance
+      // branch is removed, because the chart then uses the instance branch.
+      const submittedBranches = branchOverrides;
+      const savedBranches: Record<string, string> = { ...initialBranchOverridesRef.current };
+      const branchChartIds = new Set([...Object.keys(savedBranches), ...Object.keys(submittedBranches)]);
+      for (const chartConfigId of branchChartIds) {
+        const wanted = submittedBranches[chartConfigId] && submittedBranches[chartConfigId] !== branch
+          ? submittedBranches[chartConfigId]
+          : undefined;
+        if (wanted === savedBranches[chartConfigId]) continue;
+        if (wanted) {
+          await branchOverrideService.set(id, chartConfigId, wanted);
+          savedBranches[chartConfigId] = wanted;
+        } else {
+          try {
+            await branchOverrideService.delete(id, chartConfigId);
+          } catch (err) {
+            // 404: the override is already gone, which is the goal.
+            if ((err as { response?: { status?: number } } | null)?.response?.status !== 404) throw err;
+          }
+          delete savedBranches[chartConfigId];
+        }
+        initialBranchOverridesRef.current = { ...savedBranches };
+      }
+      // Keep a branch change made while the save request ran.
+      setBranchOverrides((prev) => (prev === submittedBranches ? { ...savedBranches } : prev));
+
       // Normalize the saved charts (drop cleared editors), but keep any
       // edit typed while the save request ran.
       setEditedOverrides((prev) => {
@@ -401,11 +433,31 @@ const Detail = () => {
       });
       showSuccess('Changes saved successfully');
       if (hadChanges && DEPLOYED_STATUSES.has(instance.status)) setSavedPendingRedeploy(true);
+      return true;
     } catch (err) {
       setError(await describeApiError(err, 'Failed to save changes'));
+      return false;
     } finally {
       setSaving(false);
+      setSaveCount((n) => n + 1);
     }
+  };
+
+  /**
+   * Start a deploy: open the deploy preview. With unsaved changes, first ask
+   * whether to save them, because the deploy uses the stored values.
+   */
+  const requestDeploy = () => {
+    if (isDirty) {
+      setUnsavedDeployOpen(true);
+    } else {
+      setDeployPreviewOpen(true);
+    }
+  };
+
+  const handleSaveAndDeploy = async () => {
+    setUnsavedDeployOpen(false);
+    if (await handleSave()) setDeployPreviewOpen(true);
   };
 
   const handleCloned = (cloned: StackInstance) => {
@@ -605,7 +657,7 @@ const Detail = () => {
   const renderStatusActions = (status: string) => (
     <>
       {(canDeploy || canRedeploy) && (
-        <Button variant="contained" color="success" onClick={() => setDeployPreviewOpen(true)} disabled={deploying}>
+        <Button variant="contained" color="success" onClick={requestDeploy} disabled={deploying}>
           {deploying ? 'Deploying...' : canRedeploy ? 'Redeploy' : 'Deploy'}
         </Button>
       )}
@@ -779,7 +831,7 @@ const Detail = () => {
             sx={{ mt: 2 }}
             onClose={() => setSavedPendingRedeploy(false)}
             action={(
-              <Button color="inherit" size="small" onClick={() => setDeployPreviewOpen(true)} disabled={deploying}>
+              <Button color="inherit" size="small" onClick={requestDeploy} disabled={deploying}>
                 Redeploy
               </Button>
             )}
@@ -939,6 +991,31 @@ const Detail = () => {
         onCancel={() => setCleanDialogOpen(false)}
         confirmText="Clean"
       />
+
+      <Dialog
+        open={unsavedDeployOpen}
+        onClose={() => setUnsavedDeployOpen(false)}
+        aria-labelledby="unsaved-deploy-title"
+        aria-describedby="unsaved-deploy-text"
+      >
+        <DialogTitle id="unsaved-deploy-title">Unsaved changes</DialogTitle>
+        <DialogContent>
+          <DialogContentText id="unsaved-deploy-text">
+            You have unsaved changes. Save them before the deploy?
+          </DialogContentText>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setUnsavedDeployOpen(false)}>Cancel</Button>
+          <Button
+            onClick={() => { setUnsavedDeployOpen(false); setDeployPreviewOpen(true); }}
+          >
+            Deploy without saving
+          </Button>
+          <Button variant="contained" onClick={handleSaveAndDeploy} disabled={saving}>
+            Save and deploy
+          </Button>
+        </DialogActions>
+      </Dialog>
 
       <DeployPreviewDialog
         open={deployPreviewOpen}

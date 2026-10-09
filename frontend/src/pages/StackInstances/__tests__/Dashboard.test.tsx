@@ -31,7 +31,7 @@ vi.mock('../../../utils/setupWizard', () => ({
 
 vi.mock('../../../api/client', () => ({
   instanceService: {
-    list: vi.fn(),
+    listAll: vi.fn(),
     recent: vi.fn().mockResolvedValue([]),
     bulkDeploy: vi.fn(),
     bulkStop: vi.fn(),
@@ -112,7 +112,7 @@ describe('Dashboard', () => {
   });
 
   it('shows loading spinner initially', () => {
-    (instanceService.list as ReturnType<typeof vi.fn>).mockReturnValue(new Promise(() => {}));
+    (instanceService.listAll as ReturnType<typeof vi.fn>).mockReturnValue(new Promise(() => {}));
     (instanceService.recent as ReturnType<typeof vi.fn>).mockReturnValue(new Promise(() => {}));
     render(
       <MemoryRouter>
@@ -125,7 +125,7 @@ describe('Dashboard', () => {
   });
 
   it('displays instances when fetch succeeds', async () => {
-    (instanceService.list as ReturnType<typeof vi.fn>).mockResolvedValue([
+    (instanceService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue([
       mockInstance(),
     ]);
     render(
@@ -140,8 +140,33 @@ describe('Dashboard', () => {
     });
   });
 
+  it('loads all instances, not only the first API page, and shows the count', async () => {
+    const user = userEvent.setup();
+    const many = Array.from({ length: 30 }, (_, i) => mockInstance({
+      id: `inst-${i}`,
+      name: `stack-${String(i).padStart(2, '0')}`,
+      status: i < 4 ? 'running' : 'draft',
+    }));
+    (instanceService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue(many);
+    render(
+      <MemoryRouter>
+        <NotificationProvider>
+          <Dashboard />
+        </NotificationProvider>
+      </MemoryRouter>
+    );
+    await waitFor(() => {
+      expect(screen.getByText('stack-29')).toBeInTheDocument();
+    });
+    expect(instanceService.listAll).toHaveBeenCalledTimes(1);
+    expect(screen.getByText('30 instances')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'running' }));
+    expect(screen.getByText('Showing 4 of 30 instances')).toBeInTheDocument();
+  });
+
   it('shows error alert when fetch fails', async () => {
-    (instanceService.list as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('Network error'));
+    (instanceService.listAll as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('Network error'));
     render(
       <MemoryRouter>
         <NotificationProvider>
@@ -155,7 +180,7 @@ describe('Dashboard', () => {
   });
 
   it('shows empty state when no instances but wizard dismissed', async () => {
-    (instanceService.list as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    (instanceService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue([]);
     render(
       <MemoryRouter>
         <NotificationProvider>
@@ -169,7 +194,7 @@ describe('Dashboard', () => {
   });
 
   it('updates instance status on WebSocket deployment.status message', async () => {
-    (instanceService.list as ReturnType<typeof vi.fn>).mockResolvedValue([
+    (instanceService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue([
       mockInstance({ id: 'inst-1', name: 'WS Instance', status: 'draft' }),
     ]);
     render(
@@ -204,7 +229,7 @@ describe('Dashboard', () => {
   });
 
   it('ignores WebSocket messages for unknown instance IDs', async () => {
-    (instanceService.list as ReturnType<typeof vi.fn>).mockResolvedValue([
+    (instanceService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue([
       mockInstance({ id: 'inst-1', name: 'My Instance' }),
     ]);
     render(
@@ -242,7 +267,7 @@ describe('Dashboard', () => {
       isExpired: false,
     });
 
-    (instanceService.list as ReturnType<typeof vi.fn>).mockResolvedValue([
+    (instanceService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue([
       mockInstance({ name: 'TTL Instance', namespace: 'stack-ttl', expires_at: '2026-01-01T12:00:00Z', ttl_minutes: 240 }),
     ]);
     render(
@@ -264,7 +289,7 @@ describe('Dashboard', () => {
     const mockUseCountdown = useCountdown as unknown as ReturnType<typeof vi.fn>;
     mockUseCountdown.mockReturnValue(null);
 
-    (instanceService.list as ReturnType<typeof vi.fn>).mockResolvedValue([
+    (instanceService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue([
       mockInstance({ name: 'Expired Instance', status: 'stopped', namespace: 'stack-exp', error_message: 'Expired (TTL)' }),
     ]);
     render(
@@ -286,7 +311,7 @@ describe('Dashboard', () => {
     const mockUseCountdown = useCountdown as unknown as ReturnType<typeof vi.fn>;
     mockUseCountdown.mockReturnValue(null);
 
-    (instanceService.list as ReturnType<typeof vi.fn>).mockResolvedValue([
+    (instanceService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue([
       mockInstance({ name: 'No TTL Instance', namespace: 'stack-nottl' }),
     ]);
     render(
@@ -306,7 +331,7 @@ describe('Dashboard', () => {
   });
 
   it('renders favorites section with hint when no favorites', async () => {
-    (instanceService.list as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    (instanceService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue([]);
     render(
       <MemoryRouter>
         <NotificationProvider>
@@ -321,7 +346,7 @@ describe('Dashboard', () => {
   });
 
   it('renders favorited instances in favorites section', async () => {
-    (instanceService.list as ReturnType<typeof vi.fn>).mockResolvedValue([
+    (instanceService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue([
       mockInstance({ id: 'inst-1', name: 'Fav Instance', namespace: 'stack-fav' }),
     ]);
     (favoriteService.list as ReturnType<typeof vi.fn>).mockResolvedValue([
@@ -342,7 +367,7 @@ describe('Dashboard', () => {
   });
 
   it('renders recent stacks section when recent instances exist', async () => {
-    (instanceService.list as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    (instanceService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue([]);
     (instanceService.recent as ReturnType<typeof vi.fn>).mockResolvedValue([
       mockInstance({ id: 'r-1', name: 'Recent Stack', status: 'draft', namespace: 'stack-rec', updated_at: '2026-01-15T10:00:00Z' }),
     ]);
@@ -360,7 +385,7 @@ describe('Dashboard', () => {
   });
 
   it('hides recent stacks section when empty', async () => {
-    (instanceService.list as ReturnType<typeof vi.fn>).mockResolvedValue([
+    (instanceService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue([
       mockInstance({ name: 'Some Instance', namespace: 'stack-some' }),
     ]);
     (instanceService.recent as ReturnType<typeof vi.fn>).mockResolvedValue([]);
@@ -384,7 +409,7 @@ describe('Dashboard', () => {
     ];
 
     beforeEach(() => {
-      (instanceService.list as ReturnType<typeof vi.fn>).mockResolvedValue(twoInstances);
+      (instanceService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue(twoInstances);
     });
 
     const renderDashboard = () => render(
@@ -509,7 +534,7 @@ describe('Dashboard', () => {
       };
       (instanceService.bulkDeploy as ReturnType<typeof vi.fn>).mockResolvedValue(bulkResult);
       // Mock the refresh call after bulk operation
-      (instanceService.list as ReturnType<typeof vi.fn>).mockResolvedValue(twoInstances);
+      (instanceService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue(twoInstances);
 
       render(
         <MemoryRouter>
@@ -550,7 +575,7 @@ describe('Dashboard', () => {
         ],
       };
       (instanceService.bulkStop as ReturnType<typeof vi.fn>).mockResolvedValue(bulkResult);
-      (instanceService.list as ReturnType<typeof vi.fn>).mockResolvedValue(twoInstances);
+      (instanceService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue(twoInstances);
 
       render(
         <MemoryRouter>
@@ -634,7 +659,7 @@ describe('Dashboard', () => {
         ],
       };
       (instanceService.bulkClean as ReturnType<typeof vi.fn>).mockResolvedValue(bulkResult);
-      (instanceService.list as ReturnType<typeof vi.fn>).mockResolvedValue(twoInstances);
+      (instanceService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue(twoInstances);
 
       render(
         <MemoryRouter>
@@ -746,7 +771,7 @@ describe('Dashboard', () => {
         expiring_soon: [],
         failing_instances: [],
       });
-      (instanceService.list as ReturnType<typeof vi.fn>).mockResolvedValue([
+      (instanceService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue([
         mockInstance(),
       ]);
       render(
@@ -772,7 +797,7 @@ describe('Dashboard', () => {
         expiring_soon: [],
         failing_instances: [],
       });
-      (instanceService.list as ReturnType<typeof vi.fn>).mockResolvedValue([
+      (instanceService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue([
         mockInstance(),
       ]);
       render(
@@ -794,7 +819,7 @@ describe('Dashboard', () => {
   describe('Filtering and Search', () => {
     it('filters instances by status', async () => {
       const user = userEvent.setup();
-      (instanceService.list as ReturnType<typeof vi.fn>).mockResolvedValue([
+      (instanceService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue([
         mockInstance({ id: '1', name: 'Running Instance', status: 'running', namespace: 'stack-r' }),
         mockInstance({ id: '2', name: 'Stopped Instance', status: 'stopped', namespace: 'stack-s' }),
         mockInstance({ id: '3', name: 'Draft Instance', status: 'draft', namespace: 'stack-d' }),
@@ -820,7 +845,7 @@ describe('Dashboard', () => {
 
     it('filters instances by search text', async () => {
       const user = userEvent.setup();
-      (instanceService.list as ReturnType<typeof vi.fn>).mockResolvedValue([
+      (instanceService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue([
         mockInstance({ id: '1', name: 'Alpha Stack', namespace: 'stack-a' }),
         mockInstance({ id: '2', name: 'Beta Service', namespace: 'stack-b' }),
       ]);
@@ -844,7 +869,7 @@ describe('Dashboard', () => {
 
     it('shows empty state with create button when filter matches nothing', async () => {
       const user = userEvent.setup();
-      (instanceService.list as ReturnType<typeof vi.fn>).mockResolvedValue([
+      (instanceService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue([
         mockInstance({ id: '1', name: 'Test Instance', namespace: 'stack-t' }),
       ]);
       render(
@@ -867,7 +892,7 @@ describe('Dashboard', () => {
 
   describe('Instance Card Details', () => {
     it('shows cluster name on instance card when cluster_id is set', async () => {
-      (instanceService.list as ReturnType<typeof vi.fn>).mockResolvedValue([
+      (instanceService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue([
         mockInstance({ id: '1', name: 'Clustered Instance', namespace: 'stack-c', cluster_id: 'c1' }),
       ]);
       (clusterService.list as ReturnType<typeof vi.fn>).mockResolvedValue([
@@ -887,7 +912,7 @@ describe('Dashboard', () => {
     });
 
     it('shows last deployed timestamp on instance card', async () => {
-      (instanceService.list as ReturnType<typeof vi.fn>).mockResolvedValue([
+      (instanceService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue([
         mockInstance({
           id: '1',
           name: 'My App',
@@ -911,7 +936,7 @@ describe('Dashboard', () => {
     });
 
     it('fetches and displays URLs for running instances', async () => {
-      (instanceService.list as ReturnType<typeof vi.fn>).mockResolvedValue([
+      (instanceService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue([
         mockInstance({ id: '1', name: 'Running App', status: 'running', namespace: 'stack-app' }),
       ]);
       (instanceService.getStatus as ReturnType<typeof vi.fn>).mockResolvedValue({
@@ -937,7 +962,7 @@ describe('Dashboard', () => {
     });
 
     it('shows pod health dot when status is fetched for running instance', async () => {
-      (instanceService.list as ReturnType<typeof vi.fn>).mockResolvedValue([
+      (instanceService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue([
         mockInstance({ id: 'inst-h', name: 'Healthy App', status: 'running', namespace: 'stack-h' }),
       ]);
       (instanceService.getStatus as ReturnType<typeof vi.fn>).mockResolvedValue({
@@ -963,7 +988,7 @@ describe('Dashboard', () => {
 
     it('navigates to detail page when Details button is clicked', async () => {
       // This test verifies the Details button renders on cards
-      (instanceService.list as ReturnType<typeof vi.fn>).mockResolvedValue([
+      (instanceService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue([
         mockInstance({ id: 'inst-1', name: 'My Stack', namespace: 'stack-my' }),
       ]);
       render(
@@ -982,7 +1007,7 @@ describe('Dashboard', () => {
 
   describe('Navigation Buttons', () => {
     it('renders Create Instance button', async () => {
-      (instanceService.list as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+      (instanceService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue([]);
       render(
         <MemoryRouter>
           <NotificationProvider>
@@ -997,7 +1022,7 @@ describe('Dashboard', () => {
     });
 
     it('renders Compare button', async () => {
-      (instanceService.list as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+      (instanceService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue([]);
       render(
         <MemoryRouter>
           <NotificationProvider>
@@ -1018,7 +1043,7 @@ describe('Dashboard', () => {
     });
 
     it('shows wizard when no clusters and no instances', async () => {
-      (instanceService.list as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+      (instanceService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue([]);
       (clusterService.list as ReturnType<typeof vi.fn>).mockResolvedValue([]);
       render(
         <MemoryRouter>
@@ -1033,7 +1058,7 @@ describe('Dashboard', () => {
     });
 
     it('does not show wizard when all resources exist', async () => {
-      (instanceService.list as ReturnType<typeof vi.fn>).mockResolvedValue([mockInstance()]);
+      (instanceService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue([mockInstance()]);
       render(
         <MemoryRouter>
           <NotificationProvider>
@@ -1048,7 +1073,7 @@ describe('Dashboard', () => {
     });
 
     it('shows wizard at step 2 when clusters exist but no templates', async () => {
-      (instanceService.list as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+      (instanceService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue([]);
       (templateService.list as ReturnType<typeof vi.fn>).mockResolvedValue([]);
       render(
         <MemoryRouter>
@@ -1065,7 +1090,7 @@ describe('Dashboard', () => {
 
     it('does not show wizard when dismissed', async () => {
       (isSetupWizardDismissed as ReturnType<typeof vi.fn>).mockReturnValue(true);
-      (instanceService.list as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+      (instanceService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue([]);
       (clusterService.list as ReturnType<typeof vi.fn>).mockResolvedValue([]);
       render(
         <MemoryRouter>
@@ -1082,7 +1107,7 @@ describe('Dashboard', () => {
 
     it('hides wizard and shows dashboard when skip is clicked', async () => {
       const user = userEvent.setup();
-      (instanceService.list as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+      (instanceService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue([]);
       (clusterService.list as ReturnType<typeof vi.fn>).mockResolvedValue([]);
       render(
         <MemoryRouter>

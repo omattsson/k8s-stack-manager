@@ -71,6 +71,10 @@ const YamlEditor = ({ value, onChange, label, height = '300px', readOnly = false
             wordWrap: 'on',
             fontSize: 13,
             tabSize: 2,
+            // On Enter, keep the indentation of the current line. The default
+            // ('advanced') also adds an indent after a line that ends with a
+            // colon, so typed YAML gets more indentation than the user typed.
+            autoIndent: 'keep',
           }}
         />
       </Box>

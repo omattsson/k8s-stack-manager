@@ -168,13 +168,15 @@ test.describe('Per-chart branch overrides (UI)', () => {
     await branchInput.click();
     await branchInput.fill('');
     await branchInput.pressSequentially(overrideBranch, { delay: 20 });
-    // Close any autocomplete popup without clearing the typed value.
-    await page.keyboard.press('Escape');
+    // Typing does not change the override. Enter commits the typed text.
+    await expect(page.getByText('Using instance branch')).toBeVisible();
+    await page.keyboard.press('Enter');
 
     // The chip reflects the override immediately (local state).
     await expect(page.getByText(`Override: ${overrideBranch}`)).toBeVisible({ timeout: 10_000 });
 
-    // The debounced save persists it — confirm via the API.
+    // Save Changes persists it — confirm via the API.
+    await page.getByRole('button', { name: 'Save Changes' }).click();
     await expect
       .poll(
         async () => {
@@ -194,7 +196,8 @@ test.describe('Per-chart branch overrides (UI)', () => {
 
     await expect(page.getByText('Using instance branch')).toBeVisible({ timeout: 10_000 });
 
-    // The debounced delete removes it — confirm via the API.
+    // Save Changes removes it — confirm via the API.
+    await page.getByRole('button', { name: 'Save Changes' }).click();
     await expect
       .poll(
         async () => (await listBranchOverrides(page.request, token, instId)).length,

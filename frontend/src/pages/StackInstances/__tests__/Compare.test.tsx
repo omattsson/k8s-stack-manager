@@ -8,7 +8,7 @@ import type { StackInstance, CompareInstancesResponse } from '../../../types';
 
 vi.mock('../../../api/client', () => ({
   instanceService: {
-    list: vi.fn(),
+    listAll: vi.fn(),
     compareInstances: vi.fn(),
   },
 }));
@@ -97,7 +97,7 @@ const renderCompare = (initialEntries: string[] = ['/stack-instances/compare']) 
 
 describe('Compare', () => {
   beforeEach(() => {
-    (instanceService.list as ReturnType<typeof vi.fn>).mockResolvedValue(mockInstances);
+    (instanceService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue(mockInstances);
     (instanceService.compareInstances as ReturnType<typeof vi.fn>).mockResolvedValue(mockCompareResponse);
   });
 
@@ -106,7 +106,7 @@ describe('Compare', () => {
   });
 
   it('shows loading spinner while fetching instances', () => {
-    (instanceService.list as ReturnType<typeof vi.fn>).mockReturnValue(new Promise(() => {}));
+    (instanceService.listAll as ReturnType<typeof vi.fn>).mockReturnValue(new Promise(() => {}));
     renderCompare();
     expect(screen.getByRole('progressbar')).toBeInTheDocument();
   });
@@ -119,6 +119,22 @@ describe('Compare', () => {
     expect(screen.getByLabelText('Left instance')).toBeInTheDocument();
     expect(screen.getByLabelText('Right instance')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /compare/i })).toBeInTheDocument();
+  });
+
+  it('offers all instances in the selectors, also past the first API page', async () => {
+    const user = userEvent.setup();
+    const many: StackInstance[] = Array.from({ length: 30 }, (_, i) => ({
+      ...mockInstances[0],
+      id: `inst-${i}`,
+      name: `Instance ${String(i).padStart(2, '0')}`,
+    }));
+    (instanceService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue(many);
+    renderCompare();
+
+    const left = await screen.findByLabelText('Left instance');
+    await user.type(left, 'Instance 29');
+    expect(await screen.findByRole('option', { name: /Instance 29/ })).toBeInTheDocument();
+    expect(instanceService.listAll).toHaveBeenCalledTimes(1);
   });
 
   it('shows empty state message when no comparison triggered', async () => {

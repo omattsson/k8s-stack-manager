@@ -187,7 +187,7 @@ const Gallery = () => {
     try {
       setLoading(true);
       const [data, favs] = await Promise.all([
-        templateService.list(),
+        templateService.listAll(),
         favoriteService.list().catch(() => []),
       ]);
       setTemplates(data || []);

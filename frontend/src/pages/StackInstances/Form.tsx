@@ -41,7 +41,7 @@ const Form = () => {
   useEffect(() => {
     const fetchData = async () => {
       try {
-        const [defs, cls] = await Promise.all([definitionService.list(), clusterService.list()]);
+        const [defs, cls] = await Promise.all([definitionService.listAll(), clusterService.list()]);
         setDefinitions(defs || []);
         setClusters(cls || []);
       } catch {

@@ -314,6 +314,33 @@ describe('templateService', () => {
 // definitionService
 // ---------------------------------------------------------------------------
 describe('definitionService', () => {
+  it('templateService.listAll reads all pages of templates', async () => {
+    const api = mockApi;
+    const page1 = Array.from({ length: 100 }, (_, i) => ({ id: `t${i}`, name: `tmpl-${i}` }));
+    api.get
+      .mockResolvedValueOnce(mockResponse({ data: page1, total: 102, page: 1, pageSize: 100 }))
+      .mockResolvedValueOnce(mockResponse({ data: [{ id: 't100' }, { id: 't101' }], total: 102, page: 2, pageSize: 100 }));
+
+    const result = await templateService.listAll();
+
+    expect(api.get).toHaveBeenNthCalledWith(1, '/api/v1/templates', { params: { page: 1, pageSize: 100 } });
+    expect(api.get).toHaveBeenNthCalledWith(2, '/api/v1/templates', { params: { page: 2, pageSize: 100 } });
+    expect(result).toHaveLength(102);
+  });
+
+  it('listAll reads all pages of definitions', async () => {
+    const api = mockApi;
+    const page1 = Array.from({ length: 100 }, (_, i) => ({ id: `d${i}`, name: `def-${i}` }));
+    api.get
+      .mockResolvedValueOnce(mockResponse({ data: page1, total: 101, page: 1, pageSize: 100 }))
+      .mockResolvedValueOnce(mockResponse({ data: [{ id: 'd100', name: 'def-100' }], total: 101, page: 2, pageSize: 100 }));
+
+    const result = await definitionService.listAll();
+
+    expect(api.get).toHaveBeenNthCalledWith(2, '/api/v1/stack-definitions', { params: { page: 2, pageSize: 100 } });
+    expect(result).toHaveLength(101);
+  });
+
   it('list sends GET to /api/v1/stack-definitions and unwraps envelope', async () => {
     const api = mockApi;
     const defs = [{ id: '1', name: 'def-1' }];
@@ -456,6 +483,105 @@ describe('definitionService', () => {
 // instanceService
 // ---------------------------------------------------------------------------
 describe('instanceService', () => {
+  /** Build `count` instances with IDs starting at `start`. */
+  const rows = (start: number, count: number) =>
+    Array.from({ length: count }, (_, i) => ({ id: `i${start + i}`, name: `inst-${start + i}` }));
+
+  it('listAll reads all pages with pageSize 100', async () => {
+    const api = mockApi;
+    api.get
+      .mockResolvedValueOnce(mockResponse({ data: rows(0, 100), total: 230, page: 1, pageSize: 100 }))
+      .mockResolvedValueOnce(mockResponse({ data: rows(100, 100), total: 230, page: 2, pageSize: 100 }))
+      .mockResolvedValueOnce(mockResponse({ data: rows(200, 30), total: 230, page: 3, pageSize: 100 }));
+
+    const result = await instanceService.listAll();
+
+    expect(api.get).toHaveBeenCalledTimes(3);
+    expect(api.get).toHaveBeenNthCalledWith(1, '/api/v1/stack-instances', { params: { page: 1, pageSize: 100 } });
+    expect(api.get).toHaveBeenNthCalledWith(3, '/api/v1/stack-instances', { params: { page: 3, pageSize: 100 } });
+    expect(result).toHaveLength(230);
+    expect(result[229].id).toBe('i229');
+  });
+
+  it('listAll stops after one request when the first page has all rows', async () => {
+    const api = mockApi;
+    api.get.mockResolvedValueOnce(mockResponse({ data: rows(0, 3), total: 3, page: 1, pageSize: 100 }));
+
+    const result = await instanceService.listAll();
+
+    expect(api.get).toHaveBeenCalledTimes(1);
+    expect(result).toHaveLength(3);
+  });
+
+  it('listAll stops on a full last page and drops rows that show twice', async () => {
+    const api = mockApi;
+    api.get
+      .mockResolvedValueOnce(mockResponse({ data: rows(0, 100), total: 200, page: 1, pageSize: 100 }))
+      // A new instance moved the rows: i99 shows again on page 2.
+      .mockResolvedValueOnce(mockResponse({ data: rows(99, 100), total: 200, page: 2, pageSize: 100 }));
+
+    const result = await instanceService.listAll();
+
+    expect(api.get).toHaveBeenCalledTimes(2);
+    expect(result).toHaveLength(199);
+    expect(new Set(result.map((r) => r.id)).size).toBe(199);
+  });
+
+  it('listAll stops when the server ignores the page parameter', async () => {
+    const api = mockApi;
+    // Every request returns the same first page.
+    api.get.mockResolvedValue(mockResponse({ data: rows(0, 100), total: 500, page: 1, pageSize: 100 }));
+
+    const result = await instanceService.listAll();
+
+    // Page 1, then one batch of 4 pages that adds no new ID.
+    expect(api.get).toHaveBeenCalledTimes(5);
+    expect(result).toHaveLength(100);
+    api.get.mockReset();
+  });
+
+  it('listAll stops when a page is bigger than pageSize and has all rows', async () => {
+    const api = mockApi;
+    api.get.mockResolvedValueOnce(mockResponse({ data: rows(0, 150), total: 150, page: 1, pageSize: 150 }));
+
+    const result = await instanceService.listAll();
+
+    expect(api.get).toHaveBeenCalledTimes(1);
+    expect(result).toHaveLength(150);
+  });
+
+  it('listAll loads the remaining pages in parallel, at most 4 at a time', async () => {
+    const api = mockApi;
+    let inFlight = 0;
+    let maxInFlight = 0;
+    api.get.mockImplementation(async (_url: string, config: { params: { page: number } }) => {
+      inFlight += 1;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      inFlight -= 1;
+      const page = config.params.page;
+      const count = page === 10 ? 50 : 100;
+      return mockResponse({ data: rows((page - 1) * 100, count), total: 950, page, pageSize: 100 });
+    });
+
+    const result = await instanceService.listAll();
+
+    expect(api.get).toHaveBeenCalledTimes(10);
+    expect(maxInFlight).toBe(4);
+    expect(result).toHaveLength(950);
+    expect(result.map((r) => r.id)).toEqual(rows(0, 950).map((r) => r.id));
+    api.get.mockReset();
+  });
+
+  it('listAll throws when a page request fails', async () => {
+    const api = mockApi;
+    api.get
+      .mockResolvedValueOnce(mockResponse({ data: rows(0, 100), total: 150, page: 1, pageSize: 100 }))
+      .mockRejectedValueOnce(new Error('Network Error'));
+
+    await expect(instanceService.listAll()).rejects.toThrow('Network Error');
+  });
+
   it('list sends GET to /api/v1/stack-instances', async () => {
     const api = mockApi;
     const instances = [{ id: 'i1', name: 'inst-1' }];

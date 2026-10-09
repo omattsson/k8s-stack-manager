@@ -149,18 +149,130 @@ describe('useWebSocket', () => {
   });
 
   it('does not send when WebSocket is not open', () => {
-    const handler = vi.fn();
-
-    const { result } = renderHook(() => useWebSocketModule.useWebSocket(handler));
-
-    // Set readyState to CLOSED
-    mockWsInstance.readyState = WebSocket.CLOSED;
+    const { result } = renderHook(() => useWebSocketModule.useWebSocket(vi.fn()));
+    const ws = mockWsInstance;
+    ws.readyState = WebSocket.CLOSED;
 
     act(() => {
       result.current.send('ping', {});
     });
+    // A later open does not send it either: send does not queue.
+    ws.readyState = WebSocket.OPEN;
+    act(() => ws.emit('open', {}));
 
-    expect(mockWsInstance.send).not.toHaveBeenCalled();
+    expect(ws.send).not.toHaveBeenCalled();
+  });
+
+  describe('instance subscriptions', () => {
+    const subscribeMsg = (id: string) => JSON.stringify({ type: 'subscribe', payload: { instance_id: id } });
+    const unsubscribeMsg = (id: string) => JSON.stringify({ type: 'unsubscribe', payload: { instance_id: id } });
+
+    it('sends a subscription made before the socket is open when it opens', () => {
+      const { result } = renderHook(() => useWebSocketModule.useWebSocket(vi.fn()));
+      const ws = mockWsInstance;
+      ws.readyState = WebSocket.CONNECTING;
+
+      act(() => {
+        result.current.subscribeInstance('inst-1');
+      });
+      expect(ws.send).not.toHaveBeenCalled();
+
+      ws.readyState = WebSocket.OPEN;
+      act(() => ws.emit('open', {}));
+
+      expect(ws.send).toHaveBeenCalledWith(subscribeMsg('inst-1'));
+    });
+
+    it('subscribes again after a reconnect', () => {
+      const { result } = renderHook(() => useWebSocketModule.useWebSocket(vi.fn()));
+      const ws = mockWsInstance;
+
+      act(() => {
+        result.current.subscribeInstance('inst-1');
+      });
+      expect(ws.send).toHaveBeenCalledTimes(1);
+      expect(ws.send).toHaveBeenLastCalledWith(subscribeMsg('inst-1'));
+
+      // The connection drops and reconnecting-websocket opens a new one.
+      ws.readyState = WebSocket.CLOSED;
+      act(() => ws.emit('close', { code: 1006 }));
+      ws.readyState = WebSocket.OPEN;
+      act(() => ws.emit('open', {}));
+
+      expect(ws.send).toHaveBeenCalledTimes(2);
+      expect(ws.send).toHaveBeenLastCalledWith(subscribeMsg('inst-1'));
+    });
+
+    it('subscribes on the new socket after reconnectWebSocket', () => {
+      const { result } = renderHook(() => useWebSocketModule.useWebSocket(vi.fn()));
+      act(() => {
+        result.current.subscribeInstance('inst-1');
+      });
+      const oldWs = mockWsInstance;
+
+      act(() => useWebSocketModule.reconnectWebSocket());
+      const newWs = mockWsInstance;
+      expect(newWs).not.toBe(oldWs);
+
+      act(() => newWs.emit('open', {}));
+      expect(newWs.send).toHaveBeenCalledWith(subscribeMsg('inst-1'));
+      // The closed socket does not send.
+      act(() => oldWs.emit('open', {}));
+      expect(oldWs.send).toHaveBeenCalledTimes(1);
+    });
+
+    it('unsubscribes and stops resubscribing after the cleanup', () => {
+      const { result } = renderHook(() => useWebSocketModule.useWebSocket(vi.fn()));
+      const ws = mockWsInstance;
+
+      let cleanup: () => void = () => {};
+      act(() => {
+        cleanup = result.current.subscribeInstance('inst-1');
+      });
+      act(() => cleanup());
+      expect(ws.send).toHaveBeenLastCalledWith(unsubscribeMsg('inst-1'));
+
+      ws.send.mockClear();
+      act(() => ws.emit('open', {}));
+      expect(ws.send).not.toHaveBeenCalled();
+    });
+
+    it('keeps the subscription until the last subscriber leaves', () => {
+      const { result } = renderHook(() => useWebSocketModule.useWebSocket(vi.fn()));
+      const ws = mockWsInstance;
+
+      let first: () => void = () => {};
+      let second: () => void = () => {};
+      act(() => {
+        first = result.current.subscribeInstance('inst-1');
+        second = result.current.subscribeInstance('inst-1');
+      });
+      // One subscribe message for two subscribers.
+      expect(ws.send).toHaveBeenCalledTimes(1);
+
+      act(() => first());
+      act(() => first()); // a second call of the same cleanup does nothing
+      expect(ws.send).toHaveBeenCalledTimes(1);
+
+      act(() => second());
+      expect(ws.send).toHaveBeenCalledTimes(2);
+      expect(ws.send).toHaveBeenLastCalledWith(unsubscribeMsg('inst-1'));
+    });
+
+    it('does not send an unsubscribe when the socket is not open', () => {
+      const { result } = renderHook(() => useWebSocketModule.useWebSocket(vi.fn()));
+      const ws = mockWsInstance;
+
+      let cleanup: () => void = () => {};
+      act(() => {
+        cleanup = result.current.subscribeInstance('inst-1');
+      });
+      ws.send.mockClear();
+      ws.readyState = WebSocket.CLOSED;
+      act(() => cleanup());
+
+      expect(ws.send).not.toHaveBeenCalled();
+    });
   });
 
   it('ignores unparseable messages', () => {

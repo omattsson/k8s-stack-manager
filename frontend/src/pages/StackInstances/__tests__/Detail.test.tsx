@@ -31,14 +31,19 @@ vi.mock('../../../context/AuthContext', () => ({
 }));
 
 // Keeps the last WebSocket message handler so tests can push messages.
-const wsState = vi.hoisted(() => ({
-  handler: null as null | ((msg: { type: string; payload: unknown }) => void),
-}));
+const wsState = vi.hoisted(() => {
+  const unsubscribeInstance = vi.fn();
+  return {
+    handler: null as null | ((msg: { type: string; payload: unknown }) => void),
+    unsubscribeInstance,
+    subscribeInstance: vi.fn((_instanceId: string) => unsubscribeInstance),
+  };
+});
 
 vi.mock('../../../hooks/useWebSocket', () => ({
   useWebSocket: (handler: (msg: { type: string; payload: unknown }) => void) => {
     wsState.handler = handler;
-    return { send: vi.fn() };
+    return { send: vi.fn(), subscribeInstance: wsState.subscribeInstance };
   },
 }));
 
@@ -199,6 +204,7 @@ vi.mock('../../../components/DeployPreviewDialog', () => ({
 import { instanceService, definitionService, branchOverrideService } from '../../../api/client';
 import useCountdown from '../../../hooks/useCountdown';
 import { downloadBlob } from '../../../utils/download';
+import { useUnsavedChanges } from '../../../hooks/useUnsavedChanges';
 
 type MockFn = ReturnType<typeof vi.fn>;
 
@@ -300,6 +306,18 @@ describe('StackInstances Detail', () => {
     });
     expect(screen.getByText(/stack-test/)).toBeInTheDocument();
     expect(screen.getByText(/user1/)).toBeInTheDocument();
+  });
+
+  it('subscribes to the instance messages and unsubscribes on unmount', async () => {
+    setupMocks();
+    const { unmount } = renderDetail();
+
+    await waitFor(() => {
+      expect(wsState.subscribeInstance).toHaveBeenCalledWith('123');
+    });
+    expect(wsState.unsubscribeInstance).not.toHaveBeenCalled();
+    unmount();
+    expect(wsState.unsubscribeInstance).toHaveBeenCalledTimes(1);
   });
 
   it('shows error alert when fetch fails', async () => {
@@ -1511,7 +1529,7 @@ describe('StackInstances Detail', () => {
     expect(screen.getByText('replicaCount: 1')).toBeInTheDocument();
   });
 
-  it('sets branch override when BranchSelector onChange is called', async () => {
+  it('saves a chart branch override only with Save Changes', async () => {
     const user = userEvent.setup();
     setupMocks();
     (branchOverrideService.set as MockFn).mockResolvedValue({});
@@ -1525,33 +1543,77 @@ describe('StackInstances Detail', () => {
     const changeBtns = screen.getAllByText('change-branch');
     await user.click(changeBtns[1]);
 
+    expect(screen.getByText('Override: feature/new-branch')).toBeInTheDocument();
+    expect(branchOverrideService.set).not.toHaveBeenCalled();
+    expect(useUnsavedChanges).toHaveBeenLastCalledWith(true);
+
+    await user.click(screen.getByRole('button', { name: /save changes/i }));
+
     await waitFor(() => {
       expect(branchOverrideService.set).toHaveBeenCalledWith('123', 'chart1', 'feature/new-branch');
     });
+    expect(branchOverrideService.set).toHaveBeenCalledTimes(1);
+    expect(instanceService.update).not.toHaveBeenCalled();
+    await waitFor(() => {
+      expect(useUnsavedChanges).toHaveBeenLastCalledWith(false);
+    });
+
+    // A second save sends nothing.
+    await user.click(screen.getByRole('button', { name: /save changes/i }));
+    await waitFor(() => {
+      expect(screen.getAllByText('Changes saved successfully').length).toBeGreaterThan(0);
+    });
+    expect(branchOverrideService.set).toHaveBeenCalledTimes(1);
   });
 
-  it('removes branch override when branch is cleared', async () => {
+  it('removes a branch override with Save Changes after a reset to the instance branch', async () => {
     const user = userEvent.setup();
     setupMocks({}, { branchOverrides: [{ chart_config_id: 'chart1', branch: 'old-branch' }] });
-    (branchOverrideService.delete as MockFn).mockResolvedValue({});
+    (branchOverrideService.delete as MockFn).mockResolvedValue(undefined);
     renderDetail();
 
     await waitFor(() => {
-      expect(screen.getByRole('tab', { name: 'frontend' })).toBeInTheDocument();
+      expect(screen.getByText('Override: old-branch')).toBeInTheDocument();
     });
 
     // Second "clear-branch" button is the chart-level BranchSelector
     const clearBtns = screen.getAllByText('clear-branch');
     await user.click(clearBtns[1]);
 
+    expect(screen.getByText('Using instance branch')).toBeInTheDocument();
+    expect(branchOverrideService.delete).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole('button', { name: /save changes/i }));
+
     await waitFor(() => {
       expect(branchOverrideService.delete).toHaveBeenCalledWith('123', 'chart1');
     });
+    expect(branchOverrideService.set).not.toHaveBeenCalled();
   });
 
-  it('shows error when setting branch override fails', async () => {
-    vi.useFakeTimers({ shouldAdvanceTime: true });
-    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+  it('does not save a branch override when the override is set back before the save', async () => {
+    const user = userEvent.setup();
+    setupMocks();
+    renderDetail();
+
+    await waitFor(() => {
+      expect(screen.getByRole('tab', { name: 'frontend' })).toBeInTheDocument();
+    });
+
+    await user.click(screen.getAllByText('change-branch')[1]);
+    await user.click(screen.getAllByText('clear-branch')[1]);
+    expect(useUnsavedChanges).toHaveBeenLastCalledWith(false);
+
+    await user.click(screen.getByRole('button', { name: /save changes/i }));
+    await waitFor(() => {
+      expect(screen.getByText('Changes saved successfully')).toBeInTheDocument();
+    });
+    expect(branchOverrideService.set).not.toHaveBeenCalled();
+    expect(branchOverrideService.delete).not.toHaveBeenCalled();
+  });
+
+  it('shows an error when saving a branch override fails', async () => {
+    const user = userEvent.setup();
     setupMocks();
     (branchOverrideService.set as MockFn).mockRejectedValue(new Error('fail'));
     renderDetail();
@@ -1560,37 +1622,33 @@ describe('StackInstances Detail', () => {
       expect(screen.getByRole('tab', { name: 'frontend' })).toBeInTheDocument();
     });
 
-    const changeBtns = screen.getAllByText('change-branch');
-    await user.click(changeBtns[1]);
-
-    await vi.advanceTimersByTimeAsync(900);
+    await user.click(screen.getAllByText('change-branch')[1]);
+    await user.click(screen.getByRole('button', { name: /save changes/i }));
 
     await waitFor(() => {
-      expect(screen.getByRole('alert')).toHaveTextContent('Failed to update branch override');
+      expect(screen.getByText(/Failed to save changes/)).toBeInTheDocument();
     });
-    vi.useRealTimers();
+    expect(useUnsavedChanges).toHaveBeenLastCalledWith(true);
   });
 
-  it('shows error when removing branch override fails', async () => {
-    vi.useFakeTimers({ shouldAdvanceTime: true });
-    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
-    setupMocks({}, { branchOverrides: [{ chart_config_id: 'chart1', branch: 'old-branch' }] });
-    (branchOverrideService.delete as MockFn).mockRejectedValue(new Error('fail'));
+  it('clears the unsaved-changes flag after a successful save of an override', async () => {
+    const user = userEvent.setup();
+    setupMocks();
+    (instanceService.setOverride as MockFn).mockResolvedValue({});
     renderDetail();
 
     await waitFor(() => {
-      expect(screen.getByRole('tab', { name: 'frontend' })).toBeInTheDocument();
+      expect(screen.getByText('Test Instance')).toBeInTheDocument();
     });
 
-    const clearBtns = screen.getAllByText('clear-branch');
-    await user.click(clearBtns[1]);
-
-    await vi.advanceTimersByTimeAsync(900);
+    await user.click(screen.getByRole('button', { name: 'edit Your Overrides' }));
+    expect(useUnsavedChanges).toHaveBeenLastCalledWith(true);
+    await user.click(screen.getByRole('button', { name: /save changes/i }));
 
     await waitFor(() => {
-      expect(screen.getByRole('alert')).toHaveTextContent('Failed to update branch override');
+      expect(screen.getByText('Changes saved successfully')).toBeInTheDocument();
     });
-    vi.useRealTimers();
+    expect(useUnsavedChanges).toHaveBeenLastCalledWith(false);
   });
 
   it('saves override values when Save Changes is clicked with edited overrides', async () => {
@@ -2412,5 +2470,87 @@ describe('StackInstances Detail redeploy, rollback and drift', () => {
     expect(screen.queryByRole('button', { name: /Roll back to/ })).not.toBeInTheDocument();
     expect(screen.queryByText('Saved. Redeploy to apply.')).not.toBeInTheDocument();
     (useCountdown as unknown as MockFn).mockReturnValue(null);
+  });
+  describe('deploy with unsaved changes', () => {
+    const editAndClickRedeploy = async (user: ReturnType<typeof userEvent.setup>) => {
+      await waitFor(() => {
+        expect(screen.getByText('Test Instance')).toBeInTheDocument();
+      });
+      await user.click(screen.getByRole('button', { name: 'edit Your Overrides' }));
+      await user.click(screen.getByRole('button', { name: 'Redeploy' }));
+    };
+
+    it('opens the deploy preview at once when nothing is unsaved', async () => {
+      const user = userEvent.setup();
+      setupMocks();
+      renderDetail();
+      await waitFor(() => {
+        expect(screen.getByText('Test Instance')).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByRole('button', { name: 'Redeploy' }));
+
+      expect(screen.getByTestId('deploy-preview-dialog')).toBeInTheDocument();
+      expect(screen.queryByText('Unsaved changes')).not.toBeInTheDocument();
+    });
+
+    it('asks first and does nothing on Cancel', async () => {
+      const user = userEvent.setup();
+      setupMocks();
+      renderDetail();
+      await editAndClickRedeploy(user);
+
+      const dialog = screen.getByRole('dialog', { name: 'Unsaved changes' });
+      expect(within(dialog).getByText('You have unsaved changes. Save them before the deploy?')).toBeInTheDocument();
+      await user.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+
+      await waitFor(() => {
+        expect(screen.queryByRole('dialog', { name: 'Unsaved changes' })).not.toBeInTheDocument();
+      });
+      expect(screen.queryByTestId('deploy-preview-dialog')).not.toBeInTheDocument();
+      expect(instanceService.setOverride).not.toHaveBeenCalled();
+    });
+
+    it('opens the deploy preview without a save on "Deploy without saving"', async () => {
+      const user = userEvent.setup();
+      setupMocks();
+      renderDetail();
+      await editAndClickRedeploy(user);
+
+      await user.click(screen.getByRole('button', { name: 'Deploy without saving' }));
+
+      expect(screen.getByTestId('deploy-preview-dialog')).toBeInTheDocument();
+      expect(instanceService.setOverride).not.toHaveBeenCalled();
+    });
+
+    it('saves and then opens the deploy preview on "Save and deploy"', async () => {
+      const user = userEvent.setup();
+      setupMocks();
+      (instanceService.setOverride as MockFn).mockResolvedValue({});
+      renderDetail();
+      await editAndClickRedeploy(user);
+
+      await user.click(screen.getByRole('button', { name: 'Save and deploy' }));
+
+      await waitFor(() => {
+        expect(screen.getByTestId('deploy-preview-dialog')).toBeInTheDocument();
+      });
+      expect(instanceService.setOverride).toHaveBeenCalledWith('123', 'chart1', { values: 'replicaCount: 5' });
+    });
+
+    it('does not open the deploy preview when the save fails', async () => {
+      const user = userEvent.setup();
+      setupMocks();
+      (instanceService.setOverride as MockFn).mockRejectedValue(new Error('fail'));
+      renderDetail();
+      await editAndClickRedeploy(user);
+
+      await user.click(screen.getByRole('button', { name: 'Save and deploy' }));
+
+      await waitFor(() => {
+        expect(screen.getByText(/Failed to save changes/)).toBeInTheDocument();
+      });
+      expect(screen.queryByTestId('deploy-preview-dialog')).not.toBeInTheDocument();
+    });
   });
 });
