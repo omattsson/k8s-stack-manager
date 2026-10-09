@@ -55,6 +55,10 @@ type fakeClusterRepo struct {
 
 func (f *fakeClusterRepo) CountAll() (int, error) { return f.total, nil }
 
+func (f *fakeClusterRepo) NamesByIDs(_ []string) (map[string]string, error) {
+	return map[string]string{}, nil
+}
+
 func (f *fakeClusterRepo) CountByHealthStatus(status string) (int, error) {
 	if status == models.ClusterHealthy {
 		return f.healthy, nil

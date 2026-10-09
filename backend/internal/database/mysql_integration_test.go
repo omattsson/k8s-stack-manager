@@ -183,7 +183,7 @@ func TestMySQLIntegration_StackInstanceRepository(t *testing.T) {
 	assert.Equal(t, instance.ID, found.ID)
 
 	// ListPaged
-	instances, total, err := repo.ListPaged(10, 0)
+	instances, total, err := repo.ListPaged(models.StackInstanceFilter{}, 10, 0)
 	require.NoError(t, err)
 	assert.Equal(t, 1, total)
 	assert.Len(t, instances, 1)

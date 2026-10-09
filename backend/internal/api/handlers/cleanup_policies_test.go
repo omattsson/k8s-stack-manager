@@ -738,7 +738,7 @@ func (r *cleanupMockInstanceRepo) CountByClusterAndOwner(clusterID, ownerID stri
 	}
 	return count, nil
 }
-func (r *cleanupMockInstanceRepo) ListPaged(limit, offset int) ([]models.StackInstance, int, error) {
+func (r *cleanupMockInstanceRepo) ListPaged(_ models.StackInstanceFilter, limit, offset int) ([]models.StackInstance, int, error) {
 	return r.instances, len(r.instances), nil
 }
 func (r *cleanupMockInstanceRepo) CountAll() (int, error)              { return len(r.instances), nil }

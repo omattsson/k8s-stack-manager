@@ -14,6 +14,10 @@ type StackTemplate struct {
 	IsPublished   bool      `json:"is_published"`
 	CreatedAt     time.Time `json:"created_at"`
 	UpdatedAt     time.Time `json:"updated_at"`
+	// OwnerUsername is the username of the owner. It is computed, not
+	// stored; the API sets it in list and detail responses. Omitted when
+	// the owner no longer exists (for example, after a delete).
+	OwnerUsername string `json:"owner_username,omitempty" gorm:"-" readonly:"true"`
 }
 
 // StackTemplateRepository defines data access operations for stack templates.

@@ -950,6 +950,9 @@ func TestHealthCheck_MixedFirstFailsSecondReachable(t *testing.T) {
 
 func (*mockClusterRepo) CountAll() (int, error) { return 0, nil }
 
+func (*mockClusterRepo) NamesByIDs(_ []string) (map[string]string, error) {
+	return map[string]string{}, nil
+}
 func (*mockClusterRepo) CountByHealthStatus(status string) (int, error) { return 0, nil }
 
 // TestResolveClusterID_ErrNoDefaultCluster checks that a missing default

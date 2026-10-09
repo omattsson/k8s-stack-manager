@@ -80,10 +80,10 @@ func NewTemplateHandlerWithVersions(
 }
 
 // TemplateListItem extends StackTemplate with computed fields for the gallery.
+// The embedded StackTemplate carries owner_username.
 type TemplateListItem struct {
 	models.StackTemplate
-	DefinitionCount int    `json:"definition_count"`
-	OwnerUsername   string `json:"owner_username,omitempty"`
+	DefinitionCount int `json:"definition_count"`
 }
 
 // TemplateDetailResponse is a flat response for GET /templates/:id that embeds
@@ -114,7 +114,7 @@ type DefinitionWithChartsResponse struct {
 
 // ListTemplates godoc
 // @Summary     List stack templates
-// @Description List published templates for regular users, all templates for devops/admin. Includes definition_count and owner_username. Supports server-side pagination.
+// @Description List published templates for regular users, all templates for devops/admin. Includes definition_count and owner_username (omitted when the owner no longer exists). Supports server-side pagination.
 // @Description name filters by exact template name (same as the stack-definitions name filter); the response keeps the paged envelope.
 // @Tags        templates
 // @Accept      json
@@ -162,12 +162,10 @@ func (h *TemplateHandler) ListTemplates(c *gin.Context) {
 
 	// Batch-fetch definition counts and owner usernames (2 queries instead of N+1).
 	templateIDs := make([]string, len(templates))
-	ownerIDSet := make(map[string]struct{})
+	ownerIDs := make([]string, len(templates))
 	for i, t := range templates {
 		templateIDs[i] = t.ID
-		if t.OwnerID != "" {
-			ownerIDSet[t.OwnerID] = struct{}{}
-		}
+		ownerIDs[i] = t.OwnerID
 	}
 
 	defCountMap := make(map[string]int)
@@ -180,28 +178,14 @@ func (h *TemplateHandler) ListTemplates(c *gin.Context) {
 		}
 	}
 
-	usernameMap := make(map[string]string)
-	if h.userRepo != nil && len(ownerIDSet) > 0 {
-		ownerIDs := make([]string, 0, len(ownerIDSet))
-		for id := range ownerIDSet {
-			ownerIDs = append(ownerIDs, id)
-		}
-		users, userErr := h.userRepo.FindByIDs(ownerIDs)
-		if userErr != nil {
-			slog.Warn("failed to batch-fetch users", "error", userErr)
-		} else {
-			for id, u := range users {
-				usernameMap[id] = u.Username
-			}
-		}
-	}
+	usernameMap := lookupUsernames(h.userRepo, ownerIDs)
 
 	items := make([]TemplateListItem, len(templates))
 	for i, t := range templates {
+		t.OwnerUsername = usernameMap[t.OwnerID]
 		items[i] = TemplateListItem{
 			StackTemplate:   t,
 			DefinitionCount: defCountMap[t.ID],
-			OwnerUsername:   usernameMap[t.OwnerID],
 		}
 	}
 
@@ -355,7 +339,7 @@ func (h *TemplateHandler) CreateTemplate(c *gin.Context) {
 
 // GetTemplate godoc
 // @Summary     Get a stack template
-// @Description Get a stack template by ID, including its chart configurations. The template fields and charts are the working copy (draft).
+// @Description Get a stack template by ID, including its chart configurations. The template fields and charts are the working copy (draft). owner_username is the username of the owner (omitted when the owner no longer exists).
 // @Description published_version and published_version_id describe the latest published snapshot (null when there is none). has_unpublished_changes is true when the working copy differs from that snapshot (or there is no snapshot).
 // @Description published_charts are the charts of that snapshot (what Use Template and Quick Deploy apply; null when there is none). Their IDs are valid chart_overrides keys for Use Template.
 // @Description charts are the working copy charts only for the template owner and admins. For other users charts equals published_charts (an empty list without a snapshot), version is the published version (empty without a snapshot) and has_unpublished_changes is false, so draft information is not exposed.
@@ -393,6 +377,7 @@ func (h *TemplateHandler) GetTemplate(c *gin.Context) {
 	if charts == nil {
 		charts = []models.TemplateChartConfig{}
 	}
+	tmpl.OwnerUsername = lookupUsernames(h.userRepo, []string{tmpl.OwnerID})[tmpl.OwnerID]
 	resp := TemplateDetailResponse{
 		StackTemplate:         *tmpl,
 		Charts:                charts,

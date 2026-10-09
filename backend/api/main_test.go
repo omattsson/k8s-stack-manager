@@ -460,7 +460,7 @@ func (m *mockInstanceRepo) CountByClusterAndOwner(_, _ string) (int, error) {
 	return 0, nil
 }
 
-func (m *mockInstanceRepo) ListPaged(_, _ int) ([]models.StackInstance, int, error) {
+func (m *mockInstanceRepo) ListPaged(_ models.StackInstanceFilter, _, _ int) ([]models.StackInstance, int, error) {
 	return nil, 0, nil
 }
 func (m *mockInstanceRepo) CountAll() (int, error)                                  { return 0, nil }
@@ -1017,7 +1017,13 @@ func (*mockInstanceRepo) CountByStatuses(statuses []string) (int, error) { retur
 func (*mockClusterRepo) CountAll() (int, error) { return 0, nil }
 
 func (*mockClusterRepo) CountByHealthStatus(status string) (int, error) { return 0, nil }
+func (*mockClusterRepo) NamesByIDs(_ []string) (map[string]string, error) {
+	return map[string]string{}, nil
+}
 
 func (*failOnCreateClusterRepo) CountAll() (int, error) { return 0, nil }
 
 func (*failOnCreateClusterRepo) CountByHealthStatus(status string) (int, error) { return 0, nil }
+func (*failOnCreateClusterRepo) NamesByIDs(_ []string) (map[string]string, error) {
+	return map[string]string{}, nil
+}

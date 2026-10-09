@@ -17,6 +17,17 @@ type StackDefinition struct {
 	OwnerInstanceID string    `json:"owner_instance_id,omitempty" gorm:"size:36;index"`
 	CreatedAt       time.Time `json:"created_at"`
 	UpdatedAt       time.Time `json:"updated_at"`
+	// OwnerUsername is the username of the owner. It is computed, not
+	// stored; the API sets it in list and detail responses. Omitted when
+	// the owner no longer exists (for example, after a delete).
+	OwnerUsername string `json:"owner_username,omitempty" gorm:"-" readonly:"true"`
+}
+
+// StackDefinitionFilter selects the stack definitions that ListPaged
+// returns. An empty field does not filter.
+type StackDefinitionFilter struct {
+	Name    string
+	OwnerID string
 }
 
 // StackDefinitionRepository defines data access operations for stack definitions.
@@ -30,7 +41,12 @@ type StackDefinitionRepository interface {
 	Update(definition *StackDefinition) error
 	Delete(id string) error
 	List() ([]StackDefinition, error)
-	ListPaged(limit, offset int) ([]StackDefinition, int64, error)
+	// ListPaged returns one page of the definitions that match filter,
+	// newest first, and the total number of matching definitions.
+	ListPaged(filter StackDefinitionFilter, limit, offset int) ([]StackDefinition, int64, error)
+	// NamesByIDs returns the name of each definition in ids that exists,
+	// keyed by ID, in one query.
+	NamesByIDs(ids []string) (map[string]string, error)
 	ListByOwner(ownerID string) ([]StackDefinition, error)
 	ListByTemplate(templateID string) ([]StackDefinition, error)
 	CountByTemplateIDs(templateIDs []string) (map[string]int, error)

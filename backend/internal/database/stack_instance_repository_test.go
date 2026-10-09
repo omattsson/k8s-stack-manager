@@ -126,12 +126,12 @@ func TestGORMStackInstanceRepository_ListPaged(t *testing.T) {
 		}))
 	}
 
-	instances, total, err := repo.ListPaged(2, 0)
+	instances, total, err := repo.ListPaged(models.StackInstanceFilter{}, 2, 0)
 	require.NoError(t, err)
 	assert.Len(t, instances, 2)
 	assert.Equal(t, 5, total)
 
-	instances2, total2, err := repo.ListPaged(2, 2)
+	instances2, total2, err := repo.ListPaged(models.StackInstanceFilter{}, 2, 2)
 	require.NoError(t, err)
 	assert.Len(t, instances2, 2)
 	assert.Equal(t, 5, total2)

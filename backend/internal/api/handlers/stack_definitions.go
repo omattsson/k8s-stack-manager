@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"strconv"
 	"time"
 
 	"backend/internal/api/middleware"
@@ -64,7 +63,16 @@ type DefinitionHandler struct {
 	templateRepo      models.StackTemplateRepository
 	templateChartRepo models.TemplateChartConfigRepository
 	versionRepo       models.TemplateVersionRepository
+	userRepo          models.UserRepository
 	txRunner          database.TxRunner
+}
+
+// WithUserRepo attaches the user repository. Definition responses then
+// include owner_username, and the owner list filter accepts usernames.
+// Returns h for chaining.
+func (h *DefinitionHandler) WithUserRepo(repo models.UserRepository) *DefinitionHandler {
+	h.userRepo = repo
+	return h
 }
 
 // NewDefinitionHandler creates a new DefinitionHandler.
@@ -110,75 +118,45 @@ func NewDefinitionHandlerWithVersions(
 
 // ListDefinitions godoc
 // @Summary     List stack definitions
-// @Description List stack definitions with server-side pagination
+// @Description List stack definitions with server-side pagination, newest first. The filters name and owner combine (AND); total is the number of definitions that match.
+// @Description owner is "me" (the authenticated user), a username, or a user ID. A value in UUID form is matched as a user ID first, then as a username. An unknown username or ID gives an empty list. Each definition includes owner_username (omitted when the owner no longer exists).
+// @Description The list is paged (default pageSize 25); with owner=me or name the total is the real number of matches, not the page size.
 // @Tags        stack-definitions
 // @Produce     json
 // @Param       name     query    string false "Filter by exact name"
+// @Param       owner    query    string false "Filter by owner: 'me', a username, or a user ID"
 // @Param       page     query    int false "Page number (default 1)"     minimum(1)
 // @Param       pageSize query    int false "Items per page (default 25, max 100)" minimum(1) maximum(100)
 // @Param       limit    query    int false "Max items to return (default 25, max 100)" minimum(1) maximum(100)
 // @Param       offset   query    int false "Number of items to skip (default 0)" minimum(0)
 // @Success     200 {object} map[string]interface{} "Paginated list with data, total, page, pageSize"
+// @Failure     400 {object} map[string]string "Owner filter is too long"
+// @Failure     401 {object} map[string]string "owner=me without an authenticated user"
 // @Failure     500 {object} map[string]string
 // @Router      /api/v1/stack-definitions [get]
 func (h *DefinitionHandler) ListDefinitions(c *gin.Context) {
-	if name := c.Query("name"); name != "" {
-		defs, err := h.definitionRepo.FindByName(name)
-		if err != nil {
-			status, message := mapError(err, entityStackDefinition)
-			c.JSON(status, gin.H{"error": message})
-			return
-		}
-		if defs == nil {
-			defs = []models.StackDefinition{}
-		}
-		c.JSON(http.StatusOK, gin.H{
-			"data":     defs,
-			"total":    len(defs),
-			"page":     1,
-			"pageSize": len(defs),
-		})
+	ownerID, ok := resolveOwnerFilter(c, h.userRepo, c.Query("owner"))
+	if !ok {
 		return
 	}
+	filter := models.StackDefinitionFilter{Name: c.Query("name"), OwnerID: ownerID}
 
-	pageSize := listPageSizeDefault
-	offset := 0
-	page := 1
+	page, pageSize, offset := listPagination(c)
 
-	if ps := c.Query("pageSize"); ps != "" {
-		if v, err := strconv.Atoi(ps); err == nil && v > 0 {
-			pageSize = v
-		}
-		if pageSize > listPageSizeMax {
-			pageSize = listPageSizeMax
-		}
-	}
-
-	if p := c.Query("page"); p != "" {
-		if v, err := strconv.Atoi(p); err == nil && v > 0 {
-			page = v
-		}
-		offset = (page - 1) * pageSize
-	} else if l := c.Query("limit"); l != "" {
-		if v, err := strconv.Atoi(l); err == nil && v > 0 {
-			pageSize = v
-			if pageSize > listPageSizeMax {
-				pageSize = listPageSizeMax
-			}
-		}
-		if o := c.Query("offset"); o != "" {
-			if v, err := strconv.Atoi(o); err == nil && v >= 0 {
-				offset = v
-			}
-		}
-	}
-
-	defs, total, err := h.definitionRepo.ListPaged(pageSize, offset)
+	defs, total, err := h.definitionRepo.ListPaged(filter, pageSize, offset)
 	if err != nil {
 		status, message := mapError(err, entityStackDefinition)
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
+	if defs == nil {
+		defs = []models.StackDefinition{}
+	}
+	ptrs := make([]*models.StackDefinition, len(defs))
+	for i := range defs {
+		ptrs[i] = &defs[i]
+	}
+	setDefinitionOwnerNames(h.userRepo, ptrs...)
 
 	c.JSON(http.StatusOK, gin.H{
 		"data":     defs,
@@ -236,12 +214,13 @@ func (h *DefinitionHandler) CreateDefinition(c *gin.Context) {
 		return
 	}
 
+	setDefinitionOwnerNames(h.userRepo, &def)
 	c.JSON(http.StatusCreated, def)
 }
 
 // GetDefinition godoc
 // @Summary     Get a stack definition
-// @Description Get a stack definition by ID, including its chart configurations
+// @Description Get a stack definition by ID, including its chart configurations and owner_username (omitted when the owner no longer exists)
 // @Tags        stack-definitions
 // @Produce     json
 // @Param       id  path     string true "Definition ID"
@@ -269,6 +248,7 @@ func (h *DefinitionHandler) GetDefinition(c *gin.Context) {
 		return
 	}
 
+	setDefinitionOwnerNames(h.userRepo, def)
 	c.JSON(http.StatusOK, DefinitionWithChartsResponse{
 		StackDefinition: *def,
 		Charts:          charts,
@@ -332,6 +312,7 @@ func (h *DefinitionHandler) UpdateDefinition(c *gin.Context) {
 		return
 	}
 
+	setDefinitionOwnerNames(h.userRepo, existing)
 	c.JSON(http.StatusOK, existing)
 }
 

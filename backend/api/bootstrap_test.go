@@ -450,7 +450,7 @@ func (s *stubStackInstanceRepo) FindByNamespace(_ string) (*models.StackInstance
 func (s *stubStackInstanceRepo) Update(_ *models.StackInstance) error  { return nil }
 func (s *stubStackInstanceRepo) Delete(_ string) error                 { return nil }
 func (s *stubStackInstanceRepo) List() ([]models.StackInstance, error) { return nil, nil }
-func (s *stubStackInstanceRepo) ListPaged(_, _ int) ([]models.StackInstance, int, error) {
+func (s *stubStackInstanceRepo) ListPaged(_ models.StackInstanceFilter, _, _ int) ([]models.StackInstance, int, error) {
 	return nil, 0, nil
 }
 func (s *stubStackInstanceRepo) ListByOwner(_ string) ([]models.StackInstance, error) {
@@ -505,7 +505,7 @@ func (s *stubStackDefinitionRepo) FindByName(_ string) ([]models.StackDefinition
 func (s *stubStackDefinitionRepo) Update(_ *models.StackDefinition) error  { return nil }
 func (s *stubStackDefinitionRepo) Delete(_ string) error                   { return nil }
 func (s *stubStackDefinitionRepo) List() ([]models.StackDefinition, error) { return nil, nil }
-func (s *stubStackDefinitionRepo) ListPaged(_, _ int) ([]models.StackDefinition, int64, error) {
+func (s *stubStackDefinitionRepo) ListPaged(_ models.StackDefinitionFilter, _, _ int) ([]models.StackDefinition, int64, error) {
 	return nil, 0, nil
 }
 func (s *stubStackDefinitionRepo) ListByOwner(_ string) ([]models.StackDefinition, error) {
@@ -524,6 +524,9 @@ func (s *stubStackDefinitionRepo) ListIDsByTemplateIDs(_ []string) (map[string][
 	return nil, nil
 }
 func (s *stubStackDefinitionRepo) Count() (int64, error) { return 0, nil }
+func (s *stubStackDefinitionRepo) NamesByIDs(_ []string) (map[string]string, error) {
+	return map[string]string{}, nil
+}
 
 // ---- stubChartConfigRepo ----
 
@@ -1233,3 +1236,6 @@ func (*stubStackInstanceRepo) CountByStatuses(statuses []string) (int, error) { 
 func (*stubClusterRepo) CountAll() (int, error) { return 0, nil }
 
 func (*stubClusterRepo) CountByHealthStatus(status string) (int, error) { return 0, nil }
+func (*stubClusterRepo) NamesByIDs(_ []string) (map[string]string, error) {
+	return map[string]string{}, nil
+}

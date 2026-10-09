@@ -157,16 +157,39 @@ var listColumns = []string{
 	"created_at", "updated_at", "last_deployed_at", "expires_at", "stopped_at",
 }
 
-// ListPaged returns stack instances with limit/offset pagination and total count.
-// It selects only list-view columns, omitting large TEXT fields like error_message.
-func (r *GORMStackInstanceRepository) ListPaged(limit, offset int) ([]models.StackInstance, int, error) {
+// applyInstanceFilter adds a WHERE condition for each non-empty field of f.
+// ListPaged uses it for the count query and for the page query, so the total
+// always matches the filtered rows. Each filtered column has an index.
+func applyInstanceFilter(q *gorm.DB, f models.StackInstanceFilter) *gorm.DB {
+	if f.Name != "" {
+		q = q.Where("name = ?", f.Name)
+	}
+	if f.Status != "" {
+		q = q.Where("status = ?", f.Status)
+	}
+	if f.ClusterID != "" {
+		q = q.Where("cluster_id = ?", f.ClusterID)
+	}
+	if f.DefinitionID != "" {
+		q = q.Where("stack_definition_id = ?", f.DefinitionID)
+	}
+	if f.OwnerID != "" {
+		q = q.Where("owner_id = ?", f.OwnerID)
+	}
+	return q
+}
+
+// ListPaged returns the stack instances that match filter with limit/offset
+// pagination, and the total count of matching instances. It selects only
+// list-view columns, omitting large TEXT fields like error_message.
+func (r *GORMStackInstanceRepository) ListPaged(filter models.StackInstanceFilter, limit, offset int) ([]models.StackInstance, int, error) {
 	var total int64
-	if err := r.db.Model(&models.StackInstance{}).Count(&total).Error; err != nil {
+	if err := applyInstanceFilter(r.db.Model(&models.StackInstance{}), filter).Count(&total).Error; err != nil {
 		return nil, 0, dberrors.NewDatabaseError("count", err)
 	}
 
-	var instances []models.StackInstance
-	if err := r.db.Select(listColumns).
+	instances := []models.StackInstance{}
+	if err := applyInstanceFilter(r.db.Select(listColumns), filter).
 		Order("created_at DESC").Limit(limit).Offset(offset).Find(&instances).Error; err != nil {
 		return nil, 0, dberrors.NewDatabaseError("list_paged", err)
 	}

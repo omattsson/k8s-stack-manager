@@ -379,6 +379,7 @@ func SetupRoutes(router *gin.Engine, deps Deps) *RateLimiters {
 				// Per-chart branch overrides
 				if deps.BranchOverrideHandler != nil {
 					instances.GET("/:id/branches", deps.BranchOverrideHandler.ListBranchOverrides)
+					instances.GET("/:id/branches/:chartId", deps.BranchOverrideHandler.GetBranchOverride)
 					instances.PUT("/:id/branches/:chartId", deps.BranchOverrideHandler.SetBranchOverride)
 					instances.DELETE("/:id/branches/:chartId", deps.BranchOverrideHandler.DeleteBranchOverride)
 				}

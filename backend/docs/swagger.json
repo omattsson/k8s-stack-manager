@@ -3294,8 +3294,7 @@
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "type": "object",
-                            "additionalProperties": true
+                            "$ref": "#/definitions/handlers.ValidateBranchResponse"
                         }
                     },
                     "400": {
@@ -3890,7 +3889,7 @@
         },
         "/api/v1/stack-definitions": {
             "get": {
-                "description": "List stack definitions with server-side pagination",
+                "description": "List stack definitions with server-side pagination, newest first. The filters name and owner combine (AND); total is the number of definitions that match.\nowner is \"me\" (the authenticated user), a username, or a user ID. A value in UUID form is matched as a user ID first, then as a username. An unknown username or ID gives an empty list. Each definition includes owner_username (omitted when the owner no longer exists).\nThe list is paged (default pageSize 25); with owner=me or name the total is the real number of matches, not the page size.",
                 "produces": [
                     "application/json"
                 ],
@@ -3903,6 +3902,12 @@
                         "type": "string",
                         "description": "Filter by exact name",
                         "name": "name",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter by owner: 'me', a username, or a user ID",
+                        "name": "owner",
                         "in": "query"
                     },
                     {
@@ -3942,6 +3947,24 @@
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Owner filter is too long",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "owner=me without an authenticated user",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
                         }
                     },
                     "500": {
@@ -4078,7 +4101,7 @@
         },
         "/api/v1/stack-definitions/{id}": {
             "get": {
-                "description": "Get a stack definition by ID, including its chart configurations",
+                "description": "Get a stack definition by ID, including its chart configurations and owner_username (omitted when the owner no longer exists)",
                 "produces": [
                     "application/json"
                 ],
@@ -4669,7 +4692,7 @@
         },
         "/api/v1/stack-instances": {
             "get": {
-                "description": "List stack instances with server-side pagination. Supports page/pageSize or legacy limit/offset params. Use owner=me to filter by the authenticated user. Filter precedence: owner \u003e name \u003e pagination (only the first matching filter is applied).",
+                "description": "List stack instances with server-side pagination, newest first. Supports page/pageSize or legacy limit/offset params.\nThe filters name, status, cluster_id, definition_id and owner combine (AND). total is the number of instances that match the filters.\nowner is \"me\" (the authenticated user), a username, or a user ID. A value in UUID form is matched as a user ID first, then as a username. An unknown username or ID gives an empty list.\nThe list is paged (default pageSize 25); with owner=me or name the total is the real number of matches, not the page size.\nEach instance includes owner_username, definition_name and cluster_name. A field is omitted when the owner, definition or cluster no longer exists; cluster_name is also omitted when cluster_id is empty (older instances).",
                 "produces": [
                     "application/json"
                 ],
@@ -4680,7 +4703,7 @@
                 "parameters": [
                     {
                         "type": "string",
-                        "description": "Filter by owner (use 'me' for current user)",
+                        "description": "Filter by owner: 'me', a username, or a user ID",
                         "name": "owner",
                         "in": "query"
                     },
@@ -4688,6 +4711,36 @@
                         "type": "string",
                         "description": "Filter by exact instance name",
                         "name": "name",
+                        "in": "query"
+                    },
+                    {
+                        "enum": [
+                            "draft",
+                            "queued",
+                            "deploying",
+                            "stabilizing",
+                            "running",
+                            "stopping",
+                            "stopped",
+                            "cleaning",
+                            "partial",
+                            "error"
+                        ],
+                        "type": "string",
+                        "description": "Filter by status",
+                        "name": "status",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter by cluster ID",
+                        "name": "cluster_id",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter by stack definition ID",
+                        "name": "definition_id",
                         "in": "query"
                     },
                     {
@@ -4721,6 +4774,24 @@
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Unknown status, or a filter value that is too long",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "owner=me without an authenticated user",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
                         }
                     },
                     "500": {
@@ -5090,7 +5161,7 @@
         },
         "/api/v1/stack-instances/{id}": {
             "get": {
-                "description": "Get a stack instance by ID. values_drift is true when the running values come from a successful rollback and the stored overrides produce different values: the next deploy undoes the rollback. Only this endpoint computes values_drift; list responses omit it.",
+                "description": "Get a stack instance by ID. values_drift is true when the running values come from a successful rollback and the stored overrides produce different values: the next deploy undoes the rollback. Only this endpoint computes values_drift; list responses omit it. owner_username, definition_name and cluster_name are omitted when the owner, definition or cluster no longer exists; cluster_name is also omitted when cluster_id is empty (older instances).",
                 "produces": [
                     "application/json"
                 ],
@@ -5446,6 +5517,90 @@
             }
         },
         "/api/v1/stack-instances/{id}/branches/{chartId}": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Get the per-chart branch override of one chart in a stack instance. The authorization rule is the same as for the list (owner, admin or devops). An existing override is returned also when its chart is no longer part of the definition. Without an override the response is 404: \"Chart not found in this stack definition\" for an unknown chart, otherwise \"Branch override not found\".",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "branch-overrides"
+                ],
+                "summary": "Get the branch override for a chart",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Instance ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Chart config ID",
+                        "name": "chartId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/models.ChartBranchOverride"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Instance not found, chart not found in this stack definition, or no override",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            },
             "put": {
                 "security": [
                     {
@@ -6618,7 +6773,7 @@
                         "BearerAuth": []
                     }
                 ],
-                "description": "Upsert the per-instance resource quota override for a stack instance. Each non-empty quantity must be a valid Kubernetes quantity (for example 500m, 2, 512Mi, 10Gi) and not negative; cpu_request must not exceed cpu_limit and memory_request must not exceed memory_limit; pod_limit must not be negative. Values are trimmed. The effective quota (cluster quota of the instance's cluster merged with this override) must follow the same rules, for example \"cpu_request 4 (instance override) exceeds the effective cpu_limit 2 (cluster quota)\". Invalid input returns 400 with the field name. Authorization: the instance owner, admin or devops. An owner without the admin or devops role cannot set a value above the cluster quota of the instance's cluster (403, for example \"cpu_limit 64 exceeds the cluster quota 16; only admin or devops can set a higher quota\"); a field without a cluster value has no cap, and pod_limit 0 (no limit) counts as above a cluster pod_limit. A value equal to the stored override passes, so an owner can change one field without losing an admin grant. Admin and devops may exceed the cluster quota. The check runs on write (and on clone), not on deploy.",
+                "description": "PUT replaces all fields of the override: a field that is not sent is cleared (an empty quantity or a missing pod_limit means no override for that field, so the cluster quota applies). To change one field, read the override with GET, change the field and send all fields. There is no PATCH.\nUpsert the per-instance resource quota override for a stack instance. Each non-empty quantity must be a valid Kubernetes quantity (for example 500m, 2, 512Mi, 10Gi) and not negative; cpu_request must not exceed cpu_limit and memory_request must not exceed memory_limit; pod_limit must not be negative. Values are trimmed. The effective quota (cluster quota of the instance's cluster merged with this override) must follow the same rules, for example \"cpu_request 4 (instance override) exceeds the effective cpu_limit 2 (cluster quota)\". Invalid input returns 400 with the field name. Authorization: the instance owner, admin or devops. An owner without the admin or devops role cannot set a value above the cluster quota of the instance's cluster (403, for example \"cpu_limit 64 exceeds the cluster quota 16; only admin or devops can set a higher quota\"); a field without a cluster value has no cap, and pod_limit 0 (no limit) counts as above a cluster pod_limit. A value equal to the stored override passes, so an owner can change one field without losing an admin grant. Admin and devops may exceed the cluster quota. The check runs on write (and on clone), not on deploy.",
                 "consumes": [
                     "application/json"
                 ],
@@ -7096,7 +7251,7 @@
         },
         "/api/v1/templates": {
             "get": {
-                "description": "List published templates for regular users, all templates for devops/admin. Includes definition_count and owner_username. Supports server-side pagination.\nname filters by exact template name (same as the stack-definitions name filter); the response keeps the paged envelope.",
+                "description": "List published templates for regular users, all templates for devops/admin. Includes definition_count and owner_username (omitted when the owner no longer exists). Supports server-side pagination.\nname filters by exact template name (same as the stack-definitions name filter); the response keeps the paged envelope.",
                 "consumes": [
                     "application/json"
                 ],
@@ -7403,7 +7558,7 @@
         },
         "/api/v1/templates/{id}": {
             "get": {
-                "description": "Get a stack template by ID, including its chart configurations. The template fields and charts are the working copy (draft).\npublished_version and published_version_id describe the latest published snapshot (null when there is none). has_unpublished_changes is true when the working copy differs from that snapshot (or there is no snapshot).\npublished_charts are the charts of that snapshot (what Use Template and Quick Deploy apply; null when there is none). Their IDs are valid chart_overrides keys for Use Template.\ncharts are the working copy charts only for the template owner and admins. For other users charts equals published_charts (an empty list without a snapshot), version is the published version (empty without a snapshot) and has_unpublished_changes is false, so draft information is not exposed.",
+                "description": "Get a stack template by ID, including its chart configurations. The template fields and charts are the working copy (draft). owner_username is the username of the owner (omitted when the owner no longer exists).\npublished_version and published_version_id describe the latest published snapshot (null when there is none). has_unpublished_changes is true when the working copy differs from that snapshot (or there is no snapshot).\npublished_charts are the charts of that snapshot (what Use Template and Quick Deploy apply; null when there is none). Their IDs are valid chart_overrides keys for Use Template.\ncharts are the working copy charts only for the template owner and admins. For other users charts equals published_charts (an empty list without a snapshot), version is the published version (empty without a snapshot) and has_unpublished_changes is false, so draft information is not exposed.",
                 "consumes": [
                     "application/json"
                 ],
@@ -9481,8 +9636,18 @@
                 "cluster_id": {
                     "type": "string"
                 },
+                "cluster_name": {
+                    "description": "ClusterName is the name of the target cluster. Omitted when the\ncluster no longer exists or cluster_id is empty (older instances).",
+                    "type": "string",
+                    "readOnly": true
+                },
                 "created_at": {
                     "type": "string"
+                },
+                "definition_name": {
+                    "description": "DefinitionName is the name of the stack definition. Omitted when the\ndefinition no longer exists.",
+                    "type": "string",
+                    "readOnly": true
                 },
                 "error_message": {
                     "type": "string"
@@ -9504,6 +9669,11 @@
                 },
                 "owner_id": {
                     "type": "string"
+                },
+                "owner_username": {
+                    "description": "OwnerUsername is the username of the owner. Omitted when the owner\nno longer exists (for example, after a delete).",
+                    "type": "string",
+                    "readOnly": true
                 },
                 "stack_definition_id": {
                     "type": "string"
@@ -9917,6 +10087,11 @@
                     "description": "OwnerInstanceID is set when quick deploy created the definition for one\ninstance. Deleting that instance also deletes the definition when no\nother instance uses it. Empty for definitions that users create.",
                     "type": "string"
                 },
+                "owner_username": {
+                    "description": "OwnerUsername is the username of the owner. It is computed, not\nstored; the API sets it in list and detail responses. Omitted when\nthe owner no longer exists (for example, after a delete).",
+                    "type": "string",
+                    "readOnly": true
+                },
                 "source_template_id": {
                     "type": "string"
                 },
@@ -10170,6 +10345,11 @@
                 "owner_id": {
                     "type": "string"
                 },
+                "owner_username": {
+                    "description": "OwnerUsername is the username of the owner. It is computed, not\nstored; the API sets it in list and detail responses. Omitted when\nthe owner no longer exists (for example, after a delete).",
+                    "type": "string",
+                    "readOnly": true
+                },
                 "published_charts": {
                     "description": "PublishedCharts are the charts of the latest snapshot: what Use\nTemplate and Quick Deploy apply. The IDs are the template chart config\nIDs at publish time; Use Template accepts them as chart_overrides keys.\nNull when the template has no snapshot.",
                     "type": "array",
@@ -10313,6 +10493,21 @@
                 },
                 "username": {
                     "type": "string"
+                }
+            }
+        },
+        "handlers.ValidateBranchResponse": {
+            "type": "object",
+            "properties": {
+                "branch": {
+                    "description": "Branch is the branch name from the request.",
+                    "type": "string",
+                    "example": "main"
+                },
+                "valid": {
+                    "description": "Valid is true when the branch exists in the repository.",
+                    "type": "boolean",
+                    "example": true
                 }
             }
         },
@@ -10601,6 +10796,11 @@
                 },
                 "owner_id": {
                     "type": "string"
+                },
+                "owner_username": {
+                    "description": "OwnerUsername is the username of the owner. It is computed, not\nstored; the API sets it in list and detail responses. Omitted when\nthe owner no longer exists (for example, after a delete).",
+                    "type": "string",
+                    "readOnly": true
                 },
                 "published_version": {
                     "type": "string"
@@ -11885,6 +12085,11 @@
                     "description": "OwnerInstanceID is set when quick deploy created the definition for one\ninstance. Deleting that instance also deletes the definition when no\nother instance uses it. Empty for definitions that users create.",
                     "type": "string"
                 },
+                "owner_username": {
+                    "description": "OwnerUsername is the username of the owner. It is computed, not\nstored; the API sets it in list and detail responses. Omitted when\nthe owner no longer exists (for example, after a delete).",
+                    "type": "string",
+                    "readOnly": true
+                },
                 "source_template_id": {
                     "type": "string"
                 },
@@ -11905,8 +12110,18 @@
                 "cluster_id": {
                     "type": "string"
                 },
+                "cluster_name": {
+                    "description": "ClusterName is the name of the target cluster. Omitted when the\ncluster no longer exists or cluster_id is empty (older instances).",
+                    "type": "string",
+                    "readOnly": true
+                },
                 "created_at": {
                     "type": "string"
+                },
+                "definition_name": {
+                    "description": "DefinitionName is the name of the stack definition. Omitted when the\ndefinition no longer exists.",
+                    "type": "string",
+                    "readOnly": true
                 },
                 "error_message": {
                     "type": "string"
@@ -11928,6 +12143,11 @@
                 },
                 "owner_id": {
                     "type": "string"
+                },
+                "owner_username": {
+                    "description": "OwnerUsername is the username of the owner. Omitted when the owner\nno longer exists (for example, after a delete).",
+                    "type": "string",
+                    "readOnly": true
                 },
                 "stack_definition_id": {
                     "type": "string"
@@ -11977,6 +12197,11 @@
                 },
                 "owner_id": {
                     "type": "string"
+                },
+                "owner_username": {
+                    "description": "OwnerUsername is the username of the owner. It is computed, not\nstored; the API sets it in list and detail responses. Omitted when\nthe owner no longer exists (for example, after a delete).",
+                    "type": "string",
+                    "readOnly": true
                 },
                 "updated_at": {
                     "type": "string"

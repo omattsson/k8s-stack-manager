@@ -209,6 +209,13 @@ func (r *GORMClusterRepository) Delete(id string) error {
 	return nil
 }
 
+// NamesByIDs returns the name of each cluster in ids that exists, keyed by
+// ID. It selects only the id and name columns, so it does not decrypt the
+// kubeconfig or the registry password.
+func (r *GORMClusterRepository) NamesByIDs(ids []string) (map[string]string, error) {
+	return namesByIDs(r.db, &models.Cluster{}, ids)
+}
+
 // List returns all clusters.
 func (r *GORMClusterRepository) List() ([]models.Cluster, error) {
 	var clusters []models.Cluster

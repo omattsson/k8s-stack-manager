@@ -296,98 +296,59 @@ const listPageSizeMax = 100
 
 // ListInstances godoc
 // @Summary     List stack instances
-// @Description List stack instances with server-side pagination. Supports page/pageSize or legacy limit/offset params. Use owner=me to filter by the authenticated user. Filter precedence: owner > name > pagination (only the first matching filter is applied).
+// @Description List stack instances with server-side pagination, newest first. Supports page/pageSize or legacy limit/offset params.
+// @Description The filters name, status, cluster_id, definition_id and owner combine (AND). total is the number of instances that match the filters.
+// @Description owner is "me" (the authenticated user), a username, or a user ID. A value in UUID form is matched as a user ID first, then as a username. An unknown username or ID gives an empty list.
+// @Description The list is paged (default pageSize 25); with owner=me or name the total is the real number of matches, not the page size.
+// @Description Each instance includes owner_username, definition_name and cluster_name. A field is omitted when the owner, definition or cluster no longer exists; cluster_name is also omitted when cluster_id is empty (older instances).
 // @Tags        stack-instances
 // @Produce     json
-// @Param       owner    query    string false "Filter by owner (use 'me' for current user)"
-// @Param       name     query    string false "Filter by exact instance name"
-// @Param       page     query    int    false "Page number (1-based, default: 1)"
-// @Param       pageSize query    int    false "Results per page (default: 25, max: 100)"
-// @Param       limit    query    int    false "Legacy: maximum number of results"
-// @Param       offset   query    int    false "Legacy: number of results to skip"
+// @Param       owner         query    string false "Filter by owner: 'me', a username, or a user ID"
+// @Param       name          query    string false "Filter by exact instance name"
+// @Param       status        query    string false "Filter by status" Enums(draft, queued, deploying, stabilizing, running, stopping, stopped, cleaning, partial, error)
+// @Param       cluster_id    query    string false "Filter by cluster ID"
+// @Param       definition_id query    string false "Filter by stack definition ID"
+// @Param       page          query    int    false "Page number (1-based, default: 1)"
+// @Param       pageSize      query    int    false "Results per page (default: 25, max: 100)"
+// @Param       limit         query    int    false "Legacy: maximum number of results"
+// @Param       offset        query    int    false "Legacy: number of results to skip"
 // @Success     200   {object} map[string]interface{} "data: []StackInstance, total: int, page: int, pageSize: int"
+// @Failure     400   {object} map[string]string "Unknown status, or a filter value that is too long"
+// @Failure     401   {object} map[string]string "owner=me without an authenticated user"
 // @Failure     500   {object} map[string]string
 // @Router      /api/v1/stack-instances [get]
 func (h *InstanceHandler) ListInstances(c *gin.Context) {
-	owner := c.Query("owner")
-
-	// Owner-filtered list — small result set, no server-side pagination needed.
-	if owner == "me" {
-		userID := middleware.GetUserIDFromContext(c)
-		instances, err := h.instanceRepo.ListByOwner(userID)
-		if err != nil {
-			status, message := mapError(err, entityStackInstance)
-			c.JSON(status, gin.H{"error": message})
-			return
-		}
-		c.JSON(http.StatusOK, gin.H{
-			"data":     instances,
-			"total":    len(instances),
-			"page":     1,
-			"pageSize": len(instances),
-		})
+	filter := models.StackInstanceFilter{
+		Name:         c.Query("name"),
+		Status:       c.Query("status"),
+		ClusterID:    c.Query("cluster_id"),
+		DefinitionID: c.Query("definition_id"),
+	}
+	if filter.Status != "" && !models.IsValidStackStatus(filter.Status) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid status filter"})
 		return
 	}
-
-	// Name-filtered list — exact match, no pagination needed.
-	if name := c.Query("name"); name != "" {
-		instances, err := h.instanceRepo.FindByName(name)
-		if err != nil {
-			status, message := mapError(err, entityStackInstance)
-			c.JSON(status, gin.H{"error": message})
-			return
-		}
-		c.JSON(http.StatusOK, gin.H{
-			"data":     instances,
-			"total":    len(instances),
-			"page":     1,
-			"pageSize": len(instances),
-		})
+	if !validIDFilter(c, "cluster_id", filter.ClusterID) || !validIDFilter(c, "definition_id", filter.DefinitionID) {
 		return
 	}
-
-	// Determine limit and offset from query params.
-	// page/pageSize take precedence; fall back to legacy limit/offset.
-	pageSize := listPageSizeDefault
-	offset := 0
-	page := 1
-
-	if ps := c.Query("pageSize"); ps != "" {
-		if v, err := strconv.Atoi(ps); err == nil && v > 0 {
-			pageSize = v
-		}
-		if pageSize > listPageSizeMax {
-			pageSize = listPageSizeMax
-		}
+	ownerID, ok := resolveOwnerFilter(c, h.userRepo, c.Query("owner"))
+	if !ok {
+		return
 	}
+	filter.OwnerID = ownerID
 
-	if p := c.Query("page"); p != "" {
-		// Page-based pagination
-		if v, err := strconv.Atoi(p); err == nil && v > 0 {
-			page = v
-		}
-		offset = (page - 1) * pageSize
-	} else if l := c.Query("limit"); l != "" {
-		// Legacy limit/offset pagination (no page param)
-		if v, err := strconv.Atoi(l); err == nil && v > 0 {
-			pageSize = v
-			if pageSize > listPageSizeMax {
-				pageSize = listPageSizeMax
-			}
-		}
-		if o := c.Query("offset"); o != "" {
-			if v, err := strconv.Atoi(o); err == nil && v >= 0 {
-				offset = v
-			}
-		}
-	}
+	page, pageSize, offset := listPagination(c)
 
-	instances, total, err := h.instanceRepo.ListPaged(pageSize, offset)
+	instances, total, err := h.instanceRepo.ListPaged(filter, pageSize, offset)
 	if err != nil {
 		status, message := mapError(err, entityStackInstance)
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
+	if instances == nil {
+		instances = []models.StackInstance{}
+	}
+	h.setInstanceListNames(instances)
 
 	c.JSON(http.StatusOK, gin.H{
 		"data":     instances,
@@ -425,6 +386,7 @@ func (h *InstanceHandler) GetRecentInstances(c *gin.Context) {
 	if len(instances) > 5 {
 		instances = instances[:5]
 	}
+	h.setInstanceListNames(instances)
 
 	c.JSON(http.StatusOK, instances)
 }
@@ -625,12 +587,13 @@ func (h *InstanceHandler) CreateInstance(c *gin.Context) {
 			fmt.Sprintf("Stack %s has been created", inst.Name), "stack_instance", inst.ID)
 	}
 
+	h.setInstanceNames(&inst)
 	c.JSON(http.StatusCreated, inst)
 }
 
 // GetInstance godoc
 // @Summary     Get a stack instance
-// @Description Get a stack instance by ID. values_drift is true when the running values come from a successful rollback and the stored overrides produce different values: the next deploy undoes the rollback. Only this endpoint computes values_drift; list responses omit it.
+// @Description Get a stack instance by ID. values_drift is true when the running values come from a successful rollback and the stored overrides produce different values: the next deploy undoes the rollback. Only this endpoint computes values_drift; list responses omit it. owner_username, definition_name and cluster_name are omitted when the owner, definition or cluster no longer exists; cluster_name is also omitted when cluster_id is empty (older instances).
 // @Tags        stack-instances
 // @Produce     json
 // @Param       id  path     string true "Instance ID"
@@ -655,6 +618,7 @@ func (h *InstanceHandler) GetInstance(c *gin.Context) {
 	}
 
 	inst.ValuesDrift = h.instanceValuesDrift(c.Request.Context(), inst)
+	h.setInstanceNames(inst)
 
 	c.JSON(http.StatusOK, inst)
 }
@@ -746,6 +710,7 @@ func (h *InstanceHandler) UpdateInstance(c *gin.Context) {
 		return
 	}
 
+	h.setInstanceNames(existing)
 	c.JSON(http.StatusOK, existing)
 }
 
@@ -1136,6 +1101,7 @@ func (h *InstanceHandler) CloneInstance(c *gin.Context) {
 		return
 	}
 
+	h.setInstanceNames(clone)
 	c.JSON(http.StatusCreated, CloneInstanceResponse{StackInstance: *clone, Warning: warning})
 }
 
@@ -2143,6 +2109,7 @@ func (h *InstanceHandler) ExtendTTL(c *gin.Context) {
 		return
 	}
 
+	h.setInstanceNames(inst)
 	c.JSON(http.StatusOK, inst)
 }
 

@@ -193,7 +193,7 @@ backend/
 
 ## Key Backend Patterns
 
-**Repository interface**: The generic `models.Repository` interface uses `Create`, `FindByID`, `Update`, `Delete`, `List` — all take `context.Context` first. Implemented by `GenericRepository` (GORM/MySQL). Domain-specific repositories (e.g., `StackInstanceRepository`, `UserRepository`, `AuditLogRepository`) have dedicated interfaces in their model files with custom method signatures. The repository auto-calls `Validate()` on create/update if the model implements `Validator`. Paginated list endpoints (stack instances, definitions, templates) use `ListPaged(limit, offset)` returning `([]T, total, error)` — GORM uses `SELECT`+column projection+`LIMIT/OFFSET`. New or changed list endpoints must use this pattern; small admin lists (users, clusters, cleanup policies, favorites, API keys) still return unpaged `List()` results. Batch methods (`CountByTemplateIDs`, `FindByIDs`) eliminate N+1 queries for enrichment lookups.
+**Repository interface**: The generic `models.Repository` interface uses `Create`, `FindByID`, `Update`, `Delete`, `List` — all take `context.Context` first. Implemented by `GenericRepository` (GORM/MySQL). Domain-specific repositories (e.g., `StackInstanceRepository`, `UserRepository`, `AuditLogRepository`) have dedicated interfaces in their model files with custom method signatures. The repository auto-calls `Validate()` on create/update if the model implements `Validator`. Paginated list endpoints (stack instances, definitions, templates) use `ListPaged(..., limit, offset)` returning `([]T, total, error)` — GORM uses `SELECT`+column projection+`LIMIT/OFFSET`. List filters go into the paged query through a filter struct (`StackInstanceFilter`, `StackDefinitionFilter`); the count query uses the same conditions, so `total` counts the matching rows. New or changed list endpoints must use this pattern; small admin lists (users, clusters, cleanup policies, favorites, API keys) still return unpaged `List()` results. Batch methods (`CountByTemplateIDs`, `FindByIDs`, `NamesByIDs`) eliminate N+1 queries for enrichment lookups. Computed response fields are model fields with `gorm:"-"` (for example `ValuesDrift`, `OwnerUsername`).
 
 **Handler struct**: `handlers.Handler` holds `models.Repository` and optional `websocket.BroadcastSender` via constructor injection (`NewHandler(repo)` or `NewHandlerWithHub(repo, hub)`). Domain handlers (e.g., `InstanceHandler`, `DefinitionHandler`, `AdminHandler`, `DashboardHandler`) use separate structs with specialized repository dependencies injected via their own constructors. Health handlers use factory functions returning `gin.HandlerFunc` via closure.
 
@@ -350,6 +350,7 @@ backend/internal/
 - **Bulk operations**: Bulk deploy/stop/clean/delete supports up to 50 instances per request. Returns per-instance success/failure results.
 - **Bulk template operations**: Bulk delete/publish/unpublish supports up to 50 templates per request. Returns per-template success/failure results. Requires DevOps+ role.
 - **Instance comparison**: Side-by-side comparison of two stack instances including merged Helm values per chart.
+- **List filters and names**: `GET /stack-instances` filters by `name`, `status` (unknown value: 400), `cluster_id`, `definition_id` and `owner` (`me`, a username or a user ID); the filters combine (AND) and `total` counts the matches. `GET /stack-definitions` filters by `name` and `owner` the same way. Instance responses add `owner_username`, `definition_name` and `cluster_name`; definition and template responses add `owner_username`. One batch lookup per kind and response; a missing owner, definition or cluster omits the field.
 - **Import/export**: Stack definitions can be exported as JSON bundles and re-imported to create new definitions with charts.
 - **Definition names**: Unique per owner (application check, no unique index): create, rename and template instantiate return 409; import renames to `<name> (imported)`, `<name> (imported 2)`, …; quick deploy uses `<name> (2)`, …
 - **Setup wizard**: The frontend shows a first-run checklist until a cluster, a template, and an instance exist, or until the user dismisses it (localStorage).
@@ -369,8 +370,8 @@ backend/internal/
 | Stack Instances | `/api/v1/stack-instances` | CRUD + clone, deploy, deploy-preview, stop, clean, rollback, status, logs, compare, extend TTL |
 | Bulk Operations | `/api/v1/stack-instances/bulk` | Bulk deploy, stop, clean, delete (up to 50 instances) |
 | Value Overrides | `/api/v1/stack-instances/:id/overrides` | Per-chart value overrides |
-| Branch Overrides | `/api/v1/stack-instances/:id/branches` | Per-chart branch overrides |
-| Quota Overrides | `/api/v1/stack-instances/:id/quota-overrides` | Per-instance resource quota overrides |
+| Branch Overrides | `/api/v1/stack-instances/:id/branches` | Per-chart branch overrides (list, get, set, delete per chart) |
+| Quota Overrides | `/api/v1/stack-instances/:id/quota-overrides` | Per-instance resource quota overrides (`PUT` replaces all fields) |
 | Git | `/api/v1/git` | Branch listing, validation, provider status |
 | Audit Logs | `/api/v1/audit-logs` | Filterable audit log viewer + export |
 | Users | `/api/v1/users` | User management (admin) |

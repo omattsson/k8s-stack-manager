@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"backend/internal/models"
@@ -28,6 +29,8 @@ type MockUserRepository struct {
 	findErr    error
 	updateErr  error
 	createFunc func(user *models.User) error // optional override for Create; called under lock
+	// findByIDsCalls counts FindByIDs calls (batch lookup checks).
+	findByIDsCalls atomic.Int32
 }
 
 func NewMockUserRepository() *MockUserRepository {
@@ -69,6 +72,7 @@ func (m *MockUserRepository) FindByID(id string) (*models.User, error) {
 }
 
 func (m *MockUserRepository) FindByIDs(ids []string) (map[string]*models.User, error) {
+	m.findByIDsCalls.Add(1)
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	if m.findErr != nil {
@@ -454,6 +458,8 @@ type MockStackDefinitionRepository struct {
 	items    map[string]*models.StackDefinition
 	err      error
 	fetchErr error
+	// namesCalls counts NamesByIDs calls (batch lookup checks).
+	namesCalls atomic.Int32
 }
 
 func NewMockStackDefinitionRepository() *MockStackDefinitionRepository {
@@ -542,7 +548,7 @@ func (m *MockStackDefinitionRepository) List() ([]models.StackDefinition, error)
 	return out, nil
 }
 
-func (m *MockStackDefinitionRepository) ListPaged(limit, offset int) ([]models.StackDefinition, int64, error) {
+func (m *MockStackDefinitionRepository) ListPaged(filter models.StackDefinitionFilter, limit, offset int) ([]models.StackDefinition, int64, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	if m.err != nil {
@@ -550,8 +556,21 @@ func (m *MockStackDefinitionRepository) ListPaged(limit, offset int) ([]models.S
 	}
 	all := make([]models.StackDefinition, 0, len(m.items))
 	for _, d := range m.items {
+		if filter.Name != "" && d.Name != filter.Name {
+			continue
+		}
+		if filter.OwnerID != "" && d.OwnerID != filter.OwnerID {
+			continue
+		}
 		all = append(all, *d)
 	}
+	// Newest first, like the GORM repository; ID breaks ties.
+	sort.Slice(all, func(i, j int) bool {
+		if !all[i].CreatedAt.Equal(all[j].CreatedAt) {
+			return all[i].CreatedAt.After(all[j].CreatedAt)
+		}
+		return all[i].ID < all[j].ID
+	})
 	total := int64(len(all))
 	if offset >= len(all) {
 		return []models.StackDefinition{}, total, nil
@@ -616,6 +635,22 @@ func (m *MockStackDefinitionRepository) Count() (int64, error) {
 		return 0, m.err
 	}
 	return int64(len(m.items)), nil
+}
+
+func (m *MockStackDefinitionRepository) NamesByIDs(ids []string) (map[string]string, error) {
+	m.namesCalls.Add(1)
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.err != nil {
+		return nil, m.err
+	}
+	out := make(map[string]string, len(ids))
+	for _, id := range ids {
+		if d, ok := m.items[id]; ok {
+			out[id] = d.Name
+		}
+	}
+	return out, nil
 }
 
 func (m *MockStackDefinitionRepository) ListIDsByTemplateIDs(templateIDs []string) (map[string][]string, error) {
@@ -895,7 +930,7 @@ func (m *MockStackInstanceRepository) CountByClusterAndOwner(clusterID, ownerID 
 	return count, nil
 }
 
-func (m *MockStackInstanceRepository) ListPaged(limit, offset int) ([]models.StackInstance, int, error) {
+func (m *MockStackInstanceRepository) ListPaged(filter models.StackInstanceFilter, limit, offset int) ([]models.StackInstance, int, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	if m.err != nil {
@@ -903,8 +938,18 @@ func (m *MockStackInstanceRepository) ListPaged(limit, offset int) ([]models.Sta
 	}
 	all := make([]models.StackInstance, 0, len(m.items))
 	for _, i := range m.items {
+		if !instanceMatchesFilter(i, filter) {
+			continue
+		}
 		all = append(all, *i)
 	}
+	// Newest first, like the GORM repository; ID breaks ties.
+	sort.Slice(all, func(a, b int) bool {
+		if !all[a].CreatedAt.Equal(all[b].CreatedAt) {
+			return all[a].CreatedAt.After(all[b].CreatedAt)
+		}
+		return all[a].ID < all[b].ID
+	})
 	total := len(all)
 	if offset > 0 && offset < total {
 		all = all[offset:]
@@ -915,6 +960,15 @@ func (m *MockStackInstanceRepository) ListPaged(limit, offset int) ([]models.Sta
 		all = all[:limit]
 	}
 	return all, total, nil
+}
+
+// instanceMatchesFilter applies the ListPaged filter like the GORM repository.
+func instanceMatchesFilter(i *models.StackInstance, f models.StackInstanceFilter) bool {
+	return (f.Name == "" || i.Name == f.Name) &&
+		(f.Status == "" || i.Status == f.Status) &&
+		(f.ClusterID == "" || i.ClusterID == f.ClusterID) &&
+		(f.DefinitionID == "" || i.StackDefinitionID == f.DefinitionID) &&
+		(f.OwnerID == "" || i.OwnerID == f.OwnerID)
 }
 
 func (m *MockStackInstanceRepository) CountAll() (int, error) {
@@ -1520,6 +1574,8 @@ type MockClusterRepository struct {
 	err        error
 	fetchErr   error
 	defaultErr error
+	// namesCalls counts NamesByIDs calls (batch lookup checks).
+	namesCalls atomic.Int32
 }
 
 func NewMockClusterRepository() *MockClusterRepository {
@@ -1605,6 +1661,22 @@ func (m *MockClusterRepository) CountAll() (int, error) {
 		return 0, m.err
 	}
 	return len(m.clusters), nil
+}
+
+func (m *MockClusterRepository) NamesByIDs(ids []string) (map[string]string, error) {
+	m.namesCalls.Add(1)
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.err != nil {
+		return nil, m.err
+	}
+	out := make(map[string]string, len(ids))
+	for _, id := range ids {
+		if cl, ok := m.clusters[id]; ok {
+			out[id] = cl.Name
+		}
+	}
+	return out, nil
 }
 
 func (m *MockClusterRepository) CountByHealthStatus(status string) (int, error) {

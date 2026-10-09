@@ -33,6 +33,41 @@ type StackInstance struct {
 	// the stored overrides produce different values (the next deploy undoes
 	// the rollback). List responses do not compute it.
 	ValuesDrift bool `json:"values_drift,omitempty" gorm:"-"`
+	// The name fields below are computed, not stored. The API sets them in
+	// list and detail responses (and in the create, update, clone and
+	// extend responses) with one batch lookup per kind and response.
+
+	// OwnerUsername is the username of the owner. Omitted when the owner
+	// no longer exists (for example, after a delete).
+	OwnerUsername string `json:"owner_username,omitempty" gorm:"-" readonly:"true"`
+	// DefinitionName is the name of the stack definition. Omitted when the
+	// definition no longer exists.
+	DefinitionName string `json:"definition_name,omitempty" gorm:"-" readonly:"true"`
+	// ClusterName is the name of the target cluster. Omitted when the
+	// cluster no longer exists or cluster_id is empty (older instances).
+	ClusterName string `json:"cluster_name,omitempty" gorm:"-" readonly:"true"`
+}
+
+// StackInstanceFilter selects the stack instances that ListPaged returns.
+// An empty field does not filter. The handler resolves "me" and usernames
+// to OwnerID before it calls the repository.
+type StackInstanceFilter struct {
+	Name         string
+	Status       string
+	ClusterID    string
+	DefinitionID string
+	OwnerID      string
+}
+
+// IsValidStackStatus reports whether status is a known stack instance status.
+func IsValidStackStatus(status string) bool {
+	switch status {
+	case StackStatusDraft, StackStatusQueued, StackStatusDeploying, StackStatusStabilizing,
+		StackStatusRunning, StackStatusStopping, StackStatusStopped, StackStatusCleaning,
+		StackStatusPartial, StackStatusError:
+		return true
+	}
+	return false
 }
 
 // Valid stack instance statuses.
@@ -57,7 +92,9 @@ type StackInstanceRepository interface {
 	Update(instance *StackInstance) error
 	Delete(id string) error
 	List() ([]StackInstance, error)
-	ListPaged(limit, offset int) ([]StackInstance, int, error)
+	// ListPaged returns one page of the instances that match filter, newest
+	// first, and the total number of matching instances.
+	ListPaged(filter StackInstanceFilter, limit, offset int) ([]StackInstance, int, error)
 	ListByOwner(ownerID string) ([]StackInstance, error)
 	FindByName(name string) ([]StackInstance, error)
 	FindByCluster(clusterID string) ([]StackInstance, error)

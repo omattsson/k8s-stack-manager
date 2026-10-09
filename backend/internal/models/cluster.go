@@ -67,6 +67,9 @@ type ClusterRepository interface {
 	Update(cluster *Cluster) error
 	Delete(id string) error
 	List() ([]Cluster, error)
+	// NamesByIDs returns the name of each cluster in ids that exists, keyed
+	// by ID, in one query.
+	NamesByIDs(ids []string) (map[string]string, error)
 	CountAll() (int, error)
 	CountByHealthStatus(status string) (int, error)
 	FindDefault() (*Cluster, error)

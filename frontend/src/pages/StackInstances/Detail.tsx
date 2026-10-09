@@ -707,7 +707,7 @@ const Detail = () => {
               Namespace: {instance.namespace}
             </Typography>
             <Typography variant="body2" color="text.secondary">
-              Owner: {instance.owner_id}
+              Owner: {instance.owner_username || instance.owner_id}
             </Typography>
             {countdown && !countdown.isExpired && (instance.status === 'running' || instance.status === 'partial') && (
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 0.5 }}>
