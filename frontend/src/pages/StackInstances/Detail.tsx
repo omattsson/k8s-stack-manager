@@ -90,6 +90,7 @@ const Detail = () => {
   const [stopping, setStopping] = useState(false);
   const [cleaning, setCleaning] = useState(false);
   const [cleanDialogOpen, setCleanDialogOpen] = useState(false);
+  const [stopDialogOpen, setStopDialogOpen] = useState(false);
   const [deployLogs, setDeployLogs] = useState<DeploymentLog[]>([]);
   const [streamingLines, setStreamingLines] = useState<Record<string, string[]>>({});
   const streamingBufferRef = useRef<Record<string, string[]>>({});
@@ -641,12 +642,13 @@ const Detail = () => {
     }
   };
 
-  const getRepoUrl = (): string => {
-    if (charts.length > 0 && charts[0].source_repo_url) {
-      return charts[0].source_repo_url;
-    }
-    return '';
-  };
+  // Source repository of the first chart that has one. The first chart can
+  // be a chart without a source repository (for example an OCI chart).
+  const getRepoUrl = (): string => charts.find((c) => c.source_repo_url)?.source_repo_url ?? '';
+
+  // The instance branch applies to all charts, so the instance-level picker
+  // lists the branches of all chart source repositories.
+  const allRepoUrls = useMemo(() => charts.map((c) => c.source_repo_url ?? ''), [charts]);
 
   const canModify = canModifyInstance(user, instance);
 
@@ -677,7 +679,7 @@ const Detail = () => {
         <Button variant="outlined" color="error" disabled>Cleaning...</Button>
       )}
       {canStop && (
-        <Button variant="contained" color="warning" onClick={handleStop} disabled={stopping}>
+        <Button variant="contained" color="warning" onClick={() => setStopDialogOpen(true)} disabled={stopping}>
           {stopping ? 'Stopping...' : 'Stop'}
         </Button>
       )}
@@ -872,7 +874,7 @@ const Detail = () => {
         <Box sx={{ maxWidth: 400 }}>
           <Typography variant="subtitle2" gutterBottom>Branch</Typography>
           <BranchSelector
-            repoUrl={getRepoUrl()}
+            repoUrl={allRepoUrls}
             value={branch}
             onChange={setBranch}
             disabled={!canModify}
@@ -995,6 +997,15 @@ const Detail = () => {
         onConfirm={handleDelete}
         onCancel={() => setDeleteOpen(false)}
         confirmText="Delete"
+      />
+
+      <ConfirmDialog
+        open={stopDialogOpen}
+        title="Stop Instance?"
+        message="This uninstalls all Helm releases of the instance. The namespace stays. You can deploy the instance again later."
+        onConfirm={() => { setStopDialogOpen(false); handleStop(); }}
+        onCancel={() => setStopDialogOpen(false)}
+        confirmText="Stop"
       />
 
       <ConfirmDialog

@@ -162,7 +162,11 @@ describe('InstanceActionsMenu', () => {
 
     await waitFor(() => expect(invokeAction).toHaveBeenCalledWith('i1', 'seed-data', {}));
     expect(await within(dialog).findByText('seed-data returned status 200.')).toBeInTheDocument();
-    expect(within(dialog).getByTestId('action-result')).toHaveTextContent('"rows": 12');
+    const resultBox = within(dialog).getByTestId('action-result');
+    expect(within(resultBox).getByRole('rowheader', { name: 'Rows' })).toBeInTheDocument();
+    expect(within(resultBox).getByText('12')).toBeInTheDocument();
+    await user.click(within(resultBox).getByRole('switch', { name: 'Raw JSON' }));
+    expect(within(resultBox).getByTestId('json-raw')).toHaveTextContent('"rows": 12');
     expect(getActionJobLog).not.toHaveBeenCalled();
   });
 
@@ -201,7 +205,23 @@ describe('InstanceActionsMenu', () => {
     await user.click(within(dialog).getByRole('button', { name: 'Run' }));
 
     expect(await within(dialog).findByText('seed-data failed: the action returned status 409.')).toBeInTheDocument();
+    expect(within(dialog).getByTestId('action-message')).toHaveTextContent('busy');
     expect(within(dialog).getByTestId('action-result')).toHaveTextContent('busy');
+  });
+
+  it('shows the message field of a 409 result in the error alert', async () => {
+    const user = userEvent.setup();
+    mockList([seedAction]);
+    invokeAction.mockResolvedValue({
+      action: 'seed-data', instance_id: 'i1', status_code: 409,
+      result: { message: 'A refresh-db job already runs for this stack', job_id: 'job-9' },
+    });
+    render(<InstanceActionsMenu instanceId="i1" />);
+
+    const dialog = await openAction(user, 'seed-data');
+    await user.click(within(dialog).getByRole('button', { name: 'Run' }));
+
+    expect(await within(dialog).findByTestId('action-status')).toHaveTextContent('A refresh-db job already runs for this stack');
   });
 
   it('shows the API error when the invoke call fails', async () => {

@@ -243,11 +243,46 @@ type versionDiffSide struct {
 	Snapshot          models.TemplateSnapshot `json:"snapshot"`
 }
 
+// templateFieldDiff is one template field that differs between two versions.
+// Field is the JSON name of the field in the snapshot template data (name,
+// description, category, default_branch or version).
+type templateFieldDiff struct {
+	Field string `json:"field"`
+	Left  string `json:"left"`
+	Right string `json:"right"`
+}
+
 // versionDiffResponse is the response of GET /templates/:id/versions/diff.
+// TemplateDiffs lists only the changed template fields (an empty list when
+// all are equal); the publish state is not content and is not compared.
 type versionDiffResponse struct {
-	Left       versionDiffSide  `json:"left"`
-	Right      versionDiffSide  `json:"right"`
-	ChartDiffs []chartDiffEntry `json:"chart_diffs"`
+	Left          versionDiffSide     `json:"left"`
+	Right         versionDiffSide     `json:"right"`
+	TemplateDiffs []templateFieldDiff `json:"template_diffs"`
+	ChartDiffs    []chartDiffEntry    `json:"chart_diffs"`
+}
+
+// computeTemplateFieldDiffs returns the template fields that differ between
+// two snapshots, in a fixed order. It compares the same fields as
+// models.SameTemplateContent. Never nil.
+func computeTemplateFieldDiffs(left, right models.TemplateSnapshotData) []templateFieldDiff {
+	fields := []struct {
+		name        string
+		left, right string
+	}{
+		{"name", left.Name, right.Name},
+		{"description", left.Description, right.Description},
+		{"category", left.Category, right.Category},
+		{"default_branch", left.DefaultBranch, right.DefaultBranch},
+		{"version", left.Version, right.Version},
+	}
+	diffs := make([]templateFieldDiff, 0, len(fields))
+	for _, f := range fields {
+		if f.left != f.right {
+			diffs = append(diffs, templateFieldDiff{Field: f.name, Left: f.left, Right: f.right})
+		}
+	}
+	return diffs
 }
 
 // DiffVersions godoc
@@ -255,6 +290,7 @@ type versionDiffResponse struct {
 // @Description Compare two template version snapshots side by side. Either side may be "working" to compare the working copy (draft), for example left=<latest version ID>&right=working shows the unpublished changes.
 // @Description Only the template owner and admins can compare the working copy (others get 403).
 // @Description left.version and right.version are version strings; the other side fields (id, created_by, created_by_username, created_at, is_working_copy) describe the side.
+// @Description template_diffs lists the changed template fields (name, description, category, default_branch, version) with the left and right value; chart_diffs compares the charts.
 // @Tags        templates
 // @Accept      json
 // @Produce     json
@@ -297,9 +333,10 @@ func (h *TemplateVersionHandler) DiffVersions(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, versionDiffResponse{
-		Left:       *left,
-		Right:      *right,
-		ChartDiffs: chartDiffs,
+		Left:          *left,
+		Right:         *right,
+		TemplateDiffs: computeTemplateFieldDiffs(left.Snapshot.Template, right.Snapshot.Template),
+		ChartDiffs:    chartDiffs,
 	})
 }
 

@@ -158,6 +158,9 @@ describe('CleanupPolicies Page', () => {
 
     await user.click(screen.getByRole('button', { name: /add policy/i }));
     expect(screen.getByText('Create Cleanup Policy')).toBeInTheDocument();
+    // A new policy is disabled by default, with a hint
+    expect(screen.getByRole('switch', { name: 'Enabled' })).not.toBeChecked();
+    expect(screen.getByTestId('policy-enabled-hint')).toHaveTextContent(/new policy is disabled/i);
 
     // Fill in name
     const nameInput = screen.getByLabelText(/^Name/);
@@ -172,7 +175,7 @@ describe('CleanupPolicies Page', () => {
     await user.click(screen.getByRole('button', { name: /^create$/i }));
 
     await waitFor(() => {
-      expect(cleanupPolicyService.create).toHaveBeenCalled();
+      expect(cleanupPolicyService.create).toHaveBeenCalledWith(expect.objectContaining({ enabled: false, dry_run: true }));
     });
   });
 
@@ -290,6 +293,7 @@ describe('CleanupPolicies Page', () => {
     await waitFor(() => {
       expect(screen.getByRole('switch', { name: 'Toggle Idle Cleanup' })).not.toBeChecked();
     });
+    expect(await screen.findByText('Policy "Idle Cleanup" is disabled')).toBeInTheDocument();
   });
 
   it('keeps the old state and shows the API error when the toggle fails', async () => {
@@ -324,6 +328,7 @@ describe('CleanupPolicies Page', () => {
     await waitFor(() => {
       expect(screen.getByRole('switch', { name: 'Dry run TTL Enforcer' })).not.toBeChecked();
     });
+    expect(await screen.findByText('Dry run is off for policy "TTL Enforcer"')).toBeInTheDocument();
   });
 
   it('shows delete confirmation and deletes policy', async () => {

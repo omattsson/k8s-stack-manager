@@ -171,6 +171,29 @@ describe('OrphanedNamespaces Page', () => {
     expect(within(row).queryByText('-')).toBeNull();
   });
 
+  it('treats helm_releases null and resource_counts null as empty (rc.2 crash)', async () => {
+    // Exact payload of the live API for a namespace without Helm releases.
+    const payload = JSON.parse(
+      '[{"created_at":"2026-10-09T12:00:00Z","name":"stack-retest2-se-stackctl-tester","phase":"Active",'
+      + '"helm_releases":null,"resource_counts":{"pods":0,"deployments":0,"services":0},"managed":true},'
+      + '{"created_at":"2026-10-09T12:00:00Z","name":"stack-nocounts","phase":"Active",'
+      + '"helm_releases":null,"resource_counts":null,"managed":true}]',
+    );
+    (adminService.listOrphanedNamespaces as ReturnType<typeof vi.fn>).mockResolvedValue(payload);
+    const user = userEvent.setup();
+    renderPage();
+
+    const row = (await screen.findByText('stack-retest2-se-stackctl-tester')).closest('tr') as HTMLElement;
+    expect(within(row).getAllByText('0')).toHaveLength(3);
+    expect(within(row).getByText('None')).toBeTruthy();
+    const noCounts = screen.getByText('stack-nocounts').closest('tr') as HTMLElement;
+    expect(within(noCounts).getAllByText('-')).toHaveLength(3);
+
+    await user.click(screen.getByRole('button', { name: 'Delete namespace stack-retest2-se-stackctl-tester' }));
+    expect(screen.queryByText(/Helm release\(s\) will be uninstalled/)).toBeNull();
+    expect(screen.getByRole('button', { name: 'Delete Namespace' })).toBeTruthy();
+  });
+
   it('removes the row after a successful delete without a refetch', async () => {
     (adminService.listOrphanedNamespaces as ReturnType<typeof vi.fn>).mockResolvedValue(mockOrphaned);
     (adminService.deleteOrphanedNamespace as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);

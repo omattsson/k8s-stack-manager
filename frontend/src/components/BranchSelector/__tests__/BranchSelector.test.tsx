@@ -2,7 +2,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import { useState } from 'react';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import BranchSelector from '../index';
+import BranchSelector, { mergeBranchLists, normalizeRepoUrls } from '../index';
 
 vi.mock('../../../api/client', () => ({
   gitService: {
@@ -49,6 +49,47 @@ describe('BranchSelector', () => {
     await waitFor(() => {
       expect(gitService.branches).toHaveBeenCalledWith('https://dev.azure.com/org/project/_git/repo');
     });
+  });
+
+  it('lists the branches of all repositories for a URL list', async () => {
+    const user = userEvent.setup();
+    (gitService.branches as ReturnType<typeof vi.fn>).mockImplementation(async (url: string) => {
+      if (url === 'https://git/a') return ['main', 'feature/a'];
+      if (url === 'https://git/b') throw new Error('no access');
+      return ['main', 'feature/c'];
+    });
+    render(<BranchSelector {...defaultProps} repoUrl={['', 'https://git/a', 'https://git/b', 'https://git/c', 'https://git/a']} />);
+
+    await waitFor(() => {
+      expect(gitService.branches).toHaveBeenCalledTimes(3);
+    });
+    const input = screen.getByRole('combobox');
+    await user.click(input);
+    await user.clear(input);
+    const options = await screen.findAllByRole('option');
+    expect(options.map((o) => o.textContent)).toEqual(['main', 'feature/a', 'feature/c']);
+  });
+
+  it('says how many repositories did not load when some fail', async () => {
+    (gitService.branches as ReturnType<typeof vi.fn>).mockImplementation(async (url: string) => {
+      if (url === 'https://git/b') throw new Error('no access');
+      return ['main'];
+    });
+    render(<BranchSelector {...defaultProps} repoUrl={['https://git/a', 'https://git/b', 'https://git/c']} />);
+
+    expect(await screen.findByText('Branches of 1 of 3 repositories did not load.')).toBeInTheDocument();
+    expect(screen.getByRole('combobox')).toBeInTheDocument();
+  });
+
+  it('loads nothing for an empty URL list', () => {
+    render(<BranchSelector {...defaultProps} repoUrl={['', ' ']} />);
+    expect(gitService.branches).not.toHaveBeenCalled();
+  });
+
+  it('normalizes repository URLs and merges branch lists', () => {
+    expect(normalizeRepoUrls(' https://x ')).toEqual(['https://x']);
+    expect(normalizeRepoUrls(['https://x', '', 'https://y', 'https://x'])).toEqual(['https://x', 'https://y']);
+    expect(mergeBranchLists([['main', 'dev'], ['dev', 'x']])).toEqual(['main', 'dev', 'x']);
   });
 
   it('shows error helper text and a plain text field when API fails', async () => {

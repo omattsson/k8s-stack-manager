@@ -393,8 +393,10 @@ export interface OrphanedNamespace {
   name: string;
   created_at: string;
   phase: string;
-  resource_counts?: ResourceCounts;
-  helm_releases: string[];
+  /** Null or absent when the server did not count the resources. */
+  resource_counts?: ResourceCounts | null;
+  /** Null when the namespace has no Helm releases (Go nil slice). */
+  helm_releases: string[] | null;
   /** True when the namespace has the label managed-by=k8s-stack-manager. */
   managed: boolean;
 }
@@ -787,9 +789,19 @@ export interface VersionDiffSide {
   is_working_copy?: boolean;
 }
 
+/** One template field that differs between the two sides of a version diff. */
+export interface TemplateFieldDiff {
+  /** Snapshot field name: name, description, category, default_branch or version. */
+  field: string;
+  left: string;
+  right: string;
+}
+
 export interface VersionDiffResponse {
   left: VersionDiffSide;
   right: VersionDiffSide;
+  /** Changed template fields. Absent in responses of older servers. */
+  template_diffs?: TemplateFieldDiff[];
   chart_diffs: TemplateChartDiff[];
 }
 

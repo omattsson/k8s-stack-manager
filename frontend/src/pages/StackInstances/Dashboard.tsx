@@ -789,6 +789,11 @@ const Dashboard = () => {
               This action cannot be undone. Selected instances will be permanently deleted.
             </Alert>
           )}
+          {bulkAction === 'stop' && (
+            <Alert severity="warning" sx={{ mb: 2 }}>
+              This uninstalls all Helm releases of the selected instances. The namespaces stay.
+            </Alert>
+          )}
           <Typography variant="body1" sx={{ mb: 1 }}>
             {bulkAction ? BULK_ACTION_LABELS[bulkAction] : ''} {selectedInstances.length} instance{selectedInstances.length === 1 ? '' : 's'}:
           </Typography>
@@ -808,7 +813,7 @@ const Dashboard = () => {
           <Button
             onClick={handleBulkConfirm}
             variant="contained"
-            color={bulkAction === 'delete' ? 'error' : 'primary'}
+            color={bulkAction === 'delete' ? 'error' : bulkAction === 'stop' ? 'warning' : 'primary'}
           >
             {bulkAction ? BULK_ACTION_LABELS[bulkAction] : 'Confirm'}
           </Button>

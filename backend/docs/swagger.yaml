@@ -1251,6 +1251,15 @@ definitions:
         example: 10Gi
         type: string
     type: object
+  handlers.templateFieldDiff:
+    properties:
+      field:
+        type: string
+      left:
+        type: string
+      right:
+        type: string
+    type: object
   handlers.templateVersionListItem:
     properties:
       change_summary:
@@ -1395,6 +1404,10 @@ definitions:
         $ref: '#/definitions/handlers.versionDiffSide'
       right:
         $ref: '#/definitions/handlers.versionDiffSide'
+      template_diffs:
+        items:
+          $ref: '#/definitions/handlers.templateFieldDiff'
+        type: array
     type: object
   handlers.versionDiffSide:
     properties:
@@ -8488,6 +8501,7 @@ paths:
         Compare two template version snapshots side by side. Either side may be "working" to compare the working copy (draft), for example left=<latest version ID>&right=working shows the unpublished changes.
         Only the template owner and admins can compare the working copy (others get 403).
         left.version and right.version are version strings; the other side fields (id, created_by, created_by_username, created_at, is_working_copy) describe the side.
+        template_diffs lists the changed template fields (name, description, category, default_branch, version) with the left and right value; chart_diffs compares the charts.
       parameters:
       - description: Template ID
         in: path

@@ -18,6 +18,7 @@ import {
   Typography,
 } from '@mui/material';
 import { instanceService } from '../../api/client';
+import JsonResultView from '../JsonResultView';
 import { describeApiError, getApiErrorInfo } from '../../utils/apiError';
 import type { ActionInvokeResult, ActionParameter, InstanceAction } from '../../types';
 
@@ -118,6 +119,23 @@ const statusColor = (status: string): 'info' | 'success' | 'error' => {
 };
 
 const isSuccessCode = (code: number): boolean => code >= 200 && code < 300;
+
+/**
+ * Read the message of an action subscriber result: the result text, or the
+ * first text field of error, message, detail or reason.
+ * @param result - The JSON body of the action subscriber
+ * @returns The message, or undefined when the result has none
+ */
+export const resultMessage = (result: unknown): string | undefined => {
+  if (typeof result === 'string') return result.trim() || undefined;
+  if (!result || typeof result !== 'object' || Array.isArray(result)) return undefined;
+  const obj = result as Record<string, unknown>;
+  for (const key of ['error', 'message', 'detail', 'reason']) {
+    const v = obj[key];
+    if (typeof v === 'string' && v.trim()) return v.trim();
+  }
+  return undefined;
+};
 
 interface ActionDialogProps {
   /** ID of the instance to run the action on. */
@@ -307,21 +325,21 @@ const ActionDialog = ({ instanceId, action, onClose }: ActionDialogProps) => {
 
   const renderResult = (res: ActionInvokeResult) => {
     const ok = isSuccessCode(res.status_code);
+    const message = ok ? undefined : resultMessage(res.result);
     return (
       <Stack spacing={2}>
-        <Alert severity={ok ? 'success' : 'error'}>
+        <Alert severity={ok ? 'success' : 'error'} data-testid="action-status">
           {ok
             ? `${action.label} returned status ${res.status_code}.`
             : `${action.label} failed: the action returned status ${res.status_code}.`}
+          {message && (
+            <Typography variant="body2" sx={{ mt: 0.5, fontWeight: 500 }} data-testid="action-message">
+              {message}
+            </Typography>
+          )}
         </Alert>
         {res.result !== null && res.result !== undefined && (
-          <Box
-            component="pre"
-            data-testid="action-result"
-            sx={{ m: 0, p: 1, bgcolor: 'action.hover', borderRadius: 1, overflow: 'auto', maxHeight: 200, fontSize: 12 }}
-          >
-            {JSON.stringify(res.result, null, 2)}
-          </Box>
+          <JsonResultView value={res.result} data-testid="action-result" />
         )}
         {jobId && (
           <Box>

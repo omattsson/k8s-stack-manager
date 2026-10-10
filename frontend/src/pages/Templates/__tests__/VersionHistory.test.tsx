@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import VersionHistory from '../VersionHistory';
 
@@ -125,6 +125,7 @@ describe('VersionHistory', () => {
     (templateService.diffVersions as ReturnType<typeof vi.fn>).mockResolvedValue({
       left: { version: '1.0', snapshot: { template: {}, charts: [] } },
       right: { version: '2.0', snapshot: { template: {}, charts: [] }, created_by_username: 'bob' },
+      template_diffs: [{ field: 'name', left: 'Old name', right: 'New name' }],
       chart_diffs: [
         { chart_name: 'frontend', left_values: 'replicas: 1', right_values: 'replicas: 2', has_differences: true, change_type: 'modified' },
       ],
@@ -160,6 +161,8 @@ describe('VersionHistory', () => {
     expect(screen.getByText('v1.0 by user-1 vs v2.0 by bob')).toBeInTheDocument();
     expect(screen.queryByText(/vundefined/)).not.toBeInTheDocument();
     expect(templateService.diffVersions).toHaveBeenCalledWith('t1', 'v1', 'v2');
+    const fields = screen.getByRole('table', { name: 'Template details' });
+    expect(within(fields).getByRole('row', { name: /Name Old name New name/ })).toBeInTheDocument();
   });
 
   it('shows the author username and falls back to the user ID', async () => {

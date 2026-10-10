@@ -74,7 +74,7 @@ const emptyForm: PolicyFormState = {
   stoppedAgeDays: '14',
   customCondition: '',
   schedule: '0 2 * * *',
-  enabled: true,
+  enabled: false,
   dry_run: true,
 };
 
@@ -314,10 +314,16 @@ const CleanupPolicies = () => {
   const handleToggleField = async (policy: CleanupPolicy, field: 'enabled' | 'dry_run') => {
     try {
       const updated = await cleanupPolicyService.update(policy.id, { [field]: !policy[field] });
+      const value = updated?.[field] ?? !policy[field];
       setPolicies((prev) =>
         prev.map((p) =>
-          p.id === policy.id ? { ...p, [field]: updated?.[field] ?? !policy[field] } : p,
+          p.id === policy.id ? { ...p, [field]: value } : p,
         ),
+      );
+      showSuccess(
+        field === 'enabled'
+          ? `Policy "${policy.name}" is ${value ? 'enabled' : 'disabled'}`
+          : `Dry run is ${value ? 'on' : 'off'} for policy "${policy.name}"`,
       );
     } catch (err) {
       const label = field === 'enabled' ? 'Failed to toggle policy' : 'Failed to toggle dry run';
@@ -660,6 +666,11 @@ const CleanupPolicies = () => {
                 label="Dry Run"
               />
             </Box>
+            {!editingId && (
+              <Typography variant="body2" color="text.secondary" data-testid="policy-enabled-hint">
+                A new policy is disabled. Run it with Dry Run first to see which instances match. Then enable it.
+              </Typography>
+            )}
           </Box>
         </DialogContent>
         <DialogActions>
