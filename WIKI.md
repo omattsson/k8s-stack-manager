@@ -89,11 +89,11 @@ Both list endpoints are paged (`page`, `pageSize`; default 25, maximum 100). Wit
 - The rollback does not change the stored value or branch overrides. After a rollback, the deploy preview compares against the values that now run (a failed rollback records the charts that it already upgraded). `values_drift: true` (in the rollback response for a target, in the deploy preview and in `GET /stack-instances/:id`) means that the next deploy applies the stored overrides again and undoes the rollback.
 - Each deploy and rollback log records the branch (`branch`). A rollback to a target records the branch of the target deploy.
 
-**Expiry warning.** About 30 minutes before the expiry, the owner gets one "Stack expiring soon" notification. The backend records the warning in the database (`expiry_warned_at`), so a restart or a second backend replica does not send it again. A new expiry time (deploy, extend, TTL change) allows a new warning.
+**Expiry warning.** About 30 minutes before the expiry, the owner and the followers get one "Stack expiring soon" notification. The backend records the warning in the database (`expiry_warned_at`), so a restart or a second backend replica does not send it again. A new expiry time (deploy, extend, TTL change) allows a new warning.
 
 **Redeploy.** `POST /stack-instances/:id/deploy` also works for a `running` instance. It upgrades the releases with the current values. With a TTL, the expiry becomes now + `ttl_minutes`, unless the current expiry is later: a redeploy never makes the expiry earlier.
 
-**Delete.** Deleting an instance also deletes its value overrides, branch overrides and quota override. Then, in a separate step, the quick deploy definition is deleted when no instance uses it any more: the definition of the deleted instance, or a definition whose owner instance no longer exists (for example a clone of a deleted quick deploy instance). An error in that step is logged and does not undo the instance delete.
+**Delete.** Deleting an instance also deletes its value overrides, branch overrides, quota override and followers (all delete paths: API, bulk delete, delete after clean, cleanup policy). The followers still get the "Stack deleted" notification. Then, in a separate step, the quick deploy definition is deleted when no instance uses it any more: the definition of the deleted instance, or a definition whose owner instance no longer exists (for example a clone of a deleted quick deploy instance). An error in that step is logged and does not undo the instance delete.
 
 **Cleanup policy conditions.** A condition is a comma-separated list of `key:value` pairs. All pairs must match.
 
@@ -127,12 +127,44 @@ Per-chart configuration overrides on a stack instance. Deep-merged with chart de
 Every mutating API call (POST, PUT, DELETE) is recorded with user, action, entity type, entity ID, and timestamp.
 
 - Plain create, update and delete calls get the action `create`, `update` or `delete` and the entity type of the resource (singular, for example `cluster`, `cleanup_policy`, `api_key`).
-- Other operations get their own action, with the entity they act on. For example `POST /stack-instances/:id/deploy` gives `deploy | stack_instance | <instance id>`. The same applies to `stop`, `clean`, `rollback`, `extend_ttl`, `clone`, `invoke_action` (the action name is in the details), template `publish`, `unpublish`, `instantiate` and `clone`, definition `import` and `upgrade`, notification channel `test`, cluster `test_connection` and `set_default`, cleanup policy `run`, and user `disable`, `enable`, `reset_password` and `change_role` (the old and the new role are in the details). Deploy, stop, clean and rollback store the deployment log ID in the details.
+- Other operations get their own action, with the entity they act on. For example `POST /stack-instances/:id/deploy` gives `deploy | stack_instance | <instance id>`. The same applies to `stop`, `clean`, `rollback`, `extend_ttl`, `clone`, `invoke_action` (the action name is in the details), template `publish`, `unpublish`, `instantiate` and `clone`, definition `import` and `upgrade`, notification channel `test`, cluster `test_connection` and `set_default`, cleanup policy `run`, user `disable`, `enable`, `reset_password` and `change_role` (the old and the new role are in the details), and instance `follow` and `unfollow`. Deploy, stop, clean and rollback store the deployment log ID in the details.
 - A bulk operation writes one entry for each instance or template that succeeded, with `"bulk": true` in the details.
 - Marking notifications as read writes no entry. Quick deploy writes its own entry (`quick_deploy | stack_instance`).
 - Filter on the entity type `stack_instance` and an instance ID to see all operations on that instance.
 - A change of a nested resource keeps the parent ID as entity ID and adds the child ID to the details, for example `PUT /clusters/:id/shared-values/:valueId` gives entity ID `<cluster id>` and `{"value_id": "..."}`; a nested create adds `created_id`. A deleted orphaned namespace has the namespace name as entity ID.
 - The upgrade renames the plural entity types of old create, update and delete entries to the singular names (`clusters` to `cluster`, `api_keys` to `api_key`, `quotas` to `quota`, and so on). Old operation entries keep their old values (for example `create | deploy`), because the old entry does not identify the operation reliably.
+
+### Notifications
+**In-app notifications.** Lifecycle events of a stack instance (deploy, stop, clean, rollback, delete, expiry warning, cleanup policy action) give an in-app notification to the owner of the instance and to each follower.
+- Each receiver gets the notification only when the event type is on in the own notification preferences (Profile page). A receiver without a preference for the event type gets it. The Profile page lists every event type that the user can get as owner or follower (and, for admin and devops users, the system events `cleanup.policy.executed`, `quota.warning` and `secret.expiring`). The system notifications to admin and devops users also follow these preferences.
+- Upgrade note: before this version the backend did not store a switched-off preference (it stored "on"), and it did not check the preferences. Users who switched events off before must open the Profile page, switch them off again and save.
+- An owner who also follows the instance gets one notification, not two.
+- The user who started the operation is not excluded. For example, a follower who deploys the instance also gets the deploy notification. The owner always got the notifications of the own operations; followers get the same rule.
+- The WebSocket message `notification.new` goes only to the sockets of each receiver.
+
+**Follow a stack instance.** The detail page of an instance has a **Follow** button next to the favorite star. It shows the number of followers.
+- Every user who can see the instance can follow it (all signed-in users). The API is `POST /stack-instances/:id/follow` and `DELETE /stack-instances/:id/follow`. Both are idempotent and return `{"following": ..., "follower_count": ...}`. An unknown instance gives 404. The audit log records `follow` and `unfollow` on the instance.
+- `GET /stack-instances/:id` adds `following` (the current user follows the instance) and `follower_count`. List responses do not have these fields.
+- Followers get in-app notifications only. They do not get channel (webhook) deliveries.
+- A favorite does not follow the instance.
+- Deleting the instance deletes its followers. Deleting a user deletes the follows of the user.
+
+**Notification channels** (`/admin/notification-channels`, admin and devops) send events as webhooks. Each channel has event-type subscriptions and optional **filters** that limit it to some stack instances:
+
+| Filter | Value | Example |
+|---|---|---|
+| `instance_name_patterns` | glob patterns for the instance name (`*`, `?`, `[a-z]`; `path.Match` syntax; case is ignored) | `rdbtest-*`, `*-se` |
+| `owner_ids` | user IDs of instance owners | the team members |
+| `definition_ids` | stack definition IDs | one product stack |
+| `cluster_ids` | cluster IDs | the development cluster |
+
+- Each set filter must match (AND). Inside one filter, one value is enough (OR). A channel without filters gets the events of all instances (the behaviour before filters).
+- An event without an instance (quota warning, secret expiry) goes only to channels without filters.
+- A cleanup policy run (`cleanup.policy.executed`) goes to a filtered channel when at least one affected instance matches.
+- A channel that the filters skip gets no delivery log entry (the backend logs it at debug level).
+- The save checks the patterns: an invalid pattern gives 400. An owner, definition or cluster ID that does not exist gives a warning in the response (`warnings`), and the channel is saved. At most 50 values per filter.
+- The channel dialog has a **Filters** section: patterns as chips (press Enter after each pattern) and pickers for owners, definitions and clusters. Admins pick owners from all users. Devops users cannot read the user list (`GET /users` is admin only), so their owner picker lists the users who own a stack now. The channel list shows "All instances" or a short summary of the filters.
+- Migration 52 adds the column `notification_channels.filters` (JSON text, empty for existing channels). Migration 53 adds the table `instance_followers`.
 
 ### Cluster
 A registered Kubernetes cluster that stack instances can be deployed to. Each cluster stores connection details (kubeconfig path or encrypted kubeconfig data) and is monitored via periodic health checks. One cluster can be designated as the **default** target. Clusters are managed by admins through `/admin/clusters`.

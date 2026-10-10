@@ -76,14 +76,14 @@ type systemNotifier struct {
 	owners   []string
 }
 
-func (n *systemNotifier) Notify(_ context.Context, _, notifType, _, _, _, _ string) error {
+func (n *systemNotifier) NotifyInstance(_ context.Context, _ models.NotificationTarget, notifType, _, _ string) error {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	n.owners = append(n.owners, notifType)
 	return nil
 }
 
-func (n *systemNotifier) NotifySystem(_ context.Context, _, _, message, _, _ string) error {
+func (n *systemNotifier) NotifySystemForInstances(_ context.Context, _, _, message, _, _ string, _ []models.NotificationTarget) error {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	n.messages = append(n.messages, message)

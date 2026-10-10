@@ -357,7 +357,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Creates a new notification channel",
+                "description": "Creates a new notification channel. Optional filters limit the channel to some stack instances: instance_name_patterns (globs, path.Match syntax, case-insensitive), owner_ids, definition_ids and cluster_ids. Each set filter must match (AND); one value of a filter is enough (OR); empty filters match all instances. Events without an instance go only to channels without filters; a cleanup policy run goes to a channel when at least one affected instance matches. An invalid pattern gives 400. An ID that does not exist gives a warning in the response; the channel is saved.",
                 "consumes": [
                     "application/json"
                 ],
@@ -383,11 +383,29 @@ const docTemplate = `{
                     "201": {
                         "description": "Created",
                         "schema": {
-                            "$ref": "#/definitions/models.NotificationChannel"
+                            "$ref": "#/definitions/handlers.notificationChannelResponse"
                         }
                     },
                     "400": {
                         "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {
@@ -449,7 +467,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Returns a notification channel by ID",
+                "description": "Returns a notification channel by ID, with its filters",
                 "produces": [
                     "application/json"
                 ],
@@ -508,7 +526,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Updates an existing notification channel",
+                "description": "Updates an existing notification channel. filters replaces the channel filters (omit it to keep them, send {} to remove them); the rules are the same as for create. An ID that does not exist gives a warning in the response.",
                 "consumes": [
                     "application/json"
                 ],
@@ -541,11 +559,29 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/models.NotificationChannel"
+                            "$ref": "#/definitions/handlers.notificationChannelResponse"
                         }
                     },
                     "400": {
                         "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {
@@ -5178,7 +5214,7 @@ const docTemplate = `{
         },
         "/api/v1/stack-instances/{id}": {
             "get": {
-                "description": "Get a stack instance by ID. values_drift is true when the running values come from a successful rollback and the stored overrides produce different values: the next deploy undoes the rollback. Only this endpoint computes values_drift; list responses omit it. owner_username, definition_name and cluster_name are omitted when the owner, definition or cluster no longer exists; cluster_name is also omitted when cluster_id is empty (older instances).",
+                "description": "Get a stack instance by ID. values_drift is true when the running values come from a successful rollback and the stored overrides produce different values: the next deploy undoes the rollback. Only this endpoint computes values_drift, following (the caller follows the instance) and follower_count; list responses omit them. owner_username, definition_name and cluster_name are omitted when the owner, definition or cluster no longer exists; cluster_name is also omitted when cluster_id is empty (older instances).",
                 "produces": [
                     "application/json"
                 ],
@@ -6502,6 +6538,180 @@ const docTemplate = `{
                     },
                     "500": {
                         "description": "Internal Server Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/stack-instances/{id}/follow": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "The caller follows the instance and gets its in-app notifications, as the owner does, filtered by the notification preferences of the caller. Every authenticated user who can view the instance can follow it. A repeated follow is not an error. Followers get no channel (webhook) deliveries.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "stack-instances"
+                ],
+                "summary": "Follow a stack instance",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Instance ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.followStateResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "501": {
+                        "description": "Following is not configured",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "The caller stops following the instance. Unfollowing an instance that the caller does not follow is not an error.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "stack-instances"
+                ],
+                "summary": "Unfollow a stack instance",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Instance ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.followStateResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "501": {
+                        "description": "Following is not configured",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {
@@ -10059,6 +10269,15 @@ const docTemplate = `{
                 "expires_at": {
                     "type": "string"
                 },
+                "follower_count": {
+                    "type": "integer",
+                    "readOnly": true
+                },
+                "following": {
+                    "description": "Following and FollowerCount are computed, not stored. Only GET\n/stack-instances/{id} sets them: following is true when the caller\nfollows the instance, follower_count is the number of followers.",
+                    "type": "boolean",
+                    "readOnly": true
+                },
                 "id": {
                     "type": "string"
                 },
@@ -11196,6 +11415,14 @@ const docTemplate = `{
                 "enabled": {
                     "type": "boolean"
                 },
+                "filters": {
+                    "description": "Filters limits the channel to some stack instances. Omit it or send\nempty lists for all instances.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/models.NotificationChannelFilters"
+                        }
+                    ]
+                },
                 "name": {
                     "type": "string"
                 },
@@ -11252,6 +11479,19 @@ const docTemplate = `{
                 }
             }
         },
+        "handlers.followStateResponse": {
+            "type": "object",
+            "properties": {
+                "follower_count": {
+                    "description": "FollowerCount is the number of users who follow the instance.",
+                    "type": "integer"
+                },
+                "following": {
+                    "description": "Following is true when the caller follows the instance.",
+                    "type": "boolean"
+                }
+            }
+        },
         "handlers.instantiateTemplateRequest": {
             "type": "object",
             "properties": {
@@ -11279,6 +11519,45 @@ const docTemplate = `{
                 }
             }
         },
+        "handlers.notificationChannelResponse": {
+            "type": "object",
+            "properties": {
+                "created_at": {
+                    "type": "string"
+                },
+                "enabled": {
+                    "description": "Enabled has no GORM default on purpose: with default:true GORM\nwrites true for a new channel with enabled=false (zero value). The\nhandler sets true when the request omits it; the column keeps its\ndatabase default (migration 40).",
+                    "type": "boolean"
+                },
+                "filters": {
+                    "description": "Filters limits the events of the channel to some stack instances.\nEmpty filters (the default) let all events through.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/models.NotificationChannelFilters"
+                        }
+                    ]
+                },
+                "id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "updated_at": {
+                    "type": "string"
+                },
+                "warnings": {
+                    "description": "Warnings lists filter IDs that point to no existing user, stack\ndefinition or cluster. The channel is saved with them.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "webhook_url": {
+                    "type": "string"
+                }
+            }
+        },
         "handlers.notificationChannelWithCount": {
             "type": "object",
             "properties": {
@@ -11286,7 +11565,16 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "enabled": {
+                    "description": "Enabled has no GORM default on purpose: with default:true GORM\nwrites true for a new channel with enabled=false (zero value). The\nhandler sets true when the request omits it; the column keeps its\ndatabase default (migration 40).",
                     "type": "boolean"
+                },
+                "filters": {
+                    "description": "Filters limits the events of the channel to some stack instances.\nEmpty filters (the default) let all events through.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/models.NotificationChannelFilters"
+                        }
+                    ]
                 },
                 "id": {
                     "type": "string"
@@ -11488,6 +11776,14 @@ const docTemplate = `{
             "properties": {
                 "enabled": {
                     "type": "boolean"
+                },
+                "filters": {
+                    "description": "Filters replaces the filters of the channel. Omit it to keep them;\nsend {} to remove all filters.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/models.NotificationChannelFilters"
+                        }
+                    ]
                 },
                 "name": {
                     "type": "string"
@@ -12484,7 +12780,16 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "enabled": {
+                    "description": "Enabled has no GORM default on purpose: with default:true GORM\nwrites true for a new channel with enabled=false (zero value). The\nhandler sets true when the request omits it; the column keeps its\ndatabase default (migration 40).",
                     "type": "boolean"
+                },
+                "filters": {
+                    "description": "Filters limits the events of the channel to some stack instances.\nEmpty filters (the default) let all events through.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/models.NotificationChannelFilters"
+                        }
+                    ]
                 },
                 "id": {
                     "type": "string"
@@ -12497,6 +12802,39 @@ const docTemplate = `{
                 },
                 "webhook_url": {
                     "type": "string"
+                }
+            }
+        },
+        "models.NotificationChannelFilters": {
+            "type": "object",
+            "properties": {
+                "cluster_ids": {
+                    "description": "ClusterIDs are cluster IDs.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "definition_ids": {
+                    "description": "DefinitionIDs are stack definition IDs.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "instance_name_patterns": {
+                    "description": "InstanceNamePatterns are glob patterns (path.Match syntax: *, ?,\n[a-z]) for the instance name, for example \"rdbtest-*\". The match\nignores case.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "owner_ids": {
+                    "description": "OwnerIDs are user IDs of instance owners.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
                 }
             }
         },
@@ -12699,6 +13037,15 @@ const docTemplate = `{
                 },
                 "expires_at": {
                     "type": "string"
+                },
+                "follower_count": {
+                    "type": "integer",
+                    "readOnly": true
+                },
+                "following": {
+                    "description": "Following and FollowerCount are computed, not stored. Only GET\n/stack-instances/{id} sets them: following is true when the caller\nfollows the instance, follower_count is the number of followers.",
+                    "type": "boolean",
+                    "readOnly": true
                 },
                 "id": {
                     "type": "string"

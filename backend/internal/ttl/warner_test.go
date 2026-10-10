@@ -26,16 +26,16 @@ type mockExpiryNotifier struct {
 	calls []notifyCall
 }
 
-func (m *mockExpiryNotifier) Notify(_ context.Context, userID, notifType, title, message, entityType, entityID string) error {
+func (m *mockExpiryNotifier) NotifyInstance(_ context.Context, target models.NotificationTarget, notifType, title, message string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.calls = append(m.calls, notifyCall{
-		userID:     userID,
+		userID:     target.OwnerID,
 		notifType:  notifType,
 		title:      title,
 		message:    message,
-		entityType: entityType,
-		entityID:   entityID,
+		entityType: "stack_instance",
+		entityID:   target.InstanceID,
 	})
 	return nil
 }

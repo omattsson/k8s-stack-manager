@@ -141,6 +141,7 @@ type InstanceHandler struct {
 	notifier           deployer.LifecycleNotifier
 	sharedValuesRepo   models.SharedValuesRepository
 	clusterQuotaRepo   models.ResourceQuotaRepository
+	followerRepo       models.InstanceFollowerRepository
 }
 
 // WithClusterQuotas attaches the cluster quota repository. Clone then copies
@@ -598,8 +599,11 @@ func (h *InstanceHandler) CreateInstance(c *gin.Context) {
 	_ = h.fireInstanceHook(hookTriggerCtx(c), hooks.EventPostInstanceCreate, &inst)
 
 	if h.notifier != nil {
-		_ = h.notifier.Notify(c.Request.Context(), inst.OwnerID, "instance.created", "Stack created",
-			fmt.Sprintf("Stack %s has been created", inst.Name), "stack_instance", inst.ID)
+		// A new instance has no followers yet.
+		target := models.NewNotificationTarget(&inst)
+		target.FollowerIDs = []string{}
+		_ = h.notifier.NotifyInstance(c.Request.Context(), target, "instance.created", "Stack created",
+			fmt.Sprintf("Stack %s has been created", inst.Name))
 	}
 
 	h.setInstanceNames(&inst)
@@ -608,7 +612,7 @@ func (h *InstanceHandler) CreateInstance(c *gin.Context) {
 
 // GetInstance godoc
 // @Summary     Get a stack instance
-// @Description Get a stack instance by ID. values_drift is true when the running values come from a successful rollback and the stored overrides produce different values: the next deploy undoes the rollback. Only this endpoint computes values_drift; list responses omit it. owner_username, definition_name and cluster_name are omitted when the owner, definition or cluster no longer exists; cluster_name is also omitted when cluster_id is empty (older instances).
+// @Description Get a stack instance by ID. values_drift is true when the running values come from a successful rollback and the stored overrides produce different values: the next deploy undoes the rollback. Only this endpoint computes values_drift, following (the caller follows the instance) and follower_count; list responses omit them. owner_username, definition_name and cluster_name are omitted when the owner, definition or cluster no longer exists; cluster_name is also omitted when cluster_id is empty (older instances).
 // @Tags        stack-instances
 // @Produce     json
 // @Param       id  path     string true "Instance ID"
@@ -634,6 +638,7 @@ func (h *InstanceHandler) GetInstance(c *gin.Context) {
 
 	inst.ValuesDrift = h.instanceValuesDrift(c.Request.Context(), inst)
 	h.setInstanceNames(inst)
+	h.setFollowState(c, inst)
 
 	c.JSON(http.StatusOK, inst)
 }
@@ -814,6 +819,10 @@ func (h *InstanceHandler) DeleteInstance(c *gin.Context) {
 		// draft or unknown — no resources to clean, delete immediately
 	}
 
+	// The delete removes the follower rows: read the followers first, so
+	// that they get the "instance.deleted" notification.
+	followerIDs := h.followerIDsBeforeDelete(c.Request.Context(), inst.ID)
+
 	if h.txRunner != nil {
 		txErr := database.DeleteInstanceWithOwnedDefinition(h.txRunner, inst)
 		if txErr != nil {
@@ -827,23 +836,40 @@ func (h *InstanceHandler) DeleteInstance(c *gin.Context) {
 		return
 	}
 
-	h.afterInstanceDeleted(hookTriggerCtx(c), inst)
+	h.afterInstanceDeleted(hookTriggerCtx(c), inst, followerIDs)
 
 	c.Status(http.StatusNoContent)
 }
 
+// followerIDsBeforeDelete returns the followers of the instance, read
+// before the delete removes the follower rows. Without a notifier it
+// returns nil.
+func (h *InstanceHandler) followerIDsBeforeDelete(ctx context.Context, instanceID string) []string {
+	if h.notifier == nil {
+		return nil
+	}
+	return h.notifier.FollowerIDs(ctx, instanceID)
+}
+
 // afterInstanceDeleted fires post-instance-delete and delete-completed and
-// sends the owner instance.deleted, after an instance row was deleted
-// without a clean (single and bulk delete). delete-completed fires after
-// every delete (also after a clean and for a cleanup policy delete), so a
-// subscriber needs only this event.
-func (h *InstanceHandler) afterInstanceDeleted(ctx context.Context, inst *models.StackInstance) {
+// sends instance.deleted to the owner and to followerIDs (read before the
+// delete), after an instance row was deleted without a clean (single and
+// bulk delete). delete-completed fires after every delete (also after a
+// clean and for a cleanup policy delete), so a subscriber needs only this
+// event.
+func (h *InstanceHandler) afterInstanceDeleted(ctx context.Context, inst *models.StackInstance, followerIDs []string) {
 	_ = h.fireInstanceHook(ctx, hooks.EventPostInstanceDelete, inst)
 	_ = h.fireInstanceHook(ctx, hooks.EventDeleteCompleted, inst)
 
 	if h.notifier != nil {
-		_ = h.notifier.Notify(ctx, inst.OwnerID, "instance.deleted", "Stack deleted",
-			fmt.Sprintf("Stack %s has been deleted", inst.Name), "stack_instance", inst.ID)
+		target := models.NewNotificationTarget(inst)
+		target.FollowerIDs = followerIDs
+		if target.FollowerIDs == nil {
+			// The rows are gone: no lookup after the delete.
+			target.FollowerIDs = []string{}
+		}
+		_ = h.notifier.NotifyInstance(ctx, target, "instance.deleted", "Stack deleted",
+			fmt.Sprintf("Stack %s has been deleted", inst.Name))
 	}
 }
 

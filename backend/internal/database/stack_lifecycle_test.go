@@ -104,6 +104,8 @@ func TestDeleteInstanceWithOwnedDefinition(t *testing.T) {
 			require.NoError(t, boRepo.Set(&models.ChartBranchOverride{ID: "b1", StackInstanceID: "i1", ChartConfigID: "c1", Branch: "x"}))
 			require.NoError(t, ovRepo.Create(&models.ValueOverride{ID: "v1", StackInstanceID: "i1", ChartConfigID: "c1", Values: "a: 1"}))
 			require.NoError(t, quotaRepo.Upsert(ctx, &models.InstanceQuotaOverride{StackInstanceID: "i1", CPULimit: "1"}))
+			followerRepo := NewGORMInstanceFollowerRepository(db)
+			require.NoError(t, followerRepo.Follow(ctx, "u2", "i1"))
 			if tt.otherInst {
 				require.NoError(t, instRepo.Create(&models.StackInstance{ID: "i2", StackDefinitionID: "d1", Name: "qd2", Namespace: "stack-qd2-u1", OwnerID: "u1", Status: models.StackStatusDraft}))
 			}
@@ -123,6 +125,9 @@ func TestDeleteInstanceWithOwnedDefinition(t *testing.T) {
 			assert.Empty(t, ovs, "value overrides are deleted")
 			_, err = quotaRepo.GetByInstanceID(ctx, "i1")
 			assert.Error(t, err, "quota override is deleted")
+			followers, err := followerRepo.ListUserIDsByInstance(ctx, "i1")
+			require.NoError(t, err)
+			assert.Empty(t, followers, "followers are deleted")
 
 			_, err = defRepo.FindByID("d1")
 			assert.Equal(t, tt.wantDefKept, err == nil)

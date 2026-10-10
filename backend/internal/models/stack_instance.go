@@ -54,6 +54,11 @@ type StackInstance struct {
 	// ClusterName is the name of the target cluster. Omitted when the
 	// cluster no longer exists or cluster_id is empty (older instances).
 	ClusterName string `json:"cluster_name,omitempty" gorm:"-" readonly:"true"`
+	// Following and FollowerCount are computed, not stored. Only GET
+	// /stack-instances/{id} sets them: following is true when the caller
+	// follows the instance, follower_count is the number of followers.
+	Following     *bool  `json:"following,omitempty" gorm:"-" readonly:"true"`
+	FollowerCount *int64 `json:"follower_count,omitempty" gorm:"-" readonly:"true"`
 }
 
 // StackInstanceFilter selects the stack instances that ListPaged returns.

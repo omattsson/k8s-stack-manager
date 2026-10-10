@@ -178,6 +178,16 @@ definitions:
         type: string
       expires_at:
         type: string
+      follower_count:
+        readOnly: true
+        type: integer
+      following:
+        description: |-
+          Following and FollowerCount are computed, not stored. Only GET
+          /stack-instances/{id} sets them: following is true when the caller
+          follows the instance, follower_count is the number of followers.
+        readOnly: true
+        type: boolean
       id:
         type: string
       last_deployed_at:
@@ -990,6 +1000,12 @@ definitions:
     properties:
       enabled:
         type: boolean
+      filters:
+        allOf:
+        - $ref: '#/definitions/models.NotificationChannelFilters'
+        description: |-
+          Filters limits the channel to some stack instances. Omit it or send
+          empty lists for all instances.
       name:
         type: string
       secret:
@@ -1034,6 +1050,15 @@ definitions:
           the TTL to this value and the expiry to now + TTL. Use minutes instead.
         type: integer
     type: object
+  handlers.followStateResponse:
+    properties:
+      follower_count:
+        description: FollowerCount is the number of users who follow the instance.
+        type: integer
+      following:
+        description: Following is true when the caller follows the instance.
+        type: boolean
+    type: object
   handlers.instantiateTemplateRequest:
     properties:
       chart_overrides:
@@ -1056,12 +1081,56 @@ definitions:
         additionalProperties: {}
         type: object
     type: object
+  handlers.notificationChannelResponse:
+    properties:
+      created_at:
+        type: string
+      enabled:
+        description: |-
+          Enabled has no GORM default on purpose: with default:true GORM
+          writes true for a new channel with enabled=false (zero value). The
+          handler sets true when the request omits it; the column keeps its
+          database default (migration 40).
+        type: boolean
+      filters:
+        allOf:
+        - $ref: '#/definitions/models.NotificationChannelFilters'
+        description: |-
+          Filters limits the events of the channel to some stack instances.
+          Empty filters (the default) let all events through.
+      id:
+        type: string
+      name:
+        type: string
+      updated_at:
+        type: string
+      warnings:
+        description: |-
+          Warnings lists filter IDs that point to no existing user, stack
+          definition or cluster. The channel is saved with them.
+        items:
+          type: string
+        type: array
+      webhook_url:
+        type: string
+    type: object
   handlers.notificationChannelWithCount:
     properties:
       created_at:
         type: string
       enabled:
+        description: |-
+          Enabled has no GORM default on purpose: with default:true GORM
+          writes true for a new channel with enabled=false (zero value). The
+          handler sets true when the request omits it; the column keeps its
+          database default (migration 40).
         type: boolean
+      filters:
+        allOf:
+        - $ref: '#/definitions/models.NotificationChannelFilters'
+        description: |-
+          Filters limits the events of the channel to some stack instances.
+          Empty filters (the default) let all events through.
       id:
         type: string
       name:
@@ -1201,6 +1270,12 @@ definitions:
     properties:
       enabled:
         type: boolean
+      filters:
+        allOf:
+        - $ref: '#/definitions/models.NotificationChannelFilters'
+        description: |-
+          Filters replaces the filters of the channel. Omit it to keep them;
+          send {} to remove all filters.
       name:
         type: string
       secret:
@@ -1884,7 +1959,18 @@ definitions:
       created_at:
         type: string
       enabled:
+        description: |-
+          Enabled has no GORM default on purpose: with default:true GORM
+          writes true for a new channel with enabled=false (zero value). The
+          handler sets true when the request omits it; the column keeps its
+          database default (migration 40).
         type: boolean
+      filters:
+        allOf:
+        - $ref: '#/definitions/models.NotificationChannelFilters'
+        description: |-
+          Filters limits the events of the channel to some stack instances.
+          Empty filters (the default) let all events through.
       id:
         type: string
       name:
@@ -1893,6 +1979,32 @@ definitions:
         type: string
       webhook_url:
         type: string
+    type: object
+  models.NotificationChannelFilters:
+    properties:
+      cluster_ids:
+        description: ClusterIDs are cluster IDs.
+        items:
+          type: string
+        type: array
+      definition_ids:
+        description: DefinitionIDs are stack definition IDs.
+        items:
+          type: string
+        type: array
+      instance_name_patterns:
+        description: |-
+          InstanceNamePatterns are glob patterns (path.Match syntax: *, ?,
+          [a-z]) for the instance name, for example "rdbtest-*". The match
+          ignores case.
+        items:
+          type: string
+        type: array
+      owner_ids:
+        description: OwnerIDs are user IDs of instance owners.
+        items:
+          type: string
+        type: array
     type: object
   models.NotificationPreference:
     properties:
@@ -2041,6 +2153,16 @@ definitions:
         type: string
       expires_at:
         type: string
+      follower_count:
+        readOnly: true
+        type: integer
+      following:
+        description: |-
+          Following and FollowerCount are computed, not stored. Only GET
+          /stack-instances/{id} sets them: following is true when the caller
+          follows the instance, follower_count is the number of followers.
+        readOnly: true
+        type: boolean
       id:
         type: string
       last_deployed_at:
@@ -2500,7 +2622,14 @@ paths:
     post:
       consumes:
       - application/json
-      description: Creates a new notification channel
+      description: 'Creates a new notification channel. Optional filters limit the
+        channel to some stack instances: instance_name_patterns (globs, path.Match
+        syntax, case-insensitive), owner_ids, definition_ids and cluster_ids. Each
+        set filter must match (AND); one value of a filter is enough (OR); empty filters
+        match all instances. Events without an instance go only to channels without
+        filters; a cleanup policy run goes to a channel when at least one affected
+        instance matches. An invalid pattern gives 400. An ID that does not exist
+        gives a warning in the response; the channel is saved.'
       parameters:
       - description: Channel
         in: body
@@ -2514,9 +2643,21 @@ paths:
         "201":
           description: Created
           schema:
-            $ref: '#/definitions/models.NotificationChannel'
+            $ref: '#/definitions/handlers.notificationChannelResponse'
         "400":
           description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
           schema:
             additionalProperties:
               type: string
@@ -2568,7 +2709,7 @@ paths:
       tags:
       - notification-channels
     get:
-      description: Returns a notification channel by ID
+      description: Returns a notification channel by ID, with its filters
       parameters:
       - description: Channel ID
         in: path
@@ -2608,7 +2749,10 @@ paths:
     put:
       consumes:
       - application/json
-      description: Updates an existing notification channel
+      description: Updates an existing notification channel. filters replaces the
+        channel filters (omit it to keep them, send {} to remove them); the rules
+        are the same as for create. An ID that does not exist gives a warning in the
+        response.
       parameters:
       - description: Channel ID
         in: path
@@ -2627,9 +2771,21 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/models.NotificationChannel'
+            $ref: '#/definitions/handlers.notificationChannelResponse'
         "400":
           description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
           schema:
             additionalProperties:
               type: string
@@ -5546,10 +5702,11 @@ paths:
     get:
       description: 'Get a stack instance by ID. values_drift is true when the running
         values come from a successful rollback and the stored overrides produce different
-        values: the next deploy undoes the rollback. Only this endpoint computes values_drift;
-        list responses omit it. owner_username, definition_name and cluster_name are
-        omitted when the owner, definition or cluster no longer exists; cluster_name
-        is also omitted when cluster_id is empty (older instances).'
+        values: the next deploy undoes the rollback. Only this endpoint computes values_drift,
+        following (the caller follows the instance) and follower_count; list responses
+        omit them. owner_username, definition_name and cluster_name are omitted when
+        the owner, definition or cluster no longer exists; cluster_name is also omitted
+        when cluster_id is empty (older instances).'
       parameters:
       - description: Instance ID
         in: path
@@ -6434,6 +6591,123 @@ paths:
               type: string
             type: object
       summary: Extend instance TTL
+      tags:
+      - stack-instances
+  /api/v1/stack-instances/{id}/follow:
+    delete:
+      description: The caller stops following the instance. Unfollowing an instance
+        that the caller does not follow is not an error.
+      parameters:
+      - description: Instance ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handlers.followStateResponse'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "501":
+          description: Following is not configured
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Unfollow a stack instance
+      tags:
+      - stack-instances
+    post:
+      description: The caller follows the instance and gets its in-app notifications,
+        as the owner does, filtered by the notification preferences of the caller.
+        Every authenticated user who can view the instance can follow it. A repeated
+        follow is not an error. Followers get no channel (webhook) deliveries.
+      parameters:
+      - description: Instance ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handlers.followStateResponse'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "501":
+          description: Following is not configured
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Follow a stack instance
       tags:
       - stack-instances
   /api/v1/stack-instances/{id}/overrides:

@@ -35,6 +35,7 @@ import DeploymentLogViewer from '../../components/DeploymentLogViewer';
 import PodStatusDisplay from '../../components/PodStatusDisplay';
 import AccessUrls from '../../components/AccessUrls';
 import FavoriteButton from '../../components/FavoriteButton';
+import FollowButton from '../../components/FollowButton';
 import { instanceService, definitionService, branchOverrideService } from '../../api/client';
 import type { RollbackResponse, StackInstance, ChartConfig, ValueOverride, ChartBranchOverride, DeploymentLog, NamespaceStatus } from '../../types';
 import YamlEditor from '../../components/YamlEditor';
@@ -79,7 +80,7 @@ const Detail = () => {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const { showSuccess } = useNotification();
+  const { showSuccess, showError: showErrorToast } = useNotification();
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [exportMenuAnchor, setExportMenuAnchor] = useState<HTMLElement | null>(null);
   const [deployPreviewOpen, setDeployPreviewOpen] = useState(false);
@@ -629,7 +630,8 @@ const Detail = () => {
         // Clear TTL — send full instance so required fields are preserved
         updated = await instanceService.update(id, { ...instance, ttl_minutes: 0 });
       }
-      setInstance(updated);
+      // The update response has no follow state: keep it.
+      setInstance((prev) => ({ ...updated, following: prev?.following, follower_count: prev?.follower_count }));
       showSuccess('TTL updated');
     } catch {
       setError('Failed to update TTL');
@@ -749,6 +751,15 @@ const Detail = () => {
                 {instance.name}
               </Typography>
               <FavoriteButton entityType="instance" entityId={instance.id} size="medium" />
+              <FollowButton
+                instanceId={instance.id}
+                following={instance.following}
+                followerCount={instance.follower_count}
+                onChange={(state) => setInstance((prev) => prev
+                  ? { ...prev, following: state.following, follower_count: state.follower_count }
+                  : prev)}
+                onError={showErrorToast}
+              />
               <Box component="span" aria-live="polite">
                 <StatusBadge status={instance.status} />
               </Box>

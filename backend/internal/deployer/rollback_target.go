@@ -483,6 +483,6 @@ func (m *Manager) finalizeRollbackRejected(job rollbackJob, output string, hookE
 		m.broadcastStatusWithError(instanceID, instance.Status, deployLog.ID, instance.ErrorMessage)
 	}
 	_ = m.fireDeployHook(m.shutdownCtx, hooks.EventRollbackCompleted, instance, deployLog.ID, deployLog.StartedAt, outcomeOpts(rollbackOutcomeRejected))
-	m.notifyUser(instance.OwnerID, instanceID, "rollback.error", "Rollback rejected",
+	m.notifyInstance(models.NewNotificationTarget(instance), "rollback.error", "Rollback rejected",
 		fmt.Sprintf("Rollback of %s was rejected: %s", instance.Name, reason))
 }

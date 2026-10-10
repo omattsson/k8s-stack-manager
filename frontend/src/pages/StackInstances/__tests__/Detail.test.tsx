@@ -83,6 +83,8 @@ vi.mock('../../../api/client', () => ({
     getPods: vi.fn(),
     extend: vi.fn(),
     rollback: vi.fn(),
+    follow: vi.fn(),
+    unfollow: vi.fn(),
   },
   definitionService: {
     get: vi.fn(),
@@ -259,6 +261,8 @@ const mockInstance = {
   error_message: undefined as string | undefined,
   values_drift: undefined as boolean | undefined,
   owner_username: undefined as string | undefined,
+  following: undefined as boolean | undefined,
+  follower_count: undefined as number | undefined,
 };
 
 const mockDefinition = {
@@ -337,6 +341,29 @@ describe('StackInstances Detail', () => {
       expect(screen.getByText('Owner: owner-name')).toBeInTheDocument();
     });
     expect(screen.queryByText('Owner: user1')).not.toBeInTheDocument();
+  });
+
+  it('hides the Follow toggle when following is not available', async () => {
+    setupMocks();
+    renderDetail();
+    await screen.findByText('Test Instance');
+    expect(screen.queryByRole('button', { name: 'Follow stack' })).not.toBeInTheDocument();
+  });
+
+  it('lets a user who is not the owner follow the instance', async () => {
+    authState.user = { id: 'other', username: 'bob', role: 'user', display_name: 'Bob' };
+    setupMocks({ following: false, follower_count: 1 });
+    (instanceService.follow as MockFn).mockResolvedValue({ following: true, follower_count: 2 });
+    renderDetail();
+
+    const button = await screen.findByRole('button', { name: 'Follow stack' });
+    expect(button).toHaveTextContent('Follow (1)');
+    await userEvent.setup().click(button);
+
+    await waitFor(() => {
+      expect(instanceService.follow).toHaveBeenCalledWith('123');
+      expect(screen.getByRole('button', { name: 'Unfollow stack' })).toHaveTextContent('Following (2)');
+    });
   });
 
   it('subscribes to the instance messages and unsubscribes on unmount', async () => {

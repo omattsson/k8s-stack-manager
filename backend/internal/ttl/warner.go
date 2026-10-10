@@ -10,9 +10,10 @@ import (
 	"backend/internal/models"
 )
 
-// ExpiryNotifier sends in-app notifications for TTL warnings.
+// ExpiryNotifier sends in-app notifications for TTL warnings to the owner
+// and the followers of the instance.
 type ExpiryNotifier interface {
-	Notify(ctx context.Context, userID, notifType, title, message, entityType, entityID string) error
+	NotifyInstance(ctx context.Context, target models.NotificationTarget, notifType, title, message string) error
 }
 
 // Warner periodically checks for stack instances approaching TTL expiry and
@@ -113,14 +114,12 @@ func (w *Warner) check() {
 		}
 
 		remaining := time.Until(*inst.ExpiresAt).Truncate(time.Minute)
-		_ = w.notifier.Notify(
+		_ = w.notifier.NotifyInstance(
 			context.Background(),
-			inst.OwnerID,
+			models.NewNotificationTarget(inst),
 			"stack.expiring",
 			"Stack expiring soon",
 			fmt.Sprintf("Stack %q will expire in %s", inst.Name, remaining),
-			"stack_instance",
-			inst.ID,
 		)
 		slog.Info("TTL warner: sent expiry warning", "instance_id", inst.ID, "expires_at", inst.ExpiresAt)
 	}

@@ -38,15 +38,25 @@ import ExpandLessOutlined from '@mui/icons-material/ExpandLessOutlined';
 import NotificationsActiveOutlined from '@mui/icons-material/NotificationsActiveOutlined';
 import NavigateNextIcon from '@mui/icons-material/NavigateNext';
 import { Link } from 'react-router-dom';
-import { notificationChannelService } from '../../../api/client';
+import {
+  clusterService,
+  definitionService,
+  instanceService,
+  notificationChannelService,
+  userService,
+} from '../../../api/client';
 import { timeAgo } from '../../../utils/timeAgo';
 import type {
   NotificationChannel,
+  NotificationChannelFilters,
   NotificationChannelWithCount,
   NotificationDeliveryLog,
 } from '../../../types';
 import LoadingState from '../../../components/LoadingState';
 import { useNotification } from '../../../context/NotificationContext';
+import { useAuth } from '../../../context/AuthContext';
+import ChannelFiltersEditor from './ChannelFiltersEditor';
+import { filtersEmpty, filtersSummary, type FilterOption, type FilterOptions } from './channelFilters';
 
 const EVENT_TYPE_CATEGORIES: Record<string, string[]> = {
   Deployment: [
@@ -74,6 +84,7 @@ interface ChannelFormState {
   webhook_url: string;
   secret: string;
   enabled: boolean;
+  filters: NotificationChannelFilters;
 }
 
 const emptyForm: ChannelFormState = {
@@ -81,13 +92,65 @@ const emptyForm: ChannelFormState = {
   webhook_url: '',
   secret: '',
   enabled: true,
+  filters: {},
 };
+
+const emptyFilterOptions: FilterOptions = { users: [], definitions: [], clusters: [] };
+
+/** Text under the owner picker for each source of the user list. */
+const OWNER_HELPER_ADMIN = 'All users.';
+const OWNER_HELPER_OWNERS = 'Users who own a stack now. Only admins see the full user list.';
+
+/** Returns the error message of an API response, or the fallback. */
+function apiErrorMessage(err: unknown, fallback: string): string {
+  return (err as { response?: { data?: { error?: string } } })?.response?.data?.error || fallback;
+}
+
+/** Sorts filter options by label. */
+function byLabel(a: FilterOption, b: FilterOption): number {
+  return a.label.localeCompare(b.label);
+}
+
+/**
+ * Loads the choices of the filter pickers. Admins get all users (GET
+ * /users is admin-only). Devops users get the owners of the current stacks
+ * from the instance list. A failed source gives an empty list.
+ */
+async function loadFilterOptions(isAdmin: boolean): Promise<FilterOptions> {
+  const [users, definitions, clusters] = await Promise.all([
+    (isAdmin
+      ? userService.list().then((list) => list.map((u) => ({ id: u.id, label: u.display_name ? `${u.display_name} (${u.username})` : u.username })))
+      : instanceService.listAll().then((list) => {
+        const owners = new Map<string, FilterOption>();
+        for (const inst of list) {
+          if (inst.owner_id && !owners.has(inst.owner_id)) {
+            owners.set(inst.owner_id, { id: inst.owner_id, label: inst.owner_username || inst.owner_id });
+          }
+        }
+        return [...owners.values()];
+      })
+    ).catch(() => [] as FilterOption[]),
+    definitionService.listAll()
+      .then((list) => list.map((d) => ({ id: d.id, label: d.name })))
+      .catch(() => [] as FilterOption[]),
+    clusterService.list()
+      .then((list) => list.map((c) => ({ id: c.id, label: c.name })))
+      .catch(() => [] as FilterOption[]),
+  ]);
+  return { users: users.sort(byLabel), definitions: definitions.sort(byLabel), clusters: clusters.sort(byLabel) };
+}
 
 const NotificationChannels = () => {
   const [channels, setChannels] = useState<NotificationChannelWithCount[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const { showSuccess, showError } = useNotification();
+  const { showSuccess, showError, showWarning } = useNotification();
+  const { user } = useAuth();
+  const isAdmin = user?.role === 'admin';
+
+  // Choices of the filter pickers, loaded when the dialog opens first.
+  const [filterOptions, setFilterOptions] = useState<FilterOptions>(emptyFilterOptions);
+  const [filterOptionsLoaded, setFilterOptionsLoaded] = useState(false);
 
   // Create/Edit dialog
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -148,26 +211,35 @@ const NotificationChannels = () => {
   }, [fetchChannels]);
 
   // --- Create/Edit ---
+  const ensureFilterOptions = useCallback(() => {
+    if (filterOptionsLoaded) return;
+    setFilterOptionsLoaded(true);
+    loadFilterOptions(isAdmin).then(setFilterOptions);
+  }, [filterOptionsLoaded, isAdmin]);
+
   const openCreateDialog = useCallback(() => {
+    ensureFilterOptions();
     setEditingId(null);
     setForm(emptyForm);
     setFormError(null);
     setFormTouched({});
     setDialogOpen(true);
-  }, []);
+  }, [ensureFilterOptions]);
 
   const openEditDialog = useCallback((channel: NotificationChannel) => {
+    ensureFilterOptions();
     setEditingId(channel.id);
     setForm({
       name: channel.name,
       webhook_url: channel.webhook_url,
       secret: '',
       enabled: channel.enabled,
+      filters: channel.filters ?? {},
     });
     setFormError(null);
     setFormTouched({});
     setDialogOpen(true);
-  }, []);
+  }, [ensureFilterOptions]);
 
   const handleDialogClose = useCallback(() => {
     setDialogOpen(false);
@@ -193,38 +265,46 @@ const NotificationChannels = () => {
     setSaving(true);
     setFormError(null);
     try {
+      // Always send the filters: an empty object removes them.
+      const filters: NotificationChannelFilters = filtersEmpty(form.filters) ? {} : form.filters;
+      let warnings: string[] | undefined;
       if (editingId) {
         const payload: Partial<NotificationChannel> & { secret?: string } = {
           name: form.name.trim(),
           webhook_url: form.webhook_url.trim(),
           enabled: form.enabled,
+          filters,
         };
         if (form.secret) {
           payload.secret = form.secret;
         }
-        await notificationChannelService.update(editingId, payload);
+        ({ warnings } = await notificationChannelService.update(editingId, payload));
         showSuccess('Channel updated');
       } else {
-        const payload: { name: string; webhook_url: string; secret?: string; enabled?: boolean } = {
+        const payload: { name: string; webhook_url: string; secret?: string; enabled?: boolean; filters?: NotificationChannelFilters } = {
           name: form.name.trim(),
           webhook_url: form.webhook_url.trim(),
           enabled: form.enabled,
+          filters,
         };
         if (form.secret) {
           payload.secret = form.secret;
         }
-        await notificationChannelService.create(payload);
+        ({ warnings } = await notificationChannelService.create(payload));
         showSuccess('Channel created');
+      }
+      if (warnings && warnings.length > 0) {
+        showWarning(`Saved with filter warnings: ${warnings.join('; ')}`);
       }
       setDialogOpen(false);
       setEditingId(null);
       await fetchChannels();
-    } catch {
-      setFormError('Failed to save channel');
+    } catch (err) {
+      setFormError(apiErrorMessage(err, 'Failed to save channel'));
     } finally {
       setSaving(false);
     }
-  }, [form, editingId, fetchChannels, showSuccess]);
+  }, [form, editingId, fetchChannels, showSuccess, showWarning]);
 
   // --- Toggle enabled ---
   const handleToggleEnabled = useCallback(async (channel: NotificationChannel) => {
@@ -403,6 +483,7 @@ const NotificationChannels = () => {
                 <TableCell>Name</TableCell>
                 <TableCell sx={{ display: { xs: 'none', md: 'table-cell' } }}>Webhook URL</TableCell>
                 <TableCell>Enabled</TableCell>
+                <TableCell>Instances</TableCell>
                 <TableCell>Subscriptions</TableCell>
                 <TableCell align="right">Actions</TableCell>
               </TableRow>
@@ -435,6 +516,15 @@ const NotificationChannels = () => {
                         size="small"
                         slotProps={{ input: { 'aria-label': `Toggle ${channel.name}` } }}
                       />
+                    </TableCell>
+                    <TableCell>
+                      <Typography
+                        variant="body2"
+                        color={filtersEmpty(channel.filters) ? 'text.secondary' : 'text.primary'}
+                        data-testid={`channel-filters-${channel.id}`}
+                      >
+                        {filtersSummary(channel.filters)}
+                      </Typography>
                     </TableCell>
                     <TableCell>
                       <Chip
@@ -474,7 +564,7 @@ const NotificationChannels = () => {
 
                   {/* Expandable delivery logs row */}
                   <TableRow key={`${channel.id}-logs`}>
-                    <TableCell colSpan={6} sx={{ py: 0, borderBottom: expandedChannelId === channel.id ? undefined : 'none' }}>
+                    <TableCell colSpan={7} sx={{ py: 0, borderBottom: expandedChannelId === channel.id ? undefined : 'none' }}>
                       <Collapse in={expandedChannelId === channel.id} timeout="auto" unmountOnExit>
                         <Box sx={{ py: 2, px: 1 }}>
                           <Typography variant="subtitle2" sx={{ mb: 1 }}>
@@ -588,6 +678,13 @@ const NotificationChannels = () => {
                 />
               }
               label="Enabled"
+            />
+            <ChannelFiltersEditor
+              value={form.filters}
+              onChange={(filters) => setForm({ ...form, filters })}
+              options={filterOptions}
+              ownerHelperText={isAdmin ? OWNER_HELPER_ADMIN : OWNER_HELPER_OWNERS}
+              disabled={saving}
             />
           </Box>
         </DialogContent>

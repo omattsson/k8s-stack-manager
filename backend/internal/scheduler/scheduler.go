@@ -37,12 +37,19 @@ type CleanupResult struct {
 	Action       string `json:"action"`
 	Status       string `json:"status"` // "success", "error", "dry_run"
 	Error        string `json:"error,omitempty"`
+	// target is the instance of the result for the notifications (owner,
+	// followers, channel filters). Not part of the API response.
+	target models.NotificationTarget
 }
 
 // CleanupNotifier creates in-app notifications for cleanup events.
+// notifier.Notifier implements it.
 type CleanupNotifier interface {
-	Notify(ctx context.Context, userID, notifType, title, message, entityType, entityID string) error
-	NotifySystem(ctx context.Context, notifType, title, message, entityType, entityID string) error
+	// NotifyInstance notifies the owner and the followers of an instance.
+	NotifyInstance(ctx context.Context, target models.NotificationTarget, notifType, title, message string) error
+	// NotifySystemForInstances notifies the admin and devops users and the
+	// channels whose filters match at least one of the instances.
+	NotifySystemForInstances(ctx context.Context, notifType, title, message, entityType, entityID string, instances []models.NotificationTarget) error
 }
 
 // HookFirer dispatches lifecycle events to webhook subscribers.
@@ -493,7 +500,10 @@ func (s *Scheduler) executePolicyWithOptions(parent context.Context, policy *mod
 			Namespace:    inst.Namespace,
 			OwnerID:      inst.OwnerID,
 			Action:       policy.Action,
+			target:       models.NewNotificationTarget(inst),
 		}
+		// For a delete, the executor reads the followers before the delete
+		// and notifies them (CleanupExecutor.DeleteInstance).
 
 		if dryRun {
 			result.Status = "dry_run"
@@ -578,11 +588,13 @@ func (s *Scheduler) notifyPolicyExecuted(ctx context.Context, policy *models.Cle
 
 	var affected, failed int
 	var names []string
+	var targets []models.NotificationTarget
 	for _, r := range results {
 		switch r.Status {
 		case "success", "dry_run":
 			affected++
 			names = append(names, r.InstanceName)
+			targets = append(targets, r.target)
 		case "error":
 			failed++
 		}
@@ -594,11 +606,14 @@ func (s *Scheduler) notifyPolicyExecuted(ctx context.Context, policy *models.Cle
 	if failed > 0 {
 		message += fmt.Sprintf(" (%d failed)", failed)
 	}
-	_ = s.notifier.NotifySystem(ctx,
+	// A channel with filters gets the summary when at least one affected
+	// instance matches its filters.
+	_ = s.notifier.NotifySystemForInstances(ctx,
 		"cleanup.policy.executed",
 		fmt.Sprintf("Cleanup policy %q ran%s", policy.Name, dryRunLabel),
 		message,
 		"cleanup_policy", policy.ID,
+		targets,
 	)
 
 	if policy.DryRun {
@@ -611,10 +626,9 @@ func (s *Scheduler) notifyPolicyExecuted(ctx context.Context, policy *models.Cle
 			continue
 		}
 		notifType := "cleanup.policy." + r.Action
-		_ = s.notifier.Notify(ctx, r.OwnerID, notifType,
+		_ = s.notifier.NotifyInstance(ctx, r.target, notifType,
 			fmt.Sprintf("Stack %q %s by cleanup policy", r.InstanceName, actionPastTense(r.Action)),
-			fmt.Sprintf("Cleanup policy %q performed %s on your stack %q", policy.Name, r.Action, r.InstanceName),
-			"stack_instance", r.InstanceID,
+			fmt.Sprintf("Cleanup policy %q performed %s on the stack %q", policy.Name, r.Action, r.InstanceName),
 		)
 	}
 }

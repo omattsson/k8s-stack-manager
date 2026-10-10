@@ -62,7 +62,10 @@ import type {
   DeployPreviewResponse,
   DashboardResponse,
   NotificationChannel,
+  NotificationChannelFilters,
+  NotificationChannelSaveResult,
   NotificationChannelWithCount,
+  FollowState,
   NotificationDeliveryLog,
   InstanceActionList,
   ActionInvokeResult,
@@ -1373,6 +1376,39 @@ export const instanceService = {
     }
   },
   /**
+   * Follow a stack instance. The current user then gets the in-app
+   * notifications of the instance (filtered by the own notification preferences).
+   * Following again is not an error.
+   * @param id - Instance ID
+   * @returns The follow state of the current user and the follower count
+   * @see POST /api/v1/stack-instances/:id/follow
+   */
+  follow: async (id: string): Promise<FollowState> => {
+    try {
+      const response = await api.post(`/api/v1/stack-instances/${id}/follow`);
+      return response.data;
+    } catch (error) {
+      console.error('Failed to follow instance:', error);
+      throw error;
+    }
+  },
+  /**
+   * Stop following a stack instance. Unfollowing an instance that the user
+   * does not follow is not an error.
+   * @param id - Instance ID
+   * @returns The follow state of the current user and the follower count
+   * @see DELETE /api/v1/stack-instances/:id/follow
+   */
+  unfollow: async (id: string): Promise<FollowState> => {
+    try {
+      const response = await api.delete(`/api/v1/stack-instances/${id}/follow`);
+      return response.data;
+    } catch (error) {
+      console.error('Failed to unfollow instance:', error);
+      throw error;
+    }
+  },
+  /**
    * Fetch recently active stack instances.
    * @returns Array of recently updated instances
    * @see GET /api/v1/stack-instances/recent
@@ -2482,11 +2518,17 @@ export const notificationChannelService = {
   },
   /**
    * Create a new notification channel.
-   * @param channel - Channel fields (name, webhook_url, optional secret and enabled)
-   * @returns The created channel
+   * @param channel - Channel fields (name, webhook_url, optional secret, enabled and instance filters)
+   * @returns The created channel, with warnings for filter IDs that do not exist
    * @see POST /api/v1/admin/notification-channels
    */
-  create: async (channel: { name: string; webhook_url: string; secret?: string; enabled?: boolean }): Promise<NotificationChannel> => {
+  create: async (channel: {
+    name: string;
+    webhook_url: string;
+    secret?: string;
+    enabled?: boolean;
+    filters?: NotificationChannelFilters;
+  }): Promise<NotificationChannelSaveResult> => {
     try {
       const response = await api.post('/api/v1/admin/notification-channels', channel);
       return response.data;
@@ -2513,11 +2555,11 @@ export const notificationChannelService = {
   /**
    * Update a notification channel.
    * @param id - Channel ID
-   * @param data - Fields to update
-   * @returns The updated channel
+   * @param data - Fields to update; `filters` replaces the instance filters (`{}` removes them)
+   * @returns The updated channel, with warnings for filter IDs that do not exist
    * @see PUT /api/v1/admin/notification-channels/:id
    */
-  update: async (id: string, data: Partial<NotificationChannel> & { secret?: string }): Promise<NotificationChannel> => {
+  update: async (id: string, data: Partial<NotificationChannel> & { secret?: string }): Promise<NotificationChannelSaveResult> => {
     try {
       const response = await api.put(`/api/v1/admin/notification-channels/${id}`, data);
       return response.data;

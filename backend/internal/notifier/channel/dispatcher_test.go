@@ -200,3 +200,63 @@ func TestDispatchTo_SingleChannel(t *testing.T) {
 	assert.Equal(t, 200, code)
 	assert.Empty(t, errMsg)
 }
+
+func TestDispatch_ChannelFilters(t *testing.T) {
+	t.Parallel()
+
+	teamA := models.NotificationTarget{InstanceID: "i-a", InstanceName: "team-a-1", OwnerID: "u1", DefinitionID: "d1", ClusterID: "c1"}
+	teamB := models.NotificationTarget{InstanceID: "i-b", InstanceName: "team-b-1", OwnerID: "u2", DefinitionID: "d2", ClusterID: "c2"}
+
+	tests := []struct {
+		name      string
+		filters   models.NotificationChannelFilters
+		instances []models.NotificationTarget
+		wantSent  bool
+	}{
+		{name: "no filters get every event", instances: []models.NotificationTarget{teamB}, wantSent: true},
+		{name: "no filters get events without instance", wantSent: true},
+		{name: "name filter match", filters: models.NotificationChannelFilters{InstanceNamePatterns: []string{"team-a-*"}},
+			instances: []models.NotificationTarget{teamA}, wantSent: true},
+		{name: "name filter skip", filters: models.NotificationChannelFilters{InstanceNamePatterns: []string{"team-a-*"}},
+			instances: []models.NotificationTarget{teamB}, wantSent: false},
+		{name: "owner and cluster filter match", filters: models.NotificationChannelFilters{OwnerIDs: []string{"u1"}, ClusterIDs: []string{"c1"}},
+			instances: []models.NotificationTarget{teamA}, wantSent: true},
+		{name: "definition filter skip", filters: models.NotificationChannelFilters{DefinitionIDs: []string{"d1"}},
+			instances: []models.NotificationTarget{teamB}, wantSent: false},
+		{name: "filters skip events without instance", filters: models.NotificationChannelFilters{ClusterIDs: []string{"c1"}},
+			wantSent: false},
+		{name: "policy run with one matching instance", filters: models.NotificationChannelFilters{OwnerIDs: []string{"u1"}},
+			instances: []models.NotificationTarget{teamB, teamA}, wantSent: true},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			var calls atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				calls.Add(1)
+				var body map[string]any
+				assert.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+				assert.NotContains(t, body, "instances", "the filter data is not sent")
+				w.WriteHeader(http.StatusOK)
+			}))
+			defer server.Close()
+
+			repo := &mockChannelRepo{channels: []models.NotificationChannel{
+				{ID: "ch-1", Name: "filtered", WebhookURL: server.URL, Enabled: true, Filters: tt.filters},
+			}}
+			NewDispatcher(repo).Dispatch(context.Background(), EventPayload{
+				EventType: "deployment.success", Timestamp: time.Now(), Instances: tt.instances,
+			})
+
+			if tt.wantSent {
+				assert.Equal(t, int32(1), calls.Load())
+				assert.Len(t, repo.deliveries, 1)
+			} else {
+				assert.Equal(t, int32(0), calls.Load())
+				assert.Empty(t, repo.deliveries, "a skipped channel gets no delivery log")
+			}
+			assert.Len(t, repo.channels, 1, "the dispatcher does not change the repository result")
+		})
+	}
+}

@@ -322,13 +322,15 @@ func (h *InstanceHandler) BulkDelete(c *gin.Context) {
 				slog.Error("pre-instance-delete hook failed in bulk delete", "instance_id", inst.ID, "error", err)
 				return "", fmt.Errorf("pre-instance-delete hook rejected the request")
 			}
+			// The delete removes the follower rows: read them first.
+			followerIDs := h.followerIDsBeforeDelete(ctx, inst.ID)
 			// Transactional path — branch override cleanup + instance delete are atomic.
 			txErr := database.DeleteInstanceWithOwnedDefinition(h.txRunner, inst)
 			if txErr != nil {
 				slog.Error("failed to delete instance in bulk operation", "instance_id", inst.ID, "error", txErr)
 				return "", fmt.Errorf("failed to delete instance")
 			}
-			h.afterInstanceDeleted(ctx, inst)
+			h.afterInstanceDeleted(ctx, inst, followerIDs)
 			return "", nil
 		}
 

@@ -21,6 +21,9 @@ type mockNotificationRepository struct {
 	created     []*models.Notification
 	createErr   error
 	callCount   int
+	// disabled maps event type -> user ID -> switched off.
+	disabled    map[string]map[string]bool
+	disabledErr error
 }
 
 func newMockNotificationRepo() *mockNotificationRepository {
@@ -61,6 +64,21 @@ func (m *mockNotificationRepository) GetPreferences(_ context.Context, _ string)
 
 func (m *mockNotificationRepository) UpdatePreference(_ context.Context, _ *models.NotificationPreference) error {
 	return nil
+}
+
+func (m *mockNotificationRepository) DisabledUserIDs(_ context.Context, eventType string, userIDs []string) (map[string]bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.disabledErr != nil {
+		return nil, m.disabledErr
+	}
+	out := map[string]bool{}
+	for _, id := range userIDs {
+		if m.disabled[eventType][id] {
+			out[id] = true
+		}
+	}
+	return out, nil
 }
 
 func (m *mockNotificationRepository) SetCreateError(err error) {
@@ -596,4 +614,8 @@ func (m *failOnceMockNotificationRepo) GetPreferences(_ context.Context, _ strin
 }
 func (m *failOnceMockNotificationRepo) UpdatePreference(_ context.Context, _ *models.NotificationPreference) error {
 	return nil
+}
+
+func (m *failOnceMockNotificationRepo) DisabledUserIDs(_ context.Context, _ string, _ []string) (map[string]bool, error) {
+	return map[string]bool{}, nil
 }

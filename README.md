@@ -114,6 +114,7 @@ Backend (Go + Gin)
 - Docker and Docker Compose
 - Go 1.26+ (for local backend development)
 - Node.js 22+ (for local frontend development)
+- MySQL 8.0 or later for an external database (the bundled MySQL and Docker Compose use 8.4)
 
 ### Start with Docker Compose
 
@@ -351,6 +352,7 @@ The Helm chart in `helm/k8s-stack-manager/` deploys the full stack to Kubernetes
 ### Prerequisites
 - Kubernetes cluster with `kubectl` context configured
 - Helm 3+
+- MySQL 8.0 or later when `mysql.enabled=false` (external database)
 - [Argo Rollouts](https://argoproj.github.io/argo-rollouts/) controller installed
 - [Traefik](https://traefik.io/) ingress controller with CRDs
 

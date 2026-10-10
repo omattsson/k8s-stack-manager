@@ -57,11 +57,12 @@ func setupMySQLTestDB(t *testing.T) *gorm.DB {
 		&models.SharedValues{},
 		&models.CleanupPolicy{},
 		&models.UserFavorite{},
+		&models.InstanceFollower{},
 	))
 
 	// Clean all tables before each test
 	tables := []string{
-		"user_favorites", "chart_branch_overrides", "value_overrides",
+		"instance_followers", "user_favorites", "chart_branch_overrides", "value_overrides",
 		"template_chart_configs", "chart_configs", "deployment_logs",
 		"stack_instances", "stack_templates", "stack_definitions",
 		"shared_values", "cleanup_policies", "api_keys", "audit_logs",

@@ -149,6 +149,23 @@ func (m *MockNotificationRepository) GetPreferences(_ context.Context, userID st
 	return result, nil
 }
 
+func (m *MockNotificationRepository) DisabledUserIDs(_ context.Context, eventType string, userIDs []string) (map[string]bool, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.err != nil {
+		return nil, m.err
+	}
+	out := map[string]bool{}
+	for _, id := range userIDs {
+		for _, p := range m.preferences {
+			if p.UserID == id && p.EventType == eventType && !p.Enabled {
+				out[id] = true
+			}
+		}
+	}
+	return out, nil
+}
+
 func (m *MockNotificationRepository) UpdatePreference(_ context.Context, pref *models.NotificationPreference) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
