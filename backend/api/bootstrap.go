@@ -291,6 +291,9 @@ func buildDomainServices(
 	// leader replica (leader worker group).
 	cleanupExecutor := deployer.NewCleanupExecutor(deployManager, repos.StackDefinition, repos.ChartConfig, repos.StackInstance)
 	cleanupScheduler := scheduler.NewScheduler(repos.CleanupPolicy, repos.StackInstance, repos.AuditLog, cleanupExecutor, lifecycleNotifier)
+	if hookDispatcher != nil {
+		cleanupScheduler.WithHooks(hookDispatcher)
+	}
 
 	return &domainServices{
 		GitRegistry:       gitRegistry,

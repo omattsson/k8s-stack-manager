@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -854,4 +855,74 @@ func TestWatcherRun_RestartsAndClearsCacheOnStop(t *testing.T) {
 		_, ok := w.GetStatus("inst-1")
 		assert.False(t, ok, "a stopped watcher must not serve cached statuses")
 	}
+}
+
+func TestWatcherHandleStatusTransition_BlockingPostDeploy(t *testing.T) {
+	t.Parallel()
+
+	future := time.Now().Add(10 * time.Minute)
+	past := time.Now().Add(-time.Minute)
+	tests := []struct {
+		name   string
+		status string
+		until  *time.Time
+		expect string
+	}{
+		{name: "stabilizing during blocking hooks keeps its status", status: models.StackStatusStabilizing, until: &future, expect: models.StackStatusStabilizing},
+		{name: "expired marker (crashed replica) gives error", status: models.StackStatusStabilizing, until: &past, expect: models.StackStatusError},
+		{name: "stabilizing without marker gives error", status: models.StackStatusStabilizing, expect: models.StackStatusError},
+		{name: "running with a stale marker gives error", status: models.StackStatusRunning, until: &future, expect: models.StackStatusError},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			repo := newMockInstanceRepo()
+			inst := &models.StackInstance{ID: "inst-blocking", Namespace: "ns", Status: tt.status, PostDeployHookUntil: tt.until}
+			require.NoError(t, repo.Create(inst))
+			w := NewWatcher(&mockClientProvider{}, repo, &mockBroadcaster{}, time.Second)
+
+			w.handleStatusTransition(inst, &NamespaceStatus{Status: StatusError})
+
+			assert.Equal(t, tt.expect, repo.getStatus("inst-blocking"))
+		})
+	}
+}
+
+func TestWatcherPoll_AppliesErrorAfterMarkerExpires(t *testing.T) {
+	t.Parallel()
+
+	ns := "ns-blocking"
+	cs := fake.NewSimpleClientset(
+		&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: ns}},
+		&corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{Name: "failed-pod", Namespace: ns, Labels: map[string]string{"app.kubernetes.io/instance": "app"}},
+			Spec:       corev1.PodSpec{Containers: []corev1.Container{{Name: "app", Image: "img:v1"}}},
+			Status:     corev1.PodStatus{Phase: corev1.PodFailed},
+		},
+	)
+	repo := newMockInstanceRepo()
+	start := time.Now()
+	until := start.Add(time.Minute)
+	require.NoError(t, repo.Create(&models.StackInstance{
+		ID: "inst-blocking", Namespace: ns, Status: models.StackStatusStabilizing, PostDeployHookUntil: &until,
+	}))
+	w := NewWatcher(&mockClientProvider{client: NewClientFromInterface(cs)}, repo, &mockBroadcaster{}, time.Second)
+	var clock atomic.Int64
+	clock.Store(start.UnixNano())
+	w.now = func() time.Time { return time.Unix(0, clock.Load()) }
+
+	// First poll: the hooks run, the status stays and is not stored.
+	w.poll(context.Background())
+	assert.Equal(t, models.StackStatusStabilizing, repo.getStatus("inst-blocking"))
+	_, cached := w.GetStatus("inst-blocking")
+	assert.False(t, cached, "a skipped status is not stored")
+
+	// Second poll after the marker expired: the same namespace error now
+	// sets error.
+	clock.Store(until.Add(time.Second).UnixNano())
+	w.poll(context.Background())
+	assert.Equal(t, models.StackStatusError, repo.getStatus("inst-blocking"))
+	_, cached = w.GetStatus("inst-blocking")
+	assert.True(t, cached)
 }

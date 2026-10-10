@@ -129,6 +129,7 @@ func setupInstanceRouterWithHooksAndActions(
 	{
 		insts.POST("", h.CreateInstance)
 		insts.DELETE("/:id", h.DeleteInstance)
+		insts.POST("/bulk/delete", h.BulkDelete)
 		insts.POST("/:id/actions/:name", h.InvokeAction)
 	}
 	return r
@@ -339,4 +340,103 @@ func TestDeleteInstance_PreHookDenialReturns403(t *testing.T) {
 	assert.Equal(t, "i-1", stored.ID)
 	// Post-delete must not have fired.
 	assert.Equal(t, []string{hooks.EventPreInstanceDelete}, rec.names())
+}
+
+func TestDeleteInstance_FiresDeleteCompletedWithUserTrigger(t *testing.T) {
+	t.Parallel()
+	rec := newHandlerHookRecorder(t)
+	d, err := hooks.NewDispatcher(hooks.Config{Subscriptions: []hooks.Subscription{{
+		Name:   "recorder",
+		Events: []string{hooks.EventPreInstanceDelete, hooks.EventPostInstanceDelete, hooks.EventDeleteCompleted},
+		URL:    rec.server.URL,
+	}}}, rec.server.Client())
+	require.NoError(t, err)
+
+	instRepo := NewMockStackInstanceRepository()
+	defRepo := NewMockStackDefinitionRepository()
+	seedInstance(t, instRepo, "i-1", "to-delete", "d1", "uid-1", "draft")
+	router := setupInstanceRouterWithHooks(instRepo, defRepo, d, "uid-1", "alice")
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest(http.MethodDelete, "/api/v1/stack-instances/i-1", nil)
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusNoContent, w.Code, w.Body.String())
+	assert.Equal(t,
+		[]string{hooks.EventPreInstanceDelete, hooks.EventPostInstanceDelete, hooks.EventDeleteCompleted},
+		rec.names())
+	rec.mu.Lock()
+	defer rec.mu.Unlock()
+	for _, e := range rec.events {
+		require.NotNil(t, e.envelope.Trigger, e.event)
+		assert.Equal(t, hooks.Trigger{Type: hooks.TriggerUser, ID: "uid-1", Name: "alice"}, *e.envelope.Trigger, e.event)
+	}
+}
+
+func TestBulkDelete_FiresDeleteHooks(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name         string
+		deny         bool
+		expectEvents []string
+		expectStatus string
+		expectExists bool
+	}{
+		{
+			name:         "delete fires the same hooks as the single delete",
+			expectEvents: []string{hooks.EventPreInstanceDelete, hooks.EventPostInstanceDelete, hooks.EventDeleteCompleted},
+			expectStatus: "success",
+		},
+		{
+			name:         "pre-instance-delete denial stops the delete of the instance",
+			deny:         true,
+			expectEvents: []string{hooks.EventPreInstanceDelete},
+			expectStatus: "error",
+			expectExists: true,
+		},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			rec := newHandlerHookRecorder(t)
+			if tt.deny {
+				rec.deny[hooks.EventPreInstanceDelete] = "still in use"
+			}
+			d, err := hooks.NewDispatcher(hooks.Config{Subscriptions: []hooks.Subscription{{
+				Name:          "recorder",
+				Events:        []string{hooks.EventPreInstanceDelete, hooks.EventPostInstanceDelete, hooks.EventDeleteCompleted},
+				URL:           rec.server.URL,
+				FailurePolicy: hooks.FailurePolicyFail,
+			}}}, rec.server.Client())
+			require.NoError(t, err)
+
+			instRepo := NewMockStackInstanceRepository()
+			seedInstance(t, instRepo, "i-1", "bulk-del", "d1", "uid-1", "draft")
+			router := setupInstanceRouterWithHooks(instRepo, NewMockStackDefinitionRepository(), d, "uid-1", "alice")
+
+			w := httptest.NewRecorder()
+			req, _ := http.NewRequest(http.MethodPost, "/api/v1/stack-instances/bulk/delete",
+				bytes.NewBufferString(`{"instance_ids":["i-1"]}`))
+			req.Header.Set("Content-Type", "application/json")
+			router.ServeHTTP(w, req)
+
+			require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+			var resp BulkOperationResponse
+			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+			require.Len(t, resp.Results, 1)
+			assert.Equal(t, tt.expectStatus, resp.Results[0].Status)
+			assert.NotContains(t, resp.Results[0].Error, rec.server.URL)
+			assert.Equal(t, tt.expectEvents, rec.names())
+			_, findErr := instRepo.FindByID("i-1")
+			assert.Equal(t, tt.expectExists, findErr == nil)
+			rec.mu.Lock()
+			defer rec.mu.Unlock()
+			for _, e := range rec.events {
+				require.NotNil(t, e.envelope.Trigger)
+				assert.Equal(t, "alice", e.envelope.Trigger.Name)
+			}
+		})
+	}
 }

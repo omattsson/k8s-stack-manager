@@ -160,17 +160,24 @@ Register at startup: `valuesGen.RegisterFunc("dnsify", fn)`. See
 | Event | Fires when | Semantics |
 |---|---|---|
 | `pre-deploy` | Just before a deployment starts, after cluster resolution | Sync. `failure_policy: fail` aborts. |
-| `post-deploy` | After a deployment completes **successfully** | Fire-and-forget. |
-| `deploy-finalized` | After a deployment ends, success **or** failure | Fire-and-forget. |
+| `post-deploy` | After a deployment completes **successfully** | Fire-and-forget. With `blocking: true` the deploy waits for the subscriber (see [Blocking post-deploy hooks](#blocking-post-deploy-hooks)). |
+| `deploy-finalized` | After a deployment ends, success **or** failure (after the blocking post-deploy hooks) | Fire-and-forget. |
+| `deploy-timeout` | After a deployment failed on a Helm or deploy budget timeout | Fire-and-forget. |
+| `stop-completed` | After a stop ends (`instance.status` `stopped` or `error`) | Fire-and-forget. |
+| `clean-completed` | After a clean ends (`draft` or `error`). For the clean of a delete, `metadata.operation` is `delete` and `delete-completed` follows | Fire-and-forget. |
+| `delete-completed` | After any delete: API (draft, or after the clean) or cleanup policy | Fire-and-forget. |
+| `cleanup-policy-executed` | Once per cleanup policy run with at least one match (also a dry run) | Fire-and-forget. The run summary is in `cleanup_policy` (see [backend/docs/hooks.md](backend/docs/hooks.md#cleanup-policy-runs)). |
 | `pre-rollback` | Before a rollback runs (in the background, after the API answered 202) | Sync for the rollback, with progress streaming. `failure_policy: fail` aborts; the instance gets its previous status back. Same `charts` list as `pre-deploy`. |
 | `post-rollback` | After a rollback completes **successfully** | Fire-and-forget. |
 | `rollback-completed` | After a rollback ends: `metadata.outcome` = `succeeded`, `failed`, `rejected` (by `pre-rollback`) or `cancelled` (another operation started) | Fire-and-forget. |
 | `pre-instance-create` | After validation, before DB write | Sync. `failure_policy: fail` → HTTP 403. |
 | `post-instance-create` | After the instance is persisted | Fire-and-forget. |
-| `pre-instance-delete` | After ID validation, before delete | Sync. `failure_policy: fail` → HTTP 403. |
-| `post-instance-delete` | After delete completes | Fire-and-forget. |
+| `pre-instance-delete` | Before each delete: single, bulk and cleanup policy | Sync. `failure_policy: fail` → HTTP 403 (single delete) or an `error` result for that instance (bulk, policy). |
+| `post-instance-delete` | After each delete completes (single, bulk, after a clean, cleanup policy) | Fire-and-forget. |
 
-Reserved for future: `pre-namespace-create`, `post-namespace-create`.
+Reserved for future: `pre-namespace-create`, `post-namespace-create`. Accepted in the config but not fired yet: `instance-created`, `stack-expiring`, `stack-expired`, `quota-warning`, `secret-expiring`.
+
+Each deploy, stop, clean, rollback and delete envelope has a `trigger`: `{"type": "user", "id": "<user id>", "name": "<username>"}` for an API call, `{"type": "cleanup-policy", "id": "<policy id>", "name": "<policy name>"}` for a cleanup policy, `{"type": "ttl"}` for the TTL reaper. A notifier can show "stopped by cleanup policy nightly-stop".
 
 Pre-* subscribers can block; post-* subscribers should default to `failure_policy: ignore` so a slow or down subscriber can't stall the deploy goroutine.
 
@@ -310,6 +317,32 @@ func handler(w http.ResponseWriter, r *http.Request) {
 ```
 
 **Backward-compatible:** Subscribers that return plain JSON (no `LOG:` lines) work identically to before. The streaming protocol is opt-in per subscriber.
+
+### Blocking post-deploy hooks
+
+A normal `post-deploy` subscriber is fire-and-forget: the stack is `running` and the user gets "Deployment succeeded" while the subscriber still works. For long post-deploy work (for example a database restore into the new stack), set `blocking: true`:
+
+```json
+{
+  "name": "db-restore",
+  "events": ["post-deploy"],
+  "url": "http://db-restore.extensions:8080/hook",
+  "blocking": true,
+  "timeout_seconds": 900,
+  "failure_policy": "ignore",
+  "secret_env": "DB_RESTORE_HOOK_SECRET"
+}
+```
+
+- The deployer calls the blocking subscriber after the Helm releases are ready and waits for it. The stack stays `stabilizing`.
+- `LOG:` lines (the streaming protocol above) go to the deploy log and the live log view.
+- `timeout_seconds` (max 1800) limits the call. The wait has its own time limit (the sum of the blocking timeouts plus one minute); the Helm deploy budget does not change.
+- Only after the subscriber returned: status `running`, "Deployment succeeded", the other `post-deploy` subscribers, `deploy-finalized`.
+- Failure, denial or timeout: with `failure_policy: fail` the deploy fails (status `error`, the hook reason in `error_message`, never the URL); with `ignore` the stack gets `running` and the owner gets the warning "Post-deploy step db-restore failed".
+- Only a Stop ends the wait early (clean, delete and deploy are refused while the stack is `stabilizing`); the k8s status watcher does not set `error` during the wait. The deployer then closes the request, but that does not stop remote work: stop your work when the request closes. The stop runs `helm uninstall` at the same time.
+- A server shutdown ends the deploy with `error` ("Interrupted by a server restart. Deploy again."). After a SIGKILL or a node loss the stack stays `stabilizing`; stop it to recover.
+
+`blocking` is only valid for a subscription that lists `post-deploy`. The full contract is in [backend/docs/hooks.md](backend/docs/hooks.md#blocking-post-deploy-subscribers).
 
 ## Request envelope — ActionRequest
 

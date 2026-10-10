@@ -53,6 +53,7 @@ const EVENT_TYPE_CATEGORIES: Record<string, string[]> = {
     'deployment.success',
     'deployment.error',
     'deployment.partial',
+    'deployment.warning',
     'deployment.stopped',
     'deploy.timeout',
   ],

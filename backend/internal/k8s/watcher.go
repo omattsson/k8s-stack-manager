@@ -41,6 +41,10 @@ type Watcher struct {
 	// mu protects lastStatus.
 	mu         sync.RWMutex
 	lastStatus map[string]*NamespaceStatus // instanceID -> last known status
+
+	// now is the clock of the blocking post-deploy check; nil means
+	// time.Now. Tests set it before the first poll.
+	now func() time.Time
 }
 
 // NewWatcher creates a new status watcher.
@@ -186,7 +190,12 @@ func (w *Watcher) poll(ctx context.Context) {
 		changed := prev == nil || prev.Status != nsStatus.Status || statusDetailsChanged(prev, nsStatus)
 		if changed {
 			w.broadcast(inst.ID, nsStatus)
-			w.handleStatusTransition(inst, nsStatus)
+			if !w.handleStatusTransition(inst, nsStatus) {
+				// Skipped during blocking post-deploy hooks: do not store the
+				// status, so a later poll applies the error when the marker
+				// has expired and the status is still the same.
+				continue
+			}
 		}
 
 		w.mu.Lock()
@@ -323,10 +332,22 @@ func countReadyReplicas(ns *NamespaceStatus) int32 {
 }
 
 // handleStatusTransition updates the instance status in the repository when
-// the Kubernetes namespace status degrades.
-func (w *Watcher) handleStatusTransition(inst *models.StackInstance, nsStatus *NamespaceStatus) {
+// the Kubernetes namespace status degrades. It returns false when it skipped
+// an error because blocking post-deploy hooks run (the caller then does not
+// store the status), else true.
+func (w *Watcher) handleStatusTransition(inst *models.StackInstance, nsStatus *NamespaceStatus) bool {
 	switch nsStatus.Status {
 	case StatusError:
+		if blockingPostDeployRuns(inst, w.clock()) {
+			// Blocking post-deploy hooks work on the namespace (for example
+			// a database restore); pods can fail meanwhile. The deploy ends
+			// the wait and sets the final status.
+			slog.Info("Instance namespace in error during blocking post-deploy hooks, status kept",
+				"instance_id", inst.ID,
+				"namespace", inst.Namespace,
+			)
+			return false
+		}
 		if inst.Status != models.StackStatusError {
 			inst.Status = models.StackStatusError
 			inst.ErrorMessage = "namespace resources in error state"
@@ -345,4 +366,22 @@ func (w *Watcher) handleStatusTransition(inst *models.StackInstance, nsStatus *N
 		// Degraded is logged but does not change the instance status in the
 		// repository — only full errors trigger a status transition.
 	}
+	return true
+}
+
+// blockingPostDeployRuns reports whether blocking post-deploy hooks of inst
+// run at now: the instance is stabilizing and its PostDeployHookUntil marker
+// is in the future. An expired marker (for example after a crash of the
+// deploying replica) does not count.
+func blockingPostDeployRuns(inst *models.StackInstance, now time.Time) bool {
+	return inst.Status == models.StackStatusStabilizing &&
+		inst.PostDeployHookUntil != nil && now.Before(*inst.PostDeployHookUntil)
+}
+
+// clock returns the current time; tests replace w.now.
+func (w *Watcher) clock() time.Time {
+	if w.now != nil {
+		return w.now()
+	}
+	return time.Now()
 }

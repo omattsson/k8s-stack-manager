@@ -94,6 +94,11 @@ type Manager struct {
 	// stop, clean, rollback) for the deployment.status WebSocket payload.
 	// Entries are removed with the final status broadcast.
 	logActions sync.Map
+
+	// logTriggers maps a running deployment log ID to the hooks.Trigger of
+	// its operation (user, cleanup policy, TTL). fireDeployHook adds it to
+	// the envelope. The operation goroutine removes the entry at its end.
+	logTriggers sync.Map
 }
 
 // NamespaceRoleBindingSpec describes a RoleBinding that should be applied to
@@ -240,6 +245,32 @@ type hookOpts struct {
 	Charts     []hooks.ChartRef
 	Metadata   map[string]string
 	OnProgress func(string)
+	// Trigger overrides the trigger of the deployment log (for events
+	// without a deployment log, for example a policy delete).
+	Trigger *hooks.Trigger
+}
+
+// rememberTrigger stores the trigger of the operation of logID: the trigger
+// in ctx (hooks.WithTrigger), else a user trigger.
+func (m *Manager) rememberTrigger(ctx context.Context, logID string) {
+	t, ok := hooks.TriggerFromContext(ctx)
+	if !ok || t.Type == "" {
+		t = hooks.Trigger{Type: hooks.TriggerUser}
+	}
+	m.logTriggers.Store(logID, t)
+}
+
+// triggerFor returns the trigger of the operation of logID, or nil.
+func (m *Manager) triggerFor(logID string) *hooks.Trigger {
+	if logID == "" {
+		return nil
+	}
+	v, ok := m.logTriggers.Load(logID)
+	if !ok {
+		return nil
+	}
+	t := v.(hooks.Trigger)
+	return &t
 }
 
 // fireDeployHook dispatches event to configured hook subscribers using a
@@ -254,6 +285,17 @@ func (m *Manager) fireDeployHook(ctx context.Context, event string, instance *mo
 	if m.hooks == nil || instance == nil {
 		return nil
 	}
+	env := m.hookEnvelope(instance, deploymentID, deployStartedAt, opts)
+	if opts.OnProgress != nil {
+		return m.hooks.FireWithProgress(ctx, event, env, opts.OnProgress)
+	}
+	return m.hooks.Fire(ctx, event, env)
+}
+
+// hookEnvelope builds the envelope of a deploy manager event from a snapshot
+// of instance. The trigger is opts.Trigger, else the trigger of the
+// operation of deploymentID.
+func (m *Manager) hookEnvelope(instance *models.StackInstance, deploymentID string, deployStartedAt time.Time, opts hookOpts) hooks.EventEnvelope {
 	env := hooks.EventEnvelope{
 		InstanceRef: &hooks.InstanceRef{
 			ID:                instance.ID,
@@ -267,6 +309,10 @@ func (m *Manager) fireDeployHook(ctx context.Context, event string, instance *mo
 		},
 		Charts:   opts.Charts,
 		Metadata: opts.Metadata,
+		Trigger:  opts.Trigger,
+	}
+	if env.Trigger == nil {
+		env.Trigger = m.triggerFor(deploymentID)
 	}
 	if deploymentID != "" {
 		startedAt := deployStartedAt
@@ -275,10 +321,7 @@ func (m *Manager) fireDeployHook(ctx context.Context, event string, instance *mo
 		}
 		env.Deployment = &hooks.DeploymentRef{ID: deploymentID, StartedAt: startedAt.UTC()}
 	}
-	if opts.OnProgress != nil {
-		return m.hooks.FireWithProgress(ctx, event, env, opts.OnProgress)
-	}
-	return m.hooks.Fire(ctx, event, env)
+	return env
 }
 
 // wrapStreaming checks if helm implements StreamingHelmExecutor and, if so,
@@ -384,6 +427,9 @@ func (m *Manager) Deploy(ctx context.Context, req DeployRequest) (string, error)
 	req.Instance.ErrorMessage = ""
 	// A deploy ends the stopped period (cleanup condition stopped_days).
 	req.Instance.StoppedAt = nil
+	// A marker of an earlier deploy (for example after a crash) must not
+	// hide errors from the k8s status watcher.
+	req.Instance.PostDeployHookUntil = nil
 
 	if m.txRunner != nil {
 		if err := m.txRunner.RunInTx(func(repos database.TxRepos) error {
@@ -435,6 +481,7 @@ func (m *Manager) Deploy(ctx context.Context, req DeployRequest) (string, error)
 			m.broadcastLog(req.Instance.ID, logID, line)
 		},
 	}
+	m.rememberTrigger(ctx, logID)
 	m.wg.Add(1)
 	go m.executeDeploy(helmExec, k8sClient, regCfg, req.Instance, deployLog, charts, req.LastDeployedValues, preDeployOpts)
 
@@ -451,6 +498,7 @@ func (m *Manager) Deploy(ctx context.Context, req DeployRequest) (string, error)
 // of the HTTP request context, and don't block the API response.
 func (m *Manager) executeDeploy(helm HelmExecutor, k8sClient *k8s.Client, regCfg *models.RegistryConfig, instance *models.StackInstance, deployLog *models.DeploymentLog, charts []ChartDeployInfo, lastDeployedValues string, preDeployOpts hookOpts) {
 	defer m.wg.Done()
+	defer m.logTriggers.Delete(deployLog.ID)
 
 	instanceID := instance.ID
 	namespace := instance.Namespace
@@ -513,9 +561,11 @@ func (m *Manager) executeDeploy(helm HelmExecutor, k8sClient *k8s.Client, regCfg
 		return
 	}
 
-	// Acquire semaphore.
+	// Acquire semaphore. Blocking post-deploy subscribers run after
+	// releaseSlot, so a long subscriber does not hold a concurrency slot.
 	m.semaphore <- struct{}{}
-	defer func() { <-m.semaphore }()
+	releaseSlot := sync.OnceFunc(func() { <-m.semaphore })
+	defer releaseSlot()
 
 	// Start a root span for the background deployment (the HTTP request context
 	// is long gone by the time this goroutine runs).
@@ -781,7 +831,28 @@ func (m *Manager) executeDeploy(helm HelmExecutor, k8sClient *k8s.Client, regCfg
 		}
 	}
 
-	m.finalizeDeploy(instanceID, deployLog, allOutput, deployErr, len(failedCharts) > 0 && len(failedCharts) < len(charts), lastDeployedValues, readinessWarning)
+	partialDeploy := len(failedCharts) > 0 && len(failedCharts) < len(charts)
+
+	// Blocking post-deploy subscribers (for example a database restore) run
+	// after the releases are ready. The instance stays stabilizing; it gets
+	// running (and the owner "Deployment succeeded") only after they return.
+	var postDeployIgnored []hooks.IgnoredFailure
+	if (deployErr == nil || partialDeploy) && m.hooks.HasBlocking(hooks.EventPostDeploy) {
+		releaseSlot()
+		res := m.runBlockingPostDeploy(instanceID, deployLog, preDeployOpts)
+		allOutput += res.output
+		if res.cancelled != nil {
+			m.finalizeDeploy(instanceID, deployLog, allOutput, res.cancelled, false, lastDeployedValues, readinessWarning)
+			return
+		}
+		if res.err != nil {
+			deployErr = res.err
+			partialDeploy = false
+		}
+		postDeployIgnored = res.ignored
+	}
+
+	m.finalizeDeployWith(instanceID, deployLog, allOutput, deployErr, partialDeploy, lastDeployedValues, readinessWarning, postDeployIgnored)
 }
 
 // awaitReadiness polls namespace status until all deployments are healthy or the
@@ -843,6 +914,13 @@ func (m *Manager) awaitReadiness(k8sClient *k8s.Client, instanceID, namespace, l
 // extra FindByID call. readinessWarning is non-empty when pod readiness timed
 // out (deploy still succeeds, but the hook payload includes the warning).
 func (m *Manager) finalizeDeploy(instanceID string, deployLog *models.DeploymentLog, output string, deployErr error, partialDeploy bool, lastDeployedValues string, readinessWarning string) {
+	m.finalizeDeployWith(instanceID, deployLog, output, deployErr, partialDeploy, lastDeployedValues, readinessWarning, nil)
+}
+
+// finalizeDeployWith is finalizeDeploy with the failures of blocking
+// post-deploy subscribers that have failure_policy=ignore: each gives the
+// owner a warning notification.
+func (m *Manager) finalizeDeployWith(instanceID string, deployLog *models.DeploymentLog, output string, deployErr error, partialDeploy bool, lastDeployedValues string, readinessWarning string, postDeployIgnored []hooks.IgnoredFailure) {
 	now := time.Now().UTC()
 
 	instance, err := m.instanceRepo.FindByID(instanceID)
@@ -859,6 +937,11 @@ func (m *Manager) finalizeDeploy(instanceID string, deployLog *models.Deployment
 	// we were deploying/stabilizing, don't overwrite it — just finalize the log.
 	concurrentOp := instance.Status != models.StackStatusDeploying &&
 		instance.Status != models.StackStatusStabilizing
+	// A newer operation (for example a new deploy after a stop during a
+	// blocking post-deploy hook) also owns the instance now.
+	if !concurrentOp && m.newerOperation(instanceID, deployLog.ID) {
+		concurrentOp = true
+	}
 	if concurrentOp {
 		m.logActions.Delete(deployLog.ID)
 		slog.Warn("finalizeDeploy: concurrent operation changed status, skipping instance update",
@@ -878,6 +961,9 @@ func (m *Manager) finalizeDeploy(instanceID string, deployLog *models.Deployment
 		}
 		return
 	}
+
+	// The blocking post-deploy hooks (if any) have ended.
+	instance.PostDeployHookUntil = nil
 
 	if deployErr != nil && !partialDeploy {
 		sanitized := sanitizeDeployError(deployErr)
@@ -956,10 +1042,28 @@ func (m *Manager) finalizeDeploy(instanceID string, deployLog *models.Deployment
 	if readinessWarning != "" {
 		finalizeHookOpts.Metadata = map[string]string{"readiness": "timeout", "readiness_warning": readinessWarning}
 	}
+	if len(postDeployIgnored) > 0 {
+		if finalizeHookOpts.Metadata == nil {
+			finalizeHookOpts.Metadata = map[string]string{}
+		}
+		names := make([]string, 0, len(postDeployIgnored))
+		for _, f := range postDeployIgnored {
+			names = append(names, f.Hook)
+		}
+		finalizeHookOpts.Metadata["post_deploy_failed"] = strings.Join(names, ",")
+	}
 	_ = m.fireDeployHook(hookCtx, hooks.EventDeployFinalized, instance, deployLog.ID, deployLog.StartedAt, finalizeHookOpts)
 
+	for _, f := range postDeployIgnored {
+		m.notifyUser(instance.OwnerID, instanceID, "deployment.warning",
+			fmt.Sprintf("Post-deploy step %s failed", f.Hook),
+			fmt.Sprintf("Deployment of %s: %s", instance.Name, f.UserMessage(hooks.EventPostDeploy, "deployment")))
+	}
+
 	if deployErr != nil && !partialDeploy {
-		if isTimeoutError(deployErr) {
+		// A failed blocking post-deploy subscriber is a hook failure, also
+		// when it timed out: no deploy-timeout event.
+		if isTimeoutError(deployErr) && !isPostDeployHookError(deployErr) {
 			m.notifyUser(instance.OwnerID, instanceID, "deploy.timeout",
 				"Deployment timed out",
 				fmt.Sprintf("Deployment of %s exceeded the timeout threshold", instance.Name))
@@ -1058,6 +1162,7 @@ func (m *Manager) StopWithCharts(ctx context.Context, instance *models.StackInst
 	})
 
 	// Pass deployLog into the goroutine to avoid a partition-scanning re-fetch.
+	m.rememberTrigger(ctx, logID)
 	m.wg.Add(1)
 	go m.executeStopWithCharts(helmExec, instance.ID, deployLog, instance.Namespace, sortedCharts)
 
@@ -1067,6 +1172,7 @@ func (m *Manager) StopWithCharts(ctx context.Context, instance *models.StackInst
 // executeStopWithCharts runs helm uninstall for each chart in reverse order.
 func (m *Manager) executeStopWithCharts(helm HelmExecutor, instanceID string, deployLog *models.DeploymentLog, namespace string, charts []ChartDeployInfo) {
 	defer m.wg.Done()
+	defer m.logTriggers.Delete(deployLog.ID)
 	m.semaphore <- struct{}{}
 	defer func() { <-m.semaphore }()
 
@@ -1143,6 +1249,9 @@ func (m *Manager) finalizeStop(instanceID string, deployLog *models.DeploymentLo
 
 	deployLog.Output = truncateString(output, maxOutputLen)
 	deployLog.CompletedAt = &now
+	// A stop during blocking post-deploy hooks ends them; clear the marker
+	// of the k8s status watcher.
+	instance.PostDeployHookUntil = nil
 
 	if stopErr != nil {
 		sanitized := sanitizeDeployError(stopErr)
@@ -1252,23 +1361,27 @@ func isTimeoutError(err error) bool {
 func sanitizeDeployError(err error) string {
 	msg := err.Error()
 
-	// A failed pre-deploy hook: show the subscriber's deny reason (or a
-	// generic failure text); never the raw error, which can hold the URL.
+	// A failed pre-deploy or blocking post-deploy hook: show the
+	// subscriber's deny reason (or a generic failure text); never the raw
+	// error, which can hold the URL.
 	var hookErr *hooks.FailedError
 	if strings.HasPrefix(msg, "pre-deploy hook") && errors.As(err, &hookErr) {
 		return hooks.UserMessage(err, hooks.EventPreDeploy, "deployment")
+	}
+	if isPostDeployHookError(err) {
+		return hooks.UserMessage(err, hooks.EventPostDeploy, "deployment")
 	}
 
 	// Look for the pattern "deploying chart ..." or "uninstalling chart ..."
 	// which is the outermost fmt.Errorf wrapper in executeDeploy / executeStopWithCharts.
 	// Partial/total chart failure messages are already user-safe — pass through.
 	if strings.HasPrefix(msg, "all charts failed") || strings.HasPrefix(msg, "partial deploy") ||
-		errors.Is(err, ErrInvalidQuota) {
+		errors.Is(err, ErrInvalidQuota) || errors.Is(err, ErrDeployInterrupted) {
 		return msg
 	}
 
 	for _, prefix := range []string{
-		"pre-deploy hook", "pre-rollback hook",
+		"pre-deploy hook", "pre-rollback hook", "post-deploy hook",
 		"deploying chart ", "uninstalling chart ", "deleting namespace ", "creating temp directory",
 		"scaling down ", "scaling up ", "waiting for MySQL", "running PVC cleanup",
 		"getting history for chart ", "rolling back chart ",
@@ -1369,6 +1482,7 @@ func (m *Manager) Clean(ctx context.Context, instance *models.StackInstance, cha
 		return sortedCharts[i].ChartConfig.DeployOrder > sortedCharts[j].ChartConfig.DeployOrder
 	})
 
+	m.rememberTrigger(ctx, logID)
 	m.wg.Add(1)
 	go m.executeClean(helmExec, k8sClient, instance.ID, deployLog, instance.Namespace, sortedCharts)
 
@@ -1379,6 +1493,7 @@ func (m *Manager) Clean(ctx context.Context, instance *models.StackInstance, cha
 // deletes the Kubernetes namespace.
 func (m *Manager) executeClean(helm HelmExecutor, k8sClient *k8s.Client, instanceID string, deployLog *models.DeploymentLog, namespace string, charts []ChartDeployInfo) {
 	defer m.wg.Done()
+	defer m.logTriggers.Delete(deployLog.ID)
 	m.semaphore <- struct{}{}
 	defer func() { <-m.semaphore }()
 
@@ -1488,6 +1603,7 @@ func (m *Manager) finalizeClean(instanceID string, deployLog *models.DeploymentL
 
 	deployLog.Output = truncateString(output, maxOutputLen)
 	deployLog.CompletedAt = &now
+	instance.PostDeployHookUntil = nil
 
 	if cleanErr != nil {
 		sanitized := sanitizeDeployError(cleanErr)
@@ -1541,34 +1657,45 @@ func (m *Manager) finalizeClean(instanceID string, deployLog *models.DeploymentL
 
 	_, shouldDelete := m.pendingDeletes.LoadAndDelete(instanceID)
 
+	// deleted is true when the clean was the first step of a delete and the
+	// instance row is gone now.
+	deleted := false
 	if cleanErr != nil {
 		m.broadcastStatusWithError(instanceID, models.StackStatusError, deployLog.ID, instance.ErrorMessage)
 	} else if shouldDelete {
+		var delErr error
 		if m.txRunner != nil {
-			if err := database.DeleteInstanceWithOwnedDefinition(m.txRunner, instance); err != nil {
-				slog.Error("failed to delete instance after clean",
-					"instance_id", instanceID, "error", err)
-				m.broadcastStatus(instanceID, models.StackStatusDraft, deployLog.ID)
-			} else {
-				slog.Info("instance deleted after clean",
-					"instance_id", instanceID, "log_id", deployLog.ID)
-			}
+			delErr = database.DeleteInstanceWithOwnedDefinition(m.txRunner, instance)
 		} else {
-			if err := m.instanceRepo.Delete(instanceID); err != nil {
-				slog.Error("failed to delete instance after clean",
-					"instance_id", instanceID, "error", err)
-			}
+			delErr = m.instanceRepo.Delete(instanceID)
+		}
+		if delErr != nil {
+			slog.Error("failed to delete instance after clean",
+				"instance_id", instanceID, "error", delErr)
+			m.broadcastStatus(instanceID, models.StackStatusDraft, deployLog.ID)
+		} else {
+			deleted = true
+			slog.Info("instance deleted after clean",
+				"instance_id", instanceID, "log_id", deployLog.ID)
 		}
 	} else {
 		m.broadcastStatus(instanceID, models.StackStatusDraft, deployLog.ID)
 	}
 
-	_ = m.fireDeployHook(m.shutdownCtx, hooks.EventCleanCompleted, instance, deployLog.ID, deployLog.StartedAt, hookOpts{})
+	// metadata.operation=delete tells subscribers that delete-completed
+	// follows, so a notifier can post one "deleted" message instead of two.
+	cleanOpts := hookOpts{}
+	if deleted {
+		cleanOpts.Metadata = map[string]string{"operation": "delete"}
+	}
+	_ = m.fireDeployHook(m.shutdownCtx, hooks.EventCleanCompleted, instance, deployLog.ID, deployLog.StartedAt, cleanOpts)
 
 	if cleanErr != nil {
 		m.notifyUser(instance.OwnerID, instanceID, "clean.error", "Cleanup failed", fmt.Sprintf("Cleanup of %s failed: %s", instance.Name, instance.ErrorMessage))
-	} else if shouldDelete {
+	} else if deleted {
 		m.notifyUser(instance.OwnerID, instanceID, "instance.deleted", "Stack deleted", fmt.Sprintf("Stack %s has been deleted", instance.Name))
+		// The same events as the API delete of a draft instance.
+		_ = m.fireDeployHook(m.shutdownCtx, hooks.EventPostInstanceDelete, instance, deployLog.ID, deployLog.StartedAt, hookOpts{})
 		_ = m.fireDeployHook(m.shutdownCtx, hooks.EventDeleteCompleted, instance, deployLog.ID, deployLog.StartedAt, hookOpts{})
 	} else {
 		m.notifyUser(instance.OwnerID, instanceID, "clean.completed", "Cleanup completed", fmt.Sprintf("Stack %s has been cleaned and returned to draft", instance.Name))
@@ -1709,6 +1836,7 @@ func (m *Manager) Rollback(ctx context.Context, req RollbackRequest) (string, er
 
 	// The pre-rollback hook fires in the goroutine (as pre-deploy does), with
 	// progress streaming, so a long gate does not block the API response.
+	m.rememberTrigger(ctx, logID)
 	m.wg.Add(1)
 	go m.executeRollback(rollbackJob{
 		helm:       helmExec,
@@ -1731,6 +1859,7 @@ func (m *Manager) Rollback(ctx context.Context, req RollbackRequest) (string, er
 // recovery and readiness gating.
 func (m *Manager) executeRollback(job rollbackJob) {
 	defer m.wg.Done()
+	defer m.logTriggers.Delete(job.deployLog.ID)
 
 	instanceID := job.instance.ID
 	namespace := job.instance.Namespace
@@ -1913,6 +2042,7 @@ func (m *Manager) finalizeRollback(instanceID string, deployLog *models.Deployme
 		return
 	}
 
+	instance.PostDeployHookUntil = nil
 	if rollbackErr != nil {
 		sanitized := sanitizeDeployError(rollbackErr)
 		instance.Status = models.StackStatusError

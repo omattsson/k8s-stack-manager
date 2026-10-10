@@ -368,13 +368,20 @@ func (m *Manager) ownsInstance(instanceID, logID string, okStatuses ...string) (
 	if !statusOK {
 		return false, inst.Status
 	}
-	if m.logRepo != nil {
-		logs, logErr := m.logRepo.ListLatestByActions(m.shutdownCtx, instanceID, allLogActions, 1)
-		if logErr == nil && len(logs) > 0 && logs[0].ID != logID {
-			return false, inst.Status
-		}
+	if m.newerOperation(instanceID, logID) {
+		return false, inst.Status
 	}
 	return true, inst.Status
+}
+
+// newerOperation reports whether the instance has a deployment log that is
+// newer than logID (another operation started after it).
+func (m *Manager) newerOperation(instanceID, logID string) bool {
+	if m.logRepo == nil {
+		return false
+	}
+	logs, err := m.logRepo.ListLatestByActions(m.shutdownCtx, instanceID, allLogActions, 1)
+	return err == nil && len(logs) > 0 && logs[0].ID != logID
 }
 
 // fallbackLogUpdate writes the final state of a deployment log alone when

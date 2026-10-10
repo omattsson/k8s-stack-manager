@@ -30,17 +30,25 @@ is a minimal Go starting point.
 | Event | Fires when | Semantics |
 |---|---|---|
 | `pre-deploy` | Just before a deployment starts, after cluster resolution. | Synchronous, with progress streaming (`LOG:` lines go to the deploy log). A subscriber with `failure_policy=fail` can abort: the deploy log ends with status `error` and the hook reason, and the instance gets status `error` with the reason in `error_message`. |
-| `post-deploy` | After a deployment completes **successfully**. | Fire-and-forget (default `failure_policy=ignore`). |
-| `deploy-finalized` | After a deployment ends **successfully or not**. | Fire-and-forget. |
+| `post-deploy` | After a deployment completes **successfully** (also a partial deploy). | Fire-and-forget (default `failure_policy=ignore`). A subscription with `blocking: true` is called earlier and the deploy waits for it, see [Blocking post-deploy subscribers](#blocking-post-deploy-subscribers). |
+| `deploy-finalized` | After a deployment ends **successfully or not**, after the blocking post-deploy subscribers. | Fire-and-forget. `metadata.post_deploy_failed` lists the blocking subscribers with `failure_policy=ignore` that failed. |
+| `deploy-timeout` | After a deployment failed because Helm or the deploy budget timed out. A failed blocking post-deploy subscriber does not fire it. | Fire-and-forget. |
+| `stop-completed` | After a stop ends, successfully (`instance.status` `stopped`) or not (`error`). | Fire-and-forget. |
+| `clean-completed` | After a clean ends, successfully (`draft`) or not (`error`). Also fires for the clean of an API delete; then `metadata.operation` is `delete` and `delete-completed` follows (a notifier can skip this event and post only the delete). | Fire-and-forget. |
+| `delete-completed` | After an instance is deleted: by the API (at once for a draft, or after its clean) or by a cleanup policy. | Fire-and-forget. |
+| `cleanup-policy-executed` | Once per cleanup policy run (scheduled or manual) with at least one matching instance; also for a dry run. Not for a scheduled run that the end of a leadership term interrupted. | Fire-and-forget. See [Cleanup policy runs](#cleanup-policy-runs). |
 | `pre-rollback` | Before a rollback runs (`POST /stack-instances/:id/rollback`), in the background after the API answered 202. | Synchronous for the rollback, with progress streaming (`LOG:` lines go to the rollback log). `failure_policy=fail` aborts: the rollback log ends with status `error` and the hook reason, and the instance gets its previous status back. |
 | `post-rollback` | After a rollback completes **successfully**. | Fire-and-forget. |
 | `rollback-completed` | After a rollback ends: succeeded, failed, rejected by `pre-rollback`, or cancelled because another operation (stop, clean, deploy) started meanwhile. `metadata.outcome` is `succeeded`, `failed`, `rejected` or `cancelled`. | Fire-and-forget. |
 | `pre-instance-create` | After validation, before the instance is written to the DB. | Synchronous. `failure_policy=fail` aborts the create (HTTP 403). |
 | `post-instance-create` | After the instance is persisted. | Fire-and-forget. |
-| `pre-instance-delete` | After the instance ID is validated, before delete. | Synchronous. `failure_policy=fail` aborts (HTTP 403). |
-| `post-instance-delete` | After the instance has been deleted. | Fire-and-forget. |
+| `pre-instance-delete` | Before a delete: single API delete (after the instance ID is validated), each instance of a bulk delete, each instance of a cleanup policy delete. | Synchronous. `failure_policy=fail` aborts: HTTP 403 for the single delete, an `error` result for that instance in a bulk delete or a policy run. |
+| `post-instance-delete` | After the instance has been deleted: single or bulk API delete, API delete after its clean, cleanup policy delete. | Fire-and-forget. |
 | `pre-namespace-create` | *(reserved — not yet wired)* | — |
 | `post-namespace-create` | *(reserved — not yet wired)* | — |
+
+The config also accepts `instance-created`, `stack-expiring`, `stack-expired`,
+`quota-warning` and `secret-expiring`, but the core does not fire them yet.
 
 Pre-* events let subscribers block the operation. Post-* and `deploy-finalized`
 are notify-only; they should use `failure_policy=ignore` so a slow or down
@@ -69,6 +77,9 @@ file can be committed to version control:
 ```
 
 - `timeout_seconds` — optional, default 5, max 1800 (30 minutes, for gates that wait for CI builds)
+- `blocking` — optional, default `false`. Only for `post-deploy` (the
+  subscription must list `post-deploy`, else startup fails). See
+  [Blocking post-deploy subscribers](#blocking-post-deploy-subscribers).
 - `failure_policy` — optional, default `ignore`; set `fail` to block on error
 - `secret_env` — optional; names an env var holding the HMAC secret. If set,
   the process env var MUST be non-empty or startup fails closed.
@@ -119,6 +130,25 @@ Body (`apiVersion: hooks.k8sstackmanager.io/v1`):
 
 Deployment/charts/values are populated only when relevant to the event. Handlers
 should not assume every field is present.
+
+`trigger` tells what started the operation of the event:
+
+```json
+"trigger": {"type": "cleanup-policy", "id": "4f0c...", "name": "nightly-stop"}
+```
+
+| `type` | Meaning | `id` / `name` |
+|---|---|---|
+| `user` | An API call (also bulk operations and quick deploy). | User ID and username. Empty when the user is not known. |
+| `cleanup-policy` | A cleanup policy run (scheduled or manual). | Policy ID and name. |
+| `ttl` | The TTL reaper stopped an expired instance. | Not set. |
+
+The deploy, stop, clean and rollback events (`pre-deploy` to `deploy-timeout`,
+`stop-completed`, `clean-completed`, `pre-rollback` to `rollback-completed`),
+`delete-completed`, the `*-instance-create` / `*-instance-delete` events and
+`cleanup-policy-executed` carry it. A subscriber can show for example
+"stopped by cleanup policy nightly-stop". Older envelopes have no `trigger`;
+treat a missing `trigger` as unknown.
 
 `charts[].branch` is the effective branch of the chart (a per-chart override,
 else the instance branch). `charts[].image_tag` is the Docker-safe tag of that
@@ -172,6 +202,138 @@ For `target`:
   shared and locked values of that time), not the images. An image tag that is
   a branch name can now point to a newer image. A gate that must guarantee the
   old image has to check it itself.
+
+### Blocking post-deploy subscribers
+
+A `post-deploy` subscriber can do long work after the Helm releases are
+ready, for example restore a database snapshot and warm caches. With
+`"blocking": true` the deploy waits for it:
+
+```json
+{
+  "name": "db-restore",
+  "events": ["post-deploy"],
+  "url": "http://db-restore.extensions:8080/hook",
+  "blocking": true,
+  "timeout_seconds": 900,
+  "failure_policy": "fail"
+}
+```
+
+1. After the Helm releases are ready (and after the readiness wait), the
+   deployer calls the blocking subscribers one after the other, in
+   registration order. The instance has the status `stabilizing`.
+2. The subscriber can stream `LOG: <message>` lines (the same protocol as
+   `pre-deploy`). They go to the deploy log and the WebSocket log stream. The
+   deploy log keeps the last 16 KiB of these lines.
+3. Each call is limited by its `timeout_seconds` (max 1800). The blocking
+   phase has its own time limit: the sum of the timeouts of the blocking
+   subscribers plus one minute. It does not change the Helm deploy budget.
+4. After all blocking subscribers returned, the instance gets `running`, the
+   owner gets "Deployment succeeded", the non-blocking `post-deploy`
+   subscribers are called, and `deploy-finalized` fires.
+5. A failure, a denial (`allowed: false`) or a timeout:
+   - `failure_policy=fail`: the deploy fails. The instance gets `error`, and
+     `error_message` of the instance and of the deploy log is
+     `post-deploy hook "<name>" denied the deployment: <message>` or
+     `post-deploy hook "<name>" failed (unreachable or timed out)`. The deploy
+     log output has the same `ERROR:` line. Later blocking subscribers and the
+     non-blocking `post-deploy` subscribers are not called; `deploy-finalized`
+     fires. A timeout of the subscriber does not fire `deploy-timeout`.
+   - `failure_policy=ignore`: the deploy succeeds (`running`). The deploy log
+     gets a `WARNING:` line, the owner gets the notification "Post-deploy step
+     <name> failed" (type `deployment.warning`), and `deploy-finalized` has
+     `metadata.post_deploy_failed` with the subscriber names.
+6. What can end the wait early:
+   - **Stop** (API, bulk, TTL reaper or a cleanup policy). Clean, delete,
+     deploy and rollback are refused (409) while the instance is
+     `stabilizing`. The deployer checks the instance every stabilize poll
+     interval (`DEPLOY_STABILIZE_POLL_INTERVAL`, default 5 s). When the status
+     is no longer `stabilizing` (or `deploying`) or a newer deployment log
+     exists, it closes the request to the subscriber. The deploy log ends with
+     status `error` and a `WARNING: deploy cancelled ...` line; the status of
+     the stop stays. A read error of the instance does not end the wait.
+   - **The k8s status watcher** does not end it for a pod error during the
+     wait: while the hooks run, the instance has `post_deploy_hook_until` (a
+     database column, so the watcher on the leader replica sees it, also when
+     another replica runs the deploy) and the watcher keeps the status. The
+     same time is the deadline of the hook calls. After that time (for
+     example after a crash, see below) the watcher sets `error` for a
+     namespace that is still in error. The marker has one minute of margin
+     after the sum of the hook timeouts, so a clock difference between the
+     replicas of less than about one minute is safe. A stop, clean or
+     rollback clears the marker.
+   - **A server shutdown** (SIGTERM, rolling update): the deploy ends with
+     status `error` and the message `Interrupted by a server restart. Deploy
+     again.`, for every `failure_policy`. The result of the subscriber is
+     unknown, so the stack is not set to `running`.
+
+   Closing the HTTP request does not stop the work of the subscriber. A
+   subscriber must stop its work when the request closes (the client
+   disconnects). A stop starts `helm uninstall` at the same time; a subscriber
+   that goes on writes to a namespace that is being removed.
+
+   After a SIGKILL or the loss of the node, nothing ends the deploy: the
+   instance stays `stabilizing`. Stop the instance to get out of this state.
+
+The blocking wait does not hold a deploy concurrency slot
+(`MAX_CONCURRENT_DEPLOYS`). The envelope of a blocking call has the `charts`
+list of `pre-deploy`, `metadata.blocking` = `"true"` and the instance status
+`stabilizing`. A subscription without `blocking` works as before: it is
+called after the status update to `running`. A blocking subscription that
+also lists other events gets those events as a normal subscriber.
+
+### Cleanup policy runs
+
+`cleanup-policy-executed` fires once per run with at least one matching
+instance. `instance` is not set; the run summary is in `cleanup_policy`:
+
+```json
+{
+  "event": "cleanup-policy-executed",
+  "trigger": {"type": "cleanup-policy", "id": "4f0c...", "name": "nightly-stop"},
+  "cleanup_policy": {
+    "id": "4f0c...",
+    "name": "nightly-stop",
+    "action": "stop",
+    "cluster_id": "all",
+    "condition": "idle_days:3",
+    "dry_run": false,
+    "run": "scheduled",
+    "matched": 2,
+    "succeeded": 1,
+    "failed": 1,
+    "instances": [
+      {"id": "6c9f...", "name": "demo", "namespace": "stack-demo-alice",
+       "owner_id": "uid-123", "result": "success"},
+      {"id": "8a21...", "name": "old", "namespace": "stack-old-bob",
+       "owner_id": "uid-456", "result": "error", "error": "resolving cluster: ..."}
+    ]
+  }
+}
+```
+
+- `run` is `scheduled` (cron) or `manual` (`POST /admin/cleanup-policies/:id/run`).
+- `result` is `success`, `error` or `dry_run`. A dry run changes nothing.
+- For `stop` and `clean`, `success` means that the operation started. Its
+  result comes with `stop-completed` / `clean-completed`, which carry the
+  same `trigger`. A policy `delete` fires `pre-instance-delete` (a
+  `failure_policy=fail` subscriber can stop it: the instance gets `result`
+  `error` with the hook reason), then `post-instance-delete` and
+  `delete-completed` per instance, and the owner gets `instance.deleted`.
+  One delete (with its `pre-instance-delete` hooks) may take 5 minutes, or
+  the sum of the `pre-instance-delete` timeouts plus one minute when that is
+  longer. A manual run (`POST /admin/cleanup-policies/:id/run`) answers only
+  when the run ends, so a manual delete run with slow `pre-instance-delete`
+  subscribers is a long request: up to the number of matches times that
+  time. Use a client (and proxy) timeout that allows it, or use a dry run
+  first.
+- `instances` has at most 200 entries (`instances_truncated: true` when cut);
+  the counts cover all matching instances. `error` is one line, at most 500
+  characters.
+- Since leader election, only the leader runs scheduled policies. A run that
+  the end of the leadership term interrupts fires no event; the next leader
+  runs the policy again.
 
 ### Response
 
@@ -527,6 +689,8 @@ request can be replayed. Job log reads carry a signed `ts` query parameter
 - Dispatch is synchronous and in subscription registration order; a `fail`
   subscription that errors prevents later subscriptions on the same event from
   being invoked.
+- A blocking `post-deploy` subscription with `failure_policy=fail` fails the
+  deploy when it fails. Use `ignore` when the post-deploy work is optional.
 
 ---
 

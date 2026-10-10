@@ -7,6 +7,7 @@ func AllEventTypes() []string {
 		"deployment.success",
 		"deployment.error",
 		"deployment.partial",
+		"deployment.warning",
 		"deployment.stopped",
 		"deploy.timeout",
 		"instance.created",

@@ -22,6 +22,9 @@ type SubscriptionSpec struct {
 	URL            string        `json:"url"`
 	TimeoutSeconds int           `json:"timeout_seconds,omitempty"`
 	FailurePolicy  FailurePolicy `json:"failure_policy,omitempty"`
+	// Blocking makes the deployer wait for this post-deploy subscriber
+	// (see Subscription.Blocking). Default false.
+	Blocking bool `json:"blocking,omitempty"`
 	// SecretEnv names an environment variable that holds the HMAC secret.
 	// Leave empty to disable signature generation for this subscription.
 	SecretEnv string `json:"secret_env,omitempty"`
@@ -67,6 +70,7 @@ func LoadConfigFile(path string) (Config, []ActionSubscription, error) {
 			URL:            s.URL,
 			TimeoutSeconds: s.TimeoutSeconds,
 			FailurePolicy:  s.FailurePolicy,
+			Blocking:       s.Blocking,
 		}
 		if s.SecretEnv != "" {
 			sub.Secret = os.Getenv(s.SecretEnv)
