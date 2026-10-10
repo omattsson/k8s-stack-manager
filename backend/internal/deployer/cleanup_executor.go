@@ -2,9 +2,13 @@ package deployer
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"log/slog"
+	"time"
 
 	"backend/internal/database"
+	"backend/internal/hooks"
 	"backend/internal/models"
 )
 
@@ -71,12 +75,53 @@ func (e *CleanupExecutor) DeleteInstance(ctx context.Context, inst *models.Stack
 		models.StackStatusStopping, models.StackStatusCleaning:
 		return fmt.Errorf("cannot delete instance %s while status is %s; stop/clean must complete first", inst.ID, inst.Status)
 	}
+	// pre-instance-delete can stop the delete, as for the API delete. The
+	// error text is user-safe (never the subscriber URL); the policy run
+	// records it as the error of this instance.
+	if e.manager != nil {
+		if hookErr := e.manager.fireDeployHook(ctx, hooks.EventPreInstanceDelete, inst, "", time.Time{}, e.triggerOpts(ctx)); hookErr != nil {
+			slog.Warn("pre-instance-delete hook stopped a cleanup delete", "instance_id", inst.ID, "error", hookErr)
+			return errors.New(hooks.UserMessage(hookErr, hooks.EventPreInstanceDelete, "delete"))
+		}
+	}
 	// With a transaction runner, delete the branch overrides and the quick
 	// deploy definition owned by the instance in the same transaction.
+	var err error
 	if e.manager != nil && e.manager.txRunner != nil {
-		return database.DeleteInstanceWithOwnedDefinition(e.manager.txRunner, inst)
+		err = database.DeleteInstanceWithOwnedDefinition(e.manager.txRunner, inst)
+	} else {
+		err = e.instanceRepo.Delete(inst.ID)
 	}
-	return e.instanceRepo.Delete(inst.ID)
+	if err != nil {
+		return err
+	}
+	e.afterDelete(ctx, inst)
+	return nil
+}
+
+// afterDelete tells subscribers and the owner about a delete, as the API
+// delete path does: post-instance-delete and delete-completed (with the
+// trigger of ctx, for example the cleanup policy) and the owner notification
+// instance.deleted. The delete is done, so a caller that stops (the end of a
+// leadership term) does not cancel the events; the subscription timeouts
+// limit them.
+func (e *CleanupExecutor) afterDelete(ctx context.Context, inst *models.StackInstance) {
+	if e.manager == nil {
+		return
+	}
+	hookCtx := context.WithoutCancel(ctx)
+	opts := e.triggerOpts(ctx)
+	trigger, ok := hooks.TriggerFromContext(ctx)
+	for _, event := range []string{hooks.EventPostInstanceDelete, hooks.EventDeleteCompleted} {
+		if err := e.manager.fireDeployHook(hookCtx, event, inst, "", time.Time{}, opts); err != nil {
+			slog.Warn("hook after cleanup delete failed", "event", event, "instance_id", inst.ID, "error", err)
+		}
+	}
+	message := fmt.Sprintf("Stack %s has been deleted", inst.Name)
+	if ok && trigger.Type == hooks.TriggerCleanupPolicy && trigger.Name != "" {
+		message = fmt.Sprintf("Stack %s has been deleted by cleanup policy %q", inst.Name, trigger.Name)
+	}
+	e.manager.notifyUser(inst.OwnerID, inst.ID, "instance.deleted", "Stack deleted", message)
 }
 
 func (e *CleanupExecutor) resolveCharts(inst *models.StackInstance) ([]models.ChartConfig, error) {
@@ -92,4 +137,12 @@ func (e *CleanupExecutor) resolveCharts(inst *models.StackInstance) ([]models.Ch
 		return nil, fmt.Errorf("no charts configured for definition %s", def.ID)
 	}
 	return charts, nil
+}
+
+// triggerOpts returns hook options with the trigger of ctx, if any.
+func (e *CleanupExecutor) triggerOpts(ctx context.Context) hookOpts {
+	if trigger, ok := hooks.TriggerFromContext(ctx); ok {
+		return hookOpts{Trigger: &trigger}
+	}
+	return hookOpts{}
 }

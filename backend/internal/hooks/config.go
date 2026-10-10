@@ -41,6 +41,10 @@ func (c *Config) Validate() error {
 			}
 		}
 
+		if s.Blocking && !hasEvent(s.Events, EventPostDeploy) {
+			return fmt.Errorf("subscription %q: blocking requires the %s event", s.Name, EventPostDeploy)
+		}
+
 		if s.URL == "" {
 			return fmt.Errorf("subscription %q: url is required", s.Name)
 		}
@@ -84,6 +88,15 @@ func isKnownEvent(e string) bool {
 		EventStackExpired, EventStackExpiring,
 		EventQuotaWarning, EventSecretExpiring:
 		return true
+	}
+	return false
+}
+
+func hasEvent(events []string, event string) bool {
+	for _, e := range events {
+		if e == event {
+			return true
+		}
 	}
 	return false
 }

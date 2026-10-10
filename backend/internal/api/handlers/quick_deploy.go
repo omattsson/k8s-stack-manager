@@ -451,7 +451,7 @@ func (h *QuickDeployHandler) triggerDeploy(
 		UserID:             middleware.GetUserIDFromContext(c),
 	}
 
-	return h.deployManager.Deploy(c.Request.Context(), req)
+	return h.deployManager.Deploy(hookTriggerCtx(c), req)
 }
 
 // values returns the values pipeline over the handler's repositories.

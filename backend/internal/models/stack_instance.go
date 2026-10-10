@@ -28,6 +28,14 @@ type StackInstance struct {
 	ErrorMessage       string     `json:"error_message,omitempty" gorm:"type:text"`
 	LastDeployedValues string     `json:"-" gorm:"type:longtext"`
 	TTLMinutes         int        `json:"ttl_minutes"`
+
+	// PostDeployHookUntil is set while blocking post-deploy hooks run: the
+	// latest end of the wait (start + the sum of the hook timeouts). The k8s
+	// status watcher (on the leader replica) does not set error for a
+	// stabilizing instance before this time. A deploy clears it. It expires
+	// by itself after a crash of the deploying replica.
+	PostDeployHookUntil *time.Time `json:"-"`
+
 	// ValuesDrift is computed, not stored. GET /stack-instances/{id} sets it
 	// to true when the running values come from a successful rollback and
 	// the stored overrides produce different values (the next deploy undoes

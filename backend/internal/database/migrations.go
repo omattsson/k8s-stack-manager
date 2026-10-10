@@ -1075,6 +1075,10 @@ func (d *Database) AutoMigrate() error {
 	// lock the admin rows (role = 'admin').
 	migrator.AddMigration(userRoleIndexMigration())
 
+	// Migration 51: stack_instances.post_deploy_hook_until (blocking
+	// post-deploy hooks run; the k8s status watcher skips the instance).
+	migrator.AddMigration(postDeployHookUntilMigration())
+
 	// Run migrations
 	if err := migrator.MigrateUp(); err != nil {
 		return err
@@ -1609,6 +1613,33 @@ func userRoleIndexMigration() schema.Migration {
 			m := tx.Migrator()
 			if m.HasIndex(&models.User{}, userRoleIndexName) {
 				return m.DropIndex(&models.User{}, userRoleIndexName)
+			}
+			return nil
+		},
+	}
+}
+
+// postDeployHookUntilMigration is migration 51. It adds
+// post_deploy_hook_until to stack_instances: set while blocking post-deploy
+// hooks run, so the k8s status watcher on the leader does not set error for
+// the instance during the wait. No backfill. It is a function so tests can
+// run its Down step.
+func postDeployHookUntilMigration() schema.Migration {
+	return schema.Migration{
+		Version:     "20261009000051",
+		Name:        "add_stack_instance_post_deploy_hook_until",
+		Description: "Add post_deploy_hook_until to stack_instances (blocking post-deploy hooks run until this time)",
+		Up: func(tx *gorm.DB) error {
+			m := tx.Migrator()
+			if m.HasTable(&models.StackInstance{}) && !m.HasColumn(&models.StackInstance{}, "PostDeployHookUntil") {
+				return m.AddColumn(&models.StackInstance{}, "PostDeployHookUntil")
+			}
+			return nil
+		},
+		Down: func(tx *gorm.DB) error {
+			m := tx.Migrator()
+			if m.HasColumn(&models.StackInstance{}, "PostDeployHookUntil") {
+				return m.DropColumn(&models.StackInstance{}, "PostDeployHookUntil")
 			}
 			return nil
 		},

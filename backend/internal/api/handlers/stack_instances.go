@@ -216,7 +216,22 @@ func (h *InstanceHandler) fireInstanceHook(ctx context.Context, event string, in
 	if h.hooks == nil || instance == nil {
 		return nil
 	}
-	return h.hooks.Fire(ctx, event, hooks.EventEnvelope{InstanceRef: instanceRefFor(instance)})
+	env := hooks.EventEnvelope{InstanceRef: instanceRefFor(instance)}
+	if t, ok := hooks.TriggerFromContext(ctx); ok {
+		env.Trigger = &t
+	}
+	return h.hooks.Fire(ctx, event, env)
+}
+
+// hookTriggerCtx returns the request context with a user trigger (ID and
+// username of the caller). The deploy manager and fireInstanceHook add it to
+// the hook envelopes, so subscribers can show who started the operation.
+func hookTriggerCtx(c *gin.Context) context.Context {
+	return hooks.WithTrigger(c.Request.Context(), hooks.Trigger{
+		Type: hooks.TriggerUser,
+		ID:   middleware.GetUserIDFromContext(c),
+		Name: middleware.GetUsernameFromContext(c),
+	})
 }
 
 // NewInstanceHandler creates a new InstanceHandler.
@@ -521,7 +536,7 @@ func (h *InstanceHandler) CreateInstance(c *gin.Context) {
 	// before any DB write. Fired after field validation, namespace uniqueness,
 	// and definition existence checks so subscribers only see creates that are
 	// otherwise eligible to succeed.
-	if err := h.fireInstanceHook(c.Request.Context(), hooks.EventPreInstanceCreate, &inst); err != nil {
+	if err := h.fireInstanceHook(hookTriggerCtx(c), hooks.EventPreInstanceCreate, &inst); err != nil {
 		slog.Error("pre-instance-create hook failed", "instance_name", inst.Name, "error", err)
 		c.JSON(http.StatusForbidden, gin.H{"error": "pre-instance-create hook rejected the request"})
 		return
@@ -580,7 +595,7 @@ func (h *InstanceHandler) CreateInstance(c *gin.Context) {
 	// Post-instance-create hook: ignore-by-default. Cannot undo the create at
 	// this point; subscribers exist for downstream notification (CMDB sync,
 	// audit logs, etc).
-	_ = h.fireInstanceHook(c.Request.Context(), hooks.EventPostInstanceCreate, &inst)
+	_ = h.fireInstanceHook(hookTriggerCtx(c), hooks.EventPostInstanceCreate, &inst)
 
 	if h.notifier != nil {
 		_ = h.notifier.Notify(c.Request.Context(), inst.OwnerID, "instance.created", "Stack created",
@@ -749,7 +764,7 @@ func (h *InstanceHandler) DeleteInstance(c *gin.Context) {
 
 	// Pre-instance-delete hook: a subscriber with failure_policy=fail can block
 	// the delete (e.g. enforce dependency checks).
-	if err := h.fireInstanceHook(c.Request.Context(), hooks.EventPreInstanceDelete, inst); err != nil {
+	if err := h.fireInstanceHook(hookTriggerCtx(c), hooks.EventPreInstanceDelete, inst); err != nil {
 		slog.Error("pre-instance-delete hook failed", logKeyInstanceID, id, "error", err)
 		c.JSON(http.StatusForbidden, gin.H{"error": "pre-instance-delete hook rejected the request"})
 		return
@@ -781,7 +796,7 @@ func (h *InstanceHandler) DeleteInstance(c *gin.Context) {
 
 		h.deployManager.ScheduleDeleteAfterClean(id)
 
-		logID, err := h.deployManager.Clean(c.Request.Context(), inst, charts)
+		logID, err := h.deployManager.Clean(hookTriggerCtx(c), inst, charts)
 		if err != nil {
 			slog.Error("Failed to start clean for delete",
 				logKeyInstanceID, id, "error", err)
@@ -812,14 +827,24 @@ func (h *InstanceHandler) DeleteInstance(c *gin.Context) {
 		return
 	}
 
-	_ = h.fireInstanceHook(c.Request.Context(), hooks.EventPostInstanceDelete, inst)
-
-	if h.notifier != nil {
-		_ = h.notifier.Notify(c.Request.Context(), inst.OwnerID, "instance.deleted", "Stack deleted",
-			fmt.Sprintf("Stack %s has been deleted", inst.Name), "stack_instance", inst.ID)
-	}
+	h.afterInstanceDeleted(hookTriggerCtx(c), inst)
 
 	c.Status(http.StatusNoContent)
+}
+
+// afterInstanceDeleted fires post-instance-delete and delete-completed and
+// sends the owner instance.deleted, after an instance row was deleted
+// without a clean (single and bulk delete). delete-completed fires after
+// every delete (also after a clean and for a cleanup policy delete), so a
+// subscriber needs only this event.
+func (h *InstanceHandler) afterInstanceDeleted(ctx context.Context, inst *models.StackInstance) {
+	_ = h.fireInstanceHook(ctx, hooks.EventPostInstanceDelete, inst)
+	_ = h.fireInstanceHook(ctx, hooks.EventDeleteCompleted, inst)
+
+	if h.notifier != nil {
+		_ = h.notifier.Notify(ctx, inst.OwnerID, "instance.deleted", "Stack deleted",
+			fmt.Sprintf("Stack %s has been deleted", inst.Name), "stack_instance", inst.ID)
+	}
 }
 
 type invokeActionRequest struct {
@@ -1470,7 +1495,7 @@ func (h *InstanceHandler) DeployInstance(c *gin.Context) {
 		UserID:             middleware.GetUserIDFromContext(c),
 	}
 
-	logID, err := h.deployManager.Deploy(c.Request.Context(), req)
+	logID, err := h.deployManager.Deploy(hookTriggerCtx(c), req)
 	if err != nil {
 		slog.Error("Failed to start deployment",
 			logKeyInstanceID, id,
@@ -1654,7 +1679,7 @@ func (h *InstanceHandler) StopInstance(c *gin.Context) {
 		})
 	}
 
-	logID, err := h.deployManager.StopWithCharts(c.Request.Context(), inst, chartInfos)
+	logID, err := h.deployManager.StopWithCharts(hookTriggerCtx(c), inst, chartInfos)
 	if err != nil {
 		slog.Error("Failed to start stop operation",
 			logKeyInstanceID, id,
@@ -1731,7 +1756,7 @@ func (h *InstanceHandler) CleanInstance(c *gin.Context) {
 		return
 	}
 
-	logID, err := h.deployManager.Clean(c.Request.Context(), inst, charts)
+	logID, err := h.deployManager.Clean(hookTriggerCtx(c), inst, charts)
 	if err != nil {
 		slog.Error("Failed to start clean operation",
 			logKeyInstanceID, id,
@@ -2502,7 +2527,7 @@ func (h *InstanceHandler) RollbackInstance(c *gin.Context) {
 		chartInfos = append(chartInfos, deployer.ChartDeployInfo{ChartConfig: ch})
 	}
 
-	logID, err := h.deployManager.Rollback(c.Request.Context(), deployer.RollbackRequest{
+	logID, err := h.deployManager.Rollback(hookTriggerCtx(c), deployer.RollbackRequest{
 		Instance:            inst,
 		Charts:              chartInfos,
 		TargetLogID:         body.TargetLogID,

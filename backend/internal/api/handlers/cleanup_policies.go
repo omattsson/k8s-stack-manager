@@ -229,7 +229,7 @@ func (h *CleanupPolicyHandler) DeleteCleanupPolicy(c *gin.Context) {
 
 // RunCleanupPolicy godoc
 // @Summary     Run a cleanup policy manually
-// @Description Executes a cleanup policy immediately. Use ?dry_run=true to preview matches without acting.
+// @Description Executes a cleanup policy immediately and answers when the run ends. Use ?dry_run=true to preview matches without acting. Stop and clean only start the operations (fast). A delete runs the pre-instance-delete hooks per instance first, so a delete run can take up to the number of matches times (5 minutes, or the sum of the pre-instance-delete hook timeouts plus one minute when longer); use a client timeout that allows this. The run fires cleanup-policy-executed when at least one instance matched.
 // @Tags        cleanup-policies
 // @Produce     json
 // @Param       id      path  string true  "Policy ID"

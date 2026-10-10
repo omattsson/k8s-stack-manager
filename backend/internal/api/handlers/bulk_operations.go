@@ -9,6 +9,7 @@ import (
 	"backend/internal/api/middleware"
 	"backend/internal/database"
 	"backend/internal/deployer"
+	"backend/internal/hooks"
 	"backend/internal/models"
 
 	"github.com/gin-gonic/gin"
@@ -189,7 +190,7 @@ func (h *InstanceHandler) BulkDeploy(c *gin.Context) {
 			UserID:             middleware.GetUserIDFromContext(c),
 		}
 
-		logID, err := h.deployManager.Deploy(c.Request.Context(), req)
+		logID, err := h.deployManager.Deploy(hookTriggerCtx(c), req)
 		if err != nil {
 			return "", fmt.Errorf("failed to start deployment")
 		}
@@ -245,7 +246,7 @@ func (h *InstanceHandler) BulkStop(c *gin.Context) {
 			})
 		}
 
-		logID, err := h.deployManager.StopWithCharts(c.Request.Context(), inst, chartInfos)
+		logID, err := h.deployManager.StopWithCharts(hookTriggerCtx(c), inst, chartInfos)
 		if err != nil {
 			return "", fmt.Errorf("failed to start stop operation")
 		}
@@ -290,7 +291,7 @@ func (h *InstanceHandler) BulkClean(c *gin.Context) {
 			return "", fmt.Errorf("failed to list chart configs")
 		}
 
-		logID, err := h.deployManager.Clean(c.Request.Context(), inst, charts)
+		logID, err := h.deployManager.Clean(hookTriggerCtx(c), inst, charts)
 		if err != nil {
 			return "", fmt.Errorf("failed to start clean operation")
 		}
@@ -312,14 +313,22 @@ func (h *InstanceHandler) BulkClean(c *gin.Context) {
 // @Failure     403     {object} map[string]string
 // @Router      /api/v1/stack-instances/bulk/delete [post]
 func (h *InstanceHandler) BulkDelete(c *gin.Context) {
-	h.executeBulkOperation(c, "delete", func(_ *gin.Context, inst *models.StackInstance) (string, error) {
+	h.executeBulkOperation(c, "delete", func(c *gin.Context, inst *models.StackInstance) (string, error) {
 		if h.txRunner != nil {
+			// The same hooks as the single delete: pre-instance-delete can
+			// stop the delete of this instance.
+			ctx := hookTriggerCtx(c)
+			if err := h.fireInstanceHook(ctx, hooks.EventPreInstanceDelete, inst); err != nil {
+				slog.Error("pre-instance-delete hook failed in bulk delete", "instance_id", inst.ID, "error", err)
+				return "", fmt.Errorf("pre-instance-delete hook rejected the request")
+			}
 			// Transactional path — branch override cleanup + instance delete are atomic.
 			txErr := database.DeleteInstanceWithOwnedDefinition(h.txRunner, inst)
 			if txErr != nil {
 				slog.Error("failed to delete instance in bulk operation", "instance_id", inst.ID, "error", txErr)
 				return "", fmt.Errorf("failed to delete instance")
 			}
+			h.afterInstanceDeleted(ctx, inst)
 			return "", nil
 		}
 

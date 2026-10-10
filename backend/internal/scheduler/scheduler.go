@@ -6,9 +6,12 @@ import (
 	"fmt"
 	"log/slog"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
+	"backend/internal/hooks"
 	"backend/internal/models"
 
 	"github.com/robfig/cron/v3"
@@ -42,6 +45,37 @@ type CleanupNotifier interface {
 	NotifySystem(ctx context.Context, notifType, title, message, entityType, entityID string) error
 }
 
+// HookFirer dispatches lifecycle events to webhook subscribers.
+// *hooks.Dispatcher implements it.
+type HookFirer interface {
+	Fire(ctx context.Context, event string, envelope hooks.EventEnvelope) error
+}
+
+// Run kinds of a cleanup policy run (cleanup-policy-executed "run").
+const (
+	runScheduled = "scheduled"
+	runManual    = "manual"
+)
+
+// maxHookInstances limits the instance list of a cleanup-policy-executed
+// envelope; the counts always cover all matching instances.
+const maxHookInstances = 200
+
+// defaultActionTimeout limits one stop, clean or delete of a policy run.
+const defaultActionTimeout = 5 * time.Minute
+
+// hookTimeouts is implemented by *hooks.Dispatcher.
+type hookTimeouts interface {
+	TotalTimeout(event string) time.Duration
+}
+
+// maxHookErrorLen limits the error text of one instance in the envelope.
+const maxHookErrorLen = 500
+
+// maxMessageNames is the number of instance names in the
+// cleanup.policy.executed channel message; more give "and N more".
+const maxMessageNames = 10
+
 // DefaultReloadInterval is how often an active scheduler reads the enabled
 // policies again (see Run).
 const DefaultReloadInterval = time.Minute
@@ -65,6 +99,7 @@ type Scheduler struct {
 	auditRepo      models.AuditLogRepository
 	executor       ActionExecutor          // can be nil (dry-run only mode)
 	notifier       CleanupNotifier         // can be nil
+	hooks          HookFirer               // can be nil
 	entryMap       map[string]cron.EntryID // policyID → cron entry
 	loaded         map[string]string       // policyID → schedule of the loaded policies
 	reloadInterval time.Duration
@@ -104,6 +139,13 @@ func (s *Scheduler) WithReloadInterval(d time.Duration) *Scheduler {
 	if d > 0 {
 		s.reloadInterval = d
 	}
+	return s
+}
+
+// WithHooks sets the dispatcher for cleanup-policy-executed. Pass nil (an
+// untyped nil, not a nil *hooks.Dispatcher) to disable it.
+func (s *Scheduler) WithHooks(h HookFirer) *Scheduler {
+	s.hooks = h
 	return s
 }
 
@@ -338,7 +380,11 @@ func (s *Scheduler) RunPolicy(policyID string, dryRun bool) ([]CleanupResult, er
 	if err != nil {
 		return nil, err
 	}
-	return s.executePolicyWithOptions(s.ctx, policy, dryRun)
+	results, err := s.executePolicyWithOptions(s.ctx, policy, dryRun)
+	if err == nil {
+		s.firePolicyExecuted(s.ctx, policy, results, dryRun, runManual)
+	}
+	return results, err
 }
 
 // executeScheduledPolicy runs a policy for its cron entry. It reads the
@@ -380,6 +426,7 @@ func (s *Scheduler) executeScheduledPolicy(ctx context.Context, policyID string)
 	slog.Info("Cleanup policy executed", "policy", policy.Name, "results", len(results))
 
 	s.notifyPolicyExecuted(ctx, policy, results)
+	s.firePolicyExecuted(ctx, policy, results, policy.DryRun, runScheduled)
 }
 
 func (s *Scheduler) executePolicyWithOptions(parent context.Context, policy *models.CleanupPolicy, dryRun bool) ([]CleanupResult, error) {
@@ -451,7 +498,10 @@ func (s *Scheduler) executePolicyWithOptions(parent context.Context, policy *mod
 		if dryRun {
 			result.Status = "dry_run"
 		} else if s.executor != nil {
-			execCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+			execCtx, cancel := context.WithTimeout(ctx, s.actionTimeout(policy.Action))
+			// The envelopes of the stop, clean and delete say that this
+			// policy started them.
+			execCtx = hooks.WithTrigger(execCtx, policyTrigger(policy))
 			var execErr error
 			switch policy.Action {
 			case "stop":
@@ -526,16 +576,28 @@ func (s *Scheduler) notifyPolicyExecuted(ctx context.Context, policy *models.Cle
 		dryRunLabel = " (dry run)"
 	}
 
-	var affected int
+	var affected, failed int
+	var names []string
 	for _, r := range results {
-		if r.Status == "success" || r.Status == "dry_run" {
+		switch r.Status {
+		case "success", "dry_run":
 			affected++
+			names = append(names, r.InstanceName)
+		case "error":
+			failed++
 		}
+	}
+	message := fmt.Sprintf("Policy %q matched %d instance(s), action: %s%s", policy.Name, affected, policy.Action, dryRunLabel)
+	if len(names) > 0 {
+		message += ": " + joinNames(names, maxMessageNames)
+	}
+	if failed > 0 {
+		message += fmt.Sprintf(" (%d failed)", failed)
 	}
 	_ = s.notifier.NotifySystem(ctx,
 		"cleanup.policy.executed",
 		fmt.Sprintf("Cleanup policy %q ran%s", policy.Name, dryRunLabel),
-		fmt.Sprintf("Policy %q matched %d instance(s), action: %s%s", policy.Name, affected, policy.Action, dryRunLabel),
+		message,
 		"cleanup_policy", policy.ID,
 	)
 
@@ -543,7 +605,9 @@ func (s *Scheduler) notifyPolicyExecuted(ctx context.Context, policy *models.Cle
 		return
 	}
 	for _, r := range results {
-		if r.Status != "success" {
+		// The executor sends the owner instance.deleted for a delete, as
+		// the API delete path does.
+		if r.Status != "success" || r.Action == "delete" {
 			continue
 		}
 		notifType := "cleanup.policy." + r.Action
@@ -566,4 +630,94 @@ func actionPastTense(action string) string {
 	default:
 		return action + "ed"
 	}
+}
+
+// joinNames returns the first limit names joined with ", ", then
+// "and N more".
+func joinNames(names []string, limit int) string {
+	if len(names) <= limit {
+		return strings.Join(names, ", ")
+	}
+	return fmt.Sprintf("%s and %d more", strings.Join(names[:limit], ", "), len(names)-limit)
+}
+
+// policyTrigger returns the hook trigger of policy.
+func policyTrigger(policy *models.CleanupPolicy) hooks.Trigger {
+	return hooks.Trigger{Type: hooks.TriggerCleanupPolicy, ID: policy.ID, Name: policy.Name}
+}
+
+// firePolicyExecuted fires cleanup-policy-executed for a run with at least
+// one matching instance. Dispatch errors are logged by the dispatcher.
+func (s *Scheduler) firePolicyExecuted(ctx context.Context, policy *models.CleanupPolicy, results []CleanupResult, dryRun bool, run string) {
+	if s.hooks == nil || len(results) == 0 {
+		return
+	}
+	trigger := policyTrigger(policy)
+	_ = s.hooks.Fire(ctx, hooks.EventCleanupPolicyExecuted, hooks.EventEnvelope{
+		Trigger:       &trigger,
+		CleanupPolicy: buildPolicyRun(policy, results, dryRun, run),
+	})
+}
+
+// buildPolicyRun builds the cleanup-policy-executed payload.
+func buildPolicyRun(policy *models.CleanupPolicy, results []CleanupResult, dryRun bool, run string) *hooks.CleanupPolicyRun {
+	out := &hooks.CleanupPolicyRun{
+		ID:        policy.ID,
+		Name:      policy.Name,
+		Action:    policy.Action,
+		ClusterID: policy.ClusterID,
+		Condition: policy.Condition,
+		DryRun:    dryRun,
+		Run:       run,
+		Matched:   len(results),
+		Instances: make([]hooks.CleanupPolicyInstance, 0, min(len(results), maxHookInstances)),
+	}
+	for _, r := range results {
+		switch r.Status {
+		case hooks.CleanupResultSuccess:
+			out.Succeeded++
+		case hooks.CleanupResultError:
+			out.Failed++
+		}
+		if len(out.Instances) >= maxHookInstances {
+			out.InstancesTruncated = true
+			continue
+		}
+		out.Instances = append(out.Instances, hooks.CleanupPolicyInstance{
+			ID:        r.InstanceID,
+			Name:      r.InstanceName,
+			Namespace: r.Namespace,
+			OwnerID:   r.OwnerID,
+			Result:    r.Status,
+			Error:     hookErrorText(r.Error),
+		})
+	}
+	return out
+}
+
+// hookErrorText flattens an error text to one line and limits its length.
+func hookErrorText(msg string) string {
+	msg = strings.Join(strings.Fields(msg), " ")
+	if len(msg) > maxHookErrorLen {
+		cut := maxHookErrorLen
+		for cut > 0 && !utf8.RuneStart(msg[cut]) {
+			cut--
+		}
+		msg = msg[:cut] + "…"
+	}
+	return msg
+}
+
+// actionTimeout returns the timeout of one action of a policy run: 5
+// minutes, for a delete at least the sum of the pre-instance-delete hook
+// timeouts plus one minute (the hooks run before the delete).
+func (s *Scheduler) actionTimeout(action string) time.Duration {
+	if action != "delete" {
+		return defaultActionTimeout
+	}
+	ht, ok := s.hooks.(hookTimeouts)
+	if !ok {
+		return defaultActionTimeout
+	}
+	return max(defaultActionTimeout, ht.TotalTimeout(hooks.EventPreInstanceDelete)+time.Minute)
 }
