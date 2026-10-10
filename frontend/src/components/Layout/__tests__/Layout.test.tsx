@@ -182,6 +182,36 @@ describe('Layout', () => {
     expect(screen.getByText('Analytics')).toBeInTheDocument();
   });
 
+  it.each([
+    ['user', false],
+    ['devops', true],
+    ['admin', true],
+  ])('shows the Audit Log nav item for role %s: %s', (role, visible) => {
+    (useAuth as ReturnType<typeof vi.fn>).mockReturnValue({
+      user: { ...authenticatedUser, role },
+      isAuthenticated: true,
+      isLoading: false,
+      login: vi.fn(),
+      logout: vi.fn(),
+    });
+
+    render(
+      <MemoryRouter>
+        <Layout>
+          <div>Content</div>
+        </Layout>
+      </MemoryRouter>,
+    );
+
+    // The Dashboard item has no role limit and is always present.
+    expect(screen.getByText('Dashboard')).toBeInTheDocument();
+    if (visible) {
+      expect(screen.getByText('Audit Log')).toBeInTheDocument();
+    } else {
+      expect(screen.queryByText('Audit Log')).not.toBeInTheDocument();
+    }
+  });
+
   it('renders the username when authenticated', () => {
     (useAuth as ReturnType<typeof vi.fn>).mockReturnValue({
       user: authenticatedUser,

@@ -42,7 +42,7 @@ const AppRoutes = () => {
       <Route path="/stack-instances/new" element={<ProtectedRoute><InstanceForm /></ProtectedRoute>} />
       <Route path="/stack-instances/compare" element={<ProtectedRoute><InstanceCompare /></ProtectedRoute>} />
       <Route path="/stack-instances/:id" element={<ProtectedRoute><InstanceDetail /></ProtectedRoute>} />
-      <Route path="/audit-log" element={<ProtectedRoute><AuditLog /></ProtectedRoute>} />
+      <Route path="/audit-log" element={<ProtectedRoute requiredRole="devops"><AuditLog /></ProtectedRoute>} />
       <Route path="/admin/users" element={<ProtectedRoute requiredRole="admin"><AdminUsers /></ProtectedRoute>} />
       <Route path="/admin/orphaned-namespaces" element={<ProtectedRoute requiredRole="admin"><OrphanedNamespaces /></ProtectedRoute>} />
       <Route path="/admin/clusters" element={<ProtectedRoute requiredRole="admin"><Clusters /></ProtectedRoute>} />

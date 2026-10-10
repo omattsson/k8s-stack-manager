@@ -1020,6 +1020,70 @@ describe('StackInstances Detail', () => {
     expect(await screen.findByText(/^Extended by 4 h\. Expires .+ \(in .+\)$/)).toBeInTheDocument();
   });
 
+  it('keeps the Follow toggle and the owner name after Extend (issue #497)', async () => {
+    const user = userEvent.setup();
+    (useCountdown as unknown as MockFn).mockReturnValue({
+      remaining: '1h 0m',
+      isWarning: false,
+      isCritical: false,
+      isExpired: false,
+    });
+    const inst = setupMocks({
+      status: 'running',
+      expires_at: '2026-01-01T12:00:00Z',
+      following: true,
+      follower_count: 2,
+      owner_username: 'owner-name',
+    });
+    // A response without the follow state.
+    (instanceService.extend as MockFn).mockResolvedValue({
+      ...inst,
+      expires_at: '2026-01-01T16:00:00Z',
+      following: undefined,
+      follower_count: undefined,
+    });
+
+    renderDetail();
+
+    expect(await screen.findByRole('button', { name: 'Unfollow stack' })).toHaveTextContent('Following (2)');
+    await user.click(screen.getByRole('button', { name: /^extend/i }));
+    await user.click(screen.getByRole('menuitem', { name: '+4 h' }));
+
+    await waitFor(() => {
+      expect(instanceService.extend).toHaveBeenCalledWith('123', 240);
+    });
+    expect(await screen.findByText(/^Extended by 4 h\./)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Unfollow stack' })).toHaveTextContent('Following (2)');
+    expect(screen.getByText('Owner: owner-name')).toBeInTheDocument();
+  });
+
+  it('clears the values drift warning when the extend response has no values_drift', async () => {
+    const user = userEvent.setup();
+    (useCountdown as unknown as MockFn).mockReturnValue({
+      remaining: '1h 0m',
+      isWarning: false,
+      isCritical: false,
+      isExpired: false,
+    });
+    const inst = setupMocks({ status: 'running', expires_at: '2026-01-01T12:00:00Z', values_drift: true });
+    // The JSON omits a false values_drift.
+    (instanceService.extend as MockFn).mockResolvedValue({
+      ...inst,
+      expires_at: '2026-01-01T16:00:00Z',
+      values_drift: undefined,
+    });
+
+    renderDetail();
+
+    expect(await screen.findByText(/The running values differ from the stored overrides/)).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: /^extend/i }));
+    await user.click(screen.getByRole('menuitem', { name: '+4 h' }));
+
+    await waitFor(() => {
+      expect(screen.queryByText(/The running values differ from the stored overrides/)).not.toBeInTheDocument();
+    });
+  });
+
   it('shows Expired chip when instance stopped by TTL', async () => {
     (useCountdown as unknown as MockFn).mockReturnValue(null);
     setupMocks({ status: 'stopped', error_message: 'Expired (TTL)' }, { deployLogReject: true });

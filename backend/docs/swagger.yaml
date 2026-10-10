@@ -183,9 +183,10 @@ definitions:
         type: integer
       following:
         description: |-
-          Following and FollowerCount are computed, not stored. Only GET
-          /stack-instances/{id} sets them: following is true when the caller
-          follows the instance, follower_count is the number of followers.
+          Following and FollowerCount are computed, not stored. GET, PUT and
+          POST .../extend on /stack-instances/{id} set them: following is true
+          when the caller follows the instance, follower_count is the number of
+          followers. List responses do not set them.
         readOnly: true
         type: boolean
       id:
@@ -220,10 +221,10 @@ definitions:
         type: string
       values_drift:
         description: |-
-          ValuesDrift is computed, not stored. GET /stack-instances/{id} sets it
-          to true when the running values come from a successful rollback and
-          the stored overrides produce different values (the next deploy undoes
-          the rollback). List responses do not compute it.
+          ValuesDrift is computed, not stored. GET, PUT and POST .../extend on
+          /stack-instances/{id} set it to true when the running values come from
+          a successful rollback and the stored overrides produce different values
+          (the next deploy undoes the rollback). List responses do not compute it.
         type: boolean
       warning:
         description: |-
@@ -2158,9 +2159,10 @@ definitions:
         type: integer
       following:
         description: |-
-          Following and FollowerCount are computed, not stored. Only GET
-          /stack-instances/{id} sets them: following is true when the caller
-          follows the instance, follower_count is the number of followers.
+          Following and FollowerCount are computed, not stored. GET, PUT and
+          POST .../extend on /stack-instances/{id} set them: following is true
+          when the caller follows the instance, follower_count is the number of
+          followers. List responses do not set them.
         readOnly: true
         type: boolean
       id:
@@ -2195,10 +2197,10 @@ definitions:
         type: string
       values_drift:
         description: |-
-          ValuesDrift is computed, not stored. GET /stack-instances/{id} sets it
-          to true when the running values come from a successful rollback and
-          the stored overrides produce different values (the next deploy undoes
-          the rollback). List responses do not compute it.
+          ValuesDrift is computed, not stored. GET, PUT and POST .../extend on
+          /stack-instances/{id} set it to true when the running values come from
+          a successful rollback and the stored overrides produce different values
+          (the next deploy undoes the rollback). List responses do not compute it.
         type: boolean
     type: object
   models.StackTemplate:
@@ -3156,7 +3158,8 @@ paths:
   /api/v1/audit-logs:
     get:
       description: List audit logs with optional filters and pagination. Supports
-        cursor-based pagination for efficient large dataset traversal.
+        cursor-based pagination for efficient large dataset traversal. Requires the
+        devops or admin role.
       parameters:
       - description: Filter by user ID
         in: query
@@ -3208,12 +3211,26 @@ paths:
             additionalProperties:
               type: string
             type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
         "500":
           description: Internal Server Error
           schema:
             additionalProperties:
               type: string
             type: object
+      security:
+      - BearerAuth: []
       summary: List audit logs
       tags:
       - audit-logs
@@ -4888,7 +4905,8 @@ paths:
       - notifications
   /api/v1/notifications/preferences:
     get:
-      description: Get the authenticated user's notification preferences
+      description: Get the authenticated user's notification preferences. Stored preferences
+        of unknown event types are omitted.
       produces:
       - application/json
       responses:
@@ -4919,7 +4937,10 @@ paths:
       consumes:
       - application/json
       description: Update the authenticated user's notification preferences (array
-        of event_type + enabled)
+        of event_type + enabled). Each event_type must be a known type (the instance
+        event types, and the system types cleanup.policy.executed, quota.warning and
+        secret.expiring); an unknown type gives 400 and no preference is changed.
+        The response omits stored preferences of unknown event types.
       parameters:
       - description: Preferences to update
         in: body
@@ -5770,11 +5791,18 @@ paths:
       - application/json
       responses:
         "200":
-          description: OK
+          description: The updated instance with the same computed fields as GET (values_drift,
+            names, follow state)
           schema:
             $ref: '#/definitions/models.StackInstance'
         "400":
           description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
           schema:
             additionalProperties:
               type: string
@@ -5787,6 +5815,12 @@ paths:
             type: object
         "404":
           description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
           schema:
             additionalProperties:
               type: string
@@ -6553,7 +6587,8 @@ paths:
       - application/json
       responses:
         "200":
-          description: The instance with the new expires_at
+          description: The instance with the new expires_at and the same computed
+            fields as GET (values_drift, names, follow state)
           headers:
             Warning:
               description: Set when the deprecated ttl_minutes body is used

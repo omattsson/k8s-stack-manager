@@ -68,7 +68,7 @@ const EVENT_TYPE_CATEGORIES: Record<string, string[]> = {
     'deploy.timeout',
   ],
   Instance: ['instance.created', 'instance.deleted'],
-  Cleanup: ['clean.completed', 'clean.error', 'cleanup.policy.executed'],
+  Cleanup: ['clean.completed', 'clean.error', 'cleanup.policy.stop', 'cleanup.policy.clean', 'cleanup.policy.executed'],
   Rollback: ['rollback.completed', 'rollback.error'],
   Stop: ['stop.error'],
   System: ['stack.expiring', 'stack.expired', 'quota.warning', 'secret.expiring'],

@@ -128,6 +128,8 @@ Per-chart configuration overrides on a stack instance. Deep-merged with chart de
 ### Audit Log
 Every mutating API call (POST, PUT, DELETE) is recorded with user, action, entity type, entity ID, and timestamp.
 
+- Only devops and admin users can read the audit log (`GET /audit-logs`). Only admins can export it (`GET /audit-logs/export`). Other users get 403, and the UI does not show the Audit Log page to them.
+
 - Plain create, update and delete calls get the action `create`, `update` or `delete` and the entity type of the resource (singular, for example `cluster`, `cleanup_policy`, `api_key`).
 - Other operations get their own action, with the entity they act on. For example `POST /stack-instances/:id/deploy` gives `deploy | stack_instance | <instance id>`. The same applies to `stop`, `clean`, `rollback`, `extend_ttl`, `clone`, `invoke_action` (the action name is in the details), template `publish`, `unpublish`, `instantiate` and `clone`, definition `import` and `upgrade`, notification channel `test`, cluster `test_connection` and `set_default`, cleanup policy `run`, user `disable`, `enable`, `reset_password` and `change_role` (the old and the new role are in the details), and instance `follow` and `unfollow`. Deploy, stop, clean and rollback store the deployment log ID in the details.
 - A bulk operation writes one entry for each instance or template that succeeded, with `"bulk": true` in the details.
@@ -139,6 +141,7 @@ Every mutating API call (POST, PUT, DELETE) is recorded with user, action, entit
 ### Notifications
 **In-app notifications.** Lifecycle events of a stack instance (deploy, stop, clean, rollback, delete, expiry warning, cleanup policy action) give an in-app notification to the owner of the instance and to each follower.
 - Each receiver gets the notification only when the event type is on in the own notification preferences (Profile page). A receiver without a preference for the event type gets it. The Profile page lists every event type that the user can get as owner or follower (and, for admin and devops users, the system events `cleanup.policy.executed`, `quota.warning` and `secret.expiring`). The system notifications to admin and devops users also follow these preferences.
+- `PUT /notifications/preferences` accepts only these event types. An unknown event type gives 400, and the request changes no preference. Notification channels accept the same event types, and also the reserved type `stack.expired` (not sent yet).
 - Upgrade note: before this version the backend did not store a switched-off preference (it stored "on"), and it did not check the preferences. Users who switched events off before must open the Profile page, switch them off again and save.
 - An owner who also follows the instance gets one notification, not two.
 - The user who started the operation is not excluded. For example, a follower who deploys the instance also gets the deploy notification. The owner always got the notifications of the own operations; followers get the same rule.

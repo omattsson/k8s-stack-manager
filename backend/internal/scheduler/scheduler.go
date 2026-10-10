@@ -625,7 +625,17 @@ func (s *Scheduler) notifyPolicyExecuted(ctx context.Context, policy *models.Cle
 		if r.Status != "success" || r.Action == "delete" {
 			continue
 		}
-		notifType := "cleanup.policy." + r.Action
+		// Literal types, so the notifier test can check them against
+		// notifier.PreferenceEventTypes.
+		var notifType string
+		switch r.Action {
+		case "stop":
+			notifType = "cleanup.policy.stop"
+		case "clean":
+			notifType = "cleanup.policy.clean"
+		default:
+			continue
+		}
 		_ = s.notifier.NotifyInstance(ctx, r.target, notifType,
 			fmt.Sprintf("Stack %q %s by cleanup policy", r.InstanceName, actionPastTense(r.Action)),
 			fmt.Sprintf("Cleanup policy %q performed %s on the stack %q", policy.Name, r.Action, r.InstanceName),

@@ -15,10 +15,13 @@ import (
 // It is safe for concurrent use after construction; subscriptions are immutable
 // for the lifetime of the Dispatcher.
 type Dispatcher struct {
-	subs   []Subscription
+	subs    []Subscription
 	byEvent map[string][]int
-	client httpClient
-	now    func() time.Time
+	client  httpClient
+	now     func() time.Time
+	// clusterNames sets cluster_name in envelopes (WithClusterNames); nil
+	// leaves it empty.
+	clusterNames *ClusterNameResolver
 }
 
 // NewDispatcher validates cfg and returns a Dispatcher.
@@ -74,7 +77,7 @@ func (d *Dispatcher) fireInternal(ctx context.Context, event string, envelope Ev
 		return nil
 	}
 
-	envelope = d.prepare(event, envelope)
+	envelope = d.prepare(ctx, event, envelope)
 
 	for _, idx := range indices {
 		sub := d.subs[idx]
@@ -97,7 +100,7 @@ func (d *Dispatcher) fireInternal(ctx context.Context, event string, envelope Ev
 }
 
 // prepare sets the envelope fields that every dispatch sets.
-func (d *Dispatcher) prepare(event string, envelope EventEnvelope) EventEnvelope {
+func (d *Dispatcher) prepare(ctx context.Context, event string, envelope EventEnvelope) EventEnvelope {
 	envelope.APIVersion = envelopeAPIVersion
 	envelope.Kind = "EventEnvelope"
 	envelope.Event = event
@@ -105,7 +108,7 @@ func (d *Dispatcher) prepare(event string, envelope EventEnvelope) EventEnvelope
 	if envelope.RequestID == "" {
 		envelope.RequestID = newRequestID()
 	}
-	return envelope
+	return d.clusterNames.setClusterNames(ctx, envelope)
 }
 
 // isBlocking reports whether sub is a blocking subscriber of event. Only
@@ -194,7 +197,7 @@ func (d *Dispatcher) FireBlocking(ctx context.Context, event string, envelope Ev
 	if len(indices) == 0 {
 		return nil, nil
 	}
-	envelope = d.prepare(event, envelope)
+	envelope = d.prepare(ctx, event, envelope)
 	onProgress := cb.OnProgress
 	if onProgress == nil {
 		onProgress = func(string) {}

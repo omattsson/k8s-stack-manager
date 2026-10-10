@@ -49,6 +49,7 @@ type domainServices struct {
 	K8sWatcher        *k8s.Watcher
 	DeployManager     *deployer.Manager
 	HookDispatcher    *hooks.Dispatcher
+	ClusterNames      *hooks.ClusterNameResolver // cluster_name for hooks and actions; nil without both
 	ActionRegistry    *hooks.ActionRegistry
 	LifecycleNotifier *notifier.Notifier
 	CleanupExecutor   *deployer.CleanupExecutor
@@ -204,20 +205,31 @@ func buildDomainServices(
 		return nil, fmt.Errorf("load hooks config: %w", hookErr)
 	}
 
+	// cluster_name in hook envelopes and action requests: the batch lookup
+	// that the API uses, cached and with a bounded wait.
+	var clusterNames *hooks.ClusterNameResolver
+	if len(hookCfg.Subscriptions) > 0 || len(actionSpecs) > 0 {
+		clusterNames = hooks.NewClusterNameResolver(repos.Cluster.NamesByIDs)
+	}
+
 	var hookDispatcher *hooks.Dispatcher
 	if len(hookCfg.Subscriptions) > 0 {
 		hookDispatcher, hookErr = hooks.NewDispatcher(hookCfg, http.DefaultClient)
 		if hookErr != nil {
+			clusterNames.Stop()
 			return nil, fmt.Errorf("build hooks dispatcher: %w", hookErr)
 		}
+		hookDispatcher.WithClusterNames(clusterNames)
 	}
 
 	var actionRegistry *hooks.ActionRegistry
 	if len(actionSpecs) > 0 {
 		actionRegistry, hookErr = hooks.NewActionRegistry(actionSpecs, http.DefaultClient)
 		if hookErr != nil {
+			clusterNames.Stop()
 			return nil, fmt.Errorf("build action registry: %w", hookErr)
 		}
+		actionRegistry.WithClusterNames(clusterNames)
 	}
 
 	// Cluster health poller.
@@ -336,6 +348,7 @@ func buildDomainServices(
 		K8sWatcher:        k8sWatcher,
 		DeployManager:     deployManager,
 		HookDispatcher:    hookDispatcher,
+		ClusterNames:      clusterNames,
 		ActionRegistry:    actionRegistry,
 		LifecycleNotifier: lifecycleNotifier,
 		CleanupExecutor:   cleanupExecutor,

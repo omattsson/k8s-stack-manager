@@ -36,10 +36,10 @@ type StackInstance struct {
 	// by itself after a crash of the deploying replica.
 	PostDeployHookUntil *time.Time `json:"-"`
 
-	// ValuesDrift is computed, not stored. GET /stack-instances/{id} sets it
-	// to true when the running values come from a successful rollback and
-	// the stored overrides produce different values (the next deploy undoes
-	// the rollback). List responses do not compute it.
+	// ValuesDrift is computed, not stored. GET, PUT and POST .../extend on
+	// /stack-instances/{id} set it to true when the running values come from
+	// a successful rollback and the stored overrides produce different values
+	// (the next deploy undoes the rollback). List responses do not compute it.
 	ValuesDrift bool `json:"values_drift,omitempty" gorm:"-"`
 	// The name fields below are computed, not stored. The API sets them in
 	// list and detail responses (and in the create, update, clone and
@@ -54,9 +54,10 @@ type StackInstance struct {
 	// ClusterName is the name of the target cluster. Omitted when the
 	// cluster no longer exists or cluster_id is empty (older instances).
 	ClusterName string `json:"cluster_name,omitempty" gorm:"-" readonly:"true"`
-	// Following and FollowerCount are computed, not stored. Only GET
-	// /stack-instances/{id} sets them: following is true when the caller
-	// follows the instance, follower_count is the number of followers.
+	// Following and FollowerCount are computed, not stored. GET, PUT and
+	// POST .../extend on /stack-instances/{id} set them: following is true
+	// when the caller follows the instance, follower_count is the number of
+	// followers. List responses do not set them.
 	Following     *bool  `json:"following,omitempty" gorm:"-" readonly:"true"`
 	FollowerCount *int64 `json:"follower_count,omitempty" gorm:"-" readonly:"true"`
 }

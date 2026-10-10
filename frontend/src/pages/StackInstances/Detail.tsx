@@ -51,6 +51,7 @@ import { downloadBlob } from '../../utils/download';
 import ExtendTtlMenu from '../../components/ExtendTtlMenu';
 import InstanceActionsMenu from '../../components/InstanceActionsMenu';
 import { successfulDeploys, currentDeployLogId, defaultRollbackTarget } from '../../utils/deployHistory';
+import { mergeInstanceUpdate } from '../../utils/instanceState';
 import CloneDialog from './CloneDialog';
 import RollbackDialog from './RollbackDialog';
 
@@ -359,8 +360,8 @@ const Detail = () => {
     try {
       // Update branch if changed
       if (branch !== instance.branch) {
-        await instanceService.update(id, { branch });
-        setInstance({ ...instance, branch });
+        const updated = await instanceService.update(id, { branch });
+        setInstance((prev) => mergeInstanceUpdate(prev, updated));
       }
       initialBranchRef.current = branch;
 
@@ -630,8 +631,8 @@ const Detail = () => {
         // Clear TTL — send full instance so required fields are preserved
         updated = await instanceService.update(id, { ...instance, ttl_minutes: 0 });
       }
-      // The update response has no follow state: keep it.
-      setInstance((prev) => ({ ...updated, following: prev?.following, follower_count: prev?.follower_count }));
+      // Keep the follow state if the response does not have it.
+      setInstance((prev) => mergeInstanceUpdate(prev, updated));
       showSuccess('TTL updated');
     } catch {
       setError('Failed to update TTL');
@@ -784,7 +785,7 @@ const Detail = () => {
                 {canModify && (
                   <ExtendTtlMenu
                     instanceId={instance.id}
-                    onExtended={setInstance}
+                    onExtended={(updated) => setInstance((prev) => mergeInstanceUpdate(prev, updated))}
                     onError={setError}
                   />
                 )}

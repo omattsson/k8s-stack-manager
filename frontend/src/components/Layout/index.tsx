@@ -57,13 +57,15 @@ interface NavItem {
   label: string;
   path: string;
   icon: ReactNode;
+  /** Lowest role that sees the item. Omit to show the item to all users. */
+  minRole?: 'user' | 'devops' | 'admin';
 }
 
 const mainNav: NavItem[] = [
   { label: 'Dashboard', path: '/', icon: <DashboardOutlined /> },
   { label: 'Templates', path: '/templates', icon: <ViewModuleOutlined /> },
   { label: 'Definitions', path: '/stack-definitions', icon: <DescriptionOutlined /> },
-  { label: 'Audit Log', path: '/audit-log', icon: <HistoryOutlined /> },
+  { label: 'Audit Log', path: '/audit-log', icon: <HistoryOutlined />, minRole: 'devops' },
 ];
 
 const operationsNav: NavItem[] = [
@@ -318,7 +320,11 @@ const Layout = ({ children }: LayoutProps) => {
       <Divider />
 
       <List component="nav" aria-label="Main navigation" sx={{ flex: 1, overflow: 'auto', pt: 1 }}>
-        {renderNavSection(mainNav, 'Main', open)}
+        {renderNavSection(
+          mainNav.filter((item) => !item.minRole || hasAtLeastRole(user?.role, item.minRole)),
+          'Main',
+          open,
+        )}
         {hasAtLeastRole(user?.role, 'devops') &&
           renderNavSection(operationsNav, 'Operations', open)}
         {user?.role === 'admin' &&

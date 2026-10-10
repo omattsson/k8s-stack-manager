@@ -6,6 +6,7 @@ import (
 	"backend/internal/config"
 	"backend/internal/deployer"
 	"backend/internal/health"
+	"backend/internal/hooks"
 	"backend/internal/leader"
 	"backend/internal/models"
 	"backend/internal/notifier"
@@ -189,6 +190,7 @@ func main() {
 		leader:           leaderRun,
 		cleanupScheduler: svc.CleanupScheduler,
 		deployManager:    svc.DeployManager,
+		clusterNames:     svc.ClusterNames,
 		heartbeat:        svc.Heartbeat,
 		hub:              hub,
 		wsFanout:         wsFanout,
@@ -206,7 +208,8 @@ type shutdownDeps struct {
 	leader           *leaderRuntime // nil: no leader workers to stop
 	cleanupScheduler *scheduler.Scheduler
 	deployManager    *deployer.Manager
-	heartbeat        *replica.Heartbeat // nil: no heartbeat repository
+	clusterNames     *hooks.ClusterNameResolver // nil: no hooks or actions
+	heartbeat        *replica.Heartbeat         // nil: no heartbeat repository
 	hub              *websocket.Hub
 	wsFanout         *websocket.Fanout // nil: fan-out disabled
 	clusterRegistry  *cluster.Registry
@@ -250,6 +253,7 @@ func gracefulShutdown(srvs *servers, timeout time.Duration, deps shutdownDeps) {
 	//    and delete its row: the operations of this process have ended.
 	deps.deployManager.Shutdown()
 	deps.heartbeat.Stop(timeout)
+	deps.clusterNames.Stop()
 
 	// 4. Stop remaining services. The fan-out writes its queued rows
 	//    before the hub and the database close.

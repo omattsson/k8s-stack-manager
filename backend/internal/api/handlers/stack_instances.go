@@ -636,9 +636,7 @@ func (h *InstanceHandler) GetInstance(c *gin.Context) {
 		return
 	}
 
-	inst.ValuesDrift = h.instanceValuesDrift(c.Request.Context(), inst)
-	h.setInstanceNames(inst)
-	h.setFollowState(c, inst)
+	h.enrichInstanceDetail(c, inst)
 
 	c.JSON(http.StatusOK, inst)
 }
@@ -651,10 +649,12 @@ func (h *InstanceHandler) GetInstance(c *gin.Context) {
 // @Produce     json
 // @Param       id       path     string               true "Instance ID"
 // @Param       instance body     models.StackInstance   true "Instance object"
-// @Success     200      {object} models.StackInstance
+// @Success     200      {object} models.StackInstance "The updated instance with the same computed fields as GET (values_drift, names, follow state)"
 // @Failure     400      {object} map[string]string
+// @Failure     401      {object} map[string]string
 // @Failure     403      {object} map[string]string "Caller is not the owner, an admin or a devops user"
 // @Failure     404      {object} map[string]string
+// @Failure     500      {object} map[string]string
 // @Router      /api/v1/stack-instances/{id} [put]
 func (h *InstanceHandler) UpdateInstance(c *gin.Context) {
 	id := c.Param("id")
@@ -730,7 +730,7 @@ func (h *InstanceHandler) UpdateInstance(c *gin.Context) {
 		return
 	}
 
-	h.setInstanceNames(existing)
+	h.enrichInstanceDetail(c, existing)
 	c.JSON(http.StatusOK, existing)
 }
 
@@ -2094,7 +2094,7 @@ const msgExtendTTLDeprecated = `299 - "ttl_minutes on /extend is deprecated and 
 // @Produce     json
 // @Param       id  path     string          true  "Instance ID"
 // @Param       body body    extendTTLRequest false "Minutes to add (or the deprecated ttl_minutes)"
-// @Success     200 {object} models.StackInstance "The instance with the new expires_at"
+// @Success     200 {object} models.StackInstance "The instance with the new expires_at and the same computed fields as GET (values_drift, names, follow state)"
 // @Header      200 {string} Warning "Set when the deprecated ttl_minutes body is used"
 // @Failure     400 {object} map[string]string
 // @Failure     401 {object} map[string]string
@@ -2178,7 +2178,7 @@ func (h *InstanceHandler) ExtendTTL(c *gin.Context) {
 		return
 	}
 
-	h.setInstanceNames(inst)
+	h.enrichInstanceDetail(c, inst)
 	c.JSON(http.StatusOK, inst)
 }
 

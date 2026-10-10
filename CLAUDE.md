@@ -388,7 +388,7 @@ backend/internal/
 | Branch Overrides | `/api/v1/stack-instances/:id/branches` | Per-chart branch overrides (list, get, set, delete per chart) |
 | Quota Overrides | `/api/v1/stack-instances/:id/quota-overrides` | Per-instance resource quota overrides (`PUT` replaces all fields) |
 | Git | `/api/v1/git` | Branch listing, validation, provider status |
-| Audit Logs | `/api/v1/audit-logs` | Filterable audit log viewer + export |
+| Audit Logs | `/api/v1/audit-logs` | Filterable audit log viewer (devops or admin) + export (admin) |
 | Users | `/api/v1/users` | User management (admin): list, delete, disable, enable, password reset, role change |
 | API Keys | `/api/v1/users/:id/api-keys` | API key management |
 | Admin | `/api/v1/admin` | Orphaned namespace detection and cleanup |

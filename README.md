@@ -58,6 +58,8 @@ Track platform usage with real-time metrics: template and definition counts, run
 
 Full audit trail of every action in the system — creates, updates, deletes — with filters by user, entity type, action, and date range. Export logs for compliance. Every mutating API call is automatically logged with user identity and entity details.
 
+Only devops and admin users can read the audit log. Only admins can export it.
+
 ![Audit Log](docs/screenshots/audit-log.png)
 
 ### User Profile & API Keys
@@ -304,7 +306,7 @@ full command surface.
 | Overrides | `/api/v1/stack-instances/:id/overrides` | Per-chart value overrides |
 | Branch Overrides | `/api/v1/stack-instances/:id/branches` | Per-chart branch overrides |
 | Git | `/api/v1/git` | Branch listing, validation |
-| Audit Logs | `/api/v1/audit-logs` | Filterable audit trail + export |
+| Audit Logs | `/api/v1/audit-logs` | Filterable audit trail (devops or admin) + export (admin) |
 | Admin | `/api/v1/admin` | Orphaned namespace detection and cleanup |
 | Clusters | `/api/v1/clusters` | Multi-cluster registration, health, test-connection |
 | Shared Values | `/api/v1/clusters/:id/shared-values` | Per-cluster shared Helm values |
