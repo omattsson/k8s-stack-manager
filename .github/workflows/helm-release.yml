@@ -40,5 +40,8 @@ jobs:
         uses: helm/chart-releaser-action@v1.7.0
         with:
           charts_dir: helm
+          # The app release (vX.Y.Z) is the latest release, not the chart
+          # release. A chart release candidate must never become "Latest".
+          mark_as_latest: false
         env:
           CR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
