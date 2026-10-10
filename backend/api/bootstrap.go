@@ -18,6 +18,7 @@ import (
 	"backend/internal/models"
 	"backend/internal/notifier"
 	"backend/internal/notifier/channel"
+	"backend/internal/replica"
 	"backend/internal/scheduler"
 	"backend/internal/sessionstore"
 	"backend/internal/telemetry"
@@ -53,6 +54,16 @@ type domainServices struct {
 	CleanupExecutor   *deployer.CleanupExecutor
 	CleanupScheduler  *scheduler.Scheduler
 	ValuesGen         *helm.ValuesGenerator
+	// ReplicaID is the process identity of this process (replica.ProcessID):
+	// stored on each deploy log and written by Heartbeat.
+	ReplicaID string
+	// Heartbeat writes the heartbeat row of this process. Every replica
+	// starts it (main), not only the leader. Nil without a heartbeat
+	// repository.
+	Heartbeat *replica.Heartbeat
+	// InterruptRecovery is a leader-only worker: it ends the operations of
+	// stopped replicas. Nil without its repositories.
+	InterruptRecovery *deployer.InterruptRecovery
 }
 
 // handlerSet holds all HTTP handlers wired during bootstrap.
@@ -269,6 +280,10 @@ func buildDomainServices(
 		})
 	}
 
+	// Process identity: the replica identity plus a random suffix per
+	// process. Deploy logs and the heartbeat row carry it.
+	replicaID := replica.ProcessID(cfg.LeaderElection.Identity)
+
 	// Deployment manager — multi-cluster deploys.
 	deployManager := deployer.NewManager(deployer.ManagerConfig{
 		Registry:                   clusterRegistry,
@@ -287,7 +302,23 @@ func buildDomainServices(
 		StabilizePollInterval:      cfg.Deployment.StabilizePollInterval,
 		Hooks:                      hookDispatcher,
 		Notifier:                   lifecycleNotifier,
+		ReplicaID:                  replicaID,
 	})
+
+	// Recovery of operations whose replica stopped (leader-only worker) and
+	// the heartbeat of this process (every replica). Each deploy log has a
+	// deadline (its time budget, set by the deploy manager); the recovery
+	// waits for it.
+	interruptRecovery := deployer.NewInterruptRecovery(deployer.InterruptRecoveryConfig{
+		Operations: repos.InterruptedOperation,
+		Heartbeats: repos.ReplicaHeartbeat,
+		Instances:  repos.StackInstance,
+		AuditLog:   repos.AuditLog,
+		Hub:        hub,
+		Notifier:   lifecycleNotifier,
+		SelfID:     replicaID,
+	})
+	heartbeat := replica.NewHeartbeat(repos.ReplicaHeartbeat, replicaID, replica.HeartbeatInterval)
 
 	// Cleanup executor + scheduler. The scheduler runs cron jobs only on the
 	// leader replica (leader worker group).
@@ -310,6 +341,9 @@ func buildDomainServices(
 		CleanupExecutor:   cleanupExecutor,
 		CleanupScheduler:  cleanupScheduler,
 		ValuesGen:         valuesGen,
+		ReplicaID:         replicaID,
+		Heartbeat:         heartbeat,
+		InterruptRecovery: interruptRecovery,
 	}, nil
 }
 
@@ -554,7 +588,8 @@ const refreshTokenCleanupInterval = time.Hour
 // buildLeaderWorkers creates the background workers that run on the leader
 // replica only (TTL reaper, expiry warner, cleanup scheduler, quota and
 // secret monitors, secret refresher, cluster health poller, k8s status
-// watcher, refresh token cleanup). It does not start them: the leader
+// watcher, refresh token cleanup, interrupted operation recovery). It does
+// not start them: the leader
 // election starts the group for each leadership term. Every replica runs
 // the HTTP server, the WebSocket hub and its revalidation.
 func buildLeaderWorkers(
@@ -613,6 +648,12 @@ func buildLeaderWorkers(
 			}
 		}},
 	)
+
+	// Ends the operations of replicas without a heartbeat. Once at the
+	// start of the term, then every minute.
+	if svc.InterruptRecovery != nil {
+		group.Add(leader.Worker{Name: "interrupted-operation-recovery", Run: svc.InterruptRecovery.Run})
+	}
 
 	return &leaderWorkers{
 		Group:         group,

@@ -101,6 +101,9 @@ func deliver(ctx context.Context, client httpClient, sub Subscription, envelope 
 	if truncated {
 		return HookResponse{}, resp.StatusCode, fmt.Errorf("hook response exceeded %d-byte limit", maxHookResponseBytes)
 	}
+	if isRedirect(resp.StatusCode) {
+		return HookResponse{}, resp.StatusCode, &RedirectError{StatusCode: resp.StatusCode}
+	}
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return HookResponse{}, resp.StatusCode, fmt.Errorf("hook returned status %d: %s", resp.StatusCode, truncate(string(respBody), 200))
@@ -138,6 +141,9 @@ func deliverStreaming(ctx context.Context, client httpClient, sub Subscription, 
 	}
 	defer resp.Body.Close()
 
+	if isRedirect(resp.StatusCode) {
+		return HookResponse{}, resp.StatusCode, &RedirectError{StatusCode: resp.StatusCode}
+	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		respBody, _, _ := readLimitedBody(resp.Body, maxHookResponseBytes)
 		return HookResponse{}, resp.StatusCode, fmt.Errorf("hook returned status %d: %s", resp.StatusCode, truncate(string(respBody), 200))
@@ -172,6 +178,12 @@ func deliverStreaming(ctx context.Context, client httpClient, sub Subscription, 
 		return HookResponse{}, resp.StatusCode, fmt.Errorf("decode hook response: %w", err)
 	}
 	return parsed, resp.StatusCode, nil
+}
+
+// isRedirect reports whether status is a 3xx status. The dispatcher client
+// does not follow redirects, so the 3xx answer reaches deliver.
+func isRedirect(status int) bool {
+	return status >= 300 && status < 400
 }
 
 func sign(body []byte, secret string) string {

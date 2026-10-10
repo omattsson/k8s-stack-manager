@@ -1087,6 +1087,15 @@ func (d *Database) AutoMigrate() error {
 	// and get its in-app notifications).
 	migrator.AddMigration(instanceFollowersMigration())
 
+	// Migration 54: deployment_logs.replica_id (the process that runs the
+	// operation), deployment_logs.deadline_at (its time budget) and an index on (status, started_at) for the recovery of
+	// interrupted operations.
+	migrator.AddMigration(deployLogReplicaIDMigration())
+
+	// Migration 55: replica_heartbeats (one row per backend process; the
+	// leader treats a process without a fresh heartbeat as stopped).
+	migrator.AddMigration(replicaHeartbeatsMigration())
+
 	// Run migrations
 	if err := migrator.MigrateUp(); err != nil {
 		return err
@@ -1695,6 +1704,82 @@ func instanceFollowersMigration() schema.Migration {
 		Down: func(tx *gorm.DB) error {
 			if tx.Migrator().HasTable(&models.InstanceFollower{}) {
 				return tx.Migrator().DropTable(&models.InstanceFollower{})
+			}
+			return nil
+		},
+	}
+}
+
+// deployLogStatusStartedIndexName is the index on deployment_logs (status,
+// started_at) for ListRunningStartedBefore.
+const deployLogStatusStartedIndexName = "idx_deployment_logs_status_started"
+
+// deployLogReplicaIDMigration is migration 54. It adds the nullable columns
+// deployment_logs.replica_id (the process identity of the replica that runs
+// the operation) and deployment_logs.deadline_at (the latest time the
+// operation can still run), and the index idx_deployment_logs_status_started (status,
+// started_at): the leader lists the running logs every minute. Existing logs
+// get NULL; the recovery of interrupted operations skips them. Up and Down
+// are idempotent. It is a function so tests can run its Down step.
+func deployLogReplicaIDMigration() schema.Migration {
+	return schema.Migration{
+		Version:     "20261010000054",
+		Name:        "add_deployment_logs_replica_id",
+		Description: "Add deployment_logs.replica_id, deployment_logs.deadline_at and an index on (status, started_at) for the recovery of interrupted operations",
+		Up: func(tx *gorm.DB) error {
+			m := tx.Migrator()
+			if !m.HasTable(&models.DeploymentLog{}) {
+				return nil
+			}
+			for _, col := range []string{"ReplicaID", "DeadlineAt"} {
+				if !m.HasColumn(&models.DeploymentLog{}, col) {
+					if err := m.AddColumn(&models.DeploymentLog{}, col); err != nil {
+						return err
+					}
+				}
+			}
+			if m.HasIndex(&models.DeploymentLog{}, deployLogStatusStartedIndexName) {
+				return nil
+			}
+			return tx.Exec("CREATE INDEX " + deployLogStatusStartedIndexName + " ON deployment_logs (status, started_at)").Error // #nosec G202 -- index name is a constant
+		},
+		Down: func(tx *gorm.DB) error {
+			m := tx.Migrator()
+			if !m.HasTable(&models.DeploymentLog{}) {
+				return nil
+			}
+			if m.HasIndex(&models.DeploymentLog{}, deployLogStatusStartedIndexName) {
+				if err := m.DropIndex(&models.DeploymentLog{}, deployLogStatusStartedIndexName); err != nil {
+					return err
+				}
+			}
+			for _, col := range []string{"ReplicaID", "DeadlineAt"} {
+				if m.HasColumn(&models.DeploymentLog{}, col) {
+					if err := m.DropColumn(&models.DeploymentLog{}, col); err != nil {
+						return err
+					}
+				}
+			}
+			return nil
+		},
+	}
+}
+
+// replicaHeartbeatsMigration is migration 55. It creates replica_heartbeats
+// (id = process identity, last_seen) with an index on last_seen for the
+// cleanup. Up and Down are idempotent. It is a function so tests can run its
+// Down step.
+func replicaHeartbeatsMigration() schema.Migration {
+	return schema.Migration{
+		Version:     "20261010000055",
+		Name:        "create_replica_heartbeats",
+		Description: "Create replica_heartbeats (last sign of life of each backend process)",
+		Up: func(tx *gorm.DB) error {
+			return tx.AutoMigrate(&models.ReplicaHeartbeat{})
+		},
+		Down: func(tx *gorm.DB) error {
+			if tx.Migrator().HasTable(&models.ReplicaHeartbeat{}) {
+				return tx.Migrator().DropTable(&models.ReplicaHeartbeat{})
 			}
 			return nil
 		},

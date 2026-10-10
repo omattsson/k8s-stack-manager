@@ -3,6 +3,7 @@ package deployer
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/url"
@@ -385,12 +386,69 @@ func (m *Manager) newerOperation(instanceID, logID string) bool {
 }
 
 // fallbackLogUpdate writes the final state of a deployment log alone when
-// the finalize transaction failed, so the log does not stay "running".
-func (m *Manager) fallbackLogUpdate(instanceID string, deployLog *models.DeploymentLog) {
+// the finalize transaction failed, so the log does not stay "running". It
+// returns false when the log is no longer running (see writeFinal).
+func (m *Manager) fallbackLogUpdate(instanceID string, deployLog *models.DeploymentLog) bool {
 	if err := m.logRepo.Update(m.shutdownCtx, deployLog); err != nil {
+		if errors.Is(err, models.ErrDeployLogNotRunning) {
+			warnLogNotRunning(deployLog)
+			return false
+		}
 		slog.Error("fallback deployment log update failed",
 			"instance_id", instanceID, "deploy_log_id", deployLog.ID, "error", err)
 	}
+	return true
+}
+
+// warnLogNotRunning logs that a finalize write was skipped because the log
+// is no longer running.
+func warnLogNotRunning(deployLog *models.DeploymentLog) {
+	recordInterruptEvent(deployLog.Action, interruptEventLateFinalizeSkipped)
+	slog.Warn("deploy log is no longer running (ended by the interrupted operation recovery); the result of this operation is not written",
+		"instance_id", deployLog.StackInstanceID, "deploy_log_id", deployLog.ID, "action", deployLog.Action)
+}
+
+// writeFinal writes the final deploy log and then the instance (nil: the
+// log only). The log write is conditional: when the stored log is no longer
+// running (the leader ended the operation as interrupted), nothing is
+// written, a warning is logged and writeFinal returns false. The caller then
+// skips the rest of its finalize work (status broadcast, hooks,
+// notifications): the recovery already did it. With a transaction runner
+// both writes run in one transaction.
+func (m *Manager) writeFinal(instance *models.StackInstance, deployLog *models.DeploymentLog, op string) bool {
+	instanceID := deployLog.StackInstanceID
+	if instance == nil {
+		return m.fallbackLogUpdate(instanceID, deployLog)
+	}
+	if m.txRunner != nil {
+		err := m.txRunner.RunInTx(func(repos database.TxRepos) error {
+			if err := repos.DeploymentLog.Update(context.Background(), deployLog); err != nil {
+				return fmt.Errorf("updating deploy log: %w", err)
+			}
+			if err := repos.StackInstance.Update(instance); err != nil {
+				return fmt.Errorf("updating instance: %w", err)
+			}
+			return nil
+		})
+		if err == nil {
+			return true
+		}
+		if errors.Is(err, models.ErrDeployLogNotRunning) {
+			warnLogNotRunning(deployLog)
+			return false
+		}
+		slog.Error("failed to finalize "+op+" atomically",
+			"instance_id", instanceID, "error", err)
+		return m.fallbackLogUpdate(instanceID, deployLog)
+	}
+	if !m.fallbackLogUpdate(instanceID, deployLog) {
+		return false
+	}
+	if err := m.instanceRepo.Update(instance); err != nil {
+		slog.Error("failed to update instance after "+op,
+			"instance_id", instanceID, "deploy_log_id", deployLog.ID, "error", err)
+	}
+	return true
 }
 
 // Outcomes of rollback-completed (metadata "outcome").
@@ -418,8 +476,8 @@ func (m *Manager) finalizeRollbackCancelled(instanceID string, deployLog *models
 	deployLog.CompletedAt = &now
 	deployLog.Status = models.DeployLogError
 	deployLog.ErrorMessage = truncateString(reason, maxLogErrorLen)
-	if err := m.logRepo.Update(m.shutdownCtx, deployLog); err != nil {
-		slog.Error("failed to close cancelled rollback log", "instance_id", instanceID, "log_id", deployLog.ID, "error", err)
+	if !m.writeFinal(nil, deployLog, "rollback") {
+		return
 	}
 	instance, err := m.instanceRepo.FindByID(instanceID)
 	if err != nil {
@@ -459,24 +517,12 @@ func (m *Manager) finalizeRollbackRejected(job rollbackJob, output string, hookE
 		instance.ErrorMessage = job.prevError
 	}
 
-	switch {
-	case restore && m.txRunner != nil:
-		if err := m.txRunner.RunInTx(func(repos database.TxRepos) error {
-			if err := repos.StackInstance.Update(instance); err != nil {
-				return fmt.Errorf("updating instance: %w", err)
-			}
-			return repos.DeploymentLog.Update(context.Background(), deployLog)
-		}); err != nil {
-			slog.Error("failed to finalize rejected rollback", "instance_id", instanceID, "error", err)
-			m.fallbackLogUpdate(instanceID, deployLog)
-		}
-	case restore:
-		if err := m.instanceRepo.Update(instance); err != nil {
-			slog.Error("failed to restore instance after rejected rollback", "instance_id", instanceID, "error", err)
-		}
-		m.fallbackLogUpdate(instanceID, deployLog)
-	default:
-		m.fallbackLogUpdate(instanceID, deployLog)
+	restoreTarget := instance
+	if !restore {
+		restoreTarget = nil
+	}
+	if !m.writeFinal(restoreTarget, deployLog, "rejected rollback") {
+		return
 	}
 
 	if restore {

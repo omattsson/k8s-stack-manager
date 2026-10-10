@@ -236,7 +236,8 @@ ready, for example restore a database snapshot and warm caches. With
    - `failure_policy=fail`: the deploy fails. The instance gets `error`, and
      `error_message` of the instance and of the deploy log is
      `post-deploy hook "<name>" denied the deployment: <message>` or
-     `post-deploy hook "<name>" failed (unreachable or timed out)`. The deploy
+     `post-deploy hook "<name>" failed (unreachable or timed out)` (for a 3xx
+     answer: `failed (the subscriber answered with a redirect)`). The deploy
      log output has the same `ERROR:` line. Later blocking subscribers and the
      non-blocking `post-deploy` subscribers are not called; `deploy-finalized`
      fires. A timeout of the subscriber does not fire `deploy-timeout`.
@@ -273,8 +274,18 @@ ready, for example restore a database snapshot and warm caches. With
    disconnects). A stop starts `helm uninstall` at the same time; a subscriber
    that goes on writes to a namespace that is being removed.
 
-   After a SIGKILL or the loss of the node, nothing ends the deploy: the
-   instance stays `stabilizing`. Stop the instance to get out of this state.
+   After a SIGKILL, an OOM kill or the loss of the node, the leader ends the
+   deploy (see [Interrupted operations](../../ARCHITECTURE.md#interrupted-operations)):
+   when the deploy passed the deadline of its log (the time budget of the
+   deploy, which includes the sum of the blocking hook timeouts plus one
+   minute, plus 5 minutes), and the replica that ran it has no heartbeat for
+   2 minutes, the instance gets `error` with the message
+   `Interrupted: the server that ran this operation stopped. Deploy again.`
+   The deploy log gets status `error`, `post_deploy_hook_until` is cleared,
+   and the owner and the followers get "Deployment failed". No hook event
+   fires for this recovery (no `deploy-finalized`). The subscriber can still
+   run: the backend does not call it again. Until the recovery, Stop also
+   ends the state.
 
 The blocking wait does not hold a deploy concurrency slot
 (`MAX_CONCURRENT_DEPLOYS`). The envelope of a blocking call has the `charts`
@@ -351,6 +362,18 @@ To block a pre-* event that has `failure_policy=fail`:
 
 Any non-2xx response is also treated as a failure. Empty 2xx bodies are
 interpreted as `{"allowed": true}`.
+
+The backend does not follow a redirect for an event hook (any dispatch path:
+normal, progress streaming and blocking `post-deploy`). A 3xx answer (for
+example 302, 307 or 308) is a subscriber failure, so a signed body never goes
+to another URL. The `failure_policy` of the subscription applies:
+
+- `fail`: the operation stops. The user sees `<event> hook "<name>" failed
+  (the subscriber answered with a redirect)`. The message does not contain
+  the subscriber URL or the `Location` header.
+- `ignore`: the backend logs a warning and continues.
+
+Configure the final URL of the subscriber in `url`.
 
 ---
 

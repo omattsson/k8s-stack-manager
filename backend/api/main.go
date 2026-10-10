@@ -9,6 +9,7 @@ import (
 	"backend/internal/leader"
 	"backend/internal/models"
 	"backend/internal/notifier"
+	"backend/internal/replica"
 	"backend/internal/scheduler"
 	"backend/internal/sessionstore"
 	"backend/internal/telemetry"
@@ -132,6 +133,10 @@ func main() {
 	svc, err := buildDomainServices(cfg, repos, hub, healthChecker)
 	must("domain services", err)
 
+	// Heartbeat of this process (every replica). The leader treats a
+	// process without a fresh heartbeat as stopped and ends its operations.
+	svc.Heartbeat.Start()
+
 	// Session store for token blocklist and OIDC state.
 	sessStore := buildSessionStore(cfg.SessionStore.Backend, mysqlGormDB)
 
@@ -184,6 +189,7 @@ func main() {
 		leader:           leaderRun,
 		cleanupScheduler: svc.CleanupScheduler,
 		deployManager:    svc.DeployManager,
+		heartbeat:        svc.Heartbeat,
 		hub:              hub,
 		wsFanout:         wsFanout,
 		clusterRegistry:  svc.ClusterRegistry,
@@ -200,6 +206,7 @@ type shutdownDeps struct {
 	leader           *leaderRuntime // nil: no leader workers to stop
 	cleanupScheduler *scheduler.Scheduler
 	deployManager    *deployer.Manager
+	heartbeat        *replica.Heartbeat // nil: no heartbeat repository
 	hub              *websocket.Hub
 	wsFanout         *websocket.Fanout // nil: fan-out disabled
 	clusterRegistry  *cluster.Registry
@@ -239,8 +246,10 @@ func gracefulShutdown(srvs *servers, timeout time.Duration, deps shutdownDeps) {
 		deps.cleanupScheduler.Stop()
 	}
 
-	// 3. Now safe to wait for in-flight deploys.
+	// 3. Now safe to wait for in-flight deploys. Then stop the heartbeat
+	//    and delete its row: the operations of this process have ended.
 	deps.deployManager.Shutdown()
+	deps.heartbeat.Stop(timeout)
 
 	// 4. Stop remaining services. The fan-out writes its queued rows
 	//    before the hub and the database close.

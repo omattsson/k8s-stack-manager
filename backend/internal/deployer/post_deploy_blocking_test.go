@@ -151,6 +151,17 @@ func TestManager_Deploy_BlockingPostDeploy(t *testing.T) {
 			expectOutput:       []string{`ERROR: post-deploy hook "restore" failed (unreachable or timed out)`},
 		},
 		{
+			name:          "failure_policy fail redirect is not followed and sets error",
+			failurePolicy: hooks.FailurePolicyFail,
+			handler: func(w http.ResponseWriter, r *http.Request, _ *mockInstanceRepo, _ string) {
+				http.Redirect(w, r, "/sink", http.StatusTemporaryRedirect)
+			},
+			expectStatus:       models.StackStatusError,
+			expectErrorMessage: `post-deploy hook "restore" failed (the subscriber answered with a redirect)`,
+			expectNotifs:       []string{"deployment.error"},
+			expectOutput:       []string{`ERROR: post-deploy hook "restore" failed (the subscriber answered with a redirect)`},
+		},
+		{
 			name:          "failure_policy ignore sets running and warns the owner",
 			failurePolicy: hooks.FailurePolicyIgnore,
 			handler: func(w http.ResponseWriter, _ *http.Request, _ *mockInstanceRepo, _ string) {
@@ -264,6 +275,7 @@ func TestManager_Deploy_BlockingPostDeploy(t *testing.T) {
 				assert.NotContains(t, names, "notify:post-deploy")
 			}
 			assert.NotContains(t, names, "restore:deploy-finalized")
+			assert.NotContains(t, names, "sink:post-deploy", "a redirect is never followed")
 
 			for _, c := range srv.snapshot() {
 				require.NotNil(t, c.envelope.Trigger, "%s:%s has a trigger", c.sub, c.envelope.Event)

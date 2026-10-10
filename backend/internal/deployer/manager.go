@@ -70,6 +70,9 @@ type Manager struct {
 	shutdownCancel    context.CancelFunc
 	wg                sync.WaitGroup
 	shuttingDown      atomic.Bool
+	// replicaID is the process identity stored on each deploy log (see
+	// ManagerConfig.ReplicaID).
+	replicaID string
 	// Wildcard TLS secret replication (local dev). When wildcardTLSSourceSecret
 	// is empty, replication is disabled.
 	wildcardTLSSourceNS     string
@@ -167,6 +170,12 @@ type ManagerConfig struct {
 	// StabilizePollInterval controls how frequently pod readiness is checked
 	// during the stabilization window. Defaults to 5s if zero.
 	StabilizePollInterval time.Duration
+
+	// ReplicaID is the process identity of this process (replica.ProcessID).
+	// Each deploy log stores it, so the leader can end the operation when
+	// this process stops without a clean shutdown (InterruptRecovery).
+	// Empty: logs get no replica ID and the recovery skips them.
+	ReplicaID string
 }
 
 // DeployRequest contains everything needed to deploy a stack instance.
@@ -221,6 +230,7 @@ func NewManager(cfg ManagerConfig) *Manager {
 		txRunner:                cfg.TxRunner,
 		quotaRepo:               cfg.QuotaRepo,
 		quotaOverrideRepo:       cfg.QuotaOverrideRepo,
+		replicaID:               cfg.ReplicaID,
 		semaphore:               make(chan struct{}, maxConcurrent),
 		shutdownCtx:             ctx,
 		shutdownCancel:          cancel,
@@ -423,6 +433,8 @@ func (m *Manager) Deploy(ctx context.Context, req DeployRequest) (string, error)
 		StackInstanceID: req.Instance.ID,
 		Action:          models.DeployActionDeploy,
 		Status:          models.DeployLogRunning,
+		ReplicaID:       m.replicaID,
+		DeadlineAt:      m.operationDeadline(now, models.DeployActionDeploy, helmExec, len(req.Charts)),
 		StartedAt:       now,
 		ChartVersions:   chartVersionsJSON(req.Charts),
 		Branch:          req.Instance.Branch,
@@ -572,6 +584,9 @@ func (m *Manager) executeDeploy(helm HelmExecutor, k8sClient *k8s.Client, regCfg
 	m.semaphore <- struct{}{}
 	releaseSlot := sync.OnceFunc(func() { <-m.semaphore })
 	defer releaseSlot()
+	if !m.extendDeadline(deployLog, helm, len(charts)) {
+		return
+	}
 
 	// Start a root span for the background deployment (the HTTP request context
 	// is long gone by the time this goroutine runs).
@@ -961,10 +976,7 @@ func (m *Manager) finalizeDeployWith(instanceID string, deployLog *models.Deploy
 			deployLog.Status = models.DeployLogError
 			deployLog.ErrorMessage = truncateString(sanitized, maxLogErrorLen)
 		}
-		if err := m.logRepo.Update(m.shutdownCtx, deployLog); err != nil {
-			slog.Error("failed to update deploy log after concurrent op",
-				"instance_id", instanceID, "deploy_log_id", deployLog.ID, "error", err)
-		}
+		m.writeFinal(nil, deployLog, "deploy")
 		return
 	}
 
@@ -1012,29 +1024,9 @@ func (m *Manager) finalizeDeployWith(instanceID string, deployLog *models.Deploy
 		)
 	}
 
-	if m.txRunner != nil {
-		if err := m.txRunner.RunInTx(func(repos database.TxRepos) error {
-			if err := repos.StackInstance.Update(instance); err != nil {
-				return fmt.Errorf("updating instance: %w", err)
-			}
-			if err := repos.DeploymentLog.Update(context.Background(), deployLog); err != nil {
-				return fmt.Errorf("updating deploy log: %w", err)
-			}
-			return nil
-		}); err != nil {
-			slog.Error("failed to finalize deploy atomically",
-				"instance_id", instanceID, "error", err)
-			m.fallbackLogUpdate(instanceID, deployLog)
-		}
-	} else {
-		if err := m.instanceRepo.Update(instance); err != nil {
-			slog.Error("failed to update instance after deploy",
-				"instance_id", instanceID, "deploy_log_id", deployLog.ID, "error", err)
-		}
-		if err := m.logRepo.Update(m.shutdownCtx, deployLog); err != nil {
-			slog.Error("failed to update deploy log after deploy",
-				"instance_id", instanceID, "deploy_log_id", deployLog.ID, "error", err)
-		}
+	if !m.writeFinal(instance, deployLog, "deploy") {
+		m.logActions.Delete(deployLog.ID)
+		return
 	}
 
 	// Broadcast final status.
@@ -1131,6 +1123,8 @@ func (m *Manager) StopWithCharts(ctx context.Context, instance *models.StackInst
 		StackInstanceID: instance.ID,
 		Action:          models.DeployActionStop,
 		Status:          models.DeployLogRunning,
+		ReplicaID:       m.replicaID,
+		DeadlineAt:      m.operationDeadline(now, models.DeployActionStop, helmExec, len(charts)),
 		StartedAt:       now,
 	}
 	m.logActions.Store(logID, deployLog.Action)
@@ -1181,6 +1175,9 @@ func (m *Manager) executeStopWithCharts(helm HelmExecutor, instanceID string, de
 	defer m.logTriggers.Delete(deployLog.ID)
 	m.semaphore <- struct{}{}
 	defer func() { <-m.semaphore }()
+	if !m.extendDeadline(deployLog, helm, len(charts)) {
+		return
+	}
 
 	_, _, finishSpan := startDeploySpan(context.Background(), "deployer.undeploy", //nolint:gosec // G118: intentional — Helm operations must outlive HTTP request; shutdown coordinated via sync.WaitGroup
 		attribute.String("instance.id", instanceID),
@@ -1283,29 +1280,9 @@ func (m *Manager) finalizeStop(instanceID string, deployLog *models.DeploymentLo
 		)
 	}
 
-	if m.txRunner != nil {
-		if err := m.txRunner.RunInTx(func(repos database.TxRepos) error {
-			if err := repos.StackInstance.Update(instance); err != nil {
-				return fmt.Errorf("updating instance: %w", err)
-			}
-			if err := repos.DeploymentLog.Update(context.Background(), deployLog); err != nil {
-				return fmt.Errorf("updating deploy log: %w", err)
-			}
-			return nil
-		}); err != nil {
-			slog.Error("failed to finalize stop atomically",
-				"instance_id", instanceID, "error", err)
-			m.fallbackLogUpdate(instanceID, deployLog)
-		}
-	} else {
-		if err := m.instanceRepo.Update(instance); err != nil {
-			slog.Error("failed to update instance after stop",
-				"instance_id", instanceID, "deploy_log_id", deployLog.ID, "error", err)
-		}
-		if err := m.logRepo.Update(m.shutdownCtx, deployLog); err != nil {
-			slog.Error("failed to update deploy log after stop",
-				"instance_id", instanceID, "deploy_log_id", deployLog.ID, "error", err)
-		}
+	if !m.writeFinal(instance, deployLog, "stop") {
+		m.logActions.Delete(deployLog.ID)
+		return
 	}
 
 	if stopErr != nil {
@@ -1450,6 +1427,8 @@ func (m *Manager) Clean(ctx context.Context, instance *models.StackInstance, cha
 		StackInstanceID: instance.ID,
 		Action:          models.DeployActionClean,
 		Status:          models.DeployLogRunning,
+		ReplicaID:       m.replicaID,
+		DeadlineAt:      m.operationDeadline(now, models.DeployActionClean, helmExec, len(charts)),
 		StartedAt:       now,
 	}
 	m.logActions.Store(logID, deployLog.Action)
@@ -1502,6 +1481,11 @@ func (m *Manager) executeClean(helm HelmExecutor, k8sClient *k8s.Client, instanc
 	defer m.logTriggers.Delete(deployLog.ID)
 	m.semaphore <- struct{}{}
 	defer func() { <-m.semaphore }()
+	if !m.extendDeadline(deployLog, helm, len(charts)) {
+		// The instance stays (status error): no delete after the clean.
+		m.pendingDeletes.Delete(instanceID)
+		return
+	}
 
 	_, _, finishSpan := startDeploySpan(context.Background(), "deployer.clean", //nolint:gosec // G118: intentional — Helm operations must outlive HTTP request; shutdown coordinated via sync.WaitGroup
 		attribute.String("instance.id", instanceID),
@@ -1636,29 +1620,11 @@ func (m *Manager) finalizeClean(instanceID string, deployLog *models.DeploymentL
 		)
 	}
 
-	if m.txRunner != nil {
-		if err := m.txRunner.RunInTx(func(repos database.TxRepos) error {
-			if err := repos.StackInstance.Update(instance); err != nil {
-				return fmt.Errorf("updating instance: %w", err)
-			}
-			if err := repos.DeploymentLog.Update(context.Background(), deployLog); err != nil {
-				return fmt.Errorf("updating deploy log: %w", err)
-			}
-			return nil
-		}); err != nil {
-			slog.Error("failed to finalize clean atomically",
-				"instance_id", instanceID, "error", err)
-			m.fallbackLogUpdate(instanceID, deployLog)
-		}
-	} else {
-		if err := m.instanceRepo.Update(instance); err != nil {
-			slog.Error("failed to update instance after clean",
-				"instance_id", instanceID, "deploy_log_id", deployLog.ID, "error", err)
-		}
-		if err := m.logRepo.Update(m.shutdownCtx, deployLog); err != nil {
-			slog.Error("failed to update deploy log after clean",
-				"instance_id", instanceID, "deploy_log_id", deployLog.ID, "error", err)
-		}
+	if !m.writeFinal(instance, deployLog, "clean") {
+		m.logActions.Delete(deployLog.ID)
+		// The instance stays (status error): no delete after the clean.
+		m.pendingDeletes.Delete(instanceID)
+		return
 	}
 
 	_, shouldDelete := m.pendingDeletes.LoadAndDelete(instanceID)
@@ -1803,6 +1769,8 @@ func (m *Manager) Rollback(ctx context.Context, req RollbackRequest) (string, er
 		StackInstanceID: req.Instance.ID,
 		Action:          models.DeployActionRollback,
 		Status:          models.DeployLogRunning,
+		ReplicaID:       m.replicaID,
+		DeadlineAt:      m.operationDeadline(now, models.DeployActionRollback, helmExec, len(req.Charts)),
 		StartedAt:       now,
 		TargetLogID:     req.TargetLogID,
 		Branch:          req.Instance.Branch,
@@ -1905,6 +1873,9 @@ func (m *Manager) executeRollback(job rollbackJob) {
 
 	m.semaphore <- struct{}{}
 	defer func() { <-m.semaphore }()
+	if !m.extendDeadline(deployLog, job.helm, len(charts)) {
+		return
+	}
 
 	_, _, finishSpan := startDeploySpan(context.Background(), "deployer.rollback", //nolint:gosec // G118: intentional — Helm operations must outlive HTTP request
 		attribute.String("instance.id", instanceID),
@@ -2091,29 +2062,9 @@ func (m *Manager) finalizeRollback(instanceID string, deployLog *models.Deployme
 		)
 	}
 
-	if m.txRunner != nil {
-		if err := m.txRunner.RunInTx(func(repos database.TxRepos) error {
-			if err := repos.StackInstance.Update(instance); err != nil {
-				return fmt.Errorf("updating instance: %w", err)
-			}
-			if err := repos.DeploymentLog.Update(context.Background(), deployLog); err != nil {
-				return fmt.Errorf("updating deploy log: %w", err)
-			}
-			return nil
-		}); err != nil {
-			slog.Error("failed to finalize rollback atomically",
-				"instance_id", instanceID, "error", err)
-			m.fallbackLogUpdate(instanceID, deployLog)
-		}
-	} else {
-		if err := m.instanceRepo.Update(instance); err != nil {
-			slog.Error("failed to update instance after rollback",
-				"instance_id", instanceID, "deploy_log_id", deployLog.ID, "error", err)
-		}
-		if err := m.logRepo.Update(m.shutdownCtx, deployLog); err != nil {
-			slog.Error("failed to update deploy log after rollback",
-				"instance_id", instanceID, "deploy_log_id", deployLog.ID, "error", err)
-		}
+	if !m.writeFinal(instance, deployLog, "rollback") {
+		m.logActions.Delete(deployLog.ID)
+		return
 	}
 
 	if rollbackErr != nil {
