@@ -216,8 +216,31 @@ func (m *mockDeployLogRepo) Update(_ context.Context, log *models.DeploymentLog)
 	if m.err != nil {
 		return m.err
 	}
+	// As the GORM repository: only a running log is written.
+	if cur, ok := m.items[log.ID]; !ok || cur.Status != models.DeployLogRunning {
+		return models.ErrDeployLogNotRunning
+	}
 	cp := *log
 	m.items[log.ID] = &cp
+	return nil
+}
+
+// ExtendDeadline implements models.DeploymentLogDeadlineExtender with the
+// rules of the GORM repository.
+func (m *mockDeployLogRepo) ExtendDeadline(_ context.Context, id string, deadline time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.err != nil {
+		return m.err
+	}
+	cur, ok := m.items[id]
+	if !ok || cur.Status != models.DeployLogRunning {
+		return models.ErrDeployLogNotRunning
+	}
+	if cur.DeadlineAt == nil || cur.DeadlineAt.Before(deadline) {
+		d := deadline
+		cur.DeadlineAt = &d
+	}
 	return nil
 }
 

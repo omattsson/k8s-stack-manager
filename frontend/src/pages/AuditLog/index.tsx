@@ -46,7 +46,7 @@ const ACTIONS = [
   'publish', 'unpublish', 'instantiate', 'quick_deploy', 'import', 'upgrade',
   'test', 'test_connection', 'set_default', 'run',
   'disable', 'enable', 'reset_password', 'change_role', 'follow', 'unfollow',
-  'expired', 'cleanup_policy_executed',
+  'expired', 'cleanup_policy_executed', 'interrupted',
 ];
 
 const AuditLog = () => {

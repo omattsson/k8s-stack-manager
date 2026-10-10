@@ -148,6 +148,7 @@ const (
 	AuditActionQuickDeploy           = "quick_deploy"            // handlers.QuickDeployHandler
 	AuditActionExpired               = "expired"                 // ttl reaper
 	AuditActionCleanupPolicyExecuted = "cleanup_policy_executed" // cleanup scheduler
+	AuditActionInterrupted           = "interrupted"             // deployer.InterruptRecovery
 )
 
 // KnownAuditActions lists every action that new audit entries can have. The
@@ -162,6 +163,7 @@ var KnownAuditActions = []string{
 	AuditActionDisable, AuditActionEnable, AuditActionResetPassword,
 	AuditActionChangeRole, AuditActionFollow, AuditActionUnfollow,
 	AuditActionQuickDeploy, AuditActionExpired, AuditActionCleanupPolicyExecuted,
+	AuditActionInterrupted,
 }
 
 // KnownAuditEntityTypes lists every entity type that new audit entries can

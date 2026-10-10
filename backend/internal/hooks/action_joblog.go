@@ -280,6 +280,13 @@ func noRedirectClient(client httpClient) httpClient {
 	if !ok {
 		return client
 	}
+	return NoRedirectHTTPClient(c)
+}
+
+// NoRedirectHTTPClient returns a copy of c that does not follow redirects:
+// the caller gets the 3xx response. Other packages that send signed bodies
+// (notification channels) use it too. c is not changed.
+func NoRedirectHTTPClient(c *http.Client) *http.Client {
 	cp := *c
 	cp.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	return &cp

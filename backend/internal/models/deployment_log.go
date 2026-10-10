@@ -2,6 +2,7 @@ package models
 
 import (
 	"context"
+	"errors"
 	"time"
 )
 
@@ -32,6 +33,33 @@ type DeploymentLog struct {
 	// the composite index idx_deployment_logs_user_action (user_id, action,
 	// started_at, completed_at, status) for SummarizeByUsers.
 	UserID string `json:"user_id,omitempty" gorm:"size:36"`
+	// ReplicaID is the process identity of the replica that runs the
+	// operation (POD_NAME or host name plus a random suffix per process, the
+	// same value as its heartbeat row). The leader uses it to find
+	// operations whose replica stopped (see InterruptedOperationRepository).
+	// NULL for logs written before migration 54. Not in the API.
+	ReplicaID string `json:"-" gorm:"size:253"`
+	// DeadlineAt is the latest time the operation can still run: the start
+	// plus the time budget of the operation (hooks, Helm, readiness wait,
+	// blocking post-deploy hooks) plus a margin. The deploy manager moves it
+	// later when the operation gets its concurrency slot. The leader ends a
+	// running operation only after this time and only when its replica has
+	// no fresh heartbeat. NULL for logs written before migration 54 (the
+	// recovery skips them). Written with the clock of the replica.
+	DeadlineAt *time.Time `json:"-"`
+}
+
+// ErrDeployLogNotRunning is returned by DeploymentLogRepository.Update when
+// the stored log is no longer running (for example the leader ended it as
+// an interrupted operation). The update changes nothing.
+var ErrDeployLogNotRunning = errors.New("deployment log is no longer running")
+
+// DeploymentLogDeadlineExtender is implemented by the GORM deployment log
+// repository. ExtendDeadline sets deadline_at to deadline when the log is
+// still running and its deadline is earlier. It returns
+// ErrDeployLogNotRunning when the log is no longer running.
+type DeploymentLogDeadlineExtender interface {
+	ExtendDeadline(ctx context.Context, id string, deadline time.Time) error
 }
 
 // Deployment log action constants.
@@ -89,6 +117,10 @@ type DeploymentLogWithContext struct {
 type DeploymentLogRepository interface {
 	Create(ctx context.Context, log *DeploymentLog) error
 	FindByID(ctx context.Context, id string) (*DeploymentLog, error)
+	// Update writes all columns of the log, only while the stored log is
+	// running. When the stored log is no longer running it changes nothing
+	// and returns ErrDeployLogNotRunning (a late writer after an interrupted
+	// operation recovery must not overwrite the recovered log).
 	Update(ctx context.Context, log *DeploymentLog) error
 	ListByInstance(ctx context.Context, instanceID string) ([]DeploymentLog, error)
 	ListByInstancePaginated(ctx context.Context, filters DeploymentLogFilters) (*DeploymentLogResult, error)

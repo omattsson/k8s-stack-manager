@@ -16,8 +16,11 @@ import (
 	"gorm.io/gorm"
 )
 
-// Compile-time interface check.
-var _ models.DeploymentLogRepository = (*GORMDeploymentLogRepository)(nil)
+// Compile-time interface checks.
+var (
+	_ models.DeploymentLogRepository       = (*GORMDeploymentLogRepository)(nil)
+	_ models.DeploymentLogDeadlineExtender = (*GORMDeploymentLogRepository)(nil)
+)
 
 // GORMDeploymentLogRepository implements models.DeploymentLogRepository using GORM.
 type GORMDeploymentLogRepository struct {
@@ -55,10 +58,61 @@ func (r *GORMDeploymentLogRepository) FindByID(ctx context.Context, id string) (
 	return &log, nil
 }
 
-// Update persists changes to an existing deployment log record.
+// Update writes all columns of a deployment log, only while the stored log
+// is running (conditional UPDATE ... WHERE id = ? AND status = 'running').
+// When no running row matches it changes nothing and returns
+// models.ErrDeployLogNotRunning: the leader can have ended the operation
+// (interrupted operation recovery), and a late writer must not overwrite
+// that result. Save is not used: it inserts a row when the update matches
+// nothing.
 func (r *GORMDeploymentLogRepository) Update(ctx context.Context, log *models.DeploymentLog) error {
-	if err := r.db.WithContext(ctx).Save(log).Error; err != nil {
+	res := r.db.WithContext(ctx).Model(&models.DeploymentLog{}).
+		Where("id = ? AND status = ?", log.ID, models.DeployLogRunning).
+		Select("*").Omit("id").
+		Updates(log)
+	if res.Error != nil {
+		return dberrors.NewDatabaseError("update", res.Error)
+	}
+	if res.RowsAffected > 0 {
+		return nil
+	}
+	// MySQL counts only changed rows: an update without a change of a
+	// running log also gives 0 rows.
+	var running int64
+	if err := r.db.WithContext(ctx).Model(&models.DeploymentLog{}).
+		Where("id = ? AND status = ?", log.ID, models.DeployLogRunning).
+		Count(&running).Error; err != nil {
 		return dberrors.NewDatabaseError("update", err)
+	}
+	if running > 0 {
+		return nil
+	}
+	return models.ErrDeployLogNotRunning
+}
+
+// ExtendDeadline sets deadline_at to deadline when the log is running and
+// its deadline is earlier (or not set). It returns
+// models.ErrDeployLogNotRunning when the log is no longer running (for
+// example the leader ended it while the operation waited for its slot).
+func (r *GORMDeploymentLogRepository) ExtendDeadline(ctx context.Context, id string, deadline time.Time) error {
+	res := r.db.WithContext(ctx).Model(&models.DeploymentLog{}).
+		Where("id = ? AND status = ? AND (deadline_at IS NULL OR deadline_at < ?)", id, models.DeployLogRunning, deadline.UTC()).
+		Update("deadline_at", deadline.UTC())
+	if res.Error != nil {
+		return dberrors.NewDatabaseError("extend_deadline", res.Error)
+	}
+	if res.RowsAffected > 0 {
+		return nil
+	}
+	// No change: the deadline is already later, or the log is not running.
+	var running int64
+	if err := r.db.WithContext(ctx).Model(&models.DeploymentLog{}).
+		Where("id = ? AND status = ?", id, models.DeployLogRunning).
+		Count(&running).Error; err != nil {
+		return dberrors.NewDatabaseError("extend_deadline", err)
+	}
+	if running == 0 {
+		return models.ErrDeployLogNotRunning
 	}
 	return nil
 }

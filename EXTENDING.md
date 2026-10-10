@@ -340,9 +340,11 @@ A normal `post-deploy` subscriber is fire-and-forget: the stack is `running` and
 - Only after the subscriber returned: status `running`, "Deployment succeeded", the other `post-deploy` subscribers, `deploy-finalized`.
 - Failure, denial or timeout: with `failure_policy: fail` the deploy fails (status `error`, the hook reason in `error_message`, never the URL); with `ignore` the stack gets `running` and the owner gets the warning "Post-deploy step db-restore failed".
 - Only a Stop ends the wait early (clean, delete and deploy are refused while the stack is `stabilizing`); the k8s status watcher does not set `error` during the wait. The deployer then closes the request, but that does not stop remote work: stop your work when the request closes. The stop runs `helm uninstall` at the same time.
-- A server shutdown ends the deploy with `error` ("Interrupted by a server restart. Deploy again."). After a SIGKILL or a node loss the stack stays `stabilizing`; stop it to recover.
+- A server shutdown ends the deploy with `error` ("Interrupted by a server restart. Deploy again."). After a SIGKILL or a node loss the leader sets the stack to `error` ("Interrupted: the server that ran this operation stopped. Deploy again.") when the deploy passed its deadline (its time budget, including the blocking timeouts, plus 5 minutes) and the replica has no heartbeat for 2 minutes. A Stop ends the state earlier. No hook event fires for this recovery.
 
 `blocking` is only valid for a subscription that lists `post-deploy`. The full contract is in [backend/docs/hooks.md](backend/docs/hooks.md#blocking-post-deploy-subscribers).
+
+The backend does not follow a redirect from an event subscriber: a 3xx answer is a failure, and `failure_policy` applies. Configure the final URL.
 
 ## Request envelope — ActionRequest
 

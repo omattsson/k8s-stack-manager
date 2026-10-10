@@ -22,7 +22,9 @@ type Dispatcher struct {
 }
 
 // NewDispatcher validates cfg and returns a Dispatcher.
-// Pass http.DefaultClient (or an injected client in tests).
+// Pass http.DefaultClient (or an injected client in tests). The dispatcher
+// does not follow redirects (noRedirectClient): a 3xx answer is a subscriber
+// error, so a signed body never goes to another URL.
 func NewDispatcher(cfg Config, client httpClient) (*Dispatcher, error) {
 	if client == nil {
 		client = http.DefaultClient
@@ -33,7 +35,7 @@ func NewDispatcher(cfg Config, client httpClient) (*Dispatcher, error) {
 	d := &Dispatcher{
 		subs:    cfg.Subscriptions,
 		byEvent: make(map[string][]int),
-		client:  client,
+		client:  noRedirectClient(client),
 		now:     time.Now,
 	}
 	for i, s := range cfg.Subscriptions {

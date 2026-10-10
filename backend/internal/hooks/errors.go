@@ -34,6 +34,19 @@ func (e *FailedError) Error() string {
 
 func (e *FailedError) Unwrap() error { return e.Err }
 
+// RedirectError is returned when a subscriber answers with a 3xx status.
+// The dispatcher does not follow redirects: a signed body must not go to
+// another URL. The error does not contain the Location header or the body.
+type RedirectError struct {
+	StatusCode int
+}
+
+// Error starts with "hook returned status" so that the dispatch span gets
+// the http_error outcome.
+func (e *RedirectError) Error() string {
+	return fmt.Sprintf("hook returned status %d (redirect; redirects are not followed)", e.StatusCode)
+}
+
 // UserMessage returns a message that is safe to show to users for a hook
 // error of event (for example "pre-rollback") that blocked operation (for
 // example "rollback"): the subscriber reason for a denial, a generic text for
@@ -50,6 +63,10 @@ func UserMessage(err error, event, operation string) string {
 			hook = denied.Hook
 		}
 		return fmt.Sprintf("%s hook %q denied the %s: %s", event, hook, operation, sanitizeDenyMessage(denied.Message))
+	}
+	var redirect *RedirectError
+	if hook != "" && errors.As(err, &redirect) {
+		return fmt.Sprintf("%s hook %q failed (the subscriber answered with a redirect)", event, hook)
 	}
 	if hook != "" {
 		return fmt.Sprintf("%s hook %q failed (unreachable or timed out)", event, hook)

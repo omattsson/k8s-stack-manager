@@ -7,12 +7,15 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"time"
 
+	"backend/internal/hooks"
 	"backend/internal/models"
 
 	"github.com/google/uuid"
@@ -35,9 +38,11 @@ type Dispatcher struct {
 func NewDispatcher(repo models.NotificationChannelRepository) *Dispatcher {
 	return &Dispatcher{
 		repo: repo,
-		client: &http.Client{
+		// A redirect is not followed: a signed body must not go to another
+		// URL. A 3xx answer is a failed delivery.
+		client: hooks.NoRedirectHTTPClient(&http.Client{
 			Timeout: requestTimeout,
-		},
+		}),
 	}
 }
 
@@ -139,11 +144,21 @@ func (d *Dispatcher) post(ctx context.Context, ch *models.NotificationChannel, e
 
 	resp, err := d.client.Do(req)
 	if err != nil {
+		// A *url.Error contains the webhook URL (it can hold a token).
+		// The delivery log shows the cause only.
+		var urlErr *url.Error
+		if errors.As(err, &urlErr) {
+			err = urlErr.Err
+		}
 		return 0, fmt.Errorf("sending request: %w", err)
 	}
 	defer resp.Body.Close()
 	io.Copy(io.Discard, io.LimitReader(resp.Body, maxResponseBody))
 
+	if resp.StatusCode >= 300 && resp.StatusCode < 400 {
+		// The Location header is not in the message.
+		return resp.StatusCode, fmt.Errorf("HTTP %d: redirect not followed", resp.StatusCode)
+	}
 	if resp.StatusCode >= 400 {
 		return resp.StatusCode, fmt.Errorf("HTTP %d", resp.StatusCode)
 	}
