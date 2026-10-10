@@ -318,6 +318,31 @@ describe('StackInstances Detail', () => {
     ]);
   });
 
+  it('shows "This stack was deleted." on an instance.deleted message for this instance', async () => {
+    const user = userEvent.setup();
+    setupMocks({ status: 'running' });
+    renderDetail();
+    await waitFor(() => {
+      expect(screen.getByText('Test Instance')).toBeInTheDocument();
+    });
+
+    // A message for another instance changes nothing.
+    act(() => {
+      wsState.handler?.({ type: 'instance.deleted', payload: { instance_id: 'other' } });
+    });
+    expect(screen.queryByTestId('instance-deleted')).not.toBeInTheDocument();
+
+    act(() => {
+      wsState.handler?.({ type: 'instance.deleted', payload: { instance_id: '123', log_id: 'l1' } });
+    });
+    const alert = await screen.findByTestId('instance-deleted');
+    expect(alert).toHaveTextContent('This stack was deleted.');
+    expect(screen.queryByText('Test Instance')).not.toBeInTheDocument();
+
+    await user.click(within(alert).getByRole('button', { name: 'Back to Dashboard' }));
+    expect(mockNavigate).toHaveBeenCalledWith('/');
+  });
+
   it('shows loading spinner while fetching', () => {
     (instanceService.get as ReturnType<typeof vi.fn>).mockReturnValue(new Promise(() => {}));
     render(

@@ -3,7 +3,6 @@ import fixture from './notification-event-types.json';
 import {
   INSTANCE_EVENT_LABELS,
   SYSTEM_EVENT_LABELS,
-  PENDING_EVENT_LABELS,
   eventTypeLabel,
   eventTypesForRole,
   mergePreferences,
@@ -51,21 +50,12 @@ describe('mergePreferences', () => {
 });
 
 describe('eventTypeLabel', () => {
-  it('labels every preference type and the pending stack.expired type', () => {
+  it('labels every preference type, stack.expired included', () => {
     for (const t of [...fixture.instance, ...fixture.system]) {
       expect(eventTypeLabel(t)).not.toBe(t);
     }
-    expect(eventTypeLabel('stack.expired')).toBe('Stack expired (TTL reached)');
+    expect(fixture.instance).toContain('stack.expired');
+    expect(eventTypeLabel('stack.expired')).toBe('Stack expired (TTL)');
     expect(eventTypeLabel('bogus.event')).toBe('bogus.event');
-  });
-
-  it('keeps pending types out of the preference list until the backend offers them', () => {
-    // The backend rejects unknown types on save, so a pending type must not
-    // be in the preference list. Move it when the fixture gets it.
-    for (const t of Object.keys(PENDING_EVENT_LABELS)) {
-      expect(fixture.instance).not.toContain(t);
-      expect(fixture.system).not.toContain(t);
-      expect(eventTypesForRole('admin')).not.toContain(t);
-    }
   });
 });

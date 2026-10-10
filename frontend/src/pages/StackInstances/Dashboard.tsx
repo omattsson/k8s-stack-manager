@@ -326,6 +326,19 @@ const Dashboard = () => {
         )
       );
     }
+    if (msg.type === 'instance.deleted') {
+      const payload = msg.payload as { instance_id?: string };
+      const deletedId = payload.instance_id;
+      if (!deletedId) return;
+      setInstances((prev) => prev.filter((inst) => inst.id !== deletedId));
+      setSelectedIds((prev) => {
+        if (!prev.has(deletedId)) return prev;
+        const next = new Set(prev);
+        next.delete(deletedId);
+        return next;
+      });
+      return;
+    }
     if (msg.type === 'instance.status') {
       const payload = msg.payload as {
         instance_id?: string;

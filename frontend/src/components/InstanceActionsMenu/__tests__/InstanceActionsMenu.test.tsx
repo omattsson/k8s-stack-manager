@@ -209,6 +209,36 @@ describe('InstanceActionsMenu', () => {
     expect(within(dialog).getByTestId('action-result')).toHaveTextContent('busy');
   });
 
+  it('prefers the envelope message over the result fields for a non-2xx result', async () => {
+    const user = userEvent.setup();
+    mockList([seedAction]);
+    invokeAction.mockResolvedValue({
+      action: 'seed-data', instance_id: 'i1', status_code: 409,
+      message: 'A refresh-db job already runs for this stack',
+      result: { error: 'conflict' },
+    });
+    render(<InstanceActionsMenu instanceId="i1" />);
+
+    const dialog = await openAction(user, 'seed-data');
+    await user.click(within(dialog).getByRole('button', { name: 'Run' }));
+
+    expect(await within(dialog).findByTestId('action-message')).toHaveTextContent('A refresh-db job already runs for this stack');
+    expect(within(dialog).getByTestId('action-message')).not.toHaveTextContent('conflict');
+  });
+
+  it('ignores the envelope message for a 2xx result', async () => {
+    const user = userEvent.setup();
+    mockList([seedAction]);
+    invokeAction.mockResolvedValue({ action: 'seed-data', instance_id: 'i1', status_code: 200, message: 'x', result: { ok: true } });
+    render(<InstanceActionsMenu instanceId="i1" />);
+
+    const dialog = await openAction(user, 'seed-data');
+    await user.click(within(dialog).getByRole('button', { name: 'Run' }));
+
+    expect(await within(dialog).findByText('seed-data returned status 200.')).toBeInTheDocument();
+    expect(within(dialog).queryByTestId('action-message')).not.toBeInTheDocument();
+  });
+
   it('shows the message field of a 409 result in the error alert', async () => {
     const user = userEvent.setup();
     mockList([seedAction]);

@@ -81,6 +81,8 @@ const Detail = () => {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** Set when an instance.deleted message for this instance arrives. */
+  const [deletedRemotely, setDeletedRemotely] = useState(false);
   const { showSuccess, showError: showErrorToast } = useNotification();
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [exportMenuAnchor, setExportMenuAnchor] = useState<HTMLElement | null>(null);
@@ -210,6 +212,13 @@ const Detail = () => {
     if (!id) return;
     const payload = msg.payload as DeploymentStatusPayload;
     if (payload.instance_id !== id) return;
+
+    // The instance row is gone (for example a delete from another tab or by
+    // a cleanup policy). Stop showing the stale page.
+    if (msg.type === 'instance.deleted') {
+      setDeletedRemotely(true);
+      return;
+    }
 
     if (msg.type === 'deployment.status') {
       // Refresh instance data and K8s status when deployment status changes.
@@ -731,6 +740,18 @@ const Detail = () => {
       </Box>
     );
   };
+
+  if (deletedRemotely) {
+    return (
+      <Alert
+        severity="info"
+        data-testid="instance-deleted"
+        action={<Button color="inherit" size="small" onClick={() => navigate('/')}>Back to Dashboard</Button>}
+      >
+        This stack was deleted.
+      </Alert>
+    );
+  }
 
   if (loading) {
     return <LoadingState label="Loading instance..." />;

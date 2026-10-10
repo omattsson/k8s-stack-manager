@@ -44,23 +44,13 @@ export const SYSTEM_EVENT_LABELS: Record<string, string> = {
 export const EVENT_TYPE_LABELS: Record<string, string> = { ...INSTANCE_EVENT_LABELS, ...SYSTEM_EVENT_LABELS };
 
 /**
- * Labels of event types that the backend does not offer in the preferences
- * yet (channel-only types). When the backend adds a type to
- * `notifier.InstanceEventTypes` and the fixture changes, the fixture test
- * fails: move the entry to INSTANCE_EVENT_LABELS at the same position.
- */
-export const PENDING_EVENT_LABELS: Record<string, string> = {
-  'stack.expired': 'Stack expired (TTL reached)',
-};
-
-/**
  * Returns the label of an event type.
  *
  * @param eventType - The event type, for example "deployment.success".
  * @returns The label, or the event type itself when no label is known.
  */
 export function eventTypeLabel(eventType: string): string {
-  return EVENT_TYPE_LABELS[eventType] ?? PENDING_EVENT_LABELS[eventType] ?? eventType;
+  return EVENT_TYPE_LABELS[eventType] ?? eventType;
 }
 
 /**

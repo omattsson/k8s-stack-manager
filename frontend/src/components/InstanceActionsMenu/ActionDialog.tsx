@@ -325,7 +325,8 @@ const ActionDialog = ({ instanceId, action, onClose }: ActionDialogProps) => {
 
   const renderResult = (res: ActionInvokeResult) => {
     const ok = isSuccessCode(res.status_code);
-    const message = ok ? undefined : resultMessage(res.result);
+    // The server message comes first; older servers omit it, then read the result.
+    const message = ok ? undefined : (res.message?.trim() || resultMessage(res.result));
     return (
       <Stack spacing={2}>
         <Alert severity={ok ? 'success' : 'error'} data-testid="action-status">

@@ -193,6 +193,32 @@ describe('Dashboard', () => {
     });
   });
 
+  it('removes the row on a WebSocket instance.deleted message', async () => {
+    (instanceService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue([
+      mockInstance({ id: 'inst-1', name: 'Gone Instance', status: 'running' }),
+      mockInstance({ id: 'inst-2', name: 'Kept Instance', status: 'running' }),
+    ]);
+    render(
+      <MemoryRouter>
+        <NotificationProvider>
+          <Dashboard />
+        </NotificationProvider>
+      </MemoryRouter>
+    );
+    await waitFor(() => {
+      expect(screen.getByText('Gone Instance')).toBeInTheDocument();
+    });
+
+    act(() => {
+      broadcastWs({ type: 'instance.deleted', payload: { instance_id: 'inst-1', log_id: 'log-9' } });
+    });
+
+    await waitFor(() => {
+      expect(screen.queryByText('Gone Instance')).not.toBeInTheDocument();
+    });
+    expect(screen.getByText('Kept Instance')).toBeInTheDocument();
+  });
+
   it('updates instance status on WebSocket deployment.status message', async () => {
     (instanceService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue([
       mockInstance({ id: 'inst-1', name: 'WS Instance', status: 'draft' }),

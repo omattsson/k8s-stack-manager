@@ -987,6 +987,11 @@ export interface ActionInvokeResult {
   result: unknown;
   /** Job ID of an asynchronous action with a job log. */
   job_id?: string;
+  /**
+   * Reason of the subscriber for a status of 400 or higher (one line, at most
+   * 500 characters, URLs replaced by [url]). Older servers omit it.
+   */
+  message?: string;
 }
 
 /** Response of `GET /stack-instances/:id/actions/:name/jobs/:job_id/log`. */
