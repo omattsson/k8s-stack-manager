@@ -216,7 +216,7 @@ func (h *HelmClient) ListReleases(ctx context.Context, namespace string) ([]stri
 		return nil, fmt.Errorf("helm list: %w", err)
 	}
 
-	var releases []string
+	releases := []string{}
 	for _, line := range strings.Split(strings.TrimSpace(output), "\n") {
 		line = strings.TrimSpace(line)
 		if line != "" {

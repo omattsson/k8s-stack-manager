@@ -36,6 +36,11 @@ type NotificationChannelSubscription struct {
 	EventType string `json:"event_type" gorm:"size:50;uniqueIndex:idx_channel_event;not null"`
 }
 
+// NotificationChannelTestEvent is the event type of a test send
+// (POST /admin/notification-channels/{id}/test) in the payload and in the
+// delivery log.
+const NotificationChannelTestEvent = "test"
+
 // NotificationDeliveryLog records each webhook delivery attempt.
 type NotificationDeliveryLog struct {
 	CreatedAt    time.Time `json:"created_at" gorm:"index"`

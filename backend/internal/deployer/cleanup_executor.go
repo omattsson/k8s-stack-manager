@@ -60,20 +60,29 @@ func (e *CleanupExecutor) CleanInstance(ctx context.Context, inst *models.StackI
 	return err
 }
 
-// DeleteInstance deletes the instance from the database.
-// It refuses deletion while the instance is running or in the middle of an async
-// stop/clean operation, because those workflows need to read/update the record.
-// Callers should ensure the instance is stopped/cleaned before requesting deletion.
+// DeleteInstance deletes the instance for a cleanup policy. It refuses an
+// instance that is running or in the middle of an operation. A stopped
+// instance or one with status error can still have cluster resources (Helm
+// releases, namespace, PVCs): it is cleaned first with the delete path of the
+// API (Manager.CleanForDelete), and the deploy manager deletes the row and
+// sends the delete events when the clean completes. Any other instance
+// (draft) is deleted at once.
 func (e *CleanupExecutor) DeleteInstance(ctx context.Context, inst *models.StackInstance) error {
 	// Do not start a delete when the caller stopped (for example the cleanup
 	// scheduler at the end of a leadership term).
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	needsClean := false
 	switch inst.Status {
 	case models.StackStatusRunning, models.StackStatusPartial, models.StackStatusDeploying, models.StackStatusStabilizing,
-		models.StackStatusStopping, models.StackStatusCleaning:
+		models.StackStatusStopping, models.StackStatusCleaning, models.StackStatusQueued:
 		return fmt.Errorf("cannot delete instance %s while status is %s; stop/clean must complete first", inst.ID, inst.Status)
+	case models.StackStatusStopped, models.StackStatusError:
+		needsClean = true
+		if e.manager == nil {
+			return fmt.Errorf("cannot delete instance %s: the deploy manager is needed to clean it first", inst.ID)
+		}
 	}
 	// pre-instance-delete can stop the delete, as for the API delete. The
 	// error text is user-safe (never the subscriber URL); the policy run
@@ -84,6 +93,26 @@ func (e *CleanupExecutor) DeleteInstance(ctx context.Context, inst *models.Stack
 			return errors.New(hooks.UserMessage(hookErr, hooks.EventPreInstanceDelete, "delete"))
 		}
 	}
+	if needsClean {
+		// As the API delete: a definition without charts still gets the
+		// namespace delete.
+		def, err := e.definitionRepo.FindByID(inst.StackDefinitionID)
+		if err != nil {
+			return fmt.Errorf("finding definition: %w", err)
+		}
+		charts, err := e.chartConfigRepo.ListByDefinition(def.ID)
+		if err != nil {
+			return fmt.Errorf("listing charts: %w", err)
+		}
+		if _, err := e.manager.CleanForDelete(ctx, inst, charts); err != nil {
+			if errors.Is(err, models.ErrDeleteConflict) {
+				return fmt.Errorf("cannot delete instance %s: another operation started on it", inst.ID)
+			}
+			return err
+		}
+		return nil
+	}
+
 	// The delete removes the follower rows: read the followers first, so
 	// that they get the "instance.deleted" notification.
 	var followerIDs []string

@@ -19,6 +19,9 @@ var (
 const (
 	msgInternalServerError  = "Internal server error"
 	msgInvalidRequestFormat = "Invalid request format"
+	// msgCleanConflict is the 409 message when a clean lost against another
+	// clean or a delete of the same instance.
+	msgCleanConflict = "Cannot clean: another operation started on the instance"
 )
 
 // Common entity names used with mapError across multiple handler files.

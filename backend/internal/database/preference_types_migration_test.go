@@ -55,7 +55,11 @@ func TestMigration_UnknownPreferenceTypes_NoTable(t *testing.T) {
 // migration list.
 func TestMigration56PreferenceEventTypes(t *testing.T) {
 	t.Parallel()
-	addedAfterMigration56 := map[string]bool{}
+	addedAfterMigration56 := map[string]bool{
+		// The TTL reaper sends stack.expired since #500. Migration 56 ran
+		// when the API still refused it, so no stored row is lost.
+		"stack.expired": true,
+	}
 	frozen := map[string]bool{}
 	for _, et := range migration56PreferenceEventTypes {
 		frozen[et] = true

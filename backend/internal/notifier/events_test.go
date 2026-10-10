@@ -59,8 +59,8 @@ func TestIsPreferenceEventType(t *testing.T) {
 		{"bogus.event", false},
 		{"", false},
 		{"Deployment.Success", false},
-		// Channel-only types are not preference types.
-		{"stack.expired", false},
+		// The TTL reaper sends stack.expired (#500).
+		{"stack.expired", true},
 	}
 	for _, tt := range tests {
 		tt := tt

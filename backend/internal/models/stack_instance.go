@@ -1,6 +1,9 @@
 package models
 
-import "time"
+import (
+	"errors"
+	"time"
+)
 
 // StackInstance represents a deployed instance of a stack definition.
 type StackInstance struct {
@@ -36,6 +39,14 @@ type StackInstance struct {
 	// by itself after a crash of the deploying replica.
 	PostDeployHookUntil *time.Time `json:"-"`
 
+	// DeleteAfterClean is true while a clean runs as the first step of a
+	// delete: the deploy manager deletes the row when the clean succeeds.
+	// Only MarkCleanStart and ClearDeleteAfterClean write it (Update does
+	// not), so a concurrent Update cannot set or clear it. A failed clean
+	// and the recovery of an interrupted operation clear it. A plain clean
+	// does not start while it is set.
+	DeleteAfterClean bool `json:"-" gorm:"not null;default:false"`
+
 	// ValuesDrift is computed, not stored. GET, PUT and POST .../extend on
 	// /stack-instances/{id} set it to true when the running values come from
 	// a successful rollback and the stored overrides produce different values
@@ -60,6 +71,39 @@ type StackInstance struct {
 	// followers. List responses do not set them.
 	Following     *bool  `json:"following,omitempty" gorm:"-" readonly:"true"`
 	FollowerCount *int64 `json:"follower_count,omitempty" gorm:"-" readonly:"true"`
+}
+
+// CleanStatuses are the statuses of an instance with cluster resources: a
+// clean can start, and a delete cleans it first (Helm uninstall and
+// namespace delete).
+var CleanStatuses = []string{StackStatusRunning, StackStatusPartial, StackStatusStopped, StackStatusError}
+
+// DeleteCleanFailedMessage starts the error message of an instance whose
+// clean for a delete failed.
+const DeleteCleanFailedMessage = "Clean failed; the stack was not deleted."
+
+// ErrDeleteConflict is returned by MarkCleanStart for a delete when the
+// instance is not in one of the allowed statuses any more (for example a
+// second delete started the clean first).
+var ErrDeleteConflict = errors.New("another operation changed the instance")
+
+// ErrCleanConflict is returned by MarkCleanStart for a plain clean when the
+// instance is not in one of the allowed statuses any more, or a delete
+// already marked it (delete_after_clean).
+var ErrCleanConflict = errors.New("another operation changed the instance")
+
+// CleanStartMarker is implemented by stack instance repositories that start
+// a clean with a conditional update. The deploy manager uses it when the
+// repository implements it.
+type CleanStartMarker interface {
+	// MarkCleanStart sets status cleaning and an empty error message when
+	// the instance has one of fromStatuses. With deleteAfterClean it also
+	// sets delete_after_clean (else ErrDeleteConflict when no row matched).
+	// Without it, the row must not have delete_after_clean (else
+	// ErrCleanConflict), so a plain clean never overwrites a delete.
+	MarkCleanStart(id string, fromStatuses []string, deleteAfterClean bool) error
+	// ClearDeleteAfterClean clears delete_after_clean.
+	ClearDeleteAfterClean(id string) error
 }
 
 // StackInstanceFilter selects the stack instances that ListPaged returns.

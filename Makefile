@@ -374,7 +374,8 @@ helm-lint: ## Lint the Helm chart
 helm-test: ## Verify default and External Secrets Helm renders
 	@set -e; \
 	template_file=$$(mktemp); \
-	trap 'rm -f "$$template_file"' EXIT; \
+	notes_dir=$$(mktemp -d); \
+	trap 'rm -f "$$template_file"; rm -rf "$$notes_dir"' EXIT; \
 	helm template $(HELM_RELEASE) $(HELM_CHART) --namespace $(HELM_NAMESPACE) \
 		--set backend.secrets.JWT_SECRET=dummy-jwt-secret-for-template > "$$template_file"; \
 	grep -q 'Source: k8s-stack-manager/templates/mysql/secret.yaml' "$$template_file"; \
@@ -442,6 +443,19 @@ helm-test: ## Verify default and External Secrets Helm renders
 		grep -q 'mountPath: /etc/helm-registry' "$$template_file"; \
 		grep -q 'secretName: helm-registry-config' "$$template_file"; \
 	done; \
+	cp -R $(HELM_CHART) "$$notes_dir/chart"; \
+	cp "$$notes_dir/chart/templates/NOTES.txt" "$$notes_dir/chart/templates/notes-render.txt"; \
+	helm template $(HELM_RELEASE) "$$notes_dir/chart" --show-only templates/notes-render.txt --debug \
+		> "$$template_file" 2>&1 || true; \
+	grep -q 'WARNING: backend.secrets.JWT_SECRET is still the placeholder value' "$$template_file" \
+		|| { echo "NOTES must warn about the JWT_SECRET placeholder" >&2; exit 1; }; \
+	grep -q 'WARNING: backend.secrets.ADMIN_PASSWORD' "$$template_file" \
+		|| { echo "NOTES must warn about the ADMIN_PASSWORD placeholder" >&2; exit 1; }; \
+	helm template $(HELM_RELEASE) "$$notes_dir/chart" --show-only templates/notes-render.txt --debug \
+		--values $(HELM_CHART)/tests/external-secrets-values.yaml > "$$template_file" 2>&1 || true; \
+	grep -q 'WARNING: CORS_ALLOWED_ORIGINS' "$$template_file" \
+		|| { echo "NOTES did not render with externalSecrets.enabled" >&2; exit 1; }; \
+	if grep -Eq 'WARNING: (backend.secrets|mysql.auth)' "$$template_file"; then echo "NOTES must not warn about placeholder secrets with externalSecrets.enabled" >&2; exit 1; fi; \
 	helm template $(HELM_RELEASE) $(HELM_CHART) --show-only templates/backend/deployment.yaml \
 		--set backend.secrets.JWT_SECRET=dummy-jwt-secret-for-template > "$$template_file"; \
 	if grep -q 'name: HELM_REGISTRY_CONFIG' "$$template_file"; then echo "unexpected match: HELM_REGISTRY_CONFIG" >&2; exit 1; fi; \

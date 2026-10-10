@@ -246,14 +246,16 @@ func TestCleanupExecutor_DeleteInstance(t *testing.T) {
 			wantErr: false,
 		},
 		{
-			name:    "stopped status allows delete",
+			name:    "stopped status needs the deploy manager to clean first",
 			status:  models.StackStatusStopped,
-			wantErr: false,
+			wantErr: true,
+			errMsg:  "deploy manager is needed",
 		},
 		{
-			name:    "error status allows delete",
+			name:    "error status needs the deploy manager to clean first",
 			status:  models.StackStatusError,
-			wantErr: false,
+			wantErr: true,
+			errMsg:  "deploy manager is needed",
 		},
 		{
 			name:    "running status blocks delete",

@@ -1,6 +1,7 @@
 package ttl
 
 import (
+	"context"
 	"sync"
 	"testing"
 	"time"
@@ -346,3 +347,76 @@ func TestReaper_InitialCheckOnStart(t *testing.T) {
 }
 
 func (*mockInstanceRepo) CountByStatuses(statuses []string) (int, error) { return 0, nil }
+
+// fakeStopper is an InstanceStopper that returns err.
+type fakeStopper struct{ err error }
+
+func (f fakeStopper) StopInstance(context.Context, *models.StackInstance) error { return f.err }
+
+func TestReaper_NotifiesStackExpired(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		stopper     InstanceStopper
+		noNotifier  bool
+		wantCalls   int
+		wantMessage string
+	}{
+		{
+			name:        "stop through the deployer",
+			stopper:     fakeStopper{},
+			wantCalls:   1,
+			wantMessage: `Stack "exp" expired after its TTL and is being stopped`,
+		},
+		{
+			name:        "no stopper marks the instance stopped",
+			stopper:     nil,
+			wantCalls:   1,
+			wantMessage: `Stack "exp" expired after its TTL and was stopped`,
+		},
+		{
+			name:        "failed stop marks the instance stopped",
+			stopper:     fakeStopper{err: assert.AnError},
+			wantCalls:   1,
+			wantMessage: `Stack "exp" expired after its TTL and was stopped`,
+		},
+		{
+			name:       "no notifier sends nothing",
+			stopper:    nil,
+			noNotifier: true,
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			repo := newMockInstanceRepo()
+			past := time.Now().Add(-time.Minute)
+			require.NoError(t, repo.Create(&models.StackInstance{
+				ID: "exp-1", Name: "exp", OwnerID: "owner-1",
+				Status: models.StackStatusRunning, TTLMinutes: 30, ExpiresAt: &past,
+			}))
+
+			notifier := &mockExpiryNotifier{}
+			reaper := NewReaper(repo, nil, nil, tt.stopper, time.Hour)
+			if !tt.noNotifier {
+				reaper.WithNotifier(notifier)
+			}
+			reaper.processExpired()
+
+			calls := notifier.getCalls()
+			require.Len(t, calls, tt.wantCalls)
+			if tt.wantCalls == 0 {
+				return
+			}
+			assert.Equal(t, "stack.expired", calls[0].notifType)
+			assert.Equal(t, "Stack expired", calls[0].title)
+			assert.Equal(t, tt.wantMessage, calls[0].message)
+			assert.Equal(t, "owner-1", calls[0].userID)
+			assert.Equal(t, "exp-1", calls[0].entityID)
+		})
+	}
+}

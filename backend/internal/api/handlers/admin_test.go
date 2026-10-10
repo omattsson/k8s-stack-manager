@@ -344,6 +344,28 @@ func TestListOrphanedNamespaces(t *testing.T) {
 		require.Len(t, result, 1)
 		assert.Equal(t, []string{}, result[0].HelmReleases)
 	})
+
+	t.Run("details without releases returns [] not null", func(t *testing.T) {
+		t.Parallel()
+		clientset := fake.NewSimpleClientset(&corev1.Namespace{
+			ObjectMeta: metav1.ObjectMeta{Name: "stack-orphan-norel"},
+		})
+		k8sClient := k8s.NewClientFromInterface(clientset)
+		helmExec := &mockAdminHelmExecutor{
+			listReleasesFunc: func(_ context.Context, _ string) ([]string, error) {
+				return nil, nil // helm list printed nothing
+			},
+		}
+
+		router := setupAdminRouter(k8sClient, helmExec, NewMockStackInstanceRepository(), "admin")
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest(http.MethodGet, "/api/v1/admin/orphaned-namespaces?details=true", nil)
+		router.ServeHTTP(w, req)
+
+		require.Equal(t, http.StatusOK, w.Code)
+		assert.Contains(t, w.Body.String(), `"helm_releases":[]`)
+		assert.NotContains(t, w.Body.String(), `"helm_releases":null`)
+	})
 }
 
 // managedNamespaceMeta returns namespace metadata with the label that the

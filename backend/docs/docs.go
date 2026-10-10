@@ -860,7 +860,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Sends a test payload to the channel's webhook URL",
+                "description": "Sends a test payload (event type \"test\") to the channel's webhook URL with one attempt. Redirects are not followed. A disabled channel can be tested too; channel_enabled in the response tells whether the channel gets events. Each test send is written to the delivery log of the channel with event_type \"test\".",
                 "produces": [
                     "application/json"
                 ],
@@ -879,7 +879,7 @@ const docTemplate = `{
                 ],
                 "responses": {
                     "200": {
-                        "description": "OK",
+                        "description": "success (bool), message, status_code (0 when no answer), channel_enabled (bool)",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
@@ -887,6 +887,24 @@ const docTemplate = `{
                     },
                     "400": {
                         "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {
@@ -922,7 +940,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Lists all Kubernetes namespaces matching the stack-* pattern that have no corresponding stack instance in the database. Pass ?details=true to include resource counts and helm releases per namespace (expensive). The managed field is true when the namespace has the label managed-by=k8s-stack-manager.",
+                "description": "Lists all Kubernetes namespaces matching the stack-* pattern that have no corresponding stack instance in the database. Pass ?details=true to include resource counts and helm releases per namespace (expensive). helm_releases is always an array (empty without details, without releases or when Helm fails), never null. The managed field is true when the namespace has the label managed-by=k8s-stack-manager.",
                 "produces": [
                     "application/json"
                 ],
@@ -4945,7 +4963,7 @@ const docTemplate = `{
         },
         "/api/v1/stack-instances/bulk/delete": {
             "post": {
-                "description": "Delete multiple stack instances in a single request. Processes instances sequentially.",
+                "description": "Delete multiple stack instances in a single request. Processes instances sequentially with the rules of DELETE /stack-instances/{id}: an instance with cluster resources (running, partial, stopped, error) is cleaned first (Helm uninstall and namespace delete) and deleted when the clean completes — its result has status \"success\" and the log_id of the clean. \"success\" with a log_id means that the clean started; the row is removed when the clean finishes (WebSocket message instance.deleted). A failed clean keeps the instance with status error. A draft instance is deleted at once. An instance with an operation in progress (checked before pre-instance-delete fires), one that a concurrent delete already started, or one that a pre-instance-delete hook rejects, gets status \"error\".",
                 "consumes": [
                     "application/json"
                 ],
@@ -5384,7 +5402,7 @@ const docTemplate = `{
                 }
             },
             "delete": {
-                "description": "Deletes a stack instance. If the instance has running resources (status running/stopped/error), a cleanup is initiated first — helm releases are uninstalled and the namespace is deleted before the database record is removed. Returns 204 for immediate deletion (draft instances) or 202 when async cleanup is required. When quick deploy created the stack definition of the instance (owner_instance_id) and no other instance uses it, the definition and its charts are deleted with the instance.",
+                "description": "Deletes a stack instance. If the instance has running resources (status running/stopped/error), a cleanup is initiated first — helm releases are uninstalled and the namespace is deleted before the database record is removed. Returns 204 for immediate deletion (draft instances) or 202 when async cleanup is required: the clean started, and the row is removed when the clean finishes (WebSocket message instance.deleted). A failed clean keeps the instance with status error (\"Clean failed; the stack was not deleted.\"). An operation in progress gives 409 before pre-instance-delete fires; of two concurrent deletes one gets 409. When quick deploy created the stack definition of the instance (owner_instance_id) and no other instance uses it, the definition and its charts are deleted with the instance.",
                 "produces": [
                     "application/json"
                 ],
@@ -5433,7 +5451,7 @@ const docTemplate = `{
                         }
                     },
                     "409": {
-                        "description": "Instance is in a transient state (deploying/stopping/cleaning)",
+                        "description": "Instance is in a transient state (deploying/stopping/cleaning), or a concurrent delete started first",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {
@@ -5532,7 +5550,7 @@ const docTemplate = `{
         },
         "/api/v1/stack-instances/{id}/actions/{name}": {
             "post": {
-                "description": "Dispatches to the action subscriber webhook and wraps its response in an envelope containing action, instance_id, status_code, and result fields. The subscriber's JSON body is nested under the result key. Returns 200 even for non-2xx subscriber responses — check status_code to distinguish. When the action declares parameters, they are checked (type, required, enum options) before the call; undeclared parameters pass through. When the action has a log_path, the subscriber answered 2xx and the result has a valid job_id, the envelope also has job_id: poll GET /stack-instances/{id}/actions/{name}/jobs/{job_id}/log for the job log.",
+                "description": "Dispatches to the action subscriber webhook and wraps its response in an envelope containing action, instance_id, status_code, and result fields. The subscriber's JSON body is nested under the result key. Returns 200 even for non-2xx subscriber responses — check status_code to distinguish. For an answer with status 400 or higher the envelope also has message: the subscriber's reason from a JSON string body or from the message, error, detail or reason field (one line, at most 500 characters, URLs replaced by [url]). A text/plain body of such an answer becomes a JSON string result; another non-JSON body gives a null result. A non-JSON body with a status below 400 gives 502. When the action declares parameters, they are checked (type, required, enum options) before the call; undeclared parameters pass through. When the action has a log_path, the subscriber answered 2xx and the result has a valid job_id, the envelope also has job_id: poll GET /stack-instances/{id}/actions/{name}/jobs/{job_id}/log for the job log.",
                 "consumes": [
                     "application/json"
                 ],
@@ -6113,7 +6131,7 @@ const docTemplate = `{
                         }
                     },
                     "409": {
-                        "description": "Invalid status for clean",
+                        "description": "Invalid status for clean, or a concurrent clean or delete started first",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {
@@ -10873,6 +10891,7 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "helm_releases": {
+                    "description": "HelmReleases is always an array, never null.",
                     "type": "array",
                     "items": {
                         "type": "string"

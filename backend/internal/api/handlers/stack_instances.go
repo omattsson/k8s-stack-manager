@@ -736,7 +736,7 @@ func (h *InstanceHandler) UpdateInstance(c *gin.Context) {
 
 // DeleteInstance godoc
 // @Summary     Delete a stack instance
-// @Description Deletes a stack instance. If the instance has running resources (status running/stopped/error), a cleanup is initiated first — helm releases are uninstalled and the namespace is deleted before the database record is removed. Returns 204 for immediate deletion (draft instances) or 202 when async cleanup is required. When quick deploy created the stack definition of the instance (owner_instance_id) and no other instance uses it, the definition and its charts are deleted with the instance.
+// @Description Deletes a stack instance. If the instance has running resources (status running/stopped/error), a cleanup is initiated first — helm releases are uninstalled and the namespace is deleted before the database record is removed. Returns 204 for immediate deletion (draft instances) or 202 when async cleanup is required: the clean started, and the row is removed when the clean finishes (WebSocket message instance.deleted). A failed clean keeps the instance with status error ("Clean failed; the stack was not deleted."). An operation in progress gives 409 before pre-instance-delete fires; of two concurrent deletes one gets 409. When quick deploy created the stack definition of the instance (owner_instance_id) and no other instance uses it, the definition and its charts are deleted with the instance.
 // @Tags        stack-instances
 // @Produce     json
 // @Param       id  path     string true "Instance ID"
@@ -744,7 +744,7 @@ func (h *InstanceHandler) UpdateInstance(c *gin.Context) {
 // @Success     204 "No Content — instance deleted immediately (no resources to clean)"
 // @Failure     403 {object} map[string]string "Caller is not the owner, an admin or a devops user, or a pre-instance-delete hook rejected the request"
 // @Failure     404 {object} map[string]string
-// @Failure     409 {object} map[string]string "Instance is in a transient state (deploying/stopping/cleaning)"
+// @Failure     409 {object} map[string]string "Instance is in a transient state (deploying/stopping/cleaning), or a concurrent delete started first"
 // @Failure     503 {object} map[string]string "Deploy manager not configured"
 // @Router      /api/v1/stack-instances/{id} [delete]
 func (h *InstanceHandler) DeleteInstance(c *gin.Context) {
@@ -767,78 +767,112 @@ func (h *InstanceHandler) DeleteInstance(c *gin.Context) {
 		return
 	}
 
-	// Pre-instance-delete hook: a subscriber with failure_policy=fail can block
-	// the delete (e.g. enforce dependency checks).
-	if err := h.fireInstanceHook(hookTriggerCtx(c), hooks.EventPreInstanceDelete, inst); err != nil {
-		slog.Error("pre-instance-delete hook failed", logKeyInstanceID, id, "error", err)
-		c.JSON(http.StatusForbidden, gin.H{"error": "pre-instance-delete hook rejected the request"})
+	logID, delErr := h.deleteInstance(c, inst)
+	if delErr != nil {
+		c.JSON(delErr.status, gin.H{"error": delErr.message})
 		return
 	}
-
-	switch inst.Status {
-	case models.StackStatusDeploying, models.StackStatusStopping, models.StackStatusCleaning, models.StackStatusQueued, models.StackStatusStabilizing:
-		c.JSON(http.StatusConflict, gin.H{"error": fmt.Sprintf("Cannot delete: instance is currently %s", inst.Status)})
-		return
-
-	case models.StackStatusRunning, models.StackStatusPartial, models.StackStatusStopped, models.StackStatusError:
-		if h.deployManager == nil {
-			c.JSON(http.StatusServiceUnavailable, gin.H{"error": msgDeployerNotConfigured})
-			return
-		}
-
-		def, err := h.definitionRepo.FindByID(inst.StackDefinitionID)
-		if err != nil {
-			status, message := mapError(err, entityStackDefinition)
-			c.JSON(status, gin.H{"error": message})
-			return
-		}
-		charts, err := h.chartConfigRepo.ListByDefinition(def.ID)
-		if err != nil {
-			status, message := mapError(err, entityChartConfigs)
-			c.JSON(status, gin.H{"error": message})
-			return
-		}
-
-		h.deployManager.ScheduleDeleteAfterClean(id)
-
-		logID, err := h.deployManager.Clean(hookTriggerCtx(c), inst, charts)
-		if err != nil {
-			slog.Error("Failed to start clean for delete",
-				logKeyInstanceID, id, "error", err)
-			c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
-			return
-		}
-
+	if logID != "" {
 		c.JSON(http.StatusAccepted, gin.H{
 			"log_id":  logID,
 			"message": "Cleanup initiated; instance will be deleted after resources are removed",
 		})
 		return
+	}
+	c.Status(http.StatusNoContent)
+}
 
+// instanceDeleteError is a delete failure with its HTTP status and a safe,
+// user-facing message.
+type instanceDeleteError struct {
+	message string
+	status  int
+}
+
+func (e *instanceDeleteError) Error() string { return e.message }
+
+// deleteInstance deletes one instance after the caller checked the
+// authorization. The single delete and the bulk delete use it, so both apply
+// the same rules:
+//   - an operation in progress (deploying, stopping, cleaning, queued,
+//     stabilizing) gives 409, before any hook fires;
+//   - pre-instance-delete can reject the delete (failure_policy=fail);
+//   - an instance with cluster resources (running, partial, stopped, error)
+//     is cleaned first (Helm uninstall and namespace delete). The start of
+//     the clean is a conditional update that also sets
+//     stack_instances.delete_after_clean, so of two concurrent deletes one
+//     wins and the other gets 409. The deploy manager deletes the row when
+//     the clean completes; deleteInstance returns the log ID of the clean;
+//   - any other instance (draft) is deleted at once, and post-instance-delete,
+//     delete-completed and instance.deleted follow. deleteInstance then
+//     returns an empty log ID.
+func (h *InstanceHandler) deleteInstance(c *gin.Context, inst *models.StackInstance) (string, *instanceDeleteError) {
+	ctx := hookTriggerCtx(c)
+
+	needsClean := false
+	switch inst.Status {
+	case models.StackStatusDeploying, models.StackStatusStopping, models.StackStatusCleaning, models.StackStatusQueued, models.StackStatusStabilizing:
+		// Checked before pre-instance-delete: no "pre" event without a delete.
+		return "", &instanceDeleteError{status: http.StatusConflict, message: fmt.Sprintf("Cannot delete: instance is currently %s", inst.Status)}
+	case models.StackStatusRunning, models.StackStatusPartial, models.StackStatusStopped, models.StackStatusError:
+		needsClean = true
 	default:
 		// draft or unknown — no resources to clean, delete immediately
+	}
+
+	// Pre-instance-delete hook: a subscriber with failure_policy=fail can block
+	// the delete (e.g. enforce dependency checks).
+	if err := h.fireInstanceHook(ctx, hooks.EventPreInstanceDelete, inst); err != nil {
+		slog.Error("pre-instance-delete hook failed", logKeyInstanceID, inst.ID, "error", err)
+		return "", &instanceDeleteError{status: http.StatusForbidden, message: "pre-instance-delete hook rejected the request"}
+	}
+
+	if needsClean {
+		if h.deployManager == nil {
+			return "", &instanceDeleteError{status: http.StatusServiceUnavailable, message: msgDeployerNotConfigured}
+		}
+		def, err := h.definitionRepo.FindByID(inst.StackDefinitionID)
+		if err != nil {
+			status, message := mapError(err, entityStackDefinition)
+			return "", &instanceDeleteError{status: status, message: message}
+		}
+		charts, err := h.chartConfigRepo.ListByDefinition(def.ID)
+		if err != nil {
+			status, message := mapError(err, entityChartConfigs)
+			return "", &instanceDeleteError{status: status, message: message}
+		}
+
+		logID, err := h.deployManager.CleanForDelete(ctx, inst, charts)
+		if errors.Is(err, models.ErrDeleteConflict) {
+			return "", &instanceDeleteError{status: http.StatusConflict, message: "Cannot delete: another operation started on the instance"}
+		}
+		if err != nil {
+			slog.Error("Failed to start clean for delete",
+				logKeyInstanceID, inst.ID, "error", err)
+			return "", &instanceDeleteError{status: http.StatusInternalServerError, message: msgInternalServerError}
+		}
+		return logID, nil
+	}
+
+	if h.txRunner == nil {
+		slog.Error("txRunner not configured for instance delete", logKeyInstanceID, inst.ID)
+		return "", &instanceDeleteError{status: http.StatusInternalServerError, message: msgInternalServerError}
 	}
 
 	// The delete removes the follower rows: read the followers first, so
 	// that they get the "instance.deleted" notification.
 	followerIDs := h.followerIDsBeforeDelete(c.Request.Context(), inst.ID)
 
-	if h.txRunner != nil {
-		txErr := database.DeleteInstanceWithOwnedDefinition(h.txRunner, inst)
-		if txErr != nil {
-			status, message := mapError(txErr, entityStackInstance)
-			c.JSON(status, gin.H{"error": message})
-			return
+	if txErr := database.DeleteInstanceWithOwnedDefinition(h.txRunner, inst); txErr != nil {
+		status, message := mapError(txErr, entityStackInstance)
+		if status == http.StatusInternalServerError {
+			slog.Error("failed to delete instance", logKeyInstanceID, inst.ID, "error", txErr)
 		}
-	} else {
-		slog.Error("txRunner not configured for DeleteInstance", "instance_id", id)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
-		return
+		return "", &instanceDeleteError{status: status, message: message}
 	}
 
-	h.afterInstanceDeleted(hookTriggerCtx(c), inst, followerIDs)
-
-	c.Status(http.StatusNoContent)
+	h.afterInstanceDeleted(ctx, inst, followerIDs)
+	return "", nil
 }
 
 // followerIDsBeforeDelete returns the followers of the instance, read
@@ -879,7 +913,7 @@ type invokeActionRequest struct {
 
 // InvokeAction godoc
 // @Summary     Invoke a registered action against a stack instance
-// @Description Dispatches to the action subscriber webhook and wraps its response in an envelope containing action, instance_id, status_code, and result fields. The subscriber's JSON body is nested under the result key. Returns 200 even for non-2xx subscriber responses — check status_code to distinguish. When the action declares parameters, they are checked (type, required, enum options) before the call; undeclared parameters pass through. When the action has a log_path, the subscriber answered 2xx and the result has a valid job_id, the envelope also has job_id: poll GET /stack-instances/{id}/actions/{name}/jobs/{job_id}/log for the job log.
+// @Description Dispatches to the action subscriber webhook and wraps its response in an envelope containing action, instance_id, status_code, and result fields. The subscriber's JSON body is nested under the result key. Returns 200 even for non-2xx subscriber responses — check status_code to distinguish. For an answer with status 400 or higher the envelope also has message: the subscriber's reason from a JSON string body or from the message, error, detail or reason field (one line, at most 500 characters, URLs replaced by [url]). A text/plain body of such an answer becomes a JSON string result; another non-JSON body gives a null result. A non-JSON body with a status below 400 gives 502. When the action declares parameters, they are checked (type, required, enum options) before the call; undeclared parameters pass through. When the action has a log_path, the subscriber answered 2xx and the result has a valid job_id, the envelope also has job_id: poll GET /stack-instances/{id}/actions/{name}/jobs/{job_id}/log for the job log.
 // @Tags        stack-instances
 // @Accept      json
 // @Produce     json
@@ -995,6 +1029,11 @@ func (h *InstanceHandler) InvokeAction(c *gin.Context) {
 	// of a 2xx answer to the envelope so clients can poll the job log route.
 	if jobID := asyncJobID(sub, res.StatusCode, result); jobID != "" {
 		envelope["job_id"] = jobID
+	}
+	// For a refusal (status >= 400, for example 409 "already in flight"), lift the
+	// subscriber's message to the envelope so clients can show it.
+	if msg := hooks.ActionResultMessage(res.StatusCode, result); msg != "" {
+		envelope["message"] = msg
 	}
 	c.JSON(http.StatusOK, envelope)
 }
@@ -1728,7 +1767,7 @@ func (h *InstanceHandler) StopInstance(c *gin.Context) {
 // @Failure     400 {object} map[string]string
 // @Failure     403 {object} map[string]string "Caller is not the owner, an admin or a devops user"
 // @Failure     404 {object} map[string]string
-// @Failure     409 {object} map[string]string "Invalid status for clean"
+// @Failure     409 {object} map[string]string "Invalid status for clean, or a concurrent clean or delete started first"
 // @Failure     503 {object} map[string]string "Deployment service not configured"
 // @Router      /api/v1/stack-instances/{id}/clean [post]
 func (h *InstanceHandler) CleanInstance(c *gin.Context) {
@@ -1756,10 +1795,8 @@ func (h *InstanceHandler) CleanInstance(c *gin.Context) {
 		return
 	}
 
-	// Note: status check is not atomic with the update in Manager.Clean().
-	// Concurrent API calls could race. The frontend mitigates this by
-	// disabling buttons optimistically. A per-instance mutex would fix this
-	// but is deferred as a known limitation shared with Deploy/Stop.
+	// Manager.Clean starts with a conditional update (status still allows a
+	// clean, no delete started): a concurrent clean or delete gives 409.
 	switch inst.Status {
 	case models.StackStatusRunning, models.StackStatusPartial, models.StackStatusStopped, models.StackStatusError:
 		// OK
@@ -1783,6 +1820,10 @@ func (h *InstanceHandler) CleanInstance(c *gin.Context) {
 	}
 
 	logID, err := h.deployManager.Clean(hookTriggerCtx(c), inst, charts)
+	if errors.Is(err, models.ErrCleanConflict) {
+		c.JSON(http.StatusConflict, gin.H{"error": msgCleanConflict})
+		return
+	}
 	if err != nil {
 		slog.Error("Failed to start clean operation",
 			logKeyInstanceID, id,

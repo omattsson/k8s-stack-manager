@@ -378,6 +378,7 @@ func TestBulkDelete_FiresDeleteHooks(t *testing.T) {
 
 	tests := []struct {
 		name         string
+		status       string // default draft
 		deny         bool
 		expectEvents []string
 		expectStatus string
@@ -392,6 +393,13 @@ func TestBulkDelete_FiresDeleteHooks(t *testing.T) {
 			name:         "pre-instance-delete denial stops the delete of the instance",
 			deny:         true,
 			expectEvents: []string{hooks.EventPreInstanceDelete},
+			expectStatus: "error",
+			expectExists: true,
+		},
+		{
+			name:         "operation in progress fires no pre-instance-delete",
+			status:       "deploying",
+			expectEvents: nil,
 			expectStatus: "error",
 			expectExists: true,
 		},
@@ -413,7 +421,11 @@ func TestBulkDelete_FiresDeleteHooks(t *testing.T) {
 			require.NoError(t, err)
 
 			instRepo := NewMockStackInstanceRepository()
-			seedInstance(t, instRepo, "i-1", "bulk-del", "d1", "uid-1", "draft")
+			status := tt.status
+			if status == "" {
+				status = "draft"
+			}
+			seedInstance(t, instRepo, "i-1", "bulk-del", "d1", "uid-1", status)
 			router := setupInstanceRouterWithHooks(instRepo, NewMockStackDefinitionRepository(), d, "uid-1", "alice")
 
 			w := httptest.NewRecorder()
@@ -428,7 +440,11 @@ func TestBulkDelete_FiresDeleteHooks(t *testing.T) {
 			require.Len(t, resp.Results, 1)
 			assert.Equal(t, tt.expectStatus, resp.Results[0].Status)
 			assert.NotContains(t, resp.Results[0].Error, rec.server.URL)
-			assert.Equal(t, tt.expectEvents, rec.names())
+			if tt.expectEvents == nil {
+				assert.Empty(t, rec.names())
+			} else {
+				assert.Equal(t, tt.expectEvents, rec.names())
+			}
 			_, findErr := instRepo.FindByID("i-1")
 			assert.Equal(t, tt.expectExists, findErr == nil)
 			rec.mu.Lock()

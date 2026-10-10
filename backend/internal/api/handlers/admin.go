@@ -29,9 +29,10 @@ const logKeyNamespace = "namespace"
 
 // OrphanedNamespaceResponse is the JSON representation of an orphaned namespace.
 type OrphanedNamespaceResponse struct {
-	CreatedAt      time.Time           `json:"created_at"`
-	Name           string              `json:"name"`
-	Phase          string              `json:"phase"`
+	CreatedAt time.Time `json:"created_at"`
+	Name      string    `json:"name"`
+	Phase     string    `json:"phase"`
+	// HelmReleases is always an array, never null.
 	HelmReleases   []string            `json:"helm_releases"`
 	ResourceCounts *k8s.ResourceCounts `json:"resource_counts,omitempty"`
 	// Managed is true when the namespace has the label
@@ -62,7 +63,7 @@ func NewAdminHandler(
 
 // ListOrphanedNamespaces returns all stack-* namespaces that have no matching StackInstance.
 // @Summary      List orphaned namespaces
-// @Description  Lists all Kubernetes namespaces matching the stack-* pattern that have no corresponding stack instance in the database. Pass ?details=true to include resource counts and helm releases per namespace (expensive). The managed field is true when the namespace has the label managed-by=k8s-stack-manager.
+// @Description  Lists all Kubernetes namespaces matching the stack-* pattern that have no corresponding stack instance in the database. Pass ?details=true to include resource counts and helm releases per namespace (expensive). helm_releases is always an array (empty without details, without releases or when Helm fails), never null. The managed field is true when the namespace has the label managed-by=k8s-stack-manager.
 // @Tags         Admin
 // @Produce      json
 // @Param        details  query  string  false  "Include resource counts and helm releases (true/false)"
@@ -127,6 +128,10 @@ func (h *AdminHandler) ListOrphanedNamespaces(c *gin.Context) {
 						if relErr != nil {
 							slog.Warn("Failed to list helm releases in orphaned namespace",
 								logKeyNamespace, ns.Name, "error", relErr)
+							resp.HelmReleases = []string{}
+						} else if releases == nil {
+							// A namespace without releases: [] (never null),
+							// clients read the length.
 							resp.HelmReleases = []string{}
 						} else {
 							resp.HelmReleases = releases

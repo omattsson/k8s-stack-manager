@@ -197,6 +197,13 @@ func (r *ActionRegistry) Invoke(ctx context.Context, name string, instance *Inst
 		respBody = []byte("null")
 	}
 
+	// A refusal (status 400 or higher) with a plain text body keeps its
+	// reason: the body becomes a JSON string. Other non-JSON refusals give a
+	// null result. A non-JSON body of another status stays an error.
+	if resp.StatusCode >= 400 && !json.Valid(respBody) {
+		respBody = plainTextActionBody(resp.Header.Get("Content-Type"), respBody)
+	}
+
 	if !json.Valid(respBody) {
 		badJSON := fmt.Errorf("action %q subscriber returned non-JSON body (%d bytes)", name, len(respBody))
 		finish(outcomeTransportError, badJSON, resp.StatusCode)

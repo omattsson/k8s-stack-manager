@@ -104,6 +104,23 @@ func (d *Dispatcher) DispatchTo(ctx context.Context, ch models.NotificationChann
 	return d.deliver(ctx, &ch, payload.EventType, body)
 }
 
+// DeliverOnce sends a payload to one channel with one attempt (no retry),
+// also when the channel is disabled. TestChannel uses it, so the admin gets
+// the result at once. It returns the delivery status ("success" or
+// "failed"), the HTTP status code (0 when no answer came) and an error
+// message without the webhook URL. It writes no delivery log.
+func (d *Dispatcher) DeliverOnce(ctx context.Context, ch models.NotificationChannel, payload EventPayload) (string, int, string) {
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return "failed", 0, "marshal error"
+	}
+	statusCode, err := d.post(ctx, &ch, payload.EventType, body)
+	if err != nil {
+		return "failed", statusCode, err.Error()
+	}
+	return "success", statusCode, ""
+}
+
 func (d *Dispatcher) deliver(ctx context.Context, ch *models.NotificationChannel, eventType string, body []byte) (status string, statusCode int, errMsg string) {
 	statusCode, err := d.post(ctx, ch, eventType, body)
 	if err == nil {

@@ -2,16 +2,12 @@ package notifier
 
 // AllEventTypes returns the complete list of notification event types
 // that can be subscribed to for channel routing: every type that the
-// notifier sends (PreferenceEventTypes) and the reserved type
-// "stack.expired" (accepted for existing subscriptions, not sent yet).
+// notifier sends (PreferenceEventTypes).
 // TestSentEventTypesAreKnown fails when code sends a type that is not in
 // PreferenceEventTypes.
 func AllEventTypes() []string {
-	return append(PreferenceEventTypes(), reservedEventTypes...)
+	return PreferenceEventTypes()
 }
-
-// reservedEventTypes are accepted in channel subscriptions but not sent.
-var reservedEventTypes = []string{"stack.expired"}
 
 // InstanceEventTypes returns the in-app notification event types of a stack
 // instance. The owner and the followers of the instance get them. A user can
@@ -36,6 +32,7 @@ func InstanceEventTypes() []string {
 		"rollback.completed",
 		"rollback.error",
 		"stack.expiring",
+		"stack.expired",
 		"cleanup.policy.stop",
 		"cleanup.policy.clean",
 	}

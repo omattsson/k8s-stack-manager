@@ -537,11 +537,22 @@ The backend does not follow a redirect from the subscriber, so a signed
 request never reaches another host. A 3xx answer with an empty or JSON body
 is returned as `status_code` (with `result` `null` for an empty body). A 3xx
 answer with a non-JSON body (for example an HTML redirect page) gives 502,
-like any other non-JSON body.
+like any other non-JSON body below status 400.
 
 When the action has a `log_path`, the subscriber answered 2xx, and `result`
 is an object with a valid `job_id` string, the envelope also has `"job_id"`. A client then polls the job
 log route.
+
+A refusal (status 400 or higher) keeps its reason: the envelope also has
+`"message"`, taken from a JSON string body or from the first string field of
+`message`, `error`, `detail` and `reason` (also `error.message`), as one line
+of at most 500 characters. A URL in the message becomes `[url]`. For example a subscriber that answers
+`409 {"error": "refresh-db already in flight"}` gives
+`{"status_code": 409, "result": {"error": "..."}, "message": "refresh-db already in flight"}`.
+A `text/plain` refusal body becomes a JSON string in `result` (and in
+`message`); another non-JSON refusal body (for example an HTML error page of a
+proxy) gives `result: null`. A non-JSON body with a status below 400 still
+gives 502. The envelope never has the subscriber URL.
 
 API error mappings:
 
