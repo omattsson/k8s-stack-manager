@@ -183,6 +183,10 @@ func SetupRoutes(router *gin.Engine, deps Deps) *RateLimiters {
 		// Ping endpoint
 		v1.GET("/ping", handlers.Ping)
 
+		// Web UI display config (title, logo, favicon) — public, so the
+		// login page can use it before sign-in.
+		v1.GET("/ui-config", handlers.NewUIConfigHandler(cfg.Branding))
+
 		// Items endpoints
 		itemsHandler := handlers.NewHandlerWithHub(deps.Repository, deps.Hub)
 		items := v1.Group("/items")
@@ -424,6 +428,7 @@ func SetupRoutes(router *gin.Engine, deps Deps) *RateLimiters {
 				users.PUT("/:id/disable", admin, deps.UserHandler.DisableUser)
 				users.PUT("/:id/enable", admin, deps.UserHandler.EnableUser)
 				users.PUT("/:id/password", admin, deps.UserHandler.ResetUserPassword)
+				users.PUT("/:id/role", admin, deps.UserHandler.ChangeUserRole)
 			}
 		}
 

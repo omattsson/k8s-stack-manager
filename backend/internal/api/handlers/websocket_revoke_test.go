@@ -315,6 +315,8 @@ func TestUserHandler_ClosesWebSockets(t *testing.T) {
 		{name: "disable", method: http.MethodPut, path: "/api/v1/users/u-target/disable", wantCode: http.StatusOK, wantUsers: []string{"u-target"}},
 		{name: "password reset", method: http.MethodPut, path: "/api/v1/users/u-target/password", body: `{"password":"new-password-1"}`, wantCode: http.StatusOK, wantUsers: []string{"u-target"}},
 		{name: "enable", method: http.MethodPut, path: "/api/v1/users/u-target/enable", wantCode: http.StatusOK},
+		{name: "role change", method: http.MethodPut, path: "/api/v1/users/u-target/role", body: `{"role":"devops"}`, wantCode: http.StatusOK, wantUsers: []string{"u-target"}},
+		{name: "role change of unknown user", method: http.MethodPut, path: "/api/v1/users/u-missing/role", body: `{"role":"devops"}`, wantCode: http.StatusNotFound},
 		{name: "delete of unknown user", method: http.MethodDelete, path: "/api/v1/users/u-missing", wantCode: http.StatusNotFound},
 	}
 
@@ -327,6 +329,7 @@ func TestUserHandler_ClosesWebSockets(t *testing.T) {
 			userRepo := NewMockUserRepository()
 			require.NoError(t, userRepo.Create(&models.User{ID: "u-target", Username: "target"}))
 			revoker := &fakeRevoker{}
+			seedCallerAdmin(userRepo, "u-admin", "admin")
 			h := NewUserHandler(userRepo, nil, nil)
 			h.SetWebSocketRevoker(revoker)
 
@@ -336,6 +339,7 @@ func TestUserHandler_ClosesWebSockets(t *testing.T) {
 			r.PUT("/api/v1/users/:id/disable", h.DisableUser)
 			r.PUT("/api/v1/users/:id/enable", h.EnableUser)
 			r.PUT("/api/v1/users/:id/password", h.ResetUserPassword)
+			r.PUT("/api/v1/users/:id/role", h.ChangeUserRole)
 
 			w := httptest.NewRecorder()
 			req := httptest.NewRequest(tt.method, tt.path, bytes.NewBufferString(tt.body))

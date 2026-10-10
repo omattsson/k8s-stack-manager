@@ -63,12 +63,26 @@ func (m *MockUserRepository) FindByID(id string) (*models.User, error) {
 	if m.findErr != nil {
 		return nil, m.findErr
 	}
-	u, ok := m.users[id]
+	u, ok := m.lookupLocked(id)
 	if !ok {
 		return nil, errors.New("not found")
 	}
 	cp := *u
 	return &cp, nil
+}
+
+// lookupLocked finds a user by ID without case, as the MySQL collation does.
+// The caller holds m.mu.
+func (m *MockUserRepository) lookupLocked(id string) (*models.User, bool) {
+	if u, ok := m.users[id]; ok {
+		return u, true
+	}
+	for key, u := range m.users {
+		if strings.EqualFold(key, id) {
+			return u, true
+		}
+	}
+	return nil, false
 }
 
 func (m *MockUserRepository) FindByIDs(ids []string) (map[string]*models.User, error) {
@@ -138,6 +152,50 @@ func (m *MockUserRepository) Update(user *models.User) error {
 	return nil
 }
 
+// UpdatePassword mirrors GORMUserRepository.UpdatePassword: only the hash.
+func (m *MockUserRepository) UpdatePassword(id, passwordHash string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.updateErr != nil {
+		return m.updateErr
+	}
+	u, ok := m.lookupLocked(id)
+	if !ok {
+		return dberrors.NewDatabaseError("update_password", dberrors.ErrNotFound)
+	}
+	u.PasswordHash = passwordHash
+	return nil
+}
+
+// UpdateProfile mirrors GORMUserRepository.UpdateProfile: only the listed
+// columns; the role only for an SSO user.
+func (m *MockUserRepository) UpdateProfile(id string, upd models.UserProfileUpdate) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.updateErr != nil {
+		return m.updateErr
+	}
+	u, ok := m.lookupLocked(id)
+	if !ok {
+		return dberrors.NewDatabaseError("update_profile", dberrors.ErrNotFound)
+	}
+	if upd.Email != nil {
+		u.Email = *upd.Email
+	}
+	if upd.DisplayName != nil {
+		u.DisplayName = *upd.DisplayName
+	}
+	if upd.LinkProvider != nil {
+		u.AuthProvider = *upd.LinkProvider
+		u.ExternalID = upd.ExternalID
+		u.PasswordHash = ""
+	}
+	if upd.Role != nil && u.AuthProvider != "" && u.AuthProvider != "local" {
+		u.Role = *upd.Role
+	}
+	return nil
+}
+
 func (m *MockUserRepository) Delete(id string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -180,6 +238,81 @@ func (m *MockUserRepository) ListByRoles(roles []string) ([]models.User, error) 
 		}
 	}
 	return out, nil
+}
+
+// guardLocked mirrors GORMUserRepository.guardedAdminChange: the caller must
+// be an enabled admin; it returns the target and the number of other enabled
+// admins. The caller holds m.mu.
+func (m *MockUserRepository) guardLocked(callerID, id string) (*models.User, int, error) {
+	if m.updateErr != nil {
+		return nil, 0, m.updateErr
+	}
+	caller, ok := m.lookupLocked(callerID)
+	if !ok || caller.Role != models.RoleAdmin || caller.Disabled {
+		return nil, 0, models.ErrCallerNotAdmin
+	}
+	target, ok := m.lookupLocked(id)
+	if !ok {
+		return nil, 0, dberrors.NewDatabaseError("guarded", dberrors.ErrNotFound)
+	}
+	others := 0
+	for _, u := range m.users {
+		if !strings.EqualFold(u.ID, target.ID) && u.Role == models.RoleAdmin && !u.Disabled {
+			others++
+		}
+	}
+	return target, others, nil
+}
+
+func removesLastAdmin(target *models.User, others int) bool {
+	return target.Role == models.RoleAdmin && !target.Disabled && others == 0
+}
+
+func (m *MockUserRepository) UpdateRole(callerID, id, role string) (string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	target, others, err := m.guardLocked(callerID, id)
+	if err != nil {
+		return "", err
+	}
+	oldRole := target.Role
+	if oldRole == role {
+		return oldRole, nil
+	}
+	if role != models.RoleAdmin && removesLastAdmin(target, others) {
+		return "", models.ErrLastAdmin
+	}
+	target.Role = role
+	return oldRole, nil
+}
+
+func (m *MockUserRepository) SetDisabled(callerID, id string, disabled bool) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	target, others, err := m.guardLocked(callerID, id)
+	if err != nil {
+		return err
+	}
+	if disabled && removesLastAdmin(target, others) {
+		return models.ErrLastAdmin
+	}
+	target.Disabled = disabled
+	return nil
+}
+
+func (m *MockUserRepository) DeleteGuarded(callerID, id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	target, others, err := m.guardLocked(callerID, id)
+	if err != nil {
+		return err
+	}
+	if removesLastAdmin(target, others) {
+		return models.ErrLastAdmin
+	}
+	delete(m.byName, target.Username)
+	delete(m.users, target.ID)
+	return nil
 }
 
 func (m *MockUserRepository) SetCreateError(err error) {

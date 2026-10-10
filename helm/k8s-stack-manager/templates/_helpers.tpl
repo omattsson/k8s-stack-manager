@@ -229,3 +229,41 @@ true
 true
 {{- end -}}
 {{- end -}}
+
+{{/*
+Return "true" when branding.files or branding.binaryFiles has a file: the
+chart then renders the frontend branding ConfigMap and mounts it into nginx
+at /usr/share/nginx/html/branding/.
+*/}}
+{{- define "k8s-stack-manager.brandingFilesEnabled" -}}
+{{- with .Values.branding -}}
+{{- if or .files .binaryFiles -}}
+true
+{{- end -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+Validate branding.files and branding.binaryFiles: each file name must match
+^[-._a-zA-Z0-9]+$ (a ConfigMap key, no path), and the total size of the
+files must stay at or below 900 KiB (a ConfigMap holds at most 1 MiB).
+binaryFiles count with their decoded size.
+*/}}
+{{- define "k8s-stack-manager.validateBrandingFiles" -}}
+{{- $total := 0 -}}
+{{- range $name, $content := (.Values.branding.files | default dict) -}}
+{{- if not (regexMatch "^[-._a-zA-Z0-9]+$" $name) -}}
+{{- fail (printf "branding.files: invalid file name %q (allowed: letters, digits, '-', '_', '.')" $name) -}}
+{{- end -}}
+{{- $total = add $total (len $content) -}}
+{{- end -}}
+{{- range $name, $content := (.Values.branding.binaryFiles | default dict) -}}
+{{- if not (regexMatch "^[-._a-zA-Z0-9]+$" $name) -}}
+{{- fail (printf "branding.binaryFiles: invalid file name %q (allowed: letters, digits, '-', '_', '.')" $name) -}}
+{{- end -}}
+{{- $total = add $total (len (b64dec $content)) -}}
+{{- end -}}
+{{- if gt (int $total) 921600 -}}
+{{- fail (printf "branding.files and branding.binaryFiles total %d bytes; the limit is 900 KiB (921600 bytes)" (int $total)) -}}
+{{- end -}}
+{{- end -}}

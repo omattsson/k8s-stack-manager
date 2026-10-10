@@ -661,6 +661,13 @@ func (s *stubUserRepo) Delete(_ string) error                                 { 
 func (s *stubUserRepo) List() ([]models.User, error)                          { return nil, nil }
 func (s *stubUserRepo) Count() (int64, error)                                 { return 0, nil }
 func (s *stubUserRepo) ListByRoles(_ []string) ([]models.User, error)         { return nil, nil }
+func (s *stubUserRepo) UpdateRole(_, _, _ string) (string, error)             { return "", nil }
+func (s *stubUserRepo) SetDisabled(_, _ string, _ bool) error                 { return nil }
+func (s *stubUserRepo) DeleteGuarded(_, _ string) error                        { return nil }
+func (s *stubUserRepo) UpdatePassword(_, _ string) error { return nil }
+func (s *stubUserRepo) UpdateProfile(_ string, _ models.UserProfileUpdate) error {
+	return nil
+}
 
 // ---- stubStackTemplateRepo ----
 

@@ -45,7 +45,7 @@ const ACTIONS = [
   'deploy', 'stop', 'clean', 'rollback', 'extend_ttl', 'clone', 'invoke_action',
   'publish', 'unpublish', 'instantiate', 'quick_deploy', 'import', 'upgrade',
   'test', 'test_connection', 'set_default', 'run',
-  'disable', 'enable', 'reset_password',
+  'disable', 'enable', 'reset_password', 'change_role',
   'expired', 'cleanup_policy_executed',
 ];
 

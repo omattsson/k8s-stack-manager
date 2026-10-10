@@ -14,6 +14,7 @@ import CloudOutlinedIcon from '@mui/icons-material/CloudOutlined';
 import ViewModuleOutlinedIcon from '@mui/icons-material/ViewModuleOutlined';
 import RocketLaunchOutlinedIcon from '@mui/icons-material/RocketLaunchOutlined';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
+import { useBranding } from '../../context/BrandingContext';
 
 interface SetupWizardProps {
   hasClusters: boolean;
@@ -46,6 +47,7 @@ const steps = [
 ];
 
 const SetupWizard = ({ hasClusters, hasTemplates, hasInstances, isAdmin, isDevOps, onDismiss }: SetupWizardProps) => {
+  const { title: appTitle } = useBranding();
   const navigate = useNavigate();
 
   const activeStep = useMemo(() => {
@@ -68,7 +70,7 @@ const SetupWizard = ({ hasClusters, hasTemplates, hasInstances, isAdmin, isDevOp
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 4 }}>
         <Box>
           <Typography variant="h4" component="h1" gutterBottom>
-            Welcome to Stack Manager
+            Welcome to {appTitle}
           </Typography>
           <Typography variant="body1" color="text.secondary">
             Get started by completing these steps to deploy your first stack.

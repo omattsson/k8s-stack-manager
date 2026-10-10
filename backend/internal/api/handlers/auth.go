@@ -42,14 +42,14 @@ type AuthHandler struct {
 	oidcCfg          *config.OIDCConfig
 	sessionStore     sessionstore.SessionStore
 	wsRevoker        websocket.ClientRevoker
-	loginCache       *cache.TTLCache[*models.User]
+	loginCache       *cache.TTLCache[struct{}] // key: verified credentials; value unused
 }
 
 // NewAuthHandler creates a new AuthHandler.
 func NewAuthHandler(userRepo models.UserRepository, cfg *config.AuthConfig, oidcCfg *config.OIDCConfig) *AuthHandler {
 	h := &AuthHandler{userRepo: userRepo, cfg: cfg, oidcCfg: oidcCfg}
 	if cfg.LoginCacheTTL > 0 {
-		h.loginCache = cache.New[*models.User](cfg.LoginCacheTTL, cfg.LoginCacheTTL)
+		h.loginCache = cache.New[struct{}](cfg.LoginCacheTTL, cfg.LoginCacheTTL)
 	}
 	return h
 }
@@ -150,8 +150,11 @@ func (h *AuthHandler) Login(c *gin.Context) {
 	cacheKey := loginCacheKey(req.Username, user.PasswordHash, req.Password)
 	cacheHit := false
 	if h.loginCache != nil {
-		if cached, ok := h.loginCache.Get(cacheKey); ok {
-			user = cached
+		// A hit only proves the password. Keep the fresh user record: the
+		// token must carry the current role and display name (a role
+		// change within the cache TTL must not give a token with the old
+		// role).
+		if _, ok := h.loginCache.Get(cacheKey); ok {
 			cacheHit = true
 		}
 	}
@@ -176,8 +179,41 @@ func (h *AuthHandler) Login(c *gin.Context) {
 			return
 		}
 		if h.loginCache != nil {
-			h.loginCache.Set(cacheKey, user)
+			h.loginCache.Set(cacheKey, struct{}{})
 		}
+	}
+
+	// Re-read the user after the password check (bcrypt takes time, and a
+	// cache hit can be up to LOGIN_CACHE_TTL old). The token and the checks
+	// use this record, so a disable, role change or password reset that
+	// commits during the login applies to it.
+	fresh, err := h.userRepo.FindByID(user.ID)
+	if err != nil {
+		if isNotFoundError(err) {
+			middleware.RecordLogin("local", "invalid")
+		} else {
+			slog.Error("Login user re-read failed", "error", err)
+			middleware.RecordLogin("local", "failure")
+		}
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid username or password"})
+		return
+	}
+	if fresh.PasswordHash != user.PasswordHash {
+		// The password changed after the check: the verified password is the old one.
+		middleware.RecordLogin("local", "invalid")
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid username or password"})
+		return
+	}
+	user = fresh
+	if user.Disabled {
+		middleware.RecordLogin("local", "disabled")
+		c.JSON(http.StatusForbidden, gin.H{"error": "Account disabled"})
+		return
+	}
+	if h.oidcCfg != nil && h.oidcCfg.Enabled && !h.oidcCfg.LocalAuth && !user.ServiceAccount {
+		middleware.RecordLogin("local", "restricted")
+		c.JSON(http.StatusForbidden, gin.H{"error": "Local login is restricted to service accounts. Please use SSO."})
+		return
 	}
 
 	// With refresh tokens the login starts a session; the access token carries
@@ -256,7 +292,7 @@ func (h *AuthHandler) Login(c *gin.Context) {
 
 // Register godoc
 // @Summary     Register a new user
-// @Description Create a new user account (admin only, or when self-registration is enabled)
+// @Description Create a new user account (admin only, or when self-registration is enabled) A role outside user, devops and admin gives 400.
 // @Tags        auth
 // @Accept      json
 // @Produce     json
@@ -282,6 +318,12 @@ func (h *AuthHandler) Register(c *gin.Context) {
 
 	if req.Username == "" || req.Password == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Username and password are required"})
+		return
+	}
+
+	// Reject an unknown role for every caller (same rule as the role change).
+	if req.Role != "" && !models.IsValidRole(req.Role) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": msgInvalidRole})
 		return
 	}
 

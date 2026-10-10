@@ -95,6 +95,35 @@ definitions:
     required:
     - session_id
     type: object
+  handlers.ChangeRoleRequest:
+    properties:
+      role:
+        description: 'Role is the new role: "user", "devops" or "admin".'
+        enum:
+        - user
+        - devops
+        - admin
+        example: devops
+        type: string
+    required:
+    - role
+    type: object
+  handlers.ChangeRoleResponse:
+    properties:
+      changed:
+        description: |-
+          Changed is false when the user already had the role (no-op: the
+          sessions of the user stay valid).
+        type: boolean
+      id:
+        type: string
+      message:
+        type: string
+      new_role:
+        type: string
+      old_role:
+        type: string
+    type: object
   handlers.ChartConfigExportData:
     properties:
       build_pipeline_id:
@@ -691,6 +720,22 @@ definitions:
       template_id:
         type: string
       template_name:
+        type: string
+    type: object
+  handlers.UIConfigResponse:
+    properties:
+      favicon_url:
+        description: FaviconURL is the browser tab icon (APP_FAVICON_URL).
+        example: /favicon.svg
+        type: string
+      logo_url:
+        description: 'LogoURL is the logo image (APP_LOGO_URL). Empty: the built-in
+          logo.'
+        example: ""
+        type: string
+      title:
+        description: Title is the product name (APP_TITLE).
+        example: K8s Stack Manager
         type: string
     type: object
   handlers.UpdateClusterRequest:
@@ -3404,7 +3449,7 @@ paths:
       consumes:
       - application/json
       description: Create a new user account (admin only, or when self-registration
-        is enabled)
+        is enabled) A role outside user, devops and admin gives 400.
       parameters:
       - description: User registration data
         in: body
@@ -8272,6 +8317,28 @@ paths:
       summary: Bulk unpublish stack templates
       tags:
       - templates
+  /api/v1/ui-config:
+    get:
+      description: 'Returns the display values of the web UI: product title, logo
+        URL and favicon URL (APP_TITLE, APP_LOGO_URL, APP_FAVICON_URL). Public: no
+        authentication, so the login page can use it. An empty logo_url means the
+        built-in logo. A URL is a same-origin path or an https URL. Cached for 5 minutes.'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handlers.UIConfigResponse'
+        "429":
+          description: Too Many Requests
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Web UI display config
+      tags:
+      - ui
   /api/v1/users:
     get:
       description: Returns all registered users. Admin only. PasswordHash is never
@@ -8305,8 +8372,9 @@ paths:
   /api/v1/users/{id}:
     delete:
       description: Permanently deletes a user account. Admin only. Cannot delete own
-        account. Revokes the user's current access tokens and all refresh tokens,
-        and deletes all API keys of the user.
+        account (400). The last enabled admin cannot be deleted (409). The caller
+        must still be an enabled admin in the database (403). Revokes the user's current
+        access tokens and all refresh tokens, and deletes all API keys of the user.
       parameters:
       - description: User ID
         in: path
@@ -8338,6 +8406,18 @@ paths:
             type: object
         "404":
           description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "409":
+          description: Conflict
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
           schema:
             additionalProperties:
               type: string
@@ -8501,9 +8581,10 @@ paths:
     put:
       consumes:
       - application/json
-      description: Disables a user account. Admin only. Revokes the user's current
-        access tokens and all refresh tokens. API keys stop working while the user
-        is disabled and work again after enable.
+      description: Disables a user account. Admin only. The last enabled admin cannot
+        be disabled (409). The caller must still be an enabled admin in the database
+        (403). Revokes the user's current access tokens and all refresh tokens. API
+        keys stop working while the user is disabled and work again after enable.
       parameters:
       - description: User ID
         in: path
@@ -8539,6 +8620,12 @@ paths:
             type: object
         "404":
           description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "409":
+          description: Conflict
           schema:
             additionalProperties:
               type: string
@@ -8671,6 +8758,78 @@ paths:
       security:
       - BearerAuth: []
       summary: Reset user password
+      tags:
+      - users
+  /api/v1/users/{id}/role:
+    put:
+      consumes:
+      - application/json
+      description: Sets the role of a local user. Admin only. The role of an SSO user
+        comes from the identity provider and cannot be changed here (409). An admin
+        cannot change their own role (403), the caller must still be an enabled admin
+        in the database (403), and the last enabled admin cannot lose the admin role
+        (409). An unchanged role is a no-op (changed=false). A change revokes the
+        user's current access tokens, all refresh tokens and open WebSocket connections,
+        so the next request needs a new login with the new role. API keys stay valid
+        and use the new role at once.
+      parameters:
+      - description: User ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: New role
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/handlers.ChangeRoleRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handlers.ChangeRoleResponse'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "409":
+          description: Conflict
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Change the role of a user
       tags:
       - users
   /health:

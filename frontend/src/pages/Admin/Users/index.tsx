@@ -36,9 +36,10 @@ import NavigateNextIcon from '@mui/icons-material/NavigateNext';
 import LockResetIcon from '@mui/icons-material/LockReset';
 import PersonOffIcon from '@mui/icons-material/PersonOff';
 import HowToRegIcon from '@mui/icons-material/HowToReg';
+import ManageAccountsIcon from '@mui/icons-material/ManageAccounts';
 import { userService, apiKeyService } from '../../../api/client';
 import { useAuth } from '../../../context/AuthContext';
-import type { User, APIKey, CreateUserRequest, CreateAPIKeyRequest, CreateAPIKeyResponse } from '../../../types';
+import type { User, UserRole, APIKey, CreateUserRequest, CreateAPIKeyRequest, CreateAPIKeyResponse } from '../../../types';
 import LoadingState from '../../../components/LoadingState';
 import { Link } from 'react-router-dom';
 
@@ -53,6 +54,15 @@ const getRoleChipColor = (role: string): 'error' | 'warning' | 'default' => {
 /** Label for the sign-in method: "Local" for a password account, otherwise "SSO". */
 const authProviderLabel = (provider: string | undefined): string =>
   !provider || provider === 'local' ? 'Local' : 'SSO';
+
+/** True for a password account. The identity provider manages the role of an SSO user. */
+const isLocalUser = (u: User): boolean => !u.auth_provider || u.auth_provider === 'local';
+
+const ROLE_OPTIONS: UserRole[] = ['user', 'devops', 'admin'];
+
+/** Server error message of a failed request, if any. */
+const serverErrorMessage = (err: unknown): string | undefined =>
+  (err as { response?: { data?: { error?: string } } })?.response?.data?.error;
 
 const AdminUsers = () => {
   const { user: currentUser } = useAuth();
@@ -104,6 +114,12 @@ const AdminUsers = () => {
 
   // Revoke API key confirm
   const [revokeKeyTarget, setRevokeKeyTarget] = useState<{ userId: string; key: APIKey } | null>(null);
+
+  // Edit role dialog
+  const [editRoleTarget, setEditRoleTarget] = useState<User | null>(null);
+  const [editRoleValue, setEditRoleValue] = useState<UserRole>('user');
+  const [editRoleError, setEditRoleError] = useState<string | null>(null);
+  const [editRoleLoading, setEditRoleLoading] = useState(false);
 
   const fetchUsers = useCallback(async () => {
     setLoading(true);
@@ -188,8 +204,11 @@ const AdminUsers = () => {
         await userService.enable(target.id);
       }
       setUsers((prev) => prev.map((u) => (u.id === target.id ? { ...u, disabled } : u)));
-    } catch {
-      setError(disabled ? `Failed to disable user ${target.username}` : `Failed to enable user ${target.username}`);
+    } catch (err) {
+      setError(
+        serverErrorMessage(err)
+          || (disabled ? `Failed to disable user ${target.username}` : `Failed to enable user ${target.username}`),
+      );
     } finally {
       setStatusLoadingId(null);
       setDisableUserTarget(null);
@@ -205,8 +224,8 @@ const AdminUsers = () => {
       setExpandedUsers((prev) => { const n = new Set(prev); n.delete(userId); return n; });
       setApiKeysMap((prev) => { const n = { ...prev }; delete n[userId]; return n; });
       await fetchUsers();
-    } catch {
-      setError('Failed to delete user');
+    } catch (err) {
+      setError(serverErrorMessage(err) || 'Failed to delete user');
       setDeleteUserTarget(null);
     }
   };
@@ -226,6 +245,27 @@ const AdminUsers = () => {
       setResetPasswordError('Failed to reset password');
     } finally {
       setResetPasswordLoading(false);
+    }
+  };
+
+  const openEditRole = (target: User) => {
+    setEditRoleTarget(target);
+    setEditRoleValue(ROLE_OPTIONS.includes(target.role as UserRole) ? (target.role as UserRole) : 'user');
+    setEditRoleError(null);
+  };
+
+  const handleChangeRole = async () => {
+    if (!editRoleTarget) return;
+    setEditRoleLoading(true);
+    setEditRoleError(null);
+    try {
+      const result = await userService.changeRole(editRoleTarget.id, editRoleValue);
+      setUsers((prev) => prev.map((u) => (u.id === editRoleTarget.id ? { ...u, role: result.new_role } : u)));
+      setEditRoleTarget(null);
+    } catch (err) {
+      setEditRoleError(serverErrorMessage(err) || 'Failed to change role');
+    } finally {
+      setEditRoleLoading(false);
     }
   };
 
@@ -347,6 +387,15 @@ const AdminUsers = () => {
                       <TableCell>{u.display_name || '—'}</TableCell>
                       <TableCell>
                         <Chip label={u.role} size="small" color={getRoleChipColor(u.role)} />
+                        {!isLocalUser(u) && (
+                          <Typography
+                            variant="caption"
+                            color="text.secondary"
+                            sx={{ display: 'block', mt: 0.5 }}
+                          >
+                            managed by SSO
+                          </Typography>
+                        )}
                       </TableCell>
                       <TableCell>
                         <Chip label={authProviderLabel(u.auth_provider)} size="small" variant="outlined" />
@@ -361,7 +410,21 @@ const AdminUsers = () => {
                       </TableCell>
                       <TableCell sx={{ display: { xs: 'none', md: 'table-cell' } }}>{new Date(u.created_at).toLocaleDateString()}</TableCell>
                       <TableCell>
-                        {(!u.auth_provider || u.auth_provider === 'local') && (
+                        {isLocalUser(u) && (
+                          <Tooltip title={u.id === currentUser.id ? 'Cannot change your own role' : 'Edit role'}>
+                            <span>
+                              <IconButton
+                                size="small"
+                                disabled={u.id === currentUser.id}
+                                onClick={() => openEditRole(u)}
+                                aria-label={`Edit role of ${u.username}`}
+                              >
+                                <ManageAccountsIcon fontSize="small" />
+                              </IconButton>
+                            </span>
+                          </Tooltip>
+                        )}
+                        {isLocalUser(u) && (
                           <Tooltip title="Reset password">
                             <IconButton
                               size="small"
@@ -724,6 +787,51 @@ const AdminUsers = () => {
             disabled={resetPasswordLoading || resetPasswordValue.length < 8}
           >
             {resetPasswordLoading ? <CircularProgress size={20} /> : 'Reset Password'}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* ── Edit Role Dialog ───────────────────────────────────────── */}
+      <Dialog
+        open={Boolean(editRoleTarget)}
+        onClose={() => !editRoleLoading && setEditRoleTarget(null)}
+        maxWidth="xs"
+        fullWidth
+      >
+        <DialogTitle>Edit Role</DialogTitle>
+        <DialogContent>
+          {editRoleError && <Alert severity="error" sx={{ mb: 2, mt: 1 }}>{editRoleError}</Alert>}
+          <Typography variant="body2" sx={{ mb: 2, mt: 1 }}>
+            Change the role of <strong>{editRoleTarget?.username}</strong>.
+          </Typography>
+          <TextField
+            label="Role"
+            value={editRoleValue}
+            onChange={(e) => setEditRoleValue(e.target.value as UserRole)}
+            select
+            fullWidth
+            size="small"
+          >
+            {ROLE_OPTIONS.map((role) => (
+              <MenuItem key={role} value={role}>{role}</MenuItem>
+            ))}
+          </TextField>
+          {editRoleTarget && editRoleValue !== editRoleTarget.role && (
+            <Alert severity="warning" sx={{ mt: 2 }}>
+              The role changes from <strong>{editRoleTarget.role}</strong> to <strong>{editRoleValue}</strong>.
+              The user is signed out and must sign in again. API keys of the user keep working and get the new role.
+            </Alert>
+          )}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setEditRoleTarget(null)} disabled={editRoleLoading}>Cancel</Button>
+          <Button
+            variant="contained"
+            color="warning"
+            onClick={handleChangeRole}
+            disabled={editRoleLoading || !editRoleTarget || editRoleValue === editRoleTarget.role}
+          >
+            {editRoleLoading ? <CircularProgress size={20} /> : 'Change Role'}
           </Button>
         </DialogActions>
       </Dialog>

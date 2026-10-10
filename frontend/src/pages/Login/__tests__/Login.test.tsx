@@ -3,6 +3,7 @@ import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import Login from '../index';
+import { StaticBrandingProvider } from '../../../context/BrandingContext';
 
 const mockNavigate = vi.fn();
 const mockLogin = vi.fn();
@@ -76,6 +77,32 @@ describe('Login Page', () => {
       expect(mockLogin).toHaveBeenCalledWith('admin', 'password');
       expect(mockNavigate).toHaveBeenCalledWith('/', { replace: true });
     });
+  });
+});
+
+describe('Login Page — branding', () => {
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('shows the built-in title and logo by default', () => {
+    renderLogin();
+    const header = screen.getByTestId('login-branding');
+    expect(header).toHaveTextContent('K8s Stack Manager');
+    expect(screen.getByTestId('brand-logo')).toHaveAttribute('src', '/logo.svg');
+  });
+
+  it('shows the configured title and logo before sign-in', () => {
+    render(
+      <StaticBrandingProvider value={{ title: 'Platform Portal', logoUrl: 'https://cdn.example.com/logo.png', faviconUrl: '/favicon.svg' }}>
+        <MemoryRouter>
+          <Login />
+        </MemoryRouter>
+      </StaticBrandingProvider>,
+    );
+    expect(screen.getByTestId('login-branding')).toHaveTextContent('Platform Portal');
+    expect(screen.getByTestId('brand-logo')).toHaveAttribute('src', 'https://cdn.example.com/logo.png');
+    expect(screen.getByRole('heading', { name: /sign in/i })).toBeInTheDocument();
   });
 });
 

@@ -3,6 +3,7 @@ import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import SetupWizard from '../index';
+import { StaticBrandingProvider } from '../../../context/BrandingContext';
 
 const renderWizard = (props: Partial<React.ComponentProps<typeof SetupWizard>> = {}) =>
   render(
@@ -22,7 +23,25 @@ const renderWizard = (props: Partial<React.ComponentProps<typeof SetupWizard>> =
 describe('SetupWizard', () => {
   it('renders welcome heading', () => {
     renderWizard();
-    expect(screen.getByText('Welcome to Stack Manager')).toBeInTheDocument();
+    expect(screen.getByText('Welcome to K8s Stack Manager')).toBeInTheDocument();
+  });
+
+  it('uses the configured title in the welcome heading', () => {
+    render(
+      <StaticBrandingProvider value={{ title: 'Platform Portal', logoUrl: '/logo.svg', faviconUrl: '/favicon.svg' }}>
+        <MemoryRouter>
+          <SetupWizard
+            hasClusters={false}
+            hasTemplates={false}
+            hasInstances={false}
+            isAdmin={true}
+            isDevOps={true}
+            onDismiss={vi.fn()}
+          />
+        </MemoryRouter>
+      </StaticBrandingProvider>,
+    );
+    expect(screen.getByText('Welcome to Platform Portal')).toBeInTheDocument();
   });
 
   it('renders all three step labels', () => {

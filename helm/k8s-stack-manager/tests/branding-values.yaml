@@ -1,0 +1,13 @@
+# Values used by `make helm-test` for the branding render checks.
+backend:
+  secrets:
+    JWT_SECRET: dummy-jwt-secret-for-template
+branding:
+  title: "Platform Portal"
+  logoUrl: /branding/logo.svg
+  faviconUrl: /branding/favicon.png
+  files:
+    logo.svg: |
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="6" fill="#1976d2"/></svg>
+  binaryFiles:
+    favicon.png: iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNgYGBgAAAABQABpfZFQAAAAABJRU5ErkJggg==

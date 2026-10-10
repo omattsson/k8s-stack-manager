@@ -67,6 +67,9 @@ import type {
   InstanceActionList,
   ActionInvokeResult,
   ActionJobLog,
+  UIConfig,
+  UserRole,
+  ChangeRoleResponse,
 } from '../types';
 
 // Extend Axios config to include our retry flag (avoids `any` cast).
@@ -364,6 +367,23 @@ export const oidcService = {
       console.error('Failed to get OIDC authorize URL:', error);
       throw error;
     }
+  },
+};
+
+/** Time limit of the UI config request, so a slow backend does not block the first render. */
+const UI_CONFIG_TIMEOUT_MS = 5000;
+
+/** Web UI display config service (branding). Maps to `/api/v1/ui-config`. */
+export const uiConfigService = {
+  /**
+   * Get the display values of the web UI: title, logo URL and favicon URL.
+   * Public endpoint (no token), so the login page can use it.
+   * @returns The UI config
+   * @see GET /api/v1/ui-config
+   */
+  get: async (): Promise<UIConfig> => {
+    const response = await api.get('/api/v1/ui-config', { timeout: UI_CONFIG_TIMEOUT_MS });
+    return response.data;
   },
 };
 
@@ -1701,6 +1721,26 @@ export const userService = {
       await api.put(`/api/v1/users/${id}/enable`);
     } catch (error) {
       console.error('Failed to enable user:', error);
+      throw error;
+    }
+  },
+  /**
+   * Change the role of a local user. Admin only. The server refuses an SSO
+   * user (409, the identity provider manages the role), the caller's own role
+   * (403) and the removal of the last enabled admin (409). A change signs the
+   * user out (access and refresh tokens revoked); API keys keep working with
+   * the new role.
+   * @param id - User ID (not the caller's own ID)
+   * @param role - New role: "user", "devops" or "admin"
+   * @returns The old and the new role, and whether the role changed
+   * @see PUT /api/v1/users/:id/role
+   */
+  changeRole: async (id: string, role: UserRole): Promise<ChangeRoleResponse> => {
+    try {
+      const response = await api.put(`/api/v1/users/${id}/role`, { role });
+      return response.data;
+    } catch (error) {
+      console.error('Failed to change user role:', error);
       throw error;
     }
   },

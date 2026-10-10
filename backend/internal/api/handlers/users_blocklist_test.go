@@ -36,6 +36,7 @@ func setupUserRouterFull(
 	if apiKeyRepo != nil {
 		akRepo = apiKeyRepo
 	}
+	seedCallerAdmin(userRepo, callerID, callerRole)
 	h := NewUserHandler(userRepo, rtRepo, akRepo)
 	if store != nil {
 		h.SetSessionStore(store)
@@ -49,6 +50,7 @@ func setupUserRouterFull(
 		users.PUT("/:id/disable", adminMW, h.DisableUser)
 		users.PUT("/:id/enable", adminMW, h.EnableUser)
 		users.PUT("/:id/password", adminMW, h.ResetUserPassword)
+		users.PUT("/:id/role", adminMW, h.ChangeUserRole)
 	}
 	return r
 }

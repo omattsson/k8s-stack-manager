@@ -12,6 +12,8 @@ import {
 } from '@mui/material';
 import SecurityOutlinedIcon from '@mui/icons-material/SecurityOutlined';
 import { useAuth } from '../../context/AuthContext';
+import { useBranding } from '../../context/BrandingContext';
+import BrandLogo from '../../components/BrandLogo';
 
 const Login = () => {
   const [username, setUsername] = useState('');
@@ -20,6 +22,7 @@ const Login = () => {
   const [loading, setLoading] = useState(false);
   const [ssoLoading, setSsoLoading] = useState(false);
   const { login, isAuthenticated, oidcConfig, oidcLoading, loginWithOIDC } = useAuth();
+  const { title: appTitle } = useBranding();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const forceLocal = useMemo(() => searchParams.get('local') === 'true', [searchParams]);
@@ -89,6 +92,15 @@ const Login = () => {
       }}
     >
       <Paper sx={{ p: 4, maxWidth: 400, width: '100%' }}>
+        <Box
+          data-testid="login-branding"
+          sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 1, mb: 2 }}
+        >
+          <BrandLogo size={48} />
+          <Typography variant="h6" component="p" sx={{ fontWeight: 700, textAlign: 'center' }}>
+            {appTitle}
+          </Typography>
+        </Box>
         <Typography variant="h5" component="h1" gutterBottom sx={{ textAlign: 'center' }}>
           Sign In
         </Typography>

@@ -137,6 +137,7 @@ const (
 	AuditActionDisable        = "disable"
 	AuditActionEnable         = "enable"
 	AuditActionResetPassword  = "reset_password"
+	AuditActionChangeRole     = "change_role"
 )
 
 // Actions and entity types that other packages write directly (not through
@@ -157,6 +158,7 @@ var KnownAuditActions = []string{
 	AuditActionImport, AuditActionUpgrade, AuditActionTest,
 	AuditActionTestConnection, AuditActionSetDefault, AuditActionRun,
 	AuditActionDisable, AuditActionEnable, AuditActionResetPassword,
+	AuditActionChangeRole,
 	AuditActionQuickDeploy, AuditActionExpired, AuditActionCleanupPolicyExecuted,
 }
 
@@ -209,6 +211,7 @@ var auditRoutes = map[string]AuditRoute{
 	"PUT /users/:id/disable":                       {Action: AuditActionDisable, EntityType: "user", IDParam: "id"},
 	"PUT /users/:id/enable":                        {Action: AuditActionEnable, EntityType: "user", IDParam: "id"},
 	"PUT /users/:id/password":                      {Action: AuditActionResetPassword, EntityType: "user", IDParam: "id"},
+	"PUT /users/:id/role":                          {Action: AuditActionChangeRole, EntityType: "user", IDParam: "id", ResultFields: map[string]string{"old_role": "old_role", "new_role": "new_role"}},
 	"POST /users/:id/api-keys":                     {Action: AuditActionCreate, EntityType: "api_key", DetailParams: map[string]string{"id": "user_id"}},
 	"DELETE /users/:id/api-keys/:keyId":            {Action: AuditActionDelete, EntityType: "api_key", IDParam: "keyId", DetailParams: map[string]string{"id": "user_id"}},
 	"DELETE /admin/orphaned-namespaces/:namespace": {Action: AuditActionDelete, EntityType: "namespace", IDParam: "namespace"},

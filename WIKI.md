@@ -127,7 +127,7 @@ Per-chart configuration overrides on a stack instance. Deep-merged with chart de
 Every mutating API call (POST, PUT, DELETE) is recorded with user, action, entity type, entity ID, and timestamp.
 
 - Plain create, update and delete calls get the action `create`, `update` or `delete` and the entity type of the resource (singular, for example `cluster`, `cleanup_policy`, `api_key`).
-- Other operations get their own action, with the entity they act on. For example `POST /stack-instances/:id/deploy` gives `deploy | stack_instance | <instance id>`. The same applies to `stop`, `clean`, `rollback`, `extend_ttl`, `clone`, `invoke_action` (the action name is in the details), template `publish`, `unpublish`, `instantiate` and `clone`, definition `import` and `upgrade`, notification channel `test`, cluster `test_connection` and `set_default`, cleanup policy `run`, and user `disable`, `enable` and `reset_password`. Deploy, stop, clean and rollback store the deployment log ID in the details.
+- Other operations get their own action, with the entity they act on. For example `POST /stack-instances/:id/deploy` gives `deploy | stack_instance | <instance id>`. The same applies to `stop`, `clean`, `rollback`, `extend_ttl`, `clone`, `invoke_action` (the action name is in the details), template `publish`, `unpublish`, `instantiate` and `clone`, definition `import` and `upgrade`, notification channel `test`, cluster `test_connection` and `set_default`, cleanup policy `run`, and user `disable`, `enable`, `reset_password` and `change_role` (the old and the new role are in the details). Deploy, stop, clean and rollback store the deployment log ID in the details.
 - A bulk operation writes one entry for each instance or template that succeeded, with `"bulk": true` in the details.
 - Marking notifications as read writes no entry. Quick deploy writes its own entry (`quick_deploy | stack_instance`).
 - Filter on the entity type `stack_instance` and an instance ID to see all operations on that instance.
@@ -158,6 +158,23 @@ Per-user deploy counts and last activity come from the deploy logs: each deploy 
 
 ### Users
 `/admin/users` (admin) shows the sign-in method (Local or SSO) and the status (Active or Disabled) of each user. Disable (with a confirmation) and Enable call `PUT /users/:id/disable` and `/enable`. An admin cannot disable, enable or delete the own account; the buttons on the own row are disabled. Reset password shows only for local users.
+
+Rules for delete, disable, enable and role change (guarded admin changes):
+
+- The handler reads the user first and uses the stored ID for the self-check, the change and the revocation. MySQL compares IDs without case, so `/users/ADMIN-ID` is the own account of `admin-id`.
+- The change runs in one database transaction. It locks the admin rows (ordered by ID), then the target row. Inside the lock the caller must still be an enabled admin, else 403 "Admin role required" (for example the caller was demoted or disabled after the token was issued).
+- The last enabled admin cannot be demoted, disabled or deleted (409). Two admins who demote, disable or delete each other at the same time are serialized: exactly one change succeeds, the other gets 403. An index on `users.role` (migration 50) keeps the lock to the admin rows.
+- Every user change writes only its own columns (role, disabled, password hash, SSO profile). No change saves the full row, so a password reset or an SSO profile sync never undoes a concurrent role change or disable. An SSO login sets the role from the identity provider only for SSO users.
+
+Edit role (local users only) opens a dialog with a role select (`user`, `devops`, `admin`) and a warning that the user is signed out. It calls `PUT /api/v1/users/:id/role` with `{"role": "devops"}`. Rules:
+
+- Only an admin can change a role.
+- The role of an SSO user comes from the identity provider (`OIDC_ROLE_CLAIM`) and is set again at each SSO login. The API refuses the change with 409 "Role is managed by the identity provider". The page shows the role read-only with the hint "managed by SSO".
+- An admin cannot change the own role (403). The button on the own row is disabled.
+- The last enabled admin cannot lose the admin role (409), and the caller must still be an enabled admin (403); see the rules above.
+- An unchanged role is a no-op: 200 with `"changed": false`, and the sessions of the user stay valid.
+- A change signs the user out (see Revoking a User). The next request needs a new login, which gives a token with the new role. API keys stay valid and use the new role at once, because API-key auth reads the role from the database on each request.
+- The change writes an audit entry `change_role | user | <user id>` with `old_role` and `new_role` in the details.
 
 ## Architecture
 
@@ -216,7 +233,7 @@ How the limits work together:
 - Any other reuse of a used refresh token revokes the session family (replay protection). Other sessions of the user stay active. A token revoked by logout never gets the grace.
 - An access token stays valid until it expires, also when the session idles out. Revocation (see below) uses the token blocklist instead.
 
-Note: The application has no API to change the role of a user. For SSO users the identity provider controls the role; the role syncs at each SSO login.
+Note: An admin can change the role of a local user (`PUT /api/v1/users/:id/role`, see Users). The change revokes the sessions of the user, so it applies to the next request. For SSO users the identity provider controls the role; the role syncs at each SSO login.
 
 Exceptions to the session limits:
 
@@ -232,10 +249,11 @@ Exceptions to the session limits:
 | Delete the user | rejected (401) | revoked | deleted | closed |
 | Disable the user | rejected (401) | revoked | kept, but rejected while the user is disabled | closed |
 | Reset the password | rejected (401) | revoked | kept | closed |
+| Change the role | rejected (401) | revoked | kept (they use the new role at once) | closed |
 | Log out (`/auth/logout`) | the current token is rejected (401) | the presented token is revoked | kept | the sockets of the current token are closed |
 | Log out of all sessions (`/auth/logout-all`) | the current token is rejected (401) | all revoked | kept | all sockets of the user are closed |
 
-A new login after a password reset works at once, also in the same second. Only tokens issued before the action are rejected. Access tokens have an `iat_ms` claim (issue time in milliseconds), and the user block stores its time in milliseconds, so the check has millisecond precision. A token without `iat_ms` (issued by an older version) is rejected when it was issued in the second of the block or before it. The block time and the token issue time come from the clocks of different replicas, so the replicas need synchronized clocks (NTP). During a rolling update with replicas of different versions, two blocks of the same user in the same second use the millisecond time of the block from the newer version. Enabling a disabled user does not bring back the tokens issued before the disable.
+A new login after a password reset or a role change works at once, also in the same second. The login cache (`LOGIN_CACHE_TTL`) only skips the password check. After the password check the login reads the user again and uses that record for the disabled check and the token role; a password changed during the login gives 401. Only tokens issued before the action are rejected. Access tokens have an `iat_ms` claim (issue time in milliseconds), and the user block stores its time in milliseconds, so the check has millisecond precision. A token without `iat_ms` (issued by an older version) is rejected when it was issued in the second of the block or before it. The block time and the token issue time come from the clocks of different replicas, so the replicas need synchronized clocks (NTP). During a rolling update with replicas of different versions, two blocks of the same user in the same second use the millisecond time of the block from the newer version. Enabling a disabled user does not bring back the tokens issued before the disable.
 
 WebSocket connections (`/ws`):
 
@@ -276,6 +294,30 @@ WebSocket connections (`/ws`):
 - Template variable substitution: `{{.Branch}}`, `{{.Namespace}}`, `{{.InstanceName}}`, `{{.StackName}}`, `{{.Owner}}`
 - The same merge feeds deploy, deploy preview, bulk deploy, quick deploy, export and compare
 - Export: `GET /stack-instances/:id/values` (ZIP, one `values.yaml` per chart) or `GET /stack-instances/:id/values/:chartId` (YAML)
+
+### Branding
+The frontend image is the same for every installation. The product name, the logo and the favicon come from the backend at runtime.
+
+| Variable | Default | Effect |
+|---|---|---|
+| `APP_TITLE` | `K8s Stack Manager` | Name in the browser tab, sidebar, app bar, login page and setup wizard. Maximum 100 characters. |
+| `APP_LOGO_URL` | empty | Logo image. Empty: the built-in logo (`/logo.svg`). |
+| `APP_FAVICON_URL` | `/favicon.svg` | Browser tab icon (built-in). |
+
+- `GET /api/v1/ui-config` returns `{"title", "logo_url", "favicon_url"}`. It needs no token (the login page uses it), has the API rate limit and `Cache-Control: public, max-age=300`.
+- The web UI renders at once with the last config it received (browser localStorage key `ui-config`) or, on the first visit, the built-in values. It loads the config once at startup, swaps in its values when they arrive (also on the login page) and stores them for the next start. If the call fails or takes more than 5 seconds, the initial values stay. A logo that does not load falls back to the built-in logo.
+- URL rule: a same-origin path (`/branding/logo.svg`) or an `https://` URL with a host. The backend refuses other values at startup with a clear error: `http://` (mixed content, clear text), `javascript:` and other schemes, all `data:` URLs (an SVG data URL can carry script), protocol-relative URLs (`//host/x`), paths without a leading `/`, user info, spaces and control characters. A path resolves against the frontend origin, not the API.
+- Helm: `branding.title`, `branding.logoUrl` and `branding.faviconUrl` set the variables (an explicit `backend.env` value wins). `branding.files` (text, for example SVG) and `branding.binaryFiles` (base64, for example PNG or ICO) put the files in a ConfigMap (file names `^[-._a-zA-Z0-9]+$`, at most 900 KiB in total, else the render fails) that the frontend nginx serves at `/branding/<name>`, with the content type of the extension, `X-Content-Type-Options: nosniff` and a sandbox Content Security Policy. Example:
+
+```yaml
+branding:
+  title: "Platform Portal"
+  logoUrl: /branding/logo.svg
+  faviconUrl: /branding/logo.svg
+  files:
+    logo.svg: |
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">...</svg>
+```
 
 ## Development
 
