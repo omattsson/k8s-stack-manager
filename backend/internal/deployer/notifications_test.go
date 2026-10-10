@@ -41,33 +41,43 @@ func (m *txRunnerWithBranchOverride) RunInTx(fn func(repos database.TxRepos) err
 	})
 }
 
-// mockNotifier records all Notify calls for assertion.
+// mockNotifier records all NotifyInstance calls for assertion.
 type mockNotifier struct {
 	mu    sync.Mutex
 	calls []notifyCall
+	// followers is what FollowerIDs returns.
+	followers []string
 }
 
 type notifyCall struct {
-	UserID     string
-	Type       string
-	Title      string
-	Message    string
-	EntityType string
-	EntityID   string
+	UserID      string
+	Type        string
+	Title       string
+	Message     string
+	EntityType  string
+	EntityID    string
+	FollowerIDs []string
 }
 
-func (m *mockNotifier) Notify(_ context.Context, userID, notifType, title, message, entityType, entityID string) error {
+func (m *mockNotifier) NotifyInstance(_ context.Context, target models.NotificationTarget, notifType, title, message string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.calls = append(m.calls, notifyCall{
-		UserID:     userID,
-		Type:       notifType,
-		Title:      title,
-		Message:    message,
-		EntityType: entityType,
-		EntityID:   entityID,
+		UserID:      target.OwnerID,
+		Type:        notifType,
+		Title:       title,
+		Message:     message,
+		EntityType:  "stack_instance",
+		EntityID:    target.InstanceID,
+		FollowerIDs: target.FollowerIDs,
 	})
 	return nil
+}
+
+func (m *mockNotifier) FollowerIDs(_ context.Context, _ string) []string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.followers
 }
 
 func (m *mockNotifier) getCalls() []notifyCall {
@@ -220,11 +230,12 @@ func TestNotification_CleanCompleted(t *testing.T) {
 	assert.Equal(t, "clean.completed", calls[0].Type)
 	assert.Equal(t, "user-20", calls[0].UserID)
 	assert.Contains(t, calls[0].Message, "clean-stack")
+	assert.Nil(t, calls[0].FollowerIDs, "without a delete the notifier reads the followers")
 }
 
 func TestNotification_DeleteAfterClean(t *testing.T) {
 	t.Parallel()
-	notif := &mockNotifier{}
+	notif := &mockNotifier{followers: []string{"follower-1"}}
 	instanceRepo := newMockInstanceRepo()
 	logRepo := newMockDeployLogRepo()
 
@@ -256,6 +267,8 @@ func TestNotification_DeleteAfterClean(t *testing.T) {
 	assert.Equal(t, "instance.deleted", calls[0].Type)
 	assert.Equal(t, "user-30", calls[0].UserID)
 	assert.Contains(t, calls[0].Message, "del-stack")
+	assert.Equal(t, []string{"follower-1"}, calls[0].FollowerIDs,
+		"the followers are read before the delete removes the follower rows")
 }
 
 func TestNotification_RollbackCompleted(t *testing.T) {

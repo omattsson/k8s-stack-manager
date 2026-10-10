@@ -46,8 +46,14 @@ type ClusterResolver interface {
 }
 
 // LifecycleNotifier creates in-app notifications for stack lifecycle events.
+// notifier.Notifier implements it.
 type LifecycleNotifier interface {
-	Notify(ctx context.Context, userID, notifType, title, message, entityType, entityID string) error
+	// NotifyInstance notifies the owner and the followers of the instance
+	// and dispatches the event to the matching channels.
+	NotifyInstance(ctx context.Context, target models.NotificationTarget, notifType, title, message string) error
+	// FollowerIDs returns the followers of the instance. Read them before
+	// an instance delete (the delete removes the follower rows).
+	FollowerIDs(ctx context.Context, instanceID string) []string
 }
 
 // Manager orchestrates asynchronous deployments with concurrency control.
@@ -1055,7 +1061,7 @@ func (m *Manager) finalizeDeployWith(instanceID string, deployLog *models.Deploy
 	_ = m.fireDeployHook(hookCtx, hooks.EventDeployFinalized, instance, deployLog.ID, deployLog.StartedAt, finalizeHookOpts)
 
 	for _, f := range postDeployIgnored {
-		m.notifyUser(instance.OwnerID, instanceID, "deployment.warning",
+		m.notifyInstance(models.NewNotificationTarget(instance), "deployment.warning",
 			fmt.Sprintf("Post-deploy step %s failed", f.Hook),
 			fmt.Sprintf("Deployment of %s: %s", instance.Name, f.UserMessage(hooks.EventPostDeploy, "deployment")))
 	}
@@ -1064,21 +1070,21 @@ func (m *Manager) finalizeDeployWith(instanceID string, deployLog *models.Deploy
 		// A failed blocking post-deploy subscriber is a hook failure, also
 		// when it timed out: no deploy-timeout event.
 		if isTimeoutError(deployErr) && !isPostDeployHookError(deployErr) {
-			m.notifyUser(instance.OwnerID, instanceID, "deploy.timeout",
+			m.notifyInstance(models.NewNotificationTarget(instance), "deploy.timeout",
 				"Deployment timed out",
 				fmt.Sprintf("Deployment of %s exceeded the timeout threshold", instance.Name))
 			_ = m.fireDeployHook(hookCtx, hooks.EventDeployTimeout, instance, deployLog.ID, deployLog.StartedAt, hookOpts{})
 		} else {
-			m.notifyUser(instance.OwnerID, instanceID, "deployment.error",
+			m.notifyInstance(models.NewNotificationTarget(instance), "deployment.error",
 				"Deployment failed",
 				fmt.Sprintf("Deployment of %s failed: %s", instance.Name, instance.ErrorMessage))
 		}
 	} else if partialDeploy {
-		m.notifyUser(instance.OwnerID, instanceID, "deployment.partial",
+		m.notifyInstance(models.NewNotificationTarget(instance), "deployment.partial",
 			"Deployment partially succeeded",
 			fmt.Sprintf("Deployment of %s partially succeeded: %s", instance.Name, instance.ErrorMessage))
 	} else {
-		m.notifyUser(instance.OwnerID, instanceID, "deployment.success", "Deployment succeeded", fmt.Sprintf("Deployment of %s completed successfully", instance.Name))
+		m.notifyInstance(models.NewNotificationTarget(instance), "deployment.success", "Deployment succeeded", fmt.Sprintf("Deployment of %s completed successfully", instance.Name))
 	}
 }
 
@@ -1310,9 +1316,9 @@ func (m *Manager) finalizeStop(instanceID string, deployLog *models.DeploymentLo
 
 	_ = m.fireDeployHook(m.shutdownCtx, hooks.EventStopCompleted, instance, deployLog.ID, deployLog.StartedAt, hookOpts{})
 	if stopErr != nil {
-		m.notifyUser(instance.OwnerID, instanceID, "stop.error", "Stop failed", fmt.Sprintf("Stopping %s failed: %s", instance.Name, instance.ErrorMessage))
+		m.notifyInstance(models.NewNotificationTarget(instance), "stop.error", "Stop failed", fmt.Sprintf("Stopping %s failed: %s", instance.Name, instance.ErrorMessage))
 	} else {
-		m.notifyUser(instance.OwnerID, instanceID, "deployment.stopped", "Stack stopped", fmt.Sprintf("Stack %s has been stopped", instance.Name))
+		m.notifyInstance(models.NewNotificationTarget(instance), "deployment.stopped", "Stack stopped", fmt.Sprintf("Stack %s has been stopped", instance.Name))
 	}
 }
 
@@ -1660,6 +1666,12 @@ func (m *Manager) finalizeClean(instanceID string, deployLog *models.DeploymentL
 	// deleted is true when the clean was the first step of a delete and the
 	// instance row is gone now.
 	deleted := false
+	// The delete removes the follower rows: read the followers first, so
+	// that they get the "instance.deleted" notification.
+	target := models.NewNotificationTarget(instance)
+	if cleanErr == nil && shouldDelete {
+		target.FollowerIDs = m.followerIDs(instanceID)
+	}
 	if cleanErr != nil {
 		m.broadcastStatusWithError(instanceID, models.StackStatusError, deployLog.ID, instance.ErrorMessage)
 	} else if shouldDelete {
@@ -1691,14 +1703,14 @@ func (m *Manager) finalizeClean(instanceID string, deployLog *models.DeploymentL
 	_ = m.fireDeployHook(m.shutdownCtx, hooks.EventCleanCompleted, instance, deployLog.ID, deployLog.StartedAt, cleanOpts)
 
 	if cleanErr != nil {
-		m.notifyUser(instance.OwnerID, instanceID, "clean.error", "Cleanup failed", fmt.Sprintf("Cleanup of %s failed: %s", instance.Name, instance.ErrorMessage))
+		m.notifyInstance(target, "clean.error", "Cleanup failed", fmt.Sprintf("Cleanup of %s failed: %s", instance.Name, instance.ErrorMessage))
 	} else if deleted {
-		m.notifyUser(instance.OwnerID, instanceID, "instance.deleted", "Stack deleted", fmt.Sprintf("Stack %s has been deleted", instance.Name))
+		m.notifyInstance(target, "instance.deleted", "Stack deleted", fmt.Sprintf("Stack %s has been deleted", instance.Name))
 		// The same events as the API delete of a draft instance.
 		_ = m.fireDeployHook(m.shutdownCtx, hooks.EventPostInstanceDelete, instance, deployLog.ID, deployLog.StartedAt, hookOpts{})
 		_ = m.fireDeployHook(m.shutdownCtx, hooks.EventDeleteCompleted, instance, deployLog.ID, deployLog.StartedAt, hookOpts{})
 	} else {
-		m.notifyUser(instance.OwnerID, instanceID, "clean.completed", "Cleanup completed", fmt.Sprintf("Stack %s has been cleaned and returned to draft", instance.Name))
+		m.notifyInstance(models.NewNotificationTarget(instance), "clean.completed", "Cleanup completed", fmt.Sprintf("Stack %s has been cleaned and returned to draft", instance.Name))
 	}
 }
 
@@ -2118,9 +2130,9 @@ func (m *Manager) finalizeRollback(instanceID string, deployLog *models.Deployme
 	_ = m.fireDeployHook(hookCtx, hooks.EventRollbackCompleted, instance, deployLog.ID, deployLog.StartedAt, outcomeOpts(outcome))
 	if rollbackErr == nil {
 		_ = m.fireDeployHook(hookCtx, hooks.EventPostRollback, instance, deployLog.ID, deployLog.StartedAt, hookOpts{})
-		m.notifyUser(instance.OwnerID, instanceID, "rollback.completed", "Rollback completed", fmt.Sprintf("Stack %s has been rolled back successfully", instance.Name))
+		m.notifyInstance(models.NewNotificationTarget(instance), "rollback.completed", "Rollback completed", fmt.Sprintf("Stack %s has been rolled back successfully", instance.Name))
 	} else {
-		m.notifyUser(instance.OwnerID, instanceID, "rollback.error", "Rollback failed", fmt.Sprintf("Rollback of %s failed: %s", instance.Name, instance.ErrorMessage))
+		m.notifyInstance(models.NewNotificationTarget(instance), "rollback.error", "Rollback failed", fmt.Sprintf("Rollback of %s failed: %s", instance.Name, instance.ErrorMessage))
 	}
 }
 

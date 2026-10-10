@@ -2141,3 +2141,92 @@ func (m *MockInstanceQuotaOverrideRepository) SetError(err error) {
 	defer m.mu.Unlock()
 	m.err = err
 }
+
+// ---- InstanceFollowerRepository mock ----
+
+// MockInstanceFollowerRepository is an in-memory InstanceFollowerRepository.
+type MockInstanceFollowerRepository struct {
+	mu sync.RWMutex
+	// pairs maps instance ID -> set of user IDs.
+	pairs map[string]map[string]bool
+	err   error
+}
+
+func NewMockInstanceFollowerRepository() *MockInstanceFollowerRepository {
+	return &MockInstanceFollowerRepository{pairs: make(map[string]map[string]bool)}
+}
+
+func (m *MockInstanceFollowerRepository) SetError(err error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.err = err
+}
+
+func (m *MockInstanceFollowerRepository) Follow(_ context.Context, userID, instanceID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.err != nil {
+		return m.err
+	}
+	if m.pairs[instanceID] == nil {
+		m.pairs[instanceID] = make(map[string]bool)
+	}
+	m.pairs[instanceID][userID] = true
+	return nil
+}
+
+func (m *MockInstanceFollowerRepository) Unfollow(_ context.Context, userID, instanceID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.err != nil {
+		return m.err
+	}
+	delete(m.pairs[instanceID], userID)
+	return nil
+}
+
+func (m *MockInstanceFollowerRepository) FollowState(_ context.Context, userID, instanceID string) (bool, int64, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.err != nil {
+		return false, 0, m.err
+	}
+	users := m.pairs[instanceID]
+	return users[userID], int64(len(users)), nil
+}
+
+func (m *MockInstanceFollowerRepository) ListUserIDsByInstance(_ context.Context, instanceID string) ([]string, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.err != nil {
+		return nil, m.err
+	}
+	ids := make([]string, 0, len(m.pairs[instanceID]))
+	for id := range m.pairs[instanceID] {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	return ids, nil
+}
+
+func (m *MockInstanceFollowerRepository) DeleteByInstance(_ context.Context, instanceID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.err != nil {
+		return m.err
+	}
+	delete(m.pairs, instanceID)
+	return nil
+}
+
+func (m *MockInstanceFollowerRepository) DeleteByUser(_ context.Context, userID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.err != nil {
+		return m.err
+	}
+	for _, users := range m.pairs {
+		delete(users, userID)
+	}
+	return nil
+}

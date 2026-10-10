@@ -1079,6 +1079,14 @@ func (d *Database) AutoMigrate() error {
 	// post-deploy hooks run; the k8s status watcher skips the instance).
 	migrator.AddMigration(postDeployHookUntilMigration())
 
+	// Migration 52: notification_channels.filters (instance filters of a
+	// channel, JSON text; NULL = all instances).
+	migrator.AddMigration(notificationChannelFiltersMigration())
+
+	// Migration 53: instance_followers (users who follow a stack instance
+	// and get its in-app notifications).
+	migrator.AddMigration(instanceFollowersMigration())
+
 	// Run migrations
 	if err := migrator.MigrateUp(); err != nil {
 		return err
@@ -1640,6 +1648,53 @@ func postDeployHookUntilMigration() schema.Migration {
 			m := tx.Migrator()
 			if m.HasColumn(&models.StackInstance{}, "PostDeployHookUntil") {
 				return m.DropColumn(&models.StackInstance{}, "PostDeployHookUntil")
+			}
+			return nil
+		},
+	}
+}
+
+// notificationChannelFiltersMigration is migration 52. It adds the nullable
+// text column notification_channels.filters. Existing channels get NULL (no
+// filters): they keep getting the events of all instances. Up and Down are
+// idempotent. It is a function so tests can run its Down step.
+func notificationChannelFiltersMigration() schema.Migration {
+	return schema.Migration{
+		Version:     "20261009000052",
+		Name:        "add_notification_channels_filters",
+		Description: "Add notification_channels.filters (instance name, owner, definition and cluster filters of a channel)",
+		Up: func(tx *gorm.DB) error {
+			m := tx.Migrator()
+			if !m.HasTable(&models.NotificationChannel{}) || m.HasColumn(&models.NotificationChannel{}, "Filters") {
+				return nil
+			}
+			return m.AddColumn(&models.NotificationChannel{}, "Filters")
+		},
+		Down: func(tx *gorm.DB) error {
+			m := tx.Migrator()
+			if m.HasTable(&models.NotificationChannel{}) && m.HasColumn(&models.NotificationChannel{}, "Filters") {
+				return m.DropColumn(&models.NotificationChannel{}, "Filters")
+			}
+			return nil
+		},
+	}
+}
+
+// instanceFollowersMigration is migration 53. It creates instance_followers
+// with the primary key (user_id, instance_id), so a pair exists once, and an
+// index on instance_id for the follower lookups of the notifier. Up and Down
+// are idempotent. It is a function so tests can run its Down step.
+func instanceFollowersMigration() schema.Migration {
+	return schema.Migration{
+		Version:     "20261009000053",
+		Name:        "create_instance_followers",
+		Description: "Create instance_followers (users who follow a stack instance)",
+		Up: func(tx *gorm.DB) error {
+			return tx.AutoMigrate(&models.InstanceFollower{})
+		},
+		Down: func(tx *gorm.DB) error {
+			if tx.Migrator().HasTable(&models.InstanceFollower{}) {
+				return tx.Migrator().DropTable(&models.InstanceFollower{})
 			}
 			return nil
 		},

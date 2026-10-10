@@ -24,7 +24,7 @@ type countingNotifier struct {
 	calls atomic.Int32
 }
 
-func (n *countingNotifier) Notify(context.Context, string, string, string, string, string, string) error {
+func (n *countingNotifier) NotifyInstance(context.Context, models.NotificationTarget, string, string, string) error {
 	n.calls.Add(1)
 	return nil
 }

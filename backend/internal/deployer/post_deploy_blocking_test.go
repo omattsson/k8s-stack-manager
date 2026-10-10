@@ -459,7 +459,8 @@ func TestCleanupExecutor_DeleteInstance_FiresDeleteEvents(t *testing.T) {
 			t.Parallel()
 			srv := newSubscriberServer(t)
 			instanceRepo := newMockInstanceRepo()
-			notif := &mockNotifier{}
+			// The policy delete reads the followers before the delete.
+			notif := &mockNotifier{followers: []string{"f1", "f2"}}
 			inst := seedInstance(t, instanceRepo, "inst-del", "del-demo", "owner-9")
 			inst.Status = models.StackStatusStopped
 			require.NoError(t, instanceRepo.Update(inst))
@@ -489,6 +490,7 @@ func TestCleanupExecutor_DeleteInstance_FiresDeleteEvents(t *testing.T) {
 			assert.Equal(t, "instance.deleted", calls[0].Type)
 			assert.Equal(t, "owner-9", calls[0].UserID)
 			assert.Equal(t, tt.expectMessage, calls[0].Message)
+			assert.Equal(t, []string{"f1", "f2"}, calls[0].FollowerIDs, "the followers get instance.deleted")
 		})
 	}
 }

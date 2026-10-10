@@ -103,14 +103,47 @@ func (r *GORMNotificationRepository) GetPreferences(ctx context.Context, userID 
 // UpdatePreference upserts a notification preference for a user+event_type.
 // Uses ON CONFLICT on the (user_id, event_type) unique index to atomically
 // insert or update, preventing races and duplicate-key violations.
+// The insert uses a column map: with the struct, GORM replaces enabled=false
+// (the zero value) with the field default (true), so a preference could not
+// be switched off.
 func (r *GORMNotificationRepository) UpdatePreference(ctx context.Context, pref *models.NotificationPreference) error {
+	if pref.Channel == "" {
+		pref.Channel = "in_app"
+	}
 	if err := r.db.WithContext(ctx).
+		Model(&models.NotificationPreference{}).
 		Clauses(clause.OnConflict{
 			Columns:   []clause.Column{{Name: "user_id"}, {Name: "event_type"}},
 			DoUpdates: clause.AssignmentColumns([]string{"enabled", "channel"}),
 		}).
-		Create(pref).Error; err != nil {
+		Create(map[string]interface{}{
+			"id":         pref.ID,
+			"user_id":    pref.UserID,
+			"event_type": pref.EventType,
+			"enabled":    pref.Enabled,
+			"channel":    pref.Channel,
+		}).Error; err != nil {
 		return dberrors.NewDatabaseError("update_preference", err)
 	}
 	return nil
+}
+
+// DisabledUserIDs returns the users in userIDs with a preference that
+// switches off eventType. Users without a preference row get the event.
+func (r *GORMNotificationRepository) DisabledUserIDs(ctx context.Context, eventType string, userIDs []string) (map[string]bool, error) {
+	disabled := make(map[string]bool)
+	if len(userIDs) == 0 {
+		return disabled, nil
+	}
+	var ids []string
+	if err := r.db.WithContext(ctx).
+		Model(&models.NotificationPreference{}).
+		Where("event_type = ? AND enabled = ? AND user_id IN ?", eventType, false, userIDs).
+		Pluck("user_id", &ids).Error; err != nil {
+		return nil, dberrors.NewDatabaseError("disabled_user_ids", err)
+	}
+	for _, id := range ids {
+		disabled[id] = true
+	}
+	return disabled, nil
 }

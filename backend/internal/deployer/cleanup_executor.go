@@ -84,6 +84,12 @@ func (e *CleanupExecutor) DeleteInstance(ctx context.Context, inst *models.Stack
 			return errors.New(hooks.UserMessage(hookErr, hooks.EventPreInstanceDelete, "delete"))
 		}
 	}
+	// The delete removes the follower rows: read the followers first, so
+	// that they get the "instance.deleted" notification.
+	var followerIDs []string
+	if e.manager != nil {
+		followerIDs = e.manager.followerIDs(inst.ID)
+	}
 	// With a transaction runner, delete the branch overrides and the quick
 	// deploy definition owned by the instance in the same transaction.
 	var err error
@@ -95,17 +101,17 @@ func (e *CleanupExecutor) DeleteInstance(ctx context.Context, inst *models.Stack
 	if err != nil {
 		return err
 	}
-	e.afterDelete(ctx, inst)
+	e.afterDelete(ctx, inst, followerIDs)
 	return nil
 }
 
 // afterDelete tells subscribers and the owner about a delete, as the API
 // delete path does: post-instance-delete and delete-completed (with the
-// trigger of ctx, for example the cleanup policy) and the owner notification
-// instance.deleted. The delete is done, so a caller that stops (the end of a
-// leadership term) does not cancel the events; the subscription timeouts
-// limit them.
-func (e *CleanupExecutor) afterDelete(ctx context.Context, inst *models.StackInstance) {
+// trigger of ctx, for example the cleanup policy) and the notification
+// instance.deleted for the owner and followerIDs (read before the delete).
+// The delete is done, so a caller that stops (the end of a leadership term)
+// does not cancel the events; the subscription timeouts limit them.
+func (e *CleanupExecutor) afterDelete(ctx context.Context, inst *models.StackInstance, followerIDs []string) {
 	if e.manager == nil {
 		return
 	}
@@ -121,7 +127,13 @@ func (e *CleanupExecutor) afterDelete(ctx context.Context, inst *models.StackIns
 	if ok && trigger.Type == hooks.TriggerCleanupPolicy && trigger.Name != "" {
 		message = fmt.Sprintf("Stack %s has been deleted by cleanup policy %q", inst.Name, trigger.Name)
 	}
-	e.manager.notifyUser(inst.OwnerID, inst.ID, "instance.deleted", "Stack deleted", message)
+	target := models.NewNotificationTarget(inst)
+	target.FollowerIDs = followerIDs
+	if target.FollowerIDs == nil {
+		// The rows are gone: no lookup after the delete.
+		target.FollowerIDs = []string{}
+	}
+	e.manager.notifyInstance(target, "instance.deleted", "Stack deleted", message)
 }
 
 func (e *CleanupExecutor) resolveCharts(inst *models.StackInstance) ([]models.ChartConfig, error) {

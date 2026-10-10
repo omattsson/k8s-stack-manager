@@ -100,6 +100,7 @@ func (r *GORMNotificationChannelRepository) UpdateChannel(ctx context.Context, c
 		"name":        channel.Name,
 		"webhook_url": channel.WebhookURL,
 		"enabled":     channel.Enabled,
+		"filters":     channel.Filters,
 		"updated_at":  time.Now().UTC(),
 	}
 	if secretChanged {

@@ -436,6 +436,8 @@ func TestAuditRouteFor(t *testing.T) {
 		{"POST", "/api/v1/stack-instances/:id/clean", "clean", "stack_instance", "id", false, ""},
 		{"POST", "/api/v1/stack-instances/:id/rollback", "rollback", "stack_instance", "id", false, ""},
 		{"POST", "/api/v1/stack-instances/:id/extend", "extend_ttl", "stack_instance", "id", false, ""},
+		{"POST", "/api/v1/stack-instances/:id/follow", "follow", "stack_instance", "id", false, ""},
+		{"DELETE", "/api/v1/stack-instances/:id/follow", "unfollow", "stack_instance", "id", false, ""},
 		{"POST", "/api/v1/stack-instances/:id/actions/:name", "invoke_action", "stack_instance", "id", false, ""},
 		{"POST", "/api/v1/stack-instances/bulk/deploy", "deploy", "stack_instance", "", false, "instance_id"},
 		{"POST", "/api/v1/stack-instances/bulk/stop", "stop", "stack_instance", "", false, "instance_id"},

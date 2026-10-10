@@ -42,13 +42,24 @@ func NewDispatcher(repo models.NotificationChannelRepository) *Dispatcher {
 }
 
 // Dispatch finds all enabled channels subscribed to the payload's event type
-// and POSTs the generic JSON to each. Errors are logged and recorded as
-// delivery logs; they never propagate to the caller.
+// whose filters match the instances of the payload, and POSTs the generic
+// JSON to each. A channel that the filters skip gets no delivery log (only a
+// debug log line). Errors are logged and recorded as delivery logs; they
+// never propagate to the caller.
 func (d *Dispatcher) Dispatch(ctx context.Context, payload EventPayload) {
-	channels, err := d.repo.FindChannelsByEvent(ctx, payload.EventType)
+	found, err := d.repo.FindChannelsByEvent(ctx, payload.EventType)
 	if err != nil {
 		slog.Error("notification channel: failed to find channels", "event", payload.EventType, "error", err)
 		return
+	}
+	channels := make([]models.NotificationChannel, 0, len(found))
+	for _, ch := range found {
+		if !ch.Filters.MatchesAny(payload.Instances) {
+			slog.Debug("notification channel: skipped by filters",
+				"channel", ch.Name, "event", payload.EventType, "entity_id", payload.EntityID)
+			continue
+		}
+		channels = append(channels, ch)
 	}
 	if len(channels) == 0 {
 		return

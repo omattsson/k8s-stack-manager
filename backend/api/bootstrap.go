@@ -245,7 +245,9 @@ func buildDomainServices(
 	)
 
 	// Lifecycle notifier — in-app notifications for stack events.
-	lifecycleNotifier := notifier.NewNotifier(repos.Notification, hub, repos.User)
+	// Followers of an instance get its in-app notifications too.
+	lifecycleNotifier := notifier.NewNotifier(repos.Notification, hub, repos.User).
+		WithFollowers(repos.InstanceFollower)
 
 	// Wire external channel dispatcher for webhook-based notifications.
 	if repos.NotificationChannel != nil {
@@ -380,7 +382,8 @@ func buildHandlers(
 		return nil, fmt.Errorf("create instance handler: %w", err)
 	}
 	instanceHandler.WithHooks(svc.HookDispatcher).WithActions(svc.ActionRegistry).WithNotifier(svc.LifecycleNotifier).WithSharedValues(repos.SharedValues).
-		WithTemplateVersions(repos.TemplateVersion).WithClusterQuotas(repos.ResourceQuota)
+		WithTemplateVersions(repos.TemplateVersion).WithClusterQuotas(repos.ResourceQuota).
+		WithFollowers(repos.InstanceFollower)
 
 	// Git handler.
 	gitHandler := handlers.NewGitHandler(svc.GitRegistry)
@@ -458,7 +461,8 @@ func buildHandlers(
 	// Notification channel handler (only when repo is available).
 	var notificationChannelHandler *handlers.NotificationChannelHandler
 	if repos.NotificationChannel != nil {
-		notificationChannelHandler = handlers.NewNotificationChannelHandler(repos.NotificationChannel)
+		notificationChannelHandler = handlers.NewNotificationChannelHandler(repos.NotificationChannel).
+			WithFilterLookups(repos.User, repos.StackDefinition, repos.Cluster)
 	}
 
 	// Auto-create admin user on startup.

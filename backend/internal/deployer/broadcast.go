@@ -95,19 +95,28 @@ func (m *Manager) broadcastLog(instanceID, logID, line string) {
 	}
 }
 
-// notifyUser sends an in-app notification to a specific user.
-// Silently returns if no notifier is configured.
-func (m *Manager) notifyUser(ownerID, instanceID, notifType, title, message string) {
+// notifyInstance sends the in-app notification of an instance event to the
+// owner and the followers of the instance. Silently returns if no notifier
+// is configured.
+func (m *Manager) notifyInstance(target models.NotificationTarget, notifType, title, message string) {
 	if m.notifier == nil {
 		return
 	}
 
-	if err := m.notifier.Notify(m.shutdownCtx, ownerID, notifType, title, message, "stack_instance", instanceID); err != nil {
+	if err := m.notifier.NotifyInstance(m.shutdownCtx, target, notifType, title, message); err != nil {
 		slog.Error("failed to create lifecycle notification",
-			"instance_id", instanceID, "type", notifType, "error", err)
+			"instance_id", target.InstanceID, "type", notifType, "error", err)
 	}
 }
 
+// followerIDs returns the followers of the instance, or nil without a
+// notifier. Call it before the instance is deleted.
+func (m *Manager) followerIDs(instanceID string) []string {
+	if m.notifier == nil {
+		return nil
+	}
+	return m.notifier.FollowerIDs(m.shutdownCtx, instanceID)
+}
 
 // logAction returns the action of logID for the status payload. A final
 // status (not one of the in-progress statuses) removes the entry.

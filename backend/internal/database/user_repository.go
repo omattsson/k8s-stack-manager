@@ -115,14 +115,20 @@ func (r *GORMUserRepository) Update(user *models.User) error {
 
 // Delete removes a user by ID.
 func (r *GORMUserRepository) Delete(id string) error {
-	result := r.db.Where("id = ?", id).Delete(&models.User{})
-	if result.Error != nil {
-		return dberrors.NewDatabaseError("delete", result.Error)
-	}
-	if result.RowsAffected == 0 {
-		return dberrors.NewDatabaseError("delete", dberrors.ErrNotFound)
-	}
-	return nil
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		result := tx.Where("id = ?", id).Delete(&models.User{})
+		if result.Error != nil {
+			return dberrors.NewDatabaseError("delete", result.Error)
+		}
+		if result.RowsAffected == 0 {
+			return dberrors.NewDatabaseError("delete", dberrors.ErrNotFound)
+		}
+		// The user follows no instance any more.
+		if err := tx.Where("user_id = ?", id).Delete(&models.InstanceFollower{}).Error; err != nil {
+			return dberrors.NewDatabaseError("delete_followers", err)
+		}
+		return nil
+	})
 }
 
 // Count returns the total number of users.
@@ -261,6 +267,10 @@ func (r *GORMUserRepository) DeleteGuarded(callerID, id string) error {
 		}
 		if result.RowsAffected == 0 {
 			return dberrors.NewDatabaseError("delete", dberrors.ErrNotFound)
+		}
+		// The user follows no instance any more.
+		if err := tx.Where("user_id = ?", g.user.ID).Delete(&models.InstanceFollower{}).Error; err != nil {
+			return dberrors.NewDatabaseError("delete_followers", err)
 		}
 		return nil
 	})

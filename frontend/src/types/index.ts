@@ -156,9 +156,19 @@ export interface StackInstance {
   definition_name?: string;
   /** Name of the target cluster. Omitted when the cluster no longer exists or `cluster_id` is empty (older instances). */
   cluster_name?: string;
+  /** True when the current user follows the instance. Only `GET /stack-instances/:id` sets it; omitted when following is not available. */
+  following?: boolean;
+  /** Number of users who follow the instance. Only `GET /stack-instances/:id` sets it. */
+  follower_count?: number;
   created_at: string;
   updated_at: string;
   definition?: StackDefinition;
+}
+
+/** Response of `POST` and `DELETE /stack-instances/:id/follow`. */
+export interface FollowState {
+  following: boolean;
+  follower_count: number;
 }
 
 /** Response of `POST /stack-instances/:id/rollback`. */
@@ -863,13 +873,36 @@ export interface DashboardResponse {
   failing_instances: DashboardFailing[];
 }
 
+/**
+ * Instance filters of a notification channel. Each set filter must match
+ * (AND); one value of a filter is enough (OR). Empty filters match all
+ * instances. Events without an instance go only to channels without filters.
+ */
+export interface NotificationChannelFilters {
+  /** Glob patterns for the instance name (`*`, `?`, `[a-z]`), case-insensitive. */
+  instance_name_patterns?: string[];
+  /** User IDs of instance owners. */
+  owner_ids?: string[];
+  /** Stack definition IDs. */
+  definition_ids?: string[];
+  /** Cluster IDs. */
+  cluster_ids?: string[];
+}
+
 export interface NotificationChannel {
   id: string;
   name: string;
   webhook_url: string;
   enabled: boolean;
+  /** Instance filters; an empty object means all instances. */
+  filters?: NotificationChannelFilters;
   created_at: string;
   updated_at: string;
+}
+
+/** Create and update response of a channel: the channel and warnings for unknown filter IDs. */
+export interface NotificationChannelSaveResult extends NotificationChannel {
+  warnings?: string[];
 }
 
 export interface NotificationChannelWithCount extends NotificationChannel {

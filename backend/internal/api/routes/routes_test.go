@@ -954,6 +954,9 @@ func (s *stubNotificationRepo) MarkAllAsRead(_ context.Context, _ string) error 
 func (s *stubNotificationRepo) GetPreferences(_ context.Context, _ string) ([]models.NotificationPreference, error) {
 	return nil, nil
 }
+func (s *stubNotificationRepo) DisabledUserIDs(_ context.Context, _ string, _ []string) (map[string]bool, error) {
+	return map[string]bool{}, nil
+}
 func (s *stubNotificationRepo) UpdatePreference(_ context.Context, _ *models.NotificationPreference) error {
 	return nil
 }
@@ -1311,6 +1314,8 @@ func TestSetupRoutes_AllHandlers_RegistersCompleteAPI(t *testing.T) {
 		{"POST", "/api/v1/stack-instances/:id/actions/:name"},
 		{"GET", "/api/v1/stack-instances/:id/actions/:name/jobs/:job_id/log"},
 		{"POST", "/api/v1/stack-instances/:id/extend"},
+		{"POST", "/api/v1/stack-instances/:id/follow"},
+		{"DELETE", "/api/v1/stack-instances/:id/follow"},
 		{"GET", "/api/v1/stack-instances/:id/deploy-log"},
 		{"GET", "/api/v1/stack-instances/:id/deploy-log/:logId/values"},
 		{"POST", "/api/v1/stack-instances/:id/rollback"},

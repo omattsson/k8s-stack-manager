@@ -229,12 +229,12 @@ type countingCleanupNotifier struct {
 	calls atomic.Int32
 }
 
-func (n *countingCleanupNotifier) Notify(context.Context, string, string, string, string, string, string) error {
+func (n *countingCleanupNotifier) NotifyInstance(context.Context, models.NotificationTarget, string, string, string) error {
 	n.calls.Add(1)
 	return nil
 }
 
-func (n *countingCleanupNotifier) NotifySystem(context.Context, string, string, string, string, string) error {
+func (n *countingCleanupNotifier) NotifySystemForInstances(context.Context, string, string, string, string, string, []models.NotificationTarget) error {
 	n.calls.Add(1)
 	return nil
 }

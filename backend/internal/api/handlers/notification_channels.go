@@ -31,6 +31,10 @@ const (
 // NotificationChannelHandler handles CRUD operations for notification channels.
 type NotificationChannelHandler struct {
 	repo models.NotificationChannelRepository
+	// Optional lookups for the filter warnings (unknown IDs).
+	userRepo       models.UserRepository
+	definitionRepo models.StackDefinitionRepository
+	clusterRepo    models.ClusterRepository
 }
 
 // NewNotificationChannelHandler creates a new NotificationChannelHandler.
@@ -38,11 +42,25 @@ func NewNotificationChannelHandler(repo models.NotificationChannelRepository) *N
 	return &NotificationChannelHandler{repo: repo}
 }
 
+// WithFilterLookups attaches the repositories that create and update use to
+// check the IDs of the channel filters. An unknown ID gives a warning in the
+// response, not an error. A nil repository skips its check. Returns h for
+// chaining.
+func (h *NotificationChannelHandler) WithFilterLookups(users models.UserRepository, definitions models.StackDefinitionRepository, clusters models.ClusterRepository) *NotificationChannelHandler {
+	h.userRepo = users
+	h.definitionRepo = definitions
+	h.clusterRepo = clusters
+	return h
+}
+
 type createChannelRequest struct {
 	Name       string `json:"name" binding:"required"`
 	WebhookURL string `json:"webhook_url" binding:"required"`
 	Secret     string `json:"secret,omitempty"`
 	Enabled    *bool  `json:"enabled"`
+	// Filters limits the channel to some stack instances. Omit it or send
+	// empty lists for all instances.
+	Filters *models.NotificationChannelFilters `json:"filters,omitempty"`
 }
 
 type updateChannelRequest struct {
@@ -50,6 +68,58 @@ type updateChannelRequest struct {
 	WebhookURL string `json:"webhook_url,omitempty"`
 	Secret     *string `json:"secret,omitempty"`
 	Enabled    *bool   `json:"enabled,omitempty"`
+	// Filters replaces the filters of the channel. Omit it to keep them;
+	// send {} to remove all filters.
+	Filters *models.NotificationChannelFilters `json:"filters,omitempty"`
+}
+
+// notificationChannelResponse is the create and update response.
+type notificationChannelResponse struct {
+	models.NotificationChannel
+	// Warnings lists filter IDs that point to no existing user, stack
+	// definition or cluster. The channel is saved with them.
+	Warnings []string `json:"warnings,omitempty"`
+}
+
+// filterWarnings returns a warning for each filter ID that points to no
+// existing user, definition or cluster. Each kind takes one batch lookup. A
+// lookup error is logged and skips that check.
+func (h *NotificationChannelHandler) filterWarnings(f models.NotificationChannelFilters) []string {
+	var warnings []string
+	if h.userRepo != nil && len(f.OwnerIDs) > 0 {
+		if users, err := h.userRepo.FindByIDs(f.OwnerIDs); err != nil {
+			slog.Error("Failed to check channel filter owners", "error", err)
+		} else {
+			for _, id := range f.OwnerIDs {
+				if _, ok := users[id]; !ok {
+					warnings = append(warnings, fmt.Sprintf("owner_ids: user %s does not exist", id))
+				}
+			}
+		}
+	}
+	if h.definitionRepo != nil && len(f.DefinitionIDs) > 0 {
+		if names, err := h.definitionRepo.NamesByIDs(f.DefinitionIDs); err != nil {
+			slog.Error("Failed to check channel filter definitions", "error", err)
+		} else {
+			for _, id := range f.DefinitionIDs {
+				if _, ok := names[id]; !ok {
+					warnings = append(warnings, fmt.Sprintf("definition_ids: stack definition %s does not exist", id))
+				}
+			}
+		}
+	}
+	if h.clusterRepo != nil && len(f.ClusterIDs) > 0 {
+		if names, err := h.clusterRepo.NamesByIDs(f.ClusterIDs); err != nil {
+			slog.Error("Failed to check channel filter clusters", "error", err)
+		} else {
+			for _, id := range f.ClusterIDs {
+				if _, ok := names[id]; !ok {
+					warnings = append(warnings, fmt.Sprintf("cluster_ids: cluster %s does not exist", id))
+				}
+			}
+		}
+	}
+	return warnings
 }
 
 type updateSubscriptionsRequest struct {
@@ -95,13 +165,15 @@ func (h *NotificationChannelHandler) ListChannels(c *gin.Context) {
 
 // CreateChannel godoc
 // @Summary     Create a notification channel
-// @Description Creates a new notification channel
+// @Description Creates a new notification channel. Optional filters limit the channel to some stack instances: instance_name_patterns (globs, path.Match syntax, case-insensitive), owner_ids, definition_ids and cluster_ids. Each set filter must match (AND); one value of a filter is enough (OR); empty filters match all instances. Events without an instance go only to channels without filters; a cleanup policy run goes to a channel when at least one affected instance matches. An invalid pattern gives 400. An ID that does not exist gives a warning in the response; the channel is saved.
 // @Tags        notification-channels
 // @Accept      json
 // @Produce     json
 // @Param       channel body     createChannelRequest true "Channel"
-// @Success     201     {object} models.NotificationChannel
+// @Success     201     {object} notificationChannelResponse
 // @Failure     400     {object} map[string]string
+// @Failure     401     {object} map[string]string
+// @Failure     403     {object} map[string]string
 // @Failure     409     {object} map[string]string
 // @Failure     500     {object} map[string]string
 // @Router      /api/v1/admin/notification-channels [post]
@@ -122,6 +194,14 @@ func (h *NotificationChannelHandler) CreateChannel(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Webhook URL must start with https://"})
 		return
 	}
+	var filters models.NotificationChannelFilters
+	if req.Filters != nil {
+		filters = *req.Filters
+		if err := filters.Normalize(); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid filters: " + err.Error()})
+			return
+		}
+	}
 
 	now := time.Now().UTC()
 	channel := models.NotificationChannel{
@@ -129,6 +209,7 @@ func (h *NotificationChannelHandler) CreateChannel(c *gin.Context) {
 		Name:       req.Name,
 		WebhookURL: req.WebhookURL,
 		Secret:     req.Secret,
+		Filters:    filters,
 		Enabled:    true,
 		CreatedAt:  now,
 		UpdatedAt:  now,
@@ -143,12 +224,15 @@ func (h *NotificationChannelHandler) CreateChannel(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusCreated, channel)
+	c.JSON(http.StatusCreated, notificationChannelResponse{
+		NotificationChannel: channel,
+		Warnings:            h.filterWarnings(channel.Filters),
+	})
 }
 
 // GetChannel godoc
 // @Summary     Get a notification channel
-// @Description Returns a notification channel by ID
+// @Description Returns a notification channel by ID, with its filters
 // @Tags        notification-channels
 // @Produce     json
 // @Param       id path string true "Channel ID"
@@ -177,14 +261,16 @@ func (h *NotificationChannelHandler) GetChannel(c *gin.Context) {
 
 // UpdateChannel godoc
 // @Summary     Update a notification channel
-// @Description Updates an existing notification channel
+// @Description Updates an existing notification channel. filters replaces the channel filters (omit it to keep them, send {} to remove them); the rules are the same as for create. An ID that does not exist gives a warning in the response.
 // @Tags        notification-channels
 // @Accept      json
 // @Produce     json
 // @Param       id      path     string               true "Channel ID"
 // @Param       channel body     updateChannelRequest  true "Channel updates"
-// @Success     200     {object} models.NotificationChannel
+// @Success     200     {object} notificationChannelResponse
 // @Failure     400     {object} map[string]string
+// @Failure     401     {object} map[string]string
+// @Failure     403     {object} map[string]string
 // @Failure     404     {object} map[string]string
 // @Failure     409     {object} map[string]string
 // @Failure     500     {object} map[string]string
@@ -230,6 +316,14 @@ func (h *NotificationChannelHandler) UpdateChannel(c *gin.Context) {
 	if req.Enabled != nil {
 		existing.Enabled = *req.Enabled
 	}
+	if req.Filters != nil {
+		filters := *req.Filters
+		if err := filters.Normalize(); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid filters: " + err.Error()})
+			return
+		}
+		existing.Filters = filters
+	}
 
 	if err := h.repo.UpdateChannel(c.Request.Context(), existing, secretChanged); err != nil {
 		status, msg := mapError(err, entityNotificationChannel)
@@ -237,7 +331,10 @@ func (h *NotificationChannelHandler) UpdateChannel(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, existing)
+	c.JSON(http.StatusOK, notificationChannelResponse{
+		NotificationChannel: *existing,
+		Warnings:            h.filterWarnings(existing.Filters),
+	})
 }
 
 // DeleteChannel godoc

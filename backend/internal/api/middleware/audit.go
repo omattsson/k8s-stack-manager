@@ -138,6 +138,8 @@ const (
 	AuditActionEnable         = "enable"
 	AuditActionResetPassword  = "reset_password"
 	AuditActionChangeRole     = "change_role"
+	AuditActionFollow         = "follow"
+	AuditActionUnfollow       = "unfollow"
 )
 
 // Actions and entity types that other packages write directly (not through
@@ -158,7 +160,7 @@ var KnownAuditActions = []string{
 	AuditActionImport, AuditActionUpgrade, AuditActionTest,
 	AuditActionTestConnection, AuditActionSetDefault, AuditActionRun,
 	AuditActionDisable, AuditActionEnable, AuditActionResetPassword,
-	AuditActionChangeRole,
+	AuditActionChangeRole, AuditActionFollow, AuditActionUnfollow,
 	AuditActionQuickDeploy, AuditActionExpired, AuditActionCleanupPolicyExecuted,
 }
 
@@ -201,6 +203,8 @@ var auditRoutes = map[string]AuditRoute{
 	"POST /stack-instances/:id/clean":         {Action: AuditActionClean, EntityType: "stack_instance", IDParam: "id", ResultFields: map[string]string{"log_id": "log_id"}},
 	"POST /stack-instances/:id/rollback":      {Action: AuditActionRollback, EntityType: "stack_instance", IDParam: "id", ResultFields: map[string]string{"log_id": "log_id"}},
 	"POST /stack-instances/:id/extend":        {Action: AuditActionExtendTTL, EntityType: "stack_instance", IDParam: "id"},
+	"POST /stack-instances/:id/follow":        {Action: AuditActionFollow, EntityType: "stack_instance", IDParam: "id"},
+	"DELETE /stack-instances/:id/follow":      {Action: AuditActionUnfollow, EntityType: "stack_instance", IDParam: "id"},
 	"POST /stack-instances/:id/actions/:name": {Action: AuditActionInvokeAction, EntityType: "stack_instance", IDParam: "id", DetailParams: map[string]string{"name": "action"}},
 	"POST /stack-instances/bulk/deploy":       {Action: AuditActionDeploy, EntityType: "stack_instance", BulkIDField: "instance_id"},
 	"POST /stack-instances/bulk/stop":         {Action: AuditActionStop, EntityType: "stack_instance", BulkIDField: "instance_id"},
