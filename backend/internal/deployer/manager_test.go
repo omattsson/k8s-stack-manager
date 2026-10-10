@@ -70,6 +70,45 @@ func (m *mockInstanceRepo) Update(inst *models.StackInstance) error {
 	return nil
 }
 
+// MarkCleanStart implements models.CleanStartMarker with the same
+// conditional semantics as the GORM repository.
+func (m *mockInstanceRepo) MarkCleanStart(id string, fromStatuses []string, deleteAfterClean bool) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.err != nil {
+		return m.err
+	}
+	conflict := models.ErrDeleteConflict
+	if !deleteAfterClean {
+		conflict = models.ErrCleanConflict
+	}
+	inst, ok := m.items[id]
+	if !ok || (!deleteAfterClean && inst.DeleteAfterClean) {
+		return conflict
+	}
+	for _, st := range fromStatuses {
+		if inst.Status == st {
+			inst.Status = models.StackStatusCleaning
+			inst.ErrorMessage = ""
+			if deleteAfterClean {
+				inst.DeleteAfterClean = true
+			}
+			return nil
+		}
+	}
+	return conflict
+}
+
+// ClearDeleteAfterClean implements models.CleanStartMarker.
+func (m *mockInstanceRepo) ClearDeleteAfterClean(id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if inst, ok := m.items[id]; ok {
+		inst.DeleteAfterClean = false
+	}
+	return nil
+}
+
 func (m *mockInstanceRepo) Delete(id string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()

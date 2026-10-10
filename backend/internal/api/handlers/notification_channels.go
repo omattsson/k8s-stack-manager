@@ -1,13 +1,7 @@
 package handlers
 
 import (
-	"bytes"
-	"crypto/hmac"
-	"crypto/sha256"
-	"encoding/hex"
-	"encoding/json"
 	"fmt"
-	"io"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -464,12 +458,14 @@ func (h *NotificationChannelHandler) UpdateSubscriptions(c *gin.Context) {
 
 // TestChannel godoc
 // @Summary     Test a notification channel
-// @Description Sends a test payload to the channel's webhook URL
+// @Description Sends a test payload (event type "test") to the channel's webhook URL with one attempt. Redirects are not followed. A disabled channel can be tested too; channel_enabled in the response tells whether the channel gets events. Each test send is written to the delivery log of the channel with event_type "test".
 // @Tags        notification-channels
 // @Produce     json
 // @Param       id path string true "Channel ID"
-// @Success     200 {object} map[string]interface{}
+// @Success     200 {object} map[string]interface{} "success (bool), message, status_code (0 when no answer), channel_enabled (bool)"
 // @Failure     400 {object} map[string]string
+// @Failure     401 {object} map[string]string
+// @Failure     403 {object} map[string]string
 // @Failure     404 {object} map[string]string
 // @Failure     500 {object} map[string]string
 // @Router      /api/v1/admin/notification-channels/{id}/test [post]
@@ -489,7 +485,7 @@ func (h *NotificationChannelHandler) TestChannel(c *gin.Context) {
 	}
 
 	testPayload := notifChannel.EventPayload{
-		EventType:       "test",
+		EventType:       models.NotificationChannelTestEvent,
 		Timestamp:       time.Now().UTC(),
 		Title:           "Test notification",
 		Message:         "This is a test notification from k8s-stack-manager.",
@@ -498,45 +494,39 @@ func (h *NotificationChannelHandler) TestChannel(c *gin.Context) {
 		EntityID:        channel.ID,
 	}
 
-	body, err := json.Marshal(testPayload)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
-		return
+	// The same sender as the event dispatch (signature, no redirects), with
+	// one attempt so the admin gets the result at once.
+	status, statusCode, errMsg := notifChannel.NewDispatcher(h.repo).DeliverOnce(c.Request.Context(), *channel, testPayload)
+
+	// Each test send goes to the delivery log, also for a disabled channel.
+	// The event type "test" marks it.
+	if logErr := h.repo.CreateDeliveryLog(c.Request.Context(), &models.NotificationDeliveryLog{
+		ID:           uuid.New().String(),
+		ChannelID:    channel.ID,
+		ChannelName:  channel.Name,
+		EventType:    models.NotificationChannelTestEvent,
+		Status:       status,
+		StatusCode:   statusCode,
+		ErrorMessage: errMsg,
+		CreatedAt:    time.Now().UTC(),
+	}); logErr != nil {
+		slog.Error("notification channel test: failed to create delivery log", "channel_id", channel.ID, "error", logErr)
 	}
 
-	client := &http.Client{Timeout: 10 * time.Second}
-	req, err := http.NewRequestWithContext(c.Request.Context(), http.MethodPost, channel.WebhookURL, bytes.NewReader(body))
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create test request"})
-		return
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-StackManager-Event", "test")
-	if channel.Secret != "" {
-		mac := hmac.New(sha256.New, []byte(channel.Secret))
-		mac.Write(body)
-		req.Header.Set("X-StackManager-Signature", "sha256="+hex.EncodeToString(mac.Sum(nil)))
-	}
-
-	resp, err := client.Do(req)
-	if err != nil {
-		c.JSON(http.StatusOK, gin.H{
-			"success": false,
-			"message": "Connection failed",
-		})
-		return
-	}
-	io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
-	resp.Body.Close()
-
-	success := resp.StatusCode >= 200 && resp.StatusCode < 300
-	msg := fmt.Sprintf("HTTP %d", resp.StatusCode)
-	if success {
-		msg = "Test notification sent successfully"
+	success := status == "success"
+	msg := "Test notification sent successfully"
+	switch {
+	case success:
+	case statusCode == 0:
+		msg = "Connection failed"
+	default:
+		msg = fmt.Sprintf("HTTP %d", statusCode)
 	}
 	c.JSON(http.StatusOK, gin.H{
-		"success": success,
-		"message": msg,
+		"success":         success,
+		"message":         msg,
+		"status_code":     statusCode,
+		"channel_enabled": channel.Enabled,
 	})
 }
 

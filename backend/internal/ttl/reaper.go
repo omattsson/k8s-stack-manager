@@ -3,6 +3,7 @@ package ttl
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"sync"
 	"time"
@@ -25,6 +26,7 @@ type Reaper struct {
 	auditRepo    models.AuditLogRepository
 	hub          websocket.BroadcastSender
 	stopper      InstanceStopper
+	notifier     ExpiryNotifier
 	interval     time.Duration
 	stopCh       chan struct{}
 	doneCh       chan struct{}
@@ -49,6 +51,13 @@ func NewReaper(
 		stopCh:       make(chan struct{}),
 		doneCh:       make(chan struct{}),
 	}
+}
+
+// WithNotifier sets the notifier that sends "stack.expired" to the owner and
+// the followers of an expired instance. nil sends no notification.
+func (r *Reaper) WithNotifier(n ExpiryNotifier) *Reaper {
+	r.notifier = n
+	return r
 }
 
 // Start begins the periodic expiry check loop. It blocks until Stop is called
@@ -129,6 +138,7 @@ func (r *Reaper) processExpired() {
 				// Stop initiated; async process handles status transitions.
 				slog.Info("Expired instance stop initiated via deployer", "instance_id", inst.ID)
 				r.logExpiry(inst)
+				r.notifyExpired(inst, "Stack %q expired after its TTL and is being stopped")
 				rMetrics.expiredTotal.Add(ctx, 1)
 				continue
 			}
@@ -146,6 +156,7 @@ func (r *Reaper) processExpired() {
 		}
 
 		r.logExpiry(inst)
+		r.notifyExpired(inst, "Stack %q expired after its TTL and was stopped")
 		rMetrics.expiredTotal.Add(ctx, 1)
 
 		slog.Info("Instance expired and stopped", "instance_id", inst.ID)
@@ -154,6 +165,20 @@ func (r *Reaper) processExpired() {
 	span.SetStatus(codes.Ok, "")
 	span.End()
 	rMetrics.reapDuration.Record(ctx, time.Since(start).Seconds())
+}
+
+// notifyExpired sends "stack.expired" to the owner and the followers of the
+// instance. format gets the instance name. The stop itself later sends
+// "deployment.stopped" (or "stop.error"); a user can switch off each type in
+// the notification preferences.
+func (r *Reaper) notifyExpired(inst *models.StackInstance, format string) {
+	if r.notifier == nil {
+		return
+	}
+	if err := r.notifier.NotifyInstance(context.Background(), models.NewNotificationTarget(inst),
+		"stack.expired", "Stack expired", fmt.Sprintf(format, inst.Name)); err != nil {
+		slog.Error("Failed to send stack expired notification", "instance_id", inst.ID, "error", err)
+	}
 }
 
 // logExpiry creates an audit log entry and broadcasts a WebSocket message for an expired instance.

@@ -599,9 +599,9 @@ func TestNotificationHandler_UpdatePreferences(t *testing.T) {
 			expectedStatus: http.StatusBadRequest,
 		},
 		{
-			name:           "channel-only event type rejects",
-			body:           `[{"event_type":"stack.expired","enabled":true}]`,
-			expectedStatus: http.StatusBadRequest,
+			name:           "stack expired event type is accepted (#500)",
+			body:           `[{"event_type":"stack.expired","enabled":false}]`,
+			expectedStatus: http.StatusOK,
 		},
 		{
 			name:           "wrapped in object rejects (regression: #218)",

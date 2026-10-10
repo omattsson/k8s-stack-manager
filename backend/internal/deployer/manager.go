@@ -86,6 +86,9 @@ type Manager struct {
 
 	stabilizeTimeout      time.Duration
 	stabilizePollInterval time.Duration
+	// podEventPollInterval is how often a deploy or rollback reads the
+	// Warning events and pod states of its namespace (see podEventWatch).
+	podEventPollInterval time.Duration
 
 	// hooks dispatches lifecycle events to user-configured webhooks.
 	// nil disables all hook dispatch.
@@ -94,10 +97,6 @@ type Manager struct {
 	// notifier creates in-app notifications for stack lifecycle events.
 	// nil disables notification creation.
 	notifier LifecycleNotifier
-
-	// pendingDeletes tracks instances that should be deleted from the database
-	// after their async clean operation completes successfully.
-	pendingDeletes sync.Map
 
 	// logActions maps a running deployment log ID to its action (deploy,
 	// stop, clean, rollback) for the deployment.status WebSocket payload.
@@ -171,6 +170,11 @@ type ManagerConfig struct {
 	// during the stabilization window. Defaults to 5s if zero.
 	StabilizePollInterval time.Duration
 
+	// PodEventPollInterval controls how often a deploy or rollback reads the
+	// Warning events and pod states of its namespace and writes new pod
+	// problems to the deploy log. Defaults to 10s if zero.
+	PodEventPollInterval time.Duration
+
 	// ReplicaID is the process identity of this process (replica.ProcessID).
 	// Each deploy log stores it, so the leader can end the operation when
 	// this process stops without a clean shutdown (InterruptRecovery).
@@ -241,17 +245,21 @@ func NewManager(cfg ManagerConfig) *Manager {
 
 		stabilizeTimeout:      cfg.StabilizeTimeout,
 		stabilizePollInterval: stabilizePoll,
+		podEventPollInterval:  cfg.PodEventPollInterval,
 
 		hooks:    cfg.Hooks,
 		notifier: cfg.Notifier,
 	}
 }
 
-// ScheduleDeleteAfterClean marks an instance for DB deletion once its async
-// clean operation finishes successfully. If the clean fails, the instance
-// remains in the database with an error status.
-func (m *Manager) ScheduleDeleteAfterClean(instanceID string) {
-	m.pendingDeletes.Store(instanceID, struct{}{})
+// clearDeleteAfterClean clears the persisted delete mark of the instance
+// (stack_instances.delete_after_clean) when the repository supports it.
+func (m *Manager) clearDeleteAfterClean(instanceID string) {
+	if marker, ok := m.instanceRepo.(models.CleanStartMarker); ok {
+		if err := marker.ClearDeleteAfterClean(instanceID); err != nil {
+			slog.Warn("failed to clear delete_after_clean", "instance_id", instanceID, "error", err)
+		}
+	}
 }
 
 // hookOpts carries optional data for fireDeployHook. Only pre-deploy hooks
@@ -757,6 +765,14 @@ func (m *Manager) executeDeploy(helm HelmExecutor, k8sClient *k8s.Client, regCfg
 		}
 	}
 
+	// Read the Warning events and pod states of the namespace while Helm
+	// installs the charts and while the pods stabilize: a pod that cannot be
+	// created (for example an exceeded ResourceQuota) shows in the deploy log
+	// at once, not only as a timeout at the end.
+	podWatch := m.startPodEventWatch(podProblemListerFor(k8sClient), namespace, func(line string) {
+		m.broadcastLog(instanceID, deployLog.ID, line)
+	})
+
 	var failedCharts []string
 
 	for _, chart := range charts {
@@ -812,6 +828,7 @@ func (m *Manager) executeDeploy(helm HelmExecutor, k8sClient *k8s.Client, regCfg
 		chartCancel()
 
 		allOutput += fmt.Sprintf("=== Chart: %s ===\n%s\n", chart.ChartConfig.ChartName, output)
+		allOutput += podWatch.drain()
 		if !streaming {
 			m.broadcastLog(instanceID, deployLog.ID, output)
 		}
@@ -848,8 +865,20 @@ func (m *Manager) executeDeploy(helm HelmExecutor, k8sClient *k8s.Client, regCfg
 	if deployErr == nil && m.stabilizeTimeout > 0 && k8sClient != nil {
 		if waitErr := m.awaitReadiness(k8sClient, instanceID, namespace, deployLog.ID); waitErr != nil {
 			readinessWarning = waitErr.Error()
-			allOutput += fmt.Sprintf("WARNING: %s\n", readinessWarning)
 		}
+	}
+
+	// The pods are no longer awaited: stop reading the events. The most
+	// relevant pod problem goes into the error (and so into the instance
+	// error message) and into the readiness warning.
+	podEventLines, podEvent := podWatch.stop()
+	allOutput += podEventLines
+	deployErr = withPodEvent(deployErr, podEvent)
+	if readinessWarning != "" {
+		if podEvent != "" {
+			readinessWarning += " (pod event: " + podEvent + ")"
+		}
+		allOutput += fmt.Sprintf("WARNING: %s\n", readinessWarning)
 	}
 
 	partialDeploy := len(failedCharts) > 0 && len(failedCharts) < len(charts)
@@ -1342,6 +1371,13 @@ func isTimeoutError(err error) bool {
 }
 
 func sanitizeDeployError(err error) string {
+	// A pod problem was added to the error: sanitize the operation error and
+	// keep the pod problem (a Kubernetes event or container state message).
+	var podErr *podEventError
+	if errors.As(err, &podErr) {
+		return sanitizeDeployError(podErr.err) + " (pod event: " + podErr.event + ")"
+	}
+
 	msg := err.Error()
 
 	// A failed pre-deploy or blocking post-deploy hook: show the
@@ -1389,6 +1425,35 @@ func sanitizeDeployError(err error) string {
 // background goroutine uses m.shutdownCtx instead, because it outlives the
 // HTTP request that triggered the clean.
 func (m *Manager) Clean(ctx context.Context, instance *models.StackInstance, charts []models.ChartConfig) (string, error) {
+	return m.startClean(ctx, instance, charts, false)
+}
+
+// CleanForDelete starts the clean of a delete: as Clean, and the instance
+// row is deleted when the clean succeeds. The start is one conditional
+// update in the transaction that creates the clean log: status cleaning and
+// stack_instances.delete_after_clean, only when the status is one of
+// models.CleanStatuses. Of two concurrent deletes (also on two
+// replicas) one starts the clean; the other gets models.ErrDeleteConflict.
+// The mark is in the database, so any replica that finishes the clean
+// deletes the row. A failed clean keeps the instance (status error, message
+// models.DeleteCleanFailedMessage) and clears the mark.
+func (m *Manager) CleanForDelete(ctx context.Context, instance *models.StackInstance, charts []models.ChartConfig) (string, error) {
+	return m.startClean(ctx, instance, charts, true)
+}
+
+// markCleanStart writes the start of a clean to the instance with the
+// conditional update of models.CleanStartMarker (status in
+// models.CleanStatuses; a plain clean also needs no delete mark, a delete
+// sets it). A repository without the marker gets a plain Update.
+func markCleanStart(repo models.StackInstanceRepository, instance *models.StackInstance, forDelete bool) error {
+	if marker, ok := repo.(models.CleanStartMarker); ok {
+		return marker.MarkCleanStart(instance.ID, models.CleanStatuses, forDelete)
+	}
+	instance.DeleteAfterClean = forDelete
+	return repo.Update(instance)
+}
+
+func (m *Manager) startClean(ctx context.Context, instance *models.StackInstance, charts []models.ChartConfig, forDelete bool) (string, error) {
 	// Short-circuit if the request context is already cancelled.
 	if err := ctx.Err(); err != nil {
 		return "", fmt.Errorf("request cancelled: %w", err)
@@ -1437,24 +1502,31 @@ func (m *Manager) Clean(ctx context.Context, instance *models.StackInstance, cha
 
 	if m.txRunner != nil {
 		if err := m.txRunner.RunInTx(func(repos database.TxRepos) error {
+			// The instance first: the conditional update of a delete
+			// decides before the log exists.
+			if err := markCleanStart(repos.StackInstance, instance, forDelete); err != nil {
+				return fmt.Errorf("updating instance status: %w", err)
+			}
 			if err := repos.DeploymentLog.Create(ctx, deployLog); err != nil {
 				return fmt.Errorf("creating deployment log: %w", err)
 			}
-			if err := repos.StackInstance.Update(instance); err != nil {
-				return fmt.Errorf("updating instance status: %w", err)
-			}
 			return nil
 		}); err != nil {
+			// No clean started: no action entry for the log.
+			m.logActions.Delete(logID)
 			return "", err
 		}
 	} else {
-		if err := m.logRepo.Create(ctx, deployLog); err != nil {
-			return "", fmt.Errorf("creating deployment log: %w", err)
-		}
-		if err := m.instanceRepo.Update(instance); err != nil {
+		if err := markCleanStart(m.instanceRepo, instance, forDelete); err != nil {
+			m.logActions.Delete(logID)
 			return "", fmt.Errorf("updating instance status: %w", err)
 		}
+		if err := m.logRepo.Create(ctx, deployLog); err != nil {
+			m.logActions.Delete(logID)
+			return "", fmt.Errorf("creating deployment log: %w", err)
+		}
 	}
+	instance.DeleteAfterClean = forDelete
 
 	m.broadcastStatus(instance.ID, models.StackStatusCleaning, logID)
 
@@ -1483,7 +1555,7 @@ func (m *Manager) executeClean(helm HelmExecutor, k8sClient *k8s.Client, instanc
 	defer func() { <-m.semaphore }()
 	if !m.extendDeadline(deployLog, helm, len(charts)) {
 		// The instance stays (status error): no delete after the clean.
-		m.pendingDeletes.Delete(instanceID)
+		m.clearDeleteAfterClean(instanceID)
 		return
 	}
 
@@ -1595,10 +1667,21 @@ func (m *Manager) finalizeClean(instanceID string, deployLog *models.DeploymentL
 	deployLog.CompletedAt = &now
 	instance.PostDeployHookUntil = nil
 
+	// The delete mark is in the database (CleanForDelete), so the replica
+	// that finishes the clean deletes the row.
+	shouldDelete := instance.DeleteAfterClean
+
 	if cleanErr != nil {
 		sanitized := sanitizeDeployError(cleanErr)
 		instance.Status = models.StackStatusError
 		instance.ErrorMessage = truncateString(sanitized, maxInstanceErrorLen)
+		if shouldDelete {
+			// The instance stays: clear the mark, so a later clean does
+			// not delete it, and tell why it still exists.
+			instance.DeleteAfterClean = false
+			m.clearDeleteAfterClean(instanceID)
+			instance.ErrorMessage = truncateString(models.DeleteCleanFailedMessage+" "+sanitized, maxInstanceErrorLen)
+		}
 		deployLog.Status = models.DeployLogError
 		deployLog.ErrorMessage = truncateString(sanitized, maxLogErrorLen)
 
@@ -1622,12 +1705,13 @@ func (m *Manager) finalizeClean(instanceID string, deployLog *models.DeploymentL
 
 	if !m.writeFinal(instance, deployLog, "clean") {
 		m.logActions.Delete(deployLog.ID)
-		// The instance stays (status error): no delete after the clean.
-		m.pendingDeletes.Delete(instanceID)
+		// The instance stays (another operation owns it): no delete after
+		// the clean.
+		if shouldDelete {
+			m.clearDeleteAfterClean(instanceID)
+		}
 		return
 	}
-
-	_, shouldDelete := m.pendingDeletes.LoadAndDelete(instanceID)
 
 	// deleted is true when the clean was the first step of a delete and the
 	// instance row is gone now.
@@ -1650,11 +1734,14 @@ func (m *Manager) finalizeClean(instanceID string, deployLog *models.DeploymentL
 		if delErr != nil {
 			slog.Error("failed to delete instance after clean",
 				"instance_id", instanceID, "error", delErr)
+			m.clearDeleteAfterClean(instanceID)
 			m.broadcastStatus(instanceID, models.StackStatusDraft, deployLog.ID)
 		} else {
 			deleted = true
 			slog.Info("instance deleted after clean",
 				"instance_id", instanceID, "log_id", deployLog.ID)
+			// The dashboards of all users remove the row.
+			m.broadcastInstanceDeleted(instanceID, deployLog.ID)
 		}
 	} else {
 		m.broadcastStatus(instanceID, models.StackStatusDraft, deployLog.ID)
@@ -1671,7 +1758,12 @@ func (m *Manager) finalizeClean(instanceID string, deployLog *models.DeploymentL
 	if cleanErr != nil {
 		m.notifyInstance(target, "clean.error", "Cleanup failed", fmt.Sprintf("Cleanup of %s failed: %s", instance.Name, instance.ErrorMessage))
 	} else if deleted {
-		m.notifyInstance(target, "instance.deleted", "Stack deleted", fmt.Sprintf("Stack %s has been deleted", instance.Name))
+		message := fmt.Sprintf("Stack %s has been deleted", instance.Name)
+		if trigger := m.triggerFor(deployLog.ID); trigger != nil && trigger.Type == hooks.TriggerCleanupPolicy && trigger.Name != "" {
+			// The same text as the direct delete of a cleanup policy.
+			message = fmt.Sprintf("Stack %s has been deleted by cleanup policy %q", instance.Name, trigger.Name)
+		}
+		m.notifyInstance(target, "instance.deleted", "Stack deleted", message)
 		// The same events as the API delete of a draft instance.
 		_ = m.fireDeployHook(m.shutdownCtx, hooks.EventPostInstanceDelete, instance, deployLog.ID, deployLog.StartedAt, hookOpts{})
 		_ = m.fireDeployHook(m.shutdownCtx, hooks.EventDeleteCompleted, instance, deployLog.ID, deployLog.StartedAt, hookOpts{})
@@ -1888,6 +1980,12 @@ func (m *Manager) executeRollback(job rollbackJob) {
 
 	helm, streaming := m.wrapStreaming(job.helm, instanceID, deployLog.ID)
 
+	// As for a deploy: report pod problems while Helm and the readiness
+	// wait run.
+	podWatch := m.startPodEventWatch(podProblemListerFor(k8sClient), namespace, func(line string) {
+		m.broadcastLog(instanceID, deployLog.ID, line)
+	})
+
 	var timeout time.Duration
 	if helm != nil {
 		timeout = helm.Timeout()
@@ -1900,7 +1998,10 @@ func (m *Manager) executeRollback(job rollbackJob) {
 		defer cancel()
 		output, applied, err := m.rollbackToTarget(ctx, helm, k8sClient, streaming, instanceID, deployLog, namespace, charts, job.target)
 		rollbackErr = err
-		output = allOutput + output + m.rollbackReadiness(k8sClient, instanceID, namespace, deployLog.ID, rollbackErr)
+		readiness := m.rollbackReadiness(k8sClient, instanceID, namespace, deployLog.ID, rollbackErr)
+		podEventLines, podEvent := podWatch.stop()
+		rollbackErr = withPodEvent(rollbackErr, podEvent)
+		output = allOutput + output + podEventLines + readiness
 		m.finalizeRollback(instanceID, deployLog, output, rollbackErr, applied)
 		return
 	}
@@ -1957,6 +2058,7 @@ func (m *Manager) executeRollback(job rollbackJob) {
 
 		output, err := helm.Rollback(ctx, releaseName, namespace, targetRevision)
 		allOutput += fmt.Sprintf("=== Chart: %s (→ rev %d) ===\n%s\n", releaseName, targetRevision, output)
+		allOutput += podWatch.drain()
 		if !streaming {
 			m.broadcastLog(instanceID, deployLog.ID, output)
 		}
@@ -1977,7 +2079,10 @@ func (m *Manager) executeRollback(job rollbackJob) {
 		collect = rolledBack
 	}
 	running := m.collectChartValues(context.Background(), helm, namespace, collect) //nolint:gosec // G118: intentional — must outlive HTTP request
-	allOutput += m.rollbackReadiness(k8sClient, instanceID, namespace, deployLog.ID, rollbackErr)
+	readiness := m.rollbackReadiness(k8sClient, instanceID, namespace, deployLog.ID, rollbackErr)
+	podEventLines, podEvent := podWatch.stop()
+	rollbackErr = withPodEvent(rollbackErr, podEvent)
+	allOutput += podEventLines + readiness
 
 	m.finalizeRollback(instanceID, deployLog, allOutput, rollbackErr, running)
 }

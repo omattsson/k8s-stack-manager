@@ -1100,6 +1100,10 @@ func (d *Database) AutoMigrate() error {
 	// (the API stored any type before it validated them, issue #498).
 	migrator.AddMigration(unknownPreferenceTypesMigration())
 
+	// Migration 57: stack_instances.delete_after_clean (the clean of a
+	// delete is persisted, so the delete works across replicas, issue #504).
+	migrator.AddMigration(deleteAfterCleanMigration())
+
 	// Run migrations
 	if err := migrator.MigrateUp(); err != nil {
 		return err
@@ -1821,6 +1825,31 @@ func unknownPreferenceTypesMigration() schema.Migration {
 				Delete(&models.NotificationPreference{}).Error
 		},
 		Down: func(_ *gorm.DB) error {
+			return nil
+		},
+	}
+}
+
+// deleteAfterCleanMigration is migration 57. It adds
+// stack_instances.delete_after_clean (bool, default false): set while a clean
+// runs as the first step of a delete. Up and Down are idempotent.
+func deleteAfterCleanMigration() schema.Migration {
+	return schema.Migration{
+		Version:     "20261010000057",
+		Name:        "add_stack_instance_delete_after_clean",
+		Description: "Add delete_after_clean to stack_instances (the deploy manager deletes the instance when the clean completes)",
+		Up: func(tx *gorm.DB) error {
+			m := tx.Migrator()
+			if m.HasTable(&models.StackInstance{}) && !m.HasColumn(&models.StackInstance{}, "DeleteAfterClean") {
+				return m.AddColumn(&models.StackInstance{}, "DeleteAfterClean")
+			}
+			return nil
+		},
+		Down: func(tx *gorm.DB) error {
+			m := tx.Migrator()
+			if m.HasTable(&models.StackInstance{}) && m.HasColumn(&models.StackInstance{}, "DeleteAfterClean") {
+				return m.DropColumn(&models.StackInstance{}, "DeleteAfterClean")
+			}
 			return nil
 		},
 	}

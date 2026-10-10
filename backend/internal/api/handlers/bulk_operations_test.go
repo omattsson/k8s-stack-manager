@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -509,23 +510,37 @@ func TestBulkClean(t *testing.T) {
 func TestBulkDelete(t *testing.T) {
 	t.Parallel()
 
+	// seedDefWithChart seeds definition d1 with one chart.
+	seedDefWithChart := func(t *testing.T, defRepo *MockStackDefinitionRepository, ccRepo *MockChartConfigRepository) {
+		t.Helper()
+		seedDefinition(t, defRepo, "d1", "My Def", "uid-1")
+		require.NoError(t, ccRepo.Create(&models.ChartConfig{
+			ID:                "c1",
+			StackDefinitionID: "d1",
+			ChartName:         "nginx",
+			RepositoryURL:     "oci://example.com/charts/nginx",
+			DeployOrder:       1,
+		}))
+	}
+
 	tests := []struct {
-		name       string
-		body       interface{}
-		callerID   string
-		callerRole string
-		setup      func(*MockStackInstanceRepository)
-		wantStatus int
-		checkFn    func(*testing.T, *httptest.ResponseRecorder, *MockStackInstanceRepository)
+		name        string
+		body        interface{}
+		callerID    string
+		callerRole  string
+		withManager bool
+		setup       func(*testing.T, *MockStackInstanceRepository, *MockStackDefinitionRepository, *MockChartConfigRepository)
+		wantStatus  int
+		checkFn     func(*testing.T, *httptest.ResponseRecorder, *MockStackInstanceRepository)
 	}{
 		{
-			name:       "happy path — deletes multiple instances",
+			name:       "happy path — deletes multiple draft instances",
 			body:       BulkOperationRequest{InstanceIDs: []string{"i1", "i2"}},
 			callerID:   "uid-1",
 			callerRole: "admin",
-			setup: func(instRepo *MockStackInstanceRepository) {
+			setup: func(t *testing.T, instRepo *MockStackInstanceRepository, _ *MockStackDefinitionRepository, _ *MockChartConfigRepository) {
 				seedInstance(t, instRepo, "i1", "stack-a", "d1", "uid-1", models.StackStatusDraft)
-				seedInstance(t, instRepo, "i2", "stack-b", "d1", "uid-2", models.StackStatusStopped)
+				seedInstance(t, instRepo, "i2", "stack-b", "d1", "uid-2", models.StackStatusDraft)
 			},
 			wantStatus: http.StatusOK,
 			checkFn: func(t *testing.T, w *httptest.ResponseRecorder, instRepo *MockStackInstanceRepository) {
@@ -534,6 +549,8 @@ func TestBulkDelete(t *testing.T) {
 				assert.Equal(t, 2, resp.Total)
 				assert.Equal(t, 2, resp.Succeeded)
 				assert.Equal(t, 0, resp.Failed)
+				// A draft has nothing to clean: no clean log.
+				assert.Empty(t, resp.Results[0].LogID)
 				// Verify instances are actually deleted.
 				_, err := instRepo.FindByID("i1")
 				assert.Error(t, err)
@@ -542,11 +559,125 @@ func TestBulkDelete(t *testing.T) {
 			},
 		},
 		{
+			name:        "stopped instance is cleaned first, then deleted",
+			body:        BulkOperationRequest{InstanceIDs: []string{"i1"}},
+			callerID:    "uid-1",
+			callerRole:  "admin",
+			withManager: true,
+			setup: func(t *testing.T, instRepo *MockStackInstanceRepository, defRepo *MockStackDefinitionRepository, ccRepo *MockChartConfigRepository) {
+				seedInstance(t, instRepo, "i1", "stack-a", "d1", "uid-1", models.StackStatusStopped)
+				seedDefWithChart(t, defRepo, ccRepo)
+			},
+			wantStatus: http.StatusOK,
+			checkFn: func(t *testing.T, w *httptest.ResponseRecorder, instRepo *MockStackInstanceRepository) {
+				var resp BulkOperationResponse
+				require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+				require.Len(t, resp.Results, 1)
+				assert.Equal(t, "success", resp.Results[0].Status)
+				assert.NotEmpty(t, resp.Results[0].LogID, "the result must carry the clean log")
+				// The deploy manager deletes the row when the clean completes.
+				assert.Eventually(t, func() bool {
+					_, err := instRepo.FindByID("i1")
+					return err != nil
+				}, 5*time.Second, 20*time.Millisecond)
+			},
+		},
+		{
+			name:        "running, partial and error instances are cleaned first",
+			body:        BulkOperationRequest{InstanceIDs: []string{"i1", "i2", "i3"}},
+			callerID:    "uid-1",
+			callerRole:  "admin",
+			withManager: true,
+			setup: func(t *testing.T, instRepo *MockStackInstanceRepository, defRepo *MockStackDefinitionRepository, ccRepo *MockChartConfigRepository) {
+				seedInstance(t, instRepo, "i1", "stack-a", "d1", "uid-1", models.StackStatusRunning)
+				seedInstance(t, instRepo, "i2", "stack-b", "d1", "uid-1", models.StackStatusPartial)
+				seedInstance(t, instRepo, "i3", "stack-c", "d1", "uid-1", models.StackStatusError)
+				seedDefWithChart(t, defRepo, ccRepo)
+			},
+			wantStatus: http.StatusOK,
+			checkFn: func(t *testing.T, w *httptest.ResponseRecorder, instRepo *MockStackInstanceRepository) {
+				var resp BulkOperationResponse
+				require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+				assert.Equal(t, 3, resp.Succeeded)
+				for _, r := range resp.Results {
+					assert.NotEmpty(t, r.LogID, r.InstanceID)
+				}
+				assert.Eventually(t, func() bool {
+					for _, id := range []string{"i1", "i2", "i3"} {
+						if _, err := instRepo.FindByID(id); err == nil {
+							return false
+						}
+					}
+					return true
+				}, 5*time.Second, 20*time.Millisecond)
+			},
+		},
+		{
+			name:        "operation in progress gives a per-item error",
+			body:        BulkOperationRequest{InstanceIDs: []string{"i1", "i2"}},
+			callerID:    "uid-1",
+			callerRole:  "admin",
+			withManager: true,
+			setup: func(t *testing.T, instRepo *MockStackInstanceRepository, _ *MockStackDefinitionRepository, _ *MockChartConfigRepository) {
+				seedInstance(t, instRepo, "i1", "stack-a", "d1", "uid-1", models.StackStatusDeploying)
+				seedInstance(t, instRepo, "i2", "stack-b", "d1", "uid-1", models.StackStatusDraft)
+			},
+			wantStatus: http.StatusOK,
+			checkFn: func(t *testing.T, w *httptest.ResponseRecorder, instRepo *MockStackInstanceRepository) {
+				var resp BulkOperationResponse
+				require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+				assert.Equal(t, 1, resp.Succeeded)
+				assert.Equal(t, 1, resp.Failed)
+				assert.Equal(t, "error", resp.Results[0].Status)
+				assert.Equal(t, "Cannot delete: instance is currently deploying", resp.Results[0].Error)
+				inst, err := instRepo.FindByID("i1")
+				require.NoError(t, err, "an instance in progress must stay")
+				assert.Equal(t, models.StackStatusDeploying, inst.Status)
+			},
+		},
+		{
+			name:       "stopped instance without deploy manager is not deleted",
+			body:       BulkOperationRequest{InstanceIDs: []string{"i1"}},
+			callerID:   "uid-1",
+			callerRole: "admin",
+			setup: func(t *testing.T, instRepo *MockStackInstanceRepository, _ *MockStackDefinitionRepository, _ *MockChartConfigRepository) {
+				seedInstance(t, instRepo, "i1", "stack-a", "d1", "uid-1", models.StackStatusStopped)
+			},
+			wantStatus: http.StatusOK,
+			checkFn: func(t *testing.T, w *httptest.ResponseRecorder, instRepo *MockStackInstanceRepository) {
+				var resp BulkOperationResponse
+				require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+				assert.Equal(t, 1, resp.Failed)
+				assert.Equal(t, msgDeployerNotConfigured, resp.Results[0].Error)
+				_, err := instRepo.FindByID("i1")
+				assert.NoError(t, err, "the instance with cluster resources must stay")
+			},
+		},
+		{
+			name:        "missing definition gives a per-item error",
+			body:        BulkOperationRequest{InstanceIDs: []string{"i1"}},
+			callerID:    "uid-1",
+			callerRole:  "admin",
+			withManager: true,
+			setup: func(t *testing.T, instRepo *MockStackInstanceRepository, _ *MockStackDefinitionRepository, _ *MockChartConfigRepository) {
+				seedInstance(t, instRepo, "i1", "stack-a", "d-missing", "uid-1", models.StackStatusRunning)
+			},
+			wantStatus: http.StatusOK,
+			checkFn: func(t *testing.T, w *httptest.ResponseRecorder, instRepo *MockStackInstanceRepository) {
+				var resp BulkOperationResponse
+				require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+				assert.Equal(t, 1, resp.Failed)
+				assert.Equal(t, "Stack definition not found", resp.Results[0].Error)
+				_, err := instRepo.FindByID("i1")
+				assert.NoError(t, err)
+			},
+		},
+		{
 			name:       "regular user can delete own instance",
 			body:       BulkOperationRequest{InstanceIDs: []string{"i1"}},
 			callerID:   "uid-1",
 			callerRole: "user",
-			setup: func(instRepo *MockStackInstanceRepository) {
+			setup: func(t *testing.T, instRepo *MockStackInstanceRepository, _ *MockStackDefinitionRepository, _ *MockChartConfigRepository) {
 				seedInstance(t, instRepo, "i1", "stack-a", "d1", "uid-1", models.StackStatusDraft)
 			},
 			wantStatus: http.StatusOK,
@@ -561,7 +692,7 @@ func TestBulkDelete(t *testing.T) {
 			body:       BulkOperationRequest{InstanceIDs: []string{"i1"}},
 			callerID:   "uid-other",
 			callerRole: "user",
-			setup: func(instRepo *MockStackInstanceRepository) {
+			setup: func(t *testing.T, instRepo *MockStackInstanceRepository, _ *MockStackDefinitionRepository, _ *MockChartConfigRepository) {
 				seedInstance(t, instRepo, "i1", "stack-a", "d1", "uid-1", models.StackStatusDraft)
 			},
 			wantStatus: http.StatusOK,
@@ -580,7 +711,7 @@ func TestBulkDelete(t *testing.T) {
 			body:       BulkOperationRequest{InstanceIDs: []string{"i1", "missing"}},
 			callerID:   "uid-1",
 			callerRole: "admin",
-			setup: func(instRepo *MockStackInstanceRepository) {
+			setup: func(t *testing.T, instRepo *MockStackInstanceRepository, _ *MockStackDefinitionRepository, _ *MockChartConfigRepository) {
 				seedInstance(t, instRepo, "i1", "stack-a", "d1", "uid-1", models.StackStatusDraft)
 			},
 			wantStatus: http.StatusOK,
@@ -596,7 +727,8 @@ func TestBulkDelete(t *testing.T) {
 			body:       map[string]string{},
 			callerID:   "uid-1",
 			callerRole: "admin",
-			setup:      func(_ *MockStackInstanceRepository) {},
+			setup: func(_ *testing.T, _ *MockStackInstanceRepository, _ *MockStackDefinitionRepository, _ *MockChartConfigRepository) {
+			},
 			wantStatus: http.StatusBadRequest,
 			checkFn:    nil,
 		},
@@ -608,16 +740,25 @@ func TestBulkDelete(t *testing.T) {
 			t.Parallel()
 
 			instRepo := NewMockStackInstanceRepository()
-			tt.setup(instRepo)
+			defRepo := NewMockStackDefinitionRepository()
+			ccRepo := NewMockChartConfigRepository()
+			tt.setup(t, instRepo, defRepo, ccRepo)
+
+			var manager *deployer.Manager
+			var logRepo models.DeploymentLogRepository
+			if tt.withManager {
+				mockLogRepo := NewMockDeploymentLogRepository()
+				logRepo = mockLogRepo
+				manager = newBulkTestManager(instRepo, mockLogRepo)
+			}
 
 			router := setupBulkRouter(t,
 				instRepo,
 				NewMockValueOverrideRepository(),
-				NewMockStackDefinitionRepository(),
-				NewMockChartConfigRepository(),
+				defRepo, ccRepo,
 				NewMockStackTemplateRepository(),
 				NewMockTemplateChartConfigRepository(),
-				nil, nil,
+				manager, logRepo,
 				tt.callerID, "testuser", tt.callerRole,
 			)
 
@@ -633,6 +774,67 @@ func TestBulkDelete(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestBulkDelete_ConcurrentDeletes: two bulk deletes of the same running
+// instance at the same time start one clean. The other gets an error
+// result, and the instance is deleted once.
+func TestBulkDelete_ConcurrentDeletes(t *testing.T) {
+	t.Parallel()
+
+	instRepo := NewMockStackInstanceRepository()
+	defRepo := NewMockStackDefinitionRepository()
+	ccRepo := NewMockChartConfigRepository()
+	seedInstance(t, instRepo, "i1", "stack-a", "d1", "uid-1", models.StackStatusRunning)
+	seedDefinition(t, defRepo, "d1", "My Def", "uid-1")
+	require.NoError(t, ccRepo.Create(&models.ChartConfig{ID: "c1", StackDefinitionID: "d1", ChartName: "nginx", DeployOrder: 1}))
+
+	logRepo := NewMockDeploymentLogRepository()
+	// The handler and the deploy manager share the repository, so the
+	// conditional update of the clean start decides.
+	manager := newBulkTestManager(instRepo, logRepo)
+	router := setupBulkRouter(t, instRepo, NewMockValueOverrideRepository(), defRepo, ccRepo,
+		NewMockStackTemplateRepository(), NewMockTemplateChartConfigRepository(),
+		manager, logRepo, "uid-1", "testuser", "admin")
+
+	const callers = 2
+	results := make([]BulkOperationResultItem, callers)
+	var wg sync.WaitGroup
+	start := make(chan struct{})
+	for n := 0; n < callers; n++ {
+		wg.Add(1)
+		go func(n int) {
+			defer wg.Done()
+			<-start
+			body, _ := json.Marshal(BulkOperationRequest{InstanceIDs: []string{"i1"}})
+			w := httptest.NewRecorder()
+			req, _ := http.NewRequest(http.MethodPost, "/api/v1/stack-instances/bulk/delete", bytes.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			router.ServeHTTP(w, req)
+			var resp BulkOperationResponse
+			if json.Unmarshal(w.Body.Bytes(), &resp) == nil && len(resp.Results) == 1 {
+				results[n] = resp.Results[0]
+			}
+		}(n)
+	}
+	close(start)
+	wg.Wait()
+
+	succeeded := 0
+	for _, r := range results {
+		if r.Status == "success" {
+			succeeded++
+			assert.NotEmpty(t, r.LogID)
+		} else {
+			assert.Equal(t, "error", r.Status)
+			assert.Contains(t, r.Error, "Cannot delete")
+		}
+	}
+	assert.Equal(t, 1, succeeded, "exactly one delete starts the clean: %+v", results)
+	assert.Eventually(t, func() bool {
+		_, err := instRepo.FindByID("i1")
+		return err != nil
+	}, 5*time.Second, 20*time.Millisecond)
 }
 
 func TestBulkOperationMaxInstances(t *testing.T) {

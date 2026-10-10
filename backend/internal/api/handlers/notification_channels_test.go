@@ -842,9 +842,12 @@ func TestNotificationChannelHandler_TestChannel(t *testing.T) {
 		seed            func(*testing.T, *MockNotificationChannelRepository, string)
 		expectedCode    int
 		expectedSuccess bool
+		expectedMessage string
+		expectedEnabled bool
+		expectedLog     *models.NotificationDeliveryLog // nil: no delivery log
 	}{
 		{
-			name:          "successful webhook returns success true",
+			name:          "successful webhook returns success true and writes a test delivery log",
 			channelID:     "ch1",
 			webhookStatus: http.StatusOK,
 			seed: func(t *testing.T, repo *MockNotificationChannelRepository, webhookURL string) {
@@ -852,9 +855,25 @@ func TestNotificationChannelHandler_TestChannel(t *testing.T) {
 			},
 			expectedCode:    http.StatusOK,
 			expectedSuccess: true,
+			expectedMessage: "Test notification sent successfully",
+			expectedEnabled: true,
+			expectedLog:     &models.NotificationDeliveryLog{ChannelName: "test-channel", EventType: "test", Status: "success", StatusCode: http.StatusOK},
 		},
 		{
-			name:          "webhook returns 500 returns success false",
+			name:          "disabled channel is tested and the send is logged",
+			channelID:     "ch1",
+			webhookStatus: http.StatusNoContent,
+			seed: func(t *testing.T, repo *MockNotificationChannelRepository, webhookURL string) {
+				seedChannel(t, repo, "ch1", "off-channel", webhookURL, false)
+			},
+			expectedCode:    http.StatusOK,
+			expectedSuccess: true,
+			expectedMessage: "Test notification sent successfully",
+			expectedEnabled: false,
+			expectedLog:     &models.NotificationDeliveryLog{ChannelName: "off-channel", EventType: "test", Status: "success", StatusCode: http.StatusNoContent},
+		},
+		{
+			name:          "webhook returns 500 returns success false and logs the failure",
 			channelID:     "ch1",
 			webhookStatus: http.StatusInternalServerError,
 			seed: func(t *testing.T, repo *MockNotificationChannelRepository, webhookURL string) {
@@ -862,6 +881,22 @@ func TestNotificationChannelHandler_TestChannel(t *testing.T) {
 			},
 			expectedCode:    http.StatusOK,
 			expectedSuccess: false,
+			expectedMessage: "HTTP 500",
+			expectedEnabled: true,
+			expectedLog:     &models.NotificationDeliveryLog{ChannelName: "test-channel", EventType: "test", Status: "failed", StatusCode: http.StatusInternalServerError, ErrorMessage: "HTTP 500"},
+		},
+		{
+			name:          "redirect is not followed",
+			channelID:     "ch1",
+			webhookStatus: http.StatusFound,
+			seed: func(t *testing.T, repo *MockNotificationChannelRepository, webhookURL string) {
+				seedChannel(t, repo, "ch1", "test-channel", webhookURL, true)
+			},
+			expectedCode:    http.StatusOK,
+			expectedSuccess: false,
+			expectedMessage: "HTTP 302",
+			expectedEnabled: true,
+			expectedLog:     &models.NotificationDeliveryLog{ChannelName: "test-channel", EventType: "test", Status: "failed", StatusCode: http.StatusFound, ErrorMessage: "HTTP 302: redirect not followed"},
 		},
 		{
 			name:          "not found channel returns 404",
@@ -878,13 +913,27 @@ func TestNotificationChannelHandler_TestChannel(t *testing.T) {
 			t.Parallel()
 
 			// Create a test webhook server.
-			var receivedContentType string
-			var receivedEvent string
-			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			var mu sync.Mutex
+			var receivedContentType, receivedEvent string
+			var redirectHits int
+			mux := http.NewServeMux()
+			mux.HandleFunc("/elsewhere", func(w http.ResponseWriter, _ *http.Request) {
+				mu.Lock()
+				redirectHits++
+				mu.Unlock()
+				w.WriteHeader(http.StatusOK)
+			})
+			mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+				mu.Lock()
 				receivedContentType = r.Header.Get("Content-Type")
 				receivedEvent = r.Header.Get("X-StackManager-Event")
+				mu.Unlock()
+				if tt.webhookStatus == http.StatusFound {
+					w.Header().Set("Location", "/elsewhere")
+				}
 				w.WriteHeader(tt.webhookStatus)
-			}))
+			})
+			ts := httptest.NewServer(mux)
 			defer ts.Close()
 
 			router, repo := setupNotificationChannelRouter()
@@ -896,19 +945,38 @@ func TestNotificationChannelHandler_TestChannel(t *testing.T) {
 
 			assert.Equal(t, tt.expectedCode, w.Code)
 
-			if tt.expectedCode == http.StatusOK {
-				var result map[string]interface{}
-				err := json.Unmarshal(w.Body.Bytes(), &result)
-				require.NoError(t, err)
-				assert.Equal(t, tt.expectedSuccess, result["success"])
-				assert.NotEmpty(t, result["message"])
-
-				// Verify correct headers were sent to the webhook.
-				if tt.channelID != "nonexistent" {
-					assert.Equal(t, "application/json", receivedContentType)
-					assert.Equal(t, "test", receivedEvent)
-				}
+			repo.mu.Lock()
+			logs := append([]models.NotificationDeliveryLog(nil), repo.deliveryLogs[tt.channelID]...)
+			repo.mu.Unlock()
+			if tt.expectedLog == nil {
+				assert.Empty(t, logs)
+				return
 			}
+
+			var result map[string]interface{}
+			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &result))
+			assert.Equal(t, tt.expectedSuccess, result["success"])
+			assert.Equal(t, tt.expectedMessage, result["message"])
+			assert.Equal(t, tt.expectedEnabled, result["channel_enabled"])
+			assert.Equal(t, float64(tt.webhookStatus), result["status_code"])
+
+			// Verify correct headers were sent to the webhook.
+			mu.Lock()
+			assert.Equal(t, "application/json", receivedContentType)
+			assert.Equal(t, "test", receivedEvent)
+			assert.Zero(t, redirectHits, "a redirect must not be followed")
+			mu.Unlock()
+
+			require.Len(t, logs, 1)
+			got := logs[0]
+			assert.Equal(t, tt.channelID, got.ChannelID)
+			assert.NotEmpty(t, got.ID)
+			assert.False(t, got.CreatedAt.IsZero())
+			assert.Equal(t, tt.expectedLog.ChannelName, got.ChannelName)
+			assert.Equal(t, tt.expectedLog.EventType, got.EventType)
+			assert.Equal(t, tt.expectedLog.Status, got.Status)
+			assert.Equal(t, tt.expectedLog.StatusCode, got.StatusCode)
+			assert.Equal(t, tt.expectedLog.ErrorMessage, got.ErrorMessage)
 		})
 	}
 }
@@ -964,6 +1032,16 @@ func TestNotificationChannelHandler_TestChannel_ConnectionFailure(t *testing.T) 
 	require.NoError(t, err)
 	assert.Equal(t, false, result["success"])
 	assert.Equal(t, "Connection failed", result["message"])
+
+	// The failed send is logged without the webhook URL.
+	repo.mu.Lock()
+	logs := repo.deliveryLogs["ch1"]
+	repo.mu.Unlock()
+	require.Len(t, logs, 1)
+	assert.Equal(t, "failed", logs[0].Status)
+	assert.Equal(t, 0, logs[0].StatusCode)
+	assert.Equal(t, "test", logs[0].EventType)
+	assert.NotContains(t, logs[0].ErrorMessage, "192.0.2.1")
 }
 
 func TestNotificationChannelHandler_ListDeliveryLogs(t *testing.T) {

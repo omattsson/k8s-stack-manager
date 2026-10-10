@@ -388,6 +388,13 @@ Actions can return **any JSON**. The core wraps it in a response envelope:
 }
 ```
 
+To refuse a call, answer with a status of 400 or higher and a short reason, for example
+`409 {"error": "refresh-db already in flight"}`. The envelope then also has
+`"message": "refresh-db already in flight"` (from a JSON string body or the
+`message`, `error`, `detail` or `reason` field; one line, at most 500
+characters, URLs replaced by `[url]`), and the web UI can show it. A `text/plain` refusal body also
+works. See `backend/docs/hooks.md`.
+
 API error mappings when invoking actions:
 
 | HTTP status | Meaning |

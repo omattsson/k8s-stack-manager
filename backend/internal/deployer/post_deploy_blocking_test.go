@@ -339,9 +339,11 @@ func TestManager_Deploy_BlockingPostDeployCancelledByStop(t *testing.T) {
 	require.NoError(t, err)
 	deployLog := waitForLogDone(t, logRepo, logID)
 
+	// The client cancels the request before the log is final, but the
+	// server sees the closed connection asynchronously: wait for it.
 	select {
 	case <-cancelled:
-	default:
+	case <-time.After(5 * time.Second):
 		t.Fatal("the stop must cancel the wait for the blocking subscriber")
 	}
 	stored, err := instanceRepo.FindByID(inst.ID)
@@ -467,43 +469,60 @@ func TestCleanupExecutor_DeleteInstance_FiresDeleteEvents(t *testing.T) {
 	}
 	for _, tt := range tests {
 		tt := tt
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			srv := newSubscriberServer(t)
-			instanceRepo := newMockInstanceRepo()
-			// The policy delete reads the followers before the delete.
-			notif := &mockNotifier{followers: []string{"f1", "f2"}}
-			inst := seedInstance(t, instanceRepo, "inst-del", "del-demo", "owner-9")
-			inst.Status = models.StackStatusStopped
-			require.NoError(t, instanceRepo.Update(inst))
-			mgr := NewManager(ManagerConfig{
-				Registry:      &mockClusterResolver{helm: &mockHelmExecutor{}},
-				InstanceRepo:  instanceRepo,
-				DeployLogRepo: newMockDeployLogRepo(),
-				Notifier:      notif,
-				Hooks: srv.dispatcher(t, hooks.Subscription{Name: "rec", Events: []string{
-					hooks.EventPostInstanceDelete, hooks.EventDeleteCompleted,
-				}}),
+		// draft: direct delete; stopped: clean first, the deploy manager
+		// deletes the row and sends the events when the clean completes.
+		for _, status := range []string{models.StackStatusDraft, models.StackStatusStopped} {
+			status := status
+			t.Run(tt.name+" ("+status+")", func(t *testing.T) {
+				t.Parallel()
+				srv := newSubscriberServer(t)
+				instanceRepo := newMockInstanceRepo()
+				// The policy delete reads the followers before the delete.
+				notif := &mockNotifier{followers: []string{"f1", "f2"}}
+				inst := seedInstance(t, instanceRepo, "inst-del", "del-demo", "owner-9")
+				inst.Status = status
+				require.NoError(t, instanceRepo.Update(inst))
+				defRepo := newMockDefinitionRepo()
+				require.NoError(t, defRepo.Create(&models.StackDefinition{ID: "def-1", Name: "def"}))
+				ccRepo := newMockChartConfigRepo()
+				require.NoError(t, ccRepo.Create(&models.ChartConfig{ID: "c1", StackDefinitionID: "def-1", ChartName: "app"}))
+				mgr := NewManager(ManagerConfig{
+					Registry:      &mockClusterResolver{helm: &mockHelmExecutor{}},
+					InstanceRepo:  instanceRepo,
+					DeployLogRepo: newMockDeployLogRepo(),
+					Notifier:      notif,
+					Hooks: srv.dispatcher(t, hooks.Subscription{Name: "rec", Events: []string{
+						hooks.EventPostInstanceDelete, hooks.EventDeleteCompleted,
+					}}),
+				})
+				exec := NewCleanupExecutor(mgr, defRepo, ccRepo, instanceRepo)
+
+				require.NoError(t, exec.DeleteInstance(tt.ctx, inst))
+
+				require.Eventually(t, func() bool {
+					_, err := instanceRepo.FindByID(inst.ID)
+					return err != nil && len(srv.snapshot()) == 2 && len(notif.getCalls()) == 1
+				}, 5*time.Second, 10*time.Millisecond, "the instance is deleted and the events are sent")
+				assert.Equal(t, []string{"rec:post-instance-delete", "rec:delete-completed"}, srv.callNames())
+				wantTrigger := tt.expectTrigger
+				if wantTrigger == nil && status == models.StackStatusStopped {
+					// An operation of the deploy manager without a trigger
+					// in the context records the default trigger "user".
+					wantTrigger = &hooks.Trigger{Type: hooks.TriggerUser}
+				}
+				for _, c := range srv.snapshot() {
+					require.NotNil(t, c.envelope.InstanceRef)
+					assert.Equal(t, inst.ID, c.envelope.InstanceRef.ID)
+					assert.Equal(t, wantTrigger, c.envelope.Trigger)
+				}
+				calls := notif.getCalls()
+				require.Len(t, calls, 1)
+				assert.Equal(t, "instance.deleted", calls[0].Type)
+				assert.Equal(t, "owner-9", calls[0].UserID)
+				assert.Equal(t, tt.expectMessage, calls[0].Message)
+				assert.Equal(t, []string{"f1", "f2"}, calls[0].FollowerIDs, "the followers get instance.deleted")
 			})
-			exec := NewCleanupExecutor(mgr, newMockDefinitionRepo(), newMockChartConfigRepo(), instanceRepo)
-
-			require.NoError(t, exec.DeleteInstance(tt.ctx, inst))
-
-			_, err := instanceRepo.FindByID(inst.ID)
-			assert.Error(t, err, "the instance is deleted")
-			assert.Equal(t, []string{"rec:post-instance-delete", "rec:delete-completed"}, srv.callNames())
-			for _, c := range srv.snapshot() {
-				require.NotNil(t, c.envelope.InstanceRef)
-				assert.Equal(t, inst.ID, c.envelope.InstanceRef.ID)
-				assert.Equal(t, tt.expectTrigger, c.envelope.Trigger)
-			}
-			calls := notif.getCalls()
-			require.Len(t, calls, 1)
-			assert.Equal(t, "instance.deleted", calls[0].Type)
-			assert.Equal(t, "owner-9", calls[0].UserID)
-			assert.Equal(t, tt.expectMessage, calls[0].Message)
-			assert.Equal(t, []string{"f1", "f2"}, calls[0].FollowerIDs, "the followers get instance.deleted")
-		})
+		}
 	}
 }
 
@@ -582,10 +601,8 @@ func TestManager_DeleteAfterClean_FiresDeleteEvents(t *testing.T) {
 	inst := seedInstance(t, instanceRepo, "inst-del-clean", "del-clean", "owner-1")
 	inst.Status = models.StackStatusRunning
 	require.NoError(t, instanceRepo.Update(inst))
-	mgr.ScheduleDeleteAfterClean(inst.ID)
-
 	ctx := hooks.WithTrigger(context.Background(), hooks.Trigger{Type: hooks.TriggerUser, ID: "u1", Name: "alice"})
-	_, err := mgr.Clean(ctx, inst, []models.ChartConfig{{ChartName: "app"}})
+	_, err := mgr.CleanForDelete(ctx, inst, []models.ChartConfig{{ChartName: "app"}})
 	require.NoError(t, err)
 	require.Eventually(t, func() bool { return len(srv.snapshot()) == 3 }, 5*time.Second, 10*time.Millisecond)
 

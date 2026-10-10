@@ -603,6 +603,9 @@ func TestManager_LateFinalizeAfterRecovery(t *testing.T) {
 			case models.DeployActionStop:
 				logID, err = mgr.StopWithCharts(context.Background(), inst, charts)
 			case models.DeployActionClean:
+				// A clean needs an instance with cluster resources.
+				inst.Status = models.StackStatusRunning
+				require.NoError(t, instanceRepo.Update(inst))
 				logID, err = mgr.Clean(context.Background(), inst, []models.ChartConfig{{ChartName: "app"}})
 			}
 			require.NoError(t, err)
@@ -735,8 +738,9 @@ func TestManager_QueuedOperationCancelledAfterRecovery(t *testing.T) {
 			case models.DeployActionStop:
 				logID, err = mgr.StopWithCharts(context.Background(), queued, charts)
 			case models.DeployActionClean:
-				mgr.ScheduleDeleteAfterClean(queued.ID)
-				logID, err = mgr.Clean(context.Background(), queued, []models.ChartConfig{{ChartName: "app"}})
+				queued.Status = models.StackStatusRunning
+				require.NoError(t, instanceRepo.Update(queued))
+				logID, err = mgr.CleanForDelete(context.Background(), queued, []models.ChartConfig{{ChartName: "app"}})
 			}
 			require.NoError(t, err)
 

@@ -110,7 +110,10 @@ func (r *GORMInterruptedOperationRepository) InterruptOperation(ctx context.Cont
 				"status":                 models.StackStatusError,
 				"error_message":          req.Message,
 				"post_deploy_hook_until": nil,
-				"updated_at":             now,
+				// An interrupted clean of a delete does not delete the
+				// instance later: the user deletes again.
+				"delete_after_clean": false,
+				"updated_at":         now,
 			})
 		if res.Error != nil {
 			return res.Error

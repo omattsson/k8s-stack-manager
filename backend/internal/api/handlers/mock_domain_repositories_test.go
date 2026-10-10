@@ -994,6 +994,50 @@ func (m *MockStackInstanceRepository) Update(i *models.StackInstance) error {
 	return nil
 }
 
+// MarkCleanStart implements models.CleanStartMarker with the conditional
+// semantics of the GORM repository. It stores a copy, so a caller's pointer
+// is not changed.
+func (m *MockStackInstanceRepository) MarkCleanStart(id string, fromStatuses []string, deleteAfterClean bool) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.err != nil {
+		return m.err
+	}
+	conflict := models.ErrDeleteConflict
+	if !deleteAfterClean {
+		conflict = models.ErrCleanConflict
+	}
+	i, ok := m.items[id]
+	if !ok || (!deleteAfterClean && i.DeleteAfterClean) {
+		return conflict
+	}
+	for _, st := range fromStatuses {
+		if i.Status == st {
+			cp := *i
+			cp.Status = models.StackStatusCleaning
+			cp.ErrorMessage = ""
+			if deleteAfterClean {
+				cp.DeleteAfterClean = true
+			}
+			m.items[id] = &cp
+			return nil
+		}
+	}
+	return conflict
+}
+
+// ClearDeleteAfterClean implements models.CleanStartMarker.
+func (m *MockStackInstanceRepository) ClearDeleteAfterClean(id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if i, ok := m.items[id]; ok {
+		cp := *i
+		cp.DeleteAfterClean = false
+		m.items[id] = &cp
+	}
+	return nil
+}
+
 func (m *MockStackInstanceRepository) Delete(id string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()

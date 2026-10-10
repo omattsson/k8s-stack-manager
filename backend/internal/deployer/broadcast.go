@@ -136,3 +136,29 @@ func (m *Manager) logAction(logID, status string) string {
 	action, _ := v.(string)
 	return action
 }
+
+// instanceDeletedPayload is the WebSocket payload of "instance.deleted".
+type instanceDeletedPayload struct {
+	InstanceID string `json:"instance_id"`
+	LogID      string `json:"log_id,omitempty"`
+}
+
+// broadcastInstanceDeleted tells all clients (all replicas through the hub
+// fan-out) that the instance row was deleted after its clean, so a
+// dashboard removes the row.
+func (m *Manager) broadcastInstanceDeleted(instanceID, logID string) {
+	if m.hub == nil {
+		return
+	}
+	msg, err := websocket.NewMessage("instance.deleted", instanceDeletedPayload{InstanceID: instanceID, LogID: logID})
+	if err != nil {
+		slog.Error("failed to create instance deleted message", "error", err)
+		return
+	}
+	data, err := msg.Bytes()
+	if err != nil {
+		slog.Error("failed to serialize instance deleted message", "error", err)
+		return
+	}
+	m.hub.Broadcast(data)
+}

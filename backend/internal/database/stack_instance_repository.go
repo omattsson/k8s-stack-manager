@@ -69,6 +69,10 @@ func (r *GORMStackInstanceRepository) FindByNamespace(namespace string) (*models
 // step in Update.
 const columnExpiryWarnedAt = "expiry_warned_at"
 
+// columnDeleteAfterClean is written only by MarkCleanStart and
+// ClearDeleteAfterClean, never by Update.
+const columnDeleteAfterClean = "delete_after_clean"
+
 // expiryMatchTolerance is the tolerance for "the same expiry time". The
 // database can store expires_at with less precision than time.Time.
 const expiryMatchTolerance = time.Second
@@ -85,7 +89,7 @@ func (r *GORMStackInstanceRepository) Update(instance *models.StackInstance) err
 		if err := clearExpiryWarningIfExpiryChanged(tx, instance); err != nil {
 			return err
 		}
-		return tx.Omit(columnExpiryWarnedAt).Save(instance).Error
+		return tx.Omit(columnExpiryWarnedAt, columnDeleteAfterClean).Save(instance).Error
 	})
 	if err != nil {
 		if isDuplicateKeyError(err) {
@@ -110,6 +114,46 @@ func clearExpiryWarningIfExpiryChanged(tx *gorm.DB, instance *models.StackInstan
 			exp.Add(-expiryMatchTolerance), exp.Add(expiryMatchTolerance))
 	}
 	return q.UpdateColumn(columnExpiryWarnedAt, nil).Error
+}
+
+// MarkCleanStart starts a clean with one conditional update: status
+// cleaning and an empty error message, only when the status is one of
+// fromStatuses. With deleteAfterClean it also sets delete_after_clean: of
+// two concurrent deletes only one matches, the other gets
+// models.ErrDeleteConflict. Without it the row must not have
+// delete_after_clean (a plain clean never overwrites a delete); else
+// models.ErrCleanConflict.
+func (r *GORMStackInstanceRepository) MarkCleanStart(id string, fromStatuses []string, deleteAfterClean bool) error {
+	updates := map[string]any{
+		"status":        models.StackStatusCleaning,
+		"error_message": "",
+		"updated_at":    time.Now().UTC(),
+	}
+	q := r.db.Model(&models.StackInstance{}).Where("id = ? AND status IN ?", id, fromStatuses)
+	conflict := models.ErrDeleteConflict
+	if deleteAfterClean {
+		updates[columnDeleteAfterClean] = true
+	} else {
+		q = q.Where(columnDeleteAfterClean+" = ?", false)
+		conflict = models.ErrCleanConflict
+	}
+	res := q.Updates(updates)
+	if res.Error != nil {
+		return dberrors.NewDatabaseError("mark_clean_start", res.Error)
+	}
+	if res.RowsAffected == 0 {
+		return conflict
+	}
+	return nil
+}
+
+// ClearDeleteAfterClean clears delete_after_clean of the instance.
+func (r *GORMStackInstanceRepository) ClearDeleteAfterClean(id string) error {
+	if err := r.db.Model(&models.StackInstance{}).Where("id = ?", id).
+		UpdateColumn(columnDeleteAfterClean, false).Error; err != nil {
+		return dberrors.NewDatabaseError("clear_delete_after_clean", err)
+	}
+	return nil
 }
 
 // MarkExpiryWarned sets expiry_warned_at when the instance has no expiry

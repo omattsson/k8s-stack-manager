@@ -120,7 +120,7 @@ Verify with stackctl:
 stackctl cluster list
 ```
 
-> **Note:** The Helm chart creates a ClusterRole with permissions for namespaces, pods, deployments, and services. If your charts require additional cluster-scoped resources (ClusterRoles, CRDs, IngressClasses), you may need to extend the ClusterRole or grant broader permissions to the backend service account.
+> **Note:** The Helm chart creates a ClusterRole with permissions for namespaces, pods, deployments, and services. For an external cluster (kubeconfig), the credentials need the same permissions. Deploy and rollback also read the pod problems of the stack namespace for the deploy log: `list` on `events` and `get`/`list` on `pods`. Without these permissions the deploy works, the deploy log has no `Pod event:` lines, and the backend logs one warning per operation. If your charts require additional cluster-scoped resources (ClusterRoles, CRDs, IngressClasses), you may need to extend the ClusterRole or grant broader permissions to the backend service account.
 
 ## 6. Import starter templates
 

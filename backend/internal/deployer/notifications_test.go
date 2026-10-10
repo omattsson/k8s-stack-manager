@@ -257,9 +257,7 @@ func TestNotification_DeleteAfterClean(t *testing.T) {
 	inst.Status = models.StackStatusRunning
 	require.NoError(t, instanceRepo.Update(inst))
 
-	mgr.ScheduleDeleteAfterClean("inst-del")
-
-	_, err := mgr.Clean(context.Background(), inst, []models.ChartConfig{})
+	_, err := mgr.CleanForDelete(context.Background(), inst, []models.ChartConfig{})
 	require.NoError(t, err)
 
 	notif.waitForCalls(t, 1)

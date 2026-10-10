@@ -25,6 +25,7 @@ export const INSTANCE_EVENT_LABELS: Record<string, string> = {
   'rollback.completed': 'Rollback completed',
   'rollback.error': 'Rollback failed',
   'stack.expiring': 'Stack expiring soon',
+  'stack.expired': 'Stack expired (TTL)',
   'cleanup.policy.stop': 'Stack stopped by a cleanup policy',
   'cleanup.policy.clean': 'Stack cleaned by a cleanup policy',
 };

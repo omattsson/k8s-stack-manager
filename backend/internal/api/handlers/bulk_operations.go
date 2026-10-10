@@ -2,14 +2,13 @@ package handlers
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
 
 	"backend/internal/api/middleware"
-	"backend/internal/database"
 	"backend/internal/deployer"
-	"backend/internal/hooks"
 	"backend/internal/models"
 
 	"github.com/gin-gonic/gin"
@@ -292,6 +291,9 @@ func (h *InstanceHandler) BulkClean(c *gin.Context) {
 		}
 
 		logID, err := h.deployManager.Clean(hookTriggerCtx(c), inst, charts)
+		if errors.Is(err, models.ErrCleanConflict) {
+			return "", errors.New(msgCleanConflict)
+		}
 		if err != nil {
 			return "", fmt.Errorf("failed to start clean operation")
 		}
@@ -302,7 +304,7 @@ func (h *InstanceHandler) BulkClean(c *gin.Context) {
 
 // BulkDelete godoc
 // @Summary     Bulk delete stack instances
-// @Description Delete multiple stack instances in a single request. Processes instances sequentially.
+// @Description Delete multiple stack instances in a single request. Processes instances sequentially with the rules of DELETE /stack-instances/{id}: an instance with cluster resources (running, partial, stopped, error) is cleaned first (Helm uninstall and namespace delete) and deleted when the clean completes — its result has status "success" and the log_id of the clean. "success" with a log_id means that the clean started; the row is removed when the clean finishes (WebSocket message instance.deleted). A failed clean keeps the instance with status error. A draft instance is deleted at once. An instance with an operation in progress (checked before pre-instance-delete fires), one that a concurrent delete already started, or one that a pre-instance-delete hook rejects, gets status "error".
 // @Tags        stack-instances
 // @Accept      json
 // @Produce     json
@@ -314,27 +316,12 @@ func (h *InstanceHandler) BulkClean(c *gin.Context) {
 // @Router      /api/v1/stack-instances/bulk/delete [post]
 func (h *InstanceHandler) BulkDelete(c *gin.Context) {
 	h.executeBulkOperation(c, "delete", func(c *gin.Context, inst *models.StackInstance) (string, error) {
-		if h.txRunner != nil {
-			// The same hooks as the single delete: pre-instance-delete can
-			// stop the delete of this instance.
-			ctx := hookTriggerCtx(c)
-			if err := h.fireInstanceHook(ctx, hooks.EventPreInstanceDelete, inst); err != nil {
-				slog.Error("pre-instance-delete hook failed in bulk delete", "instance_id", inst.ID, "error", err)
-				return "", fmt.Errorf("pre-instance-delete hook rejected the request")
-			}
-			// The delete removes the follower rows: read them first.
-			followerIDs := h.followerIDsBeforeDelete(ctx, inst.ID)
-			// Transactional path — branch override cleanup + instance delete are atomic.
-			txErr := database.DeleteInstanceWithOwnedDefinition(h.txRunner, inst)
-			if txErr != nil {
-				slog.Error("failed to delete instance in bulk operation", "instance_id", inst.ID, "error", txErr)
-				return "", fmt.Errorf("failed to delete instance")
-			}
-			h.afterInstanceDeleted(ctx, inst, followerIDs)
-			return "", nil
+		// The same code path as the single delete (status rules, clean
+		// first, hooks, followers, notifications).
+		logID, delErr := h.deleteInstance(c, inst)
+		if delErr != nil {
+			return "", delErr
 		}
-
-		slog.Error("txRunner not configured for BulkDelete", "instance_id", inst.ID)
-		return "", fmt.Errorf("failed to delete instance")
+		return logID, nil
 	})
 }

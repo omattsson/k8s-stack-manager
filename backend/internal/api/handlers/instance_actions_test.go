@@ -521,3 +521,50 @@ func expectedSignature(message, secret string) string {
 	mac.Write([]byte(message))
 	return "sha256=" + hex.EncodeToString(mac.Sum(nil))
 }
+
+func TestInvokeAction_RefusalMessage(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		code        int
+		contentType string
+		body        string
+		wantMessage string
+	}{
+		{"409 json error", http.StatusConflict, "application/json", `{"error":"refresh-db already in flight for this stack"}`, "refresh-db already in flight for this stack"},
+		{"409 plain text", http.StatusConflict, "text/plain", "refresh-db already in flight", "refresh-db already in flight"},
+		{"500 without message", http.StatusInternalServerError, "application/json", `{"code":17}`, ""},
+		{"202 has no message", http.StatusAccepted, "application/json", `{"message":"started","job_id":"job-0123456789ab"}`, ""},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", tt.contentType)
+				w.WriteHeader(tt.code)
+				_, _ = w.Write([]byte(tt.body))
+			}))
+			t.Cleanup(srv.Close)
+			reg, err := hooks.NewActionRegistry([]hooks.ActionSubscription{
+				{Name: "refresh-db", URL: srv.URL + "/actions/refresh-db", TimeoutSeconds: 5},
+			}, nil)
+			require.NoError(t, err)
+			r := setupActionsRouter(t, reg, actionsOwnerID, "user")
+
+			w := doRequest(r, http.MethodPost, "/api/v1/stack-instances/"+actionsInstanceID+"/actions/refresh-db", `{}`)
+			require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+			var resp map[string]any
+			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+			assert.Equal(t, float64(tt.code), resp["status_code"])
+			if tt.wantMessage == "" {
+				_, has := resp["message"]
+				assert.False(t, has)
+			} else {
+				assert.Equal(t, tt.wantMessage, resp["message"])
+			}
+			assert.NotContains(t, w.Body.String(), srv.URL, "the subscriber URL must not leak")
+		})
+	}
+}

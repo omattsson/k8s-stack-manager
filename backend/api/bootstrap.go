@@ -614,7 +614,8 @@ func buildLeaderWorkers(
 ) *leaderWorkers {
 	// TTL reaper for auto-expiring stack instances.
 	expiryStopper := deployer.NewExpiryStopper(svc.DeployManager, repos.StackDefinition, repos.ChartConfig)
-	reaper := ttl.NewReaper(repos.StackInstance, repos.AuditLog, hub, expiryStopper, 60*time.Second)
+	reaper := ttl.NewReaper(repos.StackInstance, repos.AuditLog, hub, expiryStopper, 60*time.Second).
+		WithNotifier(svc.LifecycleNotifier)
 
 	// TTL expiry warner — warns users before their stack expires.
 	expiryWarner := ttl.NewWarner(repos.StackInstance, svc.LifecycleNotifier, 30*time.Minute, 60*time.Second)
