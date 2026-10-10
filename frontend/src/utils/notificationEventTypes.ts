@@ -44,6 +44,16 @@ export const SYSTEM_EVENT_LABELS: Record<string, string> = {
 export const EVENT_TYPE_LABELS: Record<string, string> = { ...INSTANCE_EVENT_LABELS, ...SYSTEM_EVENT_LABELS };
 
 /**
+ * Returns the label of an event type.
+ *
+ * @param eventType - The event type, for example "deployment.success".
+ * @returns The label, or the event type itself when no label is known.
+ */
+export function eventTypeLabel(eventType: string): string {
+  return EVENT_TYPE_LABELS[eventType] ?? eventType;
+}
+
+/**
  * Returns the event types that a user with the role can get.
  *
  * @param role - The role of the user.

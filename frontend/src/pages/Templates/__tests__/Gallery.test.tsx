@@ -1,8 +1,8 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
-import Gallery from '../Gallery';
+import Gallery, { describeBulkDeleteError } from '../Gallery';
 
 const mockNavigate = vi.fn();
 vi.mock('react-router-dom', async () => {
@@ -413,6 +413,39 @@ describe('Template Gallery', () => {
       expect(screen.getByText(/bulk operation results/i)).toBeInTheDocument();
     });
     expect(screen.getAllByText('Draft Template').length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('warns about published templates in the bulk delete dialog and explains the result', async () => {
+    const user = userEvent.setup();
+    (templateService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue([publishedTemplate]);
+    (templateService.bulkDelete as ReturnType<typeof vi.fn>).mockResolvedValue({
+      total: 1, succeeded: 0, failed: 1,
+      results: [{ template_id: '1', template_name: 'My Template', status: 'error', error: 'template is published' }],
+    });
+    render(
+      <MemoryRouter>
+        <Gallery />
+      </MemoryRouter>
+    );
+    await user.click(await screen.findByRole('tab', { name: /my templates/i }));
+    await user.click(await screen.findByRole('checkbox', { name: /select my template/i }));
+    await user.click(screen.getByRole('button', { name: /delete/i }));
+
+    const confirm = await screen.findByRole('dialog', { name: /confirm bulk delete/i });
+    expect(confirm).toHaveTextContent('Published templates cannot be deleted. Unpublish them first: My Template.');
+    await user.click(within(confirm).getByRole('button', { name: /delete/i }));
+
+    const result = await screen.findByRole('dialog', { name: /bulk operation results/i });
+    expect(within(result).getByText('The template is published. Unpublish it first, then delete it.')).toBeInTheDocument();
+  });
+
+  it('describes known bulk delete errors', () => {
+    expect(describeBulkDeleteError('template is published')).toMatch(/Unpublish it first/);
+    expect(describeBulkDeleteError('template is used by 2 definition(s)')).toBe(
+      'The template is used by 2 definition(s). Delete these definitions first.',
+    );
+    expect(describeBulkDeleteError('failed to delete template')).toBe('failed to delete template');
+    expect(describeBulkDeleteError(undefined)).toBe('Failed');
   });
 
   it('shows select all checkbox on bulk-enabled tabs', async () => {

@@ -202,10 +202,77 @@ describe('Templates Preview', () => {
 
     await user.click(screen.getByRole('button', { name: /clone as template/i }));
 
+    // The dialog asks for the name first; nothing is created yet
+    const dialog = await screen.findByRole('dialog', { name: /clone as template/i });
+    const nameInput = within(dialog).getByRole('textbox', { name: /name/i });
+    expect(nameInput).toHaveValue('Web Stack Template (Copy)');
+    expect(templateService.clone).not.toHaveBeenCalled();
+
+    await user.clear(nameInput);
+    await user.type(nameInput, '  My Copy ');
+    await user.click(within(dialog).getByRole('button', { name: /^clone$/i }));
+
     await waitFor(() => {
-      expect(templateService.clone).toHaveBeenCalledWith('t1');
+      expect(templateService.clone).toHaveBeenCalledWith('t1', { name: 'My Copy' });
     });
     expect(mockNavigate).toHaveBeenCalledWith('/templates/t-clone/edit');
+  });
+
+  it('creates nothing when the clone dialog is cancelled', async () => {
+    const user = userEvent.setup();
+    (templateService.get as ReturnType<typeof vi.fn>).mockResolvedValue(mockTemplate);
+
+    render(
+      <MemoryRouter initialEntries={['/templates/t1']}>
+        <Routes>
+          <Route path="/templates/:id" element={<Preview />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('Web Stack Template')).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole('button', { name: /clone as template/i }));
+    const dialog = await screen.findByRole('dialog', { name: /clone as template/i });
+    const nameInput = within(dialog).getByRole('textbox', { name: /name/i });
+    await user.clear(nameInput);
+    expect(within(dialog).getByRole('button', { name: /^clone$/i })).toBeDisabled();
+    await user.click(within(dialog).getByRole('button', { name: /cancel/i }));
+
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog', { name: /clone as template/i })).not.toBeInTheDocument();
+    });
+    expect(templateService.clone).not.toHaveBeenCalled();
+    expect(mockNavigate).not.toHaveBeenCalledWith(expect.stringMatching(/edit$/));
+  });
+
+  it('shows the API error in the clone dialog', async () => {
+    const user = userEvent.setup();
+    (templateService.get as ReturnType<typeof vi.fn>).mockResolvedValue(mockTemplate);
+    (templateService.clone as ReturnType<typeof vi.fn>).mockRejectedValue({
+      response: { status: 400, data: { error: 'name is required' } },
+    });
+
+    render(
+      <MemoryRouter initialEntries={['/templates/t1']}>
+        <Routes>
+          <Route path="/templates/:id" element={<Preview />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('Web Stack Template')).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole('button', { name: /clone as template/i }));
+    const dialog = await screen.findByRole('dialog', { name: /clone as template/i });
+    await user.click(within(dialog).getByRole('button', { name: /^clone$/i }));
+
+    expect(await within(dialog).findByText('Failed to clone template (HTTP 400: name is required)')).toBeInTheDocument();
+    expect(mockNavigate).not.toHaveBeenCalledWith(expect.stringMatching(/edit$/));
   });
 
   it('navigates back to gallery', async () => {
@@ -324,9 +391,36 @@ describe('Templates Preview', () => {
 
     await user.click(await screen.findByRole('button', { name: /show changes/i }));
 
-    expect(await screen.findByText(/no chart value changes/i)).toBeInTheDocument();
+    expect(await screen.findByText(/no chart changes/i)).toBeInTheDocument();
     expect(templateService.diffVersions).toHaveBeenCalledWith('t1', 'ver-9');
     expect(templateService.listVersions).not.toHaveBeenCalled();
+  });
+
+  it('shows changed template fields in the changes dialog (#499)', async () => {
+    const user = userEvent.setup();
+    mockGet().mockResolvedValue({ ...releasedTemplate, published_version_id: 'ver-9' });
+    (templateService.diffVersions as ReturnType<typeof vi.fn>).mockResolvedValue({
+      left: { id: 'ver-9', version: '1.0.0', snapshot: { template: {}, charts: [] } },
+      right: { id: 'working', version: '1.0.0', snapshot: { template: {}, charts: [] }, is_working_copy: true },
+      template_diffs: [
+        { field: 'description', left: 'Old text', right: 'New text' },
+        { field: 'category', left: '', right: 'Web' },
+      ],
+      chart_diffs: [
+        { chart_name: 'frontend', left_values: 'a: 1', right_values: 'a: 1', has_differences: false, change_type: 'unchanged' },
+      ],
+    });
+    renderPreview();
+
+    await user.click(await screen.findByRole('button', { name: /show changes/i }));
+
+    const fields = await screen.findByRole('table', { name: 'Template details' });
+    const description = within(fields).getByRole('row', { name: /description/i });
+    expect(within(description).getByText('Old text')).toBeInTheDocument();
+    expect(within(description).getByText('New text')).toBeInTheDocument();
+    const category = within(fields).getByRole('row', { name: /category/i });
+    expect(within(category).getByText('(empty)')).toBeInTheDocument();
+    expect(within(category).getByText('Web')).toBeInTheDocument();
   });
 
   it('shows an error in the changes dialog when the diff fails', async () => {

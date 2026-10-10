@@ -9005,7 +9005,7 @@
         },
         "/api/v1/templates/{id}/versions/diff": {
             "get": {
-                "description": "Compare two template version snapshots side by side. Either side may be \"working\" to compare the working copy (draft), for example left=\u003clatest version ID\u003e\u0026right=working shows the unpublished changes.\nOnly the template owner and admins can compare the working copy (others get 403).\nleft.version and right.version are version strings; the other side fields (id, created_by, created_by_username, created_at, is_working_copy) describe the side.",
+                "description": "Compare two template version snapshots side by side. Either side may be \"working\" to compare the working copy (draft), for example left=\u003clatest version ID\u003e\u0026right=working shows the unpublished changes.\nOnly the template owner and admins can compare the working copy (others get 403).\nleft.version and right.version are version strings; the other side fields (id, created_by, created_by_username, created_at, is_working_copy) describe the side.\ntemplate_diffs lists the changed template fields (name, description, category, default_branch, version) with the left and right value; chart_diffs compares the charts.",
                 "consumes": [
                     "application/json"
                 ],
@@ -11803,6 +11803,20 @@
                 }
             }
         },
+        "handlers.templateFieldDiff": {
+            "type": "object",
+            "properties": {
+                "field": {
+                    "type": "string"
+                },
+                "left": {
+                    "type": "string"
+                },
+                "right": {
+                    "type": "string"
+                }
+            }
+        },
         "handlers.templateVersionListItem": {
             "type": "object",
             "properties": {
@@ -12021,6 +12035,12 @@
                 },
                 "right": {
                     "$ref": "#/definitions/handlers.versionDiffSide"
+                },
+                "template_diffs": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/handlers.templateFieldDiff"
+                    }
                 }
             }
         },

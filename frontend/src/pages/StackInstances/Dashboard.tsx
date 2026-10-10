@@ -326,6 +326,19 @@ const Dashboard = () => {
         )
       );
     }
+    if (msg.type === 'instance.deleted') {
+      const payload = msg.payload as { instance_id?: string };
+      const deletedId = payload.instance_id;
+      if (!deletedId) return;
+      setInstances((prev) => prev.filter((inst) => inst.id !== deletedId));
+      setSelectedIds((prev) => {
+        if (!prev.has(deletedId)) return prev;
+        const next = new Set(prev);
+        next.delete(deletedId);
+        return next;
+      });
+      return;
+    }
     if (msg.type === 'instance.status') {
       const payload = msg.payload as {
         instance_id?: string;
@@ -789,6 +802,11 @@ const Dashboard = () => {
               This action cannot be undone. Selected instances will be permanently deleted.
             </Alert>
           )}
+          {bulkAction === 'stop' && (
+            <Alert severity="warning" sx={{ mb: 2 }}>
+              This uninstalls all Helm releases of the selected instances. The namespaces stay.
+            </Alert>
+          )}
           <Typography variant="body1" sx={{ mb: 1 }}>
             {bulkAction ? BULK_ACTION_LABELS[bulkAction] : ''} {selectedInstances.length} instance{selectedInstances.length === 1 ? '' : 's'}:
           </Typography>
@@ -808,7 +826,7 @@ const Dashboard = () => {
           <Button
             onClick={handleBulkConfirm}
             variant="contained"
-            color={bulkAction === 'delete' ? 'error' : 'primary'}
+            color={bulkAction === 'delete' ? 'error' : bulkAction === 'stop' ? 'warning' : 'primary'}
           >
             {bulkAction ? BULK_ACTION_LABELS[bulkAction] : 'Confirm'}
           </Button>

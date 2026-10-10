@@ -3,6 +3,7 @@ import fixture from './notification-event-types.json';
 import {
   INSTANCE_EVENT_LABELS,
   SYSTEM_EVENT_LABELS,
+  eventTypeLabel,
   eventTypesForRole,
   mergePreferences,
 } from '../notificationEventTypes';
@@ -45,5 +46,16 @@ describe('mergePreferences', () => {
     );
     expect(prefs.map((p) => p.event_type)).toContain('quota.warning');
     expect(prefs.map((p) => p.event_type)).not.toContain('bogus.event');
+  });
+});
+
+describe('eventTypeLabel', () => {
+  it('labels every preference type, stack.expired included', () => {
+    for (const t of [...fixture.instance, ...fixture.system]) {
+      expect(eventTypeLabel(t)).not.toBe(t);
+    }
+    expect(fixture.instance).toContain('stack.expired');
+    expect(eventTypeLabel('stack.expired')).toBe('Stack expired (TTL)');
+    expect(eventTypeLabel('bogus.event')).toBe('bogus.event');
   });
 });

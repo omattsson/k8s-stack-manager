@@ -558,6 +558,29 @@ func TestDraftRelease_TemplateDetailAndDiff(t *testing.T) {
 				assert.Equal(t, "modified", resp.ChartDiffs[0].ChangeType)
 				assert.Equal(t, "replicas: 1", resp.ChartDiffs[0].LeftValues)
 				assert.Equal(t, "replicas: 2", resp.ChartDiffs[0].RightValues)
+				assert.Empty(t, resp.TemplateDiffs, "no template field changed")
+				assert.NotNil(t, resp.TemplateDiffs, "template_diffs is a list, not null")
+			},
+		},
+		{
+			name: "diff latest vs working copy shows changed template fields (#499)",
+			run: func(t *testing.T, e *draftReleaseEnv) {
+				_, pub := e.publish(t, "")
+				w := serve(e.router, http.MethodPut, "/api/v1/templates/t1",
+					`{"description":"New text","category":"Web"}`)
+				require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+				require.True(t, e.getTemplate(t).HasUnpublishedChanges)
+
+				w = serve(e.router, http.MethodGet, "/api/v1/templates/t1/versions/diff?left="+pub.PublishedVersionID+"&right=working", "")
+				require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+				var resp versionDiffResponse
+				require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+				assert.Equal(t, []templateFieldDiff{
+					{Field: "description", Left: "", Right: "New text"},
+					{Field: "category", Left: "", Right: "Web"},
+				}, resp.TemplateDiffs)
+				require.Len(t, resp.ChartDiffs, 1)
+				assert.Equal(t, "unchanged", resp.ChartDiffs[0].ChangeType)
 			},
 		},
 		{
@@ -908,6 +931,48 @@ func TestPublishAndCreate_TrimAndRollback(t *testing.T) {
 		assert.Equal(t, "0.2.0", *resp.PublishedVersion)
 		assert.NotNil(t, resp.PublishedCharts)
 	})
+}
+
+func TestComputeTemplateFieldDiffs(t *testing.T) {
+	t.Parallel()
+
+	base := models.TemplateSnapshotData{
+		Name: "Web", Description: "d", Category: "c", DefaultBranch: "main", IsPublished: true, Version: "1.0.0",
+	}
+	tests := []struct {
+		name  string
+		right models.TemplateSnapshotData
+		want  []templateFieldDiff
+	}{
+		{name: "equal", right: base, want: []templateFieldDiff{}},
+		{
+			name:  "publish state is not content",
+			right: func() models.TemplateSnapshotData { r := base; r.IsPublished = false; return r }(),
+			want:  []templateFieldDiff{},
+		},
+		{
+			name: "all fields in fixed order",
+			right: models.TemplateSnapshotData{
+				Name: "Web 2", Description: "", Category: "x", DefaultBranch: "develop", IsPublished: true, Version: "1.1.0",
+			},
+			want: []templateFieldDiff{
+				{Field: "name", Left: "Web", Right: "Web 2"},
+				{Field: "description", Left: "d", Right: ""},
+				{Field: "category", Left: "c", Right: "x"},
+				{Field: "default_branch", Left: "main", Right: "develop"},
+				{Field: "version", Left: "1.0.0", Right: "1.1.0"},
+			},
+		},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := computeTemplateFieldDiffs(base, tt.right)
+			assert.NotNil(t, got)
+			assert.Equal(t, tt.want, got)
+		})
+	}
 }
 
 func TestComputeChartDiffs_TrailingWhitespace(t *testing.T) {

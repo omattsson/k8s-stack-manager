@@ -171,8 +171,8 @@ vi.mock('../../../components/StatusBadge', () => ({
 }));
 
 vi.mock('../../../components/BranchSelector', () => ({
-  default: ({ value, onChange }: { value: string; repoUrl: string; onChange: (v: string) => void; label?: string }) => (
-    <div data-testid="branch-selector">
+  default: ({ value, onChange, repoUrl, label }: { value: string; repoUrl: string | string[]; onChange: (v: string) => void; label?: string }) => (
+    <div data-testid="branch-selector" data-label={label ?? 'Branch'} data-repo={JSON.stringify(repoUrl)}>
       <span>{value}</span>
       <button onClick={() => onChange('feature/new-branch')}>change-branch</button>
       <button onClick={() => onChange('')}>clear-branch</button>
@@ -185,7 +185,7 @@ vi.mock('../../../components/ConfirmDialog', () => ({
     open: boolean; title: string; message: string;
     onConfirm: () => void; onCancel: () => void; confirmText: string;
   }) => open ? (
-    <div data-testid="confirm-dialog">
+    <div data-testid="confirm-dialog" role="dialog" aria-label={title}>
       <div>{title}</div>
       <div>{message}</div>
       <button onClick={onConfirm}>{confirmText}</button>
@@ -290,6 +290,57 @@ describe('StackInstances Detail', () => {
   afterEach(() => {
     vi.clearAllMocks();
     authState.user = { id: 'user1', username: 'alice', role: 'user', display_name: 'Alice' };
+  });
+
+  it('passes the source repositories of all charts to the instance-level branch picker', async () => {
+    setupMocks({ status: 'draft' }, { deployLogReject: true });
+    (definitionService.get as MockFn).mockResolvedValue({
+      ...mockDefinition,
+      charts: [
+        { ...mockDefinition.charts[0], id: 'oci', chart_name: 'redis', source_repo_url: '' },
+        { ...mockDefinition.charts[0], id: 'app', chart_name: 'app', source_repo_url: 'https://git.example.com/app' },
+      ],
+    });
+
+    renderDetail();
+
+    await waitFor(() => {
+      expect(screen.getByText('Test Instance')).toBeInTheDocument();
+    });
+    const pickers = await screen.findAllByTestId('branch-selector');
+    const instancePicker = pickers.find((p) => p.dataset.label === 'Branch');
+    expect(JSON.parse(instancePicker?.dataset.repo ?? 'null')).toEqual(['', 'https://git.example.com/app']);
+    // A chart without a source repository falls back to the first chart that has one
+    const chartPickers = pickers.filter((p) => p.dataset.label === 'Chart Branch');
+    expect(chartPickers.map((p) => JSON.parse(p.dataset.repo ?? 'null'))).toEqual([
+      'https://git.example.com/app',
+      'https://git.example.com/app',
+    ]);
+  });
+
+  it('shows "This stack was deleted." on an instance.deleted message for this instance', async () => {
+    const user = userEvent.setup();
+    setupMocks({ status: 'running' });
+    renderDetail();
+    await waitFor(() => {
+      expect(screen.getByText('Test Instance')).toBeInTheDocument();
+    });
+
+    // A message for another instance changes nothing.
+    act(() => {
+      wsState.handler?.({ type: 'instance.deleted', payload: { instance_id: 'other' } });
+    });
+    expect(screen.queryByTestId('instance-deleted')).not.toBeInTheDocument();
+
+    act(() => {
+      wsState.handler?.({ type: 'instance.deleted', payload: { instance_id: '123', log_id: 'l1' } });
+    });
+    const alert = await screen.findByTestId('instance-deleted');
+    expect(alert).toHaveTextContent('This stack was deleted.');
+    expect(screen.queryByText('Test Instance')).not.toBeInTheDocument();
+
+    await user.click(within(alert).getByRole('button', { name: 'Back to Dashboard' }));
+    expect(mockNavigate).toHaveBeenCalledWith('/');
   });
 
   it('shows loading spinner while fetching', () => {
@@ -546,9 +597,35 @@ describe('StackInstances Detail', () => {
 
     await user.click(screen.getByRole('button', { name: /stop/i }));
 
+    // Confirm in the stop dialog
+    const dialog = await screen.findByRole('dialog', { name: /stop instance/i });
+    expect(instanceService.stop).not.toHaveBeenCalled();
+    await user.click(within(dialog).getByRole('button', { name: /^stop$/i }));
+
     await waitFor(() => {
       expect(instanceService.stop).toHaveBeenCalledWith('123');
     });
+  });
+
+  it('does not stop the instance when the stop dialog is cancelled', async () => {
+    const user = userEvent.setup();
+    setupMocks({ status: 'running' });
+
+    renderDetail();
+
+    await waitFor(() => {
+      expect(screen.getByText('Test Instance')).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole('button', { name: /stop/i }));
+    const dialog = await screen.findByRole('dialog', { name: /stop instance/i });
+    expect(within(dialog).getByText(/namespace stays/i)).toBeInTheDocument();
+    await user.click(within(dialog).getByRole('button', { name: /cancel/i }));
+
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog', { name: /stop instance/i })).not.toBeInTheDocument();
+    });
+    expect(instanceService.stop).not.toHaveBeenCalled();
   });
 
   it('shows error alert on deploy failure', async () => {
@@ -586,6 +663,8 @@ describe('StackInstances Detail', () => {
     });
 
     await user.click(screen.getByRole('button', { name: /stop/i }));
+    const dialog = await screen.findByRole('dialog', { name: /stop instance/i });
+    await user.click(within(dialog).getByRole('button', { name: /^stop$/i }));
 
     await waitFor(() => {
       expect(screen.getByText('Failed to stop instance')).toBeInTheDocument();
@@ -1505,6 +1584,7 @@ describe('StackInstances Detail', () => {
     });
 
     await user.click(screen.getByRole('button', { name: /stop/i }));
+    await user.click(within(await screen.findByRole('dialog', { name: /stop instance/i })).getByRole('button', { name: /^stop$/i }));
 
     await waitFor(() => {
       expect(instanceService.stop).toHaveBeenCalledWith('123');

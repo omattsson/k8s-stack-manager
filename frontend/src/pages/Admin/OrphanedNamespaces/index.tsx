@@ -29,6 +29,9 @@ import { adminService } from '../../../api/client';
 import { useAuth } from '../../../context/AuthContext';
 import { useNotification } from '../../../context/NotificationContext';
 import type { OrphanedNamespace } from '../../../types';
+
+/** Helm releases of a namespace; null from the API means none. */
+const releasesOf = (ns: OrphanedNamespace): string[] => ns.helm_releases ?? [];
 import LoadingState from '../../../components/LoadingState';
 import { getApiErrorInfo } from '../../../utils/apiError';
 import { Link } from 'react-router-dom';
@@ -161,9 +164,9 @@ const OrphanedNamespaces = () => {
                 <TableCell>{ns.resource_counts?.deployments ?? '-'}</TableCell>
                 <TableCell>{ns.resource_counts?.services ?? '-'}</TableCell>
                 <TableCell>
-                  {ns.helm_releases.length > 0 ? (
+                  {releasesOf(ns).length > 0 ? (
                     <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap' }}>
-                      {ns.helm_releases.map((r) => (
+                      {releasesOf(ns).map((r) => (
                         <Chip key={r} label={r} size="small" variant="outlined" />
                       ))}
                     </Box>
@@ -265,10 +268,10 @@ const OrphanedNamespaces = () => {
             This will uninstall all Helm releases and delete the Kubernetes namespace.
             This action cannot be undone.
           </Typography>
-          {deleteTarget && deleteTarget.helm_releases.length > 0 && (
+          {deleteTarget && releasesOf(deleteTarget).length > 0 && (
             <Alert severity="warning" sx={{ mt: 2 }}>
-              {deleteTarget.helm_releases.length} Helm release(s) will be uninstalled:
-              {' '}{deleteTarget.helm_releases.join(', ')}
+              {releasesOf(deleteTarget).length} Helm release(s) will be uninstalled:
+              {' '}{releasesOf(deleteTarget).join(', ')}
             </Alert>
           )}
           {confirmRequired && (

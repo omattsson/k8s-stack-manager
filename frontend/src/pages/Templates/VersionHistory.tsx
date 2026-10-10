@@ -26,6 +26,7 @@ import CompareArrowsIcon from '@mui/icons-material/CompareArrows';
 import HistoryIcon from '@mui/icons-material/History';
 import { templateService } from '../../api/client';
 import ChartDiffList from '../../components/ChartDiffList';
+import TemplateFieldDiffList, { diffSideTitle, templateFieldDiffs } from '../../components/TemplateFieldDiffList';
 import type { TemplateVersion, VersionDiffResponse, VersionDiffSide } from '../../types';
 
 interface VersionHistoryProps {
@@ -330,11 +331,20 @@ const VersionHistory = ({ templateId }: VersionHistoryProps) => {
           )}
           {diffError && <Alert severity="error">{diffError}</Alert>}
           {diffData && (
-            <ChartDiffList
-              chartDiffs={diffData.chart_diffs}
-              leftTitle={`v${diffData.left.version}`}
-              rightTitle={`v${diffData.right.version}`}
-            />
+            <>
+              <TemplateFieldDiffList
+                diffs={templateFieldDiffs(diffData)}
+                leftTitle={diffSideTitle(diffData.left)}
+                rightTitle={diffSideTitle(diffData.right)}
+              />
+              <Typography variant="subtitle1" sx={{ mb: 1 }}>Charts</Typography>
+              <ChartDiffList
+                chartDiffs={diffData.chart_diffs}
+                leftTitle={diffSideTitle(diffData.left)}
+                rightTitle={diffSideTitle(diffData.right)}
+                emptyMessage="No chart changes."
+              />
+            </>
           )}
         </DialogContent>
         <DialogActions>

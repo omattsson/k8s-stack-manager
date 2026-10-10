@@ -548,12 +548,13 @@ export const templateService = {
   /**
    * Clone a template, creating an independent copy.
    * @param id - Template ID to clone
+   * @param data - Optional name of the copy; the server uses "<name> (Copy)" when omitted
    * @returns The cloned template
    * @see POST /api/v1/templates/:id/clone
    */
-  clone: async (id: string): Promise<StackTemplate> => {
+  clone: async (id: string, data?: { name?: string }): Promise<StackTemplate> => {
     try {
-      const response = await api.post(`/api/v1/templates/${id}/clone`);
+      const response = await api.post(`/api/v1/templates/${id}/clone`, data ?? {});
       return response.data;
     } catch (error) {
       console.error('Failed to clone template:', error);
@@ -1555,18 +1556,67 @@ export const instanceService = {
 };
 
 /** Git provider service for branch listing and validation. Maps to `/api/v1/git`. */
+/** Time a loaded branch list stays in the cache, in milliseconds. */
+export const BRANCH_CACHE_TTL_MS = 60 * 1000;
+
+/** Most branch list requests that run at the same time. */
+export const BRANCH_MAX_CONCURRENT = 4;
+
+/** Cached branch lists (or requests in flight), keyed by repository URL. */
+const branchCache = new Map<string, { promise: Promise<string[]>; expiresAt: number }>();
+let branchRequestsRunning = 0;
+const branchRequestQueue: Array<() => void> = [];
+
+/** Run a branch request when fewer than BRANCH_MAX_CONCURRENT requests run. */
+const withBranchSlot = async <T>(task: () => Promise<T>): Promise<T> => {
+  if (branchRequestsRunning >= BRANCH_MAX_CONCURRENT) {
+    await new Promise<void>((resolve) => branchRequestQueue.push(resolve));
+  }
+  branchRequestsRunning += 1;
+  try {
+    return await task();
+  } finally {
+    branchRequestsRunning -= 1;
+    branchRequestQueue.shift()?.();
+  }
+};
+
+/**
+ * Clear the branch list cache of gitService.branches (for example in tests).
+ * @returns Nothing
+ * @see GET /api/v1/git/branches
+ */
+export const clearBranchCache = (): void => {
+  branchCache.clear();
+};
+
 export const gitService = {
   /**
-   * List branches for a git repository.
+   * List branches for a git repository. Calls for the same URL share one
+   * request; a loaded list stays cached for BRANCH_CACHE_TTL_MS. A failed
+   * request is not cached. At most BRANCH_MAX_CONCURRENT requests run at the
+   * same time.
    * @param repoUrl - Repository URL (Azure DevOps or GitLab)
    * @returns Array of branch names
    * @see GET /api/v1/git/branches
    */
   branches: async (repoUrl: string): Promise<string[]> => {
-    try {
+    const now = Date.now();
+    const cached = branchCache.get(repoUrl);
+    if (cached && cached.expiresAt > now) return cached.promise;
+    const promise = withBranchSlot(async () => {
       const response = await api.get('/api/v1/git/branches', { params: { repo: repoUrl } });
-      return response.data.map((b: { name: string }) => b.name);
+      return (response.data as Array<{ name: string }>).map((b) => b.name);
+    });
+    // In flight: no expiry until the request ends.
+    const entry = { promise, expiresAt: Number.POSITIVE_INFINITY };
+    branchCache.set(repoUrl, entry);
+    try {
+      const branches = await promise;
+      entry.expiresAt = Date.now() + BRANCH_CACHE_TTL_MS;
+      return branches;
     } catch (error) {
+      if (branchCache.get(repoUrl) === entry) branchCache.delete(repoUrl);
       console.error('Failed to fetch branches:', error);
       throw error;
     }

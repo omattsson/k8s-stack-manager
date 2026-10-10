@@ -40,7 +40,7 @@ import { useAuth } from '../../context/AuthContext';
 import { useNotification } from '../../context/NotificationContext';
 import type { APIKey, CreateAPIKeyRequest, CreateAPIKeyResponse, NotificationPreference } from '../../types';
 import LoadingState from '../../components/LoadingState';
-import { EVENT_TYPE_LABELS, mergePreferences } from '../../utils/notificationEventTypes';
+import { eventTypeLabel, mergePreferences } from '../../utils/notificationEventTypes';
 
 type ExpiryMode = 'preset' | 'custom';
 
@@ -388,7 +388,7 @@ const Profile = () => {
               {notifPrefs.map((pref) => (
                 <TableRow key={pref.event_type}>
                   <TableCell>
-                    {EVENT_TYPE_LABELS[pref.event_type] || pref.event_type}
+                    {eventTypeLabel(pref.event_type)}
                   </TableCell>
                   <TableCell align="right">
                     <Switch
@@ -396,7 +396,7 @@ const Profile = () => {
                       onChange={() => handleTogglePref(pref.event_type)}
                       slotProps={{
                         input: {
-                          'aria-label': `Toggle ${EVENT_TYPE_LABELS[pref.event_type] || pref.event_type}`,
+                          'aria-label': `Toggle ${eventTypeLabel(pref.event_type)}`,
                         },
                       }}
                     />

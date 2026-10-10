@@ -23,9 +23,11 @@ import { useAuth } from '../../context/AuthContext';
 import type { PublishTemplateResult, StackTemplate, VersionDiffResponse } from '../../types';
 import LoadingState from '../../components/LoadingState';
 import ChartDiffList from '../../components/ChartDiffList';
+import TemplateFieldDiffList, { diffSideTitle, templateFieldDiffs } from '../../components/TemplateFieldDiffList';
 import ConfirmDialog from '../../components/ConfirmDialog';
 import VersionHistory from './VersionHistory';
 import PublishDialog from './PublishDialog';
+import CloneTemplateDialog from './CloneTemplateDialog';
 
 interface StatusMessage {
   severity: 'success' | 'info' | 'error';
@@ -50,6 +52,7 @@ const Preview = () => {
   const [changesError, setChangesError] = useState<string | null>(null);
   const [changes, setChanges] = useState<VersionDiffResponse | null>(null);
   const [confirmUnpublishOpen, setConfirmUnpublishOpen] = useState(false);
+  const [cloneOpen, setCloneOpen] = useState(false);
   /** Chart view chosen by a manager. Null: use the default for the user. */
   const [chartsViewChoice, setChartsViewChoice] = useState<'working' | 'released' | null>(null);
 
@@ -73,15 +76,6 @@ const Preview = () => {
     loadTemplate();
   }, [loadTemplate]);
 
-  const handleClone = async () => {
-    if (!id) return;
-    try {
-      const cloned = await templateService.clone(id);
-      navigate(`/templates/${cloned.id}/edit`);
-    } catch {
-      setError('Failed to clone template');
-    }
-  };
 
   const handlePublished = async (result: PublishTemplateResult, requestedVersion: string) => {
     setPublishOpen(false);
@@ -193,7 +187,7 @@ const Preview = () => {
           )}
           {isDevOps && (
             <>
-              <Button variant="outlined" onClick={handleClone}>
+              <Button variant="outlined" onClick={() => setCloneOpen(true)}>
                 Clone as Template
               </Button>
               {canManage && (
@@ -323,6 +317,18 @@ const Preview = () => {
         <VersionHistory key={historyKey} templateId={id} />
       )}
 
+      {isDevOps && (
+        <CloneTemplateDialog
+          open={cloneOpen}
+          template={template}
+          onClose={() => setCloneOpen(false)}
+          onCloned={(cloned) => {
+            setCloneOpen(false);
+            navigate(`/templates/${cloned.id}/edit`);
+          }}
+        />
+      )}
+
       {canManage && (
         <PublishDialog
           open={publishOpen}
@@ -356,12 +362,20 @@ const Preview = () => {
           )}
           {changesError && <Alert severity="error">{changesError}</Alert>}
           {changes && (
-            <ChartDiffList
-              chartDiffs={changes.chart_diffs}
-              leftTitle={`v${changes.left.version}`}
-              rightTitle="Working copy"
-              emptyMessage="No chart value changes. Template details (for example the description) can differ."
-            />
+            <>
+              <TemplateFieldDiffList
+                diffs={templateFieldDiffs(changes)}
+                leftTitle={diffSideTitle(changes.left)}
+                rightTitle="Working copy"
+              />
+              <Typography variant="subtitle1" sx={{ mb: 1 }}>Charts</Typography>
+              <ChartDiffList
+                chartDiffs={changes.chart_diffs}
+                leftTitle={diffSideTitle(changes.left)}
+                rightTitle="Working copy"
+                emptyMessage="No chart changes."
+              />
+            </>
           )}
         </DialogContent>
         <DialogActions>

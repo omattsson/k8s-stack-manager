@@ -52,9 +52,13 @@ import {
   sharedValuesService,
   cleanupPolicyService,
   notificationService,
+  clearBranchCache,
+  BRANCH_CACHE_TTL_MS,
+  BRANCH_MAX_CONCURRENT,
 } from '../client';
 
 beforeEach(() => {
+  clearBranchCache();
   mockApi.get.mockReset();
   mockApi.post.mockReset();
   mockApi.put.mockReset();
@@ -260,8 +264,17 @@ describe('templateService', () => {
 
     const result = await templateService.clone('1');
 
-    expect(api.post).toHaveBeenCalledWith('/api/v1/templates/1/clone');
+    expect(api.post).toHaveBeenCalledWith('/api/v1/templates/1/clone', {});
     expect(result).toEqual(cloned);
+  });
+
+  it('clone sends the name of the copy in the body', async () => {
+    const api = mockApi;
+    api.post.mockResolvedValueOnce(mockResponse({ id: '4', name: 'My copy' }));
+
+    await templateService.clone('1', { name: 'My copy' });
+
+    expect(api.post).toHaveBeenCalledWith('/api/v1/templates/1/clone', { name: 'My copy' });
   });
 
   it('addChart sends POST to charts sub-resource', async () => {
@@ -1000,6 +1013,60 @@ describe('gitService', () => {
     api.get.mockRejectedValueOnce(new Error('Not Found'));
 
     await expect(gitService.branches('bad-url')).rejects.toThrow('Not Found');
+  });
+
+  it('branches shares one request per URL and caches the list for the TTL', async () => {
+    const api = mockApi;
+    api.get.mockResolvedValue(mockResponse([{ name: 'main' }]));
+    const now = vi.spyOn(Date, 'now');
+    try {
+      now.mockReturnValue(1000);
+      const [a, b] = await Promise.all([gitService.branches('repo-a'), gitService.branches('repo-a')]);
+      expect(a).toEqual(['main']);
+      expect(b).toEqual(['main']);
+      expect(api.get).toHaveBeenCalledTimes(1);
+
+      now.mockReturnValue(1000 + BRANCH_CACHE_TTL_MS - 1);
+      await gitService.branches('repo-a');
+      expect(api.get).toHaveBeenCalledTimes(1);
+
+      now.mockReturnValue(1000 + BRANCH_CACHE_TTL_MS + 1);
+      await gitService.branches('repo-a');
+      expect(api.get).toHaveBeenCalledTimes(2);
+    } finally {
+      now.mockRestore();
+    }
+  });
+
+  it('branches does not cache a failed request', async () => {
+    const api = mockApi;
+    api.get.mockRejectedValueOnce(new Error('boom')).mockResolvedValueOnce(mockResponse([{ name: 'dev' }]));
+
+    await expect(gitService.branches('repo-f')).rejects.toThrow('boom');
+    await expect(gitService.branches('repo-f')).resolves.toEqual(['dev']);
+    expect(api.get).toHaveBeenCalledTimes(2);
+  });
+
+  it('branches runs at most BRANCH_MAX_CONCURRENT requests at the same time', async () => {
+    const api = mockApi;
+    const pending: Array<() => void> = [];
+    api.get.mockImplementation(
+      () => new Promise((resolve) => pending.push(() => resolve(mockResponse([{ name: 'main' }])))),
+    );
+    const urls = Array.from({ length: BRANCH_MAX_CONCURRENT + 2 }, (_, i) => `repo-${i}`);
+    const all = Promise.all(urls.map((u) => gitService.branches(u)));
+
+    await vi.waitFor(() => expect(api.get).toHaveBeenCalledTimes(BRANCH_MAX_CONCURRENT));
+    pending.shift()?.();
+    await vi.waitFor(() => expect(api.get).toHaveBeenCalledTimes(BRANCH_MAX_CONCURRENT + 1));
+    while (pending.length > 0 || (api.get.mock.calls.length < urls.length)) {
+      pending.shift()?.();
+      await Promise.resolve();
+      await new Promise((r) => setTimeout(r, 0));
+    }
+    pending.forEach((p) => p());
+    await expect(all).resolves.toHaveLength(urls.length);
+    expect(api.get).toHaveBeenCalledTimes(urls.length);
   });
 
   it('validateBranch sends GET with repo and branch params', async () => {
