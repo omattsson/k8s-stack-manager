@@ -252,6 +252,7 @@ Body (`apiVersion: hooks.k8sstackmanager.io/v1`, `kind: EventEnvelope`):
     "stack_definition_id": "def-...",
     "branch": "main",
     "cluster_id": "ple",
+    "cluster_name": "Production",
     "status": "draft"
   },
   "deployment": { "id": "log-...", "started_at": "..." },
@@ -263,6 +264,8 @@ Body (`apiVersion: hooks.k8sstackmanager.io/v1`, `kind: EventEnvelope`):
 ```
 
 Not every field is populated for every event — handlers should check presence and not assume.
+
+`instance.cluster_name` (and `cleanup_policy.cluster_name`) is the name of the cluster of `cluster_id`. It is omitted when the cluster is unknown. See `backend/docs/hooks.md`.
 
 ### Response
 

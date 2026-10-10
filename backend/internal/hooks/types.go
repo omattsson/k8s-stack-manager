@@ -94,8 +94,11 @@ type CleanupPolicyRun struct {
 	Name      string `json:"name"`
 	Action    string `json:"action"`
 	ClusterID string `json:"cluster_id"`
-	Condition string `json:"condition,omitempty"`
-	DryRun    bool   `json:"dry_run"`
+	// ClusterName is the name of the cluster of ClusterID. Omitted for
+	// "all" and when the cluster is unknown.
+	ClusterName string `json:"cluster_name,omitempty"`
+	Condition   string `json:"condition,omitempty"`
+	DryRun      bool   `json:"dry_run"`
 	// Run is "scheduled" (cron) or "manual" (POST .../run).
 	Run string `json:"run"`
 	// Matched, Succeeded and Failed count all matching instances, also when
@@ -128,7 +131,10 @@ type InstanceRef struct {
 	StackDefinitionID string `json:"stack_definition_id"`
 	Branch            string `json:"branch,omitempty"`
 	ClusterID         string `json:"cluster_id,omitempty"`
-	Status            string `json:"status,omitempty"`
+	// ClusterName is the name of the cluster of ClusterID. Omitted when the
+	// cluster is unknown (deleted, no cluster_id, or the lookup failed).
+	ClusterName string `json:"cluster_name,omitempty"`
+	Status      string `json:"status,omitempty"`
 }
 
 // DeploymentRef identifies a deployment in progress.

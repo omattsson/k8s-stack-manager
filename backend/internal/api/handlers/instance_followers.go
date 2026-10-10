@@ -115,6 +115,19 @@ func (h *InstanceHandler) setFollow(c *gin.Context, follow bool) {
 	c.JSON(http.StatusOK, followStateResponse{Following: following, FollowerCount: count})
 }
 
+// enrichInstanceDetail sets all computed fields of a single-instance
+// response: values_drift, the display names and the follow state. GET, update
+// and extend use it, so a client can replace its state with the response and
+// keep every field (issue #497).
+func (h *InstanceHandler) enrichInstanceDetail(c *gin.Context, inst *models.StackInstance) {
+	if inst == nil {
+		return
+	}
+	inst.ValuesDrift = h.instanceValuesDrift(c.Request.Context(), inst)
+	h.setInstanceNames(inst)
+	h.setFollowState(c, inst)
+}
+
 // setFollowState sets the following and follower_count fields of inst for
 // the caller. Without a follower repository it leaves them unset. A lookup
 // error is logged and leaves them unset: the instance response still works.

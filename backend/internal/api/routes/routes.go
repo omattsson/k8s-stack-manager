@@ -413,10 +413,12 @@ func SetupRoutes(router *gin.Engine, deps Deps) *RateLimiters {
 
 		// Audit Logs
 		if deps.AuditLogHandler != nil {
+			// The audit trail holds the actions of all users: reading it
+			// requires devops or admin, and export requires admin.
 			auditLogs := authed.Group("/audit-logs")
 			{
 				auditLogs.GET("/export", middleware.RequireAdmin(), deps.AuditLogHandler.ExportAuditLogs)
-				auditLogs.GET("", deps.AuditLogHandler.ListAuditLogs)
+				auditLogs.GET("", middleware.RequireDevOps(), deps.AuditLogHandler.ListAuditLogs)
 			}
 		}
 

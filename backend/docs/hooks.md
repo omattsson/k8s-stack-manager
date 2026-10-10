@@ -112,6 +112,7 @@ Body (`apiVersion: hooks.k8sstackmanager.io/v1`):
     "stack_definition_id": "def-...",
     "branch": "main",
     "cluster_id": "ple",
+    "cluster_name": "Production",
     "status": "draft"
   },
   "deployment": {
@@ -130,6 +131,16 @@ Body (`apiVersion: hooks.k8sstackmanager.io/v1`):
 
 Deployment/charts/values are populated only when relevant to the event. Handlers
 should not assume every field is present.
+
+`instance.cluster_name` is the name of the cluster of `instance.cluster_id`, so
+a subscriber (for example a chat notifier) can show it without an API call.
+The server reads it with the same lookup as the API `cluster_name` field and
+keeps it in a cache for at most one minute (a renamed cluster can show the old
+name for that time). The server waits at most 2 seconds for the lookup, so a
+slow database does not delay a gate such as `pre-deploy`. It is omitted when
+`cluster_id` is empty, when the cluster no longer exists, or when the lookup
+fails or times out; the event is sent in all cases. Action requests
+(`instance` in the request of `POST .../actions/:name`) have the same field.
 
 `trigger` tells what started the operation of the event:
 
@@ -324,6 +335,9 @@ instance. `instance` is not set; the run summary is in `cleanup_policy`:
 }
 ```
 
+- `cluster_id` is the cluster of the policy, or `all`. `cluster_name` is the
+  name of that cluster, the same as `instance.cluster_name`. It is omitted for
+  `all` and for an unknown cluster.
 - `run` is `scheduled` (cron) or `manual` (`POST /admin/cleanup-policies/:id/run`).
 - `result` is `success`, `error` or `dry_run`. A dry run changes nothing.
 - For `stop` and `clean`, `success` means that the operation started. Its

@@ -1096,6 +1096,10 @@ func (d *Database) AutoMigrate() error {
 	// leader treats a process without a fresh heartbeat as stopped).
 	migrator.AddMigration(replicaHeartbeatsMigration())
 
+	// Migration 56: delete notification preferences of unknown event types
+	// (the API stored any type before it validated them, issue #498).
+	migrator.AddMigration(unknownPreferenceTypesMigration())
+
 	// Run migrations
 	if err := migrator.MigrateUp(); err != nil {
 		return err
@@ -1781,6 +1785,42 @@ func replicaHeartbeatsMigration() schema.Migration {
 			if tx.Migrator().HasTable(&models.ReplicaHeartbeat{}) {
 				return tx.Migrator().DropTable(&models.ReplicaHeartbeat{})
 			}
+			return nil
+		},
+	}
+}
+
+// migration56PreferenceEventTypes is the list of known notification
+// preference types when migration 56 was written (notifier.PreferenceEventTypes;
+// the database package cannot import notifier). It is frozen with the
+// migration: do not change it when the notifier list changes.
+var migration56PreferenceEventTypes = []string{
+	"deployment.success", "deployment.error", "deployment.partial", "deployment.warning",
+	"deploy.timeout", "deployment.stopped", "stop.error", "instance.created", "instance.deleted",
+	"clean.completed", "clean.error", "rollback.completed", "rollback.error", "stack.expiring",
+	"cleanup.policy.stop", "cleanup.policy.clean",
+	"cleanup.policy.executed", "quota.warning", "secret.expiring",
+}
+
+// unknownPreferenceTypesMigration is migration 56. It deletes the stored
+// notification preferences whose event type is not a known preference type
+// (migration56PreferenceEventTypes). The API accepted any type before it
+// validated them (issue #498); such rows have no effect and the Profile page
+// would send them back on save. Up is idempotent. Down does nothing: the
+// deleted rows had no effect.
+func unknownPreferenceTypesMigration() schema.Migration {
+	return schema.Migration{
+		Version:     "20261010000056",
+		Name:        "delete_unknown_notification_preference_types",
+		Description: "Delete notification preferences of unknown event types",
+		Up: func(tx *gorm.DB) error {
+			if !tx.Migrator().HasTable(&models.NotificationPreference{}) {
+				return nil
+			}
+			return tx.Where("event_type NOT IN ?", migration56PreferenceEventTypes).
+				Delete(&models.NotificationPreference{}).Error
+		},
+		Down: func(_ *gorm.DB) error {
 			return nil
 		},
 	}

@@ -63,6 +63,9 @@ type ActionRegistry struct {
 	// redirect, so a signed request cannot reach another host.
 	client httpClient
 	now    func() time.Time
+	// clusterNames sets instance.cluster_name in requests
+	// (WithClusterNames); nil leaves it empty.
+	clusterNames *ClusterNameResolver
 }
 
 // NewActionRegistry validates each subscription, normalizes optional fields,
@@ -138,7 +141,7 @@ func (r *ActionRegistry) Invoke(ctx context.Context, name string, instance *Inst
 		Action:     name,
 		Timestamp:  r.now(),
 		RequestID:  newRequestID(),
-		Instance:   instance,
+		Instance:   r.clusterNames.instanceRef(ctx, instance),
 		Parameters: params,
 	}
 

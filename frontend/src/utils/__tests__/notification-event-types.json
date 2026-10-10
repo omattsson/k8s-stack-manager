@@ -1,0 +1,25 @@
+{
+  "instance": [
+    "deployment.success",
+    "deployment.error",
+    "deployment.partial",
+    "deployment.warning",
+    "deploy.timeout",
+    "deployment.stopped",
+    "stop.error",
+    "instance.created",
+    "instance.deleted",
+    "clean.completed",
+    "clean.error",
+    "rollback.completed",
+    "rollback.error",
+    "stack.expiring",
+    "cleanup.policy.stop",
+    "cleanup.policy.clean"
+  ],
+  "system": [
+    "cleanup.policy.executed",
+    "quota.warning",
+    "secret.expiring"
+  ]
+}

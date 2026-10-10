@@ -156,9 +156,9 @@ export interface StackInstance {
   definition_name?: string;
   /** Name of the target cluster. Omitted when the cluster no longer exists or `cluster_id` is empty (older instances). */
   cluster_name?: string;
-  /** True when the current user follows the instance. Only `GET /stack-instances/:id` sets it; omitted when following is not available. */
+  /** True when the current user follows the instance. `GET`, `PUT` and `POST .../extend` on `/stack-instances/:id` set it; omitted when following is not available. */
   following?: boolean;
-  /** Number of users who follow the instance. Only `GET /stack-instances/:id` sets it. */
+  /** Number of users who follow the instance. `GET`, `PUT` and `POST .../extend` on `/stack-instances/:id` set it. */
   follower_count?: number;
   created_at: string;
   updated_at: string;

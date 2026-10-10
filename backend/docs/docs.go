@@ -1152,7 +1152,12 @@ const docTemplate = `{
         },
         "/api/v1/audit-logs": {
             "get": {
-                "description": "List audit logs with optional filters and pagination. Supports cursor-based pagination for efficient large dataset traversal.",
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "List audit logs with optional filters and pagination. Supports cursor-based pagination for efficient large dataset traversal. Requires the devops or admin role.",
                 "produces": [
                     "application/json"
                 ],
@@ -1225,6 +1230,24 @@ const docTemplate = `{
                     },
                     "400": {
                         "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {
@@ -3689,7 +3712,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Get the authenticated user's notification preferences",
+                "description": "Get the authenticated user's notification preferences. Stored preferences of unknown event types are omitted.",
                 "produces": [
                     "application/json"
                 ],
@@ -3733,7 +3756,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Update the authenticated user's notification preferences (array of event_type + enabled)",
+                "description": "Update the authenticated user's notification preferences (array of event_type + enabled). Each event_type must be a known type (the instance event types, and the system types cleanup.policy.executed, quota.warning and secret.expiring); an unknown type gives 400 and no preference is changed. The response omits stored preferences of unknown event types.",
                 "consumes": [
                     "application/json"
                 ],
@@ -5308,13 +5331,22 @@ const docTemplate = `{
                 ],
                 "responses": {
                     "200": {
-                        "description": "OK",
+                        "description": "The updated instance with the same computed fields as GET (values_drift, names, follow state)",
                         "schema": {
                             "$ref": "#/definitions/models.StackInstance"
                         }
                     },
                     "400": {
                         "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {
@@ -5333,6 +5365,15 @@ const docTemplate = `{
                     },
                     "404": {
                         "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {
@@ -6489,7 +6530,7 @@ const docTemplate = `{
                 ],
                 "responses": {
                     "200": {
-                        "description": "The instance with the new expires_at",
+                        "description": "The instance with the new expires_at and the same computed fields as GET (values_drift, names, follow state)",
                         "schema": {
                             "$ref": "#/definitions/models.StackInstance"
                         },
@@ -10274,7 +10315,7 @@ const docTemplate = `{
                     "readOnly": true
                 },
                 "following": {
-                    "description": "Following and FollowerCount are computed, not stored. Only GET\n/stack-instances/{id} sets them: following is true when the caller\nfollows the instance, follower_count is the number of followers.",
+                    "description": "Following and FollowerCount are computed, not stored. GET, PUT and\nPOST .../extend on /stack-instances/{id} set them: following is true\nwhen the caller follows the instance, follower_count is the number of\nfollowers. List responses do not set them.",
                     "type": "boolean",
                     "readOnly": true
                 },
@@ -10315,7 +10356,7 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "values_drift": {
-                    "description": "ValuesDrift is computed, not stored. GET /stack-instances/{id} sets it\nto true when the running values come from a successful rollback and\nthe stored overrides produce different values (the next deploy undoes\nthe rollback). List responses do not compute it.",
+                    "description": "ValuesDrift is computed, not stored. GET, PUT and POST .../extend on\n/stack-instances/{id} set it to true when the running values come from\na successful rollback and the stored overrides produce different values\n(the next deploy undoes the rollback). List responses do not compute it.",
                     "type": "boolean"
                 },
                 "warning": {
@@ -13043,7 +13084,7 @@ const docTemplate = `{
                     "readOnly": true
                 },
                 "following": {
-                    "description": "Following and FollowerCount are computed, not stored. Only GET\n/stack-instances/{id} sets them: following is true when the caller\nfollows the instance, follower_count is the number of followers.",
+                    "description": "Following and FollowerCount are computed, not stored. GET, PUT and\nPOST .../extend on /stack-instances/{id} set them: following is true\nwhen the caller follows the instance, follower_count is the number of\nfollowers. List responses do not set them.",
                     "type": "boolean",
                     "readOnly": true
                 },
@@ -13084,7 +13125,7 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "values_drift": {
-                    "description": "ValuesDrift is computed, not stored. GET /stack-instances/{id} sets it\nto true when the running values come from a successful rollback and\nthe stored overrides produce different values (the next deploy undoes\nthe rollback). List responses do not compute it.",
+                    "description": "ValuesDrift is computed, not stored. GET, PUT and POST .../extend on\n/stack-instances/{id} set it to true when the running values come from\na successful rollback and the stored overrides produce different values\n(the next deploy undoes the rollback). List responses do not compute it.",
                     "type": "boolean"
                 }
             }

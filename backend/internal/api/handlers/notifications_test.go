@@ -589,6 +589,21 @@ func TestNotificationHandler_UpdatePreferences(t *testing.T) {
 			expectedStatus: http.StatusBadRequest,
 		},
 		{
+			name:           "system and cleanup policy types are accepted",
+			body:           `[{"event_type":"quota.warning","enabled":false},{"event_type":"cleanup.policy.stop","enabled":false}]`,
+			expectedStatus: http.StatusOK,
+		},
+		{
+			name:           "unknown event type rejects (regression: #498)",
+			body:           `[{"event_type":"bogus.event","enabled":true}]`,
+			expectedStatus: http.StatusBadRequest,
+		},
+		{
+			name:           "channel-only event type rejects",
+			body:           `[{"event_type":"stack.expired","enabled":true}]`,
+			expectedStatus: http.StatusBadRequest,
+		},
+		{
 			name:           "wrapped in object rejects (regression: #218)",
 			body:           `{"preferences":[{"event_type":"deployment.success","enabled":true}]}`,
 			expectedStatus: http.StatusBadRequest,
@@ -616,6 +631,74 @@ func TestNotificationHandler_UpdatePreferences(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestNotificationHandler_UpdatePreferences_UnknownTypeChangesNothing checks
+// that a request with one unknown event type stores no preference, also not
+// the known ones in the same request (issue #498).
+func TestNotificationHandler_UpdatePreferences_UnknownTypeChangesNothing(t *testing.T) {
+	t.Parallel()
+	router, repo := setupNotificationRouter()
+
+	body := `[{"event_type":"deployment.success","enabled":false},{"event_type":"bogus.event","enabled":true}]`
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("PUT", "/api/v1/notifications/preferences", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusBadRequest, w.Code)
+	var resp map[string]string
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, "unknown event type: bogus.event", resp["error"])
+
+	prefs, err := repo.GetPreferences(context.Background(), "user-1")
+	require.NoError(t, err)
+	assert.Empty(t, prefs)
+}
+
+// TestNotificationHandler_Preferences_LegacyUnknownRoundTrip checks that GET
+// omits a stored preference of an unknown type (stored before #498), so a
+// client that sends the GET result back with PUT gets 200.
+func TestNotificationHandler_Preferences_LegacyUnknownRoundTrip(t *testing.T) {
+	t.Parallel()
+	router, repo := setupNotificationRouter()
+	ctx := context.Background()
+	require.NoError(t, repo.UpdatePreference(ctx, &models.NotificationPreference{
+		ID: "p1", UserID: "user-1", EventType: "deployment.success", Enabled: false,
+	}))
+	require.NoError(t, repo.UpdatePreference(ctx, &models.NotificationPreference{
+		ID: "p2", UserID: "user-1", EventType: "bogus.event", Enabled: true,
+	}))
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/api/v1/notifications/preferences", nil)
+	router.ServeHTTP(w, req)
+	require.Equal(t, http.StatusOK, w.Code)
+	var got []models.NotificationPreference
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &got))
+	require.Len(t, got, 1)
+	assert.Equal(t, "deployment.success", got[0].EventType)
+
+	// Send the GET result back.
+	type prefReq struct {
+		EventType string `json:"event_type"`
+		Enabled   bool   `json:"enabled"`
+	}
+	body := make([]prefReq, 0, len(got))
+	for _, p := range got {
+		body = append(body, prefReq{EventType: p.EventType, Enabled: !p.Enabled})
+	}
+	data, err := json.Marshal(body)
+	require.NoError(t, err)
+	w = httptest.NewRecorder()
+	req, _ = http.NewRequest("PUT", "/api/v1/notifications/preferences", strings.NewReader(string(data)))
+	req.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(w, req)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	var after []models.NotificationPreference
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &after))
+	require.Len(t, after, 1)
+	assert.True(t, after[0].Enabled)
 }
 
 func TestNotificationHandler_UpdatePreferences_RepoError(t *testing.T) {

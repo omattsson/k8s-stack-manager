@@ -85,6 +85,8 @@ func setupFollowRouter(t *testing.T, instanceRepo *MockStackInstanceRepository, 
 	}
 	g := r.Group("/api/v1/stack-instances")
 	g.GET("/:id", h.GetInstance)
+	g.PUT("/:id", h.UpdateInstance)
+	g.POST("/:id/extend", h.ExtendTTL)
 	g.DELETE("/:id", h.DeleteInstance)
 	g.POST("/bulk/delete", h.BulkDelete)
 	g.POST("/:id/follow", h.FollowInstance)
@@ -213,6 +215,50 @@ func TestInstanceHandler_GetInstance_FollowState(t *testing.T) {
 			}
 			assert.Equal(t, tt.wantFollowing, body["following"])
 			assert.EqualValues(t, 2, body["follower_count"])
+		})
+	}
+}
+
+// TestInstanceHandler_UpdateAndExtend_KeepFollowState checks that the update
+// and extend responses carry the same computed fields as GET, so the detail
+// page can replace its state with the response (issue #497).
+func TestInstanceHandler_UpdateAndExtend_KeepFollowState(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		method string
+		path   string
+		body   string
+	}{
+		{name: "extend with minutes", method: http.MethodPost, path: "/api/v1/stack-instances/i1/extend", body: `{"minutes":30}`},
+		{name: "extend with empty body", method: http.MethodPost, path: "/api/v1/stack-instances/i1/extend"},
+		{name: "update ttl", method: http.MethodPut, path: "/api/v1/stack-instances/i1", body: `{"ttl_minutes":120}`},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			instRepo := NewMockStackInstanceRepository()
+			inst := seedInstance(t, instRepo, "i1", "shared-stack", "d1", "owner", models.StackStatusRunning)
+			inst.TTLMinutes = 60
+			require.NoError(t, instRepo.Update(inst))
+			followers := NewMockInstanceFollowerRepository()
+			require.NoError(t, followers.Follow(context.Background(), "viewer", "i1"))
+			require.NoError(t, followers.Follow(context.Background(), "owner", "i1"))
+			router := setupFollowRouter(t, instRepo, followers, nil, "viewer", "devops")
+
+			req := httptest.NewRequest(tt.method, tt.path, bytes.NewReader([]byte(tt.body)))
+			req.Header.Set("Content-Type", "application/json")
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, req)
+			require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+			var body map[string]any
+			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+			assert.Equal(t, true, body["following"])
+			assert.EqualValues(t, 2, body["follower_count"])
+			assert.NotEmpty(t, body["expires_at"])
 		})
 	}
 }
