@@ -827,7 +827,11 @@ func TestBulkDelete_ConcurrentDeletes(t *testing.T) {
 			assert.NotEmpty(t, r.LogID)
 		} else {
 			assert.Equal(t, "error", r.Status)
-			assert.Contains(t, r.Error, "Cannot delete")
+			// The loser sees the clean of the winner ("Cannot delete: …
+			// cleaning") or, when the mock clean already finished and
+			// removed the row, "not found". Both mean no second clean.
+			assert.True(t, strings.Contains(r.Error, "Cannot delete") || strings.Contains(r.Error, "not found"),
+				"unexpected error for the second delete: %q", r.Error)
 		}
 	}
 	assert.Equal(t, 1, succeeded, "exactly one delete starts the clean: %+v", results)

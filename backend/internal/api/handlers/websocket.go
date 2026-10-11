@@ -258,7 +258,7 @@ func (h *WebSocketHandler) handleAPIKeyUpgrade(c *gin.Context, header string) {
 // pass (fail open): the revalidation checks again.
 func (h *WebSocketHandler) apiKeySocketRevoked(ctx context.Context, id websocket.ClientIdentity) bool {
 	if revoked, err := apiKeyRevoked(h.apiKeyRepo, id.UserID, id.APIKeyID, time.Now()); err != nil {
-		slog.Error("WebSocket API key re-check failed", "key_id", id.APIKeyID, "error", err)
+		slog.Error("WebSocket API key re-check failed", "user_id", id.UserID, "error", err)
 	} else if revoked {
 		return true
 	}

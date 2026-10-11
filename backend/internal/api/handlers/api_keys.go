@@ -261,7 +261,7 @@ func (h *APIKeyHandler) DeleteAPIKey(c *gin.Context) {
 
 	if h.wsRevoker != nil {
 		if n := h.wsRevoker.DisconnectAPIKey(keyID); n > 0 {
-			slog.Info("Closed WebSocket connections of deleted API key", "key_id", keyID, "connections", n)
+			slog.Info("Closed WebSocket connections of a deleted API key", "connections", n)
 		}
 	}
 
