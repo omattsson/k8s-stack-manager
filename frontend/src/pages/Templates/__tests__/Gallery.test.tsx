@@ -348,6 +348,40 @@ describe('Template Gallery', () => {
     });
   });
 
+  it('clears the selection after a bulk action with a partial failure', async () => {
+    const user = userEvent.setup();
+    (templateService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue([draftTemplate]);
+    (templateService.bulkDelete as ReturnType<typeof vi.fn>).mockResolvedValue({
+      total: 1, succeeded: 0, failed: 1,
+      results: [{ template_id: '2', template_name: 'Draft Template', status: 'error', error: 'template is in use' }],
+    });
+    render(
+      <MemoryRouter>
+        <Gallery />
+      </MemoryRouter>
+    );
+    await waitFor(() => {
+      expect(screen.getByRole('tab', { name: /all drafts/i })).toBeInTheDocument();
+    });
+    await user.click(screen.getByRole('tab', { name: /all drafts/i }));
+    await waitFor(() => {
+      expect(screen.getByText('Draft Template')).toBeInTheDocument();
+    });
+    await user.click(screen.getByRole('checkbox', { name: /select draft template/i }));
+    await waitFor(() => {
+      expect(screen.getByText(/1 selected/i)).toBeInTheDocument();
+    });
+    await user.click(screen.getByRole('button', { name: /delete \(1\)/i }));
+    await waitFor(() => {
+      expect(screen.getByText(/confirm bulk/i)).toBeInTheDocument();
+    });
+    await user.click(screen.getByRole('button', { name: /^delete$/i }));
+    await waitFor(() => {
+      expect(screen.getByText('Bulk Operation Results')).toBeInTheDocument();
+    });
+    expect(screen.queryByText(/1 selected/i)).not.toBeInTheDocument();
+  });
+
   it('executes bulk publish on selected templates', async () => {
     const user = userEvent.setup();
     (templateService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue([draftTemplate]);

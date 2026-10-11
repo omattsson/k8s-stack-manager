@@ -195,7 +195,8 @@ export interface DeploymentLog {
   id: string;
   stack_instance_id: string;
   action: 'deploy' | 'stop' | 'clean' | 'rollback';
-  status: 'running' | 'success' | 'error';
+  /** `partial`: the deploy finished, but not all workloads are ready (same meaning as the instance status). */
+  status: 'running' | 'success' | 'partial' | 'error';
   output: string;
   error_message?: string;
   /** Branch of the deploy, when the API sends it. */

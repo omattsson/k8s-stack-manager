@@ -46,6 +46,7 @@ import {
   userService,
 } from '../../../api/client';
 import { timeAgo } from '../../../utils/timeAgo';
+import { describeApiError } from '../../../utils/apiError';
 import type {
   NotificationChannel,
   NotificationChannelFilters,
@@ -307,16 +308,22 @@ const NotificationChannels = () => {
   }, [form, editingId, fetchChannels, showSuccess, showWarning]);
 
   // --- Toggle enabled ---
+  /**
+   * Flip the enabled flag of a channel from the table. The switch shows the new
+   * state only after the API accepts it; on error it keeps the old state.
+   */
   const handleToggleEnabled = useCallback(async (channel: NotificationChannel) => {
     try {
-      await notificationChannelService.update(channel.id, { enabled: !channel.enabled });
+      const updated = await notificationChannelService.update(channel.id, { enabled: !channel.enabled });
+      const value = updated?.enabled ?? !channel.enabled;
       setChannels((prev) =>
-        prev.map((c) => (c.id === channel.id ? { ...c, enabled: !c.enabled } : c)),
+        prev.map((c) => (c.id === channel.id ? { ...c, enabled: value } : c)),
       );
-    } catch {
-      showError('Failed to toggle channel');
+      showSuccess(`Channel "${channel.name}" is ${value ? 'enabled' : 'disabled'}`);
+    } catch (err) {
+      showError(await describeApiError(err, 'Failed to toggle channel'));
     }
-  }, [showError]);
+  }, [showSuccess, showError]);
 
   // --- Delete ---
   const handleDeleteClick = useCallback((channel: NotificationChannel) => {

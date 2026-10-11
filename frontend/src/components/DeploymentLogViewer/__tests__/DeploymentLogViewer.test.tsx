@@ -189,6 +189,12 @@ describe('DeploymentLogViewer', () => {
     expect(chips.length).toBeGreaterThanOrEqual(3);
   });
 
+  it('shows a partial log status as a warning chip, like the instance status', () => {
+    render(<DeploymentLogViewer logs={[{ ...completedDeployLog, id: 'p1', status: 'partial' }]} />);
+    const chip = screen.getByText('partial').closest('.MuiChip-root');
+    expect(chip).toHaveClass('MuiChip-colorWarning');
+  });
+
   // -------------------------------------------------------------------------
   // Timestamp and duration
   // -------------------------------------------------------------------------

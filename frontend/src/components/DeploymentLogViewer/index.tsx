@@ -22,9 +22,11 @@ interface DeploymentLogViewerProps {
   onRollbackTo?: (log: DeploymentLog) => void;
 }
 
-const statusColor = (status: string): 'success' | 'error' | 'info' | 'default' => {
+const statusColor = (status: string): 'success' | 'warning' | 'error' | 'info' | 'default' => {
   switch (status) {
     case 'success': return 'success';
+    // Same color as the instance status "partial" (StatusBadge).
+    case 'partial': return 'warning';
     case 'error': return 'error';
     case 'running': return 'info';
     default: return 'default';

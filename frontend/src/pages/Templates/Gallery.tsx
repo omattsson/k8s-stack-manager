@@ -296,6 +296,9 @@ const Gallery = () => {
       }
       setBulkResult(result);
       setBulkResultOpen(true);
+      // The action is done (also on partial failure): clear the selection so
+      // the toolbar does not show templates that are deleted or already changed.
+      setSelectedIds(new Set());
 
       if (result.failed === 0) {
         showSuccess(`Bulk ${bulkAction}: ${result.succeeded}/${result.total} succeeded`);

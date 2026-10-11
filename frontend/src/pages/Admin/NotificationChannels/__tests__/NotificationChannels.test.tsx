@@ -114,6 +114,35 @@ describe('NotificationChannels Page', () => {
     expect(screen.getByRole('button', { name: /create channel/i })).toBeInTheDocument();
   });
 
+  it('shows a success toast when the Enabled switch changes', async () => {
+    const user = userEvent.setup();
+    (notificationChannelService.list as ReturnType<typeof vi.fn>).mockResolvedValue(mockChannels);
+    vi.mocked(notificationChannelService.update).mockResolvedValue({ ...mockChannels[0], enabled: false });
+    renderPage();
+
+    const toggle = await screen.findByRole('switch', { name: 'Toggle slack-prod' });
+    await user.click(toggle);
+
+    await waitFor(() => {
+      expect(notificationChannelService.update).toHaveBeenCalledWith('ch1', { enabled: false });
+    });
+    expect(await screen.findByText('Channel "slack-prod" is disabled')).toBeInTheDocument();
+    expect(screen.getByRole('switch', { name: 'Toggle slack-prod' })).not.toBeChecked();
+  });
+
+  it('shows an error toast and keeps the state when the Enabled switch fails', async () => {
+    const user = userEvent.setup();
+    (notificationChannelService.list as ReturnType<typeof vi.fn>).mockResolvedValue(mockChannels);
+    vi.mocked(notificationChannelService.update).mockRejectedValue(new Error('Network error'));
+    renderPage();
+
+    const toggle = await screen.findByRole('switch', { name: 'Toggle teams-dev' });
+    await user.click(toggle);
+
+    expect(await screen.findByText(/failed to toggle channel/i)).toBeInTheDocument();
+    expect(screen.getByRole('switch', { name: 'Toggle teams-dev' })).not.toBeChecked();
+  });
+
   it('shows empty state when no channels exist', async () => {
     (notificationChannelService.list as ReturnType<typeof vi.fn>).mockResolvedValue([]);
     renderPage();

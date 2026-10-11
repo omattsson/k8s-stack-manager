@@ -13,9 +13,10 @@ import { Link } from 'react-router-dom';
 import { timeAgo } from '../../../utils/timeAgo';
 import type { DashboardDeployment } from '../../../types';
 
-const deployStatusColor: Record<string, 'default' | 'info' | 'success' | 'error'> = {
+const deployStatusColor: Record<string, 'default' | 'info' | 'success' | 'warning' | 'error'> = {
   running: 'info',
   success: 'success',
+  partial: 'warning',
   error: 'error',
 };
 
