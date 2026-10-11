@@ -2,6 +2,24 @@ apiVersion: v1
 entries:
   k8s-stack-manager:
   - apiVersion: v2
+    appVersion: 0.8.0-rc.4
+    created: "2026-10-11T11:01:18.971845585Z"
+    description: Helm-based stack manager with Go backend, React frontend, and MySQL
+    digest: bb74dc820eb967e43ff3101aec8b2207ebab4e2f2b974f2b1243864d7ce49b22
+    home: https://github.com/omattsson/k8s-stack-manager
+    keywords:
+    - kubernetes
+    - helm
+    - stack-manager
+    - argo-rollouts
+    name: k8s-stack-manager
+    sources:
+    - https://github.com/omattsson/k8s-stack-manager
+    type: application
+    urls:
+    - https://github.com/omattsson/k8s-stack-manager/releases/download/k8s-stack-manager-0.6.0-rc.4/k8s-stack-manager-0.6.0-rc.4.tgz
+    version: 0.6.0-rc.4
+  - apiVersion: v2
     appVersion: 0.8.0-rc.3
     created: "2026-10-10T19:46:53.801480229Z"
     description: Helm-based stack manager with Go backend, React frontend, and MySQL
@@ -253,4 +271,4 @@ entries:
     urls:
     - https://github.com/omattsson/k8s-stack-manager/releases/download/k8s-stack-manager-0.2.0/k8s-stack-manager-0.2.0.tgz
     version: 0.2.0
-generated: "2026-10-10T19:46:53.801563154Z"
+generated: "2026-10-11T11:01:18.971965789Z"
