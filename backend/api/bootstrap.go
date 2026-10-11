@@ -449,6 +449,9 @@ func buildHandlers(
 
 	// API key handler.
 	apiKeyHandler := handlers.NewAPIKeyHandler(repos.APIKey, repos.User, &cfg.Auth)
+	if hub != nil {
+		apiKeyHandler.SetWebSocketRevoker(hub)
+	}
 
 	// Admin handler.
 	adminHandler := handlers.NewAdminHandler(svc.ClusterRegistry, repos.StackInstance)

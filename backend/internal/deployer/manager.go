@@ -652,6 +652,25 @@ func (m *Manager) executeDeploy(helm HelmExecutor, k8sClient *k8s.Client, regCfg
 		}
 	}
 
+	// Apply the namespace ResourceQuota and LimitRange (cluster quota merged
+	// with the instance override) right after the namespace exists and
+	// before the first Helm install. Then every pod of the deploy, also a pod
+	// that a chart creates later (a scaled ReplicaSet, a restore job), meets
+	// the quota at once: a rejected pod shows in the deploy log (pod events)
+	// and the deploy ends partial or error with the quota message, not
+	// running with 0 pods. A redeploy applies the current quota the same
+	// way. When the namespace is not ready here (no k8s client, or the
+	// namespace check failed), Helm creates it and the quota is applied
+	// after the installs, as before.
+	quotaPending := m.quotaRepo != nil
+	if quotaPending && nsReady {
+		// A failed apply stays pending: the fallback after the installs
+		// tries once more.
+		warning := m.applyQuotasForDeploy(ctx, instanceID, namespace)
+		allOutput += warning
+		quotaPending = warning != ""
+	}
+
 	// Replicate the wildcard TLS secret into the target namespace before any
 	// chart installs, so ingresses with tlsSecretName can reference it from
 	// the first reconcile. Non-fatal: log and continue on error (the ingress
@@ -848,16 +867,10 @@ func (m *Manager) executeDeploy(helm HelmExecutor, k8sClient *k8s.Client, regCfg
 		deployErr = fmt.Errorf("partial deploy — failed charts: %s", strings.Join(failedCharts, ", "))
 	}
 
-	// Apply resource quotas to the namespace if configured.
-	if len(failedCharts) < len(charts) && m.quotaRepo != nil {
-		if quotaErr := m.applyNamespaceQuotas(ctx, instanceID, namespace); quotaErr != nil {
-			slog.Warn("failed to apply resource quotas",
-				"instance_id", instanceID,
-				"namespace", namespace,
-				"error", quotaErr,
-			)
-			allOutput += fmt.Sprintf("WARNING: failed to apply resource quotas: %s\n", quotaErr.Error())
-		}
+	// Fallback: the quota was not applied before the installs (the
+	// namespace was not ready, or the apply failed). Apply it now.
+	if quotaPending && len(failedCharts) < len(charts) {
+		allOutput += m.applyQuotasForDeploy(ctx, instanceID, namespace)
 	}
 
 	// Wait for pods to become ready when at least some charts succeeded.
@@ -1003,6 +1016,9 @@ func (m *Manager) finalizeDeployWith(instanceID string, deployLog *models.Deploy
 		if deployErr != nil {
 			sanitized := sanitizeDeployError(deployErr)
 			deployLog.Status = models.DeployLogError
+			if partialDeploy {
+				deployLog.Status = models.DeployLogPartial
+			}
 			deployLog.ErrorMessage = truncateString(sanitized, maxLogErrorLen)
 		}
 		m.writeFinal(nil, deployLog, "deploy")
@@ -1030,7 +1046,8 @@ func (m *Manager) finalizeDeployWith(instanceID string, deployLog *models.Deploy
 		instance.ErrorMessage = truncateString(sanitized, maxInstanceErrorLen)
 		instance.LastDeployedAt = &now
 		instance.LastDeployedValues = lastDeployedValues
-		deployLog.Status = models.DeployLogError
+		// The log status matches the instance status (partial, not error).
+		deployLog.Status = models.DeployLogPartial
 		deployLog.ErrorMessage = truncateString(sanitized, maxLogErrorLen)
 		deployLog.ValuesSnapshot = lastDeployedValues
 
@@ -2192,10 +2209,22 @@ func (m *Manager) finalizeRollback(instanceID string, deployLog *models.Deployme
 	}
 }
 
+// applyQuotasForDeploy applies the namespace ResourceQuota and LimitRange
+// for a deploy or a rollback (applyNamespaceQuotas). A failure is not fatal:
+// it is logged and returned as a WARNING line for the deploy log output.
+// Success (also an empty quota, which applies nothing) returns "".
+func (m *Manager) applyQuotasForDeploy(ctx context.Context, instanceID, namespace string) string {
+	if err := m.applyNamespaceQuotas(ctx, instanceID, namespace); err != nil {
+		slog.Warn("failed to apply resource quotas",
+			"instance_id", instanceID,
+			"namespace", namespace,
+			"error", err,
+		)
+		return fmt.Sprintf("WARNING: failed to apply resource quotas: %s\n", err.Error())
+	}
+	return ""
+}
 
-// truncateString returns s truncated to maxLen characters. If truncation
-// occurs, the last three characters are replaced with "..." to signal that
-// the string was cut.
 // applyNamespaceQuotas fetches the quota config for the instance's cluster and
 // applies ResourceQuota + LimitRange to the namespace via the K8s API.
 func (m *Manager) applyNamespaceQuotas(ctx context.Context, instanceID, namespace string) error {
@@ -2285,6 +2314,9 @@ func mergeQuotaOverride(cluster *models.ResourceQuotaConfig, override *models.In
 	return models.MergeQuotaOverride(cluster, override)
 }
 
+// truncateString returns s truncated to maxLen characters. If truncation
+// occurs, the last three characters are replaced with "..." to signal that
+// the string was cut.
 func truncateString(s string, maxLen int) string {
 	if len(s) <= maxLen {
 		return s

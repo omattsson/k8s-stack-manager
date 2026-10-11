@@ -146,11 +146,20 @@ func SetupRoutes(router *gin.Engine, deps Deps) *RateLimiters {
 	router.Use(middleware.CORS(cfg.CORS.AllowedOrigins))
 	router.Use(middleware.MaxBodySize(1 << 20)) // 1 MB default
 
-	// WebSocket endpoint (top-level, outside rate limiter — connections are long-lived)
+	// Rate limiter for API routes. The API-key upgrade of /ws uses it too.
+	rateLimiter := handlers.NewRateLimiter(int(cfg.Server.RateLimit), time.Minute)
+
+	// WebSocket endpoint (top-level, outside the rate limiter middleware —
+	// connections are long-lived). Only the API-key upgrade is rate limited,
+	// before the key lookup.
 	// The upgrade runs the same token and user revocation checks as the
-	// HTTP JWT auth (session store blocklists, deleted or disabled user).
+	// HTTP JWT auth (session store blocklists, deleted or disabled user),
+	// and accepts an X-API-Key header with the checks of the HTTP API-key
+	// auth.
 	wsHandler := handlers.NewWebSocketHandler(deps.Hub, cfg.CORS.AllowedOrigins, cfg.Auth.JWTSecret).
-		WithRevocationChecks(deps.SessionStore, deps.UserRepo)
+		WithRevocationChecks(deps.SessionStore, deps.UserRepo).
+		WithAPIKeys(deps.APIKeyRepo).
+		WithAPIKeyRateLimiter(rateLimiter)
 	router.GET("/ws", wsHandler.HandleWebSocket)
 
 	// Swagger UI (only when explicitly enabled via ENABLE_SWAGGER=true)
@@ -165,9 +174,6 @@ func SetupRoutes(router *gin.Engine, deps Deps) *RateLimiters {
 		healthGroup.GET("/ready", handlers.ReadinessHandler(deps.HealthChecker, deps.HealthVerbose))
 		healthGroup.GET("", handlers.HealthCheck) // Keep the original health check for backward compatibility
 	}
-
-	// Rate limiter for API routes
-	rateLimiter := handlers.NewRateLimiter(int(cfg.Server.RateLimit), time.Minute)
 
 	// Stricter rate limiter for login endpoint to prevent brute-force attacks.
 	// Only created when LoginRateLimit > 0; otherwise login uses the general API limiter.

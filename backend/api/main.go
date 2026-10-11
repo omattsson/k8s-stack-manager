@@ -149,7 +149,7 @@ func main() {
 	// itself (revoke on another replica, token blocklist). Stops on hub
 	// shutdown.
 	hub.StartRevalidation(websocket.DefaultRevalidateInterval,
-		handlers.NewWebSocketRevocationChecker(sessStore, repos.User))
+		handlers.NewWebSocketRevocationChecker(sessStore, repos.User, repos.APIKey))
 
 	// Router.
 	router, rateLimiters := buildRouter(cfg, hs, routerDeps{

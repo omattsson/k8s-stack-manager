@@ -9489,7 +9489,7 @@
                         "BearerAuth": []
                     }
                 ],
-                "description": "Deletes the specified API key. Admin or own user only.",
+                "description": "Deletes the specified API key. Admin or own user only. Open WebSocket connections opened with the key close with code 1008.",
                 "produces": [
                     "application/json"
                 ],
@@ -10008,7 +10008,7 @@
         },
         "/ws": {
             "get": {
-                "description": "Upgrades the HTTP connection to a WebSocket for real-time events. Authenticate via one of: `Sec-WebSocket-Protocol: bearer, \u003cjwt\u003e` subprotocol header, `Authorization: Bearer \u003cjwt\u003e` header, or `?token=\u003cjwt\u003e` query parameter (the query token is redacted from access logs and traces by middleware before the handler runs). The upgrade runs the same checks as the HTTP JWT auth: a revoked token (logout), a token issued at or before a user block (user deleted, disabled or password reset), a deleted user and a disabled user get 401. The server closes an open socket with close code 1008 when the session is revoked and when the access token expires; the client must reconnect with a fresh token.",
+                "description": "Upgrades the HTTP connection to a WebSocket for real-time events. Authenticate via one of: `Sec-WebSocket-Protocol: bearer, \u003cjwt\u003e` subprotocol header, `Authorization: Bearer \u003cjwt\u003e` header, `X-API-Key: sk_\u003ckey\u003e` header, or `?token=\u003cjwt\u003e` query parameter (the query token is redacted from access logs and traces by middleware before the handler runs). An API key is accepted only in the X-API-Key header, never in the query. The upgrade runs the same checks as the HTTP auth: a revoked token (logout), a token issued at or before a user block (user deleted, disabled or password reset), an unknown, deleted or expired API key, a deleted user and a disabled user get 401. An API-key upgrade counts against the per-IP API rate limit before the key lookup (429), and gets 503 when the server has no free slot for an Argon2id key verify. The server closes an open socket with close code 1008 when the session or the API key is revoked (key deleted; user deleted, disabled, password reset or role change, which also close the API-key sockets of the user although HTTP API-key requests keep working), when the access token expires and when the API key expires; the client must reconnect.",
                 "tags": [
                     "websocket"
                 ],
@@ -10019,6 +10019,12 @@
                         "description": "JWT authentication token (also accepted via Authorization header or Sec-WebSocket-Protocol subprotocol)",
                         "name": "token",
                         "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "API key (sk_\u003ckey\u003e); header only, used when no JWT is sent in the subprotocol or the Authorization header",
+                        "name": "X-API-Key",
+                        "in": "header"
                     }
                 ],
                 "responses": {
@@ -10052,8 +10058,26 @@
                             }
                         }
                     },
+                    "429": {
+                        "description": "Too Many Requests",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
                     "500": {
                         "description": "Internal Server Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {
@@ -12721,7 +12745,7 @@
                     "type": "string"
                 },
                 "status": {
-                    "description": "\"running\", \"success\", \"error\"",
+                    "description": "\"running\", \"success\", \"error\", \"partial\" (deploy only)",
                     "type": "string"
                 },
                 "target_log_id": {

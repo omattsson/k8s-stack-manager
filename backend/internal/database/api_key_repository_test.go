@@ -112,6 +112,43 @@ func TestGORMAPIKeyRepository_FindByPrefix(t *testing.T) {
 	})
 }
 
+func TestGORMAPIKeyRepository_FindByIDs(t *testing.T) {
+	t.Parallel()
+
+	repo := setupAPIKeyRepo(t)
+	require.NoError(t, repo.Create(&models.APIKey{ID: "k-ids1", UserID: "u1", Name: "k1", Prefix: "p-ids1", KeyHash: "h1"}))
+	require.NoError(t, repo.Create(&models.APIKey{ID: "k-ids2", UserID: "u2", Name: "k2", Prefix: "p-ids2", KeyHash: "h2"}))
+	many := make([]string, 0, apiKeyIDsPerQuery+2)
+	for i := 0; i < apiKeyIDsPerQuery; i++ {
+		many = append(many, fmt.Sprintf("missing-%d", i))
+	}
+	many = append(many, "k-ids1", "k-ids2") // second chunk
+
+	tests := []struct {
+		name    string
+		ids     []string
+		wantIDs []string
+	}{
+		{name: "keys of different users", ids: []string{"k-ids1", "k-ids2"}, wantIDs: []string{"k-ids1", "k-ids2"}},
+		{name: "missing IDs are skipped", ids: []string{"k-ids1", "gone"}, wantIDs: []string{"k-ids1"}},
+		{name: "no IDs", ids: nil, wantIDs: nil},
+		{name: "more IDs than one query", ids: many, wantIDs: []string{"k-ids1", "k-ids2"}},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			keys, err := repo.FindByIDs(tt.ids)
+			require.NoError(t, err)
+			var got []string
+			for _, k := range keys {
+				got = append(got, k.ID)
+			}
+			assert.ElementsMatch(t, tt.wantIDs, got)
+		})
+	}
+}
+
 func TestGORMAPIKeyRepository_ListByUser(t *testing.T) {
 	t.Parallel()
 

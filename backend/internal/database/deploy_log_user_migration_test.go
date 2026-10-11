@@ -105,6 +105,7 @@ func TestGORMDeploymentLogRepository_SummarizeByUsers(t *testing.T) {
 		{ID: "c", StackInstanceID: "i1", Action: models.DeployActionStop, Status: models.DeployLogSuccess, StartedAt: late, UserID: "u1"},
 		{ID: "d", StackInstanceID: "i1", Action: models.DeployActionDeploy, Status: models.DeployLogSuccess, StartedAt: early, UserID: "u2"},
 		{ID: "e", StackInstanceID: "i1", Action: models.DeployActionDeploy, Status: models.DeployLogSuccess, StartedAt: late},
+		{ID: "f", StackInstanceID: "i1", Action: models.DeployActionDeploy, Status: models.DeployLogPartial, StartedAt: early, UserID: "u1"},
 	} {
 		l := l
 		require.NoError(t, repo.Create(ctx, &l))
@@ -116,9 +117,9 @@ func TestGORMDeploymentLogRepository_SummarizeByUsers(t *testing.T) {
 	u1 := got["u1"]
 	require.NotNil(t, u1)
 	assert.Equal(t, "u1", u1.UserID)
-	assert.Equal(t, 2, u1.DeployCount)
+	assert.Equal(t, 3, u1.DeployCount)
 	assert.Equal(t, 1, u1.SuccessCount)
-	assert.Equal(t, 1, u1.ErrorCount)
+	assert.Equal(t, 2, u1.ErrorCount, "a partial deploy counts as an error")
 	require.NotNil(t, u1.LastDeployAt)
 	assert.True(t, u1.LastDeployAt.Equal(late), "last deploy %v", u1.LastDeployAt)
 

@@ -13,7 +13,7 @@ type DeploymentLog struct {
 	ID              string     `json:"id" gorm:"primaryKey;size:36"`
 	StackInstanceID string     `json:"stack_instance_id" gorm:"size:36"`
 	Action          string     `json:"action" gorm:"size:50"` // "deploy", "stop", "clean", "rollback"
-	Status          string     `json:"status" gorm:"size:50"` // "running", "success", "error"
+	Status          string     `json:"status" gorm:"size:50"` // "running", "success", "error", "partial" (deploy only)
 	Output          string     `json:"output" gorm:"type:longtext"`
 	ErrorMessage    string     `json:"error_message,omitempty" gorm:"type:text"`
 	ValuesSnapshot  string     `json:"values_snapshot,omitempty" gorm:"type:longtext"`
@@ -75,6 +75,12 @@ const (
 	DeployLogRunning = "running"
 	DeployLogSuccess = "success"
 	DeployLogError   = "error"
+	// DeployLogPartial is the status of a deploy log when some charts
+	// deployed and others failed: the instance status is "partial" too.
+	// Only deploy logs use it; older deploy logs keep "error" for a partial
+	// deploy. A partial deploy is not a rollback target, and the deploy
+	// statistics count it as an error.
+	DeployLogPartial = "partial"
 )
 
 // DeploymentLogFilters holds optional filters and pagination for querying deployment logs.

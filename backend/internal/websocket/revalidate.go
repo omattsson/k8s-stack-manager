@@ -25,6 +25,7 @@ type IdentityChecker func(ctx context.Context, identities []ClientIdentity) []bo
 type identityKey struct {
 	userID   string
 	tokenID  string
+	apiKeyID string
 	issuedAt int64 // Unix nanoseconds
 }
 
@@ -33,7 +34,7 @@ func keyOf(id ClientIdentity) identityKey {
 	if !id.IssuedAt.IsZero() {
 		iat = id.IssuedAt.UnixNano()
 	}
-	return identityKey{userID: id.UserID, tokenID: id.TokenID, issuedAt: iat}
+	return identityKey{userID: id.UserID, tokenID: id.TokenID, apiKeyID: id.APIKeyID, issuedAt: iat}
 }
 
 // StartRevalidation starts a goroutine that runs check every interval on the
@@ -79,8 +80,8 @@ func (h *Hub) revalidate(check IdentityChecker) (closed int) {
 	identities := make([]ClientIdentity, 0, len(h.clients))
 	for c := range h.clients {
 		id := c.identity
-		if id.UserID == "" && id.TokenID == "" {
-			continue // socket without an access token identity (tests)
+		if id.UserID == "" && id.TokenID == "" && id.APIKeyID == "" {
+			continue // socket without a credential identity (tests)
 		}
 		k := keyOf(id)
 		if seen[k] {

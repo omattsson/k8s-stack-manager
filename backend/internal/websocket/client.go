@@ -37,16 +37,21 @@ const (
 	// closeReasonExpired is the close reason when the access token that
 	// opened the socket expires. The client reconnects with a fresh token.
 	closeReasonExpired = "token expired"
+	// closeReasonAPIKeyExpired is the close reason when the API key that
+	// opened the socket expires.
+	closeReasonAPIKeyExpired = "api key expired"
 )
 
-// ClientIdentity identifies the access token that opened a socket. The hub
-// uses it to close the sockets of a revoked user or token. The client uses
-// ExpiresAt to close the socket when the token expires.
+// ClientIdentity identifies the credential that opened a socket: an access
+// token (TokenID, the jti) or an API key (APIKeyID). The hub uses it to close
+// the sockets of a revoked user, token or API key. The client uses ExpiresAt
+// to close the socket when the token or the API key expires.
 type ClientIdentity struct {
-	ExpiresAt time.Time // zero: the socket does not expire
-	IssuedAt  time.Time // iat_ms claim (ms) or iat (whole seconds); the user blocklist compares it with the block time
+	ExpiresAt time.Time // zero: the socket does not expire (API key without expiry)
+	IssuedAt  time.Time // access token: iat_ms claim (ms) or iat (whole seconds); the user blocklist compares it with the block time. Zero for an API key
 	UserID    string
-	TokenID   string // jti claim
+	TokenID   string // jti claim; empty for an API key
+	APIKeyID  string // ID of the API key; empty for an access token
 }
 
 // Client is a middleman between the WebSocket connection and the hub.
@@ -148,7 +153,11 @@ func (c *Client) writePump() {
 	for {
 		select {
 		case <-expired:
-			c.writeClose(closeReasonExpired)
+			reason := closeReasonExpired
+			if c.identity.APIKeyID != "" {
+				reason = closeReasonAPIKeyExpired
+			}
+			c.writeClose(reason)
 			return
 		case message, ok := <-c.send:
 			if err := c.handleSend(message, ok); err != nil {

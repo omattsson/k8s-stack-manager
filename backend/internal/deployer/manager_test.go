@@ -1719,7 +1719,7 @@ func TestManager_Deploy_PartialDeploy_KeepsSuccessfulCharts(t *testing.T) {
 
 	finalLog, err := logRepo.FindByID(context.Background(), logID)
 	assert.NoError(t, err)
-	assert.Equal(t, models.DeployLogError, finalLog.Status)
+	assert.Equal(t, models.DeployLogPartial, finalLog.Status, "the log status matches the instance status")
 	assert.Contains(t, finalLog.Output, "ERROR:")
 	// No rollback — successful charts are preserved.
 	assert.NotContains(t, finalLog.Output, "Rolling back")
@@ -1789,7 +1789,7 @@ func TestManager_Deploy_PartialSuccess_ContinuesOnFailure(t *testing.T) {
 
 	finalLog, err := logRepo.FindByID(context.Background(), logID)
 	assert.NoError(t, err)
-	assert.Equal(t, models.DeployLogError, finalLog.Status)
+	assert.Equal(t, models.DeployLogPartial, finalLog.Status, "the log status matches the instance status")
 	assert.Contains(t, finalLog.Output, "ERROR:")
 	// No rollback — successful charts are kept.
 	assert.NotContains(t, finalLog.Output, "Rolling back")

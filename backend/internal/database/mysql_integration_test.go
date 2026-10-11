@@ -295,6 +295,29 @@ func TestMySQLIntegration_DeploymentLogRepository(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 1, summary.DeployCount)
 	assert.Equal(t, 1, summary.SuccessCount)
+
+	// A partial deploy counts as an error in all summaries.
+	require.NoError(t, repo.Create(ctx, &models.DeploymentLog{
+		StackInstanceID: "inst1",
+		Action:          models.DeployActionDeploy,
+		Status:          models.DeployLogPartial,
+		StartedAt:       time.Now().Add(-time.Minute),
+		CompletedAt:     ptrTime(time.Now()),
+		UserID:          "user-partial",
+	}))
+	summary, err = repo.SummarizeByInstance(ctx, "inst1")
+	require.NoError(t, err)
+	assert.Equal(t, 2, summary.DeployCount)
+	assert.Equal(t, 1, summary.SuccessCount)
+	assert.Equal(t, 1, summary.ErrorCount)
+	batch, err := repo.SummarizeBatch(ctx, []string{"inst1"})
+	require.NoError(t, err)
+	require.Contains(t, batch, "inst1")
+	assert.Equal(t, 1, batch["inst1"].ErrorCount)
+	byUser, err := repo.SummarizeByUsers(ctx, []string{"user-partial"})
+	require.NoError(t, err)
+	require.Contains(t, byUser, "user-partial")
+	assert.Equal(t, 1, byUser["user-partial"].ErrorCount)
 }
 
 func TestMySQLIntegration_AuditLogRepository(t *testing.T) {
@@ -500,6 +523,11 @@ func TestMySQLIntegration_APIKeyRepository(t *testing.T) {
 	err := repo.Create(key)
 	require.NoError(t, err)
 	assert.NotEmpty(t, key.ID)
+
+	byIDs, err := repo.FindByIDs([]string{key.ID, "missing-id"})
+	require.NoError(t, err)
+	require.Len(t, byIDs, 1)
+	assert.Equal(t, key.ID, byIDs[0].ID)
 
 	found, err := repo.FindByPrefix("sk_test_abcdef12")
 	require.NoError(t, err)

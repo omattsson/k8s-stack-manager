@@ -122,6 +122,106 @@ func TestPodEventWatch_Record(t *testing.T) {
 	}
 }
 
+// rsQuota returns the FailedCreate problem of the ReplicaSet db for one
+// rejected pod: each pod name gives another event (issue #511).
+func rsQuota(pod string) k8s.PodProblem {
+	msg := fmt.Sprintf("Error creating: pods %q is forbidden: exceeded quota: stack-manager-quota", pod)
+	return problem("event|FailedCreate|replicaset/db|"+msg, "FailedCreate", "replicaset/db", msg)
+}
+
+func TestPodEventWatch_GroupsByObjectAndReason(t *testing.T) {
+	t.Parallel()
+
+	quotaMsg := func(pod string) string {
+		return fmt.Sprintf("Error creating: pods %q is forbidden: exceeded quota: stack-manager-quota", pod)
+	}
+
+	tests := []struct {
+		name       string
+		polls      [][]k8s.PodProblem
+		drainAfter []int // drain after these poll indexes (the last poll always drains)
+		wantStream []string
+		wantStored []string
+	}{
+		{
+			name:       "one poll with many rejected pods gives one line",
+			polls:      [][]k8s.PodProblem{{rsQuota("db-1"), rsQuota("db-2"), rsQuota("db-3")}},
+			wantStream: []string{"Pod event: FailedCreate replicaset/db (x3): " + quotaMsg("db-3")},
+			wantStored: []string{"Pod event: FailedCreate replicaset/db (x3): " + quotaMsg("db-3")},
+		},
+		{
+			name: "the stream repeats a group only when its count doubles",
+			polls: [][]k8s.PodProblem{
+				{rsQuota("db-1")},
+				{rsQuota("db-2")}, // x2: doubled
+				{rsQuota("db-3")}, // x3: not doubled
+				{rsQuota("db-4")}, // x4: doubled
+				{rsQuota("db-4")}, // duplicate
+			},
+			wantStream: []string{
+				"Pod event: FailedCreate replicaset/db: " + quotaMsg("db-1"),
+				"Pod event: FailedCreate replicaset/db (x2): " + quotaMsg("db-2"),
+				"Pod event: FailedCreate replicaset/db (x4): " + quotaMsg("db-4"),
+			},
+			wantStored: []string{"Pod event: FailedCreate replicaset/db (x4): " + quotaMsg("db-4")},
+		},
+		{
+			name:       "the stored log shows a group once per drain with its count",
+			polls:      [][]k8s.PodProblem{{rsQuota("db-1")}, {rsQuota("db-2"), rsQuota("db-3")}},
+			drainAfter: []int{0},
+			wantStream: []string{
+				"Pod event: FailedCreate replicaset/db: " + quotaMsg("db-1"),
+				"Pod event: FailedCreate replicaset/db (x3): " + quotaMsg("db-3"),
+			},
+			wantStored: []string{
+				"Pod event: FailedCreate replicaset/db: " + quotaMsg("db-1"),
+				"Pod event: FailedCreate replicaset/db (x3): " + quotaMsg("db-3"),
+			},
+		},
+		{
+			name: "other reasons and objects are separate groups",
+			polls: [][]k8s.PodProblem{{
+				rsQuota("db-1"),
+				problem("s1", "FailedScheduling", "pod/web-1", "0/3 nodes are available"),
+				rsQuota("db-2"),
+				problem("j1", "FailedCreate", "job/sync", testQuotaMessage),
+			}},
+			wantStream: []string{
+				"Pod event: FailedCreate replicaset/db (x2): " + quotaMsg("db-2"),
+				"Pod event: FailedScheduling pod/web-1: 0/3 nodes are available",
+				"Pod event: FailedCreate job/sync: " + testQuotaMessage,
+			},
+			wantStored: []string{
+				"Pod event: FailedCreate replicaset/db (x2): " + quotaMsg("db-2"),
+				"Pod event: FailedScheduling pod/web-1: 0/3 nodes are available",
+				"Pod event: FailedCreate job/sync: " + testQuotaMessage,
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			var emitted []string
+			w := &podEventWatch{seen: map[string]struct{}{}, emit: func(l string) { emitted = append(emitted, l) }}
+			var stored string
+			for i, p := range tt.polls {
+				w.record(p)
+				for _, d := range tt.drainAfter {
+					if d == i {
+						stored += w.drain()
+					}
+				}
+			}
+			stored += w.drain()
+			assert.Equal(t, tt.wantStream, emitted)
+			assert.Equal(t, tt.wantStored, strings.Split(strings.TrimSuffix(stored, "\n"), "\n"))
+			assert.Contains(t, w.best, "exceeded quota", "the error message keeps one quota problem")
+		})
+	}
+}
+
 func TestFormatPodProblem(t *testing.T) {
 	t.Parallel()
 

@@ -52,40 +52,50 @@ func (rl *RateLimiter) Stop() {
 	})
 }
 
+// RateLimit returns middleware that rejects a request with 429 when its
+// client IP exceeds the limit in the window.
 func (rl *RateLimiter) RateLimit() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		ip := c.ClientIP()
-		now := time.Now()
-		windowStart := now.Add(-rl.window)
-
-		// Single write lock for the check-and-add to avoid a TOCTOU race
-		// where concurrent requests could both pass the limit check.
-		rl.Lock()
-		// Filter expired timestamps during counting to prevent unbounded
-		// slice growth between periodic cleanup cycles.
-		valid := rl.requests[ip][:0]
-		for _, t := range rl.requests[ip] {
-			if t.After(windowStart) {
-				valid = append(valid, t)
-			}
-		}
-		rl.requests[ip] = valid
-
-		if len(valid) >= rl.limit {
-			rl.Unlock()
-			if rl.rejectedTotal != nil {
-				rl.rejectedTotal.Add(context.Background(), 1)
-			}
+		if !rl.Allow(c.ClientIP()) {
 			c.JSON(http.StatusTooManyRequests, gin.H{"error": "rate limit exceeded"})
 			c.Abort()
 			return
 		}
-
-		rl.requests[ip] = append(rl.requests[ip], now)
-		rl.Unlock()
-
 		c.Next()
 	}
+}
+
+// Allow records one request of ip and reports whether it is within the
+// limit. A rejected request is counted in the rejected metric and is not
+// recorded.
+func (rl *RateLimiter) Allow(ip string) bool {
+	now := time.Now()
+	windowStart := now.Add(-rl.window)
+
+	// Single write lock for the check-and-add to avoid a TOCTOU race
+	// where concurrent requests could both pass the limit check.
+	rl.Lock()
+	// Filter expired timestamps during counting to prevent unbounded
+	// slice growth between periodic cleanup cycles.
+	valid := rl.requests[ip][:0]
+	for _, t := range rl.requests[ip] {
+		if t.After(windowStart) {
+			valid = append(valid, t)
+		}
+	}
+	rl.requests[ip] = valid
+
+	if len(valid) >= rl.limit {
+		rl.Unlock()
+		if rl.rejectedTotal != nil {
+			rl.rejectedTotal.Add(context.Background(), 1)
+		}
+		return false
+	}
+
+	rl.requests[ip] = append(rl.requests[ip], now)
+	rl.Unlock()
+	return true
 }
 
 // cleanup periodically removes expired entries to prevent memory leaks.

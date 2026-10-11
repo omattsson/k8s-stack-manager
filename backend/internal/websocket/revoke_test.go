@@ -29,8 +29,11 @@ func TestHub_Disconnect(t *testing.T) {
 		disconnect func(h *Hub) int
 		wantClosed []int // indexes into the clients below
 	}{
-		{name: "user", disconnect: func(h *Hub) int { return h.DisconnectUser("u1") }, wantClosed: []int{0, 1}},
+		{name: "user", disconnect: func(h *Hub) int { return h.DisconnectUser("u1") }, wantClosed: []int{0, 1, 4}},
 		{name: "token", disconnect: func(h *Hub) int { return h.DisconnectToken("jti-b") }, wantClosed: []int{1}},
+		{name: "api key", disconnect: func(h *Hub) int { return h.DisconnectAPIKey("key-1") }, wantClosed: []int{4}},
+		{name: "unknown api key", disconnect: func(h *Hub) int { return h.DisconnectAPIKey("key-x") }},
+		{name: "empty api key ID", disconnect: func(h *Hub) int { return h.DisconnectAPIKey("") }},
 		{name: "unknown user", disconnect: func(h *Hub) int { return h.DisconnectUser("nobody") }},
 		{name: "empty user ID", disconnect: func(h *Hub) int { return h.DisconnectUser("") }},
 		{name: "empty token ID", disconnect: func(h *Hub) int { return h.DisconnectToken("") }},
@@ -50,6 +53,7 @@ func TestHub_Disconnect(t *testing.T) {
 				{UserID: "u1", TokenID: "jti-b"},
 				{UserID: "u2", TokenID: "jti-c"},
 				{}, // socket without identity
+				{UserID: "u1", APIKeyID: "key-1"},
 			}
 			clients := make([]*Client, len(identities))
 			for i, id := range identities {
@@ -163,6 +167,19 @@ func TestClient_CloseFrames(t *testing.T) {
 			name:       "token revoked",
 			identity:   func() ClientIdentity { return ClientIdentity{UserID: "u1", TokenID: "jti-1"} },
 			revoke:     func(h *Hub) { h.DisconnectToken("jti-1") },
+			wantReason: closeReasonRevoked,
+		},
+		{
+			name: "api key expires",
+			identity: func() ClientIdentity {
+				return ClientIdentity{UserID: "u1", APIKeyID: "key-1", ExpiresAt: time.Now().Add(100 * time.Millisecond)}
+			},
+			wantReason: closeReasonAPIKeyExpired,
+		},
+		{
+			name:       "api key revoked",
+			identity:   func() ClientIdentity { return ClientIdentity{UserID: "u1", APIKeyID: "key-1"} },
+			revoke:     func(h *Hub) { h.DisconnectAPIKey("key-1") },
 			wantReason: closeReasonRevoked,
 		},
 	}

@@ -1633,6 +1633,22 @@ func (m *MockAPIKeyRepository) FindByID(userID, keyID string) (*models.APIKey, e
 	return &cp, nil
 }
 
+func (m *MockAPIKeyRepository) FindByIDs(keyIDs []string) ([]*models.APIKey, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.findErr != nil {
+		return nil, m.findErr
+	}
+	var out []*models.APIKey
+	for _, id := range keyIDs {
+		if k, ok := m.keys[id]; ok {
+			cp := *k
+			out = append(out, &cp)
+		}
+	}
+	return out, nil
+}
+
 func (m *MockAPIKeyRepository) FindByPrefix(prefix string) ([]*models.APIKey, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()

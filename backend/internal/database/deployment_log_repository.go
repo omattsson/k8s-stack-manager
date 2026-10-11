@@ -254,8 +254,8 @@ func (r *GORMDeploymentLogRepository) SummarizeByInstance(ctx context.Context, i
 	row := r.db.WithContext(ctx).Model(&models.DeploymentLog{}).
 		Select("COUNT(*) as deploy_count, "+
 			"COALESCE(SUM(CASE WHEN status = ? THEN 1 ELSE 0 END), 0) as success_count, "+
-			"COALESCE(SUM(CASE WHEN status = ? THEN 1 ELSE 0 END), 0) as error_count",
-			models.DeployLogSuccess, models.DeployLogError).
+			"COALESCE(SUM(CASE WHEN status IN (?, ?) THEN 1 ELSE 0 END), 0) as error_count",
+			models.DeployLogSuccess, models.DeployLogError, models.DeployLogPartial).
 		Where("stack_instance_id = ? AND action = ? AND started_at >= ?",
 			instanceID, models.DeployActionDeploy, cutoff).
 		Row()
@@ -345,9 +345,9 @@ func (r *GORMDeploymentLogRepository) SummarizeByUsers(ctx context.Context, user
 			Select(`user_id,
 				COUNT(*) as deploy_count,
 				COALESCE(SUM(CASE WHEN status = ? THEN 1 ELSE 0 END), 0) as success_count,
-				COALESCE(SUM(CASE WHEN status = ? THEN 1 ELSE 0 END), 0) as error_count,
+				COALESCE(SUM(CASE WHEN status IN (?, ?) THEN 1 ELSE 0 END), 0) as error_count,
 				MAX(COALESCE(completed_at, started_at)) as last_deploy`,
-				models.DeployLogSuccess, models.DeployLogError).
+				models.DeployLogSuccess, models.DeployLogError, models.DeployLogPartial).
 			Where("user_id IN ? AND action = ?", userIDs[start:end], models.DeployActionDeploy).
 			Group("user_id").
 			Find(&rows).Error
@@ -418,11 +418,11 @@ func (r *GORMDeploymentLogRepository) summarizeBatchChunk(
 		Select(`stack_instance_id as instance_id,
 			COUNT(CASE WHEN action = ? THEN 1 END) as deploy_count,
 			COALESCE(SUM(CASE WHEN action = ? AND status = ? THEN 1 ELSE 0 END), 0) as success_count,
-			COALESCE(SUM(CASE WHEN action = ? AND status = ? THEN 1 ELSE 0 END), 0) as error_count,
+			COALESCE(SUM(CASE WHEN action = ? AND status IN (?, ?) THEN 1 ELSE 0 END), 0) as error_count,
 			MAX(COALESCE(completed_at, started_at)) as last_deploy`,
 			models.DeployActionDeploy,
 			models.DeployActionDeploy, models.DeployLogSuccess,
-			models.DeployActionDeploy, models.DeployLogError).
+			models.DeployActionDeploy, models.DeployLogError, models.DeployLogPartial).
 		Where("stack_instance_id IN ? AND started_at >= ?", chunk, cutoff).
 		Group("stack_instance_id").
 		Find(&rows).Error

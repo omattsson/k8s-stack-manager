@@ -65,6 +65,9 @@ type ClientRevoker interface {
 	// DisconnectToken closes all connections opened with the access token
 	// that has this jti (logout).
 	DisconnectToken(tokenID string) int
+	// DisconnectAPIKey closes all connections opened with the API key that
+	// has this ID (key deleted).
+	DisconnectAPIKey(keyID string) int
 }
 
 var _ ClientRevoker = (*Hub)(nil)
@@ -359,6 +362,19 @@ func (h *Hub) DisconnectToken(tokenID string) int {
 	return closed
 }
 
+// DisconnectAPIKey closes all connections opened with the API key that has
+// this ID. It implements ClientRevoker. With fan-out, the other replicas close
+// the sockets of the key too. The return value counts the local connections
+// only. An empty key ID or a nil hub closes nothing.
+func (h *Hub) DisconnectAPIKey(keyID string) int {
+	if h == nil || keyID == "" {
+		return 0
+	}
+	closed := h.disconnectAPIKeyLocal(keyID)
+	h.publish(models.WSEventTargetRevokeAPIKeyPrefix+keyID, nil)
+	return closed
+}
+
 // disconnectUserLocal closes the local connections of the user without a
 // fan-out row.
 func (h *Hub) disconnectUserLocal(userID string) int {
@@ -367,7 +383,8 @@ func (h *Hub) disconnectUserLocal(userID string) int {
 
 // disconnectUserIssuedBefore closes the local connections of the user whose
 // token was issued at or before t (millisecond precision, the same rule as
-// the session store user block; an unknown issue time counts as before). A
+// the session store user block; an unknown issue time counts as before, so
+// the sockets opened with an API key always close). A
 // token without the iat_ms claim has a whole-second issue time, so for it the
 // rule is "issued in the second of t or before". The
 // fan-out poller calls it for a user revocation from another replica, with
@@ -386,6 +403,12 @@ func (h *Hub) disconnectUserIssuedBefore(userID string, t time.Time) int {
 // disconnectUserLocal.
 func (h *Hub) disconnectTokenLocal(tokenID string) int {
 	return h.disconnectMatching(func(c *Client) bool { return c.identity.TokenID == tokenID })
+}
+
+// disconnectAPIKeyLocal closes the local connections of the API key. See
+// disconnectUserLocal.
+func (h *Hub) disconnectAPIKeyLocal(keyID string) int {
+	return h.disconnectMatching(func(c *Client) bool { return c.identity.APIKeyID == keyID })
 }
 
 // disconnectMatching removes the matching clients under h.mu and closes their

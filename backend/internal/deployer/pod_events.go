@@ -43,6 +43,14 @@ type podProblemLister interface {
 // each new problem once (de-duplicated, rate-limited) to the WebSocket log
 // and collects the lines for the stored deploy log output. It also keeps
 // the most relevant problem for the error message of a failed operation.
+//
+// Problems with the same reason and object form one group, for example the
+// FailedCreate events of one ReplicaSet for each pod that the quota rejects
+// (each event names another pod). A group gives one line with the number of
+// problems: "Pod event: FailedCreate replicaset/db (x18): <latest message>".
+// The WebSocket log shows the group when it starts and again each time its
+// count doubles (the stream cannot change a line it sent). The stored log
+// shows the group once per drain with the current count.
 type podEventWatch struct {
 	lister    podProblemLister
 	namespace string
@@ -51,8 +59,9 @@ type podEventWatch struct {
 
 	mu        sync.Mutex
 	seen      map[string]struct{}
-	pending   []string // lines not yet taken by drain
-	emitted   int
+	groups    map[string]*podProblemGroup
+	pending   []pendingPodLine // lines not yet taken by drain
+	emitted   int              // groups shown (the line cap counts groups)
 	capped    bool
 	best      string // most relevant problem, as one line
 	bestScore int
@@ -63,6 +72,27 @@ type podEventWatch struct {
 
 	cancel context.CancelFunc
 	done   chan struct{}
+}
+
+// podProblemGroup is the problems of one reason and object.
+type podProblemGroup struct {
+	reason   string
+	object   string
+	message  string // message of the latest problem
+	count    int    // distinct problems in the group
+	streamed int    // count of the last streamed line
+}
+
+// pendingPodLine is one line for the stored log: a group (formatted with its
+// count at drain time) or a fixed text.
+type pendingPodLine struct {
+	group string // group key; empty for a fixed text
+	text  string
+}
+
+// podProblemGroupKey returns the group of a problem: its reason and object.
+func podProblemGroupKey(p k8s.PodProblem) string {
+	return p.Reason + "|" + p.Object
 }
 
 // startPodEventWatch starts a podEventWatch for the namespace. emit gets
@@ -138,41 +168,80 @@ func (w *podEventWatch) logPollError(err error) {
 	slog.Debug("pod event poll failed", "namespace", w.namespace, "error", err)
 }
 
-// record adds the new problems: it de-duplicates them, keeps the most
-// relevant one and emits at most maxPodEventLinesPerPoll lines (and at most
-// maxPodEventLines for the operation).
+// record adds the new problems: it de-duplicates them, groups them by
+// reason and object, keeps the most relevant one and shows at most
+// maxPodEventLinesPerPoll new groups per poll (and at most maxPodEventLines
+// groups for the operation). A new problem of a known group only raises the
+// count of the group.
 func (w *podEventWatch) record(problems []k8s.PodProblem) {
 	var lines []string
 	w.mu.Lock()
+	if w.groups == nil {
+		w.groups = map[string]*podProblemGroup{}
+	}
 	perPoll := 0
+	var touched []*podProblemGroup // groups changed by this poll, in order
+	isNew := map[*podProblemGroup]bool{}
+	inTouched := map[*podProblemGroup]bool{}
+	touch := func(g *podProblemGroup) {
+		if !inTouched[g] {
+			inTouched[g] = true
+			touched = append(touched, g)
+		}
+	}
+	var notices []string
 	for _, p := range problems {
 		if _, dup := w.seen[p.Key]; dup {
 			continue
 		}
-		w.seen[p.Key] = struct{}{}
-		line := formatPodProblem(p)
-		if score := podProblemScore(p); score >= w.bestScore {
-			w.best = line
-			w.bestScore = score
+		gk := podProblemGroupKey(p)
+		if g := w.groups[gk]; g != nil {
+			w.seen[p.Key] = struct{}{}
+			w.updateBest(p)
+			g.count++
+			g.message = p.Message
+			touch(g)
+			w.pending = append(w.pending, pendingPodLine{group: gk})
+			continue
 		}
 		if w.capped {
+			w.seen[p.Key] = struct{}{}
+			w.updateBest(p)
 			continue
 		}
 		if w.emitted >= maxPodEventLines {
+			w.seen[p.Key] = struct{}{}
+			w.updateBest(p)
 			w.capped = true
-			lines = append(lines, "Pod events: more problems are not shown")
+			const notice = "Pod events: more problems are not shown"
+			notices = append(notices, notice)
+			w.pending = append(w.pending, pendingPodLine{text: notice})
 			continue
 		}
 		if perPoll >= maxPodEventLinesPerPoll {
 			// Leave the key unseen, so the next poll shows it.
-			delete(w.seen, p.Key)
 			continue
 		}
+		w.seen[p.Key] = struct{}{}
+		w.updateBest(p)
 		perPoll++
 		w.emitted++
-		lines = append(lines, "Pod event: "+line)
+		g := &podProblemGroup{reason: p.Reason, object: p.Object, message: p.Message, count: 1}
+		w.groups[gk] = g
+		isNew[g] = true
+		touch(g)
+		w.pending = append(w.pending, pendingPodLine{group: gk})
 	}
-	w.pending = append(w.pending, lines...)
+	// Stream a group of this poll with its count. Stream a known group again
+	// only when its count has doubled since its last streamed line, so a
+	// long run of rejected pods gives few lines.
+	for _, g := range touched {
+		if isNew[g] || g.count >= 2*g.streamed {
+			g.streamed = g.count
+			lines = append(lines, "Pod event: "+g.line())
+		}
+	}
+	lines = append(lines, notices...)
 	w.mu.Unlock()
 
 	if w.emit != nil {
@@ -182,8 +251,28 @@ func (w *podEventWatch) record(problems []k8s.PodProblem) {
 	}
 }
 
+// updateBest keeps p as the most relevant problem when its score is at
+// least the current one. Caller must hold w.mu.
+func (w *podEventWatch) updateBest(p k8s.PodProblem) {
+	if score := podProblemScore(p); score >= w.bestScore {
+		w.best = formatPodProblem(p)
+		w.bestScore = score
+	}
+}
+
+// line returns the line of the group: one problem as formatPodProblem, more
+// problems with the count after the object.
+func (g *podProblemGroup) line() string {
+	p := k8s.PodProblem{Reason: g.reason, Object: g.object, Message: g.message}
+	if g.count > 1 {
+		p.Object = fmt.Sprintf("%s (x%d)", g.object, g.count)
+	}
+	return formatPodProblem(p)
+}
+
 // drain returns the lines recorded since the last drain, one per line with
-// a trailing newline, for the stored deploy log output. A nil watch returns "".
+// a trailing newline, for the stored deploy log output. A group appears once
+// per drain, with its current count. A nil watch returns "".
 func (w *podEventWatch) drain() string {
 	if w == nil {
 		return ""
@@ -193,9 +282,23 @@ func (w *podEventWatch) drain() string {
 	if len(w.pending) == 0 {
 		return ""
 	}
-	out := strings.Join(w.pending, "\n") + "\n"
+	var b strings.Builder
+	written := make(map[string]bool, len(w.pending))
+	for _, pl := range w.pending {
+		if pl.group == "" {
+			b.WriteString(pl.text + "\n")
+			continue
+		}
+		if written[pl.group] {
+			continue
+		}
+		written[pl.group] = true
+		if g := w.groups[pl.group]; g != nil {
+			b.WriteString("Pod event: " + g.line() + "\n")
+		}
+	}
 	w.pending = nil
-	return out
+	return b.String()
 }
 
 // stop ends the polling, makes one last poll, and returns the remaining

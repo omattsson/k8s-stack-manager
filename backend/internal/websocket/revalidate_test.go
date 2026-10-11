@@ -20,11 +20,13 @@ func TestHub_Revalidate(t *testing.T) {
 		{UserID: "u1", TokenID: "jti-b", IssuedAt: iat},
 		{UserID: "u2", TokenID: "jti-c", IssuedAt: iat},
 		{}, // socket without identity: never checked
+		{UserID: "u1", APIKeyID: "key-1"},
+		{UserID: "u1", APIKeyID: "key-1"}, // second socket of the same API key
 	}
 
 	tests := []struct {
 		name       string
-		revoke     map[string]bool // token IDs the checker revokes
+		revoke     map[string]bool // token IDs and API key IDs the checker revokes
 		badSize    bool
 		panics     bool
 		wantClosed []int
@@ -32,6 +34,7 @@ func TestHub_Revalidate(t *testing.T) {
 		{name: "nothing revoked"},
 		{name: "one token revoked closes both tabs of it", revoke: map[string]bool{"jti-a": true}, wantClosed: []int{0, 1}},
 		{name: "two tokens revoked", revoke: map[string]bool{"jti-b": true, "jti-c": true}, wantClosed: []int{2, 3}},
+		{name: "api key revoked closes both sockets of it", revoke: map[string]bool{"key-1": true}, wantClosed: []int{5, 6}},
 		{name: "wrong result size closes nothing", revoke: map[string]bool{"jti-a": true}, badSize: true},
 		{name: "panic in checker closes nothing", panics: true},
 	}
@@ -60,7 +63,7 @@ func TestHub_Revalidate(t *testing.T) {
 				}
 				out := make([]bool, len(ids))
 				for i, id := range ids {
-					out[i] = tt.revoke[id.TokenID]
+					out[i] = tt.revoke[id.TokenID] || tt.revoke[id.APIKeyID]
 				}
 				if tt.badSize {
 					return out[:1]
@@ -71,7 +74,7 @@ func TestHub_Revalidate(t *testing.T) {
 			closed := hub.revalidate(check)
 
 			assert.Equal(t, 1, calls)
-			assert.Len(t, checked, 3, "distinct identities only, without the empty one")
+			assert.Len(t, checked, 4, "distinct identities only, without the empty one")
 			assert.Equal(t, len(tt.wantClosed), closed)
 			want := map[int]bool{}
 			for _, i := range tt.wantClosed {

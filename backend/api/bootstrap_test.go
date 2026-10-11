@@ -747,6 +747,7 @@ type stubAPIKeyRepo struct{}
 func (s *stubAPIKeyRepo) Create(_ *models.APIKey) error                   { return nil }
 func (s *stubAPIKeyRepo) FindByID(_, _ string) (*models.APIKey, error)    { return nil, nil }
 func (s *stubAPIKeyRepo) FindByPrefix(_ string) ([]*models.APIKey, error) { return nil, nil }
+func (s *stubAPIKeyRepo) FindByIDs(_ []string) ([]*models.APIKey, error)  { return nil, nil }
 func (s *stubAPIKeyRepo) ListByUser(_ string) ([]*models.APIKey, error)   { return nil, nil }
 func (s *stubAPIKeyRepo) UpdateLastUsed(_, _ string, _ time.Time) error   { return nil }
 func (s *stubAPIKeyRepo) Delete(_, _ string) error                        { return nil }

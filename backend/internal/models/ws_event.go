@@ -22,6 +22,9 @@ const (
 	// WSEventTargetRevokeTokenPrefix + token ID (jti) closes the sockets
 	// opened with the token on all replicas (no payload).
 	WSEventTargetRevokeTokenPrefix = "revoke:token:"
+	// WSEventTargetRevokeAPIKeyPrefix + API key ID closes the sockets
+	// opened with the API key on all replicas (no payload).
+	WSEventTargetRevokeAPIKeyPrefix = "revoke:apikey:"
 )
 
 // WSEvent is one WebSocket message that a replica shares with the other
@@ -41,8 +44,8 @@ type WSEvent struct {
 	// CreatedAt is the time of the broadcast on the origin replica. The
 	// cleanup deletes rows by this column.
 	CreatedAt time.Time `json:"created_at" gorm:"not null;index:idx_ws_events_created_at"`
-	// Target is "all", "instance:<id>", "user:<id>", "revoke:user:<id>" or
-	// "revoke:token:<jti>".
+	// Target is "all", "instance:<id>", "user:<id>", "revoke:user:<id>",
+	// "revoke:token:<jti>" or "revoke:apikey:<key id>".
 	Target string `json:"target" gorm:"size:128;not null"`
 	// Origin identifies the process that wrote the row: the replica identity
 	// (POD_NAME or host name) plus a random suffix per process.

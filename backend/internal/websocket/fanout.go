@@ -113,11 +113,11 @@ type FanoutStats struct {
 // the hubs of the other replicas through the ws_events table.
 //
 // Write path: each hub send (Broadcast, BroadcastToInstance,
-// BroadcastToUser) and each revocation (DisconnectUser, DisconnectToken)
-// acts on the local clients at once and queues one row. A writer goroutine
-// inserts the queued rows in batches. The queue is bounded: when it is full,
-// the message is not written (counter + rate limited warning), and the hub
-// call never blocks.
+// BroadcastToUser) and each revocation (DisconnectUser, DisconnectToken,
+// DisconnectAPIKey) acts on the local clients at once and queues one row. A
+// writer goroutine inserts the queued rows in batches. The queue is bounded:
+// when it is full, the message is not written (counter + rate limited
+// warning), and the hub call never blocks.
 //
 // Read path: a poller reads the rows with id > last ID every PollInterval
 // and delivers the rows of other origins to the local clients. It skips the
@@ -563,6 +563,8 @@ func (f *Fanout) deliver(ev *models.WSEvent) {
 		f.hub.disconnectUserIssuedBefore(strings.TrimPrefix(ev.Target, models.WSEventTargetRevokeUserPrefix), ev.CreatedAt)
 	case strings.HasPrefix(ev.Target, models.WSEventTargetRevokeTokenPrefix):
 		f.hub.disconnectTokenLocal(strings.TrimPrefix(ev.Target, models.WSEventTargetRevokeTokenPrefix))
+	case strings.HasPrefix(ev.Target, models.WSEventTargetRevokeAPIKeyPrefix):
+		f.hub.disconnectAPIKeyLocal(strings.TrimPrefix(ev.Target, models.WSEventTargetRevokeAPIKeyPrefix))
 	case ev.Target == models.WSEventTargetAll:
 		f.hub.deliverAll(msg)
 	case strings.HasPrefix(ev.Target, models.WSEventTargetInstancePrefix):

@@ -709,8 +709,11 @@ func TestFanout_RevocationReachesOtherReplicas(t *testing.T) {
 		name     string
 		wantOpen []string // B clients that stay open
 	}{
+		// A socket opened with an API key has no issue time: a user revoke
+		// always closes it.
 		{name: "user", revoke: func(h *Hub) { h.DisconnectUser("u1") }, wantOpen: []string{"u1-new", "u2"}},
-		{name: "token", revoke: func(h *Hub) { h.DisconnectToken("jti-2") }, wantOpen: []string{"u1-old", "u1-new"}},
+		{name: "token", revoke: func(h *Hub) { h.DisconnectToken("jti-2") }, wantOpen: []string{"u1-old", "u1-new", "u1-key"}},
+		{name: "api key", revoke: func(h *Hub) { h.DisconnectAPIKey("key-1") }, wantOpen: []string{"u1-old", "u1-new", "u2"}},
 	}
 	for _, tt := range tests {
 		tt := tt
@@ -725,6 +728,7 @@ func TestFanout_RevocationReachesOtherReplicas(t *testing.T) {
 				"u1-old": {UserID: "u1", TokenID: "jti-1", IssuedAt: now.Add(-time.Minute)},
 				"u1-new": {UserID: "u1", TokenID: "jti-3", IssuedAt: now.Add(time.Hour)}, // session after the revoke
 				"u2":     {UserID: "u2", TokenID: "jti-2", IssuedAt: now.Add(-time.Minute)},
+				"u1-key": {UserID: "u1", APIKeyID: "key-1"},
 			}
 			clients := map[string]*Client{}
 			for name, id := range identities {

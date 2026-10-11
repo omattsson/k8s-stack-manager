@@ -275,9 +275,10 @@ func TestHandleWebSocket_RevokedSocketCloses(t *testing.T) {
 
 // fakeRevoker records the calls of websocket.ClientRevoker.
 type fakeRevoker struct {
-	mu     sync.Mutex
-	users  []string
-	tokens []string
+	mu      sync.Mutex
+	users   []string
+	tokens  []string
+	apiKeys []string
 }
 
 func (f *fakeRevoker) DisconnectUser(userID string) int {
@@ -292,6 +293,19 @@ func (f *fakeRevoker) DisconnectToken(tokenID string) int {
 	defer f.mu.Unlock()
 	f.tokens = append(f.tokens, tokenID)
 	return 1
+}
+
+func (f *fakeRevoker) DisconnectAPIKey(keyID string) int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.apiKeys = append(f.apiKeys, keyID)
+	return 1
+}
+
+func (f *fakeRevoker) keyCalls() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.apiKeys...)
 }
 
 func (f *fakeRevoker) calls() (users, tokens []string) {
@@ -476,11 +490,11 @@ func TestNewWebSocketRevocationChecker(t *testing.T) {
 			var check websocket.IdentityChecker
 			switch {
 			case tt.noStore:
-				check = NewWebSocketRevocationChecker(nil, users)
+				check = NewWebSocketRevocationChecker(nil, users, nil)
 			case tt.noUsers:
-				check = NewWebSocketRevocationChecker(store, nil)
+				check = NewWebSocketRevocationChecker(store, nil, nil)
 			default:
-				check = NewWebSocketRevocationChecker(store, users)
+				check = NewWebSocketRevocationChecker(store, users, nil)
 			}
 			require.NotNil(t, check)
 
@@ -497,7 +511,7 @@ func TestNewWebSocketRevocationChecker(t *testing.T) {
 		})
 	}
 
-	assert.Nil(t, NewWebSocketRevocationChecker(nil, nil))
+	assert.Nil(t, NewWebSocketRevocationChecker(nil, nil, nil))
 }
 
 // flipStore reports the token as not blocked on the first check and as
@@ -564,7 +578,7 @@ func TestNewWebSocketRevocationChecker_MillisecondIssueTime(t *testing.T) {
 	require.NoError(t, store.BlockUser(context.Background(), "u1", time.Now().Add(time.Hour)))
 	after := time.Now()
 
-	check := NewWebSocketRevocationChecker(store, nil)
+	check := NewWebSocketRevocationChecker(store, nil, nil)
 	require.NotNil(t, check)
 	identities := []websocket.ClientIdentity{
 		{UserID: "u1", TokenID: "jti-before", IssuedAt: before.Add(-time.Millisecond)},
