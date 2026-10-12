@@ -266,6 +266,34 @@ backend:
     create: true
     annotations: {}
 
+  # RBAC of the backend service account on the cluster where it runs (a
+  # cluster registered with use_in_cluster). Helm installs the stack charts
+  # with this identity. Used only when serviceAccount.create is true.
+  rbac:
+    # namespace (default): the backend has rights on namespaced objects only
+    # in stack namespaces, through a RoleBinding (k8s-stack-manager-access)
+    # to the ClusterRole <fullname>-stack-access that it creates in each
+    # stack namespace. Cluster-wide it keeps: nodes (read), namespaces
+    # (manage), pods (read, for the cluster overview), RoleBinding writes and
+    # `bind` on the stack-access ClusterRole and on the ClusterRoles of
+    # backend.namespaceRoleBindings. A chart can then not read or change
+    # objects in other namespaces, and cannot create cluster-scoped objects
+    # (ClusterRoles, CRDs, webhooks). The leader adds the RoleBinding to
+    # stack namespaces that existed before (once per term, then every 10
+    # minutes).
+    # cluster: the rules of chart 0.6 and earlier (namespaced objects in all
+    # namespaces). Use it only when stack charts need cluster-scoped objects.
+    scope: namespace
+    # ValidatingAdmissionPolicy (Kubernetes 1.30 or later) for scope
+    # namespace: the backend service account may create, change or delete
+    # Roles and RoleBindings only in namespaces with the label
+    # managed-by=k8s-stack-manager, may create only namespaces with that
+    # label, and may change or delete only namespaces whose name starts with
+    # "stack-" or that have the label. Without it, the cluster-wide RoleBinding
+    # write right could give the backend access to any namespace.
+    admissionPolicy:
+      enabled: true
+
 # ---------------------------------------------------------------------------
 # External Secrets Operator
 # ---------------------------------------------------------------------------

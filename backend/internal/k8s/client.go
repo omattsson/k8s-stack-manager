@@ -34,6 +34,10 @@ type Client struct {
 	// stack namespace, in addition to managed-by=k8s-stack-manager
 	// (NAMESPACE_LABELS). Set once before the client is shared.
 	namespaceLabels map[string]string
+	// accessBinding, when set, is the RoleBinding that EnsureNamespace
+	// applies to every stack namespace (namespace-scoped access). Set once
+	// before the client is shared.
+	accessBinding *AccessBinding
 }
 
 // NewClient creates a Kubernetes client.
@@ -138,6 +142,20 @@ func (c *Client) desiredNamespaceLabels(namespace, instanceName string) map[stri
 // labels stay. Other tools select stack namespaces by the managed-by label,
 // so it must be present on every stack namespace.
 func (c *Client) EnsureNamespace(ctx context.Context, name, instanceName string) error {
+	if err := c.ensureNamespace(ctx, name, instanceName); err != nil {
+		return err
+	}
+	// With namespace-scoped access the backend has rights in the namespace
+	// only through this RoleBinding: apply it before any other object.
+	if _, err := c.ensureAccessBinding(ctx, name); err != nil {
+		return fmt.Errorf("access RoleBinding in namespace %q: %w", name, err)
+	}
+	return nil
+}
+
+// ensureNamespace creates the namespace with the desired labels, or adds the
+// missing labels to an existing namespace.
+func (c *Client) ensureNamespace(ctx context.Context, name, instanceName string) error {
 	desired := c.desiredNamespaceLabels(name, instanceName)
 	existing, err := c.clientset.CoreV1().Namespaces().Get(ctx, name, metav1.GetOptions{})
 	switch {

@@ -1,8 +1,13 @@
 {{- if .Values.backend.serviceAccount.create }}
+{{- $fullname := include "k8s-stack-manager.fullname" . }}
+{{- $scope := .Values.backend.rbac.scope | default "namespace" }}
+{{- if not (has $scope (list "namespace" "cluster")) }}
+{{- fail "backend.rbac.scope must be namespace or cluster" }}
+{{- end }}
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: {{ include "k8s-stack-manager.fullname" . }}-backend
+  name: {{ $fullname }}-backend
   labels:
     {{- include "k8s-stack-manager.backend.labels" . | nindent 4 }}
 rules:
@@ -14,7 +19,8 @@ rules:
   - apiGroups: [""]
     resources: ["namespaces"]
     verbs: ["get", "list", "create", "delete", "patch"]
-  # Namespaced resources for Helm chart deployment (least-privilege)
+{{- if eq $scope "cluster" }}
+  # Namespaced resources for Helm chart deployment, in all namespaces
   - apiGroups: [""]
     resources:
       - pods
@@ -58,6 +64,28 @@ rules:
       - roles
       - rolebindings
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+{{- else }}
+  # Cluster overview (requested CPU and memory, utilization): read pods in
+  # all namespaces. Pod specs only, no Secrets.
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+  # Create the access RoleBinding in each new stack namespace. The admission
+  # policy (backend.rbac.admissionPolicy) limits this to stack namespaces.
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["rolebindings"]
+    verbs: ["get", "create", "update", "patch", "delete"]
+  # Bind only these ClusterRoles: the stack access role and the roles of
+  # backend.namespaceRoleBindings.
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["clusterroles"]
+    verbs: ["bind"]
+    resourceNames:
+      - {{ $fullname }}-stack-access
+      {{- range .Values.backend.namespaceRoleBindings }}
+      - {{ .clusterRole | quote }}
+      {{- end }}
+{{- end }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -73,4 +101,110 @@ subjects:
   - kind: ServiceAccount
     name: {{ include "k8s-stack-manager.fullname" . }}-backend
     namespace: {{ .Release.Namespace }}
+{{- if eq $scope "namespace" }}
+---
+# Rights of the backend inside one stack namespace. Bound per namespace by the
+# RoleBinding k8s-stack-manager-access (a RoleBinding never grants
+# cluster-scoped rights).
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ $fullname }}-stack-access
+  labels:
+    {{- include "k8s-stack-manager.backend.labels" . | nindent 4 }}
+rules:
+  - apiGroups: ["*"]
+    resources: ["*"]
+    verbs: ["*"]
+{{- $srcNS := .Values.backend.env.WILDCARD_TLS_SOURCE_NAMESPACE }}
+{{- $srcSecret := .Values.backend.env.WILDCARD_TLS_SOURCE_SECRET }}
+{{- if and $srcNS $srcSecret }}
+---
+# Read the wildcard TLS source secret (WILDCARD_TLS_SOURCE_*), which the
+# deployer copies into stack namespaces.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ $fullname }}-wildcard-tls-source
+  namespace: {{ $srcNS }}
+  labels:
+    {{- include "k8s-stack-manager.backend.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames: [{{ $srcSecret | quote }}]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ $fullname }}-wildcard-tls-source
+  namespace: {{ $srcNS }}
+  labels:
+    {{- include "k8s-stack-manager.backend.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ $fullname }}-wildcard-tls-source
+subjects:
+  - kind: ServiceAccount
+    name: {{ $fullname }}-backend
+    namespace: {{ .Release.Namespace }}
+{{- end }}
+{{- if .Values.backend.rbac.admissionPolicy.enabled }}
+---
+# Keeps the cluster-wide RoleBinding and namespace rights of the backend to
+# stack namespaces. Needs Kubernetes 1.30 or later.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: {{ $fullname }}-backend-scope
+  labels:
+    {{- include "k8s-stack-manager.backend.labels" . | nindent 4 }}
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE", "DELETE"]
+        resources: ["namespaces"]
+      - apiGroups: ["rbac.authorization.k8s.io"]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE", "DELETE"]
+        resources: ["roles", "rolebindings"]
+  matchConditions:
+    - name: backend-service-account
+      expression: 'request.userInfo.username == "system:serviceaccount:{{ .Release.Namespace }}:{{ $fullname }}-backend"'
+  variables:
+    - name: managedLabel
+      expression: '"managed-by"'
+  validations:
+    - expression: >-
+        request.resource.resource != "namespaces" ||
+        (request.operation == "CREATE"
+          ? (has(object.metadata.labels) && variables.managedLabel in object.metadata.labels &&
+             object.metadata.labels[variables.managedLabel] == "k8s-stack-manager")
+          : (oldObject.metadata.name.startsWith("stack-") ||
+             (has(oldObject.metadata.labels) && variables.managedLabel in oldObject.metadata.labels &&
+              oldObject.metadata.labels[variables.managedLabel] == "k8s-stack-manager")))
+      message: "k8s-stack-manager may create only namespaces with the label managed-by=k8s-stack-manager, and may change or delete only stack namespaces"
+    - expression: >-
+        request.resource.resource == "namespaces" ||
+        (namespaceObject != null && has(namespaceObject.metadata.labels) &&
+         variables.managedLabel in namespaceObject.metadata.labels &&
+         namespaceObject.metadata.labels[variables.managedLabel] == "k8s-stack-manager")
+      message: "k8s-stack-manager may write Roles and RoleBindings only in stack namespaces (label managed-by=k8s-stack-manager)"
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: {{ $fullname }}-backend-scope
+  labels:
+    {{- include "k8s-stack-manager.backend.labels" . | nindent 4 }}
+spec:
+  policyName: {{ $fullname }}-backend-scope
+  validationActions: [Deny]
+{{- end }}
+{{- end }}
 {{- end }}

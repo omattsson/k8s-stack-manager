@@ -40,6 +40,11 @@ type RegistryOptions struct {
 	// NamespaceLabels are extra labels for every stack namespace
 	// (NAMESPACE_LABELS); each new k8s client gets them.
 	NamespaceLabels map[string]string
+	// AccessBinding, when set, is the RoleBinding that the k8s client of an
+	// in-cluster cluster applies to every stack namespace
+	// (STACK_ACCESS_CLUSTER_ROLE, STACK_ACCESS_SERVICE_ACCOUNT). Clusters
+	// with a kubeconfig use their own credentials and do not get it.
+	AccessBinding *k8s.AccessBinding
 }
 
 // Registry manages per-cluster Kubernetes and Helm clients.
@@ -54,6 +59,7 @@ type Registry struct {
 	defaultID       string // cached default cluster ID (empty = not resolved yet)
 	defaultResolved bool   // whether we've attempted to resolve default
 	namespaceLabels map[string]string
+	accessBinding   *k8s.AccessBinding
 
 	// Factories for testability.
 	k8sFactory  K8sClientFactory
@@ -68,11 +74,18 @@ func NewRegistry(cfg RegistryOptions) *Registry {
 		helmBinary:      cfg.HelmBinary,
 		helmTimeout:     cfg.HelmTimeout,
 		namespaceLabels: cfg.NamespaceLabels,
+		accessBinding:   cfg.AccessBinding,
 		k8sFactory:      k8s.NewClient,
 		helmFactory: func(binaryPath, kubeconfig string, timeout time.Duration) deployer.HelmExecutor {
 			return deployer.NewHelmClient(binaryPath, kubeconfig, timeout)
 		},
 	}
+}
+
+// HasAccessBinding reports whether in-cluster clients apply an access
+// RoleBinding to stack namespaces (namespace-scoped access).
+func (r *Registry) HasAccessBinding() bool {
+	return r.accessBinding != nil
 }
 
 // GetClients returns cached clients for the given cluster ID, creating them on first access.
@@ -480,6 +493,9 @@ func (r *Registry) buildClients(cluster *models.Cluster) (*ClusterClients, error
 		return nil, fmt.Errorf("create k8s client: %w", err)
 	}
 	k8sClient.SetNamespaceLabels(r.namespaceLabels)
+	if cluster.UseInCluster {
+		k8sClient.SetAccessBinding(r.accessBinding)
+	}
 
 	helmClient := r.helmFactory(r.helmBinary, kubeconfigPath, r.helmTimeout)
 

@@ -127,6 +127,11 @@ type DeploymentConfig struct {
 	// nil = every chart source is allowed.
 	AllowedChartRepos []string
 
+	// StackAccess is the namespace-scoped access of the backend
+	// (STACK_ACCESS_CLUSTER_ROLE, STACK_ACCESS_SERVICE_ACCOUNT, see
+	// ParseStackAccess); empty = off.
+	StackAccess StackAccessConfig
+
 	// HooksConfigFile points at a JSON file describing outbound webhook
 	// subscriptions (for lifecycle events) and registered named actions. When
 	// empty, the server starts with hooks disabled — no dispatcher or action
@@ -612,6 +617,12 @@ func LoadConfig() (*Config, error) {
 		return nil, fmt.Errorf("invalid configuration: %w", err)
 	}
 	cfg.Deployment.AllowedChartRepos = chartRepos
+
+	stackAccess, err := ParseStackAccess(getEnv("STACK_ACCESS_CLUSTER_ROLE", ""), getEnv("STACK_ACCESS_SERVICE_ACCOUNT", ""))
+	if err != nil {
+		return nil, fmt.Errorf("invalid configuration: %w", err)
+	}
+	cfg.Deployment.StackAccess = stackAccess
 
 	// Validate the configuration
 	if err := cfg.Validate(); err != nil {

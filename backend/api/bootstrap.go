@@ -194,6 +194,7 @@ func buildDomainServices(
 		HelmBinary:      cfg.Deployment.HelmBinary,
 		HelmTimeout:     cfg.Deployment.DeploymentTimeout,
 		NamespaceLabels: cfg.Deployment.NamespaceLabels,
+		AccessBinding:   stackAccessBinding(cfg.Deployment.StackAccess),
 	})
 
 	// Extended health checks.
@@ -674,6 +675,13 @@ func buildLeaderWorkers(
 		}},
 	)
 
+	// Namespace-scoped access: give stack namespaces that existed before
+	// (or lost the RoleBinding) the access RoleBinding of the backend.
+	if svc.ClusterRegistry != nil && svc.ClusterRegistry.HasAccessBinding() {
+		reconciler := cluster.NewAccessReconciler(repos.Cluster, svc.ClusterRegistry, 0)
+		group.Add(leader.Worker{Name: "stack-access-reconcile", Run: reconciler.Run})
+	}
+
 	// Ends the operations of replicas without a heartbeat. Once at the
 	// start of the term, then every minute.
 	if svc.InterruptRecovery != nil {
@@ -845,4 +853,17 @@ func startHTTPServer(router *gin.Engine, cfg *config.Config, tel *telemetry.Tele
 	}()
 
 	return s
+}
+
+// stackAccessBinding converts the STACK_ACCESS_* config to the k8s access
+// binding; nil when namespace-scoped access is off.
+func stackAccessBinding(sa config.StackAccessConfig) *k8s.AccessBinding {
+	if !sa.Enabled() {
+		return nil
+	}
+	return &k8s.AccessBinding{
+		ClusterRole:             sa.ClusterRole,
+		ServiceAccount:          sa.ServiceAccount,
+		ServiceAccountNamespace: sa.ServiceAccountNamespace,
+	}
 }

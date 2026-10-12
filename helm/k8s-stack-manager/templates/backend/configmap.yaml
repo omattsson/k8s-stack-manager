@@ -80,6 +80,11 @@ data:
   NAMESPACE_LABELS: {{ join "," $pairs | quote }}
   {{- end }}
   {{- end }}
+  {{- /* Namespace-scoped access of the backend (backend.rbac.scope=namespace). */}}
+  {{- if and .Values.backend.serviceAccount.create (eq (.Values.backend.rbac.scope | default "namespace") "namespace") }}
+  STACK_ACCESS_CLUSTER_ROLE: {{ printf "%s-stack-access" (include "k8s-stack-manager.fullname" .) | quote }}
+  STACK_ACCESS_SERVICE_ACCOUNT: {{ printf "%s/%s-backend" .Release.Namespace (include "k8s-stack-manager.fullname" .) | quote }}
+  {{- end }}
   {{- /* Chart repository allowlist. An explicit backend.env value wins. */}}
   {{- if and .Values.backend.allowedChartRepos (not (hasKey .Values.backend.env "ALLOWED_CHART_REPOS")) }}
   ALLOWED_CHART_REPOS: {{ join "," .Values.backend.allowedChartRepos | quote }}
