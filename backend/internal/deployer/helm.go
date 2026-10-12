@@ -66,6 +66,12 @@ type InstallRequest struct {
 	ValuesFile  string
 	Namespace   string
 	SkipCRDs    bool // skip CRD installation (avoids conflicts when CRDs already exist)
+	// NamespaceReady is true when the deployer already created the namespace
+	// (k8s.Client.EnsureNamespace, with its labels). Helm then gets no
+	// --create-namespace: Helm always sends a namespace create with that flag,
+	// and an admission policy that requires the managed-by label refuses it
+	// before the API server answers "already exists".
+	NamespaceReady bool
 }
 
 // UninstallRequest contains the parameters for a helm uninstall operation.
@@ -107,7 +113,8 @@ func (h *HelmClient) Timeout() time.Duration {
 	return h.timeout
 }
 
-// Install runs: helm upgrade --install <release> <chart> -f <valuesFile> -n <namespace> --create-namespace --timeout <timeout>
+// Install runs: helm upgrade --install <release> <chart> -f <valuesFile> -n <namespace> [--create-namespace] --timeout <timeout>
+// (--create-namespace only when req.NamespaceReady is false).
 // Returns combined stdout+stderr output and error.
 func (h *HelmClient) Install(ctx context.Context, req InstallRequest) (string, error) {
 	args, err := h.buildInstallArgs(req)
@@ -136,9 +143,11 @@ func (h *HelmClient) buildInstallArgs(req InstallRequest) ([]string, error) {
 		req.ReleaseName,
 		req.ChartPath,
 		"-n", req.Namespace,
-		"--create-namespace",
-		"--timeout", h.timeout.String(),
 	}
+	if !req.NamespaceReady {
+		args = append(args, "--create-namespace")
+	}
+	args = append(args, "--timeout", h.timeout.String())
 	if req.RepoURL != "" {
 		args = append(args, "--repo", req.RepoURL)
 	}

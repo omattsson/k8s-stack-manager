@@ -88,12 +88,16 @@ func (m *Manager) rollbackToTarget(ctx context.Context, helm HelmExecutor, k8sCl
 	// a failed clean). As for a deploy, create it first with the managed-by
 	// label, the instance-name label and the NAMESPACE_LABELS labels and apply the namespace quota before the first install, so the
 	// rolled-back pods meet the quota at once. Both steps are not fatal.
+	nsReady := false
 	if k8sClient != nil {
 		if nsErr := k8sClient.EnsureNamespace(ctx, namespace, instanceName); nsErr != nil {
 			slog.Warn("failed to ensure namespace before rollback",
 				"instance_id", instanceID, "namespace", namespace, "error", nsErr)
-		} else if m.quotaRepo != nil {
-			out.WriteString(m.applyQuotasForDeploy(ctx, instanceID, namespace))
+		} else {
+			nsReady = true
+			if m.quotaRepo != nil {
+				out.WriteString(m.applyQuotasForDeploy(ctx, instanceID, namespace))
+			}
 		}
 	}
 
@@ -157,13 +161,14 @@ func (m *Manager) rollbackToTarget(ctx context.Context, helm HelmExecutor, k8sCl
 
 		chartCtx, chartCancel := context.WithTimeout(ctx, timeout+chartTimeoutMargin)
 		output, installErr := helm.Install(chartCtx, InstallRequest{
-			ReleaseName: name,
-			ChartPath:   chartRef,
-			RepoURL:     repoURL,
-			Version:     version,
-			ValuesFile:  valuesFile,
-			Namespace:   namespace,
-			SkipCRDs:    true,
+			ReleaseName:    name,
+			ChartPath:      chartRef,
+			RepoURL:        repoURL,
+			Version:        version,
+			ValuesFile:     valuesFile,
+			Namespace:      namespace,
+			SkipCRDs:       true,
+			NamespaceReady: nsReady,
 		})
 		chartCancel()
 

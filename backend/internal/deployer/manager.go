@@ -850,13 +850,14 @@ func (m *Manager) executeDeploy(helm HelmExecutor, k8sClient *k8s.Client, regCfg
 		// margin keeps this context from killing helm before that.
 		chartCtx, chartCancel := context.WithTimeout(ctx, timeout+chartTimeoutMargin)
 		output, err := helm.Install(chartCtx, InstallRequest{
-			ReleaseName: releaseName,
-			ChartPath:   chartRef,
-			RepoURL:     repoURL,
-			Version:     chart.ChartConfig.ChartVersion,
-			ValuesFile:  valuesFile,
-			Namespace:   namespace,
-			SkipCRDs:    true,
+			ReleaseName:    releaseName,
+			ChartPath:      chartRef,
+			RepoURL:        repoURL,
+			Version:        chart.ChartConfig.ChartVersion,
+			ValuesFile:     valuesFile,
+			Namespace:      namespace,
+			SkipCRDs:       true,
+			NamespaceReady: nsReady,
 		})
 		chartCancel()
 
