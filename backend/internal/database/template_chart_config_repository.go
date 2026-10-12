@@ -41,6 +41,9 @@ func (r *GORMTemplateChartConfigRepository) Create(config *models.TemplateChartC
 
 // Update persists changes to an existing template chart config record.
 func (r *GORMTemplateChartConfigRepository) Update(config *models.TemplateChartConfig) error {
+	if err := config.Validate(); err != nil {
+		return dberrors.NewDatabaseError("update", fmt.Errorf("%w: %s", dberrors.ErrValidation, err.Error()))
+	}
 	return r.Save(config)
 }
 

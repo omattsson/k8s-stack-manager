@@ -122,6 +122,11 @@ type DeploymentConfig struct {
 	// ParseNamespaceLabels); nil = no extra labels.
 	NamespaceLabels map[string]string
 
+	// AllowedChartRepos are the chart repository URL prefixes that chart
+	// configs may use (ALLOWED_CHART_REPOS, see ParseAllowedChartRepos);
+	// nil = every chart source is allowed.
+	AllowedChartRepos []string
+
 	// HooksConfigFile points at a JSON file describing outbound webhook
 	// subscriptions (for lifecycle events) and registered named actions. When
 	// empty, the server starts with hooks disabled — no dispatcher or action
@@ -601,6 +606,12 @@ func LoadConfig() (*Config, error) {
 		return nil, fmt.Errorf("invalid configuration: NAMESPACE_LABELS: %w", err)
 	}
 	cfg.Deployment.NamespaceLabels = nsLabels
+
+	chartRepos, err := ParseAllowedChartRepos(getEnv("ALLOWED_CHART_REPOS", ""))
+	if err != nil {
+		return nil, fmt.Errorf("invalid configuration: %w", err)
+	}
+	cfg.Deployment.AllowedChartRepos = chartRepos
 
 	// Validate the configuration
 	if err := cfg.Validate(); err != nil {

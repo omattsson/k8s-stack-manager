@@ -62,7 +62,7 @@ func (c *TemplateChartConfig) Validate() error {
 	if !helmReleaseNameRegex.MatchString(c.ChartName) {
 		return errors.New("chart_name must contain only lowercase alphanumeric characters, dashes, dots, or underscores, and must start and end with an alphanumeric character")
 	}
-	return nil
+	return CheckChartSource(c.RepositoryURL, c.ChartPath, c.ChartName)
 }
 
 // Validate implements model validation for StackDefinition.
@@ -96,7 +96,7 @@ func (c *ChartConfig) Validate() error {
 	if !helmReleaseNameRegex.MatchString(c.ChartName) {
 		return errors.New("chart_name must contain only lowercase alphanumeric characters, dashes, dots, or underscores, and must start and end with an alphanumeric character")
 	}
-	return nil
+	return CheckChartSource(c.RepositoryURL, c.ChartPath, c.ChartName)
 }
 
 // rfc1123LabelRegex matches valid RFC 1123 label names (used for K8s namespaces).

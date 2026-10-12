@@ -80,6 +80,10 @@ data:
   NAMESPACE_LABELS: {{ join "," $pairs | quote }}
   {{- end }}
   {{- end }}
+  {{- /* Chart repository allowlist. An explicit backend.env value wins. */}}
+  {{- if and .Values.backend.allowedChartRepos (not (hasKey .Values.backend.env "ALLOWED_CHART_REPOS")) }}
+  ALLOWED_CHART_REPOS: {{ join "," .Values.backend.allowedChartRepos | quote }}
+  {{- end }}
   {{- if .Values.metrics.enabled }}
   METRICS_ENABLED: "true"
   METRICS_ADDR: ":{{ .Values.metrics.port }}"

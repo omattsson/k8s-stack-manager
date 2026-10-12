@@ -181,6 +181,13 @@ func buildDomainServices(
 	// Auto-create default cluster from KUBECONFIG_PATH for single-cluster migration.
 	ensureDefaultCluster(repos.Cluster, repos.StackInstance, cfg)
 
+	// Chart repository allowlist (ALLOWED_CHART_REPOS): checked when chart
+	// configs are saved and again at deploy time.
+	models.SetAllowedChartSources(cfg.Deployment.AllowedChartRepos)
+	if len(cfg.Deployment.AllowedChartRepos) > 0 {
+		slog.Info("chart repository allowlist enabled", "prefixes", cfg.Deployment.AllowedChartRepos)
+	}
+
 	// Cluster registry for multi-cluster client management.
 	clusterRegistry := cluster.NewRegistry(cluster.RegistryOptions{
 		ClusterRepo:     repos.Cluster,

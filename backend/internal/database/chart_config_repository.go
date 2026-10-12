@@ -55,6 +55,9 @@ func (r *GORMChartConfigRepository) FindByID(id string) (*models.ChartConfig, er
 
 // Update persists changes to an existing chart config record.
 func (r *GORMChartConfigRepository) Update(config *models.ChartConfig) error {
+	if err := config.Validate(); err != nil {
+		return dberrors.NewDatabaseError("update", fmt.Errorf("%w: %s", dberrors.ErrValidation, err.Error()))
+	}
 	if err := r.db.Save(config).Error; err != nil {
 		return dberrors.NewDatabaseError("update", err)
 	}

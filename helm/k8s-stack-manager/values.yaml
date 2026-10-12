@@ -182,6 +182,18 @@ backend:
   #   pod-security.kubernetes.io/warn: restricted
   namespaceLabels: {}
 
+  # Chart repositories that definitions and templates may use
+  # (ALLOWED_CHART_REPOS). Each entry is a URL prefix with a scheme and a host
+  # (oci, https or http). A chart must be in one of them: the backend checks
+  # chart configs when they are saved and again at deploy time. A chart path
+  # alone (local path, repo alias) is rejected when the list is set. Empty =
+  # every chart source is allowed. Set it on every cluster that untrusted
+  # users can deploy to: Helm runs with the backend service account.
+  # Example:
+  # allowedChartRepos:
+  #   - oci://registry.example.com/charts
+  allowedChartRepos: []
+
   # Extra environment variables, volumes and volume mounts for the backend
   # container (plain Kubernetes syntax). Example: give Helm a registry login
   # file (docker config.json format) for OCI chart repositories that need

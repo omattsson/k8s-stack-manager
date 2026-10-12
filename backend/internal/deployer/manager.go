@@ -799,6 +799,18 @@ func (m *Manager) executeDeploy(helm HelmExecutor, k8sClient *k8s.Client, regCfg
 	for _, chart := range charts {
 		releaseName := chart.ChartConfig.ChartName
 
+		// Check ALLOWED_CHART_REPOS again at deploy time: a chart config
+		// stored before the allowlist was set must not deploy.
+		if srcErr := models.CheckChartSource(chart.ChartConfig.RepositoryURL, chart.ChartConfig.ChartPath, chart.ChartConfig.ChartName); srcErr != nil {
+			line := fmt.Sprintf("ERROR: chart %q: %s", chart.ChartConfig.ChartName, srcErr)
+			allOutput += fmt.Sprintf("=== Chart: %s ===\n%s\n", chart.ChartConfig.ChartName, line)
+			m.broadcastLog(instanceID, deployLog.ID, line)
+			failedCharts = append(failedCharts, chart.ChartConfig.ChartName)
+			slog.Warn("chart source not allowed, skipping chart",
+				"instance_id", instanceID, "chart", chart.ChartConfig.ChartName, "error", srcErr)
+			continue
+		}
+
 		slog.Info("deploying chart",
 			"instance_id", instanceID,
 			"chart", chart.ChartConfig.ChartName,

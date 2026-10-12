@@ -63,16 +63,7 @@ func ParseChartVersions(s string) map[string]string {
 // chartReference returns the chart reference and the --repo value for helm
 // install. An OCI repository URL becomes part of the chart reference.
 func chartReference(cfg models.ChartConfig) (chartRef, repoURL string) {
-	chartRef = cfg.ChartPath
-	if chartRef == "" {
-		chartRef = cfg.ChartName
-	}
-	repoURL = cfg.RepositoryURL
-	if strings.HasPrefix(repoURL, "oci://") {
-		chartRef = strings.TrimRight(repoURL, "/") + "/" + chartRef
-		repoURL = ""
-	}
-	return chartRef, repoURL
+	return models.ChartReference(cfg.RepositoryURL, cfg.ChartPath, cfg.ChartName)
 }
 
 // rollbackToTarget installs the values snapshot of the target deploy for each
@@ -128,6 +119,10 @@ func (m *Manager) rollbackToTarget(ctx context.Context, helm HelmExecutor, k8sCl
 		if !ok {
 			fmt.Fprintf(&out, "=== Chart: %s === (skipped: not part of the target deploy; left unchanged)\n", name)
 			continue
+		}
+
+		if srcErr := models.CheckChartSource(chart.ChartConfig.RepositoryURL, chart.ChartConfig.ChartPath, name); srcErr != nil {
+			return out.String(), applied, fmt.Errorf("chart %q: %w", name, srcErr)
 		}
 
 		version := chart.ChartConfig.ChartVersion
