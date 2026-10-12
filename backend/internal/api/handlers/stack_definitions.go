@@ -70,6 +70,20 @@ type DefinitionHandler struct {
 // WithUserRepo attaches the user repository. Definition responses then
 // include owner_username, and the owner list filter accepts usernames.
 // Returns h for chaining.
+// msgDefinitionModifyForbidden is the 403 message when a caller may not
+// change a definition.
+const msgDefinitionModifyForbidden = "Only the owner, devops or admin users can change this definition"
+
+// requireDefinitionModify writes 403 and returns false unless the caller owns
+// the definition or has the devops or admin role.
+func requireDefinitionModify(c *gin.Context, def *models.StackDefinition) bool {
+	if isPrivilegedRole(c) || (def.OwnerID != "" && def.OwnerID == middleware.GetUserIDFromContext(c)) {
+		return true
+	}
+	c.JSON(http.StatusForbidden, gin.H{"error": msgDefinitionModifyForbidden})
+	return false
+}
+
 func (h *DefinitionHandler) WithUserRepo(repo models.UserRepository) *DefinitionHandler {
 	h.userRepo = repo
 	return h
@@ -190,7 +204,7 @@ func (h *DefinitionHandler) setDefinitionChartCounts(defs []models.StackDefiniti
 
 // CreateDefinition godoc
 // @Summary     Create a stack definition
-// @Description Create a new stack definition. Definition names are unique per owner.
+// @Description Create a new stack definition. Definition names are unique per owner. Requires the devops or admin role.
 // @Tags        stack-definitions
 // @Accept      json
 // @Produce     json
@@ -198,6 +212,7 @@ func (h *DefinitionHandler) setDefinitionChartCounts(defs []models.StackDefiniti
 // @Success     201        {object} models.StackDefinition
 // @Failure     400        {object} map[string]string
 // @Failure     401        {object} map[string]string
+// @Failure     403        {object} map[string]string
 // @Failure     409        {object} map[string]string "The owner already has a definition with this name"
 // @Failure     500        {object} map[string]string
 // @Router      /api/v1/stack-definitions [post]
@@ -288,6 +303,7 @@ func (h *DefinitionHandler) GetDefinition(c *gin.Context) {
 // @Success     200        {object} models.StackDefinition
 // @Failure     400        {object} map[string]string
 // @Failure     401        {object} map[string]string
+// @Failure     403        {object} map[string]string "Caller is not the owner, devops or admin"
 // @Failure     404        {object} map[string]string
 // @Failure     409        {object} map[string]string "The owner already has a definition with this name"
 // @Failure     500        {object} map[string]string
@@ -303,6 +319,9 @@ func (h *DefinitionHandler) UpdateDefinition(c *gin.Context) {
 	if err != nil {
 		status, message := mapError(err, entityStackDefinition)
 		c.JSON(status, gin.H{"error": message})
+		return
+	}
+	if !requireDefinitionModify(c, existing) {
 		return
 	}
 
@@ -345,6 +364,7 @@ func (h *DefinitionHandler) UpdateDefinition(c *gin.Context) {
 // @Produce     json
 // @Param       id  path     string true "Definition ID"
 // @Success     204 "No Content"
+// @Failure     403 {object} map[string]string "Caller is not the owner, devops or admin"
 // @Failure     404 {object} map[string]string
 // @Failure     409 {object} map[string]string
 // @Router      /api/v1/stack-definitions/{id} [delete]
@@ -352,6 +372,16 @@ func (h *DefinitionHandler) DeleteDefinition(c *gin.Context) {
 	id := c.Param("id")
 	if id == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": msgDefinitionIDRequired})
+		return
+	}
+
+	def, err := h.definitionRepo.FindByID(id)
+	if err != nil {
+		status, message := mapError(err, entityStackDefinition)
+		c.JSON(status, gin.H{"error": message})
+		return
+	}
+	if !requireDefinitionModify(c, def) {
 		return
 	}
 
@@ -804,6 +834,7 @@ func computeUpgradeChanges(defCharts []models.ChartConfig, templateCharts []mode
 // @Success     200 {object} DefinitionWithChartsResponse
 // @Failure     400 {object} map[string]string
 // @Failure     401 {object} map[string]string
+// @Failure     403 {object} map[string]string "Caller is not the owner, devops or admin"
 // @Failure     404 {object} map[string]string
 // @Failure     409 {object} map[string]string "Already at the latest version, or no published version"
 // @Failure     500 {object} map[string]string
@@ -819,6 +850,10 @@ func (h *DefinitionHandler) ApplyUpgrade(c *gin.Context) {
 	if err != nil {
 		status, message := mapError(err, entityStackDefinition)
 		c.JSON(status, gin.H{"error": message})
+		return
+	}
+
+	if !requireDefinitionModify(c, def) {
 		return
 	}
 

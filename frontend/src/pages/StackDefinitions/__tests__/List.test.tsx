@@ -40,9 +40,10 @@ vi.mock('../../../context/NotificationContext', () => ({
   }),
 }));
 
+const mockAuth = { role: 'admin' };
 vi.mock('../../../context/AuthContext', () => ({
   useAuth: () => ({
-    user: { id: '1', username: 'admin', role: 'admin', display_name: 'Admin' },
+    user: { id: '1', username: 'admin', role: mockAuth.role, display_name: 'Admin' },
     isAuthenticated: true,
     isLoading: false,
     login: vi.fn(),
@@ -70,6 +71,21 @@ describe('Stack Definitions List', () => {
 
   afterEach(() => {
     vi.clearAllMocks();
+    mockAuth.role = 'admin';
+  });
+
+  it('hides Create Definition and Import for a user without devops role', async () => {
+    mockAuth.role = 'user';
+    render(
+      <MemoryRouter>
+        <List />
+      </MemoryRouter>
+    );
+    await waitFor(() => {
+      expect(screen.getByText('My Stack')).toBeInTheDocument();
+    });
+    expect(screen.queryByRole('button', { name: /create definition/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /import/i })).not.toBeInTheDocument();
   });
 
   it('shows loading spinner initially', () => {

@@ -14,6 +14,17 @@ vi.mock('react-router-dom', async () => {
   };
 });
 
+const mockAuth = { role: 'admin' };
+vi.mock('../../../context/AuthContext', () => ({
+  useAuth: () => ({
+    user: { id: '1', username: 'tester', role: mockAuth.role, display_name: 'Tester' },
+    isAuthenticated: true,
+    isLoading: false,
+    login: vi.fn(),
+    logout: vi.fn(),
+  }),
+}));
+
 vi.mock('../../../hooks/useUnsavedChanges', () => ({
   useUnsavedChanges: vi.fn(),
 }));
@@ -71,6 +82,7 @@ const mockDefinitionWithCharts = {
 describe('StackDefinitions Form', () => {
   afterEach(() => {
     vi.clearAllMocks();
+    mockAuth.role = 'admin';
   });
 
   it('shows Create Stack Definition heading in create mode', () => {
@@ -483,5 +495,47 @@ describe('StackDefinitions Form', () => {
     await waitFor(() => {
       expect(lastDirtyFlag()).toBe(true);
     });
+  });
+
+  it('tells a user without devops role to start from a template in create mode', () => {
+    mockAuth.role = 'user';
+    render(
+      <MemoryRouter initialEntries={['/stack-definitions/new']}>
+        <NotificationProvider>
+          <Routes>
+            <Route path="/stack-definitions/new" element={<Form />} />
+          </Routes>
+        </NotificationProvider>
+      </MemoryRouter>
+    );
+    expect(screen.getByText(/Only devops and admin users can create a definition/)).toBeInTheDocument();
+    expect(screen.queryByRole('textbox', { name: /name/i })).not.toBeInTheDocument();
+  });
+
+  it('locks the chart source and hides add and remove for a user without devops role', async () => {
+    mockAuth.role = 'user';
+    (definitionService.get as ReturnType<typeof vi.fn>).mockResolvedValue(mockDefinitionWithCharts);
+    renderEdit();
+
+    await waitFor(() => {
+      expect(screen.getByDisplayValue('Test Def')).toBeInTheDocument();
+    });
+    expect(screen.queryByRole('button', { name: /add chart/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /remove chart/i })).not.toBeInTheDocument();
+    expect(screen.getByRole('textbox', { name: /chart name/i })).toBeDisabled();
+    expect(screen.getByRole('textbox', { name: /repository url/i })).toBeDisabled();
+    expect(screen.getByText(/Only devops and admin users can add or remove charts/)).toBeInTheDocument();
+  });
+
+  it('allows chart management for a devops user', async () => {
+    mockAuth.role = 'devops';
+    (definitionService.get as ReturnType<typeof vi.fn>).mockResolvedValue(mockDefinitionWithCharts);
+    renderEdit();
+
+    await waitFor(() => {
+      expect(screen.getByDisplayValue('Test Def')).toBeInTheDocument();
+    });
+    expect(screen.getByRole('button', { name: /add chart/i })).toBeInTheDocument();
+    expect(screen.getByRole('textbox', { name: /chart name/i })).not.toBeDisabled();
   });
 });

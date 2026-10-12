@@ -5134,7 +5134,7 @@ paths:
       consumes:
       - application/json
       description: Create a new stack definition. Definition names are unique per
-        owner.
+        owner. Requires the devops or admin role.
       parameters:
       - description: Definition object
         in: body
@@ -5157,6 +5157,12 @@ paths:
             type: object
         "401":
           description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
           schema:
             additionalProperties:
               type: string
@@ -5190,6 +5196,12 @@ paths:
       responses:
         "204":
           description: No Content
+        "403":
+          description: Caller is not the owner, devops or admin
+          schema:
+            additionalProperties:
+              type: string
+            type: object
         "404":
           description: Not Found
           schema:
@@ -5266,6 +5278,12 @@ paths:
             additionalProperties:
               type: string
             type: object
+        "403":
+          description: Caller is not the owner, devops or admin
+          schema:
+            additionalProperties:
+              type: string
+            type: object
         "404":
           description: Not Found
           schema:
@@ -5291,7 +5309,8 @@ paths:
     post:
       consumes:
       - application/json
-      description: Add a new chart configuration to a stack definition
+      description: Add a new chart configuration to a stack definition. Requires the
+        devops or admin role.
       parameters:
       - description: Definition ID
         in: path
@@ -5317,6 +5336,12 @@ paths:
             additionalProperties:
               type: string
             type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
         "404":
           description: Not Found
           schema:
@@ -5328,7 +5353,8 @@ paths:
       - chart-configs
   /api/v1/stack-definitions/{id}/charts/{chartId}:
     delete:
-      description: Remove a chart configuration from a stack definition
+      description: Remove a chart configuration from a stack definition. Requires
+        the devops or admin role.
       parameters:
       - description: Definition ID
         in: path
@@ -5345,6 +5371,12 @@ paths:
       responses:
         "204":
           description: No Content
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
         "404":
           description: Not Found
           schema:
@@ -5422,6 +5454,12 @@ paths:
             $ref: '#/definitions/models.ChartConfig'
         "400":
           description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
           schema:
             additionalProperties:
               type: string
@@ -5554,6 +5592,12 @@ paths:
             type: object
         "401":
           description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Caller is not the owner, devops or admin
           schema:
             additionalProperties:
               type: string

@@ -159,3 +159,53 @@ func TestSetupRoutes_AuditLogRoleGates(t *testing.T) {
 		})
 	}
 }
+
+// TestSetupRoutes_DefinitionChartRoleGates checks that creating a definition
+// and adding or removing charts need the devops or admin role.
+func TestSetupRoutes_DefinitionChartRoleGates(t *testing.T) {
+	t.Parallel()
+
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	hub := websocket.NewHub()
+	go hub.Run()
+	t.Cleanup(func() { hub.Shutdown() })
+
+	cfg := testConfig()
+	rl := SetupRoutes(router, Deps{
+		Repository:        handlers.NewMockRepository(),
+		HealthChecker:     health.New(),
+		Config:            cfg,
+		Hub:               hub,
+		AuthHandler:       handlers.NewAuthHandler(&stubUserRepo{}, &cfg.Auth, &cfg.OIDC),
+		DefinitionHandler: &handlers.DefinitionHandler{},
+	})
+	t.Cleanup(func() { rl.Stop() })
+
+	routes := []struct{ method, path string }{
+		{http.MethodPost, "/api/v1/stack-definitions"},
+		{http.MethodPost, "/api/v1/stack-definitions/d1/charts"},
+		{http.MethodDelete, "/api/v1/stack-definitions/d1/charts/c1"},
+	}
+	for _, rt := range routes {
+		for _, role := range []string{"user", "devops", "admin"} {
+			rt, role := rt, role
+			t.Run(rt.method+" "+rt.path+" as "+role, func(t *testing.T) {
+				t.Parallel()
+				token, err := middleware.GenerateToken("u-"+role, role, role, cfg.Auth.JWTSecret, time.Hour)
+				require.NoError(t, err)
+				req := httptest.NewRequest(rt.method, rt.path, strings.NewReader(`{}`))
+				req.Header.Set("Authorization", "Bearer "+token)
+				req.Header.Set("Content-Type", "application/json")
+				w := httptest.NewRecorder()
+				router.ServeHTTP(w, req)
+				if role == "user" {
+					assert.Equal(t, http.StatusForbidden, w.Code, w.Body.String())
+				} else {
+					// The empty handler fails after the gate; only the gate matters here.
+					assert.NotEqual(t, http.StatusForbidden, w.Code, w.Body.String())
+				}
+			})
+		}
+	}
+}

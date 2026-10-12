@@ -19,6 +19,8 @@ import FileDownloadIcon from '@mui/icons-material/FileDownload';
 import SystemUpdateAltIcon from '@mui/icons-material/SystemUpdateAlt';
 import { definitionService, templateService } from '../../api/client';
 import { useNotification } from '../../context/NotificationContext';
+import { useAuth } from '../../context/AuthContext';
+import { hasAtLeastRole } from '../../utils/roles';
 import type { StackDefinition, ChartConfig, TemplateChartConfig } from '../../types';
 import YamlEditor from '../../components/YamlEditor';
 import LoadingState from '../../components/LoadingState';
@@ -94,6 +96,10 @@ const Form = () => {
   const isEdit = Boolean(id);
   const navigate = useNavigate();
   const { showSuccess, showError } = useNotification();
+  const { user } = useAuth();
+  // Adding or removing charts and changing a chart source (name, repository,
+  // path, version) needs devops or admin; the backend enforces the same rule.
+  const canManageCharts = hasAtLeastRole(user?.role, 'devops');
 
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
@@ -243,6 +249,22 @@ const Form = () => {
     return <LoadingState label="Loading definition..." />;
   }
 
+  if (!isEdit && !canManageCharts) {
+    return (
+      <Box>
+        <Typography variant="h4" component="h1" gutterBottom>
+          Create Stack Definition
+        </Typography>
+        <Alert severity="info" sx={{ mb: 2 }}>
+          Only devops and admin users can create a definition. Start from a template instead.
+        </Alert>
+        <Button variant="outlined" onClick={() => navigate('/templates')}>
+          Browse Templates
+        </Button>
+      </Box>
+    );
+  }
+
   return (
     <Box>
       <Typography variant="h4" component="h1" gutterBottom>
@@ -305,8 +327,13 @@ const Form = () => {
       <Paper sx={{ p: 3, mb: 3 }}>
         <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
           <Typography variant="h6">Charts</Typography>
-          <Button startIcon={<AddIcon />} onClick={addChart}>Add Chart</Button>
+          {canManageCharts && <Button startIcon={<AddIcon />} onClick={addChart}>Add Chart</Button>}
         </Box>
+        {!canManageCharts && (
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+            Only devops and admin users can add or remove charts or change a chart source.
+          </Typography>
+        )}
 
         {charts.length === 0 && (
           <Typography color="text.secondary">No charts added yet.</Typography>
@@ -330,7 +357,7 @@ const Form = () => {
                   </Tooltip>
                 )}
               </Box>
-              {!isRequired && (
+              {!isRequired && canManageCharts && (
               <IconButton onClick={() => removeChart(index)} size="small" color="error" aria-label={`Remove chart ${charts[index]?.chart_name || index + 1}`}>
                 <DeleteIcon />
               </IconButton>
@@ -338,14 +365,14 @@ const Form = () => {
             </Box>
             <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
               <Box sx={{ display: 'flex', gap: 2 }}>
-                <TextField label="Chart Name" value={chart.chart_name} onChange={(e) => updateChart(index, 'chart_name', e.target.value)} fullWidth required size="small" />
+                <TextField label="Chart Name" value={chart.chart_name} onChange={(e) => updateChart(index, 'chart_name', e.target.value)} disabled={!canManageCharts} fullWidth required size="small" />
                 <TextField label="Deploy Order" type="number" value={chart.deploy_order} onChange={(e) => updateChart(index, 'deploy_order', Number.parseInt(e.target.value) || 0)} sx={{ width: 120 }} size="small" />
               </Box>
-              <TextField label="Repository URL" value={chart.repository_url} onChange={(e) => updateChart(index, 'repository_url', e.target.value)} fullWidth size="small" />
+              <TextField label="Repository URL" value={chart.repository_url} onChange={(e) => updateChart(index, 'repository_url', e.target.value)} disabled={!canManageCharts} fullWidth size="small" />
               <TextField label="Source Repo URL" value={chart.source_repo_url} onChange={(e) => updateChart(index, 'source_repo_url', e.target.value)} fullWidth size="small" />
               <Box sx={{ display: 'flex', gap: 2 }}>
-                <TextField label="Chart Path" value={chart.chart_path} onChange={(e) => updateChart(index, 'chart_path', e.target.value)} fullWidth size="small" />
-                <TextField label="Chart Version" value={chart.chart_version} onChange={(e) => updateChart(index, 'chart_version', e.target.value)} sx={{ width: 150 }} size="small" />
+                <TextField label="Chart Path" value={chart.chart_path} onChange={(e) => updateChart(index, 'chart_path', e.target.value)} disabled={!canManageCharts} fullWidth size="small" />
+                <TextField label="Chart Version" value={chart.chart_version} onChange={(e) => updateChart(index, 'chart_version', e.target.value)} disabled={!canManageCharts} sx={{ width: 150 }} size="small" />
               </Box>
               <Divider />
               <YamlEditor

@@ -12,7 +12,7 @@ import (
 
 // AddChartConfig godoc
 // @Summary     Add a chart to a definition
-// @Description Add a new chart configuration to a stack definition
+// @Description Add a new chart configuration to a stack definition. Requires the devops or admin role.
 // @Tags        chart-configs
 // @Accept      json
 // @Produce     json
@@ -20,6 +20,7 @@ import (
 // @Param       chart body     models.ChartConfig true "Chart config"
 // @Success     201   {object} models.ChartConfig
 // @Failure     400   {object} map[string]string
+// @Failure     403   {object} map[string]string
 // @Failure     404   {object} map[string]string
 // @Router      /api/v1/stack-definitions/{id}/charts [post]
 func (h *DefinitionHandler) AddChartConfig(c *gin.Context) {
@@ -140,6 +141,7 @@ type chartConfigUpdateRequest struct {
 // @Param       chart   body     chartConfigUpdateRequest true "Updated chart config"
 // @Success     200     {object} models.ChartConfig
 // @Failure     400     {object} map[string]string
+// @Failure     403     {object} map[string]string
 // @Failure     404     {object} map[string]string
 // @Failure     500     {object} map[string]string
 // @Router      /api/v1/stack-definitions/{id}/charts/{chartId} [put]
@@ -152,6 +154,25 @@ func (h *DefinitionHandler) UpdateChartConfig(c *gin.Context) {
 	var update chartConfigUpdateRequest
 	if err := c.ShouldBindJSON(&update); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": msgInvalidRequestFormat})
+		return
+	}
+
+	// The chart source (name, repository, path, version) decides what Helm
+	// installs with the backend identity. Only devops and admin users may
+	// change it; other users may change the default values and the order.
+	if !isPrivilegedRole(c) {
+		def, err := h.definitionRepo.FindByID(existing.StackDefinitionID)
+		if err != nil {
+			status, message := mapError(err, entityStackDefinition)
+			c.JSON(status, gin.H{"error": message})
+			return
+		}
+		if !requireDefinitionModify(c, def) {
+			return
+		}
+	}
+	if !isPrivilegedRole(c) && chartSourceChanged(existing, &update) {
+		c.JSON(http.StatusForbidden, gin.H{"error": msgChartSourceForbidden})
 		return
 	}
 
@@ -194,14 +215,30 @@ func (h *DefinitionHandler) UpdateChartConfig(c *gin.Context) {
 	c.JSON(http.StatusOK, existing)
 }
 
+// msgChartSourceForbidden is the 403 message when a user without the devops
+// or admin role changes a chart source.
+const msgChartSourceForbidden = "Only devops and admin users can change the chart name, repository, path or version"
+
+// chartSourceChanged reports whether the update changes the chart name,
+// repository URL, chart path or chart version. A field sent with the stored
+// value is no change.
+func chartSourceChanged(existing *models.ChartConfig, update *chartConfigUpdateRequest) bool {
+	changed := func(p *string, cur string) bool { return p != nil && *p != cur }
+	return changed(update.ChartName, existing.ChartName) ||
+		changed(update.RepositoryURL, existing.RepositoryURL) ||
+		changed(update.ChartPath, existing.ChartPath) ||
+		changed(update.ChartVersion, existing.ChartVersion)
+}
+
 // DeleteChartConfig godoc
 // @Summary     Delete a chart config
-// @Description Remove a chart configuration from a stack definition
+// @Description Remove a chart configuration from a stack definition. Requires the devops or admin role.
 // @Tags        chart-configs
 // @Produce     json
 // @Param       id      path     string true "Definition ID"
 // @Param       chartId path     string true "Chart config ID"
 // @Success     204     "No Content"
+// @Failure     403     {object} map[string]string
 // @Failure     404     {object} map[string]string
 // @Router      /api/v1/stack-definitions/{id}/charts/{chartId} [delete]
 func (h *DefinitionHandler) DeleteChartConfig(c *gin.Context) {

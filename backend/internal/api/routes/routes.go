@@ -326,12 +326,15 @@ func SetupRoutes(router *gin.Engine, deps Deps) *RateLimiters {
 			}
 		}
 
-		// Stack Definitions
+		// Stack Definitions. Creating a definition and adding or removing
+		// charts needs devops or admin: the chart set decides what Helm
+		// installs. Users get definitions from templates (instantiate,
+		// quick deploy) and may edit their names, values and branches.
 		if deps.DefinitionHandler != nil {
 			definitions := authed.Group("/stack-definitions")
 			{
 				definitions.GET("", deps.DefinitionHandler.ListDefinitions)
-				definitions.POST("", deps.DefinitionHandler.CreateDefinition)
+				definitions.POST("", devops, deps.DefinitionHandler.CreateDefinition)
 				definitions.POST("/import", devops, deps.DefinitionHandler.ImportDefinition)
 				definitions.GET("/:id", deps.DefinitionHandler.GetDefinition)
 				definitions.GET("/:id/export", devops, deps.DefinitionHandler.ExportDefinition)
@@ -339,10 +342,10 @@ func SetupRoutes(router *gin.Engine, deps Deps) *RateLimiters {
 				definitions.DELETE("/:id", deps.DefinitionHandler.DeleteDefinition)
 				definitions.GET("/:id/check-upgrade", deps.DefinitionHandler.CheckUpgrade)
 				definitions.POST("/:id/upgrade", deps.DefinitionHandler.ApplyUpgrade)
-				definitions.POST("/:id/charts", deps.DefinitionHandler.AddChartConfig)
+				definitions.POST("/:id/charts", devops, deps.DefinitionHandler.AddChartConfig)
 				definitions.GET("/:id/charts/:chartId", deps.DefinitionHandler.GetChartConfig)
 				definitions.PUT("/:id/charts/:chartId", deps.DefinitionHandler.UpdateChartConfig)
-				definitions.DELETE("/:id/charts/:chartId", deps.DefinitionHandler.DeleteChartConfig)
+				definitions.DELETE("/:id/charts/:chartId", devops, deps.DefinitionHandler.DeleteChartConfig)
 			}
 		}
 
