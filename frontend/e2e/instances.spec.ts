@@ -109,11 +109,14 @@ test.describe('Stack Instance Management', () => {
       timeout: 10_000,
     });
     await expect(page.getByText('Namespace:')).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Export Values' })).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Clone' })).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Delete' })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Save Changes' })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Back to Dashboard' })).toBeVisible();
+    // Export, clone and delete are in the Actions menu.
+    await page.getByRole('button', { name: 'Actions' }).click();
+    const actionsMenu = page.getByRole('menu', { name: 'Actions' });
+    await expect(actionsMenu.getByRole('menuitem', { name: /Export values/ })).toBeVisible();
+    await expect(actionsMenu.getByRole('menuitem', { name: 'Clone' })).toBeVisible();
+    await expect(actionsMenu.getByRole('menuitem', { name: 'Delete' })).toBeVisible();
   });
 
   test('clone an instance', async ({ page }) => {
@@ -135,7 +138,8 @@ test.describe('Stack Instance Management', () => {
     const originalUrl = page.url();
 
     // Clone: the dialog suggests "<name>-copy"
-    await page.getByRole('button', { name: 'Clone' }).click();
+    await page.getByRole('button', { name: 'Actions' }).click();
+    await page.getByRole('menuitem', { name: 'Clone' }).click();
     const cloneDialog = page.getByRole('dialog', { name: 'Clone Instance' });
     await expect(cloneDialog.getByLabel('Name')).toHaveValue(`${instName}-copy`);
     await cloneDialog.getByRole('button', { name: 'Create Clone' }).click();
@@ -173,8 +177,9 @@ test.describe('Stack Instance Management', () => {
       timeout: 10_000,
     });
 
-    // Click Delete
-    await page.getByRole('button', { name: 'Delete' }).click();
+    // Click Delete in the Actions menu
+    await page.getByRole('button', { name: 'Actions' }).click();
+    await page.getByRole('menuitem', { name: 'Delete' }).click();
     // Confirm dialog appears
     await expect(page.getByText(/Are you sure you want to delete/)).toBeVisible({ timeout: 5_000 });
     // Click the confirm Delete button scoped to the dialog
@@ -348,13 +353,9 @@ test.describe('Stack Instance Management', () => {
       timeout: 10_000,
     });
 
-    // The Export Values button should be visible and clickable
-    const exportButton = page.getByRole('button', { name: 'Export Values' });
-    await expect(exportButton).toBeVisible();
-    await expect(exportButton).toBeEnabled();
-
-    // The button opens a menu: all charts as a ZIP, or one chart as YAML.
-    await exportButton.click();
+    // "Export values" in the Actions menu opens a menu: all charts as a ZIP, or one chart as YAML.
+    await page.getByRole('button', { name: 'Actions' }).click();
+    await page.getByRole('menuitem', { name: /Export values/ }).click();
     const zipItem = page.getByRole('menuitem', { name: 'All charts (ZIP)' });
     await expect(zipItem).toBeVisible();
 

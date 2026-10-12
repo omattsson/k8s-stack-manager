@@ -85,6 +85,9 @@ vi.mock('../../../api/client', () => ({
     rollback: vi.fn(),
     follow: vi.fn(),
     unfollow: vi.fn(),
+    listActions: vi.fn().mockResolvedValue({ instance_id: '123', can_invoke: true, actions: [] }),
+    invokeAction: vi.fn(),
+    getActionJobLog: vi.fn(),
   },
   definitionService: {
     get: vi.fn(),
@@ -118,10 +121,6 @@ vi.mock('../../../components/YamlEditor', () => ({
       )}
     </div>
   ),
-}));
-
-vi.mock('../../../components/InstanceActionsMenu', () => ({
-  default: ({ instanceId }: { instanceId: string }) => <div data-testid="instance-actions-menu">{instanceId}</div>,
 }));
 
 vi.mock('../../../utils/download', () => ({
@@ -246,6 +245,24 @@ const renderDetail = () =>
     </MemoryRouter>
   );
 
+type User = ReturnType<typeof userEvent.setup>;
+
+/** Open the header "Actions" menu and return it. */
+const openActionsMenu = async (user: User) => {
+  await user.click(await screen.findByRole('button', { name: 'Actions' }));
+  return screen.findByRole('menu', { name: 'Actions' });
+};
+
+/**
+ * Open the header "Actions" menu, click an item and wait until the menu is
+ * gone (while it closes, the rest of the page is hidden from role queries).
+ */
+const clickMenuAction = async (user: User, name: string | RegExp) => {
+  const menu = await openActionsMenu(user);
+  await user.click(within(menu).getByRole('menuitem', { name }));
+  await waitFor(() => expect(menu).not.toBeInTheDocument());
+};
+
 const mockInstance = {
   id: '123',
   name: 'Test Instance',
@@ -369,19 +386,11 @@ describe('StackInstances Detail', () => {
     expect(screen.getByText('Owner: user1')).toBeInTheDocument();
   });
 
-  it('shows the actions menu for the owner', async () => {
+  it('loads the custom actions of the instance for the Actions menu', async () => {
     setupMocks();
     renderDetail();
-    expect(await screen.findByTestId('instance-actions-menu')).toHaveTextContent('123');
-  });
-
-  it('shows the actions menu also when the user may not modify the instance', async () => {
-    authState.user = { id: 'other', username: 'bob', role: 'user', display_name: 'Bob' };
-    setupMocks();
-    renderDetail();
-    // The menu itself disables the actions (can_invoke is false).
-    expect(await screen.findByTestId('instance-actions-menu')).toBeInTheDocument();
-    expect(screen.getByText(/Read-only/)).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: 'Actions' })).toHaveAttribute('aria-haspopup', 'menu');
+    expect(instanceService.listActions).toHaveBeenCalledWith('123');
   });
 
   it('shows the owner username instead of the owner ID', async () => {
@@ -466,7 +475,7 @@ describe('StackInstances Detail', () => {
       expect(screen.getByText('Test Instance')).toBeInTheDocument();
     });
 
-    await user.click(screen.getByRole('button', { name: /delete/i }));
+    await clickMenuAction(user, 'Delete');
 
     await waitFor(() => {
       expect(screen.getByText('Delete Instance')).toBeInTheDocument();
@@ -824,34 +833,38 @@ describe('StackInstances Detail', () => {
     expect(screen.getByText('Instance is stopped')).toBeInTheDocument();
   });
 
-  it('shows Clean Namespace button for running instance', async () => {
+  it('shows Clean namespace in the Actions menu for running instance', async () => {
     setupMocks({ status: 'running' });
     renderDetail();
 
     await waitFor(() => {
       expect(screen.getByText('Test Instance')).toBeInTheDocument();
     });
-    expect(screen.getByRole('button', { name: /clean namespace/i })).toBeInTheDocument();
+    const menu = await openActionsMenu(userEvent.setup());
+    expect(within(menu).getByRole('menuitem', { name: 'Clean namespace' })).toBeInTheDocument();
   });
 
-  it('shows Clean Namespace button for error instance', async () => {
+  it('shows Clean namespace in the Actions menu for error instance', async () => {
     setupMocks({ status: 'error' }, { deployLogReject: true });
     renderDetail();
 
     await waitFor(() => {
       expect(screen.getByText('Test Instance')).toBeInTheDocument();
     });
-    expect(screen.getByRole('button', { name: /clean namespace/i })).toBeInTheDocument();
+    const menu = await openActionsMenu(userEvent.setup());
+    expect(within(menu).getByRole('menuitem', { name: 'Clean namespace' })).toBeInTheDocument();
   });
 
-  it('does not show Clean Namespace button for draft instance', async () => {
+  it('does not show Clean namespace in the Actions menu for draft instance', async () => {
     setupMocks({ status: 'draft' }, { deployLogReject: true });
     renderDetail();
 
     await waitFor(() => {
       expect(screen.getByText('Test Instance')).toBeInTheDocument();
     });
-    expect(screen.queryByRole('button', { name: /clean namespace/i })).not.toBeInTheDocument();
+    const menu = await openActionsMenu(userEvent.setup());
+    expect(within(menu).getByRole('menuitem', { name: 'Delete' })).toBeInTheDocument();
+    expect(within(menu).queryByRole('menuitem', { name: 'Clean namespace' })).not.toBeInTheDocument();
   });
 
   it('opens confirmation dialog when Clean Namespace is clicked', async () => {
@@ -863,7 +876,7 @@ describe('StackInstances Detail', () => {
       expect(screen.getByText('Test Instance')).toBeInTheDocument();
     });
 
-    await user.click(screen.getByRole('button', { name: /clean namespace/i }));
+    await clickMenuAction(user, 'Clean namespace');
 
     await waitFor(() => {
       expect(screen.getByText('Clean Namespace?')).toBeInTheDocument();
@@ -888,7 +901,7 @@ describe('StackInstances Detail', () => {
       expect(screen.getByText('Test Instance')).toBeInTheDocument();
     });
 
-    await user.click(screen.getByRole('button', { name: /clean namespace/i }));
+    await clickMenuAction(user, 'Clean namespace');
 
     await waitFor(() => {
       expect(screen.getByText('Clean Namespace?')).toBeInTheDocument();
@@ -912,7 +925,7 @@ describe('StackInstances Detail', () => {
       expect(screen.getByText('Test Instance')).toBeInTheDocument();
     });
 
-    await user.click(screen.getByRole('button', { name: /clean namespace/i }));
+    await clickMenuAction(user, 'Clean namespace');
 
     await waitFor(() => {
       expect(screen.getByText('Clean Namespace?')).toBeInTheDocument();
@@ -948,14 +961,15 @@ describe('StackInstances Detail', () => {
     expect(screen.getByText('Instance is cleaning')).toBeInTheDocument();
   });
 
-  it('shows Clean Namespace button for stopped instance', async () => {
+  it('shows Clean namespace in the Actions menu for stopped instance', async () => {
     setupMocks({ status: 'stopped' }, { deployLogReject: true });
     renderDetail();
 
     await waitFor(() => {
       expect(screen.getByText('Test Instance')).toBeInTheDocument();
     });
-    expect(screen.getByRole('button', { name: /clean namespace/i })).toBeInTheDocument();
+    const menu = await openActionsMenu(userEvent.setup());
+    expect(within(menu).getByRole('menuitem', { name: 'Clean namespace' })).toBeInTheDocument();
   });
 
   it('shows "Using instance branch" chip when no branch override exists', async () => {
@@ -1235,7 +1249,7 @@ describe('StackInstances Detail', () => {
       expect(screen.getByText('Test Instance')).toBeInTheDocument();
     });
 
-    await user.click(screen.getByRole('button', { name: /delete/i }));
+    await clickMenuAction(user, 'Delete');
 
     await waitFor(() => {
       expect(screen.getByText('Delete Instance')).toBeInTheDocument();
@@ -1261,7 +1275,7 @@ describe('StackInstances Detail', () => {
       expect(screen.getByText('Test Instance')).toBeInTheDocument();
     });
 
-    await user.click(screen.getByRole('button', { name: /delete/i }));
+    await clickMenuAction(user, 'Delete');
     await waitFor(() => {
       expect(screen.getByText('Delete Instance')).toBeInTheDocument();
     });
@@ -1282,7 +1296,7 @@ describe('StackInstances Detail', () => {
       expect(screen.getByText('Test Instance')).toBeInTheDocument();
     });
 
-    await user.click(screen.getByRole('button', { name: 'Clone' }));
+    await clickMenuAction(user, 'Clone');
     const dialog = await screen.findByRole('dialog', { name: 'Clone Instance' });
     expect(within(dialog).getByRole('textbox', { name: /name/i })).toHaveValue('test-instance-copy');
     expect(within(dialog).getByRole('textbox', { name: /branch/i })).toHaveValue('main');
@@ -1298,7 +1312,7 @@ describe('StackInstances Detail', () => {
       expect(screen.getByText('Test Instance')).toBeInTheDocument();
     });
 
-    await user.click(screen.getByRole('button', { name: 'Clone' }));
+    await clickMenuAction(user, 'Clone');
     const dialog = await screen.findByRole('dialog', { name: 'Clone Instance' });
     const nameInput = within(dialog).getByRole('textbox', { name: /name/i });
 
@@ -1326,7 +1340,7 @@ describe('StackInstances Detail', () => {
       expect(screen.getByText('Test Instance')).toBeInTheDocument();
     });
 
-    await user.click(screen.getByRole('button', { name: 'Clone' }));
+    await clickMenuAction(user, 'Clone');
     const dialog = await screen.findByRole('dialog', { name: 'Clone Instance' });
     const nameInput = within(dialog).getByRole('textbox', { name: /name/i });
     await user.clear(nameInput);
@@ -1351,7 +1365,7 @@ describe('StackInstances Detail', () => {
       expect(screen.getByText('Test Instance')).toBeInTheDocument();
     });
 
-    await user.click(screen.getByRole('button', { name: 'Clone' }));
+    await clickMenuAction(user, 'Clone');
     const dialog = await screen.findByRole('dialog', { name: 'Clone Instance' });
     await user.click(within(dialog).getByRole('button', { name: 'Create Clone' }));
 
@@ -1369,7 +1383,7 @@ describe('StackInstances Detail', () => {
       expect(screen.getByText('Test Instance')).toBeInTheDocument();
     });
 
-    await user.click(screen.getByRole('button', { name: 'Clone' }));
+    await clickMenuAction(user, 'Clone');
     const dialog = await screen.findByRole('dialog', { name: 'Clone Instance' });
     await user.click(within(dialog).getByRole('button', { name: 'Create Clone' }));
 
@@ -1389,7 +1403,7 @@ describe('StackInstances Detail', () => {
       expect(screen.getByText('Test Instance')).toBeInTheDocument();
     });
 
-    await user.click(screen.getByRole('button', { name: /export values/i }));
+    await clickMenuAction(user, /export values/i);
     await user.click(await screen.findByRole('menuitem', { name: 'All charts (ZIP)' }));
 
     await waitFor(() => {
@@ -1411,7 +1425,7 @@ describe('StackInstances Detail', () => {
       expect(screen.getByText('Test Instance')).toBeInTheDocument();
     });
 
-    await user.click(screen.getByRole('button', { name: /export values/i }));
+    await clickMenuAction(user, /export values/i);
     await user.click(await screen.findByRole('menuitem', { name: 'frontend (YAML)' }));
 
     await waitFor(() => {
@@ -1431,7 +1445,7 @@ describe('StackInstances Detail', () => {
       expect(screen.getByText('Test Instance')).toBeInTheDocument();
     });
 
-    await user.click(screen.getByRole('button', { name: /export values/i }));
+    await clickMenuAction(user, /export values/i);
     await user.click(await screen.findByRole('menuitem', { name: 'All charts (ZIP)' }));
 
     await waitFor(() => {
@@ -1456,7 +1470,7 @@ describe('StackInstances Detail', () => {
       expect(screen.getByText('Test Instance')).toBeInTheDocument();
     });
 
-    await user.click(screen.getByRole('button', { name: /export values/i }));
+    await clickMenuAction(user, /export values/i);
     await user.click(await screen.findByRole('menuitem', { name: 'All charts (ZIP)' }));
 
     await waitFor(() => {
@@ -1521,7 +1535,7 @@ describe('StackInstances Detail', () => {
       expect(screen.getByText('Test Instance')).toBeInTheDocument();
     });
 
-    await user.click(screen.getByRole('button', { name: /clean namespace/i }));
+    await clickMenuAction(user, 'Clean namespace');
 
     await waitFor(() => {
       expect(screen.getByText('Clean Namespace?')).toBeInTheDocument();
@@ -1666,7 +1680,7 @@ describe('StackInstances Detail', () => {
       expect(screen.getByText('Test Instance')).toBeInTheDocument();
     });
 
-    await user.click(screen.getByRole('button', { name: /delete/i }));
+    await clickMenuAction(user, 'Delete');
 
     await waitFor(() => {
       expect(screen.getByText('Delete Instance')).toBeInTheDocument();
@@ -1691,7 +1705,7 @@ describe('StackInstances Detail', () => {
       expect(screen.getByText('Test Instance')).toBeInTheDocument();
     });
 
-    await user.click(screen.getByRole('button', { name: /clean namespace/i }));
+    await clickMenuAction(user, 'Clean namespace');
 
     await waitFor(() => {
       expect(screen.getByText('Clean Namespace?')).toBeInTheDocument();
@@ -2128,14 +2142,16 @@ describe('StackInstances Detail permissions', () => {
       expect(screen.getByText('Test Instance')).toBeInTheDocument();
     });
     expect(screen.getByRole('button', { name: 'Stop' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Clean Namespace' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Delete' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Save Changes' })).toBeInTheDocument();
     expect(screen.getByText('Your Overrides')).toBeInTheDocument();
     expect(screen.queryByText(/Overrides are visible to the owner/)).not.toBeInTheDocument();
     expect(screen.queryByText(/Read-only: you are not the owner/)).not.toBeInTheDocument();
     expect(instanceService.getOverrides).toHaveBeenCalledWith('123');
     expect(branchOverrideService.list).toHaveBeenCalledWith('123');
+    // Clean namespace and Delete are in the Actions menu.
+    const menu = await openActionsMenu(userEvent.setup());
+    expect(within(menu).getByRole('menuitem', { name: 'Clean namespace' })).toBeInTheDocument();
+    expect(within(menu).getByRole('menuitem', { name: 'Delete' })).toBeInTheDocument();
   };
 
   it.each([
@@ -2166,17 +2182,21 @@ describe('StackInstances Detail permissions', () => {
       expect(screen.getByText('Test Instance')).toBeInTheDocument();
     });
     expect(screen.getByText('Read-only: you are not the owner of this stack.')).toBeInTheDocument();
-    for (const name of ['Deploy', 'Stop', 'Clean Namespace', 'Delete', 'Save Changes', 'Extend']) {
+    for (const name of ['Deploy', 'Stop', 'Save Changes', 'Extend']) {
       expect(screen.queryByRole('button', { name })).not.toBeInTheDocument();
     }
-    // Viewing and copying stay available.
-    expect(screen.getByRole('button', { name: 'Export Values' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Clone' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Back to Dashboard' })).toBeInTheDocument();
     expect(screen.getByTestId('status-badge')).toHaveTextContent('running');
     expect(screen.getByText('Overrides are visible to the owner, admins and devops users.')).toBeInTheDocument();
     expect(screen.queryByText('Your Overrides')).not.toBeInTheDocument();
     expect(screen.getByText('Default Values')).toBeInTheDocument();
+    // Viewing and copying stay available in the Actions menu; Clean namespace and Delete do not.
+    const menu = await openActionsMenu(userEvent.setup());
+    expect(within(menu).getByRole('menuitem', { name: /export values/i })).toBeInTheDocument();
+    expect(within(menu).getByRole('menuitem', { name: 'Clone' })).toBeInTheDocument();
+    expect(within(menu).queryByRole('menuitem', { name: 'Clean namespace' })).not.toBeInTheDocument();
+    expect(within(menu).queryByRole('menuitem', { name: 'Delete' })).not.toBeInTheDocument();
+    expect(within(menu).queryByRole('separator')).not.toBeInTheDocument();
   });
 
   it('shows the TTL countdown but hides Extend for another user', async () => {
@@ -2754,5 +2774,114 @@ describe('StackInstances Detail redeploy, rollback and drift', () => {
       });
       expect(screen.queryByTestId('deploy-preview-dialog')).not.toBeInTheDocument();
     });
+  });
+});
+
+describe('StackInstances Detail Actions menu', () => {
+  const seedAction = {
+    name: 'seed-data',
+    label: 'Seed data',
+    description: 'Load seed data',
+    parameters: [],
+    has_job_log: false,
+    can_invoke: true,
+  };
+
+  const mockActions = (actions: unknown[]) =>
+    (instanceService.listActions as MockFn).mockResolvedValue({ instance_id: '123', can_invoke: true, actions });
+
+  /** Menu entries in DOM order: the item text, or '---' for a divider. */
+  const menuEntries = (menu: HTMLElement) =>
+    Array.from(menu.querySelectorAll('[role="menuitem"], [role="separator"], hr')).map((el) =>
+      el.getAttribute('role') === 'menuitem' ? (el.textContent ?? '') : '---',
+    );
+
+  afterEach(() => {
+    vi.clearAllMocks();
+    mockActions([]);
+    authState.user = { id: 'user1', username: 'alice', role: 'user', display_name: 'Alice' };
+  });
+
+  it('shows the groups in order: custom actions, export and clone, clean namespace and delete', async () => {
+    const user = userEvent.setup();
+    mockActions([seedAction]);
+    setupMocks({ status: 'running' });
+    renderDetail();
+
+    const menu = await openActionsMenu(user);
+    await within(menu).findByRole('menuitem', { name: /Seed data/ });
+    expect(menuEntries(menu)).toEqual([
+      'Seed dataLoad seed data',
+      '---',
+      'Export values…',
+      'Clone',
+      '---',
+      'Clean namespace',
+      'Delete',
+    ]);
+  });
+
+  it('omits the custom actions group when the server lists no actions', async () => {
+    const user = userEvent.setup();
+    setupMocks({ status: 'running' });
+    renderDetail();
+
+    const menu = await openActionsMenu(user);
+    expect(menuEntries(menu)).toEqual(['Export values…', 'Clone', '---', 'Clean namespace', 'Delete']);
+  });
+
+  it('omits the custom actions group when the action list call fails', async () => {
+    const user = userEvent.setup();
+    (instanceService.listActions as MockFn).mockRejectedValue(new Error('boom'));
+    setupMocks({ status: 'draft' }, { deployLogReject: true });
+    renderDetail();
+
+    const menu = await openActionsMenu(user);
+    expect(menuEntries(menu)).toEqual(['Export values…', 'Clone', '---', 'Delete']);
+  });
+
+  it('opens the action dialog and closes the menu when a custom action is clicked', async () => {
+    const user = userEvent.setup();
+    mockActions([seedAction]);
+    setupMocks();
+    renderDetail();
+
+    const menu = await openActionsMenu(user);
+    await user.click(await within(menu).findByRole('menuitem', { name: /Seed data/ }));
+
+    expect(await screen.findByRole('dialog', { name: 'Seed data' })).toBeInTheDocument();
+    await waitFor(() => expect(menu).not.toBeInTheDocument());
+  });
+
+  it('shows a disabled action and no clean namespace or delete for a read-only user', async () => {
+    const user = userEvent.setup();
+    authState.user = { id: 'u-bob', username: 'bob', role: 'user', display_name: 'Bob' };
+    mockActions([{ ...seedAction, can_invoke: false }]);
+    setupMocks({ status: 'running' });
+    renderDetail();
+
+    const menu = await openActionsMenu(user);
+    const item = await within(menu).findByRole('menuitem', { name: /Seed data/ });
+    expect(item).toHaveAttribute('aria-disabled', 'true');
+    expect(within(item).getByText('Only the owner, an admin or a devops user can run this action')).toBeInTheDocument();
+    expect(within(menu).queryByRole('menuitem', { name: 'Clean namespace' })).not.toBeInTheDocument();
+    expect(within(menu).queryByRole('menuitem', { name: 'Delete' })).not.toBeInTheDocument();
+    expect(menuEntries(menu)).toEqual([
+      'Seed dataOnly the owner, an admin or a devops user can run this action',
+      '---',
+      'Export values…',
+      'Clone',
+    ]);
+  });
+
+  it('opens the export menu with all charts and one item per chart', async () => {
+    const user = userEvent.setup();
+    setupMocks();
+    renderDetail();
+
+    await clickMenuAction(user, /export values/i);
+    const exportMenu = await screen.findByRole('menu', { name: 'Export values' });
+    expect(within(exportMenu).getByRole('menuitem', { name: 'All charts (ZIP)' })).toBeInTheDocument();
+    expect(within(exportMenu).getByRole('menuitem', { name: 'frontend (YAML)' })).toBeInTheDocument();
   });
 });

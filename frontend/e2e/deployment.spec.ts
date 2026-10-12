@@ -564,7 +564,7 @@ test.describe('Deployment UI', () => {
     await expect(page.getByText('Deployment History')).toBeVisible({ timeout: 15_000 });
   });
 
-  test('Clean Namespace button is visible for error instance', async ({ page }) => {
+  test('Clean namespace menu item is visible for error instance', async ({ page }) => {
     const tplName = uniqueName('tpl-clean-btn');
     const templateId = await createAndPublishTemplate(page, tplName);
     const defName = uniqueName('def-clean-btn');
@@ -620,9 +620,10 @@ test.describe('Deployment UI', () => {
     // Reload the page so the UI reflects the error state.
     await page.reload();
 
-    // Verify Clean Namespace button is visible for error instance.
+    // Verify the Actions menu has Clean namespace for an error instance.
+    await page.getByRole('button', { name: 'Actions' }).click({ timeout: 10_000 });
     await expect(
-      page.getByRole('button', { name: 'Clean Namespace' }),
+      page.getByRole('menuitem', { name: 'Clean namespace' }),
     ).toBeVisible({ timeout: 10_000 });
   });
 });

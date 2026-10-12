@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback, useRef, useMemo } from 'react';
+import type { ReactNode } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useWebSocket } from '../../hooks/useWebSocket';
 import type { WsMessage, DeploymentStatusPayload } from '../../hooks/useWebSocket';
@@ -19,6 +20,7 @@ import {
   Tooltip,
   Menu,
   MenuItem,
+  ListItemText,
   Dialog,
   DialogTitle,
   DialogContent,
@@ -49,7 +51,7 @@ import { canModifyInstance } from '../../utils/roles';
 import { describeApiError } from '../../utils/apiError';
 import { downloadBlob } from '../../utils/download';
 import ExtendTtlMenu from '../../components/ExtendTtlMenu';
-import InstanceActionsMenu from '../../components/InstanceActionsMenu';
+import { useInstanceActions, actionSecondaryText } from '../../components/InstanceActionsMenu';
 import { successfulDeploys, currentDeployLogId, defaultRollbackTarget } from '../../utils/deployHistory';
 import { mergeInstanceUpdate } from '../../utils/instanceState';
 import CloneDialog from './CloneDialog';
@@ -86,6 +88,9 @@ const Detail = () => {
   const { showSuccess, showError: showErrorToast } = useNotification();
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [exportMenuAnchor, setExportMenuAnchor] = useState<HTMLElement | null>(null);
+  /** Anchor of the header "Actions" menu (custom actions, export, clone, clean, delete). */
+  const [actionsMenuAnchor, setActionsMenuAnchor] = useState<HTMLElement | null>(null);
+  const instanceActions = useInstanceActions(id);
   const [deployPreviewOpen, setDeployPreviewOpen] = useState(false);
   const [unsavedDeployOpen, setUnsavedDeployOpen] = useState(false);
   const [deploying, setDeploying] = useState(false);
@@ -692,13 +697,68 @@ const Detail = () => {
           {stopping ? 'Stopping...' : 'Stop'}
         </Button>
       )}
-      {canClean && (
-        <Button variant="outlined" color="error" onClick={() => setCleanDialogOpen(true)} disabled={cleaning}>
-          {cleaning ? 'Cleaning...' : 'Clean Namespace'}
-        </Button>
-      )}
     </>
   );
+
+  /** Close the header "Actions" menu, then run the item action (for example open a dialog). */
+  const fromActionsMenu = (run: () => void) => () => {
+    setActionsMenuAnchor(null);
+    run();
+  };
+
+  /**
+   * Items of the header "Actions" menu, in groups with a divider between
+   * them: the custom actions of the server; export values and clone; for a
+   * user who can modify the instance, clean namespace and delete.
+   */
+  const renderActionsMenuItems = () => {
+    const items: ReactNode[] = instanceActions.actions.map((a) => (
+      <MenuItem
+        key={`action-${a.name}`}
+        disabled={!a.can_invoke}
+        onClick={fromActionsMenu(() => instanceActions.openAction(a))}
+      >
+        <ListItemText primary={a.label} secondary={actionSecondaryText(a)} />
+      </MenuItem>
+    ));
+    if (items.length > 0) items.push(<Divider key="divider-custom" />);
+    items.push(
+      <MenuItem
+        key="export"
+        aria-haspopup="menu"
+        onClick={() => {
+          // Open the export menu at the place of the Actions button.
+          const anchor = actionsMenuAnchor;
+          setActionsMenuAnchor(null);
+          setExportMenuAnchor(anchor);
+        }}
+      >
+        Export values…
+      </MenuItem>,
+      <MenuItem key="clone" onClick={fromActionsMenu(() => setCloneOpen(true))}>Clone</MenuItem>,
+    );
+    if (canModify) {
+      items.push(<Divider key="divider-danger" />);
+      if (canClean) {
+        items.push(
+          <MenuItem
+            key="clean"
+            disabled={cleaning}
+            onClick={fromActionsMenu(() => setCleanDialogOpen(true))}
+            sx={{ color: 'error.main' }}
+          >
+            Clean namespace
+          </MenuItem>,
+        );
+      }
+      items.push(
+        <MenuItem key="delete" onClick={fromActionsMenu(() => setDeleteOpen(true))} sx={{ color: 'error.main' }}>
+          Delete
+        </MenuItem>,
+      );
+    }
+    return items;
+  };
 
   const LIFECYCLE_STEPS = ['draft', 'deploying', 'stabilizing', 'running'];
 
@@ -828,24 +888,32 @@ const Detail = () => {
             }}
           >
             {canModify && renderStatusActions(instance.status)}
-            <InstanceActionsMenu instanceId={instance.id} />
             <Button
               variant="outlined"
-              id="export-values-button"
-              aria-controls={exportMenuAnchor ? 'export-values-menu' : undefined}
+              id="instance-actions-button"
+              aria-controls={actionsMenuAnchor ? 'instance-actions-menu' : undefined}
               aria-haspopup="menu"
-              aria-expanded={exportMenuAnchor ? 'true' : undefined}
+              aria-expanded={actionsMenuAnchor ? 'true' : undefined}
               endIcon={<ArrowDropDownIcon />}
-              onClick={(e) => setExportMenuAnchor(e.currentTarget)}
+              onClick={(e) => setActionsMenuAnchor(e.currentTarget)}
             >
-              Export Values
+              Actions
             </Button>
+            <Menu
+              id="instance-actions-menu"
+              anchorEl={actionsMenuAnchor}
+              open={Boolean(actionsMenuAnchor)}
+              onClose={() => setActionsMenuAnchor(null)}
+              slotProps={{ list: { 'aria-labelledby': 'instance-actions-button' } }}
+            >
+              {renderActionsMenuItems()}
+            </Menu>
             <Menu
               id="export-values-menu"
               anchorEl={exportMenuAnchor}
               open={Boolean(exportMenuAnchor)}
               onClose={() => setExportMenuAnchor(null)}
-              slotProps={{ list: { 'aria-labelledby': 'export-values-button' } }}
+              slotProps={{ list: { 'aria-label': 'Export values' } }}
             >
               <MenuItem onClick={() => handleExport()}>All charts (ZIP)</MenuItem>
               {charts.map((chart) => (
@@ -854,10 +922,6 @@ const Detail = () => {
                 </MenuItem>
               ))}
             </Menu>
-            <Button variant="outlined" onClick={() => setCloneOpen(true)}>Clone</Button>
-            {canModify && (
-              <Button variant="outlined" color="error" onClick={() => setDeleteOpen(true)}>Delete</Button>
-            )}
           </Box>
         </Box>
 
@@ -1082,6 +1146,7 @@ const Detail = () => {
         onClose={() => setDeployPreviewOpen(false)}
       />
 
+      {instanceActions.dialog}
       <CloneDialog
         open={cloneOpen}
         source={instance}
