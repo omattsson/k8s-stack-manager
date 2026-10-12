@@ -1,72 +1,78 @@
-# E2E Test Findings & Fixes
+# E2E Test Findings and Fixes
+
+This document records the problems that the first stabilization of the end-to-end (e2e) tests found, and the fixes. It is a historical record. The numbers in the summary are from that time. Later changes added more specs (see the folder `frontend/e2e/`). The sections "Least-privilege authentication" and "Running the tests" describe the current state.
 
 ## Summary
 
-Started with 102 e2e tests (commit `b968524`) showing **38 failures**. Through investigation and targeted fixes, grew to **128 tests — all passing** in ~25s with 9 parallel workers.
+The work started with 102 e2e tests (commit `b968524`). 38 of them failed. After investigation and fixes, there were 128 tests, and all of them passed in about 25 seconds with 9 parallel workers.
 
-## Root Cause 1: `useBlocker` Requires Data Router (Critical)
+## Root Cause 1: `useBlocker` Needs a Data Router (Critical)
 
-**Impact**: ~16 tests failed — any test navigating to Stack Instance Detail or Stack Definition Form pages crashed with an uncaught error.
+**Impact:** About 16 tests failed. Each test that opened the Stack Instance Detail page or the Stack Definition Form page crashed with an uncaught error.
 
-**Symptom**: Pages rendered `ErrorBoundary` "Something went wrong" instead of their content. Console showed:
+**Symptom:** The pages showed the `ErrorBoundary` message "Something went wrong" and not their content. The console showed:
 
 ```
 useBlocker must be used within a data router
 ```
 
-**Root Cause**: The `useUnsavedChanges` hook imported `useBlocker` from `react-router-dom`, which requires `createBrowserRouter` (data router). The app uses `<BrowserRouter>`, which does not support `useBlocker`.
+**Root cause:** The `useUnsavedChanges` hook imported `useBlocker` from `react-router-dom`. `useBlocker` needs `createBrowserRouter` (a data router). The application uses `<BrowserRouter>`, which does not support `useBlocker`.
 
-**Fix**: Removed `useBlocker` and all associated logic from `useUnsavedChanges.ts`. The hook now only uses the `beforeunload` event listener to warn users when closing/refreshing a tab with unsaved changes. In-app navigation blocking would require migrating to `createBrowserRouter`.
+**Fix:** The fix removed `useBlocker` and all related logic from `useUnsavedChanges.ts`. The hook now uses only the `beforeunload` event. It warns the user when the user closes or reloads a tab with unsaved changes. To block navigation inside the application, the application must first change to `createBrowserRouter`.
 
-**Files changed**:
-- `frontend/src/hooks/useUnsavedChanges.ts` — removed `useBlocker` import and blocker logic
-- `frontend/src/hooks/__tests__/useUnsavedChanges.test.ts` — removed 3 blocker-related tests
+**Files changed:**
+
+- `frontend/src/hooks/useUnsavedChanges.ts`: removed the `useBlocker` import and the blocker logic
+- `frontend/src/hooks/__tests__/useUnsavedChanges.test.ts`: removed 3 tests for the blocker
 
 ## Root Cause 2: `loginAsAdmin` Did Not Navigate (Medium)
 
-**Impact**: ~5 tests failed — tests that called `loginAsAdmin()` then immediately interacted with UI elements without navigating first.
+**Impact:** About 5 tests failed. They called `loginAsAdmin()` and then used UI elements without a navigation.
 
-**Symptom**: Tests timed out waiting for elements on `about:blank`.
+**Symptom:** The tests timed out while they waited for elements on `about:blank`.
 
-**Root Cause**: The `loginAsAdmin()` helper was refactored from a UI-based login (which navigated to `/` after sign-in) to an API-based login that injects a JWT token via `addInitScript()`. The new version does not navigate to any page.
+**Root cause:** The `loginAsAdmin()` helper was changed from a login through the UI (which opened `/` after the login) to a login through the API. The new helper puts a JWT in `localStorage` with `addInitScript()`. It does not open a page.
 
-**Fix**: Added `await page.goto('/')` after `loginAsAdmin(page)` in affected tests.
+**Fix:** The fix added `await page.goto('/')` after `loginAsAdmin(page)` in the affected tests.
 
-**Files changed**:
-- `frontend/e2e/instances.spec.ts` — added `page.goto('/')` in `beforeEach`
-- `frontend/e2e/auth.spec.ts` — added `page.goto('/')` in logout and session-persist tests
+**Files changed:**
 
-## Root Cause 3: Strict-Mode Heading Violations on Dashboard (Fixed)
+- `frontend/e2e/instances.spec.ts`: added `page.goto('/')` in `beforeEach`
+- `frontend/e2e/auth.spec.ts`: added `page.goto('/')` in the logout and session-persistence tests
 
-**Impact**: 3-5 instance tests failed when the dashboard rendered an instance name in both the "Recent Stacks" sidebar (`<h6>` from MUI `Typography variant="subtitle2"`) and the main card grid (`<h2>` from `Typography variant="h6" component="h2"`).
+## Root Cause 3: Strict-Mode Heading Violations on the Dashboard (Fixed)
 
-**Symptom**: `page.getByRole('heading', { name: instName })` resolved to 2 elements — Playwright strict mode rejected this.
+**Impact:** 3 to 5 instance tests failed when the dashboard showed an instance name twice: in the "Recent Stacks" sidebar (an `<h6>` from MUI `Typography variant="subtitle2"`) and in the main card grid (an `<h2>` from `Typography variant="h6" component="h2"`).
 
-**Root Cause**: MUI `Typography` with `variant="subtitle2"` renders as `<h6>` by default (a heading element), not `<div>`. When an instance appeared in both "Recent Stacks" and the main grid, there were two heading elements with the same text.
+**Symptom:** `page.getByRole('heading', { name: instName })` found 2 elements. Playwright strict mode rejected this.
 
-**Fix**: Applied both frontend and test-side fixes:
-- `frontend/src/pages/StackInstances/Dashboard.tsx` — added `component="div"` to Typography in "My Favorites" and "Recent Stacks" sidebar sections
-- `frontend/e2e/instances.spec.ts` — added `{ level: 2 }` to heading locators for disambiguation
+**Root cause:** MUI `Typography` with `variant="subtitle2"` renders an `<h6>` by default (a heading element), not a `<div>`. When an instance was in both "Recent Stacks" and the main grid, there were two headings with the same text.
 
-## Root Cause 4: Parallelism + Rate Limiting (Intermittent)
+**Fix:** The fix changed the frontend and the tests:
 
-**Impact**: 4-8 tests fail intermittently when workers run against a backend with `RATE_LIMIT=1000` (dev mode).
+- `frontend/src/pages/StackInstances/Dashboard.tsx`: added `component="div"` to the Typography elements in the sidebar sections
+- `frontend/e2e/instances.spec.ts`: added `{ level: 2 }` to the heading locators
 
-**Symptom**: `loginAsAdmin()` gets HTTP 429 after retries, or `waitForURL` timeouts on template save redirects (backend is slow under concurrent API load).
+## Root Cause 4: Parallel Workers and the Rate Limit (Intermittent)
 
-**Root Cause**: The `make dev-local` target runs with `RATE_LIMIT=1000` (requests per minute per IP). The `make test-e2e` target uses `RATE_LIMIT=10000`. When running e2e tests against a dev backend, the rate limit is too low for concurrent workers.
+**Impact:** 4 to 8 tests failed from time to time when many workers ran against a backend with `RATE_LIMIT=1000`.
 
-**Mitigation**: Run e2e tests via `make test-e2e` which starts the backend with `RATE_LIMIT=10000`, or reduce workers to 1 (`--workers=1`). In practice, we run CI with 1 worker and typically use up to 9 workers for local runs.
+**Symptom:** `loginAsAdmin()` got HTTP 429 after its retries, or `waitForURL` timed out on the redirect after a template save (the backend was slow under concurrent API load).
+
+**Root cause:** `make dev-local` starts the backend with `RATE_LIMIT=1000` (requests each minute for each IP address) by default. `make test-e2e` starts the backend with `RATE_LIMIT=10000` and `LOGIN_RATE_LIMIT=10000`. With the lower limit, concurrent workers reach the limit.
+
+**Mitigation:** Run the e2e tests with `make test-e2e`. It starts the backend with the higher limits. Or reduce the workers with `PW_WORKERS=1` (or `--workers=1`). The Playwright configuration uses 1 worker in CI (`CI` is set). Locally it uses `PW_WORKERS`, or the Playwright default.
 
 ## Root Cause 5: Shared Database State Between Parallel Workers (Critical)
 
-**Impact**: Cascading failures across deployment and instance tests when the "set default cluster" test deleted the cluster it had set as default.
+**Impact:** Many deployment and instance tests failed one after another when the "set default cluster" test deleted the cluster that it had set as the default.
 
-**Symptom**: Tests depending on a default cluster (deploy, status, clean operations) failed with 404 or missing cluster errors.
+**Symptom:** Tests that depend on a default cluster (deploy, status, clean) failed with 404 or with a missing-cluster error.
 
-**Root Cause**: The `clusters.spec.ts` "set default cluster" test changed the default cluster to a test cluster, then deleted it in cleanup without restoring the original default.
+**Root cause:** The "set default cluster" test in `clusters.spec.ts` made a test cluster the default. Its cleanup deleted that cluster and did not restore the original default.
 
-**Fix**: Added default cluster restoration in the `finally` block of `clusters.spec.ts`:
+**Fix:** The fix restores the original default cluster in the `finally` block of the test:
+
 ```typescript
 // Restore the original default cluster before cleanup
 const original = clusters.find((c) => c.name === 'default');
@@ -77,51 +83,66 @@ if (original) {
 
 ## Least-Privilege Authentication
 
-Tests now use the minimum required role for each page/API:
+The tests use the lowest role that the page or the API needs. The helpers are in `frontend/e2e/helpers.ts`: `loginAsAdmin`, `loginAsDevops`, and `loginAsUser`. `loginAsDevops` and `loginAsUser` create the user on the first call (with the admin account) and reuse it.
 
-| Spec File | Login Role | Reason |
+| Spec file | Login role | Reason |
 |-----------|-----------|--------|
-| `auth.spec.ts` | admin | Tests admin registration flow |
-| `navigation.spec.ts` | user (admin for admin-nav tests) | Regular nav is available to all users |
-| `profile.spec.ts` | user | Profile page works for any authenticated user |
-| `instances.spec.ts` | devops | Stack instances require devops role |
-| `definitions.spec.ts` | devops | Stack definitions require devops role |
-| `templates.spec.ts` | devops | Templates require devops role |
-| `deployment.spec.ts` | devops | Deployment operations require devops role |
-| `audit-log.spec.ts` | devops | Audit logs require devops role |
-| `analytics.spec.ts` | admin | Analytics page calls `/api/v1/analytics/users` which requires admin |
-| `clusters.spec.ts` | admin | Cluster CRUD requires admin role |
-| `cluster-health.spec.ts` | admin | Cluster health requires admin/devops, mocks API responses |
-| `orphaned-namespaces.spec.ts` | admin | Admin-only page |
+| `auth.spec.ts` | admin | The tests cover the admin registration flow |
+| `admin-users.spec.ts` | admin | User management needs the `admin` role |
+| `analytics.spec.ts` | admin | The page calls `/api/v1/analytics/users`, which needs the `admin` role |
+| `cleanup-policies.spec.ts` | admin | Cleanup policies need the `admin` role |
+| `cluster-health.spec.ts` | admin | The page needs `admin` or `devops`. The test mocks the API responses. |
+| `clusters.spec.ts` | admin | Cluster create, update, and delete need the `admin` role |
+| `orphaned-namespaces.spec.ts` | admin | The page needs the `admin` role |
+| `shared-values.spec.ts` | admin | Shared values need the `admin` role |
+| `dashboard-widgets.spec.ts` | admin (and user for the role check) | The cluster health widget shows only to `admin` and `devops` |
+| `navigation.spec.ts` | user (admin for the admin navigation) | The regular navigation is available to all users |
+| `profile.spec.ts` | user | The profile page works for every signed-in user |
+| `audit-log.spec.ts` | devops | Reading the audit log needs `devops` |
+| `branch-overrides.spec.ts`, `value-overrides.spec.ts`, `compare.spec.ts` | devops | The tests create definitions and instances. Creating a definition needs `devops`. |
+| `bulk-operations.spec.ts` | devops | Bulk operations need `devops` |
+| `definitions.spec.ts`, `import-export.spec.ts` | devops | Creating, importing, and exporting a definition needs `devops` |
+| `deployment.spec.ts`, `instances.spec.ts`, `websocket.spec.ts` | devops | The tests create and operate instances |
+| `template-versions.spec.ts`, `templates.spec.ts` | devops | Creating and publishing a template needs `devops` |
+| `notifications.spec.ts` | devops | The tests mock the notification API |
+| `ux-improvements.spec.ts` | devops (and user for some tests) | Mixed UI checks |
+| `oidc-auth.spec.ts` | none | The test mocks the OIDC configuration and uses fake tokens |
 
-Helper functions added to `helpers.ts`: `loginAsUser(page)`, `loginAsDevops(page)`.
+## Specs Added During the Stabilization
 
-## New Tests Added (27 tests)
+| Spec file | Description |
+|-----------|-------------|
+| `cluster-health.spec.ts` | The full page with a mocked API: selector, toggle, summary cards, tables, error handling, access control |
+| `orphaned-namespaces.spec.ts` | Page load, empty state, column headers, refresh, breadcrumbs, access control |
+| `instances.spec.ts` (additions) | Favorites toggle, export values, TTL selector |
+| `templates.spec.ts` (additions) | Quick deploy dialog, quick deploy navigation, favorites, category filter, My Templates tab |
+| `clusters.spec.ts` (additions) | Test connection, set default cluster |
+| `profile.spec.ts` (addition) | API Keys heading |
 
-| Spec File | Tests | Description |
-|-----------|-------|-------------|
-| `cluster-health.spec.ts` | 10 | Full page with mocked API: selector, toggle, summary cards, tables, error handling, access control |
-| `orphaned-namespaces.spec.ts` | 6 | Page load, empty state, column headers, refresh, breadcrumbs, access control |
-| `instances.spec.ts` | 3 | Favorites toggle, export values, TTL selector |
-| `templates.spec.ts` | 5 | Quick deploy dialog, quick deploy navigation, favorites, category filter, My Templates tab |
-| `clusters.spec.ts` | 2 | Test connection, set default cluster |
-| `profile.spec.ts` | 1 | API Keys heading disambiguation |
-
-## Other Fixes Applied
+## Other Fixes
 
 | File | Change | Reason |
 |------|--------|--------|
-| `helpers.ts` | Refactored `loginAsAdmin` to API-based auth with 429 retry | Reduce API calls and avoid rate-limit pressure |
-| `helpers.ts` | Added `loginAsUser`, `loginAsDevops` with auto-registration | Least-privilege testing |
-| `helpers.ts` | Added `createAndPublishTemplate`, `instantiateTemplate` helpers | Shared setup across instance/definition tests |
-| `instances.spec.ts` | Fixed `getByText('8 hours')` → `{ exact: true }` | Avoided matching "48 hours" |
-| `instances.spec.ts` | Fixed TTL heading locator to `getByRole('heading')` | Strict-mode: matched 3 elements |
-| `templates.spec.ts` | Fixed card locators to `.MuiCard-root` | `div.filter({ hasText })` matched outermost div |
-| `cluster-health.spec.ts` | Added `mockClusterAPIs()` with `page.route()` | Deterministic tests without real cluster |
-| `cluster-health.spec.ts` | `getByText('CPU', { exact: true })` | Avoided matching "CPU Capacity" |
-| `orphaned-namespaces.spec.ts` | Accept 200 or 503 on refresh | No K8s cluster in test environment |
-| `orphaned-namespaces.spec.ts` | `.or().first()` on alternative locators | Multiple matches when both visible |
-| `profile.spec.ts` | `getByRole('heading', { name: 'API Keys' })` | Strict-mode: text matched heading and paragraph |
-| `navigation.spec.ts` | Split admin/user nav tests with separate logins | Admin nav links only visible to admin users |
-| `playwright.config.ts` | Derive `workers` from `PW_WORKERS` (otherwise Playwright default) | Configurable parallelism for local/CI runs |
-| Various spec files | Adjusted selectors, labels, and test flows | Align tests with actual UI implementation |
+| `helpers.ts` | `loginAsAdmin` uses the API, with a retry on 429 | Fewer API calls and less rate-limit pressure |
+| `helpers.ts` | Added `loginAsUser` and `loginAsDevops` with automatic registration | Least-privilege tests |
+| `helpers.ts` | Added the helpers `createAndPublishTemplate` and `instantiateTemplate` | Shared setup for the instance and definition tests |
+| `instances.spec.ts` | `getByRole('option', { name: '8 hours', exact: true })` | Does not match "48 hours" |
+| `instances.spec.ts` | The TTL heading locator uses `getByRole('heading')` | Strict mode: the text matched 3 elements |
+| `templates.spec.ts` | Card locators use `.MuiCard-root` | `div.filter({ hasText })` matched the outermost div |
+| `cluster-health.spec.ts` | Added `mockClusterAPIs()` with `page.route()` | Stable tests without a real cluster |
+| `cluster-health.spec.ts` | `getByText('CPU', { exact: true })` | Does not match "CPU Capacity" |
+| `orphaned-namespaces.spec.ts` | The refresh test accepts 200, 500, or 503 | The test environment has no Kubernetes cluster |
+| `orphaned-namespaces.spec.ts` | `.or().first()` on alternative locators | Two matches when both elements are visible |
+| `profile.spec.ts` | `getByRole('heading', { name: 'API Keys' })` | Strict mode: the text matched a heading and a paragraph |
+| `navigation.spec.ts` | Separate logins for the admin and user navigation tests | The admin links show only to `admin` users |
+| `playwright.config.ts` | `workers` comes from `PW_WORKERS` (else the Playwright default; 1 in CI) | Configurable parallelism for local and CI runs |
+| Various spec files | Adjusted selectors, labels, and test flows | Align the tests with the real UI |
+
+## Running the Tests
+
+```bash
+make test-e2e                          # starts MySQL and the backend, runs Playwright
+cd frontend && PW_WORKERS=1 npx playwright test   # run against a backend that you started
+```
+
+`make test-e2e` writes the logs to `frontend/test-logs/` (`backend.log` and `playwright.log`). The Playwright configuration starts the Vite dev server (`npm run dev`) when none runs.
