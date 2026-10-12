@@ -1,8 +1,5 @@
 blank_issues_enabled: false
 contact_links:
-  - name: Application Template Community Discussions
-    url: https://github.com/your-org/application_template/discussions
-    about: Please ask and answer questions here for community support
   - name: Security Issues & Vulnerabilities
-    url: https://github.com/your-org/application_template/security/policy
+    url: https://github.com/omattsson/k8s-stack-manager/security/policy
     about: Please report security vulnerabilities here
