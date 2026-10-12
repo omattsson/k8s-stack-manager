@@ -325,6 +325,75 @@ func TestBulkDeploy_RecordsCaller(t *testing.T) {
 	}
 }
 
+// TestBulkDeploy_RestartsTTL checks that a bulk deploy sets the expiry like
+// a single deploy: an expired instance gets now + TTL (else the TTL reaper
+// stops it right after the deploy), a later expiry (extended) stays, and an
+// instance without TTL keeps no expiry.
+func TestBulkDeploy_RestartsTTL(t *testing.T) {
+	t.Parallel()
+
+	past := time.Now().UTC().Add(-2 * time.Hour)
+	later := time.Now().UTC().Add(5 * time.Hour)
+	tests := []struct {
+		name       string
+		ttlMinutes int
+		expiresAt  *time.Time
+		check      func(t *testing.T, got *time.Time)
+	}{
+		{
+			name: "expired instance gets now plus TTL", ttlMinutes: 60, expiresAt: &past,
+			check: func(t *testing.T, got *time.Time) {
+				require.NotNil(t, got)
+				assert.WithinDuration(t, time.Now().UTC().Add(60*time.Minute), *got, time.Minute)
+			},
+		},
+		{
+			name: "a later expiry stays", ttlMinutes: 60, expiresAt: &later,
+			check: func(t *testing.T, got *time.Time) {
+				require.NotNil(t, got)
+				assert.WithinDuration(t, later, *got, time.Second)
+			},
+		},
+		{
+			name: "no TTL keeps no expiry", ttlMinutes: 0, expiresAt: nil,
+			check: func(t *testing.T, got *time.Time) { assert.Nil(t, got) },
+		},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			instRepo := NewMockStackInstanceRepository()
+			defRepo := NewMockStackDefinitionRepository()
+			ccRepo := NewMockChartConfigRepository()
+			logRepo := NewMockDeploymentLogRepository()
+			inst := seedInstance(t, instRepo, "i1", "stack-a", "d1", "uid-1", models.StackStatusStopped)
+			inst.TTLMinutes = tt.ttlMinutes
+			inst.ExpiresAt = tt.expiresAt
+			require.NoError(t, instRepo.Update(inst))
+			seedDefinition(t, defRepo, "d1", "My Def", "uid-1")
+			require.NoError(t, ccRepo.Create(&models.ChartConfig{
+				ID: "c1", StackDefinitionID: "d1", ChartName: "nginx", RepositoryURL: "oci://example.com/charts/nginx", DeployOrder: 1,
+			}))
+
+			router := setupBulkRouter(t, instRepo, NewMockValueOverrideRepository(), defRepo, ccRepo,
+				NewMockStackTemplateRepository(), NewMockTemplateChartConfigRepository(),
+				newBulkTestManager(instRepo, logRepo), logRepo, "uid-1", "alice", "devops")
+
+			body, _ := json.Marshal(BulkOperationRequest{InstanceIDs: []string{"i1"}})
+			w := httptest.NewRecorder()
+			req, _ := http.NewRequest(http.MethodPost, "/api/v1/stack-instances/bulk/deploy", bytes.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			router.ServeHTTP(w, req)
+
+			require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+			got, err := instRepo.FindByID("i1")
+			require.NoError(t, err)
+			tt.check(t, got.ExpiresAt)
+		})
+	}
+}
+
 func TestBulkStop(t *testing.T) {
 	t.Parallel()
 

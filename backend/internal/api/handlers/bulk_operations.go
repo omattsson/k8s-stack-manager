@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"time"
 
 	"backend/internal/api/middleware"
 	"backend/internal/deployer"
@@ -179,6 +180,14 @@ func (h *InstanceHandler) BulkDeploy(c *gin.Context) {
 		var lastDeployedValues string
 		if encoded, encErr := json.Marshal(valuesMap); encErr == nil {
 			lastDeployedValues = string(encoded)
+		}
+
+		// Restart the TTL clock like DeployInstance (never earlier). Without
+		// it, a bulk deploy of an expired instance kept the old expiry and the
+		// TTL reaper stopped the instance right after the deploy.
+		if inst.TTLMinutes > 0 {
+			inst.ExpiresAt = deployExpiry(inst.ExpiresAt, inst.TTLMinutes, time.Now().UTC())
+			_ = h.instanceRepo.Update(inst)
 		}
 
 		req := deployer.DeployRequest{
