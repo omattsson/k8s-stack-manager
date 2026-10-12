@@ -768,9 +768,11 @@ const Detail = () => {
       {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
 
       <Paper sx={{ p: 3, mb: 3 }}>
-        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-          <Box>
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 1 }}>
+        {/* Title block and buttons wrap instead of shrinking: with many
+            buttons the labels broke onto two lines and stretched the row. */}
+        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 2 }}>
+          <Box sx={{ minWidth: 0 }}>
+            <Box sx={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 2, mb: 1 }}>
               <Typography variant="h4" component="h1">
                 {instance.name}
               </Typography>
@@ -815,7 +817,16 @@ const Detail = () => {
               </Box>
             )}
           </Box>
-          <Box sx={{ display: 'flex', gap: 1 }}>
+          <Box
+            sx={{
+              display: 'flex',
+              flexWrap: 'wrap',
+              justifyContent: 'flex-end',
+              alignItems: 'center',
+              gap: 1,
+              '& .MuiButton-root': { whiteSpace: 'nowrap', flexShrink: 0 },
+            }}
+          >
             {canModify && renderStatusActions(instance.status)}
             <InstanceActionsMenu instanceId={instance.id} />
             <Button
