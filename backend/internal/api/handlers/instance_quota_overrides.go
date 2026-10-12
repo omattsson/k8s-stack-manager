@@ -26,8 +26,6 @@ const logKeyIQOInstanceID = "instance_id"
 // cluster quota.
 const msgQuotaAboveClusterSuffix = "; only admin or devops can set a higher quota"
 
-
-
 // InstanceQuotaOverrideHandler handles per-instance resource quota override endpoints.
 type InstanceQuotaOverrideHandler struct {
 	overrideRepo     models.InstanceQuotaOverrideRepository
@@ -106,6 +104,16 @@ type setQuotaOverrideRequest struct {
 	MemoryLimit   string `json:"memory_limit" example:"1Gi"`
 	StorageLimit  string `json:"storage_limit" example:"10Gi"`
 	PodLimit      *int   `json:"pod_limit" example:"20"`
+	// Per-container LimitRange values and the namespace ephemeral-storage total.
+	ContainerCPURequest              string `json:"container_cpu_request" example:"100m"`
+	ContainerCPULimit                string `json:"container_cpu_limit" example:"500m"`
+	ContainerCPUMax                  string `json:"container_cpu_max" example:"2"`
+	ContainerMemoryRequest           string `json:"container_memory_request" example:"128Mi"`
+	ContainerMemoryLimit             string `json:"container_memory_limit" example:"512Mi"`
+	ContainerMemoryMax               string `json:"container_memory_max" example:"4Gi"`
+	EphemeralStorageLimit            string `json:"ephemeral_storage_limit" example:"20Gi"`
+	ContainerEphemeralStorageRequest string `json:"container_ephemeral_storage_request" example:"128Mi"`
+	ContainerEphemeralStorageLimit   string `json:"container_ephemeral_storage_limit" example:"1Gi"`
 }
 
 // GetQuotaOverride godoc
@@ -154,7 +162,7 @@ func (h *InstanceQuotaOverrideHandler) GetQuotaOverride(c *gin.Context) {
 // SetQuotaOverride godoc
 // @Summary     Set or update quota override for an instance
 // @Description PUT replaces all fields of the override: a field that is not sent is cleared (an empty quantity or a missing pod_limit means no override for that field, so the cluster quota applies). To change one field, read the override with GET, change the field and send all fields. There is no PATCH.
-// @Description Upsert the per-instance resource quota override for a stack instance. Each non-empty quantity must be a valid Kubernetes quantity (for example 500m, 2, 512Mi, 10Gi) and not negative; cpu_request must not exceed cpu_limit and memory_request must not exceed memory_limit; pod_limit must not be negative. Values are trimmed. The effective quota (cluster quota of the instance's cluster merged with this override) must follow the same rules, for example "cpu_request 4 (instance override) exceeds the effective cpu_limit 2 (cluster quota)". Invalid input returns 400 with the field name. Authorization: the instance owner, admin or devops. An owner without the admin or devops role cannot set a value above the cluster quota of the instance's cluster (403, for example "cpu_limit 64 exceeds the cluster quota 16; only admin or devops can set a higher quota"); a field without a cluster value has no cap, and pod_limit 0 (no limit) counts as above a cluster pod_limit. A value equal to the stored override passes, so an owner can change one field without losing an admin grant. Admin and devops may exceed the cluster quota. The check runs on write (and on clone), not on deploy.
+// @Description Upsert the per-instance resource quota override for a stack instance. Each non-empty quantity must be a valid Kubernetes quantity (for example 500m, 2, 512Mi, 10Gi) and not negative; cpu_request must not exceed cpu_limit and memory_request must not exceed memory_limit; pod_limit must not be negative. The container_* fields (LimitRange defaultRequest, default and max per container) and ephemeral_storage_limit follow the same per-field merge: a non-empty value replaces the cluster value. Per container, request <= limit <= max, and a container default must not exceed the namespace value of the same resource. Values are trimmed. The effective quota (cluster quota of the instance's cluster merged with this override) must follow the same rules, for example "cpu_request 4 (instance override) exceeds the effective cpu_limit 2 (cluster quota)". Invalid input returns 400 with the field name. Authorization: the instance owner, admin or devops. An owner without the admin or devops role cannot set a value above the cluster quota of the instance's cluster (403, for example "cpu_limit 64 exceeds the cluster quota 16; only admin or devops can set a higher quota"); the check covers every field, also the container_* fields and ephemeral_storage_limit; a field without a cluster value has no cap, and pod_limit 0 (no limit) counts as above a cluster pod_limit. A value equal to the stored override passes, so an owner can change one field without losing an admin grant. Admin and devops may exceed the cluster quota. The check runs on write (and on clone), not on deploy.
 // @Tags        stack-instances
 // @Accept      json
 // @Produce     json
@@ -200,6 +208,16 @@ func (h *InstanceQuotaOverrideHandler) SetQuotaOverride(c *gin.Context) {
 		MemoryLimit:     strings.TrimSpace(input.MemoryLimit),
 		StorageLimit:    strings.TrimSpace(input.StorageLimit),
 		PodLimit:        input.PodLimit,
+
+		ContainerCPURequest:              strings.TrimSpace(input.ContainerCPURequest),
+		ContainerCPULimit:                strings.TrimSpace(input.ContainerCPULimit),
+		ContainerCPUMax:                  strings.TrimSpace(input.ContainerCPUMax),
+		ContainerMemoryRequest:           strings.TrimSpace(input.ContainerMemoryRequest),
+		ContainerMemoryLimit:             strings.TrimSpace(input.ContainerMemoryLimit),
+		ContainerMemoryMax:               strings.TrimSpace(input.ContainerMemoryMax),
+		EphemeralStorageLimit:            strings.TrimSpace(input.EphemeralStorageLimit),
+		ContainerEphemeralStorageRequest: strings.TrimSpace(input.ContainerEphemeralStorageRequest),
+		ContainerEphemeralStorageLimit:   strings.TrimSpace(input.ContainerEphemeralStorageLimit),
 	}
 
 	// Validate before the upsert so an invalid quantity is a 400 with the

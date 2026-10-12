@@ -778,6 +778,16 @@ type UpdateQuotaRequest struct {
 	MemoryLimit   string `json:"memory_limit"`
 	StorageLimit  string `json:"storage_limit"`
 	PodLimit      int    `json:"pod_limit"`
+	// Per-container LimitRange values and the namespace ephemeral-storage total.
+	ContainerCPURequest              string `json:"container_cpu_request" example:"100m"`
+	ContainerCPULimit                string `json:"container_cpu_limit" example:"500m"`
+	ContainerCPUMax                  string `json:"container_cpu_max" example:"2"`
+	ContainerMemoryRequest           string `json:"container_memory_request" example:"128Mi"`
+	ContainerMemoryLimit             string `json:"container_memory_limit" example:"512Mi"`
+	ContainerMemoryMax               string `json:"container_memory_max" example:"4Gi"`
+	EphemeralStorageLimit            string `json:"ephemeral_storage_limit" example:"20Gi"`
+	ContainerEphemeralStorageRequest string `json:"container_ephemeral_storage_request" example:"128Mi"`
+	ContainerEphemeralStorageLimit   string `json:"container_ephemeral_storage_limit" example:"1Gi"`
 }
 
 // GetQuotas godoc
@@ -818,7 +828,7 @@ func (h *ClusterHandler) GetQuotas(c *gin.Context) {
 
 // UpdateQuotas godoc
 // @Summary      Create or update resource quota config for a cluster
-// @Description  Creates or updates the resource quota configuration for a cluster. Admin only. Each non-empty quantity must be a valid Kubernetes quantity (for example 500m, 2, 512Mi, 10Gi) and not negative; cpu_request must not exceed cpu_limit and memory_request must not exceed memory_limit; pod_limit must not be negative. Values are trimmed. Invalid input returns 400 with the field name. The quota is also checked merged with the quota override of every instance on the cluster (for the default cluster also instances without a cluster); a conflict returns 400 listing up to 10 instance names and the first rule broken.
+// @Description  Creates or updates the resource quota configuration for a cluster. Admin only. Each non-empty quantity must be a valid Kubernetes quantity (for example 500m, 2, 512Mi, 10Gi) and not negative; cpu_request must not exceed cpu_limit and memory_request must not exceed memory_limit; pod_limit must not be negative. The container_* fields set the LimitRange of each stack namespace (defaultRequest, default, max per container); per container, request <= limit <= max, and a container default must not exceed the namespace value of the same resource. ephemeral_storage_limit sets requests.ephemeral-storage and limits.ephemeral-storage of the namespace ResourceQuota. Without container defaults, the LimitRange uses fallback defaults (CPU 100m request / 500m limit, memory 128Mi / 512Mi, ephemeral storage 128Mi / 1Gi), capped at the namespace value and the container max; never the namespace total. Values are trimmed. Invalid input returns 400 with the field name. The quota is also checked merged with the quota override of every instance on the cluster (for the default cluster also instances without a cluster); a conflict returns 400 listing up to 10 instance names and the first rule broken.
 // @Tags         clusters
 // @Accept       json
 // @Produce      json
@@ -863,6 +873,16 @@ func (h *ClusterHandler) UpdateQuotas(c *gin.Context) {
 		MemoryLimit:   strings.TrimSpace(req.MemoryLimit),
 		StorageLimit:  strings.TrimSpace(req.StorageLimit),
 		PodLimit:      req.PodLimit,
+
+		ContainerCPURequest:              strings.TrimSpace(req.ContainerCPURequest),
+		ContainerCPULimit:                strings.TrimSpace(req.ContainerCPULimit),
+		ContainerCPUMax:                  strings.TrimSpace(req.ContainerCPUMax),
+		ContainerMemoryRequest:           strings.TrimSpace(req.ContainerMemoryRequest),
+		ContainerMemoryLimit:             strings.TrimSpace(req.ContainerMemoryLimit),
+		ContainerMemoryMax:               strings.TrimSpace(req.ContainerMemoryMax),
+		EphemeralStorageLimit:            strings.TrimSpace(req.EphemeralStorageLimit),
+		ContainerEphemeralStorageRequest: strings.TrimSpace(req.ContainerEphemeralStorageRequest),
+		ContainerEphemeralStorageLimit:   strings.TrimSpace(req.ContainerEphemeralStorageLimit),
 	}
 
 	if err := config.Validate(); err != nil {

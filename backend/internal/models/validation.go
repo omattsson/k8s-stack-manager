@@ -301,7 +301,11 @@ func (rq *ResourceQuotaConfig) Validate() error {
 	if rq.PodLimit < 0 {
 		return errors.New("pod_limit must be non-negative")
 	}
-	return validateQuotaQuantities(rq.CPURequest, rq.CPULimit, rq.MemoryRequest, rq.MemoryLimit, rq.StorageLimit)
+	values := make([]quotaValue, 0, len(quotaQuantityFields))
+	for _, f := range quotaQuantityFields {
+		values = append(values, quotaValue{name: f.name, value: *f.cluster(rq)})
+	}
+	return validateQuotaQuantities(values)
 }
 
 // Validate implements model validation for InstanceQuotaOverride.
@@ -312,31 +316,33 @@ func (iqo *InstanceQuotaOverride) Validate() error {
 	if iqo.PodLimit != nil && *iqo.PodLimit < 0 {
 		return errors.New("pod_limit must be non-negative")
 	}
-	return validateQuotaQuantities(iqo.CPURequest, iqo.CPULimit, iqo.MemoryRequest, iqo.MemoryLimit, iqo.StorageLimit)
+	values := make([]quotaValue, 0, len(quotaQuantityFields))
+	for _, f := range quotaQuantityFields {
+		values = append(values, quotaValue{name: f.name, value: *f.override(iqo)})
+	}
+	return validateQuotaQuantities(values)
 }
 
 // maxQuotaQuantityLen matches the size:20 column of the quota quantity fields.
 const maxQuotaQuantityLen = 20
 
-// validateQuotaQuantities checks the resource quantity fields shared by
-// ResourceQuotaConfig and InstanceQuotaOverride. Each non-empty value must
-// parse as a Kubernetes quantity (the deployer parses them again when it
-// creates the namespace ResourceQuota), must not be negative, and a request
-// must not exceed its limit when both are set. Empty values mean "not set".
-func validateQuotaQuantities(cpuRequest, cpuLimit, memoryRequest, memoryLimit, storageLimit string) error {
-	fields := []struct {
-		name  string
-		value string
-	}{
-		{"cpu_request", cpuRequest},
-		{"cpu_limit", cpuLimit},
-		{"memory_request", memoryRequest},
-		{"memory_limit", memoryLimit},
-		{"storage_limit", storageLimit},
-	}
+// quotaValue is one named quantity field value.
+type quotaValue struct {
+	name  string
+	value string
+}
 
-	parsed := make(map[string]resource.Quantity, len(fields))
-	for _, f := range fields {
+// validateQuotaQuantities checks the resource quantity fields shared by
+// ResourceQuotaConfig and InstanceQuotaOverride (quotaQuantityFields). Each
+// non-empty value must parse as a Kubernetes quantity (the deployer parses
+// them again when it creates the namespace ResourceQuota and LimitRange),
+// must not be negative, and the order rules of quotaOrderRules must hold for
+// each pair where both values are set (for example a request not above its
+// limit, a per-container limit not above the per-container max). Empty values
+// mean "not set".
+func validateQuotaQuantities(values []quotaValue) error {
+	parsed := make(map[string]resource.Quantity, len(values))
+	for _, f := range values {
 		if f.value == "" {
 			continue
 		}
@@ -353,11 +359,10 @@ func validateQuotaQuantities(cpuRequest, cpuLimit, memoryRequest, memoryLimit, s
 		parsed[f.name] = q
 	}
 
-	pairs := [][2]string{{"cpu_request", "cpu_limit"}, {"memory_request", "memory_limit"}}
-	for _, p := range pairs {
-		req, hasReq := parsed[p[0]]
-		lim, hasLim := parsed[p[1]]
-		if hasReq && hasLim && req.Cmp(lim) > 0 {
+	for _, p := range quotaOrderRules {
+		low, hasLow := parsed[p[0]]
+		high, hasHigh := parsed[p[1]]
+		if hasLow && hasHigh && low.Cmp(high) > 0 {
 			return fmt.Errorf("%s must not exceed %s", p[0], p[1])
 		}
 	}

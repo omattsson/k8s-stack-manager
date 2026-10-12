@@ -1104,6 +1104,10 @@ func (d *Database) AutoMigrate() error {
 	// delete is persisted, so the delete works across replicas, issue #504).
 	migrator.AddMigration(deleteAfterCleanMigration())
 
+	// Migration 58: per-container LimitRange fields and the namespace
+	// ephemeral-storage total on cluster quotas and instance quota overrides.
+	migrator.AddMigration(containerQuotaFieldsMigration())
+
 	// Run migrations
 	if err := migrator.MigrateUp(); err != nil {
 		return err
@@ -1849,6 +1853,63 @@ func deleteAfterCleanMigration() schema.Migration {
 			m := tx.Migrator()
 			if m.HasTable(&models.StackInstance{}) && m.HasColumn(&models.StackInstance{}, "DeleteAfterClean") {
 				return m.DropColumn(&models.StackInstance{}, "DeleteAfterClean")
+			}
+			return nil
+		},
+	}
+}
+
+// containerQuotaFieldColumns are the fields that migration 58 adds to
+// resource_quota_configs and instance_quota_overrides. Frozen with the
+// migration.
+var containerQuotaFieldColumns = []string{
+	"ContainerCPURequest", "ContainerCPULimit", "ContainerCPUMax",
+	"ContainerMemoryRequest", "ContainerMemoryLimit", "ContainerMemoryMax",
+	"EphemeralStorageLimit", "ContainerEphemeralStorageRequest", "ContainerEphemeralStorageLimit",
+}
+
+// containerQuotaFieldsMigration is migration 58. It adds the per-container
+// LimitRange fields (container_cpu_request, ..., container_memory_max), the
+// namespace ephemeral_storage_limit and the per-container ephemeral-storage
+// defaults to resource_quota_configs and instance_quota_overrides
+// (varchar(20), NULL = not set). Up and Down are idempotent.
+func containerQuotaFieldsMigration() schema.Migration {
+	tables := []interface{}{&models.ResourceQuotaConfig{}, &models.InstanceQuotaOverride{}}
+	return schema.Migration{
+		Version:     "20261012000058",
+		Name:        "add_container_quota_fields",
+		Description: "Add per-container LimitRange fields and ephemeral_storage_limit to resource_quota_configs and instance_quota_overrides",
+		Up: func(tx *gorm.DB) error {
+			m := tx.Migrator()
+			for _, table := range tables {
+				if !m.HasTable(table) {
+					continue
+				}
+				for _, col := range containerQuotaFieldColumns {
+					if m.HasColumn(table, col) {
+						continue
+					}
+					if err := m.AddColumn(table, col); err != nil {
+						return err
+					}
+				}
+			}
+			return nil
+		},
+		Down: func(tx *gorm.DB) error {
+			m := tx.Migrator()
+			for _, table := range tables {
+				if !m.HasTable(table) {
+					continue
+				}
+				for _, col := range containerQuotaFieldColumns {
+					if !m.HasColumn(table, col) {
+						continue
+					}
+					if err := m.DropColumn(table, col); err != nil {
+						return err
+					}
+				}
 			}
 			return nil
 		},

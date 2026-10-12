@@ -2487,7 +2487,7 @@
                         "BearerAuth": []
                     }
                 ],
-                "description": "Creates or updates the resource quota configuration for a cluster. Admin only. Each non-empty quantity must be a valid Kubernetes quantity (for example 500m, 2, 512Mi, 10Gi) and not negative; cpu_request must not exceed cpu_limit and memory_request must not exceed memory_limit; pod_limit must not be negative. Values are trimmed. Invalid input returns 400 with the field name. The quota is also checked merged with the quota override of every instance on the cluster (for the default cluster also instances without a cluster); a conflict returns 400 listing up to 10 instance names and the first rule broken.",
+                "description": "Creates or updates the resource quota configuration for a cluster. Admin only. Each non-empty quantity must be a valid Kubernetes quantity (for example 500m, 2, 512Mi, 10Gi) and not negative; cpu_request must not exceed cpu_limit and memory_request must not exceed memory_limit; pod_limit must not be negative. The container_* fields set the LimitRange of each stack namespace (defaultRequest, default, max per container); per container, request \u003c= limit \u003c= max, and a container default must not exceed the namespace value of the same resource. ephemeral_storage_limit sets requests.ephemeral-storage and limits.ephemeral-storage of the namespace ResourceQuota. Without container defaults, the LimitRange uses fallback defaults (CPU 100m request / 500m limit, memory 128Mi / 512Mi, ephemeral storage 128Mi / 1Gi), capped at the namespace value and the container max; never the namespace total. Values are trimmed. Invalid input returns 400 with the field name. The quota is also checked merged with the quota override of every instance on the cluster (for the default cluster also instances without a cluster); a conflict returns 400 listing up to 10 instance names and the first rule broken.",
                 "consumes": [
                     "application/json"
                 ],
@@ -7312,7 +7312,7 @@
                         "BearerAuth": []
                     }
                 ],
-                "description": "PUT replaces all fields of the override: a field that is not sent is cleared (an empty quantity or a missing pod_limit means no override for that field, so the cluster quota applies). To change one field, read the override with GET, change the field and send all fields. There is no PATCH.\nUpsert the per-instance resource quota override for a stack instance. Each non-empty quantity must be a valid Kubernetes quantity (for example 500m, 2, 512Mi, 10Gi) and not negative; cpu_request must not exceed cpu_limit and memory_request must not exceed memory_limit; pod_limit must not be negative. Values are trimmed. The effective quota (cluster quota of the instance's cluster merged with this override) must follow the same rules, for example \"cpu_request 4 (instance override) exceeds the effective cpu_limit 2 (cluster quota)\". Invalid input returns 400 with the field name. Authorization: the instance owner, admin or devops. An owner without the admin or devops role cannot set a value above the cluster quota of the instance's cluster (403, for example \"cpu_limit 64 exceeds the cluster quota 16; only admin or devops can set a higher quota\"); a field without a cluster value has no cap, and pod_limit 0 (no limit) counts as above a cluster pod_limit. A value equal to the stored override passes, so an owner can change one field without losing an admin grant. Admin and devops may exceed the cluster quota. The check runs on write (and on clone), not on deploy.",
+                "description": "PUT replaces all fields of the override: a field that is not sent is cleared (an empty quantity or a missing pod_limit means no override for that field, so the cluster quota applies). To change one field, read the override with GET, change the field and send all fields. There is no PATCH.\nUpsert the per-instance resource quota override for a stack instance. Each non-empty quantity must be a valid Kubernetes quantity (for example 500m, 2, 512Mi, 10Gi) and not negative; cpu_request must not exceed cpu_limit and memory_request must not exceed memory_limit; pod_limit must not be negative. The container_* fields (LimitRange defaultRequest, default and max per container) and ephemeral_storage_limit follow the same per-field merge: a non-empty value replaces the cluster value. Per container, request \u003c= limit \u003c= max, and a container default must not exceed the namespace value of the same resource. Values are trimmed. The effective quota (cluster quota of the instance's cluster merged with this override) must follow the same rules, for example \"cpu_request 4 (instance override) exceeds the effective cpu_limit 2 (cluster quota)\". Invalid input returns 400 with the field name. Authorization: the instance owner, admin or devops. An owner without the admin or devops role cannot set a value above the cluster quota of the instance's cluster (403, for example \"cpu_limit 64 exceeds the cluster quota 16; only admin or devops can set a higher quota\"); the check covers every field, also the container_* fields and ephemeral_storage_limit; a field without a cluster value has no cap, and pod_limit 0 (no limit) counts as above a cluster pod_limit. A value equal to the stored override passes, so an owner can change one field without losing an admin grant. Admin and devops may exceed the cluster quota. The check runs on write (and on clone), not on deploy.",
                 "consumes": [
                     "application/json"
                 ],
@@ -11253,11 +11253,48 @@
         "handlers.UpdateQuotaRequest": {
             "type": "object",
             "properties": {
+                "container_cpu_limit": {
+                    "type": "string",
+                    "example": "500m"
+                },
+                "container_cpu_max": {
+                    "type": "string",
+                    "example": "2"
+                },
+                "container_cpu_request": {
+                    "description": "Per-container LimitRange values and the namespace ephemeral-storage total.",
+                    "type": "string",
+                    "example": "100m"
+                },
+                "container_ephemeral_storage_limit": {
+                    "type": "string",
+                    "example": "1Gi"
+                },
+                "container_ephemeral_storage_request": {
+                    "type": "string",
+                    "example": "128Mi"
+                },
+                "container_memory_limit": {
+                    "type": "string",
+                    "example": "512Mi"
+                },
+                "container_memory_max": {
+                    "type": "string",
+                    "example": "4Gi"
+                },
+                "container_memory_request": {
+                    "type": "string",
+                    "example": "128Mi"
+                },
                 "cpu_limit": {
                     "type": "string"
                 },
                 "cpu_request": {
                     "type": "string"
+                },
+                "ephemeral_storage_limit": {
+                    "type": "string",
+                    "example": "20Gi"
                 },
                 "memory_limit": {
                     "type": "string"
@@ -11864,6 +11901,39 @@
         "handlers.setQuotaOverrideRequest": {
             "type": "object",
             "properties": {
+                "container_cpu_limit": {
+                    "type": "string",
+                    "example": "500m"
+                },
+                "container_cpu_max": {
+                    "type": "string",
+                    "example": "2"
+                },
+                "container_cpu_request": {
+                    "description": "Per-container LimitRange values and the namespace ephemeral-storage total.",
+                    "type": "string",
+                    "example": "100m"
+                },
+                "container_ephemeral_storage_limit": {
+                    "type": "string",
+                    "example": "1Gi"
+                },
+                "container_ephemeral_storage_request": {
+                    "type": "string",
+                    "example": "128Mi"
+                },
+                "container_memory_limit": {
+                    "type": "string",
+                    "example": "512Mi"
+                },
+                "container_memory_max": {
+                    "type": "string",
+                    "example": "4Gi"
+                },
+                "container_memory_request": {
+                    "type": "string",
+                    "example": "128Mi"
+                },
                 "cpu_limit": {
                     "type": "string",
                     "example": "2000m"
@@ -11871,6 +11941,10 @@
                 "cpu_request": {
                     "type": "string",
                     "example": "500m"
+                },
+                "ephemeral_storage_limit": {
+                    "type": "string",
+                    "example": "20Gi"
                 },
                 "memory_limit": {
                     "type": "string",
@@ -12847,6 +12921,31 @@
         "models.InstanceQuotaOverride": {
             "type": "object",
             "properties": {
+                "container_cpu_limit": {
+                    "type": "string"
+                },
+                "container_cpu_max": {
+                    "type": "string"
+                },
+                "container_cpu_request": {
+                    "description": "Per-container values for the namespace LimitRange (stack-manager-limits)\nand the namespace ephemeral-storage total. Empty means not set. See\nk8s.Client.EnsureLimitRange for the fallback defaults.",
+                    "type": "string"
+                },
+                "container_ephemeral_storage_limit": {
+                    "type": "string"
+                },
+                "container_ephemeral_storage_request": {
+                    "type": "string"
+                },
+                "container_memory_limit": {
+                    "type": "string"
+                },
+                "container_memory_max": {
+                    "type": "string"
+                },
+                "container_memory_request": {
+                    "type": "string"
+                },
                 "cpu_limit": {
                     "type": "string"
                 },
@@ -12854,6 +12953,9 @@
                     "type": "string"
                 },
                 "created_at": {
+                    "type": "string"
+                },
+                "ephemeral_storage_limit": {
                     "type": "string"
                 },
                 "id": {
@@ -13073,6 +13175,31 @@
                 "cluster_id": {
                     "type": "string"
                 },
+                "container_cpu_limit": {
+                    "type": "string"
+                },
+                "container_cpu_max": {
+                    "type": "string"
+                },
+                "container_cpu_request": {
+                    "description": "Per-container values for the namespace LimitRange (stack-manager-limits)\nand the namespace ephemeral-storage total. Empty means not set. See\nk8s.Client.EnsureLimitRange for the fallback defaults.",
+                    "type": "string"
+                },
+                "container_ephemeral_storage_limit": {
+                    "type": "string"
+                },
+                "container_ephemeral_storage_request": {
+                    "type": "string"
+                },
+                "container_memory_limit": {
+                    "type": "string"
+                },
+                "container_memory_max": {
+                    "type": "string"
+                },
+                "container_memory_request": {
+                    "type": "string"
+                },
                 "cpu_limit": {
                     "type": "string"
                 },
@@ -13080,6 +13207,9 @@
                     "type": "string"
                 },
                 "created_at": {
+                    "type": "string"
+                },
+                "ephemeral_storage_limit": {
                     "type": "string"
                 },
                 "id": {

@@ -2248,9 +2248,7 @@ func (m *Manager) applyNamespaceQuotas(ctx context.Context, instanceID, namespac
 	}
 
 	// If the effective quota is completely empty, skip.
-	if effectiveQuota.CPURequest == "" && effectiveQuota.CPULimit == "" &&
-		effectiveQuota.MemoryRequest == "" && effectiveQuota.MemoryLimit == "" &&
-		effectiveQuota.StorageLimit == "" && effectiveQuota.PodLimit == 0 {
+	if effectiveQuota.IsEmpty() {
 		return nil
 	}
 

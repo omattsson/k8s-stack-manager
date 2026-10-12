@@ -12,9 +12,81 @@ const (
 	quotaSourceOverride = "instance override"
 )
 
+// quotaQuantityField is one quantity field of ResourceQuotaConfig and the
+// same field of InstanceQuotaOverride. The getters return a pointer, so the
+// merge can also set the field.
+type quotaQuantityField struct {
+	cluster  func(*ResourceQuotaConfig) *string
+	override func(*InstanceQuotaOverride) *string
+	name     string
+}
+
+// quotaQuantityFields lists the quantity fields in the order of the
+// validation messages. pod_limit is an int and is handled on its own.
+var quotaQuantityFields = []quotaQuantityField{
+	{name: "cpu_request", cluster: func(q *ResourceQuotaConfig) *string { return &q.CPURequest }, override: func(o *InstanceQuotaOverride) *string { return &o.CPURequest }},
+	{name: "cpu_limit", cluster: func(q *ResourceQuotaConfig) *string { return &q.CPULimit }, override: func(o *InstanceQuotaOverride) *string { return &o.CPULimit }},
+	{name: "memory_request", cluster: func(q *ResourceQuotaConfig) *string { return &q.MemoryRequest }, override: func(o *InstanceQuotaOverride) *string { return &o.MemoryRequest }},
+	{name: "memory_limit", cluster: func(q *ResourceQuotaConfig) *string { return &q.MemoryLimit }, override: func(o *InstanceQuotaOverride) *string { return &o.MemoryLimit }},
+	{name: "storage_limit", cluster: func(q *ResourceQuotaConfig) *string { return &q.StorageLimit }, override: func(o *InstanceQuotaOverride) *string { return &o.StorageLimit }},
+	{name: "ephemeral_storage_limit", cluster: func(q *ResourceQuotaConfig) *string { return &q.EphemeralStorageLimit }, override: func(o *InstanceQuotaOverride) *string { return &o.EphemeralStorageLimit }},
+	{name: "container_cpu_request", cluster: func(q *ResourceQuotaConfig) *string { return &q.ContainerCPURequest }, override: func(o *InstanceQuotaOverride) *string { return &o.ContainerCPURequest }},
+	{name: "container_cpu_limit", cluster: func(q *ResourceQuotaConfig) *string { return &q.ContainerCPULimit }, override: func(o *InstanceQuotaOverride) *string { return &o.ContainerCPULimit }},
+	{name: "container_cpu_max", cluster: func(q *ResourceQuotaConfig) *string { return &q.ContainerCPUMax }, override: func(o *InstanceQuotaOverride) *string { return &o.ContainerCPUMax }},
+	{name: "container_memory_request", cluster: func(q *ResourceQuotaConfig) *string { return &q.ContainerMemoryRequest }, override: func(o *InstanceQuotaOverride) *string { return &o.ContainerMemoryRequest }},
+	{name: "container_memory_limit", cluster: func(q *ResourceQuotaConfig) *string { return &q.ContainerMemoryLimit }, override: func(o *InstanceQuotaOverride) *string { return &o.ContainerMemoryLimit }},
+	{name: "container_memory_max", cluster: func(q *ResourceQuotaConfig) *string { return &q.ContainerMemoryMax }, override: func(o *InstanceQuotaOverride) *string { return &o.ContainerMemoryMax }},
+	{name: "container_ephemeral_storage_request", cluster: func(q *ResourceQuotaConfig) *string { return &q.ContainerEphemeralStorageRequest }, override: func(o *InstanceQuotaOverride) *string { return &o.ContainerEphemeralStorageRequest }},
+	{name: "container_ephemeral_storage_limit", cluster: func(q *ResourceQuotaConfig) *string { return &q.ContainerEphemeralStorageLimit }, override: func(o *InstanceQuotaOverride) *string { return &o.ContainerEphemeralStorageLimit }},
+}
+
+// quotaOrderRules lists field pairs where the first value must not exceed
+// the second when both are set:
+//
+//   - a request is not above its limit (namespace and per container), and a
+//     per-container default is not above the per-container max;
+//   - a per-container default is not above the namespace total of the same
+//     resource, else every container that uses the default breaks the
+//     namespace ResourceQuota. The per-container max may be above the
+//     namespace total (it only caps).
+var quotaOrderRules = [][2]string{
+	{"cpu_request", "cpu_limit"},
+	{"memory_request", "memory_limit"},
+	{"container_cpu_request", "container_cpu_limit"},
+	{"container_cpu_limit", "container_cpu_max"},
+	{"container_cpu_request", "container_cpu_max"},
+	{"container_memory_request", "container_memory_limit"},
+	{"container_memory_limit", "container_memory_max"},
+	{"container_memory_request", "container_memory_max"},
+	{"container_ephemeral_storage_request", "container_ephemeral_storage_limit"},
+	{"container_cpu_request", "cpu_request"},
+	{"container_cpu_request", "cpu_limit"},
+	{"container_cpu_limit", "cpu_limit"},
+	{"container_memory_request", "memory_request"},
+	{"container_memory_request", "memory_limit"},
+	{"container_memory_limit", "memory_limit"},
+	{"container_ephemeral_storage_request", "ephemeral_storage_limit"},
+	{"container_ephemeral_storage_limit", "ephemeral_storage_limit"},
+}
+
+// IsEmpty reports whether the quota sets no value: no quantity and no
+// pod_limit. The deployer applies nothing for an empty quota.
+func (rq *ResourceQuotaConfig) IsEmpty() bool {
+	if rq.PodLimit != 0 {
+		return false
+	}
+	for _, f := range quotaQuantityFields {
+		if *f.cluster(rq) != "" {
+			return false
+		}
+	}
+	return true
+}
+
 // MergeQuotaOverride applies a per-instance override on top of the cluster
 // quota. Non-empty override fields replace the cluster value; empty or nil
-// fields fall back to the cluster value. A nil cluster means an empty base;
+// fields fall back to the cluster value. The rule is the same for every
+// field, also the per-container fields. A nil cluster means an empty base;
 // a nil override returns a copy of the cluster quota. The deployer applies
 // the result to the instance namespace.
 func MergeQuotaOverride(cluster *ResourceQuotaConfig, override *InstanceQuotaOverride) *ResourceQuotaConfig {
@@ -25,20 +97,10 @@ func MergeQuotaOverride(cluster *ResourceQuotaConfig, override *InstanceQuotaOve
 	if override == nil {
 		return &merged
 	}
-	if override.CPURequest != "" {
-		merged.CPURequest = override.CPURequest
-	}
-	if override.CPULimit != "" {
-		merged.CPULimit = override.CPULimit
-	}
-	if override.MemoryRequest != "" {
-		merged.MemoryRequest = override.MemoryRequest
-	}
-	if override.MemoryLimit != "" {
-		merged.MemoryLimit = override.MemoryLimit
-	}
-	if override.StorageLimit != "" {
-		merged.StorageLimit = override.StorageLimit
+	for _, f := range quotaQuantityFields {
+		if v := *f.override(override); v != "" {
+			*f.cluster(&merged) = v
+		}
 	}
 	if override.PodLimit != nil {
 		merged.PodLimit = *override.PodLimit
@@ -48,17 +110,16 @@ func MergeQuotaOverride(cluster *ResourceQuotaConfig, override *InstanceQuotaOve
 
 // effectiveQuotaField is one merged quota value and where it comes from.
 type effectiveQuotaField struct {
-	name   string
+	qty    resource.Quantity
 	value  string
 	source string
-	qty    resource.Quantity
 }
 
 // ValidateEffectiveQuota checks the quota that applies to an instance
 // namespace: the cluster quota merged with the instance override (see
 // MergeQuotaOverride). It applies the same rules as Validate on each object
-// (valid, non-negative quantities; request not above limit; pod_limit not
-// negative) and names the source of each value, for example:
+// (valid, non-negative quantities; the order rules of quotaOrderRules;
+// pod_limit not negative) and names the source of each value, for example:
 //
 //	cpu_request 4 (instance override) exceeds the effective cpu_limit 2 (cluster quota)
 //
@@ -67,44 +128,37 @@ func ValidateEffectiveQuota(cluster *ResourceQuotaConfig, override *InstanceQuot
 	if cluster == nil {
 		cluster = &ResourceQuotaConfig{}
 	}
-	pick := func(name, clusterVal string, overrideVal func(*InstanceQuotaOverride) string) *effectiveQuotaField {
-		if override != nil && overrideVal(override) != "" {
-			return &effectiveQuotaField{name: name, value: overrideVal(override), source: quotaSourceOverride}
-		}
-		if clusterVal != "" {
-			return &effectiveQuotaField{name: name, value: clusterVal, source: quotaSourceCluster}
-		}
-		return nil
-	}
 
-	cpuReq := pick("cpu_request", cluster.CPURequest, func(o *InstanceQuotaOverride) string { return o.CPURequest })
-	cpuLim := pick("cpu_limit", cluster.CPULimit, func(o *InstanceQuotaOverride) string { return o.CPULimit })
-	memReq := pick("memory_request", cluster.MemoryRequest, func(o *InstanceQuotaOverride) string { return o.MemoryRequest })
-	memLim := pick("memory_limit", cluster.MemoryLimit, func(o *InstanceQuotaOverride) string { return o.MemoryLimit })
-	storage := pick("storage_limit", cluster.StorageLimit, func(o *InstanceQuotaOverride) string { return o.StorageLimit })
-
-	for _, f := range []*effectiveQuotaField{cpuReq, cpuLim, memReq, memLim, storage} {
-		if f == nil {
+	effective := make(map[string]*effectiveQuotaField, len(quotaQuantityFields))
+	for _, f := range quotaQuantityFields {
+		var field *effectiveQuotaField
+		if override != nil && *f.override(override) != "" {
+			field = &effectiveQuotaField{value: *f.override(override), source: quotaSourceOverride}
+		} else if v := *f.cluster(cluster); v != "" {
+			field = &effectiveQuotaField{value: v, source: quotaSourceCluster}
+		}
+		if field == nil {
 			continue
 		}
-		q, err := resource.ParseQuantity(f.value)
+		q, err := resource.ParseQuantity(field.value)
 		if err != nil {
-			return fmt.Errorf("%s %q (%s): invalid quantity", f.name, f.value, f.source)
+			return fmt.Errorf("%s %q (%s): invalid quantity", f.name, field.value, field.source)
 		}
 		if q.Sign() < 0 {
-			return fmt.Errorf("%s %s (%s): must not be negative", f.name, f.value, f.source)
+			return fmt.Errorf("%s %s (%s): must not be negative", f.name, field.value, field.source)
 		}
-		f.qty = q
+		field.qty = q
+		effective[f.name] = field
 	}
 
-	for _, pair := range [][2]*effectiveQuotaField{{cpuReq, cpuLim}, {memReq, memLim}} {
-		req, lim := pair[0], pair[1]
-		if req == nil || lim == nil {
+	for _, rule := range quotaOrderRules {
+		low, high := effective[rule[0]], effective[rule[1]]
+		if low == nil || high == nil {
 			continue
 		}
-		if req.qty.Cmp(lim.qty) > 0 {
+		if low.qty.Cmp(high.qty) > 0 {
 			return fmt.Errorf("%s %s (%s) exceeds the effective %s %s (%s)",
-				req.name, req.value, req.source, lim.name, lim.value, lim.source)
+				rule[0], low.value, low.source, rule[1], high.value, high.source)
 		}
 	}
 
@@ -124,6 +178,10 @@ func ValidateEffectiveQuota(cluster *ResourceQuotaConfig, override *InstanceQuot
 //
 // Rules:
 //
+//   - Every quantity field has the check, also the per-container fields
+//     (container_*_request, container_*_limit, container_*_max) and
+//     ephemeral_storage_limit. A higher per-container default or max is a
+//     larger grant, so a user may lower it but not raise it.
 //   - A field that is empty in the override has no check (the cluster value
 //     applies).
 //   - A field without a cluster value (empty string, or pod_limit 0) has no
@@ -148,36 +206,28 @@ func CheckOverrideWithinClusterQuota(cluster *ResourceQuotaConfig, override, exi
 	if existing == nil {
 		existing = &InstanceQuotaOverride{}
 	}
-	fields := []struct {
-		name, overrideVal, clusterVal, existingVal string
-	}{
-		{"cpu_request", override.CPURequest, cluster.CPURequest, existing.CPURequest},
-		{"cpu_limit", override.CPULimit, cluster.CPULimit, existing.CPULimit},
-		{"memory_request", override.MemoryRequest, cluster.MemoryRequest, existing.MemoryRequest},
-		{"memory_limit", override.MemoryLimit, cluster.MemoryLimit, existing.MemoryLimit},
-		{"storage_limit", override.StorageLimit, cluster.StorageLimit, existing.StorageLimit},
-	}
-	for _, f := range fields {
-		if f.overrideVal == "" || f.clusterVal == "" {
+	for _, f := range quotaQuantityFields {
+		overrideVal, clusterVal, existingVal := *f.override(override), *f.cluster(cluster), *f.override(existing)
+		if overrideVal == "" || clusterVal == "" {
 			continue
 		}
-		capQty, err := resource.ParseQuantity(f.clusterVal)
+		capQty, err := resource.ParseQuantity(clusterVal)
 		if err != nil {
 			continue
 		}
-		qty, err := resource.ParseQuantity(f.overrideVal)
+		qty, err := resource.ParseQuantity(overrideVal)
 		if err != nil {
-			return fmt.Errorf("%s %q: invalid quantity", f.name, f.overrideVal)
+			return fmt.Errorf("%s %q: invalid quantity", f.name, overrideVal)
 		}
 		if qty.Cmp(capQty) <= 0 {
 			continue
 		}
-		if f.existingVal != "" {
-			if prev, prevErr := resource.ParseQuantity(f.existingVal); prevErr == nil && qty.Cmp(prev) == 0 {
+		if existingVal != "" {
+			if prev, prevErr := resource.ParseQuantity(existingVal); prevErr == nil && qty.Cmp(prev) == 0 {
 				continue
 			}
 		}
-		return fmt.Errorf("%s %s exceeds the cluster quota %s", f.name, f.overrideVal, f.clusterVal)
+		return fmt.Errorf("%s %s exceeds the cluster quota %s", f.name, overrideVal, clusterVal)
 	}
 	if override.PodLimit != nil && cluster.PodLimit > 0 {
 		pods := *override.PodLimit

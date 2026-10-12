@@ -68,6 +68,15 @@ func (c *Client) EnsureResourceQuota(ctx context.Context, namespace string, conf
 		}
 		hard[corev1.ResourceRequestsStorage] = q
 	}
+	if config.EphemeralStorageLimit != "" {
+		// One value caps both the requests and the limits of the namespace.
+		q, err := resource.ParseQuantity(config.EphemeralStorageLimit)
+		if err != nil {
+			return fmt.Errorf("parse ephemeral_storage_limit %q: %w", config.EphemeralStorageLimit, err)
+		}
+		hard[corev1.ResourceRequestsEphemeralStorage] = q
+		hard[corev1.ResourceLimitsEphemeralStorage] = q.DeepCopy()
+	}
 	if config.PodLimit > 0 {
 		hard[corev1.ResourcePods] = *resource.NewQuantity(int64(config.PodLimit), resource.DecimalSI)
 	}
@@ -109,43 +118,182 @@ func (c *Client) EnsureResourceQuota(ctx context.Context, namespace string, conf
 	return nil
 }
 
-// EnsureLimitRange creates or updates a LimitRange in the given namespace
-// with default request/limit values derived from the quota configuration.
+// Fallback per-container defaults of the LimitRange. They apply when the
+// quota sets a value for the resource (a namespace total or a per-container
+// limit or max) but no per-container default. A ResourceQuota on cpu, memory
+// or ephemeral-storage rejects a container without a request or limit, so the
+// LimitRange must give one; it must never be the namespace total (one
+// container would then take the whole namespace budget). Each fallback is
+// capped at the namespace total and the per-container max (the smaller value
+// wins), and the default limit is never below the default request.
+const (
+	fallbackContainerCPURequest              = "100m"
+	fallbackContainerCPULimit                = "500m"
+	fallbackContainerMemoryRequest           = "128Mi"
+	fallbackContainerMemoryLimit             = "512Mi"
+	fallbackContainerEphemeralStorageRequest = "128Mi"
+	fallbackContainerEphemeralStorageLimit   = "1Gi"
+)
+
+// quotaQuantity is one named quota value ("" = not set).
+type quotaQuantity struct {
+	field string
+	value string
+}
+
+// parse returns the parsed quantity, or nil when the value is empty.
+func (q quotaQuantity) parse() (*resource.Quantity, error) {
+	if q.value == "" {
+		return nil, nil
+	}
+	parsed, err := resource.ParseQuantity(q.value)
+	if err != nil {
+		return nil, fmt.Errorf("parse %s %q: %w", q.field, q.value, err)
+	}
+	return &parsed, nil
+}
+
+// limitRangeResource holds the quota values of one resource (cpu, memory or
+// ephemeral-storage) that decide its LimitRange entries.
+type limitRangeResource struct {
+	name            corev1.ResourceName
+	nsRequest       quotaQuantity // namespace requests total
+	nsLimit         quotaQuantity // namespace limits total
+	request         quotaQuantity // per-container default request
+	limit           quotaQuantity // per-container default limit
+	max             quotaQuantity // per-container max
+	fallbackRequest string
+	fallbackLimit   string
+}
+
+// smallestQuantity returns a copy of the smallest of base and the non-nil caps.
+func smallestQuantity(base resource.Quantity, caps ...*resource.Quantity) resource.Quantity {
+	out := base.DeepCopy()
+	for _, c := range caps {
+		if c != nil && c.Cmp(out) < 0 {
+			out = c.DeepCopy()
+		}
+	}
+	return out
+}
+
+// entries returns the LimitRange defaultRequest, default and max of the
+// resource (nil = not set):
+//
+//   - defaultRequest: the per-container request; else, when any value of the
+//     resource is set, the fallback request capped at the namespace totals,
+//     the per-container limit and the per-container max.
+//   - default: the per-container limit; else, when the namespace limit or the
+//     per-container max is set, the fallback limit capped at the namespace
+//     limit and the per-container max, and not below defaultRequest.
+//     (Without a default, Kubernetes would use the max as the default.)
+//   - max: the per-container max, only when it is set.
+func (r limitRangeResource) entries() (defaultRequest, defaultLimit, maxQty *resource.Quantity, err error) {
+	parsed := make([]*resource.Quantity, 5)
+	for i, q := range []quotaQuantity{r.nsRequest, r.nsLimit, r.request, r.limit, r.max} {
+		if parsed[i], err = q.parse(); err != nil {
+			return nil, nil, nil, err
+		}
+	}
+	nsReq, nsLim, req, lim, maxQty := parsed[0], parsed[1], parsed[2], parsed[3], parsed[4]
+	if nsReq == nil && nsLim == nil && req == nil && lim == nil && maxQty == nil {
+		return nil, nil, nil, nil
+	}
+
+	defaultRequest = req
+	if defaultRequest == nil {
+		q := smallestQuantity(resource.MustParse(r.fallbackRequest), nsReq, nsLim, lim, maxQty)
+		defaultRequest = &q
+	}
+
+	defaultLimit = lim
+	if defaultLimit == nil && (nsLim != nil || maxQty != nil) {
+		q := smallestQuantity(resource.MustParse(r.fallbackLimit), nsLim, maxQty)
+		if q.Cmp(*defaultRequest) < 0 {
+			q = defaultRequest.DeepCopy()
+		}
+		defaultLimit = &q
+	}
+	return defaultRequest, defaultLimit, maxQty, nil
+}
+
+// limitRangeResources returns the LimitRange inputs of config per resource.
+func limitRangeResources(config *models.ResourceQuotaConfig) []limitRangeResource {
+	return []limitRangeResource{
+		{
+			name:            corev1.ResourceCPU,
+			nsRequest:       quotaQuantity{"cpu_request", config.CPURequest},
+			nsLimit:         quotaQuantity{"cpu_limit", config.CPULimit},
+			request:         quotaQuantity{"container_cpu_request", config.ContainerCPURequest},
+			limit:           quotaQuantity{"container_cpu_limit", config.ContainerCPULimit},
+			max:             quotaQuantity{"container_cpu_max", config.ContainerCPUMax},
+			fallbackRequest: fallbackContainerCPURequest,
+			fallbackLimit:   fallbackContainerCPULimit,
+		},
+		{
+			name:            corev1.ResourceMemory,
+			nsRequest:       quotaQuantity{"memory_request", config.MemoryRequest},
+			nsLimit:         quotaQuantity{"memory_limit", config.MemoryLimit},
+			request:         quotaQuantity{"container_memory_request", config.ContainerMemoryRequest},
+			limit:           quotaQuantity{"container_memory_limit", config.ContainerMemoryLimit},
+			max:             quotaQuantity{"container_memory_max", config.ContainerMemoryMax},
+			fallbackRequest: fallbackContainerMemoryRequest,
+			fallbackLimit:   fallbackContainerMemoryLimit,
+		},
+		{
+			// ephemeral_storage_limit caps both requests and limits of the
+			// namespace (see EnsureResourceQuota). There is no per-container max.
+			name:            corev1.ResourceEphemeralStorage,
+			nsRequest:       quotaQuantity{"ephemeral_storage_limit", config.EphemeralStorageLimit},
+			nsLimit:         quotaQuantity{"ephemeral_storage_limit", config.EphemeralStorageLimit},
+			request:         quotaQuantity{"container_ephemeral_storage_request", config.ContainerEphemeralStorageRequest},
+			limit:           quotaQuantity{"container_ephemeral_storage_limit", config.ContainerEphemeralStorageLimit},
+			fallbackRequest: fallbackContainerEphemeralStorageRequest,
+			fallbackLimit:   fallbackContainerEphemeralStorageLimit,
+		},
+	}
+}
+
+// EnsureLimitRange creates or updates the LimitRange of the namespace
+// (container defaults and max). The per-container fields of config set the
+// values; see limitRangeResource.entries for the fallback when they are empty.
+// The namespace totals (cpu_request, cpu_limit, ...) only cap the fallback
+// defaults; they are never copied into a container default. A resource
+// without any value gets no LimitRange entry; when no resource has a value,
+// nothing is written.
 func (c *Client) EnsureLimitRange(ctx context.Context, namespace string, config *models.ResourceQuotaConfig) error {
 	defaultLimits := corev1.ResourceList{}
 	defaultRequests := corev1.ResourceList{}
+	maxLimits := corev1.ResourceList{}
 
-	if config.CPULimit != "" {
-		q, err := resource.ParseQuantity(config.CPULimit)
+	for _, r := range limitRangeResources(config) {
+		req, lim, maxQty, err := r.entries()
 		if err != nil {
-			return fmt.Errorf("parse cpu_limit %q: %w", config.CPULimit, err)
+			return err
 		}
-		defaultLimits[corev1.ResourceCPU] = q
-	}
-	if config.CPURequest != "" {
-		q, err := resource.ParseQuantity(config.CPURequest)
-		if err != nil {
-			return fmt.Errorf("parse cpu_request %q: %w", config.CPURequest, err)
+		if req != nil {
+			defaultRequests[r.name] = *req
 		}
-		defaultRequests[corev1.ResourceCPU] = q
-	}
-	if config.MemoryLimit != "" {
-		q, err := resource.ParseQuantity(config.MemoryLimit)
-		if err != nil {
-			return fmt.Errorf("parse memory_limit %q: %w", config.MemoryLimit, err)
+		if lim != nil {
+			defaultLimits[r.name] = *lim
 		}
-		defaultLimits[corev1.ResourceMemory] = q
-	}
-	if config.MemoryRequest != "" {
-		q, err := resource.ParseQuantity(config.MemoryRequest)
-		if err != nil {
-			return fmt.Errorf("parse memory_request %q: %w", config.MemoryRequest, err)
+		if maxQty != nil {
+			maxLimits[r.name] = *maxQty
 		}
-		defaultRequests[corev1.ResourceMemory] = q
 	}
 
-	if len(defaultLimits) == 0 && len(defaultRequests) == 0 {
+	if len(defaultLimits) == 0 && len(defaultRequests) == 0 && len(maxLimits) == 0 {
 		return nil // nothing to enforce
+	}
+	item := corev1.LimitRangeItem{Type: corev1.LimitTypeContainer}
+	if len(defaultLimits) > 0 {
+		item.Default = defaultLimits
+	}
+	if len(defaultRequests) > 0 {
+		item.DefaultRequest = defaultRequests
+	}
+	if len(maxLimits) > 0 {
+		item.Max = maxLimits
 	}
 
 	lr := &corev1.LimitRange{
@@ -157,13 +305,7 @@ func (c *Client) EnsureLimitRange(ctx context.Context, namespace string, config 
 			},
 		},
 		Spec: corev1.LimitRangeSpec{
-			Limits: []corev1.LimitRangeItem{
-				{
-					Type:           corev1.LimitTypeContainer,
-					Default:        defaultLimits,
-					DefaultRequest: defaultRequests,
-				},
-			},
+			Limits: []corev1.LimitRangeItem{item},
 		},
 	}
 
