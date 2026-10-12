@@ -59,6 +59,8 @@ Both list endpoints are paged (`page`, `pageSize`; default 25, maximum 100). Wit
 
 **Names in responses.** Instance responses include `owner_username`, `definition_name` and `cluster_name`. Definition and template responses include `owner_username`. A field is omitted when the owner, definition or cluster no longer exists (for example, after a delete). `cluster_name` is also omitted when `cluster_id` is empty (older instances).
 
+**Access URLs.** The instance status (`GET /stack-instances/:id/status`) lists the URLs of all Ingresses in the namespace. A chart marks the main entry point of the stack (for example the web app, not a database or mail tool) with the Ingress annotation `k8s-stack-manager.io/primary-url: "true"`. Primary Ingresses come first in `ingresses` (field `primary: true`), and the stack list shows the first URL. Without the annotation, the order is the Ingress name order.
+
 ### Stack Instance Lifecycle
 
 **Names.** An instance name must be a DNS label (RFC 1123): lowercase letters `a-z`, digits `0-9` and `-`. It must start and end with a letter or a digit. The maximum length is 50 characters. Charts build host names from `{{.InstanceName}}`, so other characters break the Ingress. The API checks the rule on create, clone, quick deploy and rename (400). Older instances with other names keep working; an update that keeps the name does not fail.

@@ -1534,6 +1534,12 @@ definitions:
         type: string
       path:
         type: string
+      primary:
+        description: |-
+          Primary is true for an Ingress with the annotation
+          PrimaryURLAnnotation = "true". Primary entries come first in
+          NamespaceStatus.Ingresses, so clients that show one URL show it.
+        type: boolean
       tls:
         type: boolean
       url:

@@ -61,9 +61,10 @@ const BULK_ACTION_LABELS: Record<BulkAction, string> = {
 };
 
 const getPrimaryUrl = (status: NamespaceStatus): string | null => {
-  // First ingress URL
+  // The ingress marked as primary (annotation k8s-stack-manager.io/primary-url),
+  // else the first ingress URL
   if (status.ingresses?.length) {
-    return status.ingresses[0].url;
+    return (status.ingresses.find((ing) => ing.primary) ?? status.ingresses[0]).url;
   }
   // First LoadBalancer external IP
   for (const chart of status.charts || []) {

@@ -1032,6 +1032,33 @@ describe('Dashboard', () => {
       });
     });
 
+    it('shows the primary ingress URL when one ingress is marked primary', async () => {
+      (instanceService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue([
+        mockInstance({ id: '1', name: 'Tools App', status: 'running', namespace: 'stack-tools' }),
+      ]);
+      (instanceService.getStatus as ReturnType<typeof vi.fn>).mockResolvedValue({
+        namespace: 'stack-tools',
+        status: 'healthy',
+        ingresses: [
+          { url: 'https://tools-db.example.com' },
+          { url: 'https://tools.example.com', primary: true },
+        ],
+        charts: [],
+        pods: [],
+      });
+      render(
+        <MemoryRouter>
+          <NotificationProvider>
+            <Dashboard />
+          </NotificationProvider>
+        </MemoryRouter>
+      );
+      await waitFor(() => {
+        expect(screen.getByText('https://tools.example.com')).toBeInTheDocument();
+      });
+      expect(screen.queryByText('https://tools-db.example.com')).not.toBeInTheDocument();
+    });
+
     it('shows pod health dot when status is fetched for running instance', async () => {
       (instanceService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue([
         mockInstance({ id: 'inst-h', name: 'Healthy App', status: 'running', namespace: 'stack-h' }),

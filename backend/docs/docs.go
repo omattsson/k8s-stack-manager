@@ -12254,6 +12254,10 @@ const docTemplate = `{
                 "path": {
                     "type": "string"
                 },
+                "primary": {
+                    "description": "Primary is true for an Ingress with the annotation\nPrimaryURLAnnotation = \"true\". Primary entries come first in\nNamespaceStatus.Ingresses, so clients that show one URL show it.",
+                    "type": "boolean"
+                },
                 "tls": {
                     "type": "boolean"
                 },

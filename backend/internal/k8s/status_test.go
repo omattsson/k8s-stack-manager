@@ -12,6 +12,7 @@ import (
 	networkingv1 "k8s.io/api/networking/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes/fake"
 )
 
@@ -1355,4 +1356,81 @@ func TestGetNamespaceStatus_PodStartTimeAndNodeName(t *testing.T) {
 	assert.Equal(t, "worker-node-1", pod.NodeName)
 	require.NotNil(t, pod.StartTime)
 	assert.Equal(t, startTime.Time, *pod.StartTime)
+}
+
+func TestGetNamespaceStatus_PrimaryIngressFirst(t *testing.T) {
+	t.Parallel()
+
+	pathType := networkingv1.PathTypePrefix
+	ingress := func(ns, name, host string, annotations map[string]string) *networkingv1.Ingress {
+		return &networkingv1.Ingress{
+			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns, Annotations: annotations},
+			Spec: networkingv1.IngressSpec{
+				Rules: []networkingv1.IngressRule{{
+					Host: host,
+					IngressRuleValue: networkingv1.IngressRuleValue{
+						HTTP: &networkingv1.HTTPIngressRuleValue{
+							Paths: []networkingv1.HTTPIngressPath{{
+								Path:     "/",
+								PathType: &pathType,
+								Backend: networkingv1.IngressBackend{
+									Service: &networkingv1.IngressServiceBackend{
+										Name: name, Port: networkingv1.ServiceBackendPort{Number: 80},
+									},
+								},
+							}},
+						},
+					},
+				}},
+			},
+		}
+	}
+	primary := map[string]string{PrimaryURLAnnotation: "true"}
+
+	tests := []struct {
+		name        string
+		ingresses   []*networkingv1.Ingress
+		wantOrder   []string
+		wantPrimary []bool
+	}{
+		{
+			name: "the primary ingress comes first, the others keep the name order",
+			ingresses: []*networkingv1.Ingress{
+				ingress("ns-a", "a-db", "db.example.com", nil),
+				ingress("ns-a", "b-web", "web.example.com", primary),
+				ingress("ns-a", "c-mail", "mail.example.com", nil),
+			},
+			wantOrder:   []string{"b-web", "a-db", "c-mail"},
+			wantPrimary: []bool{true, false, false},
+		},
+		{
+			name: "without the annotation the name order stays",
+			ingresses: []*networkingv1.Ingress{
+				ingress("ns-a", "a-db", "db.example.com", nil),
+				ingress("ns-a", "b-web", "web.example.com", map[string]string{PrimaryURLAnnotation: "false"}),
+			},
+			wantOrder:   []string{"a-db", "b-web"},
+			wantPrimary: []bool{false, false},
+		},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			objs := []runtime.Object{&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "ns-a"}}}
+			for _, ing := range tt.ingresses {
+				objs = append(objs, ing)
+			}
+			client := NewClientFromInterface(fake.NewSimpleClientset(objs...))
+
+			status, err := client.GetNamespaceStatus(context.Background(), "ns-a", StatusOptions{})
+
+			require.NoError(t, err)
+			require.Len(t, status.Ingresses, len(tt.wantOrder))
+			for i, want := range tt.wantOrder {
+				assert.Equal(t, want, status.Ingresses[i].Name)
+				assert.Equal(t, tt.wantPrimary[i], status.Ingresses[i].Primary)
+			}
+		})
+	}
 }

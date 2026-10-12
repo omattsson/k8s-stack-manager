@@ -103,7 +103,15 @@ type IngressInfo struct {
 	Path string `json:"path"`
 	URL  string `json:"url"`
 	TLS  bool   `json:"tls"`
+	// Primary is true for an Ingress with the annotation
+	// PrimaryURLAnnotation = "true". Primary entries come first in
+	// NamespaceStatus.Ingresses, so clients that show one URL show it.
+	Primary bool `json:"primary,omitempty"`
 }
+
+// PrimaryURLAnnotation marks the Ingress whose URL is the main entry point of
+// a stack (for example the web app, not a database or mail tool). Value "true".
+const PrimaryURLAnnotation = "k8s-stack-manager.io/primary-url"
 
 // NamespaceStatus represents the health of all resources in a namespace.
 type NamespaceStatus struct {
@@ -412,6 +420,7 @@ func (c *Client) GetNamespaceStatus(ctx context.Context, namespace string, opts 
 		svcIngressHosts := make(map[string][]string)
 
 		for _, ing := range ingressList.Items {
+			primary := ing.Annotations[PrimaryURLAnnotation] == "true"
 			for _, tlsEntry := range ing.Spec.TLS {
 				for _, h := range tlsEntry.Hosts {
 					tlsHosts[h] = true
@@ -427,11 +436,12 @@ func (c *Client) GetNamespaceStatus(ctx context.Context, namespace string, opts 
 					tls := tlsHosts[host]
 					path := p.Path
 					ingresses = append(ingresses, IngressInfo{
-						Name: ing.Name,
-						Host: host,
-						Path: path,
-						TLS:  tls,
-						URL:  constructIngressURL(host, path, tls),
+						Name:    ing.Name,
+						Host:    host,
+						Path:    path,
+						TLS:     tls,
+						URL:     constructIngressURL(host, path, tls),
+						Primary: primary,
 					})
 
 					// Track which services are referenced by ingress rules.
@@ -442,6 +452,12 @@ func (c *Client) GetNamespaceStatus(ctx context.Context, namespace string, opts 
 				}
 			}
 		}
+
+		// Primary ingresses first; the API list order (by name) stays within
+		// each group.
+		sort.SliceStable(ingresses, func(i, j int) bool {
+			return ingresses[i].Primary && !ingresses[j].Primary
+		})
 
 		// Attach ingress hosts to matching service entries.
 		for release, cr := range charts {

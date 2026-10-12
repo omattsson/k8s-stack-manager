@@ -280,6 +280,8 @@ export interface IngressInfo {
   path: string;
   tls: boolean;
   url: string;
+  /** Set for the Ingress with the annotation k8s-stack-manager.io/primary-url: "true". The API lists primary ingresses first. */
+  primary?: boolean;
 }
 
 export interface NamespaceStatus {
