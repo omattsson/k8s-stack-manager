@@ -510,6 +510,16 @@ helm-test: ## Verify default and External Secrets Helm renders
 		--set ingress.traefik.tls.secretName=stack-manager-tls --set backend.env.SECURE_COOKIES=false > "$$template_file"; \
 	grep -q 'SECURE_COOKIES: "false"' "$$template_file"; \
 	[ "$$(grep -c 'SECURE_COOKIES' "$$template_file")" -eq 1 ]; \
+	helm template $(HELM_RELEASE) $(HELM_CHART) --show-only templates/backend/configmap.yaml \
+		--set backend.secrets.JWT_SECRET=dummy-jwt-secret-for-template > "$$template_file"; \
+	if grep -q 'NAMESPACE_LABELS' "$$template_file"; then echo "unexpected NAMESPACE_LABELS without backend.namespaceLabels" >&2; exit 1; fi; \
+	helm template $(HELM_RELEASE) $(HELM_CHART) --show-only templates/backend/configmap.yaml \
+		--values $(HELM_CHART)/tests/namespace-labels-values.yaml > "$$template_file"; \
+	grep -q 'NAMESPACE_LABELS: "pod-security.kubernetes.io/enforce=baseline,pod-security.kubernetes.io/warn=restricted"' "$$template_file" \
+		|| { echo "backend.namespaceLabels must render sorted NAMESPACE_LABELS" >&2; exit 1; }; \
+	if helm template $(HELM_RELEASE) $(HELM_CHART) --values $(HELM_CHART)/tests/namespace-labels-values.yaml \
+		--set backend.namespaceLabels.managed-by=x > "$$template_file" 2>&1; then echo "backend.namespaceLabels.managed-by must fail" >&2; exit 1; fi; \
+	grep -q 'the key managed-by is reserved' "$$template_file" || { echo "missing managed-by error" >&2; exit 1; }; \
 	helm template $(HELM_RELEASE) $(HELM_CHART) --namespace $(HELM_NAMESPACE) \
 		--set backend.secrets.JWT_SECRET=dummy-jwt-secret-for-template > "$$template_file"; \
 	if grep -q 'Source: k8s-stack-manager/templates/frontend/branding-configmap.yaml' "$$template_file"; then echo "unexpected branding ConfigMap without branding.files" >&2; exit 1; fi; \

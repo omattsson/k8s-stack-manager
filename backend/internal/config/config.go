@@ -116,6 +116,12 @@ type DeploymentConfig struct {
 	// disables the feature.
 	NamespaceRoleBindings []NamespaceRoleBindingSpec
 
+	// NamespaceLabels are extra labels that the deployer sets on every stack
+	// namespace, in addition to managed-by=k8s-stack-manager. Sourced from
+	// NAMESPACE_LABELS (comma-separated key=value pairs, see
+	// ParseNamespaceLabels); nil = no extra labels.
+	NamespaceLabels map[string]string
+
 	// HooksConfigFile points at a JSON file describing outbound webhook
 	// subscriptions (for lifecycle events) and registered named actions. When
 	// empty, the server starts with hooks disabled — no dispatcher or action
@@ -589,6 +595,12 @@ func LoadConfig() (*Config, error) {
 	cfg.LeaderElection = loadLeaderElectionConfig()
 	cfg.WSFanout = loadWSFanoutConfig()
 	cfg.Branding = loadBrandingConfig()
+
+	nsLabels, err := ParseNamespaceLabels(getEnv("NAMESPACE_LABELS", ""))
+	if err != nil {
+		return nil, fmt.Errorf("invalid configuration: NAMESPACE_LABELS: %w", err)
+	}
+	cfg.Deployment.NamespaceLabels = nsLabels
 
 	// Validate the configuration
 	if err := cfg.Validate(); err != nil {

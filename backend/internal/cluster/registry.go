@@ -37,6 +37,9 @@ type RegistryOptions struct {
 	ClusterRepo models.ClusterRepository
 	HelmBinary  string
 	HelmTimeout time.Duration
+	// NamespaceLabels are extra labels for every stack namespace
+	// (NAMESPACE_LABELS); each new k8s client gets them.
+	NamespaceLabels map[string]string
 }
 
 // Registry manages per-cluster Kubernetes and Helm clients.
@@ -50,6 +53,7 @@ type Registry struct {
 	helmTimeout     time.Duration
 	defaultID       string // cached default cluster ID (empty = not resolved yet)
 	defaultResolved bool   // whether we've attempted to resolve default
+	namespaceLabels map[string]string
 
 	// Factories for testability.
 	k8sFactory  K8sClientFactory
@@ -59,11 +63,12 @@ type Registry struct {
 // NewRegistry creates a Registry with the given configuration.
 func NewRegistry(cfg RegistryOptions) *Registry {
 	return &Registry{
-		clients:     make(map[string]*ClusterClients),
-		clusterRepo: cfg.ClusterRepo,
-		helmBinary:  cfg.HelmBinary,
-		helmTimeout: cfg.HelmTimeout,
-		k8sFactory:  k8s.NewClient,
+		clients:         make(map[string]*ClusterClients),
+		clusterRepo:     cfg.ClusterRepo,
+		helmBinary:      cfg.HelmBinary,
+		helmTimeout:     cfg.HelmTimeout,
+		namespaceLabels: cfg.NamespaceLabels,
+		k8sFactory:      k8s.NewClient,
 		helmFactory: func(binaryPath, kubeconfig string, timeout time.Duration) deployer.HelmExecutor {
 			return deployer.NewHelmClient(binaryPath, kubeconfig, timeout)
 		},
@@ -474,6 +479,7 @@ func (r *Registry) buildClients(cluster *models.Cluster) (*ClusterClients, error
 		}
 		return nil, fmt.Errorf("create k8s client: %w", err)
 	}
+	k8sClient.SetNamespaceLabels(r.namespaceLabels)
 
 	helmClient := r.helmFactory(r.helmBinary, kubeconfigPath, r.helmTimeout)
 

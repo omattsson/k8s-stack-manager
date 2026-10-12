@@ -156,6 +156,133 @@ func TestEnsureNamespace_LabelsExistingNamespace(t *testing.T) {
 	}
 }
 
+func TestEnsureNamespace_ExtraLabels(t *testing.T) {
+	t.Parallel()
+
+	const psaEnforce = "pod-security.kubernetes.io/enforce"
+	const psaWarn = "pod-security.kubernetes.io/warn"
+	extra := map[string]string{psaEnforce: "baseline", psaWarn: "restricted"}
+
+	tests := []struct {
+		name       string
+		existing   map[string]string // nil = namespace does not exist
+		exists     bool
+		extra      map[string]string
+		wantPatch  bool
+		wantLabels map[string]string
+	}{
+		{
+			name:      "new namespace gets managed-by and the extra labels",
+			extra:     extra,
+			wantPatch: false,
+			wantLabels: map[string]string{
+				"managed-by": "k8s-stack-manager",
+				psaEnforce:   "baseline",
+				psaWarn:      "restricted",
+			},
+		},
+		{
+			name:      "existing namespace without labels gets them added",
+			exists:    true,
+			extra:     extra,
+			wantPatch: true,
+			wantLabels: map[string]string{
+				"managed-by": "k8s-stack-manager",
+				psaEnforce:   "baseline",
+				psaWarn:      "restricted",
+			},
+		},
+		{
+			name:   "differing value is updated, unrelated labels stay",
+			exists: true,
+			existing: map[string]string{
+				"managed-by": "k8s-stack-manager",
+				psaEnforce:   "privileged",
+				psaWarn:      "restricted",
+				"team":       "a",
+			},
+			extra:     extra,
+			wantPatch: true,
+			wantLabels: map[string]string{
+				"managed-by": "k8s-stack-manager",
+				psaEnforce:   "baseline",
+				psaWarn:      "restricted",
+				"team":       "a",
+			},
+		},
+		{
+			name:   "no patch when all labels match",
+			exists: true,
+			existing: map[string]string{
+				"managed-by": "k8s-stack-manager",
+				psaEnforce:   "baseline",
+				psaWarn:      "restricted",
+			},
+			extra:     extra,
+			wantPatch: false,
+			wantLabels: map[string]string{
+				"managed-by": "k8s-stack-manager",
+				psaEnforce:   "baseline",
+				psaWarn:      "restricted",
+			},
+		},
+		{
+			name:   "managed-by in the extra labels is ignored",
+			exists: true,
+			existing: map[string]string{
+				"managed-by": "k8s-stack-manager",
+			},
+			extra:      map[string]string{"managed-by": "other"},
+			wantPatch:  false,
+			wantLabels: map[string]string{"managed-by": "k8s-stack-manager"},
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			cs := fake.NewSimpleClientset()
+			if tt.exists {
+				cs = fake.NewSimpleClientset(&corev1.Namespace{
+					ObjectMeta: metav1.ObjectMeta{Name: "stack-a", Labels: tt.existing},
+				})
+			}
+			client := NewClientFromInterface(cs)
+			client.SetNamespaceLabels(tt.extra)
+
+			require.NoError(t, client.EnsureNamespace(context.Background(), "stack-a"))
+
+			ns, err := cs.CoreV1().Namespaces().Get(context.Background(), "stack-a", metav1.GetOptions{})
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantLabels, ns.Labels)
+
+			patched := false
+			for _, a := range cs.Actions() {
+				if a.GetVerb() == "patch" && a.GetResource().Resource == "namespaces" {
+					patched = true
+				}
+			}
+			assert.Equal(t, tt.wantPatch, patched)
+		})
+	}
+}
+
+func TestSetNamespaceLabels_CopiesMap(t *testing.T) {
+	t.Parallel()
+
+	labels := map[string]string{"team": "a"}
+	cs := fake.NewSimpleClientset()
+	client := NewClientFromInterface(cs)
+	client.SetNamespaceLabels(labels)
+	labels["team"] = "b"
+
+	require.NoError(t, client.EnsureNamespace(context.Background(), "stack-a"))
+	ns, err := cs.CoreV1().Namespaces().Get(context.Background(), "stack-a", metav1.GetOptions{})
+	require.NoError(t, err)
+	assert.Equal(t, "a", ns.Labels["team"])
+}
+
 func TestDeleteNamespace(t *testing.T) {
 	t.Parallel()
 

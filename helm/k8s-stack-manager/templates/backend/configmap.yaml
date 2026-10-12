@@ -65,6 +65,19 @@ data:
   # roleBindingName).
   NAMESPACE_ROLE_BINDINGS_JSON: {{ .Values.backend.namespaceRoleBindings | toJson | quote }}
   {{- end }}
+  {{- /* Extra labels on every stack namespace: sorted key=value pairs. An explicit backend.env value wins. */}}
+  {{- with .Values.backend.namespaceLabels }}
+  {{- if hasKey . "managed-by" }}
+  {{- fail "backend.namespaceLabels: the key managed-by is reserved (the backend always sets managed-by=k8s-stack-manager)" }}
+  {{- end }}
+  {{- if not (hasKey $.Values.backend.env "NAMESPACE_LABELS") }}
+  {{- $pairs := list }}
+  {{- range $k := keys . | sortAlpha }}
+  {{- $pairs = append $pairs (printf "%s=%s" $k (index $.Values.backend.namespaceLabels $k | toString)) }}
+  {{- end }}
+  NAMESPACE_LABELS: {{ join "," $pairs | quote }}
+  {{- end }}
+  {{- end }}
   {{- if .Values.metrics.enabled }}
   METRICS_ENABLED: "true"
   METRICS_ADDR: ":{{ .Values.metrics.port }}"

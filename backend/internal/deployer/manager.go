@@ -635,7 +635,8 @@ func (m *Manager) executeDeploy(helm HelmExecutor, k8sClient *k8s.Client, regCfg
 	defer cancel()
 
 	// Ensure the target namespace exists, with the label
-	// managed-by=k8s-stack-manager, before any chart installs and before any
+	// managed-by=k8s-stack-manager and the NAMESPACE_LABELS labels (set on
+	// the k8s client by the cluster registry), before any chart installs and before any
 	// pre-install resource provisioning (wildcard TLS, pull secrets,
 	// RoleBindings). Always called: without it `helm --create-namespace`
 	// creates the namespace without the label, and tools that select stack

@@ -47,6 +47,8 @@ A developer's working copy of a stack definition. Each instance has:
 - **Value overrides** per chart (merged on top of chart defaults)
 - An auto-generated **namespace** (`stack-{instance-name}-{owner}`)
 
+**Namespace labels.** The backend labels each stack namespace `managed-by=k8s-stack-manager`. The setting `NAMESPACE_LABELS` (Helm: `backend.namespaceLabels`) adds more labels, for example Pod Security Admission levels: `NAMESPACE_LABELS=pod-security.kubernetes.io/enforce=baseline,pod-security.kubernetes.io/warn=restricted`. The backend sets these labels when it creates the namespace. On each deploy and each rollback to a target deploy, it adds a missing label to an existing namespace and sets the configured value when the live value is different. It does not remove other labels. An invalid key or value, the key `managed-by` or a duplicate key stops the backend at startup.
+
 **List filters.** `GET /stack-instances` accepts these filters. They combine (AND). `total` is the number of instances that match.
 - `status`: one of `draft`, `queued`, `deploying`, `stabilizing`, `running`, `stopping`, `stopped`, `cleaning`, `partial`, `error`. Another value gives 400.
 - `cluster_id`, `definition_id`: an ID.

@@ -167,6 +167,19 @@ backend:
   #     # roleBindingName: refresh-db-snap-manager   # optional; defaults to clusterRole
   namespaceRoleBindings: []
 
+  # Extra labels on every stack namespace (NAMESPACE_LABELS), in addition to
+  # managed-by=k8s-stack-manager. The backend sets them when it creates a
+  # namespace and adds or corrects them on an existing namespace at each
+  # deploy and rollback. It does not remove other labels. Keys and values must
+  # be valid Kubernetes labels; the key managed-by is reserved. The chart
+  # renders the map as sorted key=value pairs joined by commas. Empty = no
+  # extra labels. Main use: Pod Security Admission levels.
+  # Example:
+  # namespaceLabels:
+  #   pod-security.kubernetes.io/enforce: baseline
+  #   pod-security.kubernetes.io/warn: restricted
+  namespaceLabels: {}
+
   # Extra environment variables, volumes and volume mounts for the backend
   # container (plain Kubernetes syntax). Example: give Helm a registry login
   # file (docker config.json format) for OCI chart repositories that need

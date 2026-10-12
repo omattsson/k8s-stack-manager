@@ -95,7 +95,7 @@ func (m *Manager) rollbackToTarget(ctx context.Context, helm HelmExecutor, k8sCl
 
 	// helm upgrade --install creates a missing namespace (for example after
 	// a failed clean). As for a deploy, create it first with the managed-by
-	// label and apply the namespace quota before the first install, so the
+	// label and the NAMESPACE_LABELS labels and apply the namespace quota before the first install, so the
 	// rolled-back pods meet the quota at once. Both steps are not fatal.
 	if k8sClient != nil {
 		if nsErr := k8sClient.EnsureNamespace(ctx, namespace); nsErr != nil {

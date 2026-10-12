@@ -183,9 +183,10 @@ func buildDomainServices(
 
 	// Cluster registry for multi-cluster client management.
 	clusterRegistry := cluster.NewRegistry(cluster.RegistryOptions{
-		ClusterRepo: repos.Cluster,
-		HelmBinary:  cfg.Deployment.HelmBinary,
-		HelmTimeout: cfg.Deployment.DeploymentTimeout,
+		ClusterRepo:     repos.Cluster,
+		HelmBinary:      cfg.Deployment.HelmBinary,
+		HelmTimeout:     cfg.Deployment.DeploymentTimeout,
+		NamespaceLabels: cfg.Deployment.NamespaceLabels,
 	})
 
 	// Extended health checks.

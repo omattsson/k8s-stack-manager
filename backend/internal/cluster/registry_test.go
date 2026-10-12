@@ -17,6 +17,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
 )
 
@@ -983,4 +984,34 @@ func TestResolveClusterID_LookupFailureIsNotErrNoDefaultCluster(t *testing.T) {
 	_, err := reg.ResolveClusterID("")
 	require.Error(t, err)
 	assert.NotErrorIs(t, err, ErrNoDefaultCluster)
+}
+
+func TestGetClients_AppliesNamespaceLabels(t *testing.T) {
+	t.Parallel()
+
+	repo := newMockClusterRepo()
+	repo.clusters["c1"] = &models.Cluster{ID: "c1", Name: "Cluster 1", KubeconfigPath: "/fake/kubeconfig"}
+
+	reg := NewRegistry(RegistryOptions{
+		ClusterRepo:     repo,
+		HelmBinary:      "helm",
+		HelmTimeout:     time.Minute,
+		NamespaceLabels: map[string]string{"pod-security.kubernetes.io/enforce": "baseline"},
+	})
+	cs := fake.NewSimpleClientset()
+	reg.k8sFactory = func(_ string) (*k8s.Client, error) {
+		return k8s.NewClientFromInterface(cs), nil
+	}
+	reg.helmFactory = stubHelmFactory
+
+	cc, err := reg.GetClients("c1")
+	require.NoError(t, err)
+	require.NoError(t, cc.K8s.EnsureNamespace(context.Background(), "stack-a"))
+
+	ns, err := cs.CoreV1().Namespaces().Get(context.Background(), "stack-a", metav1.GetOptions{})
+	require.NoError(t, err)
+	assert.Equal(t, map[string]string{
+		"managed-by":                         "k8s-stack-manager",
+		"pod-security.kubernetes.io/enforce": "baseline",
+	}, ns.Labels)
 }
