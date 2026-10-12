@@ -150,6 +150,7 @@ Key values in `values.yaml`:
 - `backend.replicas`, `frontend.replicas`, `*.autoscaling`, `*.pdb`: independent scaling
 - `backend.allowedChartRepos`: chart repository URL prefixes (`ALLOWED_CHART_REPOS`). Empty means all sources.
 - `backend.rbac.scope` (`namespace` or `cluster`), `backend.rbac.admissionPolicy.enabled`: backend RBAC (see Key Design Decisions)
+- `backend.priorityClassName`, `frontend.priorityClassName`, `mysql.priorityClassName`, `otel.priorityClassName`: PriorityClass of each pod; empty = cluster default.
 - `backend.namespaceRoleBindings`: RoleBindings that the deployer applies to every stack namespace (`NAMESPACE_ROLE_BINDINGS_JSON`)
 - `backend.namespaceLabels`: map of extra stack namespace labels, rendered as sorted `NAMESPACE_LABELS`. The chart renders it only when it is not empty. The keys `managed-by` and `k8s-stack-manager.io/instance-name` fail the render.
 - `mysql.enabled`, `mysql.auth.*`, `mysql.persistence.enabled`: bundled database

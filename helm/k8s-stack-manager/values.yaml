@@ -262,6 +262,11 @@ backend:
     targetCPUUtilizationPercentage: 75
     targetMemoryUtilizationPercentage: 80
 
+  # PriorityClass of the backend pods (an existing PriorityClass name). Empty =
+  # the cluster default. Use it so that the scheduler keeps the stack manager
+  # running when stack pods fill the nodes.
+  priorityClassName: ""
+
   serviceAccount:
     create: true
     annotations: {}
@@ -391,6 +396,11 @@ frontend:
     targetCPUUtilizationPercentage: 75
     targetMemoryUtilizationPercentage: 80
 
+  # PriorityClass of the frontend pods (an existing PriorityClass name). Empty =
+  # the cluster default. Use it so that the scheduler keeps the stack manager
+  # running when stack pods fill the nodes.
+  priorityClassName: ""
+
   serviceAccount:
     create: true
     annotations: {}
@@ -434,6 +444,11 @@ branding:
 # ---------------------------------------------------------------------------
 mysql:
   enabled: true
+  # PriorityClass of the bundled MySQL pods (an existing PriorityClass name). Empty =
+  # the cluster default. Use it so that the scheduler keeps the stack manager
+  # running when stack pods fill the nodes.
+  priorityClassName: ""
+
   image:
     repository: mysql
     tag: "8.0"
@@ -465,6 +480,11 @@ mysql:
 # ---------------------------------------------------------------------------
 otel:
   enabled: false
+  # PriorityClass of the OpenTelemetry collector pods (an existing PriorityClass name). Empty =
+  # the cluster default. Use it so that the scheduler keeps the stack manager
+  # running when stack pods fill the nodes.
+  priorityClassName: ""
+
   sampleRate: "1.0"   # Trace sampling rate (0.0-1.0). Reduce for production.
   collector:
     image:

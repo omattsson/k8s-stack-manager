@@ -53,6 +53,9 @@ spec:
         container.apparmor.security.beta.kubernetes.io/backend: runtime/default
         {{- end }}
     spec:
+      {{- with .Values.backend.priorityClassName }}
+      priorityClassName: {{ . | quote }}
+      {{- end }}
       {{- with .Values.global.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}

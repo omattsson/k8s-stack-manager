@@ -31,6 +31,9 @@ spec:
         container.apparmor.security.beta.kubernetes.io/nginx: runtime/default
         {{- end }}
     spec:
+      {{- with .Values.frontend.priorityClassName }}
+      priorityClassName: {{ . | quote }}
+      {{- end }}
       {{- with .Values.global.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
