@@ -1,52 +1,60 @@
 # Example webhook handler
 
-Minimal reference implementation for a k8s-stack-manager event subscriber. Use
-this as a starting point for custom handlers (e.g. database-refresh, CMDB
-sync, deploy-gate policies).
+This is a minimal reference implementation of a k8s-stack-manager event
+subscriber. Use it as a starting point for custom handlers, for example
+database refresh, configuration management database (CMDB) sync and
+deploy-gate policies.
 
 ## What it does
 
-Listens on `/events` and:
+The handler listens on `/events`. For each request it does these steps:
 
-1. Reads the request body (capped at 1 MiB).
-2. If started with `-secret <value>`, verifies the `X-StackManager-Signature`
-   header — HMAC-SHA256 of the body, hex-encoded, `sha256=` prefix.
-3. Unmarshals the envelope (`apiVersion: hooks.k8sstackmanager.io/v1`).
-4. Logs a structured record.
-5. Responds `{"allowed": true}`.
+1. Reads the request body (at most 1 MiB).
+2. If you start it with `-secret <value>`, verifies the `X-StackManager-Signature`
+   header. The header is the HMAC-SHA256 (hash-based message authentication
+   code) of the body, hex-encoded, with the prefix `sha256=`.
+3. Parses the envelope (`apiVersion: hooks.k8sstackmanager.io/v1`).
+4. Writes a structured log record (JSON).
+5. Responds with `{"allowed": true}`.
 
-That's it. Everything else is policy you add.
+Everything else is policy that you add.
 
 ## Run locally
+
+Run the command from the `backend/` directory:
 
 ```bash
 go run ./examples/webhook-handler -addr :8080 -secret topsecret
 ```
 
-Register it against a k8s-stack-manager instance by adding a subscription
-pointing at `http://<host>:8080/events`. See the hooks contract doc for the
-full envelope and subscription schema.
+The flags are `-addr` (default `:8080`) and `-secret` (default: empty, no
+signature check).
+
+To register the handler, add a subscription that points at
+`http://<host>:8080/events`. The same secret must be available to the backend
+through the environment variable that `secret_env` names. The full envelope and
+subscription schema is in [../../docs/hooks.md](../../docs/hooks.md).
 
 ## Contract summary
 
 Request headers:
 - `Content-Type: application/json`
-- `X-StackManager-Event: <event-name>` (e.g. `pre-deploy`)
-- `X-StackManager-Request-Id: <id>` (same id also in the envelope)
+- `X-StackManager-Event: <event-name>` (for example `pre-deploy`)
+- `X-StackManager-Request-Id: <id>` (the same ID is also in the envelope)
 - `X-StackManager-Signature: sha256=<hex>` (only when the subscription has a
-  secret configured)
+  secret)
 
 Response (any 2xx):
 ```json
 { "allowed": true,  "message": "" }
 ```
-or, to deny a pre-\* event with `failure_policy=fail`:
+To deny a `pre-*` event that has `failure_policy=fail`:
 ```json
 { "allowed": false, "message": "quota exceeded" }
 ```
 
-Respond with a non-2xx to signal transport failure; that is also treated as a
-failure (and may abort the operation when `failure_policy=fail`).
+A non-2xx response signals a failure. The core treats it as a failure, and it
+can abort the operation when `failure_policy=fail`.
 
 ## Tests
 
@@ -54,14 +62,16 @@ failure (and may abort the operation when `failure_policy=fail`).
 go test ./examples/webhook-handler/...
 ```
 
-Covers: valid request, bad signature rejected, valid signature accepted, malformed envelope.
+The tests cover: a valid request, a rejected bad signature, an accepted valid
+signature and a malformed envelope.
 
 ## Next steps
 
 - Subscribe to specific events only (filter on `X-StackManager-Event`).
-- Implement policy: reject pre-deploys during a maintenance window, reject
-  pre-instance-deletes while dependencies exist, etc.
-- For longer-running work (RefreshDB-style), respond quickly with
-  `{"allowed": true}` and do the real work as an **action** via
-  `POST /api/v1/stack-instances/:id/actions/:name` — actions are RPC-style
-  and can return arbitrary JSON payloads.
+- Implement policy. Examples: reject a `pre-deploy` during a maintenance
+  window, reject a `pre-instance-delete` while dependencies exist.
+- For longer work (for example a database refresh), do not use an event. Use an
+  **action** instead: `POST /api/v1/stack-instances/:id/actions/:name`. An
+  action is RPC-style and can return any JSON. See
+  [../webhook-handler-python/](../webhook-handler-python/) for an action
+  handler.
