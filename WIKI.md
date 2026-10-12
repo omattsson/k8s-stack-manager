@@ -47,7 +47,7 @@ A developer's working copy of a stack definition. Each instance has:
 - **Value overrides** per chart (merged on top of chart defaults)
 - An auto-generated **namespace** (`stack-{instance-name}-{owner}`)
 
-**Namespace labels.** The backend labels each stack namespace `managed-by=k8s-stack-manager`. The setting `NAMESPACE_LABELS` (Helm: `backend.namespaceLabels`) adds more labels, for example Pod Security Admission levels: `NAMESPACE_LABELS=pod-security.kubernetes.io/enforce=baseline,pod-security.kubernetes.io/warn=restricted`. The backend sets these labels when it creates the namespace. On each deploy and each rollback to a target deploy, it adds a missing label to an existing namespace and sets the configured value when the live value is different. It does not remove other labels. An invalid key or value, the key `managed-by` or a duplicate key stops the backend at startup.
+**Namespace labels.** The backend labels each stack namespace `managed-by=k8s-stack-manager` and `k8s-stack-manager.io/instance-name=<instance name>`. The instance-name label gives the exact stack name, for example for an admission policy that binds Ingress hosts to the stack (a namespace name prefix is ambiguous). A rename changes the label at the next deploy. An instance name that is not a valid label value (older names from before the naming rule) gets no instance-name label, and the backend logs a warning. The setting `NAMESPACE_LABELS` (Helm: `backend.namespaceLabels`) adds more labels, for example Pod Security Admission levels: `NAMESPACE_LABELS=pod-security.kubernetes.io/enforce=baseline,pod-security.kubernetes.io/warn=restricted`. The backend sets these labels when it creates the namespace. On each deploy and each rollback to a target deploy, it adds a missing label to an existing namespace and sets the configured value when the live value is different. It does not remove other labels. An invalid key or value, a reserved key (`managed-by`, `k8s-stack-manager.io/instance-name`) or a duplicate key stops the backend at startup.
 
 **List filters.** `GET /stack-instances` accepts these filters. They combine (AND). `total` is the number of instances that match.
 - `status`: one of `draft`, `queued`, `deploying`, `stabilizing`, `running`, `stopping`, `stopped`, `cleaning`, `partial`, `error`. Another value gives 400.
@@ -198,7 +198,7 @@ Clusters can optionally store **container registry credentials** (`registry_url`
 
 ### Orphaned Namespaces
 `/admin/orphaned-namespaces` (admin) lists `stack-*` namespaces without a stack instance, with pod, deployment and service counts and Helm releases (`?details=true`).
-- The deployer labels each namespace it creates `managed-by=k8s-stack-manager`. The page lists labelled namespaces as orphans and unlabelled `stack-*` namespaces in a separate "Unmanaged namespaces" table.
+- The deployer labels each namespace it creates `managed-by=k8s-stack-manager` (and `k8s-stack-manager.io/instance-name`, see "Namespace labels"). The page lists labelled namespaces as orphans and unlabelled `stack-*` namespaces in a separate "Unmanaged namespaces" table.
 - `DELETE /admin/orphaned-namespaces/:namespace` deletes a labelled namespace. An unlabelled namespace can belong to another team or tool: the delete returns 409 unless `?confirm=<full namespace name>` is set. The page asks the admin to type the full name. A missing namespace gives 404.
 - After a delete the page removes the row. The namespace can stay in phase `Terminating` for some time; a refresh then shows it with the delete button disabled.
 

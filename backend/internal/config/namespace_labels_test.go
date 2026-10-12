@@ -41,6 +41,11 @@ func TestParseNamespaceLabels(t *testing.T) {
 		{name: "invalid value characters", raw: "team=a b", wantErr: `value "a b" of label "team" is not valid`},
 		{name: "value too long", raw: "team=" + strings.Repeat("a", 64), wantErr: `of label "team" is not valid`},
 		{name: "reserved managed-by", raw: "managed-by=other", wantErr: `label key "managed-by" is reserved`},
+		{
+			name:    "reserved instance-name",
+			raw:     "team=a,k8s-stack-manager.io/instance-name=foo",
+			wantErr: `label key "k8s-stack-manager.io/instance-name" is reserved`,
+		},
 		{name: "duplicate key", raw: "team=a,team=b", wantErr: `label key "team" is set more than once`},
 	}
 

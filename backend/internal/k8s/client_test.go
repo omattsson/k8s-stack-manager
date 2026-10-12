@@ -62,7 +62,7 @@ func TestEnsureNamespace(t *testing.T) {
 			}
 
 			client := NewClientFromInterface(cs)
-			err := client.EnsureNamespace(context.Background(), tt.namespace)
+			err := client.EnsureNamespace(context.Background(), tt.namespace, "")
 			if tt.wantErr {
 				assert.Error(t, err)
 			} else {
@@ -83,7 +83,7 @@ func TestEnsureNamespace_AddsLabel(t *testing.T) {
 	cs := fake.NewSimpleClientset()
 	client := NewClientFromInterface(cs)
 
-	err := client.EnsureNamespace(context.Background(), "labeled-ns")
+	err := client.EnsureNamespace(context.Background(), "labeled-ns", "")
 	assert.NoError(t, err)
 
 	ns, err := cs.CoreV1().Namespaces().Get(context.Background(), "labeled-ns", metav1.GetOptions{})
@@ -138,7 +138,7 @@ func TestEnsureNamespace_LabelsExistingNamespace(t *testing.T) {
 			})
 			client := NewClientFromInterface(cs)
 
-			err := client.EnsureNamespace(context.Background(), "stack-a")
+			err := client.EnsureNamespace(context.Background(), "stack-a", "")
 			assert.NoError(t, err)
 
 			ns, err := cs.CoreV1().Namespaces().Get(context.Background(), "stack-a", metav1.GetOptions{})
@@ -251,7 +251,111 @@ func TestEnsureNamespace_ExtraLabels(t *testing.T) {
 			client := NewClientFromInterface(cs)
 			client.SetNamespaceLabels(tt.extra)
 
-			require.NoError(t, client.EnsureNamespace(context.Background(), "stack-a"))
+			require.NoError(t, client.EnsureNamespace(context.Background(), "stack-a", ""))
+
+			ns, err := cs.CoreV1().Namespaces().Get(context.Background(), "stack-a", metav1.GetOptions{})
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantLabels, ns.Labels)
+
+			patched := false
+			for _, a := range cs.Actions() {
+				if a.GetVerb() == "patch" && a.GetResource().Resource == "namespaces" {
+					patched = true
+				}
+			}
+			assert.Equal(t, tt.wantPatch, patched)
+		})
+	}
+}
+
+func TestEnsureNamespace_InstanceNameLabel(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name         string
+		existing     map[string]string
+		exists       bool
+		instanceName string
+		wantPatch    bool
+		wantLabels   map[string]string
+	}{
+		{
+			name:         "new namespace gets the instance-name label",
+			instanceName: "foo",
+			wantLabels: map[string]string{
+				"managed-by":         "k8s-stack-manager",
+				InstanceNameLabelKey: "foo",
+			},
+		},
+		{
+			name:         "existing namespace gets the label added",
+			exists:       true,
+			existing:     map[string]string{"managed-by": "k8s-stack-manager", "team": "a"},
+			instanceName: "foo",
+			wantPatch:    true,
+			wantLabels: map[string]string{
+				"managed-by":         "k8s-stack-manager",
+				"team":               "a",
+				InstanceNameLabelKey: "foo",
+			},
+		},
+		{
+			name:         "renamed instance overwrites the label",
+			exists:       true,
+			existing:     map[string]string{"managed-by": "k8s-stack-manager", InstanceNameLabelKey: "old-name"},
+			instanceName: "new-name",
+			wantPatch:    true,
+			wantLabels: map[string]string{
+				"managed-by":         "k8s-stack-manager",
+				InstanceNameLabelKey: "new-name",
+			},
+		},
+		{
+			name:         "no patch when the label matches",
+			exists:       true,
+			existing:     map[string]string{"managed-by": "k8s-stack-manager", InstanceNameLabelKey: "foo"},
+			instanceName: "foo",
+			wantLabels: map[string]string{
+				"managed-by":         "k8s-stack-manager",
+				InstanceNameLabelKey: "foo",
+			},
+		},
+		{
+			name:         "invalid label value gives no label on a new namespace",
+			instanceName: "Old Name!",
+			wantLabels:   map[string]string{"managed-by": "k8s-stack-manager"},
+		},
+		{
+			name:         "invalid label value keeps an existing label",
+			exists:       true,
+			existing:     map[string]string{"managed-by": "k8s-stack-manager", InstanceNameLabelKey: "foo"},
+			instanceName: "Old Name!",
+			wantLabels: map[string]string{
+				"managed-by":         "k8s-stack-manager",
+				InstanceNameLabelKey: "foo",
+			},
+		},
+		{
+			name:       "empty instance name gives no label",
+			wantLabels: map[string]string{"managed-by": "k8s-stack-manager"},
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			cs := fake.NewSimpleClientset()
+			if tt.exists {
+				cs = fake.NewSimpleClientset(&corev1.Namespace{
+					ObjectMeta: metav1.ObjectMeta{Name: "stack-a", Labels: tt.existing},
+				})
+			}
+			client := NewClientFromInterface(cs)
+			// The instance-name key in NAMESPACE_LABELS is ignored.
+			client.SetNamespaceLabels(map[string]string{InstanceNameLabelKey: "static"})
+
+			require.NoError(t, client.EnsureNamespace(context.Background(), "stack-a", tt.instanceName))
 
 			ns, err := cs.CoreV1().Namespaces().Get(context.Background(), "stack-a", metav1.GetOptions{})
 			require.NoError(t, err)
@@ -277,7 +381,7 @@ func TestSetNamespaceLabels_CopiesMap(t *testing.T) {
 	client.SetNamespaceLabels(labels)
 	labels["team"] = "b"
 
-	require.NoError(t, client.EnsureNamespace(context.Background(), "stack-a"))
+	require.NoError(t, client.EnsureNamespace(context.Background(), "stack-a", ""))
 	ns, err := cs.CoreV1().Namespaces().Get(context.Background(), "stack-a", metav1.GetOptions{})
 	require.NoError(t, err)
 	assert.Equal(t, "a", ns.Labels["team"])

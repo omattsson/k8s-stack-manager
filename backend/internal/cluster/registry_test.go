@@ -1006,7 +1006,7 @@ func TestGetClients_AppliesNamespaceLabels(t *testing.T) {
 
 	cc, err := reg.GetClients("c1")
 	require.NoError(t, err)
-	require.NoError(t, cc.K8s.EnsureNamespace(context.Background(), "stack-a"))
+	require.NoError(t, cc.K8s.EnsureNamespace(context.Background(), "stack-a", ""))
 
 	ns, err := cs.CoreV1().Namespaces().Get(context.Background(), "stack-a", metav1.GetOptions{})
 	require.NoError(t, err)

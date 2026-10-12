@@ -635,8 +635,9 @@ func (m *Manager) executeDeploy(helm HelmExecutor, k8sClient *k8s.Client, regCfg
 	defer cancel()
 
 	// Ensure the target namespace exists, with the label
-	// managed-by=k8s-stack-manager and the NAMESPACE_LABELS labels (set on
-	// the k8s client by the cluster registry), before any chart installs and before any
+	// managed-by=k8s-stack-manager, the instance-name label and the
+	// NAMESPACE_LABELS labels (set on the k8s client by the cluster
+	// registry), before any chart installs and before any
 	// pre-install resource provisioning (wildcard TLS, pull secrets,
 	// RoleBindings). Always called: without it `helm --create-namespace`
 	// creates the namespace without the label, and tools that select stack
@@ -644,7 +645,7 @@ func (m *Manager) executeDeploy(helm HelmExecutor, k8sClient *k8s.Client, regCfg
 	// ClusterExternalSecret) never see it.
 	nsReady := false
 	if k8sClient != nil {
-		if err := k8sClient.EnsureNamespace(ctx, namespace); err != nil {
+		if err := k8sClient.EnsureNamespace(ctx, namespace, instance.Name); err != nil {
 			slog.Warn("failed to ensure namespace for pre-install resources",
 				"instance_id", instanceID, "namespace", namespace, "error", err,
 			)
@@ -2014,7 +2015,7 @@ func (m *Manager) executeRollback(job rollbackJob) {
 		// One helm timeout per chart, as for a deploy.
 		ctx, cancel := context.WithTimeout(m.shutdownCtx, deployBudget(timeout, len(charts)))
 		defer cancel()
-		output, applied, err := m.rollbackToTarget(ctx, helm, k8sClient, streaming, instanceID, deployLog, namespace, charts, job.target)
+		output, applied, err := m.rollbackToTarget(ctx, helm, k8sClient, streaming, instanceID, job.instance.Name, deployLog, namespace, charts, job.target)
 		rollbackErr = err
 		readiness := m.rollbackReadiness(k8sClient, instanceID, namespace, deployLog.ID, rollbackErr)
 		podEventLines, podEvent := podWatch.stop()

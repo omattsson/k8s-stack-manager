@@ -520,6 +520,9 @@ helm-test: ## Verify default and External Secrets Helm renders
 	if helm template $(HELM_RELEASE) $(HELM_CHART) --values $(HELM_CHART)/tests/namespace-labels-values.yaml \
 		--set backend.namespaceLabels.managed-by=x > "$$template_file" 2>&1; then echo "backend.namespaceLabels.managed-by must fail" >&2; exit 1; fi; \
 	grep -q 'the key managed-by is reserved' "$$template_file" || { echo "missing managed-by error" >&2; exit 1; }; \
+	if helm template $(HELM_RELEASE) $(HELM_CHART) --values $(HELM_CHART)/tests/namespace-labels-values.yaml \
+		--set 'backend.namespaceLabels.k8s-stack-manager\.io/instance-name=x' > "$$template_file" 2>&1; then echo "backend.namespaceLabels instance-name must fail" >&2; exit 1; fi; \
+	grep -q 'the key k8s-stack-manager.io/instance-name is reserved' "$$template_file" || { echo "missing instance-name error" >&2; exit 1; }; \
 	helm template $(HELM_RELEASE) $(HELM_CHART) --namespace $(HELM_NAMESPACE) \
 		--set backend.secrets.JWT_SECRET=dummy-jwt-secret-for-template > "$$template_file"; \
 	if grep -q 'Source: k8s-stack-manager/templates/frontend/branding-configmap.yaml' "$$template_file"; then echo "unexpected branding ConfigMap without branding.files" >&2; exit 1; fi; \

@@ -232,6 +232,7 @@ func TestRollback_ToTarget_AppliesQuotaBeforeInstall(t *testing.T) {
 	ns, err := cs.CoreV1().Namespaces().Get(context.Background(), inst.Namespace, metav1.GetOptions{})
 	require.NoError(t, err)
 	assert.Equal(t, "k8s-stack-manager", ns.Labels["managed-by"])
+	assert.Equal(t, "rbq", ns.Labels[k8s.InstanceNameLabelKey])
 	require.Len(t, seen(), 1)
 	assert.Equal(t, quotaSeen{cpuLimit: "2", limitRange: true}, seen()[0])
 }

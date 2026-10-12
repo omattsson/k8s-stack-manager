@@ -83,7 +83,7 @@ func chartReference(cfg models.ChartConfig) (chartRef, repoURL string) {
 // is skipped with a warning. The first chart error stops the rollback.
 //
 // It returns the helm output, the values applied per chart and the error.
-func (m *Manager) rollbackToTarget(ctx context.Context, helm HelmExecutor, k8sClient *k8s.Client, streaming bool, instanceID string, deployLog *models.DeploymentLog, namespace string, charts []ChartDeployInfo, target *rollbackTarget) (string, map[string]string, error) {
+func (m *Manager) rollbackToTarget(ctx context.Context, helm HelmExecutor, k8sClient *k8s.Client, streaming bool, instanceID, instanceName string, deployLog *models.DeploymentLog, namespace string, charts []ChartDeployInfo, target *rollbackTarget) (string, map[string]string, error) {
 	var out strings.Builder
 	applied := make(map[string]string, len(target.values))
 
@@ -95,10 +95,10 @@ func (m *Manager) rollbackToTarget(ctx context.Context, helm HelmExecutor, k8sCl
 
 	// helm upgrade --install creates a missing namespace (for example after
 	// a failed clean). As for a deploy, create it first with the managed-by
-	// label and the NAMESPACE_LABELS labels and apply the namespace quota before the first install, so the
+	// label, the instance-name label and the NAMESPACE_LABELS labels and apply the namespace quota before the first install, so the
 	// rolled-back pods meet the quota at once. Both steps are not fatal.
 	if k8sClient != nil {
-		if nsErr := k8sClient.EnsureNamespace(ctx, namespace); nsErr != nil {
+		if nsErr := k8sClient.EnsureNamespace(ctx, namespace, instanceName); nsErr != nil {
 			slog.Warn("failed to ensure namespace before rollback",
 				"instance_id", instanceID, "namespace", namespace, "error", nsErr)
 		} else if m.quotaRepo != nil {

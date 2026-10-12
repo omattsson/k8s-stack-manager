@@ -95,6 +95,13 @@ func TestManager_Deploy_ReplicatesWildcardTLS(t *testing.T) {
 		assert.Equal(t, []byte("CERT"), got.Data["tls.crt"])
 		assert.Equal(t, "k8s-stack-manager", got.Labels["managed-by"])
 		assert.Equal(t, "source-ns", got.Labels["k8s-stack-manager.io/copied-from-namespace"])
+
+		// The deploy ensures the namespace (before the secret copy) with the
+		// managed-by and instance-name labels.
+		ns, err := cs.CoreV1().Namespaces().Get(context.Background(), "stack-target-a", metav1.GetOptions{})
+		require.NoError(t, err)
+		assert.Equal(t, "k8s-stack-manager", ns.Labels[k8s.ManagedByLabelKey])
+		assert.Equal(t, "wtls-happy", ns.Labels[k8s.InstanceNameLabelKey])
 	})
 
 	t.Run("source secret missing is non-fatal", func(t *testing.T) {

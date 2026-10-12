@@ -168,12 +168,14 @@ backend:
   namespaceRoleBindings: []
 
   # Extra labels on every stack namespace (NAMESPACE_LABELS), in addition to
-  # managed-by=k8s-stack-manager. The backend sets them when it creates a
-  # namespace and adds or corrects them on an existing namespace at each
-  # deploy and rollback. It does not remove other labels. Keys and values must
-  # be valid Kubernetes labels; the key managed-by is reserved. The chart
-  # renders the map as sorted key=value pairs joined by commas. Empty = no
-  # extra labels. Main use: Pod Security Admission levels.
+  # managed-by=k8s-stack-manager and k8s-stack-manager.io/instance-name. The
+  # backend sets them when it creates a namespace and adds or corrects them on
+  # an existing namespace at each deploy and rollback. It does not remove
+  # other labels. Keys and values must be valid Kubernetes labels; the keys
+  # managed-by and k8s-stack-manager.io/instance-name are reserved (the
+  # backend sets them). The chart renders the map as sorted key=value pairs
+  # joined by commas. Empty = no extra labels. Main use: Pod Security
+  # Admission levels.
   # Example:
   # namespaceLabels:
   #   pod-security.kubernetes.io/enforce: baseline

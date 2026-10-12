@@ -67,8 +67,10 @@ data:
   {{- end }}
   {{- /* Extra labels on every stack namespace: sorted key=value pairs. An explicit backend.env value wins. */}}
   {{- with .Values.backend.namespaceLabels }}
-  {{- if hasKey . "managed-by" }}
-  {{- fail "backend.namespaceLabels: the key managed-by is reserved (the backend always sets managed-by=k8s-stack-manager)" }}
+  {{- range $reserved := list "managed-by" "k8s-stack-manager.io/instance-name" }}
+  {{- if hasKey $.Values.backend.namespaceLabels $reserved }}
+  {{- fail (printf "backend.namespaceLabels: the key %s is reserved (the backend sets it on every stack namespace)" $reserved) }}
+  {{- end }}
   {{- end }}
   {{- if not (hasKey $.Values.backend.env "NAMESPACE_LABELS") }}
   {{- $pairs := list }}
