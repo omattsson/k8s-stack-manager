@@ -59,7 +59,7 @@ helm/k8s-stack-manager/
   templates/backend/
     configmap.yaml                         # Non-secret env vars
     secret.yaml                            # Secret env vars (skipped when externalSecrets.enabled)
-    serviceaccount.yaml, clusterrole.yaml  # Identity + RBAC for managing target clusters
+    serviceaccount.yaml, clusterrole.yaml  # Identity + RBAC (backend.rbac.scope: namespace = per-namespace RoleBinding + stack-access ClusterRole + ValidatingAdmissionPolicy; cluster = old rules)
     leader-election-rbac.yaml              # Role + RoleBinding: leases get/create/update (backend.leaderElection.enabled)
     deployment.yaml                        # Used when argoRollouts.enabled=false (default)
     rollout.yaml                           # Argo Rollout, canary 20%→50%→80% (argoRollouts.enabled=true)
@@ -85,6 +85,7 @@ helm/k8s-stack-manager/
 - **ConfigMap/Secret checksums** in pod annotations trigger a rollout on config changes.
 - **Security contexts** — backend runs as non-root (uid 65532), readOnlyRootFilesystem; frontend drops all capabilities.
 - **Observability** — `otel.enabled` deploys a collector; `metrics.enabled` exposes Prometheus metrics, `metrics.serviceMonitor.enabled` adds a ServiceMonitor.
+- **Namespace-scoped RBAC** — `backend.rbac.scope: namespace` (default): the backend (and Helm, which runs with its service account) has rights on namespaced objects only in stack namespaces, through the RoleBinding `k8s-stack-manager-access` to `<fullname>-stack-access`; cluster-wide it keeps nodes and pods (read), namespaces, RoleBinding writes and `bind` on that role and the roles of `backend.namespaceRoleBindings`. A ValidatingAdmissionPolicy (`backend.rbac.admissionPolicy.enabled`, Kubernetes 1.30+) keeps its Role/RoleBinding writes in namespaces with `managed-by=k8s-stack-manager` and its namespace changes to stack namespaces. `cluster` keeps the old rules.
 - **Leader election** — `backend.leaderElection.enabled` (default true) sets `LEADER_ELECTION_ENABLED`, `POD_NAME`/`POD_NAMESPACE` (downward API, Deployment and Rollout) and a Lease Role; only the leader replica runs the background workers, every replica serves HTTP and WebSocket.
 - **WebSocket fan-out** — `backend.wsFanout.enabled` (default true) sets `WS_FANOUT_ENABLED`; `backend.wsFanout.pollInterval` (500ms) and `retention` (5m) set `WS_FANOUT_POLL_INTERVAL` and `WS_FANOUT_RETENTION`. The replicas share WebSocket messages through the `ws_events` table, so clients on every replica get deploy logs and leader events.
 
@@ -96,9 +97,11 @@ Key values in `values.yaml`:
 - `backend.replicas` / `frontend.replicas`, `*.autoscaling`, `*.pdb` — Independently scalable
 - `backend.leaderElection.enabled`, `backend.leaderElection.leaseName` — Leader election for the background workers (Lease `<fullname>-workers`)
 - `backend.wsFanout.enabled`, `backend.wsFanout.pollInterval`, `backend.wsFanout.retention` — WebSocket fan-out between replicas (`ws_events`)
+- `backend.allowedChartRepos` — chart repository URL prefixes (`ALLOWED_CHART_REPOS`); empty = all sources
+- `backend.rbac.scope` (`namespace` | `cluster`), `backend.rbac.admissionPolicy.enabled` — backend RBAC, see Key Design Decisions
 - `backend.namespaceLabels` — map of extra stack namespace labels, rendered as sorted `NAMESPACE_LABELS` (only when not empty; the keys `managed-by` and `k8s-stack-manager.io/instance-name` fail the render)
 - `mysql.enabled`, `mysql.auth.*`, `mysql.persistence.enabled` — Bundled database
-- `ingress.type`, `ingress.host`, `ingress.traefik.*`, `ingress.className`, `ingress.tls` — Ingress settings
+- `ingress.type`, `ingress.host`, `ingress.traefik.*` (`priority`: router priority of every route, default 10000), `ingress.className`, `ingress.tls` — Ingress settings
 - `otel.enabled`, `metrics.enabled`, `metrics.serviceMonitor.enabled` — Observability
 - `hooks.enabled`, `hooks.subscriptions` — Outbound webhook subscriptions (see `EXTENDING.md`)
 - `branding.title`, `branding.logoUrl`, `branding.faviconUrl` — `APP_TITLE`, `APP_LOGO_URL`, `APP_FAVICON_URL` in the backend ConfigMap; `branding.files` / `branding.binaryFiles` — ConfigMap served by the frontend nginx at `/branding/` (nosniff, sandbox CSP; names `^[-._a-zA-Z0-9]+$`, max 900 KiB total)
@@ -369,6 +372,8 @@ backend/internal/
 - **Instance comparison**: Side-by-side comparison of two stack instances including merged Helm values per chart.
 - **List filters and names**: `GET /stack-instances` filters by `name`, `status` (unknown value: 400), `cluster_id`, `definition_id` and `owner` (`me`, a username or a user ID); the filters combine (AND) and `total` counts the matches. `GET /stack-definitions` filters by `name` and `owner` the same way. Instance responses add `owner_username`, `definition_name` and `cluster_name`; definition and template responses add `owner_username`. One batch lookup per kind and response; a missing owner, definition or cluster omits the field.
 - **Import/export**: Stack definitions can be exported as JSON bundles and re-imported to create new definitions with charts.
+- **Definition access**: creating a definition, import and adding or removing charts need devops or admin (`RequireDevOps`); update, delete, upgrade and chart updates need the owner, devops or admin (`requireDefinitionModify`, 403). A user without devops or admin may change chart default values and deploy order, not the chart name, repository, path or version (`chartSourceChanged`, 403). The UI hides Create Definition, Import and Add/Remove Chart for role `user` and shows the chart source read-only
+- **Chart sources**: `ALLOWED_CHART_REPOS` (comma list of oci/https/http URL prefixes, `models.NormalizeChartSourcePrefix`) limits the chart location (`models.CheckChartSource`: OCI reference, `--repo` URL + chart, or chart path; prefix + `/` boundary, no `..`; a chart path with a scheme or a leading `/` next to a repository URL is rejected). Checked in `ChartConfig.Validate` / `TemplateChartConfig.Validate` (repository create and update) and again before each Helm install (deploy: chart failed; rollback to target: error). Empty = all sources
 - **Definition names**: Unique per owner (application check, no unique index): create, rename and template instantiate return 409; import renames to `<name> (imported)`, `<name> (imported 2)`, …; quick deploy uses `<name> (2)`, …
 - **Setup wizard**: The frontend shows a first-run checklist until a cluster, a template, and an instance exist, or until the user dismisses it (localStorage).
 

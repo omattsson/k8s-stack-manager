@@ -567,6 +567,7 @@ func sessionActivityFunc(repo models.RefreshTokenRepository) middleware.SessionA
 // buildRouter creates the Gin engine, wires all routes, and returns the
 // router plus the rate limiters (caller must stop them on shutdown).
 func buildRouter(cfg *config.Config, hs *handlerSet, deps routerDeps) (*gin.Engine, *routes.RateLimiters) {
+	gin.SetMode(ginMode(os.Getenv("GIN_MODE"), cfg.App.Debug))
 	router := gin.New()
 	rateLimiters := routes.SetupRoutes(router, routes.Deps{
 		Repository:                   deps.Repo,
@@ -866,4 +867,17 @@ func stackAccessBinding(sa config.StackAccessConfig) *k8s.AccessBinding {
 		ServiceAccount:          sa.ServiceAccount,
 		ServiceAccountNamespace: sa.ServiceAccountNamespace,
 	}
+}
+
+// ginMode returns the Gin mode: GIN_MODE when it is set, else release mode
+// unless APP_DEBUG is true. Debug mode prints every route at startup and
+// warnings that are not wanted in production.
+func ginMode(envMode string, debug bool) string {
+	if envMode != "" {
+		return envMode
+	}
+	if debug {
+		return gin.DebugMode
+	}
+	return gin.ReleaseMode
 }

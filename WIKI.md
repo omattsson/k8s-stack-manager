@@ -32,10 +32,11 @@ A template has a **working copy** and a **version history**.
 ### Stack Definition
 A concrete collection of Helm chart configurations. Created by instantiating a template or from scratch. Owns the chart configs (chart name, repository, version, default values).
 
+- Only devops and admin users can create or import a definition, and add or remove charts. Users get definitions from templates (Use Template, Quick Deploy). The owner can rename a definition, change its branch, the default values and the order of its charts; the chart name, repository, path and version need devops or admin. Only the owner, devops and admin can change or delete a definition.
 - Definition names are unique per owner. Create, rename and template instantiate return 409 for a name that the owner already uses.
 - Import does not fail on a used name. It uses `<name> (imported)`, then `<name> (imported 2)`, and so on. The response shows the final name.
 - Quick deploy creates one definition for the new instance and sets `owner_instance_id`. When you delete that instance, the definition and its charts are deleted too, if no other instance uses the definition. If the name is used, quick deploy names the definition `<name> (2)`, `<name> (3)`, and so on.
-- Editing a quick deploy definition (for example adding a chart) does not keep it. It is still deleted with its owner instance when no instance uses it. To keep a setup, create your own definition (for example export and import it).
+- Editing a quick deploy definition (for example adding a chart) does not keep it. It is still deleted with its owner instance when no instance uses it. To keep a setup, ask a devops or admin user to create a definition (for example export and import it).
 - Older databases can contain duplicate names. They stay until you rename or delete them.
 - On MySQL the check is not case-sensitive (the default collation): `My-Def` and `my-def` are the same name. The in-memory test repositories compare exactly.
 - The paged list (`GET /stack-definitions`) does not load the charts. It returns `chart_count` (one grouped count query for the page); the definitions page shows it in the Charts column.

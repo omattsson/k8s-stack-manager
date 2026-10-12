@@ -1257,3 +1257,24 @@ func (*stubClusterRepo) CountByHealthStatus(status string) (int, error) { return
 func (*stubClusterRepo) NamesByIDs(_ []string) (map[string]string, error) {
 	return map[string]string{}, nil
 }
+
+func TestGinMode(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name  string
+		env   string
+		debug bool
+		want  string
+	}{
+		{name: "env wins", env: "debug", debug: false, want: gin.DebugMode},
+		{name: "debug config", env: "", debug: true, want: gin.DebugMode},
+		{name: "production default", env: "", debug: false, want: gin.ReleaseMode},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tt.want, ginMode(tt.env, tt.debug))
+		})
+	}
+}

@@ -535,6 +535,12 @@ ingress:
     middlewares:
       stripApiPrefix: false  # Backend routes include /api prefix (/api/v1/...)
       secureHeaders: true
+    # Router priority of every route of the IngressRoute. Traefik orders
+    # routers by priority, by default the length of the rule, so another
+    # Ingress on the same host with a longer rule (for example a path under
+    # /api) would win. A high value keeps the stack manager routes first.
+    # 0 = Traefik default.
+    priority: 10000
 
   # Standard Ingress settings (only used when type: ingress)
   className: ""  # e.g. "nginx", "traefik", or leave empty for cluster default
