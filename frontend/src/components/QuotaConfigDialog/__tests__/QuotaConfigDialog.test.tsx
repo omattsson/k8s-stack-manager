@@ -369,4 +369,132 @@ describe('QuotaConfigDialog', () => {
       });
     });
   });
+  describe('per container section', () => {
+    const fieldByLabel = (label: string) => screen.getByRole('textbox', { name: label });
+
+    const renderEmpty = async () => {
+      (clusterService.getQuotas as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+      renderDialog();
+      await waitFor(() => {
+        expect(screen.getByText(/No quotas configured/)).toBeInTheDocument();
+      });
+    };
+
+    it('shows the per container fields with helper text', async () => {
+      await renderEmpty();
+
+      expect(screen.getByText('Per container')).toBeInTheDocument();
+      for (const label of [
+        'Container CPU Request',
+        'Container CPU Limit',
+        'Container CPU Max',
+        'Container Memory Request',
+        'Container Memory Limit',
+        'Container Memory Max',
+        'Container Ephemeral Storage Request',
+        'Container Ephemeral Storage Limit',
+        'Ephemeral Storage Limit',
+      ]) {
+        expect(fieldByLabel(label)).toBeInTheDocument();
+      }
+      expect(screen.getByText('Default CPU request of a container without its own (e.g., 100m)')).toBeInTheDocument();
+      expect(screen.getByText('Default memory request of a container without its own (e.g., 128Mi)')).toBeInTheDocument();
+    });
+
+    it('loads stored container values', async () => {
+      (clusterService.getQuotas as ReturnType<typeof vi.fn>).mockResolvedValue({
+        ...mockQuota,
+        container_cpu_request: '150m',
+        container_cpu_max: '3',
+        container_memory_max: '6Gi',
+        ephemeral_storage_limit: '30Gi',
+      });
+      renderDialog();
+
+      await waitFor(() => {
+        expect(fieldByLabel('Container CPU Request')).toHaveValue('150m');
+      });
+      expect(fieldByLabel('Container CPU Max')).toHaveValue('3');
+      expect(fieldByLabel('Container Memory Max')).toHaveValue('6Gi');
+      expect(fieldByLabel('Ephemeral Storage Limit')).toHaveValue('30Gi');
+      expect(fieldByLabel('Container CPU Limit')).toHaveValue('');
+    });
+
+    it('saves the container fields trimmed', async () => {
+      const user = userEvent.setup();
+      (clusterService.updateQuotas as ReturnType<typeof vi.fn>).mockResolvedValue(mockQuota);
+      await renderEmpty();
+
+      await user.type(fieldByLabel('Container CPU Request'), ' 100m');
+      await user.type(fieldByLabel('Container CPU Limit'), '500m');
+      await user.type(fieldByLabel('Container CPU Max'), '2');
+      await user.type(fieldByLabel('Container Memory Request'), '128Mi');
+      await user.type(fieldByLabel('Container Memory Limit'), '512Mi');
+      await user.type(fieldByLabel('Container Memory Max'), '4Gi ');
+      await user.type(fieldByLabel('Ephemeral Storage Limit'), '20Gi');
+      await user.type(fieldByLabel('Container Ephemeral Storage Request'), '128Mi');
+      await user.type(fieldByLabel('Container Ephemeral Storage Limit'), '1Gi');
+      await user.click(screen.getByRole('button', { name: /^save$/i }));
+
+      await waitFor(() => {
+        expect(clusterService.updateQuotas).toHaveBeenCalledWith('c1', expect.objectContaining({
+          container_cpu_request: '100m',
+          container_cpu_limit: '500m',
+          container_cpu_max: '2',
+          container_memory_request: '128Mi',
+          container_memory_limit: '512Mi',
+          container_memory_max: '4Gi',
+          ephemeral_storage_limit: '20Gi',
+          container_ephemeral_storage_request: '128Mi',
+          container_ephemeral_storage_limit: '1Gi',
+        }));
+      });
+    });
+
+    it('rejects an invalid container quantity', async () => {
+      const user = userEvent.setup();
+      await renderEmpty();
+
+      await user.type(fieldByLabel('Container Memory Max'), '4 GB');
+      await user.tab();
+
+      expect(screen.getByText(/Invalid quantity\. Use a memory quantity/)).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /^save$/i })).toBeDisabled();
+    });
+
+    it('rejects a container limit higher than the container max', async () => {
+      const user = userEvent.setup();
+      await renderEmpty();
+
+      await user.type(fieldByLabel('Container CPU Limit'), '4');
+      await user.type(fieldByLabel('Container CPU Max'), '2000m');
+      await user.tab();
+
+      expect(screen.getByText('Must not be higher than the container CPU max')).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /^save$/i })).toBeDisabled();
+    });
+
+    it('rejects a container default higher than the namespace total', async () => {
+      const user = userEvent.setup();
+      await renderEmpty();
+
+      await user.type(fieldByLabel('Memory Limit'), '1Gi');
+      await user.type(fieldByLabel('Container Memory Limit'), '2Gi');
+      await user.tab();
+
+      expect(screen.getByText('Must not be higher than the namespace memory limit')).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /^save$/i })).toBeDisabled();
+    });
+
+    it('allows a container max above the namespace total', async () => {
+      const user = userEvent.setup();
+      await renderEmpty();
+
+      await user.type(fieldByLabel('CPU Limit'), '1');
+      await user.type(fieldByLabel('Container CPU Max'), '2');
+      await user.tab();
+
+      expect(screen.getByRole('button', { name: /^save$/i })).toBeEnabled();
+    });
+  });
 });

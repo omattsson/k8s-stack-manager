@@ -695,6 +695,16 @@ export interface ResourceQuotaConfig {
   memory_limit: string;
   storage_limit: string;
   pod_limit: number;
+  /** Per-container LimitRange values and the namespace ephemeral-storage total (empty = not set). */
+  container_cpu_request?: string;
+  container_cpu_limit?: string;
+  container_cpu_max?: string;
+  container_memory_request?: string;
+  container_memory_limit?: string;
+  container_memory_max?: string;
+  ephemeral_storage_limit?: string;
+  container_ephemeral_storage_request?: string;
+  container_ephemeral_storage_limit?: string;
 }
 
 export interface InstanceQuotaOverride {
@@ -706,6 +716,16 @@ export interface InstanceQuotaOverride {
   memory_limit: string;
   storage_limit: string;
   pod_limit: number | null;
+  /** Per-container LimitRange values and the namespace ephemeral-storage total (empty = not set). */
+  container_cpu_request?: string;
+  container_cpu_limit?: string;
+  container_cpu_max?: string;
+  container_memory_request?: string;
+  container_memory_limit?: string;
+  container_memory_max?: string;
+  ephemeral_storage_limit?: string;
+  container_ephemeral_storage_request?: string;
+  container_ephemeral_storage_limit?: string;
   created_at?: string;
   updated_at?: string;
 }
