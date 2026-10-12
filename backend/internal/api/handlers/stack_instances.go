@@ -894,6 +894,10 @@ func (h *InstanceHandler) followerIDsBeforeDelete(ctx context.Context, instanceI
 // clean and for a cleanup policy delete), so a subscriber needs only this
 // event.
 func (h *InstanceHandler) afterInstanceDeleted(ctx context.Context, inst *models.StackInstance, followerIDs []string) {
+	// Open stack lists remove the row (the delete after a clean sends the
+	// same message from the deploy manager).
+	h.deployManager.BroadcastInstanceDeleted(inst.ID)
+
 	_ = h.fireInstanceHook(ctx, hooks.EventPostInstanceDelete, inst)
 	_ = h.fireInstanceHook(ctx, hooks.EventDeleteCompleted, inst)
 

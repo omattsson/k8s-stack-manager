@@ -286,8 +286,20 @@ const Dashboard = () => {
       void refreshInstances();
     }, NEW_INSTANCE_RELOAD_DELAY_MS);
   }, [refreshInstances]);
+  // A finished deploy (status running) can change the card: the deploy time
+  // and the URL (a chart can add or change the primary Ingress). One list
+  // reload for a burst of finished deploys.
+  const finishedReloadTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const scheduleFinishedReload = useCallback(() => {
+    if (finishedReloadTimerRef.current) return;
+    finishedReloadTimerRef.current = setTimeout(() => {
+      finishedReloadTimerRef.current = null;
+      void refreshInstances();
+    }, NEW_INSTANCE_RELOAD_DELAY_MS);
+  }, [refreshInstances]);
   useEffect(() => () => {
     if (reloadTimerRef.current) clearTimeout(reloadTimerRef.current);
+    if (finishedReloadTimerRef.current) clearTimeout(finishedReloadTimerRef.current);
   }, []);
 
   // Track which instance IDs have a confirmed URL (won't retry)
@@ -362,6 +374,11 @@ const Dashboard = () => {
         scheduleReload(payload.instance_id);
         return;
       }
+      if (payload.status === 'running') {
+        // Fetch the URL again and reload the list for the new deploy time.
+        fetchedStatusIdsRef.current.delete(payload.instance_id);
+        scheduleFinishedReload();
+      }
       setInstances((prev) =>
         prev.map((inst) =>
           inst.id === payload.instance_id ? { ...inst, status: payload.status as string } : inst
@@ -392,7 +409,7 @@ const Dashboard = () => {
         setInstanceHealth((prev) => ({ ...prev, [payload.instance_id!]: nextHealth }));
       }
     }
-  }, [scheduleReload]);
+  }, [scheduleReload, scheduleFinishedReload]);
 
   useWebSocket(handleWsMessage);
 

@@ -6,10 +6,13 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
+	"backend/internal/cluster"
 	"backend/internal/database"
+	"backend/internal/deployer"
 	"backend/internal/helm"
 	"backend/internal/models"
 
@@ -1359,4 +1362,44 @@ func TestDeployPreview_SubstitutesImageTag(t *testing.T) {
 	want := helm.SanitizeImageTag(inst.Branch)
 	require.Contains(t, pending, "tag: "+want,
 		"expected sanitized image tag %q in rendered values:\n%s", want, pending)
+}
+
+func TestDeleteInstance_DraftBroadcastsInstanceDeleted(t *testing.T) {
+	t.Parallel()
+
+	instRepo := NewMockStackInstanceRepository()
+	seedInstance(t, instRepo, "i-draft", "stack-draft", "d1", "uid-1", models.StackStatusDraft)
+	hub := &MockBroadcastSender{}
+	testRegistry := cluster.NewRegistryForTest("test-cluster", nil, &noopHelmExecutor{})
+	mgr := deployer.NewManager(deployer.ManagerConfig{
+		Registry:      testRegistry,
+		InstanceRepo:  instRepo,
+		DeployLogRepo: NewMockDeploymentLogRepository(),
+		Hub:           hub,
+		MaxConcurrent: 1,
+	})
+	router := setupBulkRouter(t, instRepo, NewMockValueOverrideRepository(), NewMockStackDefinitionRepository(),
+		NewMockChartConfigRepository(), NewMockStackTemplateRepository(), NewMockTemplateChartConfigRepository(),
+		mgr, NewMockDeploymentLogRepository(), "uid-1", "alice", "user")
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest(http.MethodPost, "/api/v1/stack-instances/bulk/delete",
+		strings.NewReader(`{"instance_ids":["i-draft"]}`))
+	req.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	found := false
+	for _, msg := range hub.Messages() {
+		var envelope struct {
+			Type    string `json:"type"`
+			Payload struct {
+				InstanceID string `json:"instance_id"`
+			} `json:"payload"`
+		}
+		if json.Unmarshal(msg, &envelope) == nil && envelope.Type == "instance.deleted" && envelope.Payload.InstanceID == "i-draft" {
+			found = true
+		}
+	}
+	assert.True(t, found, "a direct delete must broadcast instance.deleted")
 }

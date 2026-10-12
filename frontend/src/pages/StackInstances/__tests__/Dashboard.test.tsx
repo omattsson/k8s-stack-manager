@@ -1148,6 +1148,46 @@ describe('Dashboard', () => {
       expect(screen.queryByText('https://tools-db.example.com')).not.toBeInTheDocument();
     });
 
+    it('fetches the URL again and reloads the list when a deploy finishes', async () => {
+      const listAll = instanceService.listAll as ReturnType<typeof vi.fn>;
+      const getStatus = instanceService.getStatus as ReturnType<typeof vi.fn>;
+      listAll.mockResolvedValue([
+        mockInstance({ id: 'r1', name: 'Redeploy App', status: 'running', namespace: 'stack-r1' }),
+      ]);
+      getStatus.mockResolvedValue({
+        namespace: 'stack-r1', status: 'healthy',
+        ingresses: [{ url: 'https://r1-db.example.com' }], charts: [], pods: [],
+      });
+      render(
+        <MemoryRouter>
+          <NotificationProvider>
+            <Dashboard />
+          </NotificationProvider>
+        </MemoryRouter>
+      );
+      await waitFor(() => {
+        expect(screen.getByText('https://r1-db.example.com')).toBeInTheDocument();
+      });
+      const listCallsBefore = listAll.mock.calls.length;
+
+      getStatus.mockResolvedValue({
+        namespace: 'stack-r1', status: 'healthy',
+        ingresses: [{ url: 'https://r1-db.example.com' }, { url: 'https://r1.example.com', primary: true }],
+        charts: [], pods: [],
+      });
+      act(() => {
+        broadcastWs({ type: 'deployment.status', payload: { instance_id: 'r1', status: 'deploying' } });
+        broadcastWs({ type: 'deployment.status', payload: { instance_id: 'r1', status: 'running' } });
+      });
+
+      await waitFor(() => {
+        expect(screen.getByText('https://r1.example.com')).toBeInTheDocument();
+      }, { timeout: 3000 });
+      await waitFor(() => {
+        expect(listAll.mock.calls.length).toBe(listCallsBefore + 1);
+      }, { timeout: 3000 });
+    });
+
     it('shows pod health dot when status is fetched for running instance', async () => {
       (instanceService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue([
         mockInstance({ id: 'inst-h', name: 'Healthy App', status: 'running', namespace: 'stack-h' }),

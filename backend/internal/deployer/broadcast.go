@@ -170,6 +170,16 @@ type instanceDeletedPayload struct {
 	LogID      string `json:"log_id,omitempty"`
 }
 
+// BroadcastInstanceDeleted tells all clients that an instance row was deleted
+// without a clean (a direct delete through the API or a cleanup policy), so an
+// open stack list removes it. Safe on a nil Manager or a Manager without a hub.
+func (m *Manager) BroadcastInstanceDeleted(instanceID string) {
+	if m == nil || instanceID == "" {
+		return
+	}
+	m.broadcastInstanceDeleted(instanceID, "")
+}
+
 // broadcastInstanceDeleted tells all clients (all replicas through the hub
 // fan-out) that the instance row was deleted after its clean, so a
 // dashboard removes the row.

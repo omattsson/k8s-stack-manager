@@ -141,6 +141,9 @@ func (e *CleanupExecutor) DeleteInstance(ctx context.Context, inst *models.Stack
 // The delete is done, so a caller that stops (the end of a leadership term)
 // does not cancel the events; the subscription timeouts limit them.
 func (e *CleanupExecutor) afterDelete(ctx context.Context, inst *models.StackInstance, followerIDs []string) {
+	// Open stack lists remove the row.
+	e.manager.BroadcastInstanceDeleted(inst.ID)
+
 	if e.manager == nil {
 		return
 	}
