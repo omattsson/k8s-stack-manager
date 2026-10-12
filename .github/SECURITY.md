@@ -2,58 +2,62 @@
 
 ## Supported Versions
 
-Use this section to tell people about which versions of your project are currently being supported with security updates.
+The project gives security fixes for the latest minor release line.
 
-| Version | Supported          |
-| ------- | ------------------ |
-| 1.0.x   | :white_check_mark: |
-| 0.9.x   | :white_check_mark: |
-| < 0.9   | :x:                |
+| Version | Supported |
+| ------- | --------- |
+| 0.9.x   | Yes       |
+| < 0.9   | No        |
 
 ## Reporting a Vulnerability
 
-We take the security of our project seriously. If you believe you've found a security vulnerability, please follow these steps to report it:
+We take the security of this project seriously. If you find a security vulnerability, follow these steps:
 
-1. **Do NOT disclose the vulnerability publicly**
-2. **Email us at security@example.com** with details about the vulnerability
-3. Include the following information in your report:
-   - Type of vulnerability
-   - Full path of source file(s) related to the vulnerability
-   - Location of affected code (line number(s))
-   - Proof of concept or exploit code (if possible)
-   - Impact of the vulnerability
+1. **Do not disclose the vulnerability in public.** Do not open a public issue or pull request for it.
+2. **Send an email to security@example.com** with the details of the vulnerability.
+3. Include this information in your report:
+   - The type of vulnerability
+   - The full path of the source files that relate to the vulnerability
+   - The location of the affected code (line numbers)
+   - A proof of concept or exploit code (if you have it)
+   - The impact of the vulnerability
 
 ## What to Expect
 
-- We will acknowledge receipt of your vulnerability report within 48 hours
-- We will provide a more detailed response within 7 days
-- We will work with you to understand and address the vulnerability
-- We will keep you informed of our progress towards a fix and announcement
-- We may ask for additional information or guidance
+- We acknowledge receipt of your report within 48 hours.
+- We send a more detailed response within 7 days.
+- We work with you to understand and fix the vulnerability.
+- We keep you informed of the progress toward a fix and an announcement.
+- We can ask you for more information.
 
 ## Security Practices
 
-Our project follows these security practices:
+The project uses these security practices:
 
-- Regular dependency updates and audits
-- Automated security scanning in CI/CD pipeline
-- Code review process that includes security considerations
-- Regular security testing and assessments
+- Dependabot opens weekly pull requests for dependency updates.
+- Each pull request runs `gosec` (Go) and `npm audit` (frontend).
+- CodeQL analysis runs on `main`, on pull requests, and every week.
+- A weekly Trivy scan checks the repository for known vulnerabilities.
+- Code review includes security considerations.
 
 ## Security-Related Configuration
 
-For optimal security when deploying this application, follow these guidelines:
+Follow these guidelines when you deploy the application:
 
-1. Always use HTTPS in production environments
-2. Configure proper authentication for all API endpoints
-3. Implement rate limiting to prevent abuse
-4. Keep all dependencies up-to-date
-5. Follow the least privilege principle for service accounts
+1. Use HTTPS in production. Set `SECURE_COOKIES=true` (the Helm chart sets it when the ingress has TLS).
+2. Set `JWT_SECRET` to a random value of at least 16 characters. Change `ADMIN_PASSWORD` and the MySQL root password from the placeholder values.
+3. Set `CORS_ALLOWED_ORIGINS` to the origin of your web UI. The default `*` allows all origins.
+4. Set `SELF_REGISTRATION=false` when only `admin` users must create accounts. The Helm chart and Docker Compose set it to `true` by default.
+5. Set `ALLOWED_CHART_REPOS` (Helm: `backend.allowedChartRepos`) to the chart repositories that you trust. Helm installs charts with the identity of the backend. An empty list allows every chart source.
+6. Keep `backend.rbac.scope: namespace` (default) and `backend.rbac.admissionPolicy.enabled: true`. Then a stack chart can reach only the stack namespaces, and cannot create cluster-scoped objects. The policy needs Kubernetes 1.30 or later.
+7. Give the `devops` and `admin` roles only to users who must create definitions, templates, and chart sources. A user with the `user` role cannot change chart sources.
+8. Set `KUBECONFIG_ENCRYPTION_KEY`. The backend then encrypts kubeconfig data, registry passwords, and webhook channel secrets at rest. Use a long random value, and keep it stable. A changed key makes the stored data unreadable.
+9. Keep `ENABLE_SWAGGER` off in production, unless you need the API documentation.
+10. Use the External Secrets Operator (`externalSecrets.enabled`) or another secret store for the secrets of the chart. Do not put secrets in value overrides or shared values. Every user who can see an instance can see its merged values.
+11. Sign hook and action requests (`secret_env` in the hook configuration). See [EXTENDING.md](../EXTENDING.md).
+12. Give cluster credentials that you register with a kubeconfig only the rights that the stacks need.
+13. Keep all dependencies and images up to date.
 
 ## Acknowledgments
 
-We would like to thank the following individuals who have helped improve our security through responsible disclosure:
-
-- (Your project can acknowledge security researchers here)
-
-If you have responsibly disclosed a security vulnerability to us, we would be happy to acknowledge your contribution.
+We thank everyone who reports a vulnerability in a responsible way. If you report a vulnerability to us, we are glad to acknowledge your contribution.

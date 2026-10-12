@@ -7,31 +7,32 @@ assignees: ""
 ---
 
 ## Bug Description
-<!-- A clear and concise description of what the bug is -->
+<!-- Describe the bug in a few short sentences. -->
 
 ## Steps To Reproduce
 1. Go to '...'
 2. Click on '....'
 3. Scroll down to '....'
-4. See error
+4. See the error
 
 ## Expected Behavior
-<!-- A clear and concise description of what you expected to happen -->
+<!-- Describe what you expected to happen. -->
 
 ## Actual Behavior
-<!-- What actually happened -->
+<!-- Describe what happened. -->
 
-## Screenshots
-<!-- If applicable, add screenshots to help explain your problem -->
+## Screenshots and Logs
+<!-- Add screenshots or backend logs that help to explain the problem. Remove secrets and tokens first. -->
 
 ## Environment
-- **OS**: [e.g. macOS 14.1, Windows 11]
-- **Browser**: [e.g. Chrome 123, Safari 17.1]
-- **Application Version**: [e.g. 1.2.0]
-- **Device**: [e.g. iPhone 15, Desktop]
+- **Application version**: [for example 0.9.1 (see the Helm chart appVersion or the image tag)]
+- **Deployment**: [for example Helm chart 0.7.2, or Docker Compose]
+- **Kubernetes version**: [for example 1.31]
+- **OS**: [for example macOS 14.1, Windows 11]
+- **Browser**: [for example Chrome 123, Safari 17.1]
 
 ## Additional Context
-<!-- Add any other context about the problem here -->
+<!-- Add other information about the problem. -->
 
 ## Possible Solution
-<!-- If you have a suggestion for fixing the bug, please describe it here -->
+<!-- If you have an idea for a fix, describe it here. -->

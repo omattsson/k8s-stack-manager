@@ -1,39 +1,41 @@
 # Feature Pull Request
 
+<!-- The pull request title must use the Conventional Commits format, for example "feat(templates): add a clone endpoint". -->
+
 ## Feature Description
-<!-- Provide a clear description of the new feature -->
+<!-- Describe the new feature. -->
 
 ## Implementation Details
-<!-- Explain how the feature has been implemented -->
+<!-- Describe how you implemented the feature. -->
 
 ## Related Issue
-<!-- Link to the related issue or feature request: Implements #(issue) -->
+<!-- Link the related issue or feature request. Example: Implements #123 -->
 
 ## Usage Example
-<!-- Provide an example of how to use the new feature -->
+<!-- Show how to use the new feature. -->
 ```go
-// Code example if applicable
+// Code example, if applicable
 ```
 
 ## Documentation
-- [ ] Updated API documentation
-- [ ] Added inline code comments
-- [ ] Updated README/Wiki
+- [ ] I updated the API documentation (Swagger).
+- [ ] I added code comments.
+- [ ] I updated the README, the wiki, or other documents.
 
 ## Testing
-- [ ] Added unit tests
-- [ ] Added integration tests
-- [ ] Manually verified functionality
+- [ ] I added unit tests.
+- [ ] I added integration tests.
+- [ ] I verified the function manually.
 
 ## Checklist
-- [ ] I have performed a self-review of my code
-- [ ] All tests pass locally
-- [ ] Code follows project's style guidelines
-- [ ] No new warnings introduced
-- [ ] Feature is backward compatible
+- [ ] I reviewed my own code.
+- [ ] All tests pass on my computer.
+- [ ] The code follows the style guidelines of the project.
+- [ ] The change adds no new warnings.
+- [ ] The feature is backward compatible.
 
 ## Screenshots
-<!-- If applicable, add screenshots to demonstrate the feature -->
+<!-- Add screenshots that show the feature, if applicable. -->
 
 ## Performance Considerations
-<!-- Describe any performance implications and how they were addressed -->
+<!-- Describe the effect on performance and how you handled it. -->

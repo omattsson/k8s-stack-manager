@@ -1,10 +1,12 @@
 # Documentation Pull Request
 
+<!-- The pull request title must use the Conventional Commits format, for example "docs: correct the Helm values table". -->
+
 ## Documentation Changes
-<!-- Describe the documentation changes made in this PR -->
+<!-- Describe the documentation changes in this pull request. -->
 
 ## Purpose
-<!-- Explain why these documentation changes were necessary -->
+<!-- Explain why the changes are necessary. -->
 
 ## Type of Documentation
 - [ ] Code comments
@@ -12,18 +14,19 @@
 - [ ] README files
 - [ ] Wiki pages
 - [ ] Examples
-- [ ] Other: (please specify)
+- [ ] Other (describe it):
 
 ## Checklist
-- [ ] I have verified all information is accurate and up-to-date
-- [ ] Links are valid and working
-- [ ] Code examples (if any) are correct and working
-- [ ] Spelling and grammar have been checked
-- [ ] Documentation follows project style and format
-- [ ] Changes are consistent with existing documentation
+- [ ] I checked each fact against the code (commands, variable names, default values, routes).
+- [ ] The links work.
+- [ ] The code examples are correct and work.
+- [ ] I checked the spelling and grammar.
+- [ ] The text uses short sentences and the same terms as the other documents.
+- [ ] The examples use placeholders such as `example.com` and no names of real organizations.
+- [ ] The changes are consistent with the existing documentation.
 
 ## Screenshots
-<!-- If applicable, add before/after screenshots of documentation changes -->
+<!-- Add before and after screenshots, if they help. -->
 
 ## Notes for Reviewers
-<!-- Any specific areas that need particular attention from reviewers -->
+<!-- Tell the reviewers where to look first. -->

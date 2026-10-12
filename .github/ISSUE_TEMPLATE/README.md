@@ -1,35 +1,40 @@
 # Issue Templates
 
-This directory contains templates for creating GitHub issues in the K8s Stack Manager project.
+This directory has the templates for GitHub issues in the K8s Stack Manager project.
 
 ## Available Issue Templates
 
-1. **Bug Report Template** - For reporting bugs
-2. **Feature Request Template** - For requesting new features
-3. **Documentation Issue Template** - For reporting documentation issues
+1. **Bug Report.** Use it to report a bug.
+2. **Feature Request.** Use it to request a new feature.
+3. **Documentation Issue.** Use it to report a problem in the documentation.
+
+Note: To report a security vulnerability, do not create an issue. See [SECURITY.md](../SECURITY.md).
 
 ## When to Use Each Template
 
-- **Bug Report**: When something doesn't work as expected
-- **Feature Request**: When you want to suggest a new feature or enhancement
-- **Documentation Issue**: When documentation is unclear, incorrect, or missing
+- **Bug Report:** Use it when something does not work as you expect.
+- **Feature Request:** Use it when you want to suggest a new feature or an improvement.
+- **Documentation Issue:** Use it when the documentation is unclear, incorrect, or missing.
 
-## Tips for Creating Good Issues
+## Tips for Good Issues
 
 ### Bug Reports
-- Be specific about the problem
-- Include steps to reproduce
-- Mention the expected vs. actual behavior
-- Include environment details (OS, browser, etc.)
-- Add screenshots if applicable
+
+- Describe the problem in specific words.
+- Include the steps to reproduce it.
+- Describe the expected behavior and the actual behavior.
+- Include the environment details: the application version, the browser, and how you run the application (Docker Compose or Helm).
+- Add screenshots, if they help.
 
 ### Feature Requests
-- Clearly describe the feature
-- Explain why it would be valuable
-- Suggest implementation ideas if you have them
-- Consider alternatives that might achieve the same goal
+
+- Describe the feature clearly.
+- Explain why it is valuable.
+- Suggest an implementation, if you have an idea.
+- Describe alternatives that can reach the same goal.
 
 ### Documentation Issues
-- Specify which documentation is problematic
-- Explain what's wrong or missing
-- Suggest improvements if possible
+
+- Name the document that has the problem.
+- Explain what is wrong or missing.
+- Suggest an improvement, if you can.
