@@ -76,8 +76,10 @@ spec:
     # Everything else → frontend
     - match: {{ if .Values.ingress.host }}Host(`{{ .Values.ingress.host }}`) && {{ end }}PathPrefix(`/`)
       kind: Rule
+      {{- /* One below the other routes: with equal priorities Traefik no
+           longer prefers the longer rule, and /api would reach the frontend. */}}
       {{- with $.Values.ingress.traefik.priority }}
-      priority: {{ . }}
+      priority: {{ sub (int .) 1 }}
       {{- end }}
       services:
         - name: {{ include "k8s-stack-manager.fullname" . }}-frontend

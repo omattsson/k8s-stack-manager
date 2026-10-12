@@ -538,8 +538,9 @@ ingress:
     # Router priority of every route of the IngressRoute. Traefik orders
     # routers by priority, by default the length of the rule, so another
     # Ingress on the same host with a longer rule (for example a path under
-    # /api) would win. A high value keeps the stack manager routes first.
-    # 0 = Traefik default.
+    # /api) would win. A high value keeps the stack manager routes first. The
+    # frontend route (/) gets this value minus 1, so /api, /ws, /health and
+    # /swagger still win over /. 0 = Traefik default (rule length).
     priority: 10000
 
   # Standard Ingress settings (only used when type: ingress)

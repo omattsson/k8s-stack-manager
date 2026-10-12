@@ -379,6 +379,10 @@ helm-test: ## Verify default and External Secrets Helm renders
 	helm template $(HELM_RELEASE) $(HELM_CHART) --namespace $(HELM_NAMESPACE) \
 		--set backend.secrets.JWT_SECRET=dummy-jwt-secret-for-template > "$$template_file"; \
 	grep -q 'Source: k8s-stack-manager/templates/mysql/secret.yaml' "$$template_file"; \
+	helm template $(HELM_RELEASE) $(HELM_CHART) --show-only templates/traefik/ingressroute.yaml \
+		--set backend.secrets.JWT_SECRET=dummy-jwt-secret-for-template --set ingress.traefik.priority=10000 > "$$template_file"; \
+	awk '/PathPrefix\(`\/api`\)/{a=1} a && /priority:/{api=$$2; a=0} /PathPrefix\(`\/`\)/{f=1} f && /priority:/{fe=$$2; f=0} END{exit !(api==10000 && fe==9999)}' "$$template_file" \
+		|| { echo "IngressRoute: / must have a lower priority than /api" >&2; exit 1; }; \
 	helm template $(HELM_RELEASE) $(HELM_CHART) --show-only templates/mysql/secret.yaml \
 		--set backend.secrets.JWT_SECRET=dummy-jwt-secret-for-template \
 		--set mysql.auth.password=inline-user-password > "$$template_file"; \
