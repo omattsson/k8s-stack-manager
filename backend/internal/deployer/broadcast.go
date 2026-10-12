@@ -137,6 +137,33 @@ func (m *Manager) logAction(logID, status string) string {
 	return action
 }
 
+// instanceCreatedPayload is the WebSocket payload of "instance.created".
+type instanceCreatedPayload struct {
+	InstanceID string `json:"instance_id"`
+}
+
+// BroadcastInstanceCreated tells all clients (all replicas through the hub
+// fan-out) that a new instance row exists (create, clone, quick deploy), so
+// an open dashboard reloads its list. The payload has only the ID: a client
+// reads the instance through the API, with its own access rules. Safe on a
+// nil Manager or a Manager without a hub.
+func (m *Manager) BroadcastInstanceCreated(instanceID string) {
+	if m == nil || m.hub == nil || instanceID == "" {
+		return
+	}
+	msg, err := websocket.NewMessage("instance.created", instanceCreatedPayload{InstanceID: instanceID})
+	if err != nil {
+		slog.Error("failed to create instance created message", "error", err)
+		return
+	}
+	data, err := msg.Bytes()
+	if err != nil {
+		slog.Error("failed to serialize instance created message", "error", err)
+		return
+	}
+	m.hub.Broadcast(data)
+}
+
 // instanceDeletedPayload is the WebSocket payload of "instance.deleted".
 type instanceDeletedPayload struct {
 	InstanceID string `json:"instance_id"`

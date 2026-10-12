@@ -347,6 +347,10 @@ func (h *QuickDeployHandler) QuickDeploy(c *gin.Context) {
 		return
 	}
 
+	// Open dashboards reload their list (the deploy below also sends
+	// deployment.status, which they treat the same way).
+	h.deployManager.BroadcastInstanceCreated(inst.ID)
+
 	// 4. Set branch overrides.
 	if len(req.BranchOverrides) > 0 && h.branchOverrideRepo != nil {
 		for chartConfigID, branchName := range req.BranchOverrides {

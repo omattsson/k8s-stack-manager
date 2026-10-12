@@ -49,6 +49,10 @@ import { useAuth } from '../../context/AuthContext';
 import { canModifyInstance, hasAtLeastRole } from '../../utils/roles';
 import { isSetupWizardDismissed, dismissSetupWizard } from '../../utils/setupWizard';
 
+
+// Delay before the list reloads for an instance that is not in it yet.
+const NEW_INSTANCE_RELOAD_DELAY_MS = 500;
+
 const STATUSES = ['All', 'draft', 'deploying', 'stabilizing', 'running', 'partial', 'stopped', 'error'];
 
 type BulkAction = 'deploy' | 'stop' | 'clean' | 'delete';
@@ -259,6 +263,32 @@ const Dashboard = () => {
     fetchData();
   }, []);
 
+  // IDs in the list, for the WebSocket handler: an event for an unknown
+  // instance (created by another user or in another tab after the page
+  // loaded) reloads the list.
+  const instanceIdsRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    instanceIdsRef.current = new Set(instances.map((inst) => inst.id));
+  }, [instances]);
+
+  // One reload for a burst of events (a deploy sends several status events),
+  // and at most one reload per unknown ID, so an instance that stays absent
+  // from the list does not reload it on every event.
+  const reloadTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const reloadedForRef = useRef<Set<string>>(new Set());
+  const scheduleReload = useCallback((instanceId: string) => {
+    if (reloadedForRef.current.has(instanceId)) return;
+    reloadedForRef.current.add(instanceId);
+    if (reloadTimerRef.current) return;
+    reloadTimerRef.current = setTimeout(() => {
+      reloadTimerRef.current = null;
+      void refreshInstances();
+    }, NEW_INSTANCE_RELOAD_DELAY_MS);
+  }, [refreshInstances]);
+  useEffect(() => () => {
+    if (reloadTimerRef.current) clearTimeout(reloadTimerRef.current);
+  }, []);
+
   // Track which instance IDs have a confirmed URL (won't retry)
   const fetchedStatusIdsRef = useRef<Set<string>>(new Set());
   // Track currently in-flight fetches to avoid duplicate requests
@@ -317,9 +347,20 @@ const Dashboard = () => {
 
   // Live-update instance statuses via WebSocket.
   const handleWsMessage = useCallback((msg: WsMessage) => {
+    if (msg.type === 'instance.created') {
+      const payload = msg.payload as { instance_id?: string };
+      if (payload.instance_id && !instanceIdsRef.current.has(payload.instance_id)) {
+        scheduleReload(payload.instance_id);
+      }
+      return;
+    }
     if (msg.type === 'deployment.status') {
       const payload = msg.payload as { instance_id?: string; status?: string };
       if (!payload.instance_id || !payload.status) return;
+      if (!instanceIdsRef.current.has(payload.instance_id)) {
+        scheduleReload(payload.instance_id);
+        return;
+      }
       setInstances((prev) =>
         prev.map((inst) =>
           inst.id === payload.instance_id ? { ...inst, status: payload.status as string } : inst
@@ -350,7 +391,7 @@ const Dashboard = () => {
         setInstanceHealth((prev) => ({ ...prev, [payload.instance_id!]: nextHealth }));
       }
     }
-  }, []);
+  }, [scheduleReload]);
 
   useWebSocket(handleWsMessage);
 

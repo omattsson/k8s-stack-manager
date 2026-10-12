@@ -606,6 +606,8 @@ func (h *InstanceHandler) CreateInstance(c *gin.Context) {
 			fmt.Sprintf("Stack %s has been created", inst.Name))
 	}
 
+	h.deployManager.BroadcastInstanceCreated(inst.ID)
+
 	h.setInstanceNames(&inst)
 	c.JSON(http.StatusCreated, inst)
 }
@@ -1207,6 +1209,8 @@ func (h *InstanceHandler) CloneInstance(c *gin.Context) {
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
+
+	h.deployManager.BroadcastInstanceCreated(clone.ID)
 
 	h.setInstanceNames(clone)
 	c.JSON(http.StatusCreated, CloneInstanceResponse{StackInstance: *clone, Warning: warning})

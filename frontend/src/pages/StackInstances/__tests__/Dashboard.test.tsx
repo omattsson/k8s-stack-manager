@@ -284,6 +284,95 @@ describe('Dashboard', () => {
     expect(screen.getAllByText('running').length).toBeGreaterThanOrEqual(2);
   });
 
+  it('reloads the list for a deployment.status of an instance that is not in it', async () => {
+    const listAll = instanceService.listAll as ReturnType<typeof vi.fn>;
+    listAll
+      .mockResolvedValueOnce([mockInstance({ id: 'inst-1', name: 'Old Stack' })])
+      .mockResolvedValue([
+        mockInstance({ id: 'inst-1', name: 'Old Stack' }),
+        mockInstance({ id: 'inst-2', name: 'New Stack', status: 'deploying' }),
+      ]);
+    render(
+      <MemoryRouter>
+        <NotificationProvider>
+          <Dashboard />
+        </NotificationProvider>
+      </MemoryRouter>
+    );
+    await waitFor(() => {
+      expect(screen.getByText('Old Stack')).toBeInTheDocument();
+    });
+
+    act(() => {
+      broadcastWs({
+        type: 'deployment.status',
+        payload: { instance_id: 'inst-2', status: 'deploying', log_id: 'log-3' },
+      });
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText('New Stack')).toBeInTheDocument();
+    }, { timeout: 3000 });
+  });
+
+  it('reloads the list on instance.created', async () => {
+    const listAll = instanceService.listAll as ReturnType<typeof vi.fn>;
+    listAll
+      .mockResolvedValueOnce([mockInstance({ id: 'inst-1', name: 'Old Stack' })])
+      .mockResolvedValue([
+        mockInstance({ id: 'inst-1', name: 'Old Stack' }),
+        mockInstance({ id: 'inst-3', name: 'Draft Stack', status: 'draft' }),
+      ]);
+    render(
+      <MemoryRouter>
+        <NotificationProvider>
+          <Dashboard />
+        </NotificationProvider>
+      </MemoryRouter>
+    );
+    await waitFor(() => {
+      expect(screen.getByText('Old Stack')).toBeInTheDocument();
+    });
+
+    act(() => {
+      broadcastWs({ type: 'instance.created', payload: { instance_id: 'inst-3' } });
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText('Draft Stack')).toBeInTheDocument();
+    }, { timeout: 3000 });
+  });
+
+  it('reloads the list at most once for the same unknown instance', async () => {
+    const listAll = instanceService.listAll as ReturnType<typeof vi.fn>;
+    listAll.mockResolvedValue([mockInstance({ id: 'inst-1', name: 'Only Stack' })]);
+    render(
+      <MemoryRouter>
+        <NotificationProvider>
+          <Dashboard />
+        </NotificationProvider>
+      </MemoryRouter>
+    );
+    await waitFor(() => {
+      expect(screen.getByText('Only Stack')).toBeInTheDocument();
+    });
+    const callsBefore = listAll.mock.calls.length;
+
+    act(() => {
+      broadcastWs({ type: 'deployment.status', payload: { instance_id: 'ghost', status: 'deploying' } });
+    });
+    await waitFor(() => {
+      expect(listAll.mock.calls.length).toBe(callsBefore + 1);
+    }, { timeout: 3000 });
+
+    act(() => {
+      broadcastWs({ type: 'deployment.status', payload: { instance_id: 'ghost', status: 'running' } });
+      broadcastWs({ type: 'instance.created', payload: { instance_id: 'ghost' } });
+    });
+    await new Promise((resolve) => setTimeout(resolve, 800));
+    expect(listAll.mock.calls.length).toBe(callsBefore + 1);
+  });
+
   it('shows countdown chip for running instance with expiry', async () => {
     const mockUseCountdown = useCountdown as unknown as ReturnType<typeof vi.fn>;
     mockUseCountdown.mockReturnValue({
