@@ -349,9 +349,9 @@ To block a `pre-*` event that has `failure_policy=fail`:
 
 **Progress streaming.** For `pre-deploy`, `pre-rollback` and blocking
 `post-deploy`, the subscriber can write progress lines before the final JSON.
-- Start each progress line with `LOG: `. The core forwards the rest of the line to the deploy log (or rollback log) and to the WebSocket log stream.
+- Start each progress line with `LOG:` plus one space. The core forwards the rest of the line to the deploy log (or rollback log) and to the WebSocket log stream.
 - Flush after each line.
-- The last non-empty line without the `LOG: ` prefix must be the JSON `HookResponse`. A body without such a line means `{"allowed": true}`.
+- The last non-empty line that does not start with `LOG:` must be the JSON `HookResponse`. A body without such a line means `{"allowed": true}`.
 - A subscriber that returns plain JSON works without change.
 
 The backend does not follow a redirect for an event hook (any dispatch path:

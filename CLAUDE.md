@@ -5,7 +5,7 @@
 K8s Stack Manager is a full-stack application.
 - Backend: Go (Gin). Frontend: React (TypeScript, Vite, MUI). Data store: MySQL (GORM).
 - Docker Compose runs all services.
-- Versions: Go 1.26 (`backend/go.mod`; the images build with `golang:1.27`), Node 22 or later (the images use `node:26-alpine`).
+- Versions: Go 1.26 (`backend/go.mod`; the images build with `golang:1.27`), Node 22.12 or later (Vitest needs `^22.12 || ^24 || >=26`; the images use `node:26-alpine`).
 
 **Bootstrap flow.** `backend/api/main.go` calls helpers in `backend/api/bootstrap.go` in this order:
 
@@ -125,7 +125,7 @@ helm/k8s-stack-manager/
   - `ingress`: standard Ingress, any controller.
   - `none`: use port-forward.
 - **Traefik priority.** `ingress.traefik.priority` (default `10000`) is the router priority of every route. The frontend route `/` gets `priority - 1`, so the backend routes win over `/`. The value `0` uses the Traefik default (rule length).
-- **nginx in the frontend pod** serves the SPA only. It has no API proxy. The ingress does all routing.
+- **nginx in the frontend pod** serves the SPA only: the chart ConfigMap (`templates/frontend/configmap.yaml`) has no API proxy, and the ingress does all routing. Note: `frontend/nginx.conf` in the image (Docker Compose) proxies `/api/` and `/ws` to the backend; the chart replaces it.
 - **Bundled MySQL** is for dev and small installs (`mysql.enabled`, optional PVC). For production, point `backend.env.DB_*` at an external database.
 - **Secrets** come from a Secret or from External Secrets Operator. `externalSecrets.enabled` renders a SecretStore and an ExternalSecret and skips the chart Secret.
 - **ConfigMap and Secret checksums** in pod annotations restart the pods on a config change.
@@ -269,7 +269,7 @@ backend/
 **Repository interface.**
 - The generic `models.Repository` interface has `Create`, `FindByID`, `Update`, `Delete`, `List`. All take `context.Context` first. `GenericRepository` (GORM, MySQL) implements it.
 - Domain repositories (for example `StackInstanceRepository`, `UserRepository`, `AuditLogRepository`) have their own interfaces in their model files. Their method signatures differ.
-- The repository calls `Validate()` on create and update when the model implements `Validator`.
+- `GenericRepository` calls `Validate()` on create and update when the model implements `Validator`. Domain repositories call it where they choose (for example chart configs on create and update); check the repository before you rely on it.
 - Paginated list endpoints (stack instances, definitions, templates) use `ListPaged(..., limit, offset)`. It returns `([]T, total, error)`. GORM uses `SELECT` with column projection and `LIMIT/OFFSET`.
 - List filters go into the paged query through a filter struct (`StackInstanceFilter`, `StackDefinitionFilter`). The count query uses the same conditions, so `total` counts the matching rows.
 - New or changed list endpoints must use this pattern. Small admin lists (users, clusters, cleanup policies, favorites, API keys) still return unpaged `List()` results.
@@ -289,7 +289,7 @@ backend/
 - Both map: 400 validation, 404 not found, 409 duplicate or conflict, 501 not implemented, 500 internal.
 - Never expose a raw error message for a 500. Always return `"Internal server error"`.
 
-**Optimistic locking.** Models embed `Version uint` (`default:1`). The repository `Update()` uses `WHERE version = ?`. On a conflict it returns a `"version mismatch"` error. The Items `UpdateItem` handler maps it to 409. `stack_instances` has no version column.
+**Optimistic locking.** Only the `Item` reference model has `Version uint` (`default:1`). `GenericRepository.Update()` uses `WHERE version = ?`. On a conflict it returns a `"version mismatch"` error. The Items `UpdateItem` handler maps it to 409. The domain models have no version column. They use targeted or conditional writes (for example `UserRepository.UpdateRole`, the conditional instance status updates).
 
 **Filter whitelist.** `GenericRepository` has an `allowedFilterFields` map. A new entity needs `NewRepositoryWithFilterFields()`, or you must extend the existing repository.
 
@@ -468,7 +468,7 @@ frontend/src/
 
 ## Adding a New API Resource
 
-1. Model: create `internal/models/<entity>.go`. Embed `Base` (ID, timestamps, soft delete). Add `Version uint` with `default:1`. Define the repository interface in the same file.
+1. Model: create `internal/models/<entity>.go`. Domain models have a string UUID `ID` (`gorm:"primaryKey;size:36"`, set by the repository `Create`) and their own timestamps. Do not embed `Base` (uint ID, only for `Item`). Deletes are hard deletes: `Base.DeletedAt` is a plain field, not `gorm.DeletedAt`. Define the repository interface in the same file.
 2. Validation: add it in `internal/models/validation.go` (implement the `Validator` interface).
 3. Repository: create `internal/database/<entity>_repository.go`. Wire it in `repository_factory.go`.
 4. Migration: add it in `internal/database/migrations.go` (the next version string).
