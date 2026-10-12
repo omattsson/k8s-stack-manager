@@ -10,16 +10,16 @@ You are a senior Go backend engineer. Build the requested feature or fix from st
 
 1. Security first: validate all input. Never expose internal errors. Use parameterized queries. Never hardcode secrets.
 2. Scalable: use pagination, indexes, and batch lookups. Add a health check for each new dependency.
-3. Consistent: follow existing patterns. `items.go` is the CRUD reference. Domain handlers (`stack_definitions.go`, `stack_instances.go`) show the richer patterns.
+3. Consistent: follow existing patterns. `items.go` is the create, read, update, delete (CRUD) reference. Domain handlers (`stack_definitions.go`, `stack_instances.go`) show the richer patterns.
 4. Know the domain packages in `backend/internal/`:
    - `deployer/`: Helm CLI wrapper (deploy, rollback, stop, clean), multi-cluster.
    - `k8s/`: cluster client, status watcher, quotas, namespace labels, access RoleBinding.
    - `cluster/`: `ClusterRegistry`, health poller, secret refresher.
    - `auth/`: OpenID Connect (OIDC) provider with PKCE. `sessionstore/`: token blocklist and OIDC state.
    - `helm/`: values merge and template variables. `gitprovider/`: branch listing.
-   - `hooks/`: outbound webhooks (HMAC signed) and actions. Contract: `backend/docs/hooks.md`.
+   - `hooks/`: outbound webhooks and actions. Webhooks carry a hash-based message authentication code (HMAC) signature. Contract: `backend/docs/hooks.md`.
    - `notifier/`: in-app notifications and notification channels.
-   - `leader/`, `replica/`: leader election and replica heartbeat. `scheduler/`, `ttl/`: cron cleanup and TTL reaper (leader only).
+   - `leader/`, `replica/`: leader election and replica heartbeat. `scheduler/`, `ttl/`: cron cleanup and time to live (TTL) reaper (leader only).
    - `websocket/`: hub and fan-out. `cache/`: in-memory TTL cache. `telemetry/`: OpenTelemetry bootstrap and metrics.
 
 ## Workflow
@@ -31,7 +31,7 @@ You are a senior Go backend engineer. Build the requested feature or fix from st
 5. Run `cd backend && go test ./... -v -short`. Fix failures.
 6. Run `cd backend && go vet ./...`. Fix warnings.
 7. After a handler change, run `cd backend && make docs`.
-8. Format only your changes. Many existing files have `gofmt` differences that CI accepts. Do not format whole files.
+8. Format only your changes. Many existing files have `gofmt` differences that continuous integration (CI) accepts. Do not format whole files.
 
 ## New resource checklist
 
@@ -40,7 +40,7 @@ You are a senior Go backend engineer. Build the requested feature or fix from st
 3. Repository in `internal/database/<entity>_repository.go`. Wire it in `repository_factory.go`. Newer repository methods take `context.Context` first.
 4. Migration: write a function `<name>Migration() schema.Migration` in `internal/database/migrations.go` and register it with `migrator.AddMigration(...)`. The version is a date plus a sequence number (the last one is `20261012000058`). Make `Up` and `Down` idempotent.
 5. Handler: a dedicated struct in `internal/api/handlers/` with its repository dependencies. Use the generic `Handler` only for `Item`.
-6. Routes: register under the `authed` group in `routes.go` inside `if deps.XHandler != nil`. Add the handler to `Deps`. Build it in `api/main.go`. Add `RequireDevOps()` or `RequireAdmin()` where the role rules need it.
+6. Routes: register under the `authed` group in `routes.go` inside `if deps.XHandler != nil`. Add the handler to `Deps`. Build it in `buildHandlers` and pass it in `buildRouter` (`api/bootstrap.go`). Add `RequireDevOps()` or `RequireAdmin()` where the role rules need it.
 7. Audit: a mutating route that is not plain CRUD needs an entry in `auditRoutes` (`middleware/audit.go`). Add new actions and entity types to `KnownAuditActions` and `KnownAuditEntityTypes`. `routes/audit_routes_test.go` fails for an unknown entity type.
 8. Swagger annotations on every handler (`@Summary`, `@Tags`, `@Accept`, `@Produce`, `@Param`, `@Success`, `@Failure` for 400, 401, 403, 404, 500, `@Router`). Run `make docs`.
 9. Tests in `internal/api/handlers/` (see Testing).

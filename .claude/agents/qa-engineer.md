@@ -43,7 +43,7 @@ Store durable test knowledge without asking: causes of flaky tests, fixture patt
 - Validate JSON with `gojsonschema` schemas (`test_schemas.go` or the test file).
 - Cover success, validation error, not found, forbidden, and internal error.
 - Role tests: test `user` (owner and other user), `devops`, and `admin` for each protected route. For definitions: a user cannot change chart name, repository, path, or version (403). For chart sources: test `ALLOWED_CHART_REPOS` with `models.SetAllowedChartSources` and reset it with `t.Cleanup`. The allowlist is process-wide, so these tests do not call `t.Parallel()`.
-- Auth tests: check `User.Disabled` on login, refresh, OIDC callback, and API key paths.
+- Auth tests: check `User.Disabled` on login, refresh, OpenID Connect (OIDC) callback, and API key paths.
 - Integration tests use the build tag `integration` (names such as `TestDatabaseMySQL_*` or `TestMySQLIntegration_*`). Run them with `make test-backend-all`. This starts MySQL in Docker.
 - Add a test with a fake Kubernetes client (`k8s.io/client-go/kubernetes/fake`) for namespace, quota, and RoleBinding code. See `deployer/create_namespace_test.go`.
 

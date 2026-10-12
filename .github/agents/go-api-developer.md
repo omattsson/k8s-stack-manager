@@ -35,7 +35,7 @@ You are a senior Go backend engineer for REST APIs. You receive GitHub issues ab
 6. Run `cd backend && go test ./... -v -short`. Fix failures.
 7. Run `cd backend && go vet ./...`. Fix warnings.
 8. When the change touches the database, run `make test-backend-all`.
-9. Format only your changes. Many existing files have `gofmt` differences that CI accepts. Do not format whole files.
+9. Format only your changes. Many existing files have `gofmt` differences that continuous integration (CI) accepts. Do not format whole files.
 
 ## Project architecture
 
@@ -49,7 +49,7 @@ You are a senior Go backend engineer for REST APIs. You receive GitHub issues ab
 backend/
   api/main.go, bootstrap.go            # entry point and wiring
   internal/
-    api/handlers/items.go              # generic CRUD reference
+    api/handlers/items.go              # generic create, read, update, delete reference
     api/handlers/stack_definitions.go  # domain handler reference
     api/handlers/errors.go             # mapError() for domain handlers
     api/handlers/authz.go              # role helpers (isPrivilegedRole, canModifyInstance)
@@ -131,7 +131,7 @@ Make `Up` and `Down` idempotent (`HasTable`, `HasColumn`, `HasIndex`). Add index
 
 ### 6. Routes (`internal/api/routes/routes.go`)
 
-Add the handler to `Deps` and build it in `api/main.go`. Register it under the `authed` group inside `if deps.XHandler != nil`. Add `RequireDevOps()` or `RequireAdmin()` where the role rules need it.
+Add the handler to `Deps`. Build it in `buildHandlers` and pass it in `buildRouter` (`api/bootstrap.go`). Register it under the `authed` group inside `if deps.XHandler != nil`. Add `RequireDevOps()` or `RequireAdmin()` where the role rules need it.
 
 ```go
 if deps.OrderHandler != nil {
@@ -145,7 +145,7 @@ if deps.OrderHandler != nil {
 
 ### 7. Audit
 
-`middleware.NewAuditMiddleware` writes the audit entry for each successful POST, PUT, and DELETE. Do not call the audit repository in a handler (exception: `quick_deploy.go`). A route that is not plain CRUD needs an entry in `auditRoutes` (`middleware/audit.go`). Add new actions and entity types to `KnownAuditActions` and `KnownAuditEntityTypes`. `routes/audit_routes_test.go` fails for a mutating route with an unknown entity type.
+`middleware.NewAuditMiddleware` writes the audit entry for each successful POST, PUT, and DELETE. Do not call the audit repository in a handler (exception: `quick_deploy.go`). A route that is not plain create, update, or delete needs an entry in `auditRoutes` (`middleware/audit.go`). Add new actions and entity types to `KnownAuditActions` and `KnownAuditEntityTypes`. `routes/audit_routes_test.go` fails for a mutating route with an unknown entity type.
 
 ### 8. Swagger
 
@@ -194,14 +194,14 @@ c.JSON(500, gin.H{"error": err.Error()})
 - **Chart source allowlist**: `ALLOWED_CHART_REPOS` (`config.ParseAllowedChartRepos`). `models.CheckChartSource(repositoryURL, chartPath, chartName)` checks a chart config. Chart config validation calls it. The deployer calls it again at deploy and rollback. An empty list allows all sources. Call it in each new path that stores or deploys a chart config.
 - **Definition access**: create definition, import, add chart, and remove chart need `devops` or `admin`. Update, delete, and upgrade of a definition need the owner, `devops`, or `admin` (`msgDefinitionModifyForbidden`). A user without `devops` or `admin` can change chart default values and deploy order. That user cannot change chart name, repository, path, or version (403, `msgChartSourceForbidden`).
 - **Instance access**: call `requireInstanceModify` (owner, `devops`, `admin`) before any side effect.
-- **Namespace-scoped RBAC**: `backend.rbac.scope=namespace` (chart default) gives the backend namespaced rights only through the RoleBinding `k8s-stack-manager-access` to the ClusterRole `<fullname>-stack-access`. `k8s.Client.EnsureNamespace` creates the namespace with its labels and applies the RoleBinding first (`STACK_ACCESS_CLUSTER_ROLE`, `STACK_ACCESS_SERVICE_ACCOUNT`). A ValidatingAdmissionPolicy limits Roles, RoleBindings, and namespaces to the label `managed-by=k8s-stack-manager`. Do not add code that needs cluster-scoped rights.
+- **Namespace-scoped Role-Based Access Control (RBAC)**: `backend.rbac.scope=namespace` (chart default) gives the backend namespaced rights only through the RoleBinding `k8s-stack-manager-access` to the ClusterRole `<fullname>-stack-access`. `k8s.Client.EnsureNamespace` creates the namespace with its labels and applies the RoleBinding first (`STACK_ACCESS_CLUSTER_ROLE`, `STACK_ACCESS_SERVICE_ACCOUNT`). A ValidatingAdmissionPolicy limits Roles, RoleBindings, and namespaces to the label `managed-by=k8s-stack-manager`. Do not add code that needs cluster-scoped rights.
 - **No `--create-namespace`**: when `EnsureNamespace` succeeds, `InstallRequest.NamespaceReady` is true and Helm gets no `--create-namespace`. The admission policy refuses that flag for an existing namespace.
 - **LimitRange**: the cluster quota and the instance quota override have per-container fields (`container_cpu_request`, `container_cpu_limit`, `container_cpu_max`, and the memory and ephemeral-storage fields) and `ephemeral_storage_limit`. Validate request <= limit <= max. A container default is never the namespace total. A user without `devops` or `admin` cannot set an override above the cluster quota (403).
 - **Helm version**: test Helm behavior with the Helm version of the backend image (`HELM_VERSION` in `backend/Dockerfile`), not with the local Helm.
 
 ### Other rules
 
-- Auth: check `User.Disabled` on every auth path (login, refresh, OIDC, API key). `IsTokenBlocked` fails open (log and continue).
+- Auth: check `User.Disabled` on every auth path: login, refresh, OpenID Connect (OIDC), and API key. `IsTokenBlocked` fails open (log and continue).
 - Hooks: send events through `hooks.Dispatcher` (`Fire`). `failure_policy: fail` stops the operation. Add each new event to `backend/docs/hooks.md` and `EXTENDING.md`.
 - Notifications: use `Notifier.NotifyInstance`, `Notify`, `NotifySystem`, or `NotifySystemForInstances`. Do not insert notification rows directly.
 - WebSocket: use `Broadcast`, `BroadcastToInstance`, or `BroadcastToUser` on the hub. The `Item` handler has `h.broadcast(msgType, payload)` for `NewHandlerWithHub`.
@@ -232,7 +232,7 @@ make lint                                # go vet and frontend lint
 
 ## When in doubt
 
-- Read `internal/api/handlers/items.go` (generic CRUD) and `stack_definitions.go` (domain handler).
+- Read `internal/api/handlers/items.go` (generic create, read, update, delete) and `stack_definitions.go` (domain handler).
 - Read `.github/instructions/` for security, scalability, API extension, and Go conventions.
 - Match the existing patterns.
 

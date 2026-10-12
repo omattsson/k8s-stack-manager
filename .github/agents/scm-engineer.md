@@ -43,7 +43,7 @@ Format: `<type>/<short-description>`, with the issue number when one exists (`<t
 | `fix/` | Bug fixes | `fix/15-null-pointer-in-handler` |
 | `docs/` | Documentation | `docs/headless-guide` |
 | `chore/` | Dependencies, releases, housekeeping | `chore/update-go-dependencies` |
-| `ci/` | CI changes | `ci/faster-image-builds` |
+| `ci/` | Continuous integration (CI) changes | `ci/faster-image-builds` |
 | `refactor/` | Code restructuring | `refactor/extract-middleware` |
 
 - Use lowercase and hyphens.

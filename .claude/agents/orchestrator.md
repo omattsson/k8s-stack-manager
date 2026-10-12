@@ -29,9 +29,9 @@ Store durable knowledge without asking: workflow sequences, dependency chains, r
 | frontend-developer | React, TypeScript: pages, components, API services, routing, WebSocket | UI features, frontend bugs |
 | git-provider | Azure DevOps and GitLab: branch listing, URL detection | Git provider work |
 | helm-values | Values merge, template variables, Helm CLI wrapper | Values generation and deploy logic |
-| devops-engineer | Docker, nginx, Helm chart, Makefile, CI/CD | Infrastructure changes |
+| devops-engineer | Docker, nginx, Helm chart, Makefile, continuous integration and delivery (CI/CD) | Infrastructure changes |
 | qa-engineer | Test strategy, unit, integration, and end-to-end (e2e) tests, coverage | Tests and coverage audits |
-| code-reviewer | PR review, security review, pattern check | Review of finished work |
+| code-reviewer | Pull request (PR) review, security review, pattern check | Review of finished work |
 
 ## Implementation order
 
@@ -53,7 +53,7 @@ For a full-stack feature, use this order:
 4. qa-engineer: frontend test audit and e2e tests.
 5. code-reviewer: full review.
 
-### Auth or OIDC change
+### Auth or OpenID Connect (OIDC) change
 
 1. go-api-developer: auth handler or middleware, session store, OIDC provider.
 2. qa-engineer: test all auth paths (login, refresh, OIDC callback, API key, disabled user).
@@ -62,12 +62,12 @@ For a full-stack feature, use this order:
 
 ### Hooks or actions
 
-1. go-api-developer: dispatcher, HMAC signing, action routes. Update `backend/docs/hooks.md` and `EXTENDING.md`.
+1. go-api-developer: dispatcher, hash-based message authentication code (HMAC) signing, action routes. Update `backend/docs/hooks.md` and `EXTENDING.md`.
 2. devops-engineer: Helm values for hooks (`hooks.subscriptions`, `hooks.actions`).
 3. qa-engineer: tests for the hook lifecycle.
 4. code-reviewer: security review (HMAC, timeouts, redirects, `failure_policy`).
 
-### Chart source, RBAC, or namespace change
+### Chart source, Role-Based Access Control (RBAC), or namespace change
 
 1. go-api-developer: `ALLOWED_CHART_REPOS` checks, access rules, `EnsureNamespace`, quota fields.
 2. devops-engineer: chart templates and values (`backend.rbac.*`, `backend.allowedChartRepos`). Test with the Helm version of the backend image (`HELM_VERSION` in `backend/Dockerfile`).

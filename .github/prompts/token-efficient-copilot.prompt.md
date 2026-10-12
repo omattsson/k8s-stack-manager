@@ -1,93 +1,94 @@
 # Token-Efficient Copilot Prompt Templates
 
-Use these templates to reduce token usage while keeping output high quality.
+Use these templates to use fewer tokens and keep the output quality high. Replace each `<placeholder>` with a real value.
 
-## Global Rules Block (prepend to any task)
+## Global rules block (put it before any task)
 
 ```text
 Goal: <one sentence>
 Scope: <exact files only>
 Constraints:
 - Be concise.
-- No recap.
-- No background explanation.
-- No alternatives.
-- Output only what is requested.
-- If editing code: provide unified diff or apply changes directly.
-- Do not touch files outside scope.
+- Do not recap.
+- Do not explain background.
+- Do not offer alternatives.
+- Output only what I ask for.
+- When you edit code, apply the changes directly or give a unified diff.
+- Do not change files outside the scope.
 Validation:
-- Run only required tests/lint for changed files.
-- Report failing command and first error only.
+- Run only the tests and lint that the changed files need.
+- Report the failing command and the first error only.
 ```
 
-## Backend Go Handler Task
+## Backend Go handler task
 
 ```text
-Task: Implement <feature/fix> in backend handler.
+Task: Implement <feature or fix> in a backend handler.
 Scope:
 - backend/internal/api/handlers/<file>.go
 - backend/internal/api/routes/routes.go
 - backend/internal/api/handlers/<file>_test.go
 Requirements:
-- Follow existing handler patterns.
-- Use safe error mapping; do not leak internal errors.
-- Keep changes minimal.
+- Follow the existing handler patterns (items.go for Item, stack_definitions.go for domain handlers).
+- Map errors with mapError. Do not leak internal errors. A 500 returns "Internal server error".
+- Check access (owner, devops, admin) before any side effect.
+- Keep the change small.
 Output:
-- Apply edits directly.
+- Apply the edits directly.
 - Then run: cd backend && go test ./internal/api/handlers -run <TestName> -v
-- Return changed files + test result summary in <= 6 lines.
+- Return the changed files and the test result in 6 lines or fewer.
 ```
 
-## Frontend React Page Task
+## Frontend React page task
 
 ```text
-Task: Implement <feature/fix> in page/component.
+Task: Implement <feature or fix> in a page or component.
 Scope:
-- frontend/src/pages/<Page>/index.tsx
+- frontend/src/pages/<Page>/<file>.tsx
 - frontend/src/api/client.ts
 - frontend/src/routes.tsx
 Requirements:
-- Reuse existing MUI patterns and project style.
-- Keep state and API logic minimal.
-- No unrelated refactors.
+- Reuse the existing MUI patterns.
+- Keep the state and API logic small.
+- Do not refactor unrelated code.
 Output:
-- Apply edits directly.
-- Run targeted test only.
-- Return changed files + one-line behavior summary.
+- Apply the edits directly.
+- Run the targeted test only: cd frontend && npx vitest run <test file>
+- Return the changed files and a one-line behavior summary.
 ```
 
-## Focused Test Task
+## Focused test task
 
 ```text
 Task: Add or fix tests for <feature>.
 Scope:
 - <exact test files>
 Requirements:
-- Table-driven for Go tests where applicable.
-- Keep fixtures compact.
-- No broad rewrites.
+- Use table-driven tests for Go tests where it fits.
+- Keep fixtures small.
+- Do not rewrite unrelated tests.
 Output:
-- Apply edits directly.
-- Run only affected tests.
-- Return pass/fail + first failing assertion if any.
+- Apply the edits directly.
+- Run only the affected tests.
+- Return pass or fail and the first failing assertion, if any.
 ```
 
-## Code Review (Low-Token)
+## Code review (low token)
 
 ```text
-Review scope: <branch/PR/files>
+Review scope: <branch, PR, or files>
 Priorities:
 1. Correctness regressions
 2. Security risks
-3. Scalability/performance risks
+3. Scalability and performance risks
 4. Missing tests
 Output format:
 - Findings only, ordered by severity.
-- Each finding: file, line, impact, fix in 1-2 lines.
-- If no findings: "No blocking findings." then residual risks in <= 3 bullets.
+- Each finding: file, line, impact, and a fix in 1 or 2 lines.
+- If there are no findings: write "No blocking findings." Then list residual risks in 3 bullets or fewer.
 ```
 
-## Small Edit Template
+## Small edit template
 
 ```text
 Make this exact change only:
@@ -96,14 +97,14 @@ Files allowed:
 - <file1>
 - <file2>
 Output:
-- Apply edits directly.
-- Show concise diff summary only.
+- Apply the edits directly.
+- Show a short diff summary only.
 ```
 
-## Token-Saver Tips
+## Tips
 
-- Always pin exact files.
+- Name the exact files.
 - Ask for direct edits, not long explanations.
-- Ask for one command/test at a time.
-- Split large tasks into 2-4 prompts.
-- Use "first error only" when debugging.
+- Ask for one command or test at a time.
+- Split a large task into 2 to 4 prompts.
+- Write "first error only" when you debug.

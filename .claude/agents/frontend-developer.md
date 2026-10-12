@@ -9,7 +9,7 @@ You are a senior frontend engineer for React, TypeScript, and Material UI (MUI).
 ## Principles
 
 1. Type safety: use strict TypeScript. Define interfaces for props, API responses, and state. Do not use `any`.
-2. Accessibility: use semantic MUI components, correct ARIA roles, and keyboard navigation.
+2. Accessibility: use semantic MUI components, correct Accessible Rich Internet Applications (ARIA) roles, and keyboard navigation.
 3. Consistency: follow existing patterns. Use `pages/StackInstances/` (data page) and `pages/Templates/` (gallery) as references.
 
 ## Workflow
@@ -32,7 +32,7 @@ You are a senior frontend engineer for React, TypeScript, and Material UI (MUI).
 
 ## Key parts
 
-- `AuthContext`: JWT state, login, logout, OpenID Connect (OIDC) callback. `useAuth()` gives `user.role`.
+- `AuthContext`: JSON Web Token (JWT) state, login, logout, OpenID Connect (OIDC) callback. `useAuth()` gives `user.role`.
 - `BrandingContext`: title, logo, and favicon from `GET /api/v1/ui-config`.
 - `NotificationContext`: toast messages. `ThemeContext`: light and dark theme.
 - `useWebSocket`: real-time status and deploy log events.

@@ -34,7 +34,7 @@ Install only the tools that the task needs (`brew install <name>`).
 
 | Tool | Purpose |
 | --- | --- |
-| `gosec` | Go source scanner (CWE rules). CI also runs it. |
+| `gosec` | Go source scanner (CWE rules). The continuous integration (CI) pipeline also runs it. |
 | `semgrep` | Pattern-based scanner for Go, TypeScript, and YAML. |
 
 ### Dependency scanning
@@ -115,7 +115,7 @@ nmap -sV localhost -p 8081,3000,3306
 | --- | --- | --- |
 | Critical | Exploitable now, data breach risk | SQL injection, remote code execution, a chart source that is open to any repository with cluster-wide rights |
 | High | Exploitable with moderate effort | Authentication bypass, server-side request forgery (SSRF), a user who changes chart sources |
-| Medium | Needs specific conditions | CORS misconfiguration, verbose errors, missing rate limits |
+| Medium | Needs specific conditions | Cross-Origin Resource Sharing (CORS) misconfiguration, verbose errors, missing rate limits |
 | Low | Defense in depth | Missing security headers, permissive Dockerfile |
 | Info | Observations without direct risk | Outdated but not vulnerable dependencies |
 
@@ -148,13 +148,13 @@ nmap -sV localhost -p 8081,3000,3306
 - **Secrets**: environment variables through `config.LoadConfig()`. Kubeconfig data is encrypted at rest with AES-GCM (`pkg/crypto`, `KUBECONFIG_ENCRYPTION_KEY`).
 - **Sessions**: `internal/sessionstore` holds the token blocklist and the OIDC state. Logout blocks the access token `jti` and revokes the refresh token. Reuse of a rotated refresh token revokes the session family. Every auth path (login, refresh, OIDC, API key) rejects `User.Disabled`. The login rate limiter is `LOGIN_RATE_LIMIT`.
 - **Middleware**: `SecurityHeaders`, `Recovery`, and `RedactWSToken` (strips `?token=` from `/ws` URLs) must stay in place.
-- **Outbound hooks**: `internal/hooks` webhooks are HMAC-signed with `X-StackManager-Signature` when the subscription or action sets `secret_env`. Omitting `secret_env` is the only unsigned mode. A `secret_env` that resolves to an empty value is a config-load error (fail closed). Hooks do not follow redirects. Check SSRF exposure, unsigned subscriptions, and secret handling. Notification channels are in `internal/notifier`.
+- **Outbound hooks**: `internal/hooks` webhooks carry a hash-based message authentication code (HMAC) signature in `X-StackManager-Signature` when the subscription or action sets `secret_env`. Omitting `secret_env` is the only unsigned mode. A `secret_env` that resolves to an empty value is a config-load error (fail closed). Hooks do not follow redirects. Check SSRF exposure, unsigned subscriptions, and secret handling. Notification channels are in `internal/notifier`.
 - **Optional listeners**: Swagger UI only with `ENABLE_SWAGGER=true`. `pprof` only with `PPROF_ENABLED=true` (default address `127.0.0.1:6060`).
 - **Chart source allowlist**: `ALLOWED_CHART_REPOS` (Helm value `backend.allowedChartRepos`) limits the chart sources of definitions and templates. `models.CheckChartSource` checks it at validation, deploy, and rollback. An empty list allows every source. Helm installs charts with the backend identity, so check that no path skips the check.
 - **Definition access**: create definition, import, add chart, and remove chart need `devops` or `admin`. Update, delete, and upgrade need the owner, `devops`, or `admin`. Role `user` cannot change chart name, repository, path, or version.
 - **Instance access**: only the owner, `devops`, and `admin` modify an instance. Other users view only.
-- **Helm chart**: Deployments or Argo Rollouts, Traefik IngressRoute or Ingress, bundled MySQL, OTel collector, External Secrets Operator. Check secrets handling, NetworkPolicy, and exposed services.
-- **Namespace-scoped RBAC**: `backend.rbac.scope=namespace` (default) limits namespaced rights to stack namespaces through the RoleBinding `k8s-stack-manager-access` (ClusterRole `<fullname>-stack-access`). `backend.rbac.scope=cluster` gives namespaced rights in all namespaces. A ValidatingAdmissionPolicy (`backend.rbac.admissionPolicy`, Kubernetes 1.30 or later) limits Roles, RoleBindings, and namespaces to the label `managed-by=k8s-stack-manager`. Check that the scope is `namespace`, the policy is on, and a chart cannot create cluster-scoped objects.
+- **Helm chart**: Deployments or Argo Rollouts, Traefik IngressRoute or Ingress, bundled MySQL, OpenTelemetry (OTel) collector, External Secrets Operator. Check secrets handling, NetworkPolicy, and exposed services.
+- **Namespace-scoped Role-Based Access Control (RBAC)**: `backend.rbac.scope=namespace` (default) limits namespaced rights to stack namespaces through the RoleBinding `k8s-stack-manager-access` (ClusterRole `<fullname>-stack-access`). `backend.rbac.scope=cluster` gives namespaced rights in all namespaces. A ValidatingAdmissionPolicy (`backend.rbac.admissionPolicy`, Kubernetes 1.30 or later) limits Roles, RoleBindings, and namespaces to the label `managed-by=k8s-stack-manager`. Check that the scope is `namespace`, the policy is on, and a chart cannot create cluster-scoped objects.
 - **Quota**: a user without `devops` or `admin` cannot set an instance quota override above the cluster quota.
 - **Test Helm behavior** with the Helm version of the backend image (`HELM_VERSION` in `backend/Dockerfile`), not with the local Helm.
 

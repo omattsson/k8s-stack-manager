@@ -21,7 +21,7 @@ You are a senior frontend engineer for React, TypeScript, and Material UI (MUI).
 ## Principles
 
 1. Type safety: use strict TypeScript. Define interfaces for props, API responses, and state. Do not use `any`.
-2. Accessibility: use semantic MUI components with correct ARIA roles. Make each interactive element keyboard-accessible.
+2. Accessibility: use semantic MUI components with correct Accessible Rich Internet Applications (ARIA) roles. Make each interactive element keyboard-accessible.
 3. Performance: avoid needless re-renders. Clean up effects. Show loading and error states.
 4. Consistency: follow the existing patterns. If no pattern exists, study the code before you propose one.
 
@@ -41,7 +41,7 @@ You are a senior frontend engineer for React, TypeScript, and Material UI (MUI).
 - Framework: React 19, TypeScript 6 (strict), Vite 8 with `@vitejs/plugin-react-swc`, Vitest 5. Node 22 or later.
 - UI: MUI v9. Prefer MUI components over raw HTML. Keep native controls that MUI does not provide (for example `<input type="file">` for definition import).
 - Routing: react-router-dom v7.
-- HTTP: Axios. The shared instance is in `src/api/client.ts`. It adds the JWT and refreshes the token after a 401.
+- HTTP: Axios. The shared instance is in `src/api/client.ts`. It adds the JSON Web Token (JWT) and refreshes the token after a 401.
 - Real-time: `reconnecting-websocket` in `src/hooks/useWebSocket.ts`.
 - Tests: Vitest and Testing Library (unit), Playwright (e2e).
 

@@ -31,7 +31,7 @@ You are a principal engineer. You review pull requests (PRs) and code changes fo
 
 1. Read the PR description or the issue. Find the intent and the acceptance criteria.
 2. Read every changed line. Use the `changes` tool to see the full diff.
-3. Compare with the reference code: `items.go` (generic CRUD), `stack_definitions.go` and `stack_instances.go` (domain handlers), `pages/StackInstances/` (frontend).
+3. Compare with the reference code: `items.go` (generic create, read, update, and delete handlers), `stack_definitions.go` and `stack_instances.go` (domain handlers), `pages/StackInstances/` (frontend).
 4. Check the rules in `.github/instructions/*.md`. If a rule and the code disagree, trust the code and flag the rule.
 5. Use the `problems` tool to find compile and lint errors.
 6. Run the tests and the lint (see "Commands").
@@ -51,8 +51,8 @@ Security and access:
 - [ ] Definitions: only the owner, `devops`, or `admin` change a definition. Create definition, import, add chart, and remove chart need `devops` or `admin`. Role `user` cannot change chart name, repository, path, or version (403).
 - [ ] Chart source: each path that stores or deploys a chart config calls `models.CheckChartSource` (`ALLOWED_CHART_REPOS`). An empty list allows all sources.
 - [ ] Cluster rights: no new cluster-wide Kubernetes right. With `backend.rbac.scope=namespace`, the backend gets namespaced rights only through the RoleBinding `k8s-stack-manager-access`. The ValidatingAdmissionPolicy limits Roles, RoleBindings, and namespaces.
-- [ ] Auth changes: `User.Disabled` check on login, refresh, OIDC, and API key. `IsTokenBlocked` fails open (log and continue).
-- [ ] Hooks: HMAC signing, timeouts, no redirects, `failure_policy`.
+- [ ] Auth changes: `User.Disabled` check on login, refresh, OpenID Connect (OIDC), and API key. `IsTokenBlocked` fails open (log and continue).
+- [ ] Hooks: hash-based message authentication code (HMAC) signing, timeouts, no redirects, `failure_policy`.
 
 Correctness:
 
@@ -65,8 +65,8 @@ Correctness:
 
 Patterns:
 
-- [ ] Domain handlers use a dedicated struct with repository dependencies. Handlers are in `Deps`, built in `api/main.go`, and registered in `routes.go` inside `if deps.XHandler != nil` under the `authed` group.
-- [ ] Audit: handlers do not write audit entries (exception: `quick_deploy.go`). A mutating route that is not plain CRUD has an `auditRoutes` entry. New actions and entity types are in `KnownAuditActions` and `KnownAuditEntityTypes`.
+- [ ] Domain handlers use a dedicated struct with repository dependencies. Handlers are in `Deps`, built in `api/bootstrap.go` (`buildHandlers`, `buildRouter`), and registered in `routes.go` inside `if deps.XHandler != nil` under the `authed` group.
+- [ ] Audit: handlers do not write audit entries (exception: `quick_deploy.go`). A mutating route that is not plain create, update, or delete has an `auditRoutes` entry. New actions and entity types are in `KnownAuditActions` and `KnownAuditEntityTypes`.
 - [ ] Notifications use `Notifier.NotifyInstance`, `Notify`, or `NotifySystem`. Bulk operations stop at 50 items and report each item.
 - [ ] Swagger annotations on every handler. `cd backend && make docs` was run.
 - [ ] New outbound calls have spans. Metrics are in `internal/telemetry/`. No secrets in logs or spans.
@@ -86,7 +86,7 @@ Testing:
 
 ### Frontend (React and TypeScript)
 
-- [ ] MUI components and the `sx` prop. Raw HTML only where MUI has no equivalent.
+- [ ] Material UI (MUI) components and the `sx` prop. Raw HTML only where MUI has no equivalent.
 - [ ] No `any`. Interfaces for props, state, and API responses.
 - [ ] Loading state (`LoadingState` or `CircularProgress`) and error state (`Alert`).
 - [ ] API calls use the shared axios instance. Service methods in `api/client.ts` have TSDoc with `@param`, `@returns`, `@see`.
@@ -100,7 +100,7 @@ Testing:
 - [ ] `backend-net` and `frontend-net` stay separate.
 - [ ] Health checks use `wget` in the Alpine image.
 - [ ] No secrets in images. New environment variables are documented.
-- [ ] Chart changes pass `make helm-lint` and `make helm-test`. Test chart and RBAC changes with the Helm version of the backend image (`HELM_VERSION` in `backend/Dockerfile`), not the local Helm.
+- [ ] Chart changes pass `make helm-lint` and `make helm-test`. Test chart and Role-Based Access Control (RBAC) changes with the Helm version of the backend image (`HELM_VERSION` in `backend/Dockerfile`), not the local Helm.
 
 ## Feedback format
 
@@ -135,7 +135,7 @@ make helm-lint && make helm-test         # chart checks
 
 ## When in doubt
 
-- Read `internal/api/handlers/items.go` for the generic CRUD reference.
+- Read `internal/api/handlers/items.go` for the generic create, read, update, and delete reference.
 - Read `internal/api/handlers/stack_definitions.go` for a domain handler.
 - Read `src/pages/StackInstances/` for the frontend reference.
 - If a pattern exists, enforce it. If it does not exist, raise it as a discussion point.

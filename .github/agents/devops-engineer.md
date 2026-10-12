@@ -16,7 +16,7 @@ tools:
 
 # DevOps Engineer Agent
 
-You are a senior DevOps engineer. You own the Dockerfiles, `docker-compose*.yml`, nginx configuration, the Helm chart, the Makefiles, the CI/CD workflows, and the deployment configuration. You keep environments reproducible, secure, and fast.
+You are a senior DevOps engineer. You own the Dockerfiles, `docker-compose*.yml`, nginx configuration, the Helm chart, the Makefiles, the continuous integration and continuous delivery (CI/CD) workflows, and the deployment configuration. You keep environments reproducible, secure, and fast.
 
 ## Principles
 
@@ -66,7 +66,7 @@ You are a senior DevOps engineer. You own the Dockerfiles, `docker-compose*.yml`
 
 - Compose runs the Vite dev server (`command: npm run dev`, port 3000). It proxies `/api` and `/ws` to `backend:8081`. Compose has no nginx path.
 - The `production` stage uses `nginx-unprivileged` on port 8080. The image `frontend/nginx.conf` proxies `/api` and `/ws` to `backend:8081`.
-- The Helm chart replaces that file with an SPA-only ConfigMap. The ingress routes `/api` and `/ws` to the backend.
+- The Helm chart replaces that file with a ConfigMap for the single-page application (SPA). It has no proxy rules. The ingress routes `/api` and `/ws` to the backend.
 
 ### Makefile
 
@@ -78,7 +78,7 @@ Do not run `make fmt` on the whole tree. Many Go files have existing `gofmt` dif
 
 - Deployments by default. `argoRollouts.enabled=true` uses Rollouts (canary) and an AnalysisTemplate.
 - `ingress.type`: `traefik`, `ingress`, or `none`.
-- Bundled MySQL (`mysql.enabled`, default on). OpenTelemetry (OTel) collector (`otel.enabled`). Metrics and ServiceMonitor (`metrics.*`). HPA and PDB for each workload. External Secrets Operator (`externalSecrets.enabled`). Hook subscribers ConfigMap (`hooks.enabled`).
+- Bundled MySQL (`mysql.enabled`, default on). OpenTelemetry (OTel) collector (`otel.enabled`). Metrics and ServiceMonitor (`metrics.*`). Horizontal Pod Autoscaler (HPA) and PodDisruptionBudget (PDB) for each workload. External Secrets Operator (`externalSecrets.enabled`). Hook subscribers ConfigMap (`hooks.enabled`).
 - Secrets (`JWT_SECRET`, `ADMIN_PASSWORD`, `KUBECONFIG_ENCRYPTION_KEY`, `DB_PASSWORD`) go in `backend.secrets`, not in the ConfigMap.
 - ConfigMap and Secret checksums in pod annotations cause a rollout on config change.
 - `make helm-test` runs render checks: default values, External Secrets values, extra values, and the Traefik route priority.
@@ -86,7 +86,7 @@ Do not run `make fmt` on the whole tree. Many Go files have existing `gofmt` dif
 ### Chart security settings
 
 - **Chart source allowlist**: `backend.allowedChartRepos` sets `ALLOWED_CHART_REPOS`. An empty list allows every chart source.
-- **Namespace-scoped RBAC**: `backend.rbac.scope` is `namespace` (default) or `cluster` (rules of chart 0.6 and earlier). With `namespace`, the backend gets namespaced rights only through the RoleBinding `k8s-stack-manager-access` to the ClusterRole `<fullname>-stack-access` in each stack namespace. The chart sets `STACK_ACCESS_CLUSTER_ROLE` and `STACK_ACCESS_SERVICE_ACCOUNT`. The leader adds the RoleBinding to older stack namespaces. The backend keeps only these cluster-wide rights: read nodes and pods, manage namespaces, write RoleBindings, and `bind` on the stack-access role and the roles of `backend.namespaceRoleBindings`.
+- **Namespace-scoped Role-Based Access Control (RBAC)**: `backend.rbac.scope` is `namespace` (default) or `cluster` (rules of chart 0.6 and earlier). With `namespace`, the backend gets namespaced rights only through the RoleBinding `k8s-stack-manager-access` to the ClusterRole `<fullname>-stack-access` in each stack namespace. The chart sets `STACK_ACCESS_CLUSTER_ROLE` and `STACK_ACCESS_SERVICE_ACCOUNT`. The leader adds the RoleBinding to older stack namespaces. The backend keeps only these cluster-wide rights: read nodes and pods, manage namespaces, write RoleBindings, and `bind` on the stack-access role and the roles of `backend.namespaceRoleBindings`.
 - **Admission policy**: `backend.rbac.admissionPolicy.enabled` (default true) renders a ValidatingAdmissionPolicy (Kubernetes 1.30 or later). It limits the backend to Roles and RoleBindings in namespaces with the label `managed-by=k8s-stack-manager`. It allows namespace creation only with that label. It allows namespace changes and deletes only for namespaces that start with `stack-` or have the label.
 - **Namespace creation**: the deployer creates the labeled namespace first. Helm gets no `--create-namespace` when the namespace is ready (`InstallRequest.NamespaceReady`). Helm 3 sends a namespace create with that flag even for an existing namespace, and the admission policy refuses it.
 - RBAC and the admission policy are in `templates/backend/clusterrole.yaml`.
@@ -94,7 +94,7 @@ Do not run `make fmt` on the whole tree. Many Go files have existing `gofmt` dif
 
 ### CI (`.github/workflows/`)
 
-- `pull-request.yml`: PR title check, Go 1.26, Node 26, lint, tests, build, Helm lint, `make helm-test`, Markdown lint.
+- `pull-request.yml`: pull request (PR) title check, Go 1.26, Node 26, lint, tests, build, Helm lint, `make helm-test`, Markdown lint.
 - `security-scan.yml`, `codeql.yml`, `docker-build.yml`, `helm-release.yml` (chart-releaser).
 
 ## Rules
