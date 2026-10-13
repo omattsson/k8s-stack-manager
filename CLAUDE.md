@@ -373,7 +373,7 @@ backend/
 
 **WebSocket messages.**
 - Client to server: `subscribe` and `unsubscribe` with `{"instance_id": "..."}`.
-- Server to client: `deployment.status`, `deployment.log` (only to the subscribers of the instance, if the sender supports it), `instance.created`, `instance.deleted`, `notification.new` (only to the sockets of the notified user), and `item.*` for the Items example.
+- Server to client: `deployment.status`, `deployment.log` (only to the subscribers of the instance, if the sender supports it), `instance.created`, `instance.deleted`, `notification.new` (only to the sockets of the notified user). The Items reference handler (`handlers/items.go`) also sends `item.*`, but no route registers it (#534).
 
 ## Frontend Structure
 

@@ -346,7 +346,7 @@ docker-compose.yml              Local development stack
 
 ## API Overview
 
-Swagger documents all routes. All routes need authentication, except `/health/*`, `/api/v1/ping`, `/api/v1/ui-config`, the login, refresh, logout, and OIDC routes, and the Items routes (`/api/v1/items`). The Items routes are the reference implementation of a CRUD handler. The web UI does not use them.
+Swagger documents all routes. All routes need authentication, except `/health/*`, `/api/v1/ping`, `/api/v1/ui-config`, and the login, refresh, logout, and OIDC routes. The Items handlers (`handlers/items.go`) are the reference implementation of a CRUD handler; no route registers them.
 
 | Group | Prefix | Description |
 |-------|--------|-------------|

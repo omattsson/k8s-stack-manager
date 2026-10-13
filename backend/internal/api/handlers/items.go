@@ -30,7 +30,11 @@ func parseUintParam(s string) (uint, error) {
 	return uint(id), nil
 }
 
-
+// Handler is the reference implementation of the CRUD handler pattern
+// (Items): repository injection, handleDBError, optional WebSocket
+// broadcast. No route registers these handlers: unauthenticated item routes
+// let any client change data (GitHub issue #534). The handler tests call them
+// on their own router.
 type Handler struct {
 	repository models.Repository
 	hub        websocket.BroadcastSender
@@ -87,16 +91,7 @@ func handleDBError(err error) (int, string) {
 	return http.StatusInternalServerError, msgInternalServerError
 }
 
-// CreateItem godoc
-// @Summary Create a new item
-// @Description Create a new item with the provided information
-// @Tags items
-// @Accept json
-// @Produce json
-// @Param item body models.Item true "Item object"
-// @Success 201 {object} models.Item
-// @Failure 400 {object} map[string]string
-// @Router /api/v1/items [post]
+// CreateItem creates an item.
 func (h *Handler) CreateItem(c *gin.Context) {
 	var item models.Item
 	if err := c.ShouldBindJSON(&item); err != nil {
@@ -122,13 +117,7 @@ func (h *Handler) CreateItem(c *gin.Context) {
 	c.JSON(http.StatusCreated, item)
 }
 
-// GetItems godoc
-// @Summary Get all items
-// @Description Get a list of all items
-// @Tags items
-// @Produce json
-// @Success 200 {array} models.Item
-// @Router /api/v1/items [get]
+// GetItems lists the items (filter, sort and pagination query parameters).
 func (h *Handler) GetItems(c *gin.Context) {
 	// Parse query parameters
 	limit, _ := strconv.Atoi(c.Query("limit"))
@@ -181,15 +170,7 @@ func (h *Handler) GetItems(c *gin.Context) {
 	c.JSON(http.StatusOK, items)
 }
 
-// GetItem godoc
-// @Summary Get an item by ID
-// @Description Get an item by its ID
-// @Tags items
-// @Produce json
-// @Param id path int true "Item ID"
-// @Success 200 {object} models.Item
-// @Failure 404 {object} map[string]string
-// @Router /api/v1/items/{id} [get]
+// GetItem returns one item by ID.
 func (h *Handler) GetItem(c *gin.Context) {
 	id, err := parseUintParam(c.Param("id"))
 	if err != nil {
@@ -207,17 +188,7 @@ func (h *Handler) GetItem(c *gin.Context) {
 	c.JSON(http.StatusOK, item)
 }
 
-// UpdateItem godoc
-// @Summary Update an item
-// @Description Update an item's information
-// @Tags items
-// @Accept json
-// @Produce json
-// @Param id path int true "Item ID"
-// @Param item body models.Item true "Item object"
-// @Success 200 {object} models.Item
-// @Failure 404 {object} map[string]string
-// @Router /api/v1/items/{id} [put]
+// UpdateItem updates an item (optimistic locking with the version field).
 func (h *Handler) UpdateItem(c *gin.Context) {
 	id, err := parseUintParam(c.Param("id"))
 	if err != nil {
@@ -266,15 +237,7 @@ func (h *Handler) UpdateItem(c *gin.Context) {
 	c.JSON(http.StatusOK, currentItem)
 }
 
-// DeleteItem godoc
-// @Summary Delete an item
-// @Description Delete an item by its ID
-// @Tags items
-// @Produce json
-// @Param id path int true "Item ID"
-// @Success 204 "No Content"
-// @Failure 404 {object} map[string]string
-// @Router /api/v1/items/{id} [delete]
+// DeleteItem deletes an item.
 func (h *Handler) DeleteItem(c *gin.Context) {
 	id, err := parseUintParam(c.Param("id"))
 	if err != nil {
