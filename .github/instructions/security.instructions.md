@@ -59,7 +59,7 @@ Helm installs charts with the identity of the backend. `ALLOWED_CHART_REPOS` (He
 
 ## Cross-Origin Resource Sharing (CORS)
 
-The CORS middleware is in `internal/api/middleware/middleware.go`. The default of `CORS_ALLOWED_ORIGINS` in `config.go` is `*`. `docker-compose.yml` sets `http://localhost:3000`. In production, set `CORS_ALLOWED_ORIGINS` to the exact domains. Never use `Access-Control-Allow-Origin: *` in production.
+The CORS middleware is in `internal/api/middleware/middleware.go`. `CORS_ALLOWED_ORIGINS` is `*` (all origins; code default, development only), `same-origin` (no cross-origin requests; Helm chart default), or a comma-separated list of origins. With `same-origin` or a list, a request whose `Origin` host equals its `Host` header (the web UI behind the ingress) always passes. Another `Origin` gets 403. The WebSocket upgrade (`/ws`) uses the same rules (`middleware.OriginPolicy`). `*` or `same-origin` mixed with other entries stops the startup. The backend logs a warning for `*` when `GO_ENV=production`. `docker-compose.yml` sets `http://localhost:3000`. In production, keep `same-origin` or set the exact domains. Never use `Access-Control-Allow-Origin: *` in production.
 
 ## Credentials
 

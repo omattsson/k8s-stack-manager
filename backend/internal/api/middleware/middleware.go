@@ -7,49 +7,95 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
+
+	"backend/internal/config"
 
 	"github.com/gin-gonic/gin"
 	"go.opentelemetry.io/otel/trace"
 )
 
-// CORS middleware with configurable allowed origins.
-// Pass "*" or "" to allow all origins (development only).
-// For production, pass a comma-separated list of allowed origins.
+// OriginPolicy is the parsed CORS_ALLOWED_ORIGINS setting. The CORS
+// middleware and the WebSocket upgrade check use the same rules:
+//   - "*" or "" allows all origins (development only).
+//   - "same-origin" (config.CORSSameOrigin) allows no cross-origin request.
+//   - A comma-separated list allows these origins.
+//
+// With "same-origin" or a list, a request whose Origin has the host of the
+// request (the Host header, which the ingress keeps) is a same-origin request
+// and is always allowed, so the web UI works behind the ingress without its
+// own origin in the list.
+type OriginPolicy struct {
+	origins  []string
+	allowAll bool
+}
+
+// NewOriginPolicy parses a CORS_ALLOWED_ORIGINS value with the rules of
+// config.CORSConfig (trimmed entries, empty entries dropped).
+func NewOriginPolicy(setting string) OriginPolicy {
+	cfg := config.CORSConfig{AllowedOrigins: setting}
+	p := OriginPolicy{allowAll: cfg.AllowsAllOrigins()}
+	if p.allowAll || cfg.SameOriginOnly() {
+		return p
+	}
+	p.origins = cfg.Entries()
+	return p
+}
+
+// AllowsAll reports whether every origin is allowed ("*").
+func (p OriginPolicy) AllowsAll() bool { return p.allowAll }
+
+// Allows reports whether a request with the given Origin header may proceed.
+// A request without an Origin header is not a browser cross-origin request
+// and is allowed. listed is true when the origin is allowed because it is in
+// the list (and not because all origins or the same origin are allowed); only
+// then may the response carry Access-Control-Allow-Credentials.
+func (p OriginPolicy) Allows(r *http.Request, origin string) (allowed, listed bool) {
+	switch {
+	case p.allowAll || origin == "" || isSameOrigin(r, origin):
+		return true, false
+	case containsOrigin(p.origins, origin):
+		return true, true
+	default:
+		return false, false
+	}
+}
+
+// CORS middleware with configurable allowed origins (see OriginPolicy). A
+// request with a disallowed Origin gets 403.
 //
 // Note: wildcard ("*") disables Access-Control-Allow-Credentials, which
 // prevents cookie-based refresh token rotation for cross-origin requests.
 // For local development with a separate frontend origin, set
 // CORS_ALLOWED_ORIGINS to the frontend URL (e.g. "http://localhost:5173").
 func CORS(allowedOrigins string) gin.HandlerFunc {
+	policy := NewOriginPolicy(allowedOrigins)
+
 	return func(c *gin.Context) {
-		if allowedOrigins == "" || allowedOrigins == "*" {
+		requestOrigin := c.Request.Header.Get("Origin")
+		if policy.AllowsAll() {
 			c.Writer.Header().Set("Access-Control-Allow-Origin", "*")
 			// No Allow-Credentials for wildcard — require explicit origin list
-		} else {
-			requestOrigin := c.Request.Header.Get("Origin")
-			if requestOrigin != "" {
-				allowed := false
-				for _, origin := range strings.Split(allowedOrigins, ",") {
-					if strings.TrimSpace(origin) == requestOrigin {
-						c.Writer.Header().Set("Access-Control-Allow-Origin", requestOrigin)
-						c.Writer.Header().Set("Access-Control-Allow-Credentials", "true")
-						c.Writer.Header().Set("Vary", "Origin")
-						allowed = true
-						break
-					}
-				}
-				if !allowed {
-					// Block requests from non-whitelisted origins as defense-in-depth;
-					// browsers enforce CORS client-side, but we also enforce server-side.
-					c.AbortWithStatus(http.StatusForbidden)
-					return
-				}
+		} else if requestOrigin != "" {
+			// The answer depends on the Origin header (CORS headers, none, or 403).
+			c.Writer.Header().Add("Vary", "Origin")
+			allowed, listed := policy.Allows(c.Request, requestOrigin)
+			if !allowed {
+				// Block requests from non-whitelisted origins as defense-in-depth;
+				// browsers enforce CORS client-side, but we also enforce server-side.
+				c.AbortWithStatus(http.StatusForbidden)
+				return
 			}
-			// If there is no Origin header, treat this as a non-CORS request:
-			// allow it through without setting Access-Control-Allow-Origin.
+			if listed {
+				c.Writer.Header().Set("Access-Control-Allow-Origin", requestOrigin)
+				c.Writer.Header().Set("Access-Control-Allow-Credentials", "true")
+			}
+			// Same-origin request (the web UI): no CORS headers needed.
 		}
+		// If there is no Origin header, treat this as a non-CORS request:
+		// allow it through without setting Access-Control-Allow-Origin.
 		c.Writer.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 		c.Writer.Header().Set("Access-Control-Allow-Headers", "Content-Type, Content-Length, Accept-Encoding, Authorization, X-Request-ID, X-API-Key")
 		// Let browser code read these response headers on cross-origin calls
@@ -63,6 +109,28 @@ func CORS(allowedOrigins string) gin.HandlerFunc {
 
 		c.Next()
 	}
+}
+
+// isSameOrigin reports whether the Origin header names the host of the
+// request (host and port, without case). The scheme is not compared: behind a
+// TLS-terminating ingress the backend sees plain HTTP. Origin "null" and
+// values without a host are never same-origin.
+func isSameOrigin(r *http.Request, origin string) bool {
+	u, err := url.Parse(origin)
+	if err != nil || u.Host == "" || r.Host == "" {
+		return false
+	}
+	return strings.EqualFold(u.Host, r.Host)
+}
+
+// containsOrigin reports whether origin is in the allowed list (exact match).
+func containsOrigin(origins []string, origin string) bool {
+	for _, o := range origins {
+		if o == origin {
+			return true
+		}
+	}
+	return false
 }
 
 // Logger is a middleware that logs incoming requests using structured logging.

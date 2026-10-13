@@ -95,7 +95,6 @@ type handlerSet struct {
 
 // routerDeps holds non-handler dependencies required to wire the router.
 type routerDeps struct {
-	Repo          models.Repository
 	HealthChecker *health.HealthChecker
 	Hub           *websocket.Hub
 	SessionStore  sessionstore.SessionStore
@@ -570,7 +569,6 @@ func buildRouter(cfg *config.Config, hs *handlerSet, deps routerDeps) (*gin.Engi
 	gin.SetMode(ginMode(os.Getenv("GIN_MODE"), cfg.App.Debug))
 	router := gin.New()
 	rateLimiters := routes.SetupRoutes(router, routes.Deps{
-		Repository:                   deps.Repo,
 		HealthChecker:                deps.HealthChecker,
 		Config:                       cfg,
 		Hub:                          deps.Hub,

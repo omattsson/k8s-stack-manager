@@ -185,7 +185,6 @@ func TestRouterDepsFieldTypes(t *testing.T) {
 
 	var rd routerDeps
 
-	var _ models.Repository = rd.Repo
 	var _ *health.HealthChecker = rd.HealthChecker
 	var _ *websocket.Hub = rd.Hub
 	var _ sessionstore.SessionStore = rd.SessionStore
@@ -829,22 +828,6 @@ func (s *stubTxRunner) RunInTx(fn func(repos database.TxRepos) error) error {
 	return fn(database.TxRepos{})
 }
 
-// ---- stubGenericRepo (models.Repository) ----
-
-type stubGenericRepo struct{}
-
-func (s *stubGenericRepo) Create(_ context.Context, _ interface{}) error                 { return nil }
-func (s *stubGenericRepo) FindByID(_ context.Context, _ uint, _ interface{}) error       { return nil }
-func (s *stubGenericRepo) Update(_ context.Context, _ interface{}) error                 { return nil }
-func (s *stubGenericRepo) Delete(_ context.Context, _ interface{}) error                 { return nil }
-func (s *stubGenericRepo) List(_ context.Context, _ interface{}, _ ...interface{}) error { return nil }
-func (s *stubGenericRepo) Ping(_ context.Context) error                                  { return nil }
-func (s *stubGenericRepo) Close() error                                                  { return nil }
-
-// ============================================================================
-// Test helpers
-// ============================================================================
-
 // buildTestConfig returns a minimal *config.Config suitable for bootstrap tests.
 // Fields are set to their minimum valid values needed for the bootstrap functions.
 func buildTestConfig() *config.Config {
@@ -1084,7 +1067,6 @@ func TestBuildRouter_ReturnsEngineAndRateLimiters(t *testing.T) {
 	require.NoError(t, err)
 
 	router, rateLimiters := buildRouter(cfg, hs, routerDeps{
-		Repo:          &stubGenericRepo{},
 		HealthChecker: healthChecker,
 		Hub:           hub,
 		SessionStore:  sessStore,
@@ -1121,7 +1103,6 @@ func TestBuildRouter_HealthEndpointResponds(t *testing.T) {
 	require.NoError(t, err)
 
 	router, rateLimiters := buildRouter(cfg, hs, routerDeps{
-		Repo:          &stubGenericRepo{},
 		HealthChecker: healthChecker,
 		Hub:           hub,
 		SessionStore:  sessStore,
@@ -1226,7 +1207,6 @@ func TestBootstrapFullPipeline(t *testing.T) {
 
 	// Step 3: Router.
 	router, rateLimiters := buildRouter(cfg, hs, routerDeps{
-		Repo:          &stubGenericRepo{},
 		HealthChecker: healthChecker,
 		Hub:           hub,
 		SessionStore:  sessStore,

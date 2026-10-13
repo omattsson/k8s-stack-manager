@@ -22,7 +22,6 @@ import (
 
 // Deps holds all handler dependencies needed by SetupRoutes.
 type Deps struct {
-	Repository    models.Repository
 	HealthChecker *health.HealthChecker
 	Config        *config.Config
 	Hub           *websocket.Hub
@@ -193,16 +192,9 @@ func SetupRoutes(router *gin.Engine, deps Deps) *RateLimiters {
 		// so the login page can use it before sign-in.
 		v1.GET("/ui-config", handlers.NewUIConfigHandler(cfg.Branding, cfg.App.DefaultInstanceTTLMinutes))
 
-		// Items endpoints
-		itemsHandler := handlers.NewHandlerWithHub(deps.Repository, deps.Hub)
-		items := v1.Group("/items")
-		{
-			items.GET("", itemsHandler.GetItems)
-			items.GET("/:id", itemsHandler.GetItem)
-			items.POST("", itemsHandler.CreateItem)
-			items.PUT("/:id", itemsHandler.UpdateItem)
-			items.DELETE("/:id", itemsHandler.DeleteItem)
-		}
+		// No /items routes: handlers.Handler (items.go) is the reference
+		// implementation of the CRUD pattern only. Unauthenticated item routes
+		// let any client change data (GitHub issue #534).
 	}
 
 	// Phase 1 routes — only register if handlers are provided (they are nil in legacy tests).

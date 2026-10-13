@@ -125,7 +125,7 @@ Security controls of the application:
 - **Secrets at rest.** Kubeconfig data, registry passwords, and webhook channel secrets are encrypted with a key that the application derives from `KUBECONFIG_ENCRYPTION_KEY`.
 - **HTTP hardening.** The application sets security headers and rate limits, and has panic recovery. The Gin framework runs in release mode unless you set `APP_DEBUG=true` or `GIN_MODE`.
 
-Warning: The default value of `CORS_ALLOWED_ORIGINS` is `*`. Set it to the origin of your UI for production.
+Note: The Helm chart sets `CORS_ALLOWED_ORIGINS` to `same-origin`: only the web UI on the ingress host can call the API from a browser. The code default is `*` (all origins) for local development; the backend logs a warning for `*` when `GO_ENV=production`.
 
 ## Architecture
 
@@ -346,7 +346,7 @@ docker-compose.yml              Local development stack
 
 ## API Overview
 
-Swagger documents all routes. All routes need authentication, except `/health/*`, `/api/v1/ping`, `/api/v1/ui-config`, the login, refresh, logout, and OIDC routes, and the Items routes (`/api/v1/items`). The Items routes are the reference implementation of a CRUD handler. The web UI does not use them.
+Swagger documents all routes. All routes need authentication, except `/health/*`, `/api/v1/ping`, `/api/v1/ui-config`, and the login, refresh, logout, and OIDC routes. The Items handlers (`handlers/items.go`) are the reference implementation of a CRUD handler; no route registers them.
 
 | Group | Prefix | Description |
 |-------|--------|-------------|
@@ -384,7 +384,7 @@ The table shows the key environment variables. The full list is in `backend/inte
 | `JWT_SECRET` | Yes | JWT signing secret (minimum 16 characters) |
 | `ADMIN_USERNAME` | No | Username of the initial admin user (default: `admin`) |
 | `ADMIN_PASSWORD` | Yes | Password of the initial admin user. The backend creates the user at startup when it does not exist. |
-| `SELF_REGISTRATION` | No | Let any signed-in user register new `user` accounts (default: `false`; the Helm chart and Docker Compose set `true`). With `false`, only `admin` users register users. |
+| `SELF_REGISTRATION` | No | Let any signed-in user register new `user` accounts (default: `false`, also in the Helm chart; Docker Compose sets `true` for development). With `false`, only `admin` users register users. |
 | `OIDC_ENABLED` and `OIDC_*` | No | OpenID Connect single sign-on. See [OIDC single sign-on](WIKI.md#authentication). |
 | `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME` | No | MySQL connection. Set them for your database (defaults: `localhost`, `3306`, `root`, empty, `app`). The Helm chart sets them for the bundled MySQL. |
 | `AZURE_DEVOPS_PAT` | No | Azure DevOps personal access token (PAT) |
@@ -394,7 +394,7 @@ The table shows the key environment variables. The full list is in `backend/inte
 | `KUBECONFIG_ENCRYPTION_KEY` | No | Passphrase. The backend derives an AES-256 key from it (SHA-256) to encrypt kubeconfig data, registry passwords, and webhook channel secrets. Without it, the backend rejects a cluster that has kubeconfig data. Use a kubeconfig path or in-cluster configuration then. |
 | `ALLOWED_CHART_REPOS` | No | Comma-separated chart repository URL prefixes (`oci://`, `https://`, `http://`). Empty: every chart source is allowed. |
 | `NAMESPACE_LABELS` | No | Extra labels for stack namespaces (`key=value,key=value`) |
-| `CORS_ALLOWED_ORIGINS` | No | Allowed CORS origins (default: `*`) |
+| `CORS_ALLOWED_ORIGINS` | No | Allowed CORS origins: `*` (default; development only), `same-origin` (no cross-origin requests; Helm chart default) or a comma-separated list. The web UI on the same host always passes. |
 | `RATE_LIMIT` / `LOGIN_RATE_LIMIT` | No | Requests per minute for each IP address (defaults: `100` / `10`) |
 | `ENABLE_SWAGGER` | No | Serve the Swagger UI at `/swagger` (default: `false`) |
 | `SESSION_STORE` | No | Session store backend: `mysql` (default) or `memory` |
@@ -456,9 +456,11 @@ JWT_SECRET=my-secret-at-least-16-chars make helm-upgrade
 make helm-uninstall
 ```
 
-Warning: Change the placeholder values `backend.secrets.ADMIN_PASSWORD` and `mysql.auth.rootPassword`. Change `backend.env.CORS_ALLOWED_ORIGINS` (default `*`) to the origin of your UI. The notes after `helm install` warn you about each placeholder.
+Warning: Change the placeholder values `backend.secrets.ADMIN_PASSWORD` and `mysql.auth.rootPassword`. Keep `backend.env.CORS_ALLOWED_ORIGINS` at `same-origin` (default), or list the other origins that call the API from a browser. The notes after `helm install` warn you about each placeholder.
 
-Note: The chart sets `SELF_REGISTRATION` to `true`. Any signed-in user can then register new `user` accounts. Set `backend.env.SELF_REGISTRATION` to `"false"` to allow only `admin` users to register users.
+Note: The chart sets `SELF_REGISTRATION` to `"false"`: only `admin` users register users. Set `backend.env.SELF_REGISTRATION` to `"true"` to let any signed-in user register new `user` accounts. The notes after `helm install` then show a warning.
+
+Upgrade note: Earlier chart versions set `CORS_ALLOWED_ORIGINS` to `"*"` and `SELF_REGISTRATION` to `"true"`. After an upgrade, a browser client on another origin gets 403, and only `admin` users register users. To keep the old behaviour, set these values explicitly: list the other origins in `backend.env.CORS_ALLOWED_ORIGINS` (or `"*"`), and set `backend.env.SELF_REGISTRATION: "true"`.
 
 ### Security settings of the chart
 

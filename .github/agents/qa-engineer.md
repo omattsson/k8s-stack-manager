@@ -88,6 +88,7 @@ func TestCreateItem(t *testing.T) {
             t.Parallel()
             payload, _ := json.Marshal(tt.input)
             w := httptest.NewRecorder()
+            // router is the handler test router (setupTestRouter); the API itself has no /items routes.
             req, _ := http.NewRequest("POST", "/api/v1/items", bytes.NewBuffer(payload))
             req.Header.Set("Content-Type", "application/json")
             router.ServeHTTP(w, req)

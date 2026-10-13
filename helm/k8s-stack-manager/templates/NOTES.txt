@@ -86,10 +86,18 @@ WARNING: mysql.auth.rootPassword is still the placeholder value!
 {{- end }}
 {{- end }}
 
-{{- if eq (index .Values.backend.env "CORS_ALLOWED_ORIGINS") "*" }}
+{{- $cors := trim (toString (index .Values.backend.env "CORS_ALLOWED_ORIGINS" | default "")) }}
+{{- if or (eq $cors "*") (eq $cors "") }}
 
-WARNING: CORS_ALLOWED_ORIGINS is set to "*" (allow all origins).
-  For production, restrict it: --set backend.env.CORS_ALLOWED_ORIGINS="https://your-domain.com"
+WARNING: CORS_ALLOWED_ORIGINS allows all origins ("*").
+  For production, use the default "same-origin" or list the origins:
+  --set backend.env.CORS_ALLOWED_ORIGINS="https://your-domain.com"
+{{- end }}
+
+{{- if eq (lower (toString (index .Values.backend.env "SELF_REGISTRATION" | default ""))) "true" }}
+
+WARNING: SELF_REGISTRATION is "true". Every signed-in user can create local
+  accounts. For a shared installation, set it to "false" (only an admin can).
 {{- end }}
 
 {{- if .Values.backend.leaderElection.enabled }}

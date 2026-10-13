@@ -3,6 +3,7 @@ package routes
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -84,7 +85,6 @@ func setupMinimalRouter(t *testing.T) (*gin.Engine, *RateLimiters) {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
-	mockRepo := handlers.NewMockRepository()
 
 	healthChecker := health.New()
 	healthChecker.SetReady(true)
@@ -94,7 +94,6 @@ func setupMinimalRouter(t *testing.T) (*gin.Engine, *RateLimiters) {
 	t.Cleanup(func() { hub.Shutdown() })
 
 	rl := SetupRoutes(router, Deps{
-		Repository:    mockRepo,
 		HealthChecker: healthChecker,
 		Config:        testConfig(),
 		Hub:           hub,
@@ -110,7 +109,6 @@ func TestSetupRoutes(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	router := gin.Default()
-	mockRepo := handlers.NewMockRepository()
 
 	healthChecker := health.New()
 	healthChecker.SetReady(true)
@@ -130,7 +128,6 @@ func TestSetupRoutes(t *testing.T) {
 	defer hub.Shutdown()
 
 	rl := SetupRoutes(router, Deps{
-		Repository:    mockRepo,
 		HealthChecker: healthChecker,
 		Config:        cfg,
 		Hub:           hub,
@@ -234,7 +231,6 @@ func TestSetupRoutes_AllRouteGroupsRegistered(t *testing.T) {
 
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
-	mockRepo := handlers.NewMockRepository()
 
 	healthChecker := health.New()
 	healthChecker.SetReady(true)
@@ -249,7 +245,6 @@ func TestSetupRoutes_AllRouteGroupsRegistered(t *testing.T) {
 	authHandler := handlers.NewAuthHandler(&stubUserRepo{}, &cfg.Auth, &cfg.OIDC)
 
 	rl := SetupRoutes(router, Deps{
-		Repository:    mockRepo,
 		HealthChecker: healthChecker,
 		Config:        cfg,
 		Hub:           hub,
@@ -277,11 +272,6 @@ func TestSetupRoutes_AllRouteGroupsRegistered(t *testing.T) {
 		{"GET", "/health/ready"},
 		{"GET", "/api/v1/ping"},
 		{"GET", "/api/v1/ui-config"},
-		{"GET", "/api/v1/items"},
-		{"POST", "/api/v1/items"},
-		{"GET", "/api/v1/items/:id"},
-		{"PUT", "/api/v1/items/:id"},
-		{"DELETE", "/api/v1/items/:id"},
 		{"POST", "/api/v1/auth/login"},
 		{"POST", "/api/v1/auth/register"},
 		{"GET", "/api/v1/auth/me"},
@@ -298,7 +288,6 @@ func TestSetupRoutes_ProtectedRoutesReturn401(t *testing.T) {
 
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
-	mockRepo := handlers.NewMockRepository()
 
 	healthChecker := health.New()
 	healthChecker.SetReady(true)
@@ -311,7 +300,6 @@ func TestSetupRoutes_ProtectedRoutesReturn401(t *testing.T) {
 	authHandler := handlers.NewAuthHandler(&stubUserRepo{}, &cfg.Auth, &cfg.OIDC)
 
 	rl := SetupRoutes(router, Deps{
-		Repository:    mockRepo,
 		HealthChecker: healthChecker,
 		Config:        cfg,
 		Hub:           hub,
@@ -343,7 +331,6 @@ func TestSetupRoutes_LoginIsPublic(t *testing.T) {
 
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
-	mockRepo := handlers.NewMockRepository()
 
 	healthChecker := health.New()
 	healthChecker.SetReady(true)
@@ -356,7 +343,6 @@ func TestSetupRoutes_LoginIsPublic(t *testing.T) {
 	authHandler := handlers.NewAuthHandler(&stubUserRepo{}, &cfg.Auth, &cfg.OIDC)
 
 	rl := SetupRoutes(router, Deps{
-		Repository:    mockRepo,
 		HealthChecker: healthChecker,
 		Config:        cfg,
 		Hub:           hub,
@@ -383,7 +369,6 @@ func TestSetupRoutes_OIDCDisabled(t *testing.T) {
 
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
-	mockRepo := handlers.NewMockRepository()
 
 	healthChecker := health.New()
 	healthChecker.SetReady(true)
@@ -397,7 +382,6 @@ func TestSetupRoutes_OIDCDisabled(t *testing.T) {
 
 	// OIDCHandler is nil (OIDC disabled), so the fallback config endpoint should be registered.
 	rl := SetupRoutes(router, Deps{
-		Repository:    mockRepo,
 		HealthChecker: healthChecker,
 		Config:        cfg,
 		Hub:           hub,
@@ -426,7 +410,6 @@ func TestSetupRoutes_MiddlewareOrdering(t *testing.T) {
 
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
-	mockRepo := handlers.NewMockRepository()
 
 	healthChecker := health.New()
 	healthChecker.SetReady(true)
@@ -436,7 +419,6 @@ func TestSetupRoutes_MiddlewareOrdering(t *testing.T) {
 	t.Cleanup(func() { hub.Shutdown() })
 
 	rl := SetupRoutes(router, Deps{
-		Repository:    mockRepo,
 		HealthChecker: healthChecker,
 		Config:        testConfig(),
 		Hub:           hub,
@@ -460,7 +442,6 @@ func TestSetupRoutes_MaxBodySizeEnforced(t *testing.T) {
 
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
-	mockRepo := handlers.NewMockRepository()
 
 	healthChecker := health.New()
 	healthChecker.SetReady(true)
@@ -470,25 +451,31 @@ func TestSetupRoutes_MaxBodySizeEnforced(t *testing.T) {
 	t.Cleanup(func() { hub.Shutdown() })
 
 	rl := SetupRoutes(router, Deps{
-		Repository:    mockRepo,
 		HealthChecker: healthChecker,
 		Config:        testConfig(),
 		Hub:           hub,
 	})
 	t.Cleanup(func() { rl.Stop() })
 
+	// A test route after SetupRoutes gets the global middleware (MaxBodySize).
+	router.POST("/api/v1/test-body", func(c *gin.Context) {
+		if _, err := io.ReadAll(c.Request.Body); err != nil {
+			c.Status(http.StatusRequestEntityTooLarge)
+			return
+		}
+		c.Status(http.StatusOK)
+	})
+
 	// Create a body larger than 1 MB.
 	largeBody := strings.Repeat("a", 1<<20+1)
 	w := httptest.NewRecorder()
-	req, _ := http.NewRequest(http.MethodPost, "/api/v1/items", strings.NewReader(largeBody))
+	req, _ := http.NewRequest(http.MethodPost, "/api/v1/test-body", strings.NewReader(largeBody))
 	req.Header.Set("Content-Type", "application/json")
 	router.ServeHTTP(w, req)
 
-	// The handler reads the limited body and gets a read error which results
-	// in either 400 (bad JSON) or 413 (body too large). Both indicate the
-	// MaxBodySize middleware is working -- the request is NOT processed.
-	assert.Contains(t, []int{http.StatusBadRequest, http.StatusRequestEntityTooLarge}, w.Code,
-		"oversized body should be rejected")
+	// Reading the limited body fails: the MaxBodySize middleware works and
+	// the request is NOT processed.
+	assert.Equal(t, http.StatusRequestEntityTooLarge, w.Code, "oversized body should be rejected")
 }
 
 func TestSetupRoutes_WithAllHandlersRegistersFullAPI(t *testing.T) {
@@ -496,7 +483,6 @@ func TestSetupRoutes_WithAllHandlersRegistersFullAPI(t *testing.T) {
 
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
-	mockRepo := handlers.NewMockRepository()
 
 	healthChecker := health.New()
 	healthChecker.SetReady(true)
@@ -512,7 +498,6 @@ func TestSetupRoutes_WithAllHandlersRegistersFullAPI(t *testing.T) {
 	auditLogHandler := handlers.NewAuditLogHandler(nil)
 
 	rl := SetupRoutes(router, Deps{
-		Repository:      mockRepo,
 		HealthChecker:   healthChecker,
 		Config:          cfg,
 		Hub:             hub,
@@ -550,7 +535,6 @@ func TestSetupRoutes_NilHandlersSkipRouteRegistration(t *testing.T) {
 
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
-	mockRepo := handlers.NewMockRepository()
 
 	healthChecker := health.New()
 	healthChecker.SetReady(true)
@@ -562,9 +546,8 @@ func TestSetupRoutes_NilHandlersSkipRouteRegistration(t *testing.T) {
 	cfg := testConfig()
 	authHandler := handlers.NewAuthHandler(&stubUserRepo{}, &cfg.Auth, &cfg.OIDC)
 
-	// All domain handlers are nil -- only auth/items/health should be registered.
+	// All domain handlers are nil -- only auth/health should be registered.
 	rl := SetupRoutes(router, Deps{
-		Repository:    mockRepo,
 		HealthChecker: healthChecker,
 		Config:        cfg,
 		Hub:           hub,
@@ -603,26 +586,39 @@ func TestSetupRoutes_WebSocketEndpoint(t *testing.T) {
 	assert.True(t, registeredRoutes["GET /ws"], "WebSocket endpoint should be registered at /ws")
 }
 
-func TestSetupRoutes_ItemsCRUD(t *testing.T) {
+func TestSetupRoutes_NoItemsRoutes(t *testing.T) {
 	t.Parallel()
 
+	// GitHub issue #534: the items handlers are a reference implementation
+	// only. Unauthenticated item routes let any client change data.
 	router, _ := setupMinimalRouter(t)
+	fullRouter, _ := setupFullRouter(t)
 
-	registeredRoutes := make(map[string]bool)
-	for _, r := range router.Routes() {
-		registeredRoutes[r.Method+" "+r.Path] = true
+	// Neither the minimal router nor the router with all handlers has items routes.
+	for _, rt := range append(router.Routes(), fullRouter.Routes()...) {
+		assert.False(t, strings.HasPrefix(rt.Path, "/api/v1/items"), "items route registered: %s %s", rt.Method, rt.Path)
 	}
 
-	itemRoutes := []string{
-		"GET /api/v1/items",
-		"POST /api/v1/items",
-		"GET /api/v1/items/:id",
-		"PUT /api/v1/items/:id",
-		"DELETE /api/v1/items/:id",
+	tests := []struct {
+		method string
+		path   string
+		body   string
+	}{
+		{http.MethodGet, "/api/v1/items", ""},
+		{http.MethodPost, "/api/v1/items", `{"name":"x","price":1}`},
+		{http.MethodPut, "/api/v1/items/1", `{"name":"x","price":1}`},
+		{http.MethodDelete, "/api/v1/items/1", ""},
 	}
-
-	for _, route := range itemRoutes {
-		assert.True(t, registeredRoutes[route], "items route missing: %s", route)
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.method, func(t *testing.T) {
+			t.Parallel()
+			w := httptest.NewRecorder()
+			req, _ := http.NewRequest(tt.method, tt.path, strings.NewReader(tt.body))
+			req.Header.Set("Content-Type", "application/json")
+			router.ServeHTTP(w, req)
+			assert.Equal(t, http.StatusNotFound, w.Code)
+		})
 	}
 }
 
@@ -631,7 +627,6 @@ func TestSetupRoutes_RecoveryMiddleware(t *testing.T) {
 
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
-	mockRepo := handlers.NewMockRepository()
 
 	healthChecker := health.New()
 	healthChecker.SetReady(true)
@@ -641,7 +636,6 @@ func TestSetupRoutes_RecoveryMiddleware(t *testing.T) {
 	t.Cleanup(func() { hub.Shutdown() })
 
 	rl := SetupRoutes(router, Deps{
-		Repository:    mockRepo,
 		HealthChecker: healthChecker,
 		Config:        testConfig(),
 		Hub:           hub,
@@ -700,7 +694,6 @@ func TestSetupRoutes_SwaggerGatedByConfig(t *testing.T) {
 
 			gin.SetMode(gin.TestMode)
 			router := gin.New()
-			mockRepo := handlers.NewMockRepository()
 
 			healthChecker := health.New()
 			healthChecker.SetReady(true)
@@ -713,7 +706,6 @@ func TestSetupRoutes_SwaggerGatedByConfig(t *testing.T) {
 			cfg.App.EnableSwagger = tt.enable
 
 			rl := SetupRoutes(router, Deps{
-				Repository:    mockRepo,
 				HealthChecker: healthChecker,
 				Config:        cfg,
 				Hub:           hub,
@@ -1095,7 +1087,6 @@ func setupFullRouter(t *testing.T) (*gin.Engine, *RateLimiters) {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
-	mockRepo := handlers.NewMockRepository()
 
 	healthChecker := health.New()
 	healthChecker.SetReady(true)
@@ -1157,7 +1148,6 @@ func setupFullRouter(t *testing.T) (*gin.Engine, *RateLimiters) {
 	require.NoError(t, err)
 
 	rl := SetupRoutes(router, Deps{
-		Repository:                  mockRepo,
 		HealthChecker:               healthChecker,
 		Config:                      cfg,
 		Hub:                         hub,
@@ -1224,14 +1214,9 @@ func TestSetupRoutes_AllHandlers_RegistersCompleteAPI(t *testing.T) {
 		{"GET", "/health/live"},
 		{"GET", "/health/ready"},
 
-		// Ping + Items (always registered)
+		// Ping and UI config (always registered)
 		{"GET", "/api/v1/ping"},
 		{"GET", "/api/v1/ui-config"},
-		{"GET", "/api/v1/items"},
-		{"POST", "/api/v1/items"},
-		{"GET", "/api/v1/items/:id"},
-		{"PUT", "/api/v1/items/:id"},
-		{"DELETE", "/api/v1/items/:id"},
 
 		// Auth
 		{"POST", "/api/v1/auth/login"},
@@ -1456,7 +1441,6 @@ func TestSetupRoutes_OIDCDisabled_FallbackConfigOnly(t *testing.T) {
 
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
-	mockRepo := handlers.NewMockRepository()
 
 	healthChecker := health.New()
 	healthChecker.SetReady(true)
@@ -1469,7 +1453,6 @@ func TestSetupRoutes_OIDCDisabled_FallbackConfigOnly(t *testing.T) {
 	authHandler := handlers.NewAuthHandler(&stubUserRepo{}, &cfg.Auth, &cfg.OIDC)
 
 	rl := SetupRoutes(router, Deps{
-		Repository:    mockRepo,
 		HealthChecker: healthChecker,
 		Config:        cfg,
 		Hub:           hub,
@@ -1524,7 +1507,6 @@ func TestSetupRoutes_LoginRateLimiterBranching(t *testing.T) {
 
 			gin.SetMode(gin.TestMode)
 			router := gin.New()
-			mockRepo := handlers.NewMockRepository()
 
 			healthChecker := health.New()
 			healthChecker.SetReady(true)
@@ -1538,7 +1520,6 @@ func TestSetupRoutes_LoginRateLimiterBranching(t *testing.T) {
 			authHandler := handlers.NewAuthHandler(&stubUserRepo{}, &cfg.Auth, &cfg.OIDC)
 
 			rl := SetupRoutes(router, Deps{
-				Repository:    mockRepo,
 				HealthChecker: healthChecker,
 				Config:        cfg,
 				Hub:           hub,
@@ -1569,7 +1550,6 @@ func TestSetupRoutes_ClusterHandlerFallbackConstruction(t *testing.T) {
 	// SetupRoutes constructs a fallback ClusterHandler internally.
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
-	mockRepo := handlers.NewMockRepository()
 
 	healthChecker := health.New()
 	healthChecker.SetReady(true)
@@ -1582,7 +1562,6 @@ func TestSetupRoutes_ClusterHandlerFallbackConstruction(t *testing.T) {
 	authHandler := handlers.NewAuthHandler(&stubUserRepo{}, &cfg.Auth, &cfg.OIDC)
 
 	rl := SetupRoutes(router, Deps{
-		Repository:    mockRepo,
 		HealthChecker: healthChecker,
 		Config:        cfg,
 		Hub:           hub,
@@ -1619,7 +1598,6 @@ func TestSetupRoutes_ClusterHandlerNotRegisteredWithoutDeps(t *testing.T) {
 	// no cluster routes should be registered.
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
-	mockRepo := handlers.NewMockRepository()
 
 	healthChecker := health.New()
 	healthChecker.SetReady(true)
@@ -1632,7 +1610,6 @@ func TestSetupRoutes_ClusterHandlerNotRegisteredWithoutDeps(t *testing.T) {
 	authHandler := handlers.NewAuthHandler(&stubUserRepo{}, &cfg.Auth, &cfg.OIDC)
 
 	rl := SetupRoutes(router, Deps{
-		Repository:     mockRepo,
 		HealthChecker:  healthChecker,
 		Config:         cfg,
 		Hub:            hub,
@@ -1668,7 +1645,6 @@ func TestSetupRoutes_OtelMiddlewareGatedByConfig(t *testing.T) {
 
 			gin.SetMode(gin.TestMode)
 			router := gin.New()
-			mockRepo := handlers.NewMockRepository()
 
 			healthChecker := health.New()
 			healthChecker.SetReady(true)
@@ -1683,7 +1659,6 @@ func TestSetupRoutes_OtelMiddlewareGatedByConfig(t *testing.T) {
 			authHandler := handlers.NewAuthHandler(&stubUserRepo{}, &cfg.Auth, &cfg.OIDC)
 
 			rl := SetupRoutes(router, Deps{
-				Repository:    mockRepo,
 				HealthChecker: healthChecker,
 				Config:        cfg,
 				Hub:           hub,
@@ -1709,7 +1684,6 @@ func TestSetupRoutes_APIKeyRoutesWithoutUserHandler(t *testing.T) {
 	// routes should still be registered.
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
-	mockRepo := handlers.NewMockRepository()
 
 	healthChecker := health.New()
 	healthChecker.SetReady(true)
@@ -1723,7 +1697,6 @@ func TestSetupRoutes_APIKeyRoutesWithoutUserHandler(t *testing.T) {
 	apiKeyHandler := handlers.NewAPIKeyHandler(&stubAPIKeyRepo{}, &stubUserRepo{}, &cfg.Auth)
 
 	rl := SetupRoutes(router, Deps{
-		Repository:    mockRepo,
 		HealthChecker: healthChecker,
 		Config:        cfg,
 		Hub:           hub,

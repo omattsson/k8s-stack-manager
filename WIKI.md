@@ -455,7 +455,9 @@ Template -> (instantiate) -> Definition + ChartConfigs -> (create instance) -> I
 
 - Authentication uses a JWT with the header `Authorization: Bearer <token>`, or an API key.
 - The role hierarchy is `admin` > `devops` > `user`.
-- `POST /auth/register` needs a valid token. With `SELF_REGISTRATION=false` (the backend default), only an `admin` can register users. With `SELF_REGISTRATION=true`, any signed-in user can register a new `user` account. Only an `admin` can set another role or create a service account. The Helm chart and `docker-compose.yml` set `SELF_REGISTRATION` to `true` by default.
+- `POST /auth/register` needs a valid token. With `SELF_REGISTRATION=false` (the backend default), only an `admin` can register users. With `SELF_REGISTRATION=true`, any signed-in user can register a new `user` account. Only an `admin` can set another role or create a service account.
+- The Helm chart sets `SELF_REGISTRATION` to `"false"`, the same as the backend default. Docker Compose sets `true` for local development. The notes after `helm install` warn when it is `"true"`.
+- CORS: `CORS_ALLOWED_ORIGINS` is `*` (all origins; code default, development only), `same-origin` (no cross-origin requests; Helm chart default), or a comma-separated list of origins. With `same-origin` or a list, a request whose `Origin` host equals its `Host` header (the web UI behind the ingress) always passes. Another `Origin` gets 403. The WebSocket upgrade (`/ws`) uses the same rules (`middleware.OriginPolicy`). `*` or `same-origin` mixed with other entries stops the startup. The backend logs a warning for `*` when `GO_ENV=production`.
 - The backend creates the initial admin user at startup from `ADMIN_USERNAME` (default `admin`) and `ADMIN_PASSWORD`, when this user does not exist. A change of `ADMIN_PASSWORD` later does not change the stored password.
 
 **OIDC single sign-on.** Set `OIDC_ENABLED=true` to turn on OpenID Connect (Authorization Code flow with PKCE). The backend then needs `OIDC_PROVIDER_URL`, `OIDC_CLIENT_ID`, and `OIDC_REDIRECT_URL`.

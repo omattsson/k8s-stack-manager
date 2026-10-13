@@ -320,7 +320,7 @@ backend/
 - Delete, disable, password reset and role change block earlier tokens and revoke refresh tokens. Delete also removes the API keys. A role change keeps them, because API-key auth reads the current role.
 - A login cache hit (`LOGIN_CACHE_TTL`) skips only bcrypt. After the password check, the login reads the user again and uses that record (disabled check, token role). A changed password hash gives 401.
 - All auth paths (login, refresh, OIDC, API key) reject `User.Disabled`.
-- Register (`POST /auth/register`) needs an admin, or `SELF_REGISTRATION=true`.
+- Register (`POST /auth/register`) needs an admin, or `SELF_REGISTRATION=true` (code and Helm chart default `false`; Docker Compose sets `true` for development).
 - WebSocket auth:
   - The `/ws` upgrade accepts a JWT in the `Sec-WebSocket-Protocol: bearer, <jwt>` subprotocol, in the `Authorization` header or in `?token=`. It accepts an API key in the `X-API-Key` header only.
   - It runs the same checks (`middleware.CheckRevocation`, fail open) and also rejects a deleted or disabled user (401). A user lookup error gives 500.
@@ -373,7 +373,7 @@ backend/
 
 **WebSocket messages.**
 - Client to server: `subscribe` and `unsubscribe` with `{"instance_id": "..."}`.
-- Server to client: `deployment.status`, `deployment.log` (only to the subscribers of the instance, if the sender supports it), `instance.created`, `instance.deleted`, `notification.new` (only to the sockets of the notified user), and `item.*` for the Items example.
+- Server to client: `deployment.status`, `deployment.log` (only to the subscribers of the instance, if the sender supports it), `instance.created`, `instance.deleted`, `notification.new` (only to the sockets of the notified user). The Items reference handler (`handlers/items.go`) also sends `item.*`, but no route registers it (#534).
 
 ## Frontend Structure
 

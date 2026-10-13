@@ -30,9 +30,58 @@ const (
 	defaultShutdownTimeout = 30 * time.Second
 )
 
-// CORSConfig holds CORS configuration
+// CORSSameOrigin is the CORS_ALLOWED_ORIGINS value that allows no
+// cross-origin request: only the web UI on the same host can call the API.
+const CORSSameOrigin = "same-origin"
+
+// CORSConfig holds CORS configuration. AllowedOrigins (CORS_ALLOWED_ORIGINS)
+// is "*" (all origins, development only; the code default), CORSSameOrigin,
+// or a comma-separated list of origins.
 type CORSConfig struct {
 	AllowedOrigins string
+}
+
+// Entries returns the comma-separated entries of AllowedOrigins, trimmed,
+// without empty entries. The CORS middleware and the WebSocket origin check
+// read the setting through this method.
+func (c CORSConfig) Entries() []string {
+	var entries []string
+	for _, e := range strings.Split(c.AllowedOrigins, ",") {
+		if e = strings.TrimSpace(e); e != "" {
+			entries = append(entries, e)
+		}
+	}
+	return entries
+}
+
+// AllowsAllOrigins reports whether every origin may call the API: no entry
+// (the middleware treats an empty value as "*") or the single entry "*".
+func (c CORSConfig) AllowsAllOrigins() bool {
+	entries := c.Entries()
+	return len(entries) == 0 || (len(entries) == 1 && entries[0] == "*")
+}
+
+// SameOriginOnly reports whether the setting is the single entry
+// CORSSameOrigin.
+func (c CORSConfig) SameOriginOnly() bool {
+	entries := c.Entries()
+	return len(entries) == 1 && entries[0] == CORSSameOrigin
+}
+
+// Validate checks that "*" and "same-origin" are not mixed with other
+// entries: in a list they would be compared as literal origins and never
+// match.
+func (c CORSConfig) Validate() error {
+	entries := c.Entries()
+	if len(entries) < 2 {
+		return nil
+	}
+	for _, e := range entries {
+		if e == "*" || e == CORSSameOrigin {
+			return fmt.Errorf("CORS_ALLOWED_ORIGINS: %q must be the only value, got %q", e, c.AllowedOrigins)
+		}
+	}
+	return nil
 }
 
 // maxRefreshReuseGrace caps REFRESH_REUSE_GRACE. The grace window only has to
@@ -381,6 +430,13 @@ func (c *Config) Validate() error {
 	case "", "pat", "workload-identity":
 	default:
 		return fmt.Errorf("AZURE_DEVOPS_AUTH must be \"pat\" or \"workload-identity\", got %q", c.GitProvider.AzureDevOpsAuth)
+	}
+
+	if err := c.CORS.Validate(); err != nil {
+		return err
+	}
+	if c.CORS.AllowsAllOrigins() && c.App.Environment == "production" {
+		slog.Warn("CORS_ALLOWED_ORIGINS allows every origin (\"*\") in production; set \"same-origin\" or a list of origins")
 	}
 
 	if c.Deployment.KubeconfigEncryptionKey == "" || len(c.Deployment.KubeconfigEncryptionKey) < 16 {

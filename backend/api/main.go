@@ -153,7 +153,6 @@ func main() {
 
 	// Router.
 	router, rateLimiters := buildRouter(cfg, hs, routerDeps{
-		Repo:          repo,
 		HealthChecker: healthChecker,
 		Hub:           hub,
 		SessionStore:  sessStore,

@@ -36,7 +36,6 @@ func TestSetupRoutes_EveryMutatingRouteHasKnownAuditEntry(t *testing.T) {
 
 	cfg := testConfig()
 	rl := SetupRoutes(router, Deps{
-		Repository:                   handlers.NewMockRepository(),
 		HealthChecker:                healthChecker,
 		Config:                       cfg,
 		Hub:                          hub,
@@ -82,7 +81,7 @@ func TestSetupRoutes_EveryMutatingRouteHasKnownAuditEntry(t *testing.T) {
 		if r.Method != http.MethodPost && r.Method != http.MethodPut && r.Method != http.MethodDelete {
 			continue
 		}
-		if !strings.HasPrefix(r.Path, "/api/v1/") || strings.HasPrefix(r.Path, "/api/v1/items") {
+		if !strings.HasPrefix(r.Path, "/api/v1/") {
 			continue
 		}
 		key := r.Method + " " + r.Path
@@ -122,7 +121,6 @@ func TestSetupRoutes_AuditLogRoleGates(t *testing.T) {
 
 	cfg := testConfig()
 	rl := SetupRoutes(router, Deps{
-		Repository:      handlers.NewMockRepository(),
 		HealthChecker:   health.New(),
 		Config:          cfg,
 		Hub:             hub,
@@ -173,7 +171,6 @@ func TestSetupRoutes_DefinitionChartRoleGates(t *testing.T) {
 
 	cfg := testConfig()
 	rl := SetupRoutes(router, Deps{
-		Repository:        handlers.NewMockRepository(),
 		HealthChecker:     health.New(),
 		Config:            cfg,
 		Hub:               hub,

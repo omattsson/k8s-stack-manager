@@ -29,6 +29,8 @@ services:
       - JWT_EXPIRATION=${JWT_EXPIRATION:-24h}
       - ADMIN_USERNAME=${ADMIN_USERNAME:-admin}
       - ADMIN_PASSWORD=${ADMIN_PASSWORD:-admin}
+      # Development setting: every signed-in user can create local accounts.
+      # The backend code and the Helm chart default to false (only an admin).
       - SELF_REGISTRATION=${SELF_REGISTRATION:-true}
       # OIDC / External Auth (optional)
       - OIDC_ENABLED=${OIDC_ENABLED:-false}

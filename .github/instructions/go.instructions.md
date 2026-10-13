@@ -88,14 +88,14 @@ Use the error types in `pkg/dberrors/errors.go` (`internal/database/errors.go` r
 Add godoc annotations above handler methods:
 
 ```go
-// CreateItem godoc
-// @Summary Create a new item
-// @Tags items
+// CreateDefinition godoc
+// @Summary Create a stack definition
+// @Tags stack-definitions
 // @Accept json
 // @Produce json
-// @Param item body models.Item true "Item object"
-// @Success 201 {object} models.Item
-// @Router /api/v1/items [post]
+// @Param definition body models.StackDefinition true "Stack definition"
+// @Success 201 {object} models.StackDefinition
+// @Router /api/v1/stack-definitions [post]
 ```
 
 Regenerate: `cd backend && make docs` (runs `swag init -g api/main.go`). Commit the generated files in `backend/docs/`.

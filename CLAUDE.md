@@ -320,7 +320,7 @@ backend/
 - Delete, disable, password reset and role change block earlier tokens and revoke refresh tokens. Delete also removes the API keys. A role change keeps them, because API-key auth reads the current role.
 - A login cache hit (`LOGIN_CACHE_TTL`) skips only bcrypt. After the password check, the login reads the user again and uses that record (disabled check, token role). A changed password hash gives 401.
 - All auth paths (login, refresh, OIDC, API key) reject `User.Disabled`.
-- Register (`POST /auth/register`) needs an admin, or `SELF_REGISTRATION=true`.
+- Register (`POST /auth/register`) needs an admin, or `SELF_REGISTRATION=true` (code and Helm chart default `false`; Docker Compose sets `true` for development).
 - WebSocket auth:
   - The `/ws` upgrade accepts a JWT in the `Sec-WebSocket-Protocol: bearer, <jwt>` subprotocol, in the `Authorization` header or in `?token=`. It accepts an API key in the `X-API-Key` header only.
   - It runs the same checks (`middleware.CheckRevocation`, fail open) and also rejects a deleted or disabled user (401). A user lookup error gives 500.
@@ -373,7 +373,7 @@ backend/
 
 **WebSocket messages.**
 - Client to server: `subscribe` and `unsubscribe` with `{"instance_id": "..."}`.
-- Server to client: `deployment.status`, `deployment.log` (only to the subscribers of the instance, if the sender supports it), `instance.created`, `instance.deleted`, `notification.new` (only to the sockets of the notified user), and `item.*` for the Items example.
+- Server to client: `deployment.status`, `deployment.log` (only to the subscribers of the instance, if the sender supports it), `instance.created`, `instance.deleted`, `notification.new` (only to the sockets of the notified user). The Items reference handler (`handlers/items.go`) also sends `item.*`, but no route registers it (#534).
 
 ## Frontend Structure
 
@@ -680,7 +680,7 @@ Developers use this application to configure, store and deploy multi-service Hel
 - Never expose a raw error message for a 500. Return `"Internal server error"`.
 - Set all secrets through environment variables. Never hard-code credentials.
 - GORM parameterizes queries. Never interpolate user input into raw SQL.
-- CORS allows `*` in dev only. Set `CORS_ALLOWED_ORIGINS` in production.
+- CORS allows `*` in dev only (code default; a startup warning when `GO_ENV=production`). The Helm chart default is `same-origin`: no cross-origin requests, the web UI on the same host passes. Set a list of origins only for other browser clients.
 - Rate limiting: a per-IP sliding window on API routes, and a stricter login limiter (`LOGIN_RATE_LIMIT`).
 - The `SecurityHeaders` middleware sets baseline headers on every response. Never remove it.
 - The Recovery middleware catches panics globally. Never remove it.
