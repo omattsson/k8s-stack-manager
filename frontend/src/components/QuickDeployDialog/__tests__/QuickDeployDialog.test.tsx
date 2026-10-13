@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import QuickDeployDialog from '../index';
 import type { StackTemplate } from '../../../types';
+import { BRANDING_DEFAULTS, StaticBrandingProvider } from '../../../context/BrandingContext';
 
 const mockNavigate = vi.fn();
 vi.mock('react-router-dom', async () => {
@@ -207,5 +208,51 @@ describe('QuickDeployDialog', () => {
       </MemoryRouter>
     );
     expect(container.querySelector('[role="dialog"]')).not.toBeInTheDocument();
+  });
+
+  describe('TTL default from the UI config', () => {
+    const renderWithDefault = (defaultTtlMinutes: number) =>
+      render(
+        <MemoryRouter>
+          <StaticBrandingProvider value={{ ...BRANDING_DEFAULTS, defaultTtlMinutes }}>
+            <QuickDeployDialog open={true} onClose={vi.fn()} template={template} />
+          </StaticBrandingProvider>
+        </MemoryRouter>
+      );
+
+    const deploy = async (user: ReturnType<typeof userEvent.setup>) => {
+      await user.type(screen.getByLabelText(/instance name/i), 'my-instance');
+      await user.click(screen.getByRole('button', { name: /deploy/i }));
+      await waitFor(() => expect(templateService.quickDeploy).toHaveBeenCalledTimes(1));
+      return (templateService.quickDeploy as ReturnType<typeof vi.fn>).mock.calls[0][1];
+    };
+
+    it('shows the server default and leaves out ttl_minutes when the user does not change it', async () => {
+      const user = userEvent.setup();
+      (templateService.quickDeploy as ReturnType<typeof vi.fn>).mockResolvedValue({
+        instance: { id: 'inst-1' }, definition: { id: 'def-1' }, log_id: 'log-1',
+      });
+      renderWithDefault(240);
+      expect(screen.getByRole('combobox', { name: /ttl/i })).toHaveTextContent('4 hours');
+      const body = await deploy(user);
+      expect(body).not.toHaveProperty('ttl_minutes');
+    }, 15_000);
+
+    it('shows "No expiry" when the server default is 0', () => {
+      renderWithDefault(0);
+      expect(screen.getByRole('combobox', { name: /ttl/i })).toHaveTextContent('No expiry');
+    });
+
+    it('sends the TTL that the user picks, also "No expiry"', async () => {
+      const user = userEvent.setup();
+      (templateService.quickDeploy as ReturnType<typeof vi.fn>).mockResolvedValue({
+        instance: { id: 'inst-1' }, definition: { id: 'def-1' }, log_id: 'log-1',
+      });
+      renderWithDefault(480);
+      await user.click(screen.getByRole('combobox', { name: /ttl/i }));
+      await user.click(screen.getByRole('option', { name: 'No expiry' }));
+      const body = await deploy(user);
+      expect(body).toHaveProperty('ttl_minutes', 0);
+    }, 15_000);
   });
 });

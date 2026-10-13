@@ -72,35 +72,44 @@ describe('AccessUrls', () => {
     expect(screen.getByText('http://20.1.2.3:8080')).toBeInTheDocument();
   });
 
-  it('renders port-forward command for ClusterIP services', () => {
-    const status: NamespaceStatus = {
-      namespace: 'stack-my-app',
-      status: 'healthy',
-      charts: [
-        {
-          release_name: 'database',
-          chart_name: 'database',
-          status: 'healthy',
-          deployments: [],
-          pods: [],
-          services: [
-            {
-              name: 'database',
-              type: 'ClusterIP',
-              cluster_ip: '10.0.0.2',
-              ports: ['5432/TCP'],
-              ingress_hosts: [],
-            },
-          ],
-        },
-      ],
-      last_checked: '2025-01-01T00:00:00Z',
-    };
+  const clusterIPStatus = (): NamespaceStatus => ({
+    namespace: 'stack-my-app',
+    status: 'healthy',
+    charts: [
+      {
+        release_name: 'database',
+        chart_name: 'database',
+        status: 'healthy',
+        deployments: [],
+        pods: [],
+        services: [
+          {
+            name: 'database',
+            type: 'ClusterIP',
+            cluster_ip: '10.0.0.2',
+            ports: ['5432/TCP'],
+            ingress_hosts: [],
+          },
+        ],
+      },
+    ],
+    last_checked: '2025-01-01T00:00:00Z',
+  });
 
-    render(<NotificationProvider><AccessUrls status={status} /></NotificationProvider>);
+  it('renders port-forward command for ClusterIP services when showPortForward is set', () => {
+    render(<NotificationProvider><AccessUrls status={clusterIPStatus()} showPortForward /></NotificationProvider>);
 
     expect(screen.getByText('ClusterIP')).toBeInTheDocument();
     expect(screen.getByText('kubectl port-forward svc/database 5432:5432 -n stack-my-app')).toBeInTheDocument();
+  });
+
+  it('hides the port-forward commands by default (users without kubectl access)', () => {
+    render(<NotificationProvider><AccessUrls status={clusterIPStatus()} /></NotificationProvider>);
+
+    expect(screen.queryByText('ClusterIP')).not.toBeInTheDocument();
+    expect(screen.queryByText(/kubectl port-forward/)).not.toBeInTheDocument();
+    // Only ClusterIP services: the section is not shown at all.
+    expect(screen.queryByText('Access URLs')).not.toBeInTheDocument();
   });
 
   it('renders NodePort services', () => {

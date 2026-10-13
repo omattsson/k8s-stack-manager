@@ -62,6 +62,15 @@ type DeploymentLogDeadlineExtender interface {
 	ExtendDeadline(ctx context.Context, id string, deadline time.Time) error
 }
 
+// DeploymentLogOutputWriter is implemented by the GORM deployment log
+// repository. UpdateRunningOutput sets the output of a running log to the
+// lines streamed so far, so a page that loads the log during the operation
+// shows them. It returns ErrDeployLogNotRunning when the log is no longer
+// running; the final write of the operation then has the full output.
+type DeploymentLogOutputWriter interface {
+	UpdateRunningOutput(ctx context.Context, id, output string) error
+}
+
 // Deployment log action constants.
 const (
 	DeployActionDeploy   = "deploy"

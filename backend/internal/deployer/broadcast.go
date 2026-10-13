@@ -61,6 +61,9 @@ func (m *Manager) broadcastStatusWithError(instanceID, status, logID, errorMessa
 // Uses targeted broadcast when the hub supports it, so only clients subscribed to
 // the instance receive the high-volume log output.
 func (m *Manager) broadcastLog(instanceID, logID, line string) {
+	// Keep the line for the stored output of the running operation, so a
+	// page that loads the deploy log during the operation shows it.
+	m.appendLiveOutput(logID, line)
 	if m.hub == nil {
 		return
 	}

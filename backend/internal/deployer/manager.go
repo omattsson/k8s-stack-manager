@@ -107,6 +107,13 @@ type Manager struct {
 	// its operation (user, cleanup policy, TTL). fireDeployHook adds it to
 	// the envelope. The operation goroutine removes the entry at its end.
 	logTriggers sync.Map
+
+	// liveOut holds the streamed lines of the running operations of this
+	// replica; a flusher writes them to deployment_logs.output (see
+	// live_output.go). liveOutputInterval overrides liveOutputFlushInterval
+	// (tests).
+	liveOut            liveOutputs
+	liveOutputInterval time.Duration
 }
 
 // NamespaceRoleBindingSpec describes a RoleBinding that should be applied to

@@ -402,6 +402,7 @@ func (m *Manager) newerOperation(instanceID, logID string) bool {
 // the finalize transaction failed, so the log does not stay "running". It
 // returns false when the log is no longer running (see writeFinal).
 func (m *Manager) fallbackLogUpdate(instanceID string, deployLog *models.DeploymentLog) bool {
+	m.dropLiveOutput(deployLog.ID)
 	if err := m.logRepo.Update(m.shutdownCtx, deployLog); err != nil {
 		if errors.Is(err, models.ErrDeployLogNotRunning) {
 			warnLogNotRunning(deployLog)
@@ -429,6 +430,8 @@ func warnLogNotRunning(deployLog *models.DeploymentLog) {
 // notifications): the recovery already did it. With a transaction runner
 // both writes run in one transaction.
 func (m *Manager) writeFinal(instance *models.StackInstance, deployLog *models.DeploymentLog, op string) bool {
+	// The final write has the full output; the live output is not needed.
+	m.dropLiveOutput(deployLog.ID)
 	instanceID := deployLog.StackInstanceID
 	if instance == nil {
 		return m.fallbackLogUpdate(instanceID, deployLog)

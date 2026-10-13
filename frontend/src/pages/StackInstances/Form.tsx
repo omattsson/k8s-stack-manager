@@ -14,6 +14,7 @@ import axios from 'axios';
 import { instanceService, definitionService, clusterService } from '../../api/client';
 import type { StackDefinition, Cluster } from '../../types';
 import TtlSelector from '../../components/TtlSelector';
+import { useBranding } from '../../context/BrandingContext';
 import LoadingState from '../../components/LoadingState';
 import { INSTANCE_NAME_MAX_LENGTH, INSTANCE_NAME_RULE, validateInstanceName } from '../../utils/instanceName';
 
@@ -33,7 +34,12 @@ const Form = () => {
   const [name, setName] = useState('');
   const [branch, setBranch] = useState('master');
   const [loading, setLoading] = useState(true);
-  const [ttlMinutes, setTtlMinutes] = useState(0);
+  // null: the user has not changed the TTL field. The field shows the server
+  // default and the request leaves out ttl_minutes, so the server applies its
+  // own default (DEFAULT_INSTANCE_TTL_MINUTES).
+  const { defaultTtlMinutes } = useBranding();
+  const [ttlChoice, setTtlChoice] = useState<number | null>(null);
+  const ttlMinutes = ttlChoice ?? defaultTtlMinutes;
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [suggestions, setSuggestions] = useState<string[]>([]);
@@ -73,7 +79,7 @@ const Form = () => {
         name,
         branch,
         ...(selectedClusterId ? { cluster_id: selectedClusterId } : {}),
-        ttl_minutes: ttlMinutes,
+        ...(ttlChoice !== null ? { ttl_minutes: ttlChoice } : {}),
       });
       navigate(`/stack-instances/${instance.id}`);
     } catch (err) {
@@ -171,7 +177,7 @@ const Form = () => {
             fullWidth
           />
 
-          <TtlSelector value={ttlMinutes} onChange={setTtlMinutes} />
+          <TtlSelector value={ttlMinutes} onChange={setTtlChoice} />
 
           {clusters.length > 0 && (
             <TextField

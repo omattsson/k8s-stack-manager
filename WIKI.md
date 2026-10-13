@@ -135,7 +135,7 @@ Both list endpoints are paged (`page` and `pageSize`; default 25, maximum 100). 
 
 **Names in responses.** Instance responses include `owner_username`, `definition_name`, and `cluster_name`. Definition and template responses include `owner_username`. The API omits a field when the owner, definition, or cluster no longer exists (for example after a delete). It also omits `cluster_name` when `cluster_id` is empty (older instances).
 
-**Access URLs.** The instance status (`GET /stack-instances/:id/status`) lists the URLs of all Ingresses in the namespace. A chart marks the main entry point of the stack (for example the web application, not a database or mail tool) with the Ingress annotation `k8s-stack-manager.io/primary-url: "true"`. Primary Ingresses come first in `ingresses` (field `primary: true`), and the stack list shows the first URL. Without the annotation, the order is the Ingress name order.
+**Access URLs.** The instance status (`GET /stack-instances/:id/status`) lists the URLs of all Ingresses in the namespace. A chart marks the main entry point of the stack (for example the web application, not a database or mail tool) with the Ingress annotation `k8s-stack-manager.io/primary-url: "true"`. Primary Ingresses come first in `ingresses` (field `primary: true`), and the stack list shows the first URL. Without the annotation, the order is the Ingress name order. The web UI also lists a `kubectl port-forward` command for each ClusterIP service, only for the roles `devops` and `admin`.
 
 ### Stack Instance Lifecycle
 
@@ -247,7 +247,7 @@ Both list endpoints are paged (`page` and `pageSize`; default 25, maximum 100). 
 
 **Expiry.** When the TTL reaper stops an expired instance, the owner and the followers get one "Stack expired" notification (`stack.expired`; notification channels can subscribe to it). The stop then gives the usual "Stack stopped" (or "Stop failed") notification.
 
-**TTL.** An instance can have a time to live (`ttl_minutes`). The maximum is 43200 minutes (30 days). A new instance without a TTL gets `DEFAULT_INSTANCE_TTL_MINUTES` when you set it (default `0`, which means no TTL). A deploy sets the expiry (`expires_at`) to now + `ttl_minutes` (see Redeploy below for a running instance).
+**TTL.** An instance can have a time to live (`ttl_minutes`). The maximum is 43200 minutes (30 days). A new instance without a TTL gets `DEFAULT_INSTANCE_TTL_MINUTES` when you set it (code default `0`, which means no TTL; the Helm chart sets `480`, 8 hours). The forms Create Instance and Quick Deploy start the TTL field with this value (`GET /api/v1/ui-config`). "No expiry" stays a choice that the user makes. A deploy sets the expiry (`expires_at`) to now + `ttl_minutes` (see Redeploy below for a running instance).
 
 **Redeploy.** `POST /stack-instances/:id/deploy` also works for a `running` instance. It upgrades the releases with the current values. With a TTL, the expiry becomes now + `ttl_minutes`, unless the current expiry is later. A redeploy never makes the expiry earlier.
 
@@ -617,7 +617,7 @@ The frontend image is the same for every installation. The product name, the log
 | `APP_LOGO_URL` | empty | Logo image. Empty means the built-in logo (`/logo.svg`). |
 | `APP_FAVICON_URL` | `/favicon.svg` | Browser tab icon (built-in). |
 
-- `GET /api/v1/ui-config` returns `{"title", "logo_url", "favicon_url"}`. It needs no token (the login page uses it). It has the API rate limit and `Cache-Control: public, max-age=300`.
+- `GET /api/v1/ui-config` returns `{"title", "logo_url", "favicon_url", "default_instance_ttl_minutes"}`. It needs no token (the login page uses it). It has the API rate limit and `Cache-Control: public, max-age=300`.
 - The web UI renders at once with the last config that it received (browser localStorage key `ui-config`) or, on the first visit, the built-in values. It loads the config once at startup, swaps in the values when they arrive (also on the login page), and stores them for the next start. If the call fails or takes more than 5 seconds, the initial values stay. A logo that does not load falls back to the built-in logo.
 - URL rule: a same-origin path (`/branding/logo.svg`) or an `https://` URL with a host. The backend refuses other values at startup with a clear error. It refuses these values: `http://` (mixed content, clear text), `javascript:` and other schemes, and all `data:` URLs (an SVG data URL can carry script). It also refuses protocol-relative URLs (`//host/x`), paths without a leading `/`, user info, spaces, and control characters. A path resolves against the frontend origin, not the API.
 - Helm: `branding.title`, `branding.logoUrl`, and `branding.faviconUrl` set the variables (an explicit `backend.env` value wins). `branding.files` (text, for example SVG) and `branding.binaryFiles` (base64, for example PNG or ICO) put the files in a ConfigMap. The ConfigMap has file names that match `^[-._a-zA-Z0-9]+$` and at most 900 KiB in total (otherwise the render fails). The frontend nginx serves the files at `/branding/<name>`, with the content type of the extension, `X-Content-Type-Options: nosniff`, and a sandbox Content Security Policy. Example:

@@ -322,17 +322,27 @@ describe('DeploymentLogViewer', () => {
       expect(screen.queryByText('LIVE')).not.toBeInTheDocument();
     });
 
-    it('renders streaming output instead of log.output for running log with streaming lines', () => {
-      // This running log has output AND streaming lines.
-      // Streaming lines should win when isStreaming is true.
+    it('shows the stored output of a running log and then the streaming lines (page reload)', () => {
+      // The stored output has the lines written before the page loaded.
       const streamingLines = {
         [runningLogWithOutput.id]: ['Real-time line A', 'Real-time line B'],
       };
       render(
         <DeploymentLogViewer logs={[runningLogWithOutput]} streamingLines={streamingLines} />,
       );
-      expect(screen.getByText('Real-time line A')).toBeInTheDocument();
-      expect(screen.getByText('Real-time line B')).toBeInTheDocument();
+      const shown = ['Helm install started...', 'Real-time line A', 'Real-time line B'];
+      shown.forEach((line) => expect(screen.getByText(line)).toBeInTheDocument());
+      expect(screen.getByText('LIVE')).toBeInTheDocument();
+    });
+
+    it('shows a line once when it is in the stored output and in the streaming lines', () => {
+      const log = { ...runningLogWithOutput, output: 'line 1\nline 2\n' };
+      render(
+        <DeploymentLogViewer logs={[log]} streamingLines={{ [log.id]: ['line 1', 'line 2', 'line 3'] }} />,
+      );
+      expect(screen.getAllByText('line 1')).toHaveLength(1);
+      expect(screen.getAllByText('line 2')).toHaveLength(1);
+      expect(screen.getByText('line 3')).toBeInTheDocument();
     });
 
     it('falls back to log.output when running log has output but no streaming lines', () => {

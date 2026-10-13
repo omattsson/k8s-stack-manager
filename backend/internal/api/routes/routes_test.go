@@ -1758,18 +1758,14 @@ func TestSetupRoutes_UIConfigIsPublic(t *testing.T) {
 
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 	assert.Equal(t, "public, max-age=300", w.Header().Get("Cache-Control"))
-	var body map[string]string
+	var body map[string]any
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
-	assert.ElementsMatch(t, []string{"title", "logo_url", "favicon_url"}, keysOf(body))
-	assert.NotEmpty(t, body["title"])
-}
-
-func keysOf(m map[string]string) []string {
-	out := make([]string, 0, len(m))
-	for k := range m {
-		out = append(out, k)
+	keys := make([]string, 0, len(body))
+	for k := range body {
+		keys = append(keys, k)
 	}
-	return out
+	assert.ElementsMatch(t, []string{"title", "logo_url", "favicon_url", "default_instance_ttl_minutes"}, keys)
+	assert.NotEmpty(t, body["title"])
 }
 
 func TestSetupRoutes_SecurityHeaders(t *testing.T) {

@@ -189,9 +189,9 @@ func SetupRoutes(router *gin.Engine, deps Deps) *RateLimiters {
 		// Ping endpoint
 		v1.GET("/ping", handlers.Ping)
 
-		// Web UI display config (title, logo, favicon) — public, so the
-		// login page can use it before sign-in.
-		v1.GET("/ui-config", handlers.NewUIConfigHandler(cfg.Branding))
+		// Web UI display config (title, logo, favicon, TTL default) — public,
+		// so the login page can use it before sign-in.
+		v1.GET("/ui-config", handlers.NewUIConfigHandler(cfg.Branding, cfg.App.DefaultInstanceTTLMinutes))
 
 		// Items endpoints
 		itemsHandler := handlers.NewHandlerWithHub(deps.Repository, deps.Hub)

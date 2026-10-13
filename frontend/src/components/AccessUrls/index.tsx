@@ -18,6 +18,11 @@ import type { NamespaceStatus, ChartStatus, ServiceInfo, IngressInfo } from '../
 
 interface AccessUrlsProps {
   status: NamespaceStatus;
+  /**
+   * Show a `kubectl port-forward` command for each ClusterIP service. Only
+   * useful to users with kubectl access to the cluster (devops, admin).
+   */
+  showPortForward?: boolean;
 }
 
 interface AccessEntry {
@@ -29,7 +34,7 @@ interface AccessEntry {
   label: string;
 }
 
-const buildEntries = (status: NamespaceStatus): AccessEntry[] => {
+const buildEntries = (status: NamespaceStatus, showPortForward: boolean): AccessEntry[] => {
   const entries: AccessEntry[] = [];
 
   // Ingress entries
@@ -72,7 +77,7 @@ const buildEntries = (status: NamespaceStatus): AccessEntry[] => {
           copyText: `NodePort: ${portsStr}`,
           label: `NodePort: ${portsStr}`,
         });
-      } else if (svc.type === 'ClusterIP') {
+      } else if (svc.type === 'ClusterIP' && showPortForward) {
         const port = (svc.ports || [])[0]?.replace(/\/.*/, '') || '80';
         const cmd = `kubectl port-forward svc/${svc.name} ${port}:${port} -n ${status.namespace}`;
         entries.push({
@@ -98,10 +103,10 @@ const typeColor = (type: string): 'primary' | 'success' | 'warning' | 'default' 
   }
 };
 
-const AccessUrls = ({ status }: AccessUrlsProps) => {
+const AccessUrls = ({ status, showPortForward = false }: AccessUrlsProps) => {
   const { showSuccess, showError } = useNotification();
 
-  const entries = buildEntries(status);
+  const entries = buildEntries(status, showPortForward);
 
   if (entries.length === 0) return null;
 

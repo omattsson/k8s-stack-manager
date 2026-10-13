@@ -11,6 +11,7 @@ import {
 } from '@mui/material';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import type { DeploymentLog } from '../../types';
+import { liveLogLines } from '../../utils/liveLogLines';
 
 interface DeploymentLogViewerProps {
   logs: DeploymentLog[];
@@ -119,8 +120,13 @@ const DeploymentLogViewer = ({ logs, loading, streamingLines, currentDeployLogId
   return (
     <Box>
       {logs.map((log) => {
-        const lines = streamingLines?.[log.id];
-        const isStreaming = log.status === 'running' && lines && lines.length > 0;
+        // A running log shows its stored output (the server writes it every
+        // few seconds, so it survives a page reload) and then the streamed lines.
+        const streamed = streamingLines?.[log.id];
+        const lines = log.status === 'running' ? liveLogLines(log.output, streamed) : [];
+        const isStreaming = lines.length > 0;
+        // LIVE: lines arrive over the WebSocket now.
+        const isLive = log.status === 'running' && (streamed?.length ?? 0) > 0;
         const isExpanded = expanded === log.id;
         const isCurrentDeploy = log.id === currentDeployLogId;
         const canRollbackHere = Boolean(onRollbackTo)
@@ -152,7 +158,7 @@ const DeploymentLogViewer = ({ logs, loading, streamingLines, currentDeployLogId
                 {isCurrentDeploy && (
                   <Chip label="current" size="small" color="success" variant="outlined" />
                 )}
-                {isStreaming && (
+                {isLive && (
                   <Chip
                     label="LIVE"
                     size="small"
