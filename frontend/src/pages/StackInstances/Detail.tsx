@@ -47,7 +47,7 @@ import { useNotification } from '../../context/NotificationContext';
 import LoadingState from '../../components/LoadingState';
 import { useUnsavedChanges } from '../../hooks/useUnsavedChanges';
 import { useAuth } from '../../context/AuthContext';
-import { canModifyInstance } from '../../utils/roles';
+import { canModifyInstance, hasAtLeastRole } from '../../utils/roles';
 import { describeApiError } from '../../utils/apiError';
 import { downloadBlob } from '../../utils/download';
 import ExtendTtlMenu from '../../components/ExtendTtlMenu';
@@ -964,7 +964,7 @@ const Detail = () => {
         )}
 
         {k8sStatus && (instance.status === 'running' || instance.status === 'partial') && (
-          <AccessUrls status={k8sStatus} />
+          <AccessUrls status={k8sStatus} showPortForward={hasAtLeastRole(user?.role, 'devops')} />
         )}
 
         <Box sx={{ maxWidth: 400 }}>
