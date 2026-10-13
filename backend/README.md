@@ -107,7 +107,7 @@ The backend reads all configuration from environment variables. It also reads a 
 | `SERVER_SHUTDOWN_TIMEOUT` | `30s` | Time to finish requests at shutdown |
 | `RATE_LIMIT` | `100` | Requests per minute for each IP address on `/api/v1` |
 | `LOGIN_RATE_LIMIT` | `10` | Requests per minute for each IP address on login and refresh. `0` uses the general limiter. |
-| `CORS_ALLOWED_ORIGINS` | `*` | Allowed CORS origins. Restrict this in production. |
+| `CORS_ALLOWED_ORIGINS` | `*` | Allowed CORS origins: `*` (development only; a warning in production), `same-origin` (no cross-origin requests; Helm chart default) or a comma-separated list. The web UI on the same host always passes. |
 | `ENABLE_SWAGGER` | `false` | Serve the Swagger UI at `/swagger/index.html` |
 | `APP_DEBUG` | `true` | Debug mode. `false` in the Helm chart. Gin runs in release mode unless `APP_DEBUG=true` or `GIN_MODE` is set. |
 | `GIN_MODE` | not set | Gin mode (`debug`, `release`, `test`). It wins over `APP_DEBUG`. |

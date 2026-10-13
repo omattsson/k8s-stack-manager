@@ -92,11 +92,18 @@ backend:
     API_PREFIX: /api
     RATE_LIMIT: "2000"
     LOGIN_RATE_LIMIT: "500"
-    CORS_ALLOWED_ORIGINS: "*"
+    # Origins that may call the API from a browser. "same-origin": only the web
+    # UI on the ingress host (no cross-origin requests). A comma-separated list
+    # adds other origins, for example "https://portal.example.com". "*" allows
+    # every origin (development only; NOTES warns).
+    CORS_ALLOWED_ORIGINS: "same-origin"
     CORS_ALLOWED_METHODS: "GET,POST,PUT,DELETE,OPTIONS"
     CORS_ALLOWED_HEADERS: "Origin,Content-Type,Accept,Authorization"
     CORS_MAX_AGE: "300"
-    SELF_REGISTRATION: "true"
+    # "true": every signed-in user can create local accounts
+    # (POST /api/v1/auth/register). "false": only an admin can (NOTES warns
+    # when "true").
+    SELF_REGISTRATION: "false"
     DEFAULT_BRANCH: master
     HELM_BINARY: helm
     # helm --timeout for one chart; a deploy of N charts may take N x this value.

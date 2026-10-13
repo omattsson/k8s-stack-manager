@@ -21,13 +21,13 @@ import (
 // It is a separate struct from Handler because it depends on *websocket.Hub
 // rather than models.Repository.
 type WebSocketHandler struct {
-	sessionStore   sessionstore.SessionStore // nil: no blocklist checks
-	userRepo       models.UserRepository     // nil: no user checks
-	apiKeyRepo     models.APIKeyRepository   // nil (or nil userRepo): no API-key auth
-	apiKeyLimiter  *RateLimiter              // nil: no per-IP limit on API-key upgrades
-	hub            *websocket.Hub
-	allowedOrigins string
-	jwtSecret      string
+	sessionStore  sessionstore.SessionStore // nil: no blocklist checks
+	userRepo      models.UserRepository     // nil: no user checks
+	apiKeyRepo    models.APIKeyRepository   // nil (or nil userRepo): no API-key auth
+	apiKeyLimiter *RateLimiter              // nil: no per-IP limit on API-key upgrades
+	hub           *websocket.Hub
+	originPolicy  middleware.OriginPolicy
+	jwtSecret     string
 }
 
 // WithRevocationChecks makes the upgrade run the same checks as the HTTP JWT
@@ -62,9 +62,9 @@ func (h *WebSocketHandler) WithAPIKeyRateLimiter(rl *RateLimiter) *WebSocketHand
 // NewWebSocketHandler creates a new WebSocketHandler with the given hub, allowed origins, and JWT secret.
 func NewWebSocketHandler(hub *websocket.Hub, allowedOrigins string, jwtSecret string) *WebSocketHandler {
 	return &WebSocketHandler{
-		hub:            hub,
-		allowedOrigins: allowedOrigins,
-		jwtSecret:      jwtSecret,
+		hub:          hub,
+		originPolicy: middleware.NewOriginPolicy(allowedOrigins),
+		jwtSecret:    jwtSecret,
 	}
 }
 
@@ -522,22 +522,10 @@ func extractSubprotocolToken(header string) (token string, viaSubprotocol bool) 
 	return "", true
 }
 
-// checkOrigin validates the request origin against the configured allowed origins.
+// checkOrigin validates the request origin with the same rules as the CORS
+// middleware (middleware.OriginPolicy): all origins with "*", the same host
+// with "same-origin", and the same host or a listed origin with a list.
 func (h *WebSocketHandler) checkOrigin(r *http.Request) bool {
-	if h.allowedOrigins == "" || h.allowedOrigins == "*" {
-		return true
-	}
-
-	origin := r.Header.Get("Origin")
-	if origin == "" {
-		return true
-	}
-
-	for _, allowed := range strings.Split(h.allowedOrigins, ",") {
-		if strings.TrimSpace(allowed) == origin {
-			return true
-		}
-	}
-
-	return false
+	allowed, _ := h.originPolicy.Allows(r, r.Header.Get("Origin"))
+	return allowed
 }

@@ -89,6 +89,24 @@ func TestCheckOrigin(t *testing.T) {
 			origin:         "",
 			want:           true,
 		},
+		{
+			name:           "same-origin allows the web UI on the request host",
+			allowedOrigins: "same-origin",
+			origin:         "https://stacks.example.com",
+			want:           true,
+		},
+		{
+			name:           "same-origin rejects another host",
+			allowedOrigins: "same-origin",
+			origin:         "https://evil.example.com",
+			want:           false,
+		},
+		{
+			name:           "a list also allows the web UI on the request host",
+			allowedOrigins: "https://portal.example.com",
+			origin:         "https://stacks.example.com",
+			want:           true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -99,6 +117,7 @@ func TestCheckOrigin(t *testing.T) {
 			handler := NewWebSocketHandler(nil, tt.allowedOrigins, wsTestJWTSecret)
 			req, err := http.NewRequest("GET", "/ws", nil)
 			require.NoError(t, err)
+			req.Host = "stacks.example.com"
 
 			if tt.origin != "" {
 				req.Header.Set("Origin", tt.origin)
@@ -117,7 +136,7 @@ func TestNewWebSocketHandler(t *testing.T) {
 	handler := NewWebSocketHandler(hub, "http://example.com", wsTestJWTSecret)
 
 	assert.NotNil(t, handler)
-	assert.Equal(t, "http://example.com", handler.allowedOrigins)
+	assert.Equal(t, middleware.NewOriginPolicy("http://example.com"), handler.originPolicy)
 }
 
 // waitForHubClients polls hub.ClientCount until it equals want or timeout.

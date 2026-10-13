@@ -46,8 +46,8 @@ Follow these guidelines when you deploy the application:
 
 1. Use HTTPS in production. Set `SECURE_COOKIES=true` (the Helm chart sets it when the ingress has TLS).
 2. Set `JWT_SECRET` to a random value of at least 16 characters. Change `ADMIN_PASSWORD` and the MySQL root password from the placeholder values.
-3. Set `CORS_ALLOWED_ORIGINS` to the origin of your web UI. The default `*` allows all origins.
-4. Set `SELF_REGISTRATION=false` when only `admin` users must create accounts. The Helm chart and Docker Compose set it to `true` by default.
+3. Keep `CORS_ALLOWED_ORIGINS=same-origin` (the Helm chart default), or list the exact origins of other browser clients. The code default `*` allows all origins and is for development only.
+4. Keep `SELF_REGISTRATION=false` (the code and Helm chart default) when only `admin` users must create accounts. Docker Compose sets `true` for local development.
 5. Set `ALLOWED_CHART_REPOS` (Helm: `backend.allowedChartRepos`) to the chart repositories that you trust. Helm installs charts with the identity of the backend. An empty list allows every chart source.
 6. Keep `backend.rbac.scope: namespace` (default) and `backend.rbac.admissionPolicy.enabled: true`. Then a stack chart can reach only the stack namespaces, and cannot create cluster-scoped objects. The policy needs Kubernetes 1.30 or later.
 7. Give the `devops` and `admin` roles only to users who must create definitions, templates, and chart sources. A user with the `user` role cannot change chart sources.

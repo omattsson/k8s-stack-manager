@@ -460,8 +460,17 @@ helm-test: ## Verify default and External Secrets Helm renders
 		|| { echo "NOTES must warn about the JWT_SECRET placeholder" >&2; exit 1; }; \
 	grep -q 'WARNING: backend.secrets.ADMIN_PASSWORD' "$$template_file" \
 		|| { echo "NOTES must warn about the ADMIN_PASSWORD placeholder" >&2; exit 1; }; \
+	if grep -q 'WARNING: CORS_ALLOWED_ORIGINS' "$$template_file"; then echo "NOTES must not warn about CORS with the default same-origin" >&2; exit 1; fi; \
+	if grep -q 'WARNING: SELF_REGISTRATION' "$$template_file"; then echo "NOTES must not warn about SELF_REGISTRATION with the default false" >&2; exit 1; fi; \
 	helm template $(HELM_RELEASE) "$$notes_dir/chart" --show-only templates/notes-render.txt --debug \
-		--values $(HELM_CHART)/tests/external-secrets-values.yaml > "$$template_file" 2>&1 || true; \
+		--set-string 'backend.env.CORS_ALLOWED_ORIGINS=*' --set-string backend.env.SELF_REGISTRATION=true > "$$template_file" 2>&1 || true; \
+	grep -q 'WARNING: CORS_ALLOWED_ORIGINS allows all origins' "$$template_file" \
+		|| { echo "NOTES must warn about CORS_ALLOWED_ORIGINS=*" >&2; exit 1; }; \
+	grep -q 'WARNING: SELF_REGISTRATION is "true"' "$$template_file" \
+		|| { echo "NOTES must warn about SELF_REGISTRATION=true" >&2; exit 1; }; \
+	helm template $(HELM_RELEASE) "$$notes_dir/chart" --show-only templates/notes-render.txt --debug \
+		--values $(HELM_CHART)/tests/external-secrets-values.yaml \
+		--set-string 'backend.env.CORS_ALLOWED_ORIGINS=*' > "$$template_file" 2>&1 || true; \
 	grep -q 'WARNING: CORS_ALLOWED_ORIGINS' "$$template_file" \
 		|| { echo "NOTES did not render with externalSecrets.enabled" >&2; exit 1; }; \
 	if grep -Eq 'WARNING: (backend.secrets|mysql.auth)' "$$template_file"; then echo "NOTES must not warn about placeholder secrets with externalSecrets.enabled" >&2; exit 1; fi; \
