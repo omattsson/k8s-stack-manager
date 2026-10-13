@@ -68,6 +68,9 @@ func init() {
 		"deployment.duration",
 		metric.WithDescription("Duration of deployment operations"),
 		metric.WithUnit("s"),
+		// Deploy, stop, clean, rollback: 1 s (a stop of a small stack) to 2 h (a deploy of N charts may take N x DEPLOYMENT_TIMEOUT). The OpenTelemetry default buckets (0 to 10000) are for
+		// milliseconds: in seconds every value fell into the first bucket.
+		metric.WithExplicitBucketBoundaries(1, 2.5, 5, 15, 30, 60, 120, 300, 600, 900, 1200, 1800, 3600, 7200),
 	)
 	if err != nil {
 		otel.Handle(err)

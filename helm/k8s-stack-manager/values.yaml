@@ -595,3 +595,20 @@ metrics:
     interval: 30s
     scrapeTimeout: 10s
     labels: {}
+  # Grafana dashboard of the backend metrics (dashboards/k8s-stack-manager.json)
+  # in a ConfigMap. The Grafana dashboard sidecar (for example of
+  # kube-prometheus-stack) loads every ConfigMap with the label below. Without a
+  # sidecar, import the JSON file in Grafana or load it by URL. The dashboard
+  # needs the Prometheus scrape of /metrics (metrics.enabled and a ServiceMonitor
+  # or another scrape job): metrics that reach Prometheus only through the
+  # OpenTelemetry collector (otel.enabled) have no pod label and no Go runtime
+  # metrics.
+  grafanaDashboard:
+    enabled: false
+    # Namespace of the ConfigMap. Empty: the release namespace.
+    namespace: ""
+    # Label that the sidecar selects (sidecar.dashboards.label and labelValue).
+    labels:
+      grafana_dashboard: "1"
+    # Grafana folder, for sidecars with folderAnnotation set.
+    annotations: {}

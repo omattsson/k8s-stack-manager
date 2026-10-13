@@ -10,3 +10,12 @@ providers:
     options:
       path: /etc/grafana/provisioning/dashboards/json
       foldersFromFilesStructure: false
+  # The dashboard of the Helm chart (mounted by docker-compose.yml).
+  - name: chart
+    orgId: 1
+    folder: ''
+    type: file
+    disableDeletion: false
+    editable: true
+    options:
+      path: /var/lib/grafana/dashboards-chart

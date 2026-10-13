@@ -35,6 +35,9 @@ func init() {
 		"ttl.reap_duration",
 		metric.WithDescription("Duration of TTL reaper cycles"),
 		metric.WithUnit("s"),
+		// TTL reaper cycles: 10 ms to 1 min. The OpenTelemetry default buckets (0 to 10000) are for
+		// milliseconds: in seconds every value fell into the first bucket.
+		metric.WithExplicitBucketBoundaries(0.01, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60),
 	)
 	if err != nil {
 		otel.Handle(err)
