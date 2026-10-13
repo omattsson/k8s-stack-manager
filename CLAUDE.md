@@ -211,7 +211,7 @@ backend/
       template_charts.go         # Template chart config management
       template_versions.go       # TemplateVersionHandler: version history listing and diff
       users.go                   # UserHandler: user management, role change (local users only)
-      ui_config.go               # Public GET /ui-config: branding (APP_TITLE, APP_LOGO_URL, APP_FAVICON_URL)
+      ui_config.go               # Public GET /ui-config: branding (APP_TITLE, APP_LOGO_URL, APP_FAVICON_URL) and default_instance_ttl_minutes
       value_overrides.go         # Per-chart value overrides
       websocket.go               # WebSocket upgrade handler
       content_disposition.go     # Safe Content-Disposition header for downloads
@@ -387,13 +387,13 @@ frontend/src/
   main.tsx                     # Entry point
   components/
     Layout/                    # AppBar, navigation, footer shell
-    AccessUrls/                # Access URL display for stack instances
+    AccessUrls/                # Access URL display for stack instances (kubectl port-forward hints only for devops and admin)
     BrandLogo/                 # Logo from the branding config (falls back to the built-in /logo.svg)
     BranchSelector/            # Git branch picker with autocomplete
     ChartDiffList/             # Chart changes of a template version diff
     ConfirmDialog/             # Reusable confirmation modal
     DeployPreviewDialog/       # Merged values preview before deploy (GET /stack-instances/:id/deploy-preview)
-    DeploymentLogViewer/       # Real-time deployment log display
+    DeploymentLogViewer/       # Deployment log display: stored output of a running log, then the streamed lines (utils/liveLogLines)
     EmptyState/                # Placeholder for empty lists
     EntityLink/                # Link to a related entity
     ErrorBoundary/             # React error boundary wrapper
@@ -508,6 +508,7 @@ Developers use this application to configure, store and deploy multi-service Hel
   - Each response uses one batch lookup for each kind. A missing owner, definition or cluster omits the field.
 - **Primary URL:** an Ingress with the annotation `k8s-stack-manager.io/primary-url: "true"` (`k8s.PrimaryURLAnnotation`) is the main entry point of the stack. `GET /stack-instances/:id/status` lists it first (`primary: true`), and the stack list card shows it. Without the annotation, the first Ingress by name is the primary URL.
 - **TTL auto-expiry:**
+  - A create request without `ttl_minutes` gets `DEFAULT_INSTANCE_TTL_MINUTES` (Helm chart default `480`, code default `0` = no expiry). `GET /ui-config` returns it as `default_instance_ttl_minutes` (0 when it is out of range). Create Instance and Quick Deploy start the TTL field with it and leave out `ttl_minutes` until the user changes the field.
   - An instance with `TTLMinutes > 0` gets `ExpiresAt` on deploy: now plus the TTL, or the current expiry when that is later. A redeploy never shortens an extended expiry. Bulk deploy does the same.
   - The reaper (leader replica only) checks every minute and stops expired instances.
   - The expiry warner sends one warning 30 minutes before expiry. It sets `stack_instances.expiry_warned_at` with a conditional update before it notifies. The repository `Update` never writes that column. It clears the column when `ExpiresAt` changes (deploy, extend).
@@ -670,7 +671,7 @@ Developers use this application to configure, store and deploy multi-service Hel
 | Favorites | `/api/v1/favorites` | User bookmarks |
 | Notifications | `/api/v1/notifications` | List, read and unread, count, preferences |
 | Analytics | `/api/v1/analytics` | Usage overview, template stats, user stats |
-| UI Config | `/api/v1/ui-config` | Public branding values (title, logo, favicon) |
+| UI Config | `/api/v1/ui-config` | Public branding values (title, logo, favicon) and the TTL default of the create forms |
 | Health | `/health/*` | Liveness and readiness |
 | WebSocket | `/ws` | Real-time status and log events. Replicas share them through `ws_events` when `WS_FANOUT_ENABLED=true`. `RedactWSToken` removes the token from logs. |
 
@@ -708,6 +709,7 @@ Developers use this application to configure, store and deploy multi-service Hel
   - `deadline_at` is the time budget of the operation plus 5 minutes. The backend sets it at the start and moves it when the operation gets its concurrency slot.
   - The update is a compare-and-set on the instance status and `updated_at`. It never ends an operation with a fresh heartbeat. The audit action is `interrupted`.
   - Every final deploy log write is conditional on `status = 'running'` (`models.ErrDeployLogNotRunning`). A late goroutine writes nothing after a recovery.
+  - During an operation, the deploy manager writes the streamed lines to `deployment_logs.output` every 5s (`DeploymentLogOutputWriter.UpdateRunningOutput`, also conditional on `running`, up to `maxOutputLen`). A page reload then shows the output so far. `writeFinal` drops the live output.
   - Gap: `stack_instances` has no version column. A stale writer (status watcher, TTL reaper) can overwrite the recovered error.
 - Always paginate new list endpoints.
   - Use the query parameters `page` and `pageSize` (default 25, maximum 100) with `ListPaged(..., limit, offset)`, as stack instances, definitions and templates do.

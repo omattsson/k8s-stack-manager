@@ -9236,7 +9236,7 @@ const docTemplate = `{
         },
         "/api/v1/ui-config": {
             "get": {
-                "description": "Returns the display values of the web UI: product title, logo URL and favicon URL (APP_TITLE, APP_LOGO_URL, APP_FAVICON_URL). Public: no authentication, so the login page can use it. An empty logo_url means the built-in logo. A URL is a same-origin path or an https URL. Cached for 5 minutes.",
+                "description": "Returns the display values of the web UI: product title, logo URL and favicon URL (APP_TITLE, APP_LOGO_URL, APP_FAVICON_URL), and the start value of the TTL field in the create forms (default_instance_ttl_minutes, DEFAULT_INSTANCE_TTL_MINUTES; 0 means no expiry). Public: no authentication, so the login page can use it. An empty logo_url means the built-in logo. A URL is a same-origin path or an https URL. Cached for 5 minutes.",
                 "produces": [
                     "application/json"
                 ],
@@ -11188,6 +11188,11 @@ const docTemplate = `{
         "handlers.UIConfigResponse": {
             "type": "object",
             "properties": {
+                "default_instance_ttl_minutes": {
+                    "description": "DefaultInstanceTTLMinutes is the start value of the TTL field in the\ncreate forms (DEFAULT_INSTANCE_TTL_MINUTES). 0: no expiry.",
+                    "type": "integer",
+                    "example": 480
+                },
                 "favicon_url": {
                     "description": "FaviconURL is the browser tab icon (APP_FAVICON_URL).",
                     "type": "string",
