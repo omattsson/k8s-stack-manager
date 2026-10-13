@@ -1,0 +1,24 @@
+{{- if .Values.metrics.grafanaDashboard.enabled }}
+{{- if not .Values.metrics.enabled }}
+{{- fail "metrics.grafanaDashboard.enabled needs metrics.enabled (the dashboard shows the backend metrics)" }}
+{{- end }}
+# Grafana dashboard of the backend metrics. A Grafana dashboard sidecar loads
+# it by the label in metrics.grafanaDashboard.labels.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "k8s-stack-manager.fullname" . }}-grafana-dashboard
+  namespace: {{ .Values.metrics.grafanaDashboard.namespace | default .Release.Namespace }}
+  labels:
+    {{- include "k8s-stack-manager.labels" . | nindent 4 }}
+    {{- with .Values.metrics.grafanaDashboard.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  {{- with .Values.metrics.grafanaDashboard.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+data:
+  k8s-stack-manager.json: |-
+{{ .Files.Get "dashboards/k8s-stack-manager.json" | indent 4 }}
+{{- end }}

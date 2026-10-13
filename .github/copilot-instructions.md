@@ -66,7 +66,7 @@ startHTTPServer              # main server, optional pprof and metrics servers
 | Install dependencies | `make install` |
 | Helm lint | `make helm-lint` |
 | Helm dry-run render | `make helm-template` |
-| Helm render checks (default values, secrets, External Secrets, Traefik priority) | `make helm-test` |
+| Helm render checks (default values, secrets, External Secrets, Traefik priority, Grafana dashboard ConfigMap) | `make helm-test` |
 | Helm install, upgrade, uninstall | `make helm-install`, `make helm-upgrade`, `make helm-uninstall` |
 | Helm package for release | `make helm-release` |
 | Load tests | `make loadtest` (see the `loadtest-*` targets) |
@@ -108,6 +108,8 @@ helm/k8s-stack-manager/
     hpa.yaml, pdb.yaml                    # Autoscaling (off by default), PodDisruptionBudget (on)
     hooks-configmap.yaml                  # Hook subscriptions file (hooks.enabled)
     servicemonitor.yaml                   # Prometheus Operator scrape (metrics.serviceMonitor.enabled)
+  templates/grafana-dashboard.yaml        # ConfigMap with dashboards/k8s-stack-manager.json for a Grafana dashboard sidecar (metrics.grafanaDashboard.enabled)
+  dashboards/k8s-stack-manager.json       # Grafana dashboard of the backend metrics (API, auth, deploys, hooks, clusters, WebSocket, DB pool, runtime)
   templates/frontend/
     configmap.yaml                        # nginx.conf (SPA only)
     branding-configmap.yaml               # Branding files served at /branding/ (branding.files, branding.binaryFiles)
@@ -130,7 +132,7 @@ helm/k8s-stack-manager/
 - **Secrets** come from a Secret or from External Secrets Operator. `externalSecrets.enabled` renders a SecretStore and an ExternalSecret and skips the chart Secret.
 - **ConfigMap and Secret checksums** in pod annotations restart the pods on a config change.
 - **Security contexts.** The backend runs as non-root (uid 65532) with a read-only root file system. The frontend drops all capabilities.
-- **Observability.** `otel.enabled` deploys a collector. `metrics.enabled` exposes Prometheus metrics. `metrics.serviceMonitor.enabled` adds a ServiceMonitor.
+- **Observability.** `otel.enabled` deploys a collector. `metrics.enabled` exposes Prometheus metrics. `metrics.serviceMonitor.enabled` adds a ServiceMonitor. `metrics.grafanaDashboard.enabled` adds the Grafana dashboard as a ConfigMap (label `grafana_dashboard: "1"`). Histograms in seconds need explicit buckets (`metric.WithExplicitBucketBoundaries`): the OpenTelemetry defaults (0 to 10000) are for milliseconds.
 - **Namespace-scoped RBAC.** `backend.rbac.scope: namespace` is the default.
   - The backend (and Helm, which runs with its service account) has rights on namespaced objects only in stack namespaces.
   - The RoleBinding `k8s-stack-manager-access` in each stack namespace binds the service account to the ClusterRole `<fullname>-stack-access`.
@@ -155,7 +157,7 @@ Key values in `values.yaml`:
 - `backend.namespaceLabels`: map of extra stack namespace labels, rendered as sorted `NAMESPACE_LABELS`. The chart renders it only when it is not empty. The keys `managed-by` and `k8s-stack-manager.io/instance-name` fail the render.
 - `mysql.enabled`, `mysql.auth.*`, `mysql.persistence.enabled`: bundled database
 - `ingress.type`, `ingress.host`, `ingress.traefik.*` (`priority`), `ingress.className`, `ingress.tls`: ingress settings
-- `otel.enabled`, `metrics.enabled`, `metrics.serviceMonitor.enabled`: observability
+- `otel.enabled`, `metrics.enabled`, `metrics.serviceMonitor.enabled`, `metrics.grafanaDashboard.enabled`: observability
 - `hooks.enabled`, `hooks.subscriptions`, `hooks.actions`: outbound webhook subscriptions and custom actions (see `EXTENDING.md`)
 - `branding.title`, `branding.logoUrl`, `branding.faviconUrl`: set `APP_TITLE`, `APP_LOGO_URL`, `APP_FAVICON_URL` in the backend ConfigMap
 - `branding.files`, `branding.binaryFiles`: ConfigMap that the frontend nginx serves at `/branding/` (nosniff header, sandbox CSP, names `^[-._a-zA-Z0-9]+$`, at most 900 KiB in total)

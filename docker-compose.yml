@@ -242,6 +242,10 @@ services:
       - GF_INSTALL_PLUGINS=
     volumes:
       - ./config/otel/grafana/provisioning:/etc/grafana/provisioning:ro
+      # The dashboard of the Helm chart (one file for the chart and for dev).
+      # A separate path: a file mount inside the read-only provisioning mount
+      # fails (Docker cannot create the mount point).
+      - ./helm/k8s-stack-manager/dashboards/k8s-stack-manager.json:/var/lib/grafana/dashboards-chart/k8s-stack-manager.json:ro
       - grafana_data:/var/lib/grafana
     depends_on:
       prometheus:

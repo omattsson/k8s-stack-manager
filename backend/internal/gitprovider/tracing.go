@@ -36,6 +36,9 @@ func initGitProviderMetrics() {
 		"gitprovider.branch_list.duration",
 		metric.WithDescription("Latency of branch-list operations by provider."),
 		metric.WithUnit("s"),
+		// Branch listing: 50 ms to 30 s. The OpenTelemetry default buckets (0 to 10000) are for
+		// milliseconds: in seconds every value fell into the first bucket.
+		metric.WithExplicitBucketBoundaries(0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30),
 	)
 	if err != nil {
 		otel.Handle(err)

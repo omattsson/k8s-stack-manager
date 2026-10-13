@@ -577,7 +577,21 @@ helm-test: ## Verify default and External Secrets Helm renders
 	if helm template $(HELM_RELEASE) $(HELM_CHART) --values $(HELM_CHART)/tests/branding-values.yaml \
 		--set-file "branding.files.big\.svg=$$big_file" > "$$template_file" 2>&1; then rm -f "$$big_file"; echo "branding files over 900 KiB must fail" >&2; exit 1; fi; \
 	rm -f "$$big_file"; \
-	grep -q 'the limit is 900 KiB' "$$template_file" || { echo "missing branding size error" >&2; exit 1; }
+	grep -q 'the limit is 900 KiB' "$$template_file" || { echo "missing branding size error" >&2; exit 1; }; \
+	helm template $(HELM_RELEASE) $(HELM_CHART) --set backend.secrets.JWT_SECRET=dummy-jwt-secret-for-template \
+		--set metrics.enabled=true --set metrics.grafanaDashboard.enabled=true \
+		--show-only templates/grafana-dashboard.yaml > "$$template_file"; \
+	grep -q 'grafana_dashboard: "1"' "$$template_file" || { echo "missing grafana_dashboard label" >&2; exit 1; }; \
+	grep -q '"uid": "k8s-stack-manager"' "$$template_file" || { echo "missing dashboard JSON in the ConfigMap" >&2; exit 1; }; \
+	helm template $(HELM_RELEASE) $(HELM_CHART) --set backend.secrets.JWT_SECRET=dummy-jwt-secret-for-template \
+		--set metrics.enabled=true --set metrics.grafanaDashboard.enabled=true \
+		--set metrics.grafanaDashboard.namespace=grafana --set metrics.grafanaDashboard.annotations.grafana_folder=Platform \
+		--show-only templates/grafana-dashboard.yaml > "$$template_file"; \
+	grep -q '  namespace: grafana' "$$template_file" || { echo "grafanaDashboard.namespace not rendered" >&2; exit 1; }; \
+	grep -q 'grafana_folder: Platform' "$$template_file" || { echo "grafanaDashboard.annotations not rendered" >&2; exit 1; }; \
+	if helm template $(HELM_RELEASE) $(HELM_CHART) --set backend.secrets.JWT_SECRET=dummy-jwt-secret-for-template \
+		--set metrics.grafanaDashboard.enabled=true > "$$template_file" 2>&1; then echo "grafanaDashboard without metrics.enabled must fail" >&2; exit 1; fi; \
+	grep -q 'metrics.grafanaDashboard.enabled needs metrics.enabled' "$$template_file" || { echo "missing grafanaDashboard error" >&2; exit 1; }
 
 helm-template: ## Render templates locally (dry-run)
 	helm template $(HELM_RELEASE) $(HELM_CHART) --namespace $(HELM_NAMESPACE) \

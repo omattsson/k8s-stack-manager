@@ -133,6 +133,10 @@ func TestHTTPMetrics(t *testing.T) {
 		require.True(t, ok, "http.server.request.duration metric not found")
 		require.Len(t, hist.DataPoints, 1)
 		assert.EqualValues(t, 1, hist.DataPoints[0].Count)
+		// Second-based buckets: a fast request lands in the first bucket
+		// (<= 5 ms), not in a 0-5 s bucket of the millisecond defaults.
+		assert.Equal(t, []float64{0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30}, hist.DataPoints[0].Bounds)
+		assert.EqualValues(t, 1, hist.DataPoints[0].BucketCounts[0], "a fast request is in the <= 5 ms bucket")
 	})
 
 	t.Run("is a no-op when global provider is no-op", func(t *testing.T) {

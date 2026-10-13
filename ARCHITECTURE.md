@@ -247,6 +247,7 @@ A replica can stop without a clean shutdown (SIGKILL, OOM kill, node loss). It t
 - HTTP metrics and auth outcome counters come from the middleware. Database pool metrics and business KPIs come from `telemetry`.
 - `RedactWSToken` removes the WebSocket `?token=` query parameter before logging and tracing.
 - The Helm chart can deploy an OpenTelemetry collector (`otel.enabled`) and a ServiceMonitor (`metrics.serviceMonitor.enabled`).
+- A Grafana dashboard for the backend metrics is in `helm/k8s-stack-manager/dashboards/k8s-stack-manager.json`. Import it in Grafana, or set `metrics.grafanaDashboard.enabled` so that a Grafana dashboard sidecar loads it from a ConfigMap. It has a data source variable and a job variable. It needs the Prometheus scrape of `/metrics` (`metrics.enabled` and a ServiceMonitor or scrape job). `make dev-otel` sets `METRICS_ENABLED` and scrapes the backend, and its Grafana loads the dashboard.
 - Local development: `make dev-otel` starts a collector, Tempo, Prometheus (`:9090`), and Grafana (`:3001`).
 
 ## Outbound Notifications

@@ -7,6 +7,12 @@ scrape_configs:
     static_configs:
       - targets: ['otel-collector:8889']
 
+  # Backend Prometheus endpoint (METRICS_ENABLED=true in docker-compose.otel.yml).
+  # The K8s Stack Manager dashboard uses this job.
+  - job_name: 'k8s-stack-manager-backend'
+    static_configs:
+      - targets: ['backend:9090']
+
   # OTel Collector internal metrics
   - job_name: 'otel-collector-internal'
     static_configs:
