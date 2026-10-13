@@ -20,6 +20,7 @@ import (
 var (
 	_ models.DeploymentLogRepository       = (*GORMDeploymentLogRepository)(nil)
 	_ models.DeploymentLogDeadlineExtender = (*GORMDeploymentLogRepository)(nil)
+	_ models.DeploymentLogOutputWriter     = (*GORMDeploymentLogRepository)(nil)
 )
 
 // GORMDeploymentLogRepository implements models.DeploymentLogRepository using GORM.
@@ -110,6 +111,34 @@ func (r *GORMDeploymentLogRepository) ExtendDeadline(ctx context.Context, id str
 		Where("id = ? AND status = ?", id, models.DeployLogRunning).
 		Count(&running).Error; err != nil {
 		return dberrors.NewDatabaseError("extend_deadline", err)
+	}
+	if running == 0 {
+		return models.ErrDeployLogNotRunning
+	}
+	return nil
+}
+
+// UpdateRunningOutput sets the output column of a running log (conditional
+// UPDATE ... WHERE id = ? AND status = 'running'). It returns
+// models.ErrDeployLogNotRunning when the log is no longer running: the final
+// write of the operation (or the interrupted operation recovery) has already
+// set the output, and this write must not replace it.
+func (r *GORMDeploymentLogRepository) UpdateRunningOutput(ctx context.Context, id, output string) error {
+	res := r.db.WithContext(ctx).Model(&models.DeploymentLog{}).
+		Where("id = ? AND status = ?", id, models.DeployLogRunning).
+		Update("output", output)
+	if res.Error != nil {
+		return dberrors.NewDatabaseError("update_running_output", res.Error)
+	}
+	if res.RowsAffected > 0 {
+		return nil
+	}
+	// MySQL counts only changed rows: the same output again also gives 0 rows.
+	var running int64
+	if err := r.db.WithContext(ctx).Model(&models.DeploymentLog{}).
+		Where("id = ? AND status = ?", id, models.DeployLogRunning).
+		Count(&running).Error; err != nil {
+		return dberrors.NewDatabaseError("update_running_output", err)
 	}
 	if running == 0 {
 		return models.ErrDeployLogNotRunning

@@ -205,6 +205,14 @@ func TestDatabaseInterruptedOperations(t *testing.T) {
 	require.NoError(t, logs.ExtendDeadline(ctx, "log-live", now.Add(time.Hour)))
 	require.NoError(t, logs.ExtendDeadline(ctx, "log-live", now), "an earlier deadline of a running log is no error")
 	require.ErrorIs(t, logs.ExtendDeadline(ctx, "log-ok", now.Add(time.Hour)), models.ErrDeployLogNotRunning)
+	// Live output: written only while the log runs; the same output again
+	// (0 changed rows) is no error; a finished log keeps its output.
+	require.NoError(t, logs.UpdateRunningOutput(ctx, "log-live", "line 1\n"))
+	require.NoError(t, logs.UpdateRunningOutput(ctx, "log-live", "line 1\n"), "unchanged output of a running log")
+	live, err = logs.FindByID(ctx, "log-live")
+	require.NoError(t, err)
+	assert.Equal(t, "line 1\n", live.Output)
+	require.ErrorIs(t, logs.UpdateRunningOutput(ctx, "log-ok", "late line\n"), models.ErrDeployLogNotRunning)
 	finished, err := logs.FindByID(ctx, "log-ok")
 	require.NoError(t, err)
 	finished.Status = models.DeployLogSuccess
