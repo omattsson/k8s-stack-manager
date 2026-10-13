@@ -16,6 +16,7 @@ import {
 import RocketLaunchIcon from '@mui/icons-material/RocketLaunch';
 import { templateService, clusterService } from '../../api/client';
 import TtlSelector from '../TtlSelector';
+import { useBranding } from '../../context/BrandingContext';
 import type { Cluster, StackTemplate } from '../../types';
 import { trackRecentTemplate } from '../../utils/recentTemplates';
 import { isNoPublishedVersionError, NO_PUBLISHED_VERSION_MESSAGE } from '../../utils/templateVersion';
@@ -32,7 +33,12 @@ const QuickDeployDialog = ({ open, onClose, template }: QuickDeployDialogProps) 
   const [instanceName, setInstanceName] = useState('');
   const [description, setDescription] = useState('');
   const [branch, setBranch] = useState('');
-  const [ttlMinutes, setTtlMinutes] = useState(480);
+  // null: the user has not changed the TTL field. The field shows the server
+  // default and the request leaves out ttl_minutes, so the server applies its
+  // own default (DEFAULT_INSTANCE_TTL_MINUTES).
+  const { defaultTtlMinutes } = useBranding();
+  const [ttlChoice, setTtlChoice] = useState<number | null>(null);
+  const ttlMinutes = ttlChoice ?? defaultTtlMinutes;
   const [clusterId, setClusterId] = useState('');
   const [clusters, setClusters] = useState<Cluster[]>([]);
   const [deploying, setDeploying] = useState(false);
@@ -44,7 +50,7 @@ const QuickDeployDialog = ({ open, onClose, template }: QuickDeployDialogProps) 
       setInstanceName('');
       setDescription('');
       setBranch(template?.default_branch || 'master');
-      setTtlMinutes(480);
+      setTtlChoice(null);
       setClusterId('');
       setError(null);
       setNameError(null);
@@ -78,7 +84,7 @@ const QuickDeployDialog = ({ open, onClose, template }: QuickDeployDialogProps) 
         instance_description: description.trim() || undefined,
         branch: branch.trim() || undefined,
         cluster_id: clusterId || undefined,
-        ttl_minutes: ttlMinutes,
+        ...(ttlChoice !== null ? { ttl_minutes: ttlChoice } : {}),
       });
       // Track in recently used templates
       trackRecentTemplate({ id: template.id, name: template.name });
@@ -140,7 +146,7 @@ const QuickDeployDialog = ({ open, onClose, template }: QuickDeployDialogProps) 
             size="small"
             helperText="Git branch to deploy"
           />
-          <TtlSelector value={ttlMinutes} onChange={setTtlMinutes} disabled={deploying} />
+          <TtlSelector value={ttlMinutes} onChange={setTtlChoice} disabled={deploying} />
           {clusters.length > 1 && (
             <TextField
               select

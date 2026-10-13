@@ -11,7 +11,7 @@ describe('BrandLogo', () => {
 
   it('falls back to the built-in logo when the configured image fails to load', () => {
     render(
-      <StaticBrandingProvider value={{ title: 'X', logoUrl: '/branding/missing.svg', faviconUrl: '/favicon.svg' }}>
+      <StaticBrandingProvider value={{ title: 'X', logoUrl: '/branding/missing.svg', faviconUrl: '/favicon.svg', defaultTtlMinutes: 0 }}>
         <BrandLogo size={32} />
       </StaticBrandingProvider>,
     );

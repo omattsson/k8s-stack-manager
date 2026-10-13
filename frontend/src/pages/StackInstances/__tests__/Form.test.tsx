@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import axios from 'axios';
 import Form from '../Form';
+import { BRANDING_DEFAULTS, StaticBrandingProvider } from '../../../context/BrandingContext';
 
 const mockNavigate = vi.fn();
 vi.mock('react-router-dom', async () => {
@@ -500,5 +501,51 @@ describe('StackInstances Form', () => {
 
     await user.type(nameInput, '1');
     expect(screen.getByRole('button', { name: /create instance/i })).toBeEnabled();
+  });
+
+  describe('TTL default from the UI config', () => {
+    const renderWithDefault = async (defaultTtlMinutes: number) => {
+      (definitionService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue(mockDefinitions);
+      (instanceService.create as ReturnType<typeof vi.fn>).mockResolvedValue({ id: 'inst-new', name: 'my-app' });
+      render(
+        <MemoryRouter>
+          <StaticBrandingProvider value={{ ...BRANDING_DEFAULTS, defaultTtlMinutes }}>
+            <Form />
+          </StaticBrandingProvider>
+        </MemoryRouter>
+      );
+      await waitFor(() => expect(screen.getByText('Create Stack Instance')).toBeInTheDocument());
+    };
+
+    const create = async (user: ReturnType<typeof userEvent.setup>) => {
+      await user.click(screen.getByRole('combobox', { name: /stack definition/i }));
+      await user.click(screen.getByText(/Web Stack/));
+      await user.type(screen.getByRole('textbox', { name: /instance name/i }), 'my-app');
+      await user.click(screen.getByRole('button', { name: /create instance/i }));
+      await waitFor(() => expect(instanceService.create).toHaveBeenCalledTimes(1));
+      return (instanceService.create as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    };
+
+    it('shows the server default and leaves out ttl_minutes when the user does not change it', async () => {
+      const user = userEvent.setup();
+      await renderWithDefault(480);
+      expect(screen.getByRole('combobox', { name: /ttl/i })).toHaveTextContent('8 hours');
+      const body = await create(user);
+      expect(body).not.toHaveProperty('ttl_minutes');
+    });
+
+    it('shows "No expiry" when the server default is 0', async () => {
+      await renderWithDefault(0);
+      expect(screen.getByRole('combobox', { name: /ttl/i })).toHaveTextContent('No expiry');
+    });
+
+    it('sends the TTL that the user picks, also "No expiry"', async () => {
+      const user = userEvent.setup();
+      await renderWithDefault(480);
+      await user.click(screen.getByRole('combobox', { name: /ttl/i }));
+      await user.click(screen.getByRole('option', { name: 'No expiry' }));
+      const body = await create(user);
+      expect(body).toHaveProperty('ttl_minutes', 0);
+    });
   });
 });

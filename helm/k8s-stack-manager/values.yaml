@@ -102,6 +102,10 @@ backend:
     # helm --timeout for one chart; a deploy of N charts may take N x this value.
     DEPLOYMENT_TIMEOUT: "10m"
     MAX_CONCURRENT_DEPLOYS: "5"
+    # TTL in minutes of a new instance that does not set one. The create forms
+    # of the web UI start with this value (GET /api/v1/ui-config). "0" means no
+    # expiry; the maximum is 43200 (30 days).
+    DEFAULT_INSTANCE_TTL_MINUTES: "480"
     # Wildcard TLS secret replication — copies a shared TLS secret into every
     # stack namespace so ingresses can reference it. Disabled when
     # WILDCARD_TLS_SOURCE_SECRET is empty. Set to enable for local dev flows

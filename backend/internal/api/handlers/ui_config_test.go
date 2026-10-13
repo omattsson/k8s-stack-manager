@@ -17,12 +17,13 @@ import (
 // are allowed: the endpoint is public.
 const uiConfigSchema = `{
 "type": "object",
-"required": ["title", "logo_url", "favicon_url"],
+"required": ["title", "logo_url", "favicon_url", "default_instance_ttl_minutes"],
 "additionalProperties": false,
 "properties": {
 "title": {"type": "string", "minLength": 1},
 "logo_url": {"type": "string"},
-"favicon_url": {"type": "string", "minLength": 1}
+"favicon_url": {"type": "string", "minLength": 1},
+"default_instance_ttl_minutes": {"type": "integer", "minimum": 0, "maximum": 43200}
 }
 }`
 
@@ -30,9 +31,10 @@ func TestGetUIConfig(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name     string
-		branding config.BrandingConfig
-		want     UIConfigResponse
+		name       string
+		branding   config.BrandingConfig
+		defaultTTL int
+		want       UIConfigResponse
 	}{
 		{
 			name:     "empty config gives the defaults",
@@ -46,6 +48,26 @@ func TestGetUIConfig(t *testing.T) {
 			},
 			want: UIConfigResponse{Title: "Platform Portal", LogoURL: "/branding/logo.svg", FaviconURL: "https://cdn.example.com/favicon.ico"},
 		},
+		{
+			name:       "TTL default",
+			defaultTTL: 480,
+			want:       UIConfigResponse{Title: config.DefaultAppTitle, FaviconURL: config.DefaultAppFaviconURL, DefaultInstanceTTLMinutes: 480},
+		},
+		{
+			name:       "TTL default at the maximum",
+			defaultTTL: MaxTTLMinutes,
+			want:       UIConfigResponse{Title: config.DefaultAppTitle, FaviconURL: config.DefaultAppFaviconURL, DefaultInstanceTTLMinutes: MaxTTLMinutes},
+		},
+		{
+			name:       "negative TTL default is sent as 0",
+			defaultTTL: -5,
+			want:       UIConfigResponse{Title: config.DefaultAppTitle, FaviconURL: config.DefaultAppFaviconURL},
+		},
+		{
+			name:       "TTL default above the maximum is sent as 0",
+			defaultTTL: MaxTTLMinutes + 1,
+			want:       UIConfigResponse{Title: config.DefaultAppTitle, FaviconURL: config.DefaultAppFaviconURL},
+		},
 	}
 
 	for _, tt := range tests {
@@ -54,7 +76,7 @@ func TestGetUIConfig(t *testing.T) {
 			t.Parallel()
 			gin.SetMode(gin.TestMode)
 			r := gin.New()
-			r.GET("/api/v1/ui-config", NewUIConfigHandler(tt.branding))
+			r.GET("/api/v1/ui-config", NewUIConfigHandler(tt.branding, tt.defaultTTL))
 
 			w := httptest.NewRecorder()
 			req := httptest.NewRequest(http.MethodGet, "/api/v1/ui-config", nil)

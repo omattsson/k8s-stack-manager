@@ -10,7 +10,10 @@ export const DEFAULT_FAVICON_URL = '/favicon.svg';
 /** Built-in product name. */
 export const DEFAULT_APP_TITLE = 'K8s Stack Manager';
 
-/** Display values of the web UI. */
+/** Highest TTL in minutes that the server accepts (30 days). */
+export const MAX_TTL_MINUTES = 43200;
+
+/** Display values and form defaults of the web UI (GET /api/v1/ui-config). */
 export interface Branding {
   /** Product name. */
   title: string;
@@ -18,6 +21,8 @@ export interface Branding {
   logoUrl: string;
   /** Browser tab icon URL. */
   faviconUrl: string;
+  /** Start value of the TTL field in the create forms, in minutes. 0: no expiry. */
+  defaultTtlMinutes: number;
 }
 
 /** Values used when the UI config cannot be loaded, and outside a BrandingProvider. */
@@ -25,7 +30,16 @@ export const BRANDING_DEFAULTS: Branding = {
   title: DEFAULT_APP_TITLE,
   logoUrl: DEFAULT_LOGO_URL,
   faviconUrl: DEFAULT_FAVICON_URL,
+  defaultTtlMinutes: 0,
 };
+
+/**
+ * Accept a whole number of minutes from 0 to MAX_TTL_MINUTES.
+ * @param value - TTL default from the server
+ * @returns The value, or 0 when it is not a valid TTL
+ */
+const ttlFromConfig = (value: unknown): number =>
+  typeof value === 'number' && Number.isInteger(value) && value > 0 && value <= MAX_TTL_MINUTES ? value : 0;
 
 const BrandingContext = createContext<Branding>(BRANDING_DEFAULTS);
 
@@ -64,6 +78,7 @@ export const brandingFromConfig = (data: unknown): Branding => {
     title,
     logoUrl: isSafeImageUrl(cfg.logo_url) ? cfg.logo_url : DEFAULT_LOGO_URL,
     faviconUrl: isSafeImageUrl(cfg.favicon_url) ? cfg.favicon_url : DEFAULT_FAVICON_URL,
+    defaultTtlMinutes: ttlFromConfig(cfg.default_instance_ttl_minutes),
   };
 };
 
@@ -85,7 +100,7 @@ export const loadCachedBranding = (): Branding => {
 };
 
 /**
- * Store the UI config (only the three display fields) for the next start.
+ * Store the UI config (only the known fields) for the next start.
  * @param data - Response body of GET /api/v1/ui-config
  */
 const cacheUIConfig = (data: unknown) => {
@@ -93,7 +108,12 @@ const cacheUIConfig = (data: unknown) => {
     const cfg = (data && typeof data === 'object' ? data : {}) as Record<string, unknown>;
     localStorage.setItem(
       UI_CONFIG_STORAGE_KEY,
-      JSON.stringify({ title: cfg.title, logo_url: cfg.logo_url, favicon_url: cfg.favicon_url }),
+      JSON.stringify({
+        title: cfg.title,
+        logo_url: cfg.logo_url,
+        favicon_url: cfg.favicon_url,
+        default_instance_ttl_minutes: cfg.default_instance_ttl_minutes,
+      }),
     );
   } catch {
     // Storage full or blocked: the next start uses the defaults.
@@ -165,6 +185,6 @@ export function StaticBrandingProvider({ value, children }: { value: Branding; c
 /**
  * Branding of the web UI. Outside a BrandingProvider it returns the built-in
  * defaults.
- * @returns Title, logo URL and favicon URL
+ * @returns Title, logo URL, favicon URL and the TTL default of the create forms
  */
 export const useBranding = (): Branding => useContext(BrandingContext);

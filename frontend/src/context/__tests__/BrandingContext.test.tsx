@@ -146,6 +146,17 @@ describe('BrandingContext', () => {
       });
     });
 
+    it('caches the TTL default and uses it at the next start', async () => {
+      mockGet.mockResolvedValue({ title: 'P', logo_url: '', favicon_url: '/f.svg', default_instance_ttl_minutes: 240 });
+      render(
+        <BrandingProvider>
+          <Probe />
+        </BrandingProvider>,
+      );
+      await waitFor(() => expect(mockGet).toHaveBeenCalledTimes(1));
+      expect(loadCachedBranding().defaultTtlMinutes).toBe(240);
+    });
+
     it('keeps the cached config when the server call fails', async () => {
       localStorage.setItem(UI_CONFIG_STORAGE_KEY, JSON.stringify({ title: 'Cached Portal', logo_url: '', favicon_url: '/f.svg' }));
       mockGet.mockRejectedValue(new Error('Network Error'));
@@ -187,12 +198,25 @@ describe('BrandingContext', () => {
 
   describe('brandingFromConfig', () => {
     it.each([
-      ['empty logo uses the built-in logo', { title: 'A', logo_url: '', favicon_url: '/f.svg' }, { title: 'A', logoUrl: '/logo.svg', faviconUrl: '/f.svg' }],
-      ['blank title uses the default', { title: '  ', logo_url: '/l.svg', favicon_url: '/f.svg' }, { title: BRANDING_DEFAULTS.title, logoUrl: '/l.svg', faviconUrl: '/f.svg' }],
-      ['javascript URL is ignored', { title: 'A', logo_url: 'javascript:alert(1)', favicon_url: 'data:image/svg+xml,<svg/>' }, { title: 'A', logoUrl: '/logo.svg', faviconUrl: '/favicon.svg' }],
+      ['empty logo uses the built-in logo', { title: 'A', logo_url: '', favicon_url: '/f.svg' }, { title: 'A', logoUrl: '/logo.svg', faviconUrl: '/f.svg', defaultTtlMinutes: 0 }],
+      ['blank title uses the default', { title: '  ', logo_url: '/l.svg', favicon_url: '/f.svg' }, { title: BRANDING_DEFAULTS.title, logoUrl: '/l.svg', faviconUrl: '/f.svg', defaultTtlMinutes: 0 }],
+      ['javascript URL is ignored', { title: 'A', logo_url: 'javascript:alert(1)', favicon_url: 'data:image/svg+xml,<svg/>' }, { title: 'A', logoUrl: '/logo.svg', faviconUrl: '/favicon.svg', defaultTtlMinutes: 0 }],
       ['non-object body gives the defaults', 'not json', BRANDING_DEFAULTS],
     ])('%s', (_name, input, expected) => {
       expect(brandingFromConfig(input)).toEqual(expected);
+    });
+
+    it.each([
+      ['a valid TTL default', 480, 480],
+      ['the maximum TTL', 43200, 43200],
+      ['0 (no expiry)', 0, 0],
+      ['a negative value', -5, 0],
+      ['a value above the maximum', 43201, 0],
+      ['a fraction', 1.5, 0],
+      ['a string', '480', 0],
+      ['a missing value', undefined, 0],
+    ])('TTL default: %s gives %s', (_name, value, expected) => {
+      expect(brandingFromConfig({ title: 'A', default_instance_ttl_minutes: value }).defaultTtlMinutes).toBe(expected);
     });
   });
 
