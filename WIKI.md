@@ -188,6 +188,14 @@ Both list endpoints are paged (`page` and `pageSize`; default 25, maximum 100). 
 - A rollback to a target deploy (`target_log_id`, which can create the namespace again) does the same before its first install.
 - If the backend cannot prepare the namespace before the installs, Helm creates it and the backend applies the quota after the installs.
 - A failed quota apply gives a `WARNING` line in the deploy log and does not stop the deploy. The deploy tries once more after the installs.
+
+**Quota changes apply at once.** You do not need a redeploy after a quota change.
+
+- When an admin saves the cluster quota, the backend writes the quota to every stack namespace on the cluster. The namespace of an instance with a quota override gets the cluster quota merged with the override. Other stack namespaces get the cluster quota.
+- When you set or delete a quota override, the backend writes the merged quota to the namespace of the instance. It does this only when the instance is deployed (not a draft, not cleaning).
+- These writes run in the background. Each write reads the stored quotas again, so two quick changes on the same backend replica do not undo each other. With more than one replica, or during a deploy, the last write wins.
+- The backend skips a namespace when the merged quota is not valid or when it cannot read the quotas. It logs the reason. The next deploy applies the quota.
+- If the merged quota is empty (no cluster quota and no override), the backend writes nothing. The namespace keeps its current ResourceQuota and LimitRange.
 - Warning: A quota that you lower below the current use of the namespace refuses new pods, also the surge pods of a rolling update. The Helm wait for that chart then fails (timeout), and the pod events show the quota message. Raise the quota or reduce the requests before you redeploy.
 
 **Per-container limits.** The cluster quota and the instance quota override have per-container fields for the namespace LimitRange (`stack-manager-limits`):

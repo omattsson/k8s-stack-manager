@@ -189,6 +189,7 @@ backend/
       bulk_operations.go         # BulkHandler: bulk deploy, stop, clean, delete (up to 50 instances)
       bulk_template_operations.go # TemplateHandler: bulk delete, publish, unpublish (up to 50 templates)
       instance_quota_overrides.go # InstanceQuotaOverrideHandler: per-instance resource quota overrides
+      quota_apply.go             # Writes the effective quota (cluster quota merged with the override) to stack namespaces after a quota change
       chart_configs.go           # Chart config management (nested under definitions), chartSourceChanged
       cleanup_policies.go        # CleanupPolicyHandler: CRUD and manual run
       clusters.go                # ClusterHandler: CRUD, test-connection, health, quotas, utilization
@@ -570,6 +571,11 @@ Developers use this application to configure, store and deploy multi-service Hel
   - `ephemeral_storage_limit` sets `requests.ephemeral-storage` and `limits.ephemeral-storage`.
   - A user without the admin or devops role can set an instance quota override only at or below each cluster quota value, also for the per-container fields (`models.CheckOverrideWithinClusterQuota`, 403). The check runs on write and on clone. A value equal to the stored override passes. `pod_limit: 0` counts as no limit.
   - The quota monitor raises quota warnings through the notifier. The `quota-warning` hook constant is defined but not dispatched.
+  - A quota change applies at once, in the background (`handlers/quota_apply.go`).
+    - A cluster quota save writes the effective quota (cluster quota merged with the instance override) to the namespace of each instance, and the cluster quota to the other stack namespaces. It skips Terminating namespaces.
+    - An override set or delete writes the effective quota to the namespace of a deployed instance (not draft or cleaning).
+    - Each write reads the stored cluster quota and override again while it holds a lock for the namespace (`writeNamespaceQuota`), so the last write of a replica has the latest state. Across replicas, and against a concurrent deploy, the last writer wins.
+    - The backend skips a namespace when a read fails or the merged quota is not valid, and logs the reason. The next deploy applies the quota. An empty effective quota writes nothing, so the old objects stay.
 
 **Access control**
 - **Auth:** JWT with the header `Authorization: Bearer <token>`. The middleware puts `userID`, `username` and `role` into the Gin context. Refresh tokens rotate through `/auth/refresh`. Logout blocks tokens in `sessionstore`. See "Sessions".
