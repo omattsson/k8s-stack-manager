@@ -458,8 +458,10 @@ func (m *Manager) Deploy(ctx context.Context, req DeployRequest) (string, error)
 	m.logActions.Store(logID, deployLog.Action)
 	req.Instance.Status = models.StackStatusDeploying
 	req.Instance.ErrorMessage = ""
-	// A deploy ends the stopped period (cleanup condition stopped_days).
+	// A deploy ends the stopped period (cleanup condition stopped_days) and
+	// the cleaned period (cleanup condition cleaned_days).
 	req.Instance.StoppedAt = nil
+	req.Instance.CleanedAt = nil
 	// A marker of an earlier deploy (for example after a crash) must not
 	// hide errors from the k8s status watcher.
 	req.Instance.PostDeployHookUntil = nil
@@ -1734,6 +1736,7 @@ func (m *Manager) finalizeClean(instanceID string, deployLog *models.DeploymentL
 		instance.ErrorMessage = ""
 		instance.LastDeployedAt = nil
 		instance.StoppedAt = nil
+		instance.CleanedAt = &now
 		deployLog.Status = models.DeployLogSuccess
 
 		slog.Info("clean succeeded",
@@ -2192,6 +2195,8 @@ func (m *Manager) finalizeRollback(instanceID string, deployLog *models.Deployme
 		instance.Status = models.StackStatusRunning
 		instance.ErrorMessage = ""
 		instance.LastDeployedAt = &now
+		// The instance runs again, so the cleaned period ends (cleaned_days).
+		instance.CleanedAt = nil
 		deployLog.Status = models.DeployLogSuccess
 
 		if len(applied) > 0 {

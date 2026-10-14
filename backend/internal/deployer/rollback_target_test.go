@@ -244,6 +244,27 @@ func TestStoppedAt_SetOnStopClearedOnDeploy(t *testing.T) {
 	assert.Nil(t, deployed.StoppedAt)
 }
 
+func TestCleanedAt_ClearedOnDeploy(t *testing.T) {
+	t.Parallel()
+	instanceRepo := newMockInstanceRepo()
+	logRepo := newMockDeployLogRepo()
+	cleanedAt := time.Now().Add(-48 * time.Hour)
+	inst := &models.StackInstance{
+		ID: "inst-cl", StackDefinitionID: "def-1", Name: "cl", Namespace: "stack-cl-alice",
+		OwnerID: "user-1", Branch: "feature", Status: models.StackStatusDraft, CleanedAt: &cleanedAt,
+	}
+	require.NoError(t, instanceRepo.Create(inst))
+	mgr := newRollbackTestManager(instanceRepo, logRepo, &mockHelmExecutor{})
+	charts := []ChartDeployInfo{{ChartConfig: models.ChartConfig{ChartName: "web", ChartVersion: "1.2.3"}}}
+
+	deployLogID, err := mgr.Deploy(context.Background(), DeployRequest{Instance: inst, Charts: charts})
+	require.NoError(t, err)
+	waitForLogDone(t, logRepo, deployLogID)
+	deployed, err := instanceRepo.FindByID(inst.ID)
+	require.NoError(t, err)
+	assert.Nil(t, deployed.CleanedAt, "a deploy ends the cleaned period (cleanup condition cleaned_days)")
+}
+
 func TestChartVersionsAndRunningValuesHelpers(t *testing.T) {
 	t.Parallel()
 

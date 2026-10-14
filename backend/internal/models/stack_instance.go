@@ -19,7 +19,12 @@ type StackInstance struct {
 	// StoppedAt is the time the last successful stop finished. It is nil
 	// when the instance is not stopped. A deploy or a clean clears it.
 	// Cleanup policies use it for the stopped_days condition.
-	StoppedAt          *time.Time `json:"stopped_at,omitempty"`
+	StoppedAt *time.Time `json:"stopped_at,omitempty"`
+	// CleanedAt is the time the last successful clean finished. It is nil
+	// when the instance was not cleaned since its last deploy. A deploy
+	// clears it. Cleanup policies use it for the cleaned_days condition (a
+	// clean also clears LastDeployedAt, so idle_days cannot count from it).
+	CleanedAt          *time.Time `json:"cleaned_at,omitempty"`
 	ID                 string     `json:"id" gorm:"primaryKey;size:36"`
 	StackDefinitionID  string     `json:"stack_definition_id" gorm:"size:36"`
 	Name               string     `json:"name" gorm:"size:255"`

@@ -616,7 +616,7 @@ describe('CleanupPolicies Page', () => {
       const dialog = screen.getByRole('dialog');
       // Help lists stopped_days with an example and explains age_days.
       expect(within(dialog).getByText('stopped_days:3')).toBeInTheDocument();
-      expect(within(dialog).getByText(/Stopped for more than N days \(time since the stop\)/)).toBeInTheDocument();
+      expect(within(dialog).getByText(/Stopped N or more days ago \(time since the stop\)/)).toBeInTheDocument();
       expect(within(dialog).getByText(/Created more than N days ago \(creation age, not the time since the stop\)/)).toBeInTheDocument();
 
       await user.type(within(dialog).getByLabelText(/^Name/), 'Clean stopped');

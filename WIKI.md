@@ -275,15 +275,17 @@ Both list endpoints are paged (`page` and `pageSize`; default 25, maximum 100). 
 | Condition | Meaning |
 |---|---|
 | `status:<status>` | The instance status is `<status>`. |
-| `idle_days:N` | No deploy for N days (the creation time when the instance was never deployed). |
+| `idle_days:N` | No deploy for N days (the creation time when the instance was never deployed). A running or partial instance whose expiry is still in the future never matches: the owner set or extended the time to live (TTL), and the TTL reaper stops it at the expiry. To stop such stacks anyway, use `age_days`. |
 | `age_days:N` | The instance was created more than N days ago. This is not the time since the stop. |
 | `stopped_days:N` | The instance is stopped, and the last stop finished N or more days ago. Instances without a recorded stop time never match. |
+| `cleaned_days:N` | The instance is a draft, and the last clean finished N or more days ago. Instances without a recorded clean time (for example never deployed) never match. |
 | `ttl_expired` | The expiry time is in the past. |
 
-Use `stopped_days:N` for "stopped for N days".
+Use `stopped_days:N` for "stopped for N days", and `cleaned_days:N` for "cleaned N days ago". Example: delete stacks 30 days after their clean with the action `delete` and the condition `cleaned_days:30`. Do not use `idle_days` for this: a clean clears the last deploy time, so `idle_days` then counts from the creation.
 
 - The stop time (`stopped_at`) is set when a stop finishes (API, TTL reaper, cleanup policy). A deploy or a clean clears it.
 - The upgrade sets `stopped_at` for instances that are already stopped. It uses the last successful stop log, or else `updated_at`.
+- The clean time (`cleaned_at`) is set when a clean finishes. A deploy clears it. The upgrade sets it for drafts from their last successful clean log.
 - Existing policies with `status:stopped,age_days:N` keep their meaning: created more than N days ago.
 
 **Cleanup policy update.** `PUT /admin/cleanup-policies/:id` is a partial update. Only the fields in the body change, for example `{"enabled": false}` or `{"dry_run": true}`. The API validates the merged policy, and the scheduler reloads. The Enabled and Dry Run switches in the policy table use this call.
