@@ -37,6 +37,7 @@ type RepositorySet struct {
 	WSEvent               models.WSEventRepository
 	InstanceFollower      models.InstanceFollowerRepository
 	ReplicaHeartbeat      models.ReplicaHeartbeatRepository
+	Retention             models.RetentionRepository
 	InterruptedOperation  models.InterruptedOperationRepository
 	TxRunner              TxRunner
 }
@@ -101,6 +102,7 @@ func newGORMRepositorySet(cfg *config.Config, db *gorm.DB) (*RepositorySet, erro
 		WSEvent:               NewGORMWSEventRepository(db),
 		InstanceFollower:      NewGORMInstanceFollowerRepository(db),
 		ReplicaHeartbeat:      NewGORMReplicaHeartbeatRepository(db),
+		Retention:             NewGORMRetentionRepository(db),
 		InterruptedOperation:  NewGORMInterruptedOperationRepository(db),
 		TxRunner:              NewGORMTxRunner(db),
 	}, nil

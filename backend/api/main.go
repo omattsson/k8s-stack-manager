@@ -172,6 +172,9 @@ func main() {
 	if wsEventCleanup != nil {
 		workers.Group.Add(*wsEventCleanup)
 	}
+	if logRetention := buildLogRetention(cfg, repos); logRetention != nil {
+		workers.Group.Add(*logRetention)
+	}
 	leaderRun := startLeaderElection(elector, workers.Group)
 
 	// HTTP server.

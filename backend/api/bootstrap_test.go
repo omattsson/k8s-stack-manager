@@ -1259,3 +1259,49 @@ func TestGinMode(t *testing.T) {
 		})
 	}
 }
+
+// stubRetentionRepo is a models.RetentionRepository that deletes nothing.
+type stubRetentionRepo struct{}
+
+func (stubRetentionRepo) DeleteDeploymentLogsOlderThan(context.Context, time.Duration, int) (int64, error) {
+	return 0, nil
+}
+func (stubRetentionRepo) DeleteAuditLogsOlderThan(context.Context, time.Duration, int) (int64, error) {
+	return 0, nil
+}
+func (stubRetentionRepo) DeleteNotificationsOlderThan(context.Context, time.Duration, int) (int64, error) {
+	return 0, nil
+}
+func (stubRetentionRepo) DeleteDeliveryLogsOlderThan(context.Context, time.Duration, int) (int64, error) {
+	return 0, nil
+}
+
+func TestBuildLogRetention(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		retention config.RetentionConfig
+		repos     *database.RepositorySet
+		want      bool
+	}{
+		{name: "retention set", retention: config.RetentionConfig{AuditLogDays: 365}, repos: &database.RepositorySet{Retention: stubRetentionRepo{}}, want: true},
+		{name: "all 0 keeps everything", retention: config.RetentionConfig{}, repos: &database.RepositorySet{Retention: stubRetentionRepo{}}},
+		{name: "no repository", retention: config.RetentionConfig{AuditLogDays: 365}, repos: &database.RepositorySet{}},
+		{name: "no repository set", retention: config.RetentionConfig{AuditLogDays: 365}},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			w := buildLogRetention(&config.Config{Retention: tt.retention}, tt.repos)
+			if !tt.want {
+				assert.Nil(t, w)
+				return
+			}
+			require.NotNil(t, w)
+			assert.Equal(t, "log-retention", w.Name)
+			assert.NotNil(t, w.Run)
+		})
+	}
+}

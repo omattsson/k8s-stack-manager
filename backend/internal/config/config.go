@@ -338,6 +338,8 @@ type Config struct {
 
 	// WSFanout shares WebSocket messages between replicas.
 	WSFanout WSFanoutConfig
+	// Retention is the age limit of the log tables (leader worker log-retention).
+	Retention RetentionConfig
 
 	// Branding holds the display values of the web UI (title, logo, favicon).
 	Branding BrandingConfig
@@ -485,6 +487,10 @@ func (c *Config) Validate() error {
 	// election does) to skip its own rows.
 	if c.WSFanout.Enabled && c.LeaderElection.Identity == "" {
 		return errors.New("WebSocket fan-out config: POD_NAME (or a host name) is required when WS_FANOUT_ENABLED is true")
+	}
+
+	if err := c.Retention.Validate(); err != nil {
+		return fmt.Errorf("log retention config: %w", err)
 	}
 
 	return nil
@@ -680,6 +686,7 @@ func LoadConfig() (*Config, error) {
 	}
 	cfg.LeaderElection = loadLeaderElectionConfig()
 	cfg.WSFanout = loadWSFanoutConfig()
+	cfg.Retention = loadRetentionConfig()
 	cfg.Branding = loadBrandingConfig()
 
 	nsLabels, err := ParseNamespaceLabels(getEnv("NAMESPACE_LABELS", ""))

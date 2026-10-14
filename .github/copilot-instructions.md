@@ -143,6 +143,7 @@ helm/k8s-stack-manager/
   - `backend.rbac.scope: cluster` keeps the old rules (namespaced objects in all namespaces).
 - **Leader election.** `backend.leaderElection.enabled` (default true) and `backend.leaderElection.leaseName` (Lease `<fullname>-workers`) set `LEADER_ELECTION_ENABLED` and `POD_NAME` / `POD_NAMESPACE` (downward API, Deployment and Rollout). It also creates the Lease Role. Only the leader replica runs the background workers. Every replica serves HTTP and WebSocket.
 - **WebSocket fan-out.** `backend.wsFanout.enabled` (default true) sets `WS_FANOUT_ENABLED`. `backend.wsFanout.pollInterval` (500ms) and `retention` (5m) set `WS_FANOUT_POLL_INTERVAL` and `WS_FANOUT_RETENTION`. The replicas share WebSocket messages through the `ws_events` table. Clients on every replica get deploy logs and leader events.
+- **Log retention.** `backend.logRetention` (`deployLogDays` 180, `auditLogDays` 365, `notificationDays` 90, `deliveryLogDays` 30, `interval` 1h) sets `DEPLOY_LOG_RETENTION_DAYS`, `AUDIT_LOG_RETENTION_DAYS`, `NOTIFICATION_RETENTION_DAYS`, `DELIVERY_LOG_RETENTION_DAYS` and `LOG_RETENTION_INTERVAL`. The leader worker `log-retention` deletes older rows. `0` keeps the rows forever.
 
 ### Configuration
 Key values in `values.yaml`:
@@ -263,6 +264,7 @@ backend/
     websocket/                   # WebSocket hub, client, message types, fan-out between replicas (ws_events writer and poller, cleanup worker)
     scheduler/                   # Cron-based cleanup policy execution
     ttl/                         # TTL reaper and expiry warner for stack instances
+    retention/                   # Leader worker log-retention: deletes old deploy logs, audit logs, notifications and delivery logs (*_RETENTION_DAYS)
   pkg/dberrors/errors.go         # Canonical error types: ErrNotFound, ErrDuplicateKey, ErrValidation, ErrConnectionFailed, ErrNotImplemented
   pkg/crypto/                    # AES-GCM encryption and decryption of kubeconfig data at rest (key derived with SHA-256)
   pkg/utils/                     # Shared utilities (for example cryptographic random strings)

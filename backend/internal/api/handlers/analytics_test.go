@@ -690,3 +690,37 @@ func TestAnalytics_RepoErrors(t *testing.T) {
 		assert.Equal(t, http.StatusInternalServerError, w.Code)
 	})
 }
+
+func TestGetOverview_DeployLogRetention(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		days int
+	}{
+		{name: "retention set", days: 180},
+		{name: "no retention", days: 0},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			gin.SetMode(gin.TestMode)
+			r := gin.New()
+			r.Use(injectAuthContext("admin-1", "admin"))
+			h := NewAnalyticsHandler(NewMockStackTemplateRepository(), NewMockStackDefinitionRepository(),
+				NewMockStackInstanceRepository(), newMockDeployLogRepo(), NewMockUserRepository()).
+				WithDeployLogRetention(tt.days)
+			r.GET("/api/v1/analytics/overview", h.GetOverview)
+
+			w := httptest.NewRecorder()
+			req, _ := http.NewRequest(http.MethodGet, "/api/v1/analytics/overview", nil)
+			r.ServeHTTP(w, req)
+
+			require.Equal(t, http.StatusOK, w.Code)
+			var stats OverviewStats
+			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &stats))
+			assert.Equal(t, tt.days, stats.DeployLogRetentionDays)
+		})
+	}
+}

@@ -19,6 +19,7 @@ import (
 	"backend/internal/notifier"
 	"backend/internal/notifier/channel"
 	"backend/internal/replica"
+	"backend/internal/retention"
 	"backend/internal/scheduler"
 	"backend/internal/sessionstore"
 	"backend/internal/telemetry"
@@ -508,7 +509,8 @@ func buildHandlers(
 	}
 
 	// Analytics handler.
-	analyticsHandler := handlers.NewAnalyticsHandler(repos.StackTemplate, repos.StackDefinition, repos.StackInstance, repos.DeploymentLog, repos.User)
+	analyticsHandler := handlers.NewAnalyticsHandler(repos.StackTemplate, repos.StackDefinition, repos.StackInstance, repos.DeploymentLog, repos.User).
+		WithDeployLogRetention(cfg.Retention.DeployLogDays)
 
 	// Dashboard handler.
 	dashboardHandler := handlers.NewDashboardHandler(repos.Cluster, repos.StackInstance, repos.DeploymentLog, svc.ClusterRegistry)
@@ -694,6 +696,23 @@ func buildLeaderWorkers(
 		QuotaMonitor:  quotaMonitor,
 		SecretMonitor: secretMonitor,
 	}
+}
+
+// buildLogRetention returns the leader worker log-retention, which deletes
+// old rows of the log tables, or nil when no table has a retention (all
+// *_RETENTION_DAYS are 0).
+func buildLogRetention(cfg *config.Config, repos *database.RepositorySet) *leader.Worker {
+	if repos == nil || repos.Retention == nil || !cfg.Retention.Enabled() {
+		return nil
+	}
+	slog.Info("log retention enabled",
+		"deployment_logs_days", cfg.Retention.DeployLogDays,
+		"audit_logs_days", cfg.Retention.AuditLogDays,
+		"notifications_days", cfg.Retention.NotificationDays,
+		"delivery_logs_days", cfg.Retention.DeliveryLogDays,
+	)
+	w := retention.NewWorker(repos.Retention, cfg.Retention)
+	return &leader.Worker{Name: "log-retention", Run: w.Run}
 }
 
 // buildWSFanout creates the WebSocket fan-out between replicas when

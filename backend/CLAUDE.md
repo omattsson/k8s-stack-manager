@@ -78,6 +78,7 @@ All configuration uses environment variables with a `.env` fallback (godotenv). 
 - `OTEL_ENABLED`, `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_SERVICE_NAME`, `OTEL_TRACE_SAMPLE_RATE`, `METRICS_ENABLED`, `METRICS_ADDR`.
 - `LEADER_ELECTION_*` (`ENABLED` default false means this process is always the leader; `LEASE_NAME`, `NAMESPACE`, `LEASE_DURATION`, `RENEW_DEADLINE`, `RETRY_PERIOD`) with `POD_NAME` and `POD_NAMESPACE`.
 - `WS_FANOUT_ENABLED`, `WS_FANOUT_POLL_INTERVAL`, `WS_FANOUT_RETENTION`.
+- `DEPLOY_LOG_RETENTION_DAYS` (180), `AUDIT_LOG_RETENTION_DAYS` (365), `NOTIFICATION_RETENTION_DAYS` (90), `DELIVERY_LOG_RETENTION_DAYS` (30), `LOG_RETENTION_INTERVAL` (1h). `0` keeps the rows forever. A value that is not a number stops the start (`config/retention.go`).
 
 ## Background Workers
 - The leader-only workers are built in `api/bootstrap.go`, function `buildLeaderWorkers`. They run in a `leader.Group` for each leadership term. The workers are:
@@ -88,6 +89,7 @@ All configuration uses environment variables with a `.env` fallback (godotenv). 
   - `stack-access-reconcile`, only when `STACK_ACCESS_*` is set.
   - `interrupted-operation-recovery`.
   - `ws-event-cleanup`, only when fan-out is enabled.
+  - `log-retention` (`internal/retention`), only when a `*_RETENTION_DAYS` is greater than 0 (`buildLogRetention`). It deletes old rows of `deployment_logs`, `audit_logs`, `notifications` and `notification_delivery_logs` through `RetentionRepository`, in batches of 1000 IDs (100 for `deployment_logs`: large rows) with a 100ms pause, by database time. For each existing instance it keeps the running deploy logs, the newest `deploy` or `rollback` log (any status), the newest successful `deploy` log and the two newest successful `deploy` or `rollback` logs (values drift, rollback branch). Counter `log_retention.deleted_rows_total{table}`.
 - A worker has `Run(ctx)`. It blocks until `ctx` is done. It must work again after it returned. Do not use closed stop channels or one-shot state.
 - Keep state that must survive a leader change in the database. Example: `stack_instances.expiry_warned_at`.
 - Add a new periodic job as a `leader.Worker`, not as a goroutine in `main.go`.

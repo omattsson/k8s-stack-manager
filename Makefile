@@ -379,6 +379,9 @@ helm-test: ## Verify default and External Secrets Helm renders
 	helm template $(HELM_RELEASE) $(HELM_CHART) --namespace $(HELM_NAMESPACE) \
 		--set backend.secrets.JWT_SECRET=dummy-jwt-secret-for-template > "$$template_file"; \
 	grep -q 'Source: k8s-stack-manager/templates/mysql/secret.yaml' "$$template_file"; \
+	grep -q 'DEPLOY_LOG_RETENTION_DAYS: "180"' "$$template_file" && grep -q 'AUDIT_LOG_RETENTION_DAYS: "365"' "$$template_file" \
+		&& grep -q 'NOTIFICATION_RETENTION_DAYS: "90"' "$$template_file" && grep -q 'DELIVERY_LOG_RETENTION_DAYS: "30"' "$$template_file" \
+		|| { echo "backend ConfigMap must have the default log retention" >&2; exit 1; }; \
 	helm template $(HELM_RELEASE) $(HELM_CHART) --set backend.secrets.JWT_SECRET=dummy-jwt-secret-for-template \
 		--set backend.priorityClassName=pc-test --set frontend.priorityClassName=pc-test \
 		--set mysql.priorityClassName=pc-test --set otel.enabled=true --set otel.priorityClassName=pc-test > "$$template_file"; \

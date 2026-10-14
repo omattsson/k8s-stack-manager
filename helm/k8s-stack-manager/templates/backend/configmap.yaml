@@ -40,6 +40,24 @@ data:
   {{- if not (hasKey .Values.backend.env "WS_FANOUT_RETENTION") }}
   WS_FANOUT_RETENTION: {{ .Values.backend.wsFanout.retention | quote }}
   {{- end }}
+  {{- /* Log retention of the log tables (leader worker log-retention). An explicit backend.env value wins. The raw value goes to the backend, which refuses a value that is not a whole number. */}}
+  {{- with .Values.backend.logRetention }}
+  {{- if not (hasKey $.Values.backend.env "DEPLOY_LOG_RETENTION_DAYS") }}
+  DEPLOY_LOG_RETENTION_DAYS: {{ .deployLogDays | toString | quote }}
+  {{- end }}
+  {{- if not (hasKey $.Values.backend.env "AUDIT_LOG_RETENTION_DAYS") }}
+  AUDIT_LOG_RETENTION_DAYS: {{ .auditLogDays | toString | quote }}
+  {{- end }}
+  {{- if not (hasKey $.Values.backend.env "NOTIFICATION_RETENTION_DAYS") }}
+  NOTIFICATION_RETENTION_DAYS: {{ .notificationDays | toString | quote }}
+  {{- end }}
+  {{- if not (hasKey $.Values.backend.env "DELIVERY_LOG_RETENTION_DAYS") }}
+  DELIVERY_LOG_RETENTION_DAYS: {{ .deliveryLogDays | toString | quote }}
+  {{- end }}
+  {{- if not (hasKey $.Values.backend.env "LOG_RETENTION_INTERVAL") }}
+  LOG_RETENTION_INTERVAL: {{ .interval | quote }}
+  {{- end }}
+  {{- end }}
   {{- /* Branding (web UI title, logo, favicon). An explicit backend.env value wins. */}}
   {{- with .Values.branding }}
   {{- if and .title (not (hasKey $.Values.backend.env "APP_TITLE")) }}

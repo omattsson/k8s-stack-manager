@@ -68,6 +68,20 @@ backend:
     # Age after which the leader deletes rows (at least 1m).
     retention: 5m
 
+  # Log retention (env *_RETENTION_DAYS, LOG_RETENTION_INTERVAL). The leader
+  # worker log-retention deletes rows older than the number of days, in
+  # batches. 0 keeps the rows forever. deployment_logs keeps running logs,
+  # the newest deploy or rollback log, the newest successful deploy and the
+  # two newest successful deploy or rollback logs of each instance; the deploy counts of the Analytics page
+  # cover only the kept deploy logs. A whole number of days is required.
+  logRetention:
+    deployLogDays: 180
+    auditLogDays: 365
+    notificationDays: 90
+    deliveryLogDays: 30
+    # Time between two runs (at least 1m).
+    interval: 1h
+
   resources:
     requests:
       memory: 256Mi

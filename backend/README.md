@@ -188,6 +188,11 @@ The backend reads all configuration from environment variables. It also reads a 
 | `WS_FANOUT_ENABLED` | `false` | Share WebSocket messages between replicas through the `ws_events` table. `false`: no `ws_events` reads or writes (one replica). |
 | `WS_FANOUT_POLL_INTERVAL` | `500ms` | Time between two `ws_events` polls (50ms to 1m) |
 | `WS_FANOUT_RETENTION` | `5m` | The leader deletes `ws_events` rows older than this (at least 1m) |
+| `DEPLOY_LOG_RETENTION_DAYS` | `180` | The leader deletes `deployment_logs` rows older than this number of days. It keeps running logs, the newest deploy or rollback log, the newest successful deploy and the two newest successful deploy or rollback logs of each instance. `0` keeps all rows. |
+| `AUDIT_LOG_RETENTION_DAYS` | `365` | The same for `audit_logs` |
+| `NOTIFICATION_RETENTION_DAYS` | `90` | The same for `notifications` (read and unread) |
+| `DELIVERY_LOG_RETENTION_DAYS` | `30` | The same for the notification channel delivery logs |
+| `LOG_RETENTION_INTERVAL` | `1h` | Time between two retention runs (at least 1m) |
 
 ### Observability and branding
 

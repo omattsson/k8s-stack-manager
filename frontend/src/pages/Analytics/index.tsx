@@ -138,6 +138,12 @@ const Analytics = () => {
       {!loading && !allFailed && (
         <>
           {/* Overview Cards */}
+          {(overview?.deploy_log_retention_days ?? 0) > 0 && (
+            <Alert severity="info" sx={{ mb: 2 }}>
+              The deploy counts on this page cover the last {overview?.deploy_log_retention_days} days. Older deploy
+              logs are deleted (deploy log retention).
+            </Alert>
+          )}
           {overview && (
             <Grid container spacing={2} sx={{ mb: 4 }}>
               <Grid size={{ xs: 12, sm: 6, md: 4 }}>
@@ -194,6 +200,11 @@ const Analytics = () => {
                       Total Deploys
                     </Typography>
                     <Typography variant="h4">{overview.total_deploys}</Typography>
+                    {(overview.deploy_log_retention_days ?? 0) > 0 && (
+                      <Typography variant="caption" color="text.secondary">
+                        Last {overview.deploy_log_retention_days} days
+                      </Typography>
+                    )}
                   </CardContent>
                 </Card>
               </Grid>

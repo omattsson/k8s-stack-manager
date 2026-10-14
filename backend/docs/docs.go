@@ -1077,7 +1077,7 @@ const docTemplate = `{
         },
         "/api/v1/analytics/overview": {
             "get": {
-                "description": "Returns high-level aggregate counts (templates, definitions, instances, deploys, users)",
+                "description": "Returns high-level aggregate counts (templates, definitions, instances, deploys, users).\ndeploy_log_retention_days is DEPLOY_LOG_RETENTION_DAYS: the deploy counts of all analytics endpoints cover only the kept deploy logs (about the last N days). 0 means all deploy logs are kept.",
                 "produces": [
                     "application/json"
                 ],
@@ -10922,6 +10922,10 @@ const docTemplate = `{
         "handlers.OverviewStats": {
             "type": "object",
             "properties": {
+                "deploy_log_retention_days": {
+                    "description": "DeployLogRetentionDays is DEPLOY_LOG_RETENTION_DAYS. The deploy counts\n(here, per template and per user) cover only the kept deploy logs:\nabout the last N days. 0 means all deploy logs are kept.",
+                    "type": "integer"
+                },
                 "running_instances": {
                     "type": "integer"
                 },
