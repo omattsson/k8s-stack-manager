@@ -46,6 +46,7 @@ import type {
   CleanupResult,
   CompareInstancesResponse,
   DefinitionExportBundle,
+  ImportDefinitionResponse,
   BulkOperationResponse,
   BulkTemplateResponse,
   NotificationListResponse,
@@ -904,10 +905,10 @@ export const definitionService = {
   /**
    * Import a stack definition from a JSON bundle.
    * @param bundle - The export bundle to import
-   * @returns The created stack definition
+   * @returns The created stack definition, with warnings (for example a source template that was not linked)
    * @see POST /api/v1/stack-definitions/import
    */
-  importDefinition: async (bundle: DefinitionExportBundle): Promise<StackDefinition> => {
+  importDefinition: async (bundle: DefinitionExportBundle): Promise<ImportDefinitionResponse> => {
     try {
       const response = await api.post('/api/v1/stack-definitions/import', bundle);
       return response.data;
@@ -943,6 +944,27 @@ export const definitionService = {
       return response.data;
     } catch (error) {
       console.error('Failed to apply upgrade:', error);
+      throw error;
+    }
+  },
+  /**
+   * Link a definition to a published template version, or remove the link.
+   * The charts and the values of the definition do not change.
+   * @param definitionId - Definition ID
+   * @param templateId - Template ID; an empty string removes the link
+   * @param version - A published version of the template; empty means the latest
+   * @returns The updated definition
+   * @see PUT /api/v1/stack-definitions/:id/template-link
+   */
+  setTemplateLink: async (definitionId: string, templateId: string, version = ''): Promise<StackDefinition> => {
+    try {
+      const response = await api.put(`/api/v1/stack-definitions/${definitionId}/template-link`, {
+        template_id: templateId,
+        version,
+      });
+      return response.data;
+    } catch (error) {
+      console.error('Failed to set template link:', error);
       throw error;
     }
   },

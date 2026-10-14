@@ -76,6 +76,29 @@ func (r *GORMStackDefinitionRepository) FindByName(name string) ([]models.StackD
 	return definitions, nil
 }
 
+// SetTemplateLink writes the template link columns of one definition.
+func (r *GORMStackDefinitionRepository) SetTemplateLink(id, templateID, version string) error {
+	result := r.db.Model(&models.StackDefinition{}).Where("id = ?", id).Updates(map[string]any{
+		"source_template_id":      templateID,
+		"source_template_version": version,
+		"updated_at":              time.Now().UTC(),
+	})
+	if result.Error != nil {
+		return dberrors.NewDatabaseError("set_template_link", result.Error)
+	}
+	if result.RowsAffected == 0 {
+		// MySQL counts only changed rows: check that the row exists.
+		var count int64
+		if err := r.db.Model(&models.StackDefinition{}).Where("id = ?", id).Count(&count).Error; err != nil {
+			return dberrors.NewDatabaseError("set_template_link", err)
+		}
+		if count == 0 {
+			return dberrors.NewDatabaseError("set_template_link", dberrors.ErrNotFound)
+		}
+	}
+	return nil
+}
+
 // Update persists changes to an existing stack definition.
 func (r *GORMStackDefinitionRepository) Update(definition *models.StackDefinition) error {
 	definition.UpdatedAt = time.Now().UTC()

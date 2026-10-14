@@ -667,6 +667,17 @@ export interface NotificationListResponse {
   unread_count: number;
 }
 
+/** Source template of an exported definition. The import looks it up by id, else by name. */
+export interface SourceTemplateRef {
+  id?: string;
+  name?: string;
+  /** A published version of the template. Empty means the latest. */
+  version?: string;
+}
+
+/** Response of the definition import: the definition, and warnings such as a template link that was not set. */
+export type ImportDefinitionResponse = StackDefinition & { warnings?: string[] };
+
 export interface DefinitionExportBundle {
   schema_version: string;
   exported_at: string;
@@ -675,6 +686,8 @@ export interface DefinitionExportBundle {
     description: string;
     default_branch: string;
     repository_url: string;
+    /** Template that the definition is linked to (id or name, and version). */
+    source_template?: SourceTemplateRef;
     [key: string]: unknown;
   };
   charts: Array<{

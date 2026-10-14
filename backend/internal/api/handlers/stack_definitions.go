@@ -38,9 +38,31 @@ type DefinitionExportBundle struct {
 
 // DefinitionExportData holds the exportable fields of a stack definition.
 type DefinitionExportData struct {
-	Name          string `json:"name"`
-	Description   string `json:"description"`
-	DefaultBranch string `json:"default_branch"`
+	// SourceTemplate is the template that the definition is linked to. The
+	// export sets it for a linked definition; the import links the new
+	// definition when the template and the version exist.
+	SourceTemplate *SourceTemplateExportData `json:"source_template,omitempty"`
+	Name           string                    `json:"name"`
+	Description    string                    `json:"description"`
+	DefaultBranch  string                    `json:"default_branch"`
+}
+
+// SourceTemplateExportData names the source template of an exported
+// definition. The import looks up the template by ID, else by exact name.
+type SourceTemplateExportData struct {
+	ID   string `json:"id,omitempty"`
+	Name string `json:"name,omitempty"`
+	// Version is a published version of the template. Empty means the
+	// latest published version.
+	Version string `json:"version,omitempty"`
+}
+
+// definitionImportResponse is the import response: the new definition with
+// its charts, and warnings (for example a source template that could not be
+// linked).
+type definitionImportResponse struct {
+	DefinitionWithChartsResponse
+	Warnings []string `json:"warnings,omitempty"`
 }
 
 // ChartConfigExportData holds the exportable fields of a chart configuration.
@@ -463,6 +485,16 @@ func (h *DefinitionHandler) ExportDefinition(c *gin.Context) {
 		},
 		Charts: exportCharts,
 	}
+	if def.SourceTemplateID != "" {
+		src := &SourceTemplateExportData{ID: def.SourceTemplateID, Version: def.SourceTemplateVersion}
+		// The name lets another installation (other IDs) find the template.
+		if tmpl, err := h.templateRepo.FindByID(def.SourceTemplateID); err == nil {
+			src.Name = tmpl.Name
+		} else if !isNotFoundError(err) {
+			slog.Warn("export: failed to read source template", "template_id", def.SourceTemplateID, "error", err)
+		}
+		bundle.Definition.SourceTemplate = src
+	}
 
 	c.JSON(http.StatusOK, bundle)
 }
@@ -470,11 +502,12 @@ func (h *DefinitionHandler) ExportDefinition(c *gin.Context) {
 // ImportDefinition godoc
 // @Summary     Import a stack definition
 // @Description Import a stack definition from a portable JSON bundle, creating a new definition with fresh IDs. Definition names are unique per owner: when the caller already has a definition with the bundle name, the import uses "<name> (imported)", then "<name> (imported 2)", ... The response holds the final name (409 when no free name is found).
+// @Description definition.source_template (optional: id or name, and version) links the new definition to a template, as PUT /stack-definitions/{id}/template-link does. The import looks up the template by ID, else by name among the published templates (not case-sensitive on MySQL). When the template does not exist, is not published, the name matches more than one published template, or the version is not a published version, the import creates the definition without a link and adds a message to warnings; it does not fail.
 // @Tags        stack-definitions
 // @Accept      json
 // @Produce     json
 // @Param       bundle body     DefinitionExportBundle true "Export bundle"
-// @Success     201    {object} DefinitionWithChartsResponse
+// @Success     201    {object} definitionImportResponse
 // @Failure     400    {object} map[string]string
 // @Failure     500    {object} map[string]string
 // @Router      /api/v1/stack-definitions/import [post]
@@ -529,6 +562,15 @@ func (h *DefinitionHandler) ImportDefinition(c *gin.Context) {
 	if err := def.Validate(); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
+	}
+
+	// The template link never stops the import: a link that cannot be set
+	// gives a warning.
+	var warnings []string
+	templateID, templateVersion, warning := h.importTemplateLink(c.Request.Context(), bundle.Definition.SourceTemplate)
+	def.SourceTemplateID, def.SourceTemplateVersion = templateID, templateVersion
+	if warning != "" {
+		warnings = append(warnings, warning)
 	}
 
 	// Definition names are unique per owner: an existing name gets the
@@ -589,9 +631,12 @@ func (h *DefinitionHandler) ImportDefinition(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusCreated, DefinitionWithChartsResponse{
-		StackDefinition: def,
-		Charts:          createdCharts,
+	c.JSON(http.StatusCreated, definitionImportResponse{
+		DefinitionWithChartsResponse: DefinitionWithChartsResponse{
+			StackDefinition: def,
+			Charts:          createdCharts,
+		},
+		Warnings: warnings,
 	})
 }
 

@@ -3969,7 +3969,7 @@ const docTemplate = `{
         },
         "/api/v1/stack-definitions/import": {
             "post": {
-                "description": "Import a stack definition from a portable JSON bundle, creating a new definition with fresh IDs. Definition names are unique per owner: when the caller already has a definition with the bundle name, the import uses \"\u003cname\u003e (imported)\", then \"\u003cname\u003e (imported 2)\", ... The response holds the final name (409 when no free name is found).",
+                "description": "Import a stack definition from a portable JSON bundle, creating a new definition with fresh IDs. Definition names are unique per owner: when the caller already has a definition with the bundle name, the import uses \"\u003cname\u003e (imported)\", then \"\u003cname\u003e (imported 2)\", ... The response holds the final name (409 when no free name is found).\ndefinition.source_template (optional: id or name, and version) links the new definition to a template, as PUT /stack-definitions/{id}/template-link does. The import looks up the template by ID, else by name among the published templates (not case-sensitive on MySQL). When the template does not exist, is not published, the name matches more than one published template, or the version is not a published version, the import creates the definition without a link and adds a message to warnings; it does not fail.",
                 "consumes": [
                     "application/json"
                 ],
@@ -3995,7 +3995,7 @@ const docTemplate = `{
                     "201": {
                         "description": "Created",
                         "schema": {
-                            "$ref": "#/definitions/handlers.DefinitionWithChartsResponse"
+                            "$ref": "#/definitions/handlers.definitionImportResponse"
                         }
                     },
                     "400": {
@@ -4559,6 +4559,97 @@ const docTemplate = `{
                     },
                     "404": {
                         "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/stack-definitions/{id}/template-link": {
+            "put": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Sets or removes the source template of an existing definition (for example an imported one). The link changes only source_template_id and source_template_version; the charts and the values of the definition do not change.\nA linked definition gets the template rules: required charts cannot be removed, the locked values of the latest published snapshot apply at deploy time (also when the link names an older version; the version is the base of the upgrade check), the upgrade check compares with the template, and the analytics template usage counts the definition, its instances and its deploys. A definition whose charts differ from the template can be linked; the upgrade check then shows the difference.\ntemplate_id empty removes the link (both fields become empty; version must then be empty). The template must exist (404) and be published (409). version must be a published version of the template (400); empty means the latest published version.\nAuthorization: devops or admin (403).",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "stack-definitions"
+                ],
+                "summary": "Link a stack definition to a template",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Definition ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Template link",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handlers.templateLinkRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/models.StackDefinition"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {
@@ -10643,6 +10734,14 @@ const docTemplate = `{
                 },
                 "name": {
                     "type": "string"
+                },
+                "source_template": {
+                    "description": "SourceTemplate is the template that the definition is linked to. The\nexport sets it for a linked definition; the import links the new\ndefinition when the template and the version exist.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/handlers.SourceTemplateExportData"
+                        }
+                    ]
                 }
             }
         },
@@ -10905,6 +11004,21 @@ const docTemplate = `{
                 },
                 "warning": {
                     "description": "Warning explains ValuesDrift when it is true.",
+                    "type": "string"
+                }
+            }
+        },
+        "handlers.SourceTemplateExportData": {
+            "type": "object",
+            "properties": {
+                "id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "version": {
+                    "description": "Version is a published version of the template. Empty means the\nlatest published version.",
                     "type": "string"
                 }
             }
@@ -11485,6 +11599,64 @@ const docTemplate = `{
                 }
             }
         },
+        "handlers.definitionImportResponse": {
+            "type": "object",
+            "properties": {
+                "chart_count": {
+                    "description": "ChartCount is the number of charts. It is computed, not stored; the\npaged list sets it (the list does not load the charts).",
+                    "type": "integer",
+                    "readOnly": true
+                },
+                "charts": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/models.ChartConfig"
+                    }
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "default_branch": {
+                    "type": "string"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "owner_id": {
+                    "type": "string"
+                },
+                "owner_instance_id": {
+                    "description": "OwnerInstanceID is set when quick deploy created the definition for one\ninstance. Deleting that instance also deletes the definition when no\nother instance uses it. Empty for definitions that users create.",
+                    "type": "string"
+                },
+                "owner_username": {
+                    "description": "OwnerUsername is the username of the owner. It is computed, not\nstored; the API sets it in list and detail responses. Omitted when\nthe owner no longer exists (for example, after a delete).",
+                    "type": "string",
+                    "readOnly": true
+                },
+                "source_template_id": {
+                    "type": "string"
+                },
+                "source_template_version": {
+                    "type": "string"
+                },
+                "updated_at": {
+                    "type": "string"
+                },
+                "warnings": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
         "handlers.extendTTLRequest": {
             "type": "object",
             "properties": {
@@ -11820,6 +11992,21 @@ const docTemplate = `{
                 },
                 "right": {
                     "type": "string"
+                }
+            }
+        },
+        "handlers.templateLinkRequest": {
+            "type": "object",
+            "properties": {
+                "template_id": {
+                    "description": "TemplateID is the template to link. Empty removes the link.",
+                    "type": "string",
+                    "example": "6f1c2d3e-0000-0000-0000-000000000000"
+                },
+                "version": {
+                    "description": "Version is a published version of the template. Empty means the\nlatest published version.",
+                    "type": "string",
+                    "example": "1.2.0"
                 }
             }
         },

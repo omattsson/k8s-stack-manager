@@ -17,6 +17,7 @@ import DeleteIcon from '@mui/icons-material/Delete';
 import LockIcon from '@mui/icons-material/Lock';
 import FileDownloadIcon from '@mui/icons-material/FileDownload';
 import SystemUpdateAltIcon from '@mui/icons-material/SystemUpdateAlt';
+import LinkIcon from '@mui/icons-material/Link';
 import { definitionService, templateService } from '../../api/client';
 import { useNotification } from '../../context/NotificationContext';
 import { useAuth } from '../../context/AuthContext';
@@ -25,6 +26,7 @@ import type { StackDefinition, ChartConfig, TemplateChartConfig } from '../../ty
 import YamlEditor from '../../components/YamlEditor';
 import LoadingState from '../../components/LoadingState';
 import UpgradeDialog from './UpgradeDialog';
+import TemplateLinkDialog from './TemplateLinkDialog';
 import { useUnsavedChanges } from '../../hooks/useUnsavedChanges';
 
 interface ChartFormData {
@@ -106,6 +108,8 @@ const Form = () => {
   const [defaultBranch, setDefaultBranch] = useState('master');
   const [sourceTemplateId, setSourceTemplateId] = useState<string | undefined>();
   const [sourceTemplateVersion, setSourceTemplateVersion] = useState<string | undefined>();
+  const [sourceTemplateName, setSourceTemplateName] = useState<string | undefined>();
+  const [linkDialogOpen, setLinkDialogOpen] = useState(false);
   const [charts, setCharts] = useState<ChartFormData[]>([]);
   const [templateCharts, setTemplateCharts] = useState<TemplateChartConfig[]>([]);
   const [loading, setLoading] = useState(isEdit);
@@ -145,12 +149,7 @@ const Form = () => {
           charts: loadedCharts,
         }));
         if (data.source_template_id) {
-          try {
-            const tmpl = await templateService.get(data.source_template_id);
-            setTemplateCharts(tmpl.charts || []);
-          } catch {
-            // Template fetch is best-effort
-          }
+          await loadSourceTemplate(data.source_template_id);
         }
       } catch {
         setError('Failed to load definition');
@@ -160,6 +159,31 @@ const Form = () => {
     };
     fetchDefinition();
   }, [id]);
+
+  /** Loads the name and the charts of the source template (best effort). */
+  const loadSourceTemplate = async (templateId: string) => {
+    try {
+      const tmpl = await templateService.get(templateId);
+      setSourceTemplateName(tmpl.name);
+      setTemplateCharts(tmpl.charts || []);
+    } catch {
+      // Template fetch is best-effort
+    }
+  };
+
+  const handleLinked = async (updated: StackDefinition) => {
+    setLinkDialogOpen(false);
+    setSourceTemplateId(updated.source_template_id || undefined);
+    setSourceTemplateVersion(updated.source_template_version || undefined);
+    setSourceTemplateName(undefined);
+    setTemplateCharts([]);
+    if (updated.source_template_id) {
+      await loadSourceTemplate(updated.source_template_id);
+      showSuccess('Template link saved');
+    } else {
+      showSuccess('Template link removed');
+    }
+  };
 
   const addChart = () => {
     setCharts([...charts, emptyChart()]);
@@ -276,6 +300,7 @@ const Form = () => {
       {sourceTemplateId && (
         <Alert severity="info" sx={{ mb: 2 }}>
           Derived from template
+          {sourceTemplateName && ` ${sourceTemplateName}`}
           {sourceTemplateVersion && ` (v${sourceTemplateVersion})`}.{' '}
           <Chip
             label="View Template"
@@ -293,7 +318,28 @@ const Form = () => {
             onClick={() => setUpgradeDialogOpen(true)}
             sx={{ cursor: 'pointer' }}
           />
+          {canManageCharts && id && (
+            <>
+              {' '}
+              <Chip
+                icon={<LinkIcon />}
+                label="Change Link"
+                size="small"
+                variant="outlined"
+                onClick={() => setLinkDialogOpen(true)}
+                sx={{ cursor: 'pointer' }}
+              />
+            </>
+          )}
         </Alert>
+      )}
+
+      {!sourceTemplateId && canManageCharts && id && !loading && (
+        <Box sx={{ mb: 2 }}>
+          <Button size="small" variant="outlined" startIcon={<LinkIcon />} onClick={() => setLinkDialogOpen(true)}>
+            Link to a Template
+          </Button>
+        </Box>
       )}
 
       <Paper sx={{ p: 3, mb: 3 }}>
@@ -416,6 +462,17 @@ const Form = () => {
           {saving ? 'Saving...' : 'Save Definition'}
         </Button>
       </Box>
+
+      {canManageCharts && id && (
+        <TemplateLinkDialog
+          definitionId={id}
+          open={linkDialogOpen}
+          currentTemplateId={sourceTemplateId}
+          currentVersion={sourceTemplateVersion}
+          onClose={() => setLinkDialogOpen(false)}
+          onLinked={handleLinked}
+        />
+      )}
 
       {sourceTemplateId && id && (
         <UpgradeDialog

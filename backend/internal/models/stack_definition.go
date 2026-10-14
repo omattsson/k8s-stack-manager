@@ -42,6 +42,10 @@ type StackDefinitionRepository interface {
 	FindByIDForUpdate(id string) (*StackDefinition, error)
 	FindByName(name string) ([]StackDefinition, error)
 	Update(definition *StackDefinition) error
+	// SetTemplateLink writes only source_template_id,
+	// source_template_version and updated_at, so a concurrent full-row
+	// update of other fields is not lost. Empty values remove the link.
+	SetTemplateLink(id, templateID, version string) error
 	Delete(id string) error
 	List() ([]StackDefinition, error)
 	// ListPaged returns one page of the definitions that match filter,

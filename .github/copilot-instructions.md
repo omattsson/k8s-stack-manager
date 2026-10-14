@@ -205,6 +205,7 @@ backend/
       shared_values_loader.go    # Loads the shared values of the cluster that the deploy uses
       values_builder.go          # valuesBuilder: the one Helm values pipeline (deploy, bulk, quick deploy, preview, export, compare)
       stack_definitions.go       # DefinitionHandler: CRUD, chart management, import and export, requireDefinitionModify
+      definition_template_link.go # DefinitionHandler: link a definition to a template version (PUT template-link), import link lookup
       stack_instances.go         # InstanceHandler: CRUD, clone, deploy, stop, clean, deploy-preview, compare, extend TTL
       instance_rollback.go       # Rollback response type and values-drift message
       instance_actions.go        # InstanceHandler: custom action list (UI metadata, can_invoke) and async job log proxy
@@ -420,7 +421,7 @@ frontend/src/
     Login/                     # Authentication page
     AuthCallback/              # OIDC authentication callback handler
     StackInstances/            # Dashboard.tsx, Detail.tsx, Form.tsx, Compare.tsx, CloneDialog.tsx, RollbackDialog.tsx, ExpiryChip.tsx, widgets/: instance list, deploy, stop, clean, rollback
-    StackDefinitions/          # List.tsx, Form.tsx, ImportDefinitionDialog.tsx, UpgradeDialog.tsx
+    StackDefinitions/          # List.tsx, Form.tsx, ImportDefinitionDialog.tsx, UpgradeDialog.tsx, TemplateLinkDialog.tsx
     Templates/                 # Gallery.tsx, Builder.tsx, Instantiate.tsx, Preview.tsx, VersionHistory.tsx, PublishDialog.tsx, CloneTemplateDialog.tsx
     AuditLog/                  # Filterable audit log viewer
     Admin/                     # Clusters/, Users/, OrphanedNamespaces/, NotificationChannels/
@@ -606,6 +607,7 @@ Developers use this application to configure, store and deploy multi-service Hel
   - `PUT /templates/:id` is a partial update.
 - **Definition names:** unique for each owner (application check, no unique index). Create, rename and template instantiate return 409 for a duplicate. Import renames to `<name> (imported)`, `<name> (imported 2)`, and so on. Quick deploy uses `<name> (2)`, and so on.
 - **Import and export:** you can export a definition as a JSON bundle and import it to create a new definition with charts.
+- **Template link:** `PUT /stack-definitions/:id/template-link` with `{"template_id","version"}` (devops or admin, `handlers/definition_template_link.go`) writes only the link columns (`SetTemplateLink`), and sets or removes `source_template_id` and `source_template_version` of an existing definition. The template must be published (409); the version must be a published version (400, default: the latest). An empty `template_id` removes the link. Charts and values do not change. A linked definition gets the template rules (required charts, locked values at deploy, both from the latest published version; the linked version is the base of the upgrade check) and counts in the analytics template usage. Audit action `link_template`. Export writes `definition.source_template` (`id`, `name`, `version`); import looks it up by ID, else by a unique name among the published templates, and returns `warnings` instead of a failure when the link cannot be set. The definition page has a "Template link" dialog (`TemplateLinkDialog`, devops and admin).
 - **Shared values:** per-cluster Helm values for all instances in that cluster. They merge by priority (lowest first) before the chart defaults and the instance overrides.
 - **Bulk template operations:** bulk delete, publish and unpublish accept up to 50 templates for each request. They return a result for each template.
 
@@ -664,7 +666,7 @@ Developers use this application to configure, store and deploy multi-service Hel
 | Template Versions | `/api/v1/templates/:id/versions` | Version history listing, detail, diff |
 | Quick Deploy | `/api/v1/templates/:id/quick-deploy` | One-click template deployment |
 | Bulk Template Ops | `/api/v1/templates/bulk` | Bulk delete, publish, unpublish templates (up to 50, devops) |
-| Stack Definitions | `/api/v1/stack-definitions` | CRUD, nested chart management, import and export |
+| Stack Definitions | `/api/v1/stack-definitions` | CRUD, nested chart management, import and export, template link, upgrade check and upgrade |
 | Stack Instances | `/api/v1/stack-instances` | CRUD, clone, values export, deploy, deploy-preview, stop, clean, rollback, status, pods, deploy-log, recent, compare, extend TTL, follow and unfollow, custom actions (list, invoke, job log) |
 | Bulk Operations | `/api/v1/stack-instances/bulk` | Bulk deploy, stop, clean, delete (up to 50 instances, devops) |
 | Value Overrides | `/api/v1/stack-instances/:id/overrides` | Per-chart value overrides |

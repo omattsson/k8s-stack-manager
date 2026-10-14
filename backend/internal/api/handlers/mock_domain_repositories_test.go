@@ -655,6 +655,23 @@ func (m *MockStackDefinitionRepository) Update(d *models.StackDefinition) error 
 	return nil
 }
 
+func (m *MockStackDefinitionRepository) SetTemplateLink(id, templateID, version string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.err != nil {
+		return m.err
+	}
+	d, ok := m.items[id]
+	if !ok {
+		return dberrors.NewDatabaseError("set_template_link", dberrors.ErrNotFound)
+	}
+	cp := *d
+	cp.SourceTemplateID, cp.SourceTemplateVersion = templateID, version
+	cp.UpdatedAt = time.Now().UTC()
+	m.items[id] = &cp
+	return nil
+}
+
 func (m *MockStackDefinitionRepository) Delete(id string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()

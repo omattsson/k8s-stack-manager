@@ -154,6 +154,8 @@ stackctl definition import --file examples/starter-templates/api-backend.json
 stackctl definition import --file examples/starter-templates/full-stack.json
 ```
 
+The starter bundles have no source template, so the analytics template usage does not count them. To link an imported definition to a published template, open the definition and select **Link to a Template** (`devops` or `admin`). A bundle can also name its template in `definition.source_template` (`id` or `name`, and `version`).
+
 List the definitions:
 
 ```bash

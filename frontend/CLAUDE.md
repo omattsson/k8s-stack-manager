@@ -43,7 +43,7 @@
   - Simple pages export from `index.tsx`: Login, AuthCallback, AuditLog, Profile, Analytics, CleanupPolicies, ClusterHealth, Notifications, SharedValues, NotFound.
   - Domain pages use named files:
     - `StackInstances/`: `Dashboard.tsx`, `Detail.tsx`, `Form.tsx`, `Compare.tsx`, `CloneDialog.tsx`, `RollbackDialog.tsx`, `ExpiryChip.tsx`, `widgets/`.
-    - `StackDefinitions/`: `List.tsx`, `Form.tsx`, `ImportDefinitionDialog.tsx`, `UpgradeDialog.tsx`.
+    - `StackDefinitions/`: `List.tsx`, `Form.tsx`, `ImportDefinitionDialog.tsx`, `UpgradeDialog.tsx`, `TemplateLinkDialog.tsx`.
     - `Templates/`: `Gallery.tsx`, `Builder.tsx`, `Instantiate.tsx`, `Preview.tsx`, `VersionHistory.tsx`, `PublishDialog.tsx`, `CloneTemplateDialog.tsx`.
     - `Admin/`: `Clusters/`, `NotificationChannels/`, `OrphanedNamespaces/`, `Users/`.
 - Shared components are in `src/components/`:

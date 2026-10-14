@@ -14,6 +14,7 @@ import {
 import FileUploadIcon from '@mui/icons-material/FileUpload';
 import type { DefinitionExportBundle, StackDefinition } from '../../types';
 import { definitionService } from '../../api/client';
+import { useNotification } from '../../context/NotificationContext';
 
 interface ImportDefinitionDialogProps {
   open: boolean;
@@ -27,6 +28,7 @@ const ImportDefinitionDialog = ({ open, onClose, onImported }: ImportDefinitionD
   const [parseError, setParseError] = useState<string | null>(null);
   const [importing, setImporting] = useState(false);
   const [importError, setImportError] = useState<string | null>(null);
+  const { showWarning } = useNotification();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const resetState = () => {
@@ -84,7 +86,9 @@ const ImportDefinitionDialog = ({ open, onClose, onImported }: ImportDefinitionD
     setImporting(true);
     setImportError(null);
     try {
-      const created = await definitionService.importDefinition(bundle);
+      const { warnings, ...created } = await definitionService.importDefinition(bundle);
+      // For example: the source template of the bundle does not exist here.
+      if (warnings && warnings.length > 0) showWarning(warnings.join(' '));
       onImported(created);
       handleClose();
     } catch {

@@ -131,6 +131,10 @@ func (m *mockDefinitionRepo) FindByIDForUpdate(id string) (*models.StackDefiniti
 	return m.FindByID(id)
 }
 
+func (m *mockDefinitionRepo) SetTemplateLink(_, _, _ string) error {
+	return nil
+}
+
 func (m *mockDefinitionRepo) NamesByIDs(_ []string) (map[string]string, error) {
 	return map[string]string{}, nil
 }
