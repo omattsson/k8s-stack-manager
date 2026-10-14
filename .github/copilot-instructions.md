@@ -611,11 +611,12 @@ Developers use this application to configure, store and deploy multi-service Hel
 - **Git provider detection:** by URL. `dev.azure.com` and `visualstudio.com` mean Azure DevOps. `gitlab.com` or a custom host means GitLab.
 - **Cleanup policies:**
   - `PUT /admin/cleanup-policies/:id` is a partial update. Only the fields in the body change. The backend validates the merged policy.
-  - A policy runs a cron-scheduled action (stop, clean, delete) on instances that match a condition: `status:`, `idle_days:` (days without a deploy; a running or partial stack whose expiry is in the future never matches), `age_days:` (creation age), `stopped_days:` (time since `StoppedAt`), `ttl_expired`.
+  - A policy runs a cron-scheduled action (stop, clean, delete) on instances that match a condition: `status:`, `idle_days:` (days without a deploy; a running or partial stack whose expiry is in the future never matches), `age_days:` (creation age), `stopped_days:` (time since `StoppedAt`), `cleaned_days:` (time since `CleanedAt`, drafts only), `ttl_expired`.
   - A policy targets one cluster or "all".
   - Only the leader replica runs the cron jobs. It reloads on the policy changes it handles, when it becomes leader and every minute. A scheduled run reads the policy again.
   - Any replica can run a manual run. A manual run supports dry-run mode.
   - `StoppedAt` is set when a stop completes (API, TTL reaper, policy). A deploy or a clean clears it.
+  - `CleanedAt` (migration 59) is set when a clean completes. A deploy clears it. A clean also clears `LastDeployedAt`, so `idle_days` counts from the creation after a clean. Use `cleaned_days` for "cleaned N days ago".
 - **Orphaned namespaces:** `/admin/orphaned-namespaces` lists `stack-*` namespaces without an instance. Each entry has a `managed` flag (label `managed-by=k8s-stack-manager`). Delete of an unmanaged namespace needs `?confirm=<full name>`, else 409.
 - **Cluster health units:** `GET /clusters/:id/health/summary` adds `requested_cpu` and `requested_memory`. `GetClusterRequests` sums the pod requests with the scheduler rule. It reads pods from the API server cache. This is not the real use, and the dashboard does not list pods. The frontend parses quantities with `utils/quantity.ts` and shows cores and binary units.
 

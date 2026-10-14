@@ -281,3 +281,49 @@ func TestStoppedDaysCondition_InvalidValues(t *testing.T) {
 		assert.Error(t, err, cond)
 	}
 }
+
+func TestCleanedDaysCondition(t *testing.T) {
+	t.Parallel()
+
+	now := time.Now()
+	ago := func(d time.Duration) *time.Time { ts := now.Add(-d); return &ts }
+	day := 24 * time.Hour
+
+	tests := []struct {
+		name      string
+		condition string
+		inst      models.StackInstance
+		want      bool
+	}{
+		{"cleaned long ago matches", "cleaned_days:30",
+			models.StackInstance{Status: models.StackStatusDraft, CreatedAt: now.Add(-90 * day), CleanedAt: ago(31 * day)}, true},
+		{"old instance cleaned recently does not match", "cleaned_days:30",
+			models.StackInstance{Status: models.StackStatusDraft, CreatedAt: now.Add(-90 * day), CleanedAt: ago(2 * day)}, false},
+		{"draft without clean time (never deployed) never matches", "cleaned_days:1",
+			models.StackInstance{Status: models.StackStatusDraft, CreatedAt: now.Add(-90 * day)}, false},
+		{"deployed instance with an old clean time does not match", "cleaned_days:1",
+			models.StackInstance{Status: models.StackStatusRunning, CreatedAt: now.Add(-90 * day), CleanedAt: ago(5 * day)}, false},
+		{"cleaned_days:0 matches any recorded clean", "cleaned_days:0",
+			models.StackInstance{Status: models.StackStatusDraft, CleanedAt: ago(time.Second)}, true},
+		{"combined with age_days", "cleaned_days:2,age_days:30",
+			models.StackInstance{Status: models.StackStatusDraft, CreatedAt: now.Add(-5 * day), CleanedAt: ago(3 * day)}, false},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			f, err := ParseCondition(tt.condition)
+			assert.NoError(t, err)
+			inst := tt.inst
+			assert.Equal(t, tt.want, f.MatchesInstance(&inst))
+		})
+	}
+}
+
+func TestCleanedDaysCondition_InvalidValues(t *testing.T) {
+	t.Parallel()
+	for _, cond := range []string{"cleaned_days:x", "cleaned_days:-1", "cleaned_days"} {
+		_, err := ParseCondition(cond)
+		assert.Error(t, err, cond)
+	}
+}

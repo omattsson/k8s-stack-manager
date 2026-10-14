@@ -49,7 +49,7 @@ func (h *CleanupPolicyHandler) ListCleanupPolicies(c *gin.Context) {
 
 // CreateCleanupPolicy godoc
 // @Summary     Create a cleanup policy
-// @Description Creates a new cleanup policy and reloads the scheduler. condition is a comma-separated list of key:value pairs (all must match): status:<status>; idle_days:<N> (no deploy for N days, creation time when never deployed; a running or partial instance whose expiry is in the future never matches); age_days:<N> (created more than N days ago); stopped_days:<N> (stopped, and the last stop finished N or more days ago; instances without a recorded stop time never match); ttl_expired.
+// @Description Creates a new cleanup policy and reloads the scheduler. condition is a comma-separated list of key:value pairs (all must match): status:<status>; idle_days:<N> (no deploy for N days, creation time when never deployed; a running or partial instance whose expiry is in the future never matches); age_days:<N> (created more than N days ago); stopped_days:<N> (stopped, and the last stop finished N or more days ago; instances without a recorded stop time never match); cleaned_days:<N> (a draft, and the last clean finished N or more days ago; instances without a recorded clean time never match); ttl_expired.
 // @Tags        cleanup-policies
 // @Accept      json
 // @Produce     json
@@ -132,7 +132,7 @@ func (r *updateCleanupPolicyRequest) apply(policy *models.CleanupPolicy) {
 
 // UpdateCleanupPolicy godoc
 // @Summary     Update a cleanup policy
-// @Description Updates an existing cleanup policy and reloads the scheduler. Partial update: only the fields in the body change (for example {"enabled": false}); the merged policy is validated. See the create endpoint for the condition syntax (status, idle_days, age_days, stopped_days, ttl_expired).
+// @Description Updates an existing cleanup policy and reloads the scheduler. Partial update: only the fields in the body change (for example {"enabled": false}); the merged policy is validated. See the create endpoint for the condition syntax (status, idle_days, age_days, stopped_days, cleaned_days, ttl_expired).
 // @Tags        cleanup-policies
 // @Accept      json
 // @Produce     json

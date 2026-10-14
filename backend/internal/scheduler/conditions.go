@@ -15,10 +15,13 @@ type InstanceFilter struct {
 	IdleDays    int    // days since last deploy (or creation when never deployed); skips a running or partial stack with a future expiry
 	AgeDays     int    // days since creation
 	StoppedDays int    // days since the last successful stop (StoppedAt)
+	CleanedDays int    // days since the last successful clean (CleanedAt)
 	TTLExpired  bool   // instances past their TTL
 	// hasStoppedDays is true when the condition contains stopped_days, so
 	// that stopped_days:0 still requires a stopped instance with StoppedAt.
 	hasStoppedDays bool
+	// hasCleanedDays is the same for cleaned_days.
+	hasCleanedDays bool
 }
 
 // ParseCondition parses a condition string into an InstanceFilter.
@@ -32,6 +35,8 @@ type InstanceFilter struct {
 //   - age_days:<N>     created more than N days ago (creation age, not stop time)
 //   - stopped_days:<N> stopped, and the last stop finished N or more days ago;
 //     instances without a recorded stop time never match
+//   - cleaned_days:<N> a draft, and the last clean finished N or more days ago;
+//     instances without a recorded clean time never match
 //   - ttl_expired      the TTL expiry time is in the past
 //
 // Examples: "idle_days:7", "status:stopped,age_days:14", "stopped_days:3", "ttl_expired"
@@ -67,6 +72,13 @@ func ParseCondition(condition string) (*InstanceFilter, error) {
 			}
 			filter.StoppedDays = days
 			filter.hasStoppedDays = true
+		case "cleaned_days":
+			days, err := strconv.Atoi(value)
+			if err != nil || days < 0 {
+				return nil, fmt.Errorf("invalid cleaned_days value: %s", value)
+			}
+			filter.CleanedDays = days
+			filter.hasCleanedDays = true
 		case "ttl_expired":
 			filter.TTLExpired = true
 		default:
@@ -114,6 +126,15 @@ func (f *InstanceFilter) MatchesInstance(inst *models.StackInstance) bool {
 			return false
 		}
 		if now.Sub(*inst.StoppedAt).Hours() < float64(f.StoppedDays*24) {
+			return false
+		}
+	}
+
+	if f.hasCleanedDays {
+		if inst.Status != models.StackStatusDraft || inst.CleanedAt == nil {
+			return false
+		}
+		if now.Sub(*inst.CleanedAt).Hours() < float64(f.CleanedDays*24) {
 			return false
 		}
 	}

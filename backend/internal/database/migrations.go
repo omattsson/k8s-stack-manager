@@ -1108,6 +1108,9 @@ func (d *Database) AutoMigrate() error {
 	// ephemeral-storage total on cluster quotas and instance quota overrides.
 	migrator.AddMigration(containerQuotaFieldsMigration())
 
+	// Migration 59: stack_instances.cleaned_at (cleanup condition cleaned_days).
+	migrator.AddMigration(cleanedAtMigration())
+
 	// Run migrations
 	if err := migrator.MigrateUp(); err != nil {
 		return err
@@ -1910,6 +1913,47 @@ func containerQuotaFieldsMigration() schema.Migration {
 						return err
 					}
 				}
+			}
+			return nil
+		},
+	}
+}
+
+// cleanedAtMigration is migration 59. It adds stack_instances.cleaned_at, the
+// time the last successful clean finished (cleanup condition cleaned_days).
+// It backfills draft instances from their last successful clean log. A draft
+// without a clean log (never deployed) keeps NULL, so cleaned_days never
+// matches it. Up and Down are idempotent.
+func cleanedAtMigration() schema.Migration {
+	return schema.Migration{
+		Version:     "20261014000059",
+		Name:        "add_stack_instance_cleaned_at",
+		Description: "Add cleaned_at to stack_instances (cleanup condition cleaned_days); backfill drafts from their last successful clean",
+		Up: func(tx *gorm.DB) error {
+			m := tx.Migrator()
+			if !m.HasTable(&models.StackInstance{}) {
+				return nil
+			}
+			if !m.HasColumn(&models.StackInstance{}, "CleanedAt") {
+				if err := m.AddColumn(&models.StackInstance{}, "CleanedAt"); err != nil {
+					return err
+				}
+			}
+			if !m.HasTable(&models.DeploymentLog{}) {
+				return nil
+			}
+			return tx.Exec(
+				`UPDATE stack_instances SET cleaned_at = (
+					SELECT MAX(dl.completed_at) FROM deployment_logs dl
+					WHERE dl.stack_instance_id = stack_instances.id AND dl.action = ? AND dl.status = ?
+				) WHERE status = ? AND cleaned_at IS NULL`,
+				models.DeployActionClean, models.DeployLogSuccess, models.StackStatusDraft,
+			).Error
+		},
+		Down: func(tx *gorm.DB) error {
+			m := tx.Migrator()
+			if m.HasTable(&models.StackInstance{}) && m.HasColumn(&models.StackInstance{}, "CleanedAt") {
+				return m.DropColumn(&models.StackInstance{}, "CleanedAt")
 			}
 			return nil
 		},

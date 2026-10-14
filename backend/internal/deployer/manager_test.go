@@ -1862,6 +1862,7 @@ func TestManager_Clean_Success(t *testing.T) {
 	assert.Equal(t, models.StackStatusDraft, final.Status)
 	assert.Empty(t, final.ErrorMessage)
 	assert.Nil(t, final.LastDeployedAt)
+	assert.NotNil(t, final.CleanedAt, "a successful clean records cleaned_at (cleanup condition cleaned_days)")
 
 	// Verify log was updated to success.
 	finalLog, err := logRepo.FindByID(context.Background(), logID)
@@ -2606,6 +2607,7 @@ func TestManager_FinalizeClean_Success(t *testing.T) {
 	assert.Equal(t, models.StackStatusDraft, final.Status)
 	assert.Empty(t, final.ErrorMessage)
 	assert.Nil(t, final.LastDeployedAt)
+	assert.NotNil(t, final.CleanedAt, "a successful clean records cleaned_at (cleanup condition cleaned_days)")
 
 	finalLog, err := logRepo.FindByID(context.Background(), deployLog.ID)
 	assert.NoError(t, err)

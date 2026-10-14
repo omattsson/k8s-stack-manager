@@ -198,7 +198,7 @@ func (r *GORMStackInstanceRepository) List() ([]models.StackInstance, error) {
 var listColumns = []string{
 	"id", "name", "namespace", "owner_id", "stack_definition_id",
 	"branch", "cluster_id", "status", "ttl_minutes",
-	"created_at", "updated_at", "last_deployed_at", "expires_at", "stopped_at",
+	"created_at", "updated_at", "last_deployed_at", "expires_at", "stopped_at", "cleaned_at",
 }
 
 // applyInstanceFilter adds a WHERE condition for each non-empty field of f.
