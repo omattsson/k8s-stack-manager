@@ -22,6 +22,10 @@ type OverviewStats struct {
 	RunningInstances int `json:"running_instances"`
 	TotalDeploys     int `json:"total_deploys"`
 	TotalUsers       int `json:"total_users"`
+	// DeployLogRetentionDays is DEPLOY_LOG_RETENTION_DAYS. The deploy counts
+	// (here, per template and per user) cover only the kept deploy logs:
+	// about the last N days. 0 means all deploy logs are kept.
+	DeployLogRetentionDays int `json:"deploy_log_retention_days"`
 }
 
 // TemplateStats provides usage analytics for a single stack template.
@@ -67,6 +71,15 @@ type AnalyticsHandler struct {
 	userRepo       models.UserRepository
 	overviewCache  *cache.TTLCache[*OverviewStats]
 	templateCache  *cache.TTLCache[[]TemplateStats]
+	// deployLogRetentionDays is reported in the overview.
+	deployLogRetentionDays int
+}
+
+// WithDeployLogRetention sets the deploy log retention in days that the
+// overview reports (0: no retention). Returns h for chaining.
+func (h *AnalyticsHandler) WithDeployLogRetention(days int) *AnalyticsHandler {
+	h.deployLogRetentionDays = days
+	return h
 }
 
 // NewAnalyticsHandler creates a new AnalyticsHandler.
@@ -90,7 +103,8 @@ func NewAnalyticsHandler(
 
 // GetOverview godoc
 // @Summary     Get platform overview statistics
-// @Description Returns high-level aggregate counts (templates, definitions, instances, deploys, users)
+// @Description Returns high-level aggregate counts (templates, definitions, instances, deploys, users).
+// @Description deploy_log_retention_days is DEPLOY_LOG_RETENTION_DAYS: the deploy counts of all analytics endpoints cover only the kept deploy logs (about the last N days). 0 means all deploy logs are kept.
 // @Tags        analytics
 // @Produce     json
 // @Success     200 {object} OverviewStats
@@ -151,6 +165,8 @@ func (h *AnalyticsHandler) GetOverview(c *gin.Context) {
 		RunningInstances: runningInstances,
 		TotalDeploys:     totalDeploys,
 		TotalUsers:       int(userCount),
+
+		DeployLogRetentionDays: h.deployLogRetentionDays,
 	}
 	h.overviewCache.Set("overview", stats)
 	c.JSON(http.StatusOK, stats)

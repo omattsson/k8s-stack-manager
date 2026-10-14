@@ -542,6 +542,8 @@ export interface OverviewStats {
   running_instances: number;
   total_deploys: number;
   total_users: number;
+  /** DEPLOY_LOG_RETENTION_DAYS. Deploy counts cover only the kept deploy logs. 0: all logs are kept. */
+  deploy_log_retention_days?: number;
 }
 
 export interface TemplateStats {

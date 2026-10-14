@@ -236,6 +236,7 @@ Both list endpoints are paged (`page` and `pageSize`; default 25, maximum 100). 
 
 - Without a body, each Helm release goes back one revision.
 - With `{"target_log_id": "<log id>"}`, each chart gets the values of that deploy again (`helm upgrade --install` with the stored values snapshot).
+  - The log retention can delete an old target log (see [Log retention](#log-retention)). The rollback then gives 404. The newest successful deploy always stays.
   - The chart version is the version that the deploy recorded. Older deploy logs have no recorded versions. Then the current chart version is used.
   - A deploy with an empty chart version records no version. So the rollback installs the newest chart.
   - Charts that the target deploy did not include do not change.
@@ -330,6 +331,7 @@ A value override is a per-chart configuration override on a stack instance. The 
 
 The application records every mutating API call (POST, PUT, DELETE) with the user, action, entity type, entity ID, and time.
 
+- The log retention deletes audit entries older than `AUDIT_LOG_RETENTION_DAYS` (default 365 days; `0` keeps them). See [Log retention](#log-retention).
 - Only `devops` and `admin` users can read the audit log (`GET /audit-logs`). Only `admin` users can export it (`GET /audit-logs/export`). Other users get 403, and the UI does not show the Audit Log page to them.
 - A plain create, update, or delete call gets the action `create`, `update`, or `delete` and the entity type of the resource. The entity type is singular, for example `cluster`, `cleanup_policy`, or `api_key`.
 - Other operations get their own action, with the entity that they act on. For example, `POST /stack-instances/:id/deploy` gives `deploy | stack_instance | <instance id>`. The same applies to these operations:
@@ -430,6 +432,30 @@ A cluster can store **container registry credentials** (`registry_url`, `registr
 - The per-user deploy counts and the last activity come from the deploy logs. Each deploy log stores the user who started it (`user_id`). The data stays after the instance is deleted. A deploy on the instance of another user counts for the user who started it.
 - Migration 49 adds an index on (`user_id`, `action`, `started_at`, `completed_at`, `status`). It also sets `user_id` on older deploy logs to the owner of the instance (in batches of 1000), when the instance still exists. Deploys of instances that were deleted before the upgrade stay without a user.
 - "Instances" is the number of instances that the user owns now.
+- With a deploy log retention (`DEPLOY_LOG_RETENTION_DAYS`, default 180 days), all deploy counts cover only the kept deploy logs: about the last N days. The page says so above the overview. See [Log retention](#log-retention).
+
+### Log retention
+
+The leader replica deletes old rows of four tables once at the start and then every `LOG_RETENTION_INTERVAL` (default 1 hour). `0` keeps the rows of a table forever.
+
+| Table | Setting | Default | Age from |
+|---|---|---|---|
+| `deployment_logs` | `DEPLOY_LOG_RETENTION_DAYS` | 180 days | `started_at` |
+| `audit_logs` | `AUDIT_LOG_RETENTION_DAYS` | 365 days | `timestamp` |
+| `notifications` (read and unread) | `NOTIFICATION_RETENTION_DAYS` | 90 days | `created_at` |
+| Notification channel delivery logs | `DELIVERY_LOG_RETENTION_DAYS` | 30 days | `created_at` |
+
+- For each instance that exists, the deploy log retention keeps:
+  - the running logs;
+  - the newest deploy or rollback log, also when it failed;
+  - the newest successful deploy log;
+  - the two newest successful deploy or rollback logs. The values drift warning reads the newest one, and a rollback without a target reads the branch of the second newest.
+- Other old logs go, also old stop and clean logs. All old logs of a deleted instance go.
+- A rollback to a target deploy (`target_log_id`) that the retention deleted gives 404.
+- The age uses the database time. The worker deletes 1000 rows per statement (100 for deploy logs, which are large) with a short pause, so a large first run does not lock a table.
+- Each run logs the deleted rows per table. The metric `log_retention.deleted_rows_total` (attribute `table`) counts them.
+- Helm: `backend.logRetention` (`deployLogDays`, `auditLogDays`, `notificationDays`, `deliveryLogDays`, `interval`).
+- An upgrade from a version without retention deletes the older rows at the first run. To keep them, set the days (or `0`) before the upgrade.
 
 ### Users
 

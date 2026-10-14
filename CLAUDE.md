@@ -143,6 +143,7 @@ helm/k8s-stack-manager/
   - `backend.rbac.scope: cluster` keeps the old rules (namespaced objects in all namespaces).
 - **Leader election.** `backend.leaderElection.enabled` (default true) and `backend.leaderElection.leaseName` (Lease `<fullname>-workers`) set `LEADER_ELECTION_ENABLED` and `POD_NAME` / `POD_NAMESPACE` (downward API, Deployment and Rollout). It also creates the Lease Role. Only the leader replica runs the background workers. Every replica serves HTTP and WebSocket.
 - **WebSocket fan-out.** `backend.wsFanout.enabled` (default true) sets `WS_FANOUT_ENABLED`. `backend.wsFanout.pollInterval` (500ms) and `retention` (5m) set `WS_FANOUT_POLL_INTERVAL` and `WS_FANOUT_RETENTION`. The replicas share WebSocket messages through the `ws_events` table. Clients on every replica get deploy logs and leader events.
+- **Log retention.** `backend.logRetention` (`deployLogDays` 180, `auditLogDays` 365, `notificationDays` 90, `deliveryLogDays` 30, `interval` 1h) sets `DEPLOY_LOG_RETENTION_DAYS`, `AUDIT_LOG_RETENTION_DAYS`, `NOTIFICATION_RETENTION_DAYS`, `DELIVERY_LOG_RETENTION_DAYS` and `LOG_RETENTION_INTERVAL`. The leader worker `log-retention` deletes older rows. `0` keeps the rows forever.
 
 ### Configuration
 Key values in `values.yaml`:
@@ -263,6 +264,7 @@ backend/
     websocket/                   # WebSocket hub, client, message types, fan-out between replicas (ws_events writer and poller, cleanup worker)
     scheduler/                   # Cron-based cleanup policy execution
     ttl/                         # TTL reaper and expiry warner for stack instances
+    retention/                   # Leader worker log-retention: deletes old deploy logs, audit logs, notifications and delivery logs (*_RETENTION_DAYS)
   pkg/dberrors/errors.go         # Canonical error types: ErrNotFound, ErrDuplicateKey, ErrValidation, ErrConnectionFailed, ErrNotImplemented
   pkg/crypto/                    # AES-GCM encryption and decryption of kubeconfig data at rest (key derived with SHA-256)
   pkg/utils/                     # Shared utilities (for example cryptographic random strings)
@@ -724,6 +726,7 @@ Developers use this application to configure, store and deploy multi-service Hel
   - Every final deploy log write is conditional on `status = 'running'` (`models.ErrDeployLogNotRunning`). A late goroutine writes nothing after a recovery.
   - During an operation, the deploy manager writes the streamed lines to `deployment_logs.output` every 5s (`DeploymentLogOutputWriter.UpdateRunningOutput`, also conditional on `running`, up to `maxOutputLen`). A page reload then shows the output so far. `writeFinal` drops the live output.
   - Gap: `stack_instances` has no version column. A stale writer (status watcher, TTL reaper) can overwrite the recovered error.
+- Log retention: the leader worker `log-retention` (`internal/retention`, `RetentionRepository`) deletes old rows of `deployment_logs`, `audit_logs`, `notifications` and `notification_delivery_logs` (`*_RETENTION_DAYS`, `0` keeps them). It deletes in batches of 1000 IDs (100 for `deployment_logs`) by database time. For each existing instance it keeps the running deploy logs, the newest `deploy` or `rollback` log (any status), the newest successful `deploy` log and the two newest successful `deploy` or `rollback` logs (values drift, rollback branch). A rollback to a deleted target log gives 404. The Analytics deploy counts cover only the kept deploy logs (`deploy_log_retention_days` in the overview). A new log table that grows needs a retention there.
 - Always paginate new list endpoints.
   - Use the query parameters `page` and `pageSize` (default 25, maximum 100) with `ListPaged(..., limit, offset)`, as stack instances, definitions and templates do.
   - Stack instances and definitions also accept a `limit` and `offset` fallback. Templates take `page` and `pageSize` only.

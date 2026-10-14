@@ -77,6 +77,33 @@ describe('Analytics Page', () => {
     expect(screen.getByRole('progressbar')).toBeInTheDocument();
   });
 
+  it('says that the deploy counts cover the retention period', async () => {
+    (analyticsService.getOverview as ReturnType<typeof vi.fn>).mockResolvedValue({ ...mockOverview, deploy_log_retention_days: 180 });
+    (analyticsService.getTemplateStats as ReturnType<typeof vi.fn>).mockResolvedValue(mockTemplates);
+    (analyticsService.getUserStats as ReturnType<typeof vi.fn>).mockResolvedValue(mockUsers);
+    render(
+      <MemoryRouter>
+        <Analytics />
+      </MemoryRouter>
+    );
+    expect(await screen.findByText(/The deploy counts on this page cover the last 180 days/)).toBeInTheDocument();
+    expect(screen.getByText('Last 180 days')).toBeInTheDocument();
+  });
+
+  it('shows no retention note without a deploy log retention', async () => {
+    (analyticsService.getOverview as ReturnType<typeof vi.fn>).mockResolvedValue({ ...mockOverview, deploy_log_retention_days: 0 });
+    (analyticsService.getTemplateStats as ReturnType<typeof vi.fn>).mockResolvedValue(mockTemplates);
+    (analyticsService.getUserStats as ReturnType<typeof vi.fn>).mockResolvedValue(mockUsers);
+    render(
+      <MemoryRouter>
+        <Analytics />
+      </MemoryRouter>
+    );
+    expect(await screen.findByText('42')).toBeInTheDocument();
+    expect(screen.queryByText(/cover the last/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/^Last \d+ days$/)).not.toBeInTheDocument();
+  });
+
   it('renders overview cards and tables on success', async () => {
     (analyticsService.getOverview as ReturnType<typeof vi.fn>).mockResolvedValue(mockOverview);
     (analyticsService.getTemplateStats as ReturnType<typeof vi.fn>).mockResolvedValue(mockTemplates);
