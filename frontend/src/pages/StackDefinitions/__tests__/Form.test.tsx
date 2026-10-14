@@ -38,9 +38,12 @@ vi.mock('../../../api/client', () => ({
     updateChart: vi.fn(),
     deleteChart: vi.fn(),
     exportDefinition: vi.fn(),
+    setTemplateLink: vi.fn(),
   },
   templateService: {
     get: vi.fn(),
+    listAll: vi.fn(),
+    listVersions: vi.fn(),
   },
 }));
 
@@ -537,5 +540,45 @@ describe('StackDefinitions Form', () => {
     });
     expect(screen.getByRole('button', { name: /add chart/i })).toBeInTheDocument();
     expect(screen.getByRole('textbox', { name: /chart name/i })).not.toBeDisabled();
+  });
+
+  it('offers a template link to a devops user, not to a user', async () => {
+    (definitionService.get as ReturnType<typeof vi.fn>).mockResolvedValue(mockDefinitionWithCharts);
+    mockAuth.role = 'devops';
+    const { unmount } = renderEdit();
+    expect(await screen.findByRole('button', { name: /link to a template/i })).toBeInTheDocument();
+    unmount();
+
+    mockAuth.role = 'user';
+    renderEdit();
+    await waitFor(() => {
+      expect(screen.getByDisplayValue('Test Def')).toBeInTheDocument();
+    });
+    expect(screen.queryByRole('button', { name: /link to a template/i })).not.toBeInTheDocument();
+  });
+
+  it('links the definition and shows the template name', async () => {
+    const user = userEvent.setup();
+    mockAuth.role = 'devops';
+    (definitionService.get as ReturnType<typeof vi.fn>).mockResolvedValue(mockDefinitionWithCharts);
+    (templateService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue([{ id: 't1', name: 'Web stack', is_published: true }]);
+    (templateService.listVersions as ReturnType<typeof vi.fn>).mockResolvedValue([{ id: 'v1', template_id: 't1', version: '1.0.0' }]);
+    (templateService.get as ReturnType<typeof vi.fn>).mockResolvedValue({ id: 't1', name: 'Web stack', charts: [] });
+    (definitionService.setTemplateLink as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...mockDefinitionWithCharts,
+      source_template_id: 't1',
+      source_template_version: '1.0.0',
+    });
+    renderEdit();
+
+    await user.click(await screen.findByRole('button', { name: /link to a template/i }));
+    await user.click(await screen.findByRole('combobox', { name: 'Template' }));
+    await user.click(await screen.findByRole('option', { name: 'Web stack' }));
+    await waitFor(() => expect(templateService.listVersions).toHaveBeenCalledWith('t1'));
+    await user.click(screen.getByRole('button', { name: 'Save link' }));
+
+    await waitFor(() => expect(definitionService.setTemplateLink).toHaveBeenCalledWith('123', 't1', ''));
+    expect(await screen.findByText(/Derived from template Web stack \(v1.0.0\)/)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /link to a template/i })).not.toBeInTheDocument();
   });
 });

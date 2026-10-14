@@ -9,6 +9,16 @@ vi.mock('../../../api/client', () => ({
   },
 }));
 
+const mockShowWarning = vi.fn();
+vi.mock('../../../context/NotificationContext', () => ({
+  useNotification: () => ({
+    showSuccess: vi.fn(),
+    showError: vi.fn(),
+    showWarning: mockShowWarning,
+    showInfo: vi.fn(),
+  }),
+}));
+
 import { definitionService } from '../../../api/client';
 
 const validBundle = JSON.stringify({
@@ -116,6 +126,35 @@ describe('ImportDefinitionDialog', () => {
       expect(definitionService.importDefinition).toHaveBeenCalledTimes(1);
       expect(onImported).toHaveBeenCalledWith(created);
     });
+    expect(mockShowWarning).not.toHaveBeenCalled();
+  });
+
+  it('shows the import warnings and passes the definition without them', async () => {
+    const user = userEvent.setup();
+    const onImported = vi.fn();
+    (definitionService.importDefinition as ReturnType<typeof vi.fn>).mockResolvedValue({
+      id: 'new-id',
+      name: 'Test Definition',
+      warnings: ['The source template "Web" does not exist; the definition is not linked'],
+    });
+
+    render(
+      <ImportDefinitionDialog open={true} onClose={vi.fn()} onImported={onImported} />
+    );
+
+    const file = new File([validBundle], 'test-export.json', { type: 'application/json' });
+    await user.upload(screen.getByLabelText('Select definition file'), file);
+    await waitFor(() => {
+      expect(screen.getByText('Preview')).toBeInTheDocument();
+    });
+    await user.click(screen.getByRole('button', { name: /^import$/i }));
+
+    await waitFor(() => {
+      expect(onImported).toHaveBeenCalledWith({ id: 'new-id', name: 'Test Definition' });
+    });
+    expect(mockShowWarning).toHaveBeenCalledWith(
+      'The source template "Web" does not exist; the definition is not linked',
+    );
   });
 
   it('shows error when import API call fails', async () => {

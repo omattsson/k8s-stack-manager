@@ -52,6 +52,46 @@ func TestGORMStackDefinitionRepository_CRUD(t *testing.T) {
 	assert.Error(t, err)
 }
 
+func TestGORMStackDefinitionRepository_SetTemplateLink(t *testing.T) {
+	t.Parallel()
+
+	repo := setupStackDefinitionRepo(t)
+	def := &models.StackDefinition{Name: "imported", OwnerID: "owner-1", DefaultBranch: "main", Description: "keep me"}
+	require.NoError(t, repo.Create(def))
+
+	tests := []struct {
+		name        string
+		id          string
+		templateID  string
+		version     string
+		wantErr     bool
+		wantID      string
+		wantVersion string
+	}{
+		{name: "set the link", id: def.ID, templateID: "t1", version: "1.2.0", wantID: "t1", wantVersion: "1.2.0"},
+		{name: "remove the link", id: def.ID, templateID: "", version: "", wantID: "", wantVersion: ""},
+		{name: "unknown definition", id: "nonexistent", templateID: "t1", version: "1.0.0", wantErr: true},
+	}
+	// The cases share one row, so they run in order.
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := repo.SetTemplateLink(tt.id, tt.templateID, tt.version)
+			if tt.wantErr {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			got, err := repo.FindByID(def.ID)
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantID, got.SourceTemplateID)
+			assert.Equal(t, tt.wantVersion, got.SourceTemplateVersion)
+			// Other columns stay.
+			assert.Equal(t, "imported", got.Name)
+			assert.Equal(t, "keep me", got.Description)
+		})
+	}
+}
+
 func TestGORMStackDefinitionRepository_FindByID_NotFound(t *testing.T) {
 	t.Parallel()
 

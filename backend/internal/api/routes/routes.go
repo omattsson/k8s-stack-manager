@@ -334,6 +334,7 @@ func SetupRoutes(router *gin.Engine, deps Deps) *RateLimiters {
 				definitions.DELETE("/:id", deps.DefinitionHandler.DeleteDefinition)
 				definitions.GET("/:id/check-upgrade", deps.DefinitionHandler.CheckUpgrade)
 				definitions.POST("/:id/upgrade", deps.DefinitionHandler.ApplyUpgrade)
+				definitions.PUT("/:id/template-link", devops, deps.DefinitionHandler.SetTemplateLink)
 				definitions.POST("/:id/charts", devops, deps.DefinitionHandler.AddChartConfig)
 				definitions.GET("/:id/charts/:chartId", deps.DefinitionHandler.GetChartConfig)
 				definitions.PUT("/:id/charts/:chartId", deps.DefinitionHandler.UpdateChartConfig)

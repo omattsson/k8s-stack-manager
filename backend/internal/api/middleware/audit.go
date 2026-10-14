@@ -130,6 +130,7 @@ const (
 	AuditActionInstantiate    = "instantiate"
 	AuditActionImport         = "import"
 	AuditActionUpgrade        = "upgrade"
+	AuditActionLinkTemplate   = "link_template"
 	AuditActionTest           = "test"
 	AuditActionTestConnection = "test_connection"
 	AuditActionSetDefault     = "set_default"
@@ -158,7 +159,7 @@ var KnownAuditActions = []string{
 	AuditActionDeploy, AuditActionStop, AuditActionClean, AuditActionRollback,
 	AuditActionExtendTTL, AuditActionClone, AuditActionInvokeAction,
 	AuditActionPublish, AuditActionUnpublish, AuditActionInstantiate,
-	AuditActionImport, AuditActionUpgrade, AuditActionTest,
+	AuditActionImport, AuditActionUpgrade, AuditActionLinkTemplate, AuditActionTest,
 	AuditActionTestConnection, AuditActionSetDefault, AuditActionRun,
 	AuditActionDisable, AuditActionEnable, AuditActionResetPassword,
 	AuditActionChangeRole, AuditActionFollow, AuditActionUnfollow,
@@ -197,6 +198,9 @@ var auditRoutes = map[string]AuditRoute{
 	// Stack definitions.
 	"POST /stack-definitions/import":      {Action: AuditActionImport, EntityType: "stack_definition"},
 	"POST /stack-definitions/:id/upgrade": {Action: AuditActionUpgrade, EntityType: "stack_definition", IDParam: "id"},
+	// The details hold the new link; both keys are missing after an unlink.
+	"PUT /stack-definitions/:id/template-link": {Action: AuditActionLinkTemplate, EntityType: "stack_definition", IDParam: "id",
+		ResultFields: map[string]string{"source_template_id": "template_id", "source_template_version": "version"}},
 
 	// Stack instances.
 	"POST /stack-instances/:id/clone":         {Action: AuditActionClone, EntityType: "stack_instance", IDParam: "id", ResultFields: map[string]string{"id": "clone_id"}},

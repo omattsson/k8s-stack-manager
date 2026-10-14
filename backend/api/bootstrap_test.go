@@ -502,6 +502,7 @@ func (s *stubStackDefinitionRepo) FindByName(_ string) ([]models.StackDefinition
 	return nil, nil
 }
 func (s *stubStackDefinitionRepo) Update(_ *models.StackDefinition) error  { return nil }
+func (s *stubStackDefinitionRepo) SetTemplateLink(_, _, _ string) error { return nil }
 func (s *stubStackDefinitionRepo) Delete(_ string) error                   { return nil }
 func (s *stubStackDefinitionRepo) List() ([]models.StackDefinition, error) { return nil, nil }
 func (s *stubStackDefinitionRepo) ListPaged(_ models.StackDefinitionFilter, _, _ int) ([]models.StackDefinition, int64, error) {

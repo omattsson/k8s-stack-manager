@@ -471,6 +471,13 @@ definitions:
         type: string
       name:
         type: string
+      source_template:
+        allOf:
+        - $ref: '#/definitions/handlers.SourceTemplateExportData'
+        description: |-
+          SourceTemplate is the template that the definition is linked to. The
+          export sets it for a linked definition; the import links the new
+          definition when the template and the version exist.
     type: object
   handlers.DefinitionWithChartsResponse:
     properties:
@@ -667,6 +674,18 @@ definitions:
         type: boolean
       warning:
         description: Warning explains ValuesDrift when it is true.
+        type: string
+    type: object
+  handlers.SourceTemplateExportData:
+    properties:
+      id:
+        type: string
+      name:
+        type: string
+      version:
+        description: |-
+          Version is a published version of the template. Empty means the
+          latest published version.
         type: string
     type: object
   handlers.TemplateDetailResponse:
@@ -1090,6 +1109,54 @@ definitions:
     required:
     - name
     type: object
+  handlers.definitionImportResponse:
+    properties:
+      chart_count:
+        description: |-
+          ChartCount is the number of charts. It is computed, not stored; the
+          paged list sets it (the list does not load the charts).
+        readOnly: true
+        type: integer
+      charts:
+        items:
+          $ref: '#/definitions/models.ChartConfig'
+        type: array
+      created_at:
+        type: string
+      default_branch:
+        type: string
+      description:
+        type: string
+      id:
+        type: string
+      name:
+        type: string
+      owner_id:
+        type: string
+      owner_instance_id:
+        description: |-
+          OwnerInstanceID is set when quick deploy created the definition for one
+          instance. Deleting that instance also deletes the definition when no
+          other instance uses it. Empty for definitions that users create.
+        type: string
+      owner_username:
+        description: |-
+          OwnerUsername is the username of the owner. It is computed, not
+          stored; the API sets it in list and detail responses. Omitted when
+          the owner no longer exists (for example, after a delete).
+        readOnly: true
+        type: string
+      source_template_id:
+        type: string
+      source_template_version:
+        type: string
+      updated_at:
+        type: string
+      warnings:
+        items:
+          type: string
+        type: array
+    type: object
   handlers.extendTTLRequest:
     properties:
       minutes:
@@ -1352,6 +1419,19 @@ definitions:
       left:
         type: string
       right:
+        type: string
+    type: object
+  handlers.templateLinkRequest:
+    properties:
+      template_id:
+        description: TemplateID is the template to link. Empty removes the link.
+        example: 6f1c2d3e-0000-0000-0000-000000000000
+        type: string
+      version:
+        description: |-
+          Version is a published version of the template. Empty means the
+          latest published version.
+        example: 1.2.0
         type: string
     type: object
   handlers.templateVersionListItem:
@@ -5600,6 +5680,69 @@ paths:
       summary: Export a stack definition
       tags:
       - stack-definitions
+  /api/v1/stack-definitions/{id}/template-link:
+    put:
+      consumes:
+      - application/json
+      description: |-
+        Sets or removes the source template of an existing definition (for example an imported one). The link changes only source_template_id and source_template_version; the charts and the values of the definition do not change.
+        A linked definition gets the template rules: required charts cannot be removed, the locked values of the latest published snapshot apply at deploy time (also when the link names an older version; the version is the base of the upgrade check), the upgrade check compares with the template, and the analytics template usage counts the definition, its instances and its deploys. A definition whose charts differ from the template can be linked; the upgrade check then shows the difference.
+        template_id empty removes the link (both fields become empty; version must then be empty). The template must exist (404) and be published (409). version must be a published version of the template (400); empty means the latest published version.
+        Authorization: devops or admin (403).
+      parameters:
+      - description: Definition ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Template link
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/handlers.templateLinkRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.StackDefinition'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "409":
+          description: Conflict
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Link a stack definition to a template
+      tags:
+      - stack-definitions
   /api/v1/stack-definitions/{id}/upgrade:
     post:
       consumes:
@@ -5663,11 +5806,9 @@ paths:
     post:
       consumes:
       - application/json
-      description: 'Import a stack definition from a portable JSON bundle, creating
-        a new definition with fresh IDs. Definition names are unique per owner: when
-        the caller already has a definition with the bundle name, the import uses
-        "<name> (imported)", then "<name> (imported 2)", ... The response holds the
-        final name (409 when no free name is found).'
+      description: |-
+        Import a stack definition from a portable JSON bundle, creating a new definition with fresh IDs. Definition names are unique per owner: when the caller already has a definition with the bundle name, the import uses "<name> (imported)", then "<name> (imported 2)", ... The response holds the final name (409 when no free name is found).
+        definition.source_template (optional: id or name, and version) links the new definition to a template, as PUT /stack-definitions/{id}/template-link does. The import looks up the template by ID, else by name among the published templates (not case-sensitive on MySQL). When the template does not exist, is not published, the name matches more than one published template, or the version is not a published version, the import creates the definition without a link and adds a message to warnings; it does not fail.
       parameters:
       - description: Export bundle
         in: body
@@ -5681,7 +5822,7 @@ paths:
         "201":
           description: Created
           schema:
-            $ref: '#/definitions/handlers.DefinitionWithChartsResponse'
+            $ref: '#/definitions/handlers.definitionImportResponse'
         "400":
           description: Bad Request
           schema:
