@@ -924,11 +924,19 @@ export interface NotificationChannelFilters {
   cluster_ids?: string[];
 }
 
+/**
+ * Body format of a notification channel. `generic` sends the event JSON.
+ * `teams` sends a Microsoft Teams Adaptive Card envelope.
+ */
+export type NotificationChannelFormat = 'generic' | 'teams';
+
 export interface NotificationChannel {
   id: string;
   name: string;
   webhook_url: string;
   enabled: boolean;
+  /** Body format. An older backend omits it; treat a missing value as `generic`. */
+  format?: NotificationChannelFormat;
   /** Instance filters; an empty object means all instances. */
   filters?: NotificationChannelFilters;
   created_at: string;

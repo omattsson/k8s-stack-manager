@@ -1285,6 +1285,7 @@ func (m *Manager) executeStopWithCharts(helm HelmExecutor, instanceID string, de
 		output, err := helm.Uninstall(ctx, UninstallRequest{
 			ReleaseName: releaseName,
 			Namespace:   namespace,
+			Timeout:     uninstallWaitTimeout(ctx),
 		})
 
 		allOutput += fmt.Sprintf("=== Chart: %s ===\n%s\n", chart.ChartConfig.ChartName, output)
@@ -1637,6 +1638,9 @@ func (m *Manager) executeClean(helm HelmExecutor, k8sClient *k8s.Client, instanc
 		output, err := helm.Uninstall(ctx, UninstallRequest{
 			ReleaseName: releaseName,
 			Namespace:   namespace,
+			// The namespace delete below removes every object, so the clean
+			// does not wait for each release.
+			NoWait: true,
 		})
 
 		allOutput += fmt.Sprintf("=== Chart: %s ===\n%s\n", chart.ChartConfig.ChartName, output)
@@ -2350,4 +2354,28 @@ func truncateString(s string, maxLen int) string {
 		return s[:maxLen]
 	}
 	return s[:maxLen-3] + "..."
+}
+
+// uninstallWaitMargin is the time that a stop keeps after the helm --wait of
+// one release, so that helm ends with its own timeout error instead of being
+// killed when the stop context ends.
+const uninstallWaitMargin = 10 * time.Second
+
+// uninstallWaitTimeout returns the --timeout of one helm uninstall in a stop:
+// the time left in ctx minus uninstallWaitMargin, at most
+// defaultUninstallTimeout, at least one second. Without a deadline it returns
+// defaultUninstallTimeout.
+func uninstallWaitTimeout(ctx context.Context) time.Duration {
+	dl, ok := ctx.Deadline()
+	if !ok {
+		return defaultUninstallTimeout
+	}
+	t := time.Until(dl) - uninstallWaitMargin
+	if t > defaultUninstallTimeout {
+		return defaultUninstallTimeout
+	}
+	if t < time.Second {
+		return time.Second
+	}
+	return t
 }

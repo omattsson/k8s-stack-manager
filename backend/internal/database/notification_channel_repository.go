@@ -65,6 +65,9 @@ func (r *GORMNotificationChannelRepository) decryptSecret(ch *models.Notificatio
 
 // CreateChannel inserts a new notification channel.
 func (r *GORMNotificationChannelRepository) CreateChannel(ctx context.Context, channel *models.NotificationChannel) error {
+	if channel.Format == "" {
+		channel.Format = models.NotificationChannelFormatGeneric
+	}
 	original, err := r.encryptSecret(channel)
 	if err != nil {
 		return err
@@ -92,6 +95,14 @@ func (r *GORMNotificationChannelRepository) GetChannel(ctx context.Context, id s
 	return &channel, nil
 }
 
+// channelFormat returns the format to store: an empty format is generic.
+func channelFormat(format string) string {
+	if format == "" {
+		return models.NotificationChannelFormatGeneric
+	}
+	return format
+}
+
 // UpdateChannel updates an existing notification channel. If secretChanged is
 // true, the secret field is encrypted and persisted; otherwise it is left untouched
 // to avoid double-encryption when re-saving a decrypted record.
@@ -101,6 +112,7 @@ func (r *GORMNotificationChannelRepository) UpdateChannel(ctx context.Context, c
 		"webhook_url": channel.WebhookURL,
 		"enabled":     channel.Enabled,
 		"filters":     channel.Filters,
+		"format":      channelFormat(channel.Format),
 		"updated_at":  time.Now().UTC(),
 	}
 	if secretChanged {

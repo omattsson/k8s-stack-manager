@@ -219,6 +219,7 @@ describe('NotificationChannels Page', () => {
         name: 'team-a',
         webhook_url: 'https://hooks.example.com/a',
         enabled: true,
+        format: 'generic',
         filters: { instance_name_patterns: ['rdbtest-*'], owner_ids: ['u2'], cluster_ids: ['c1'] },
       });
     });
@@ -296,5 +297,78 @@ describe('NotificationChannels Page', () => {
     await user.click(within(dialog).getByRole('button', { name: 'Create' }));
 
     expect(await within(dialog).findByText(/is not a valid pattern/i)).toBeInTheDocument();
+  });
+
+  it('shows the Format select with Generic JSON as the default', async () => {
+    const user = userEvent.setup();
+    vi.mocked(notificationChannelService.list).mockResolvedValue([]);
+    renderPage();
+
+    await user.click(await screen.findByRole('button', { name: /create channel/i }));
+    const dialog = await screen.findByRole('dialog');
+    const select = within(dialog).getByRole('combobox', { name: /format/i });
+    expect(select).toHaveTextContent('Generic JSON');
+    expect(within(dialog).getByText('Sends the stack manager event JSON.')).toBeInTheDocument();
+  });
+
+  it('sends format teams on create when Microsoft Teams is chosen', async () => {
+    const user = userEvent.setup();
+    vi.mocked(notificationChannelService.list).mockResolvedValue([]);
+    vi.mocked(notificationChannelService.create).mockResolvedValue({ ...mockChannels[1], format: 'teams' });
+    renderPage();
+
+    await user.click(await screen.findByRole('button', { name: /create channel/i }));
+    const dialog = await screen.findByRole('dialog');
+    await user.type(within(dialog).getByLabelText(/^name/i), 'teams-alerts');
+    await user.type(within(dialog).getByLabelText(/webhook url/i), 'https://hooks.example.com/teams');
+    await user.click(within(dialog).getByRole('combobox', { name: /format/i }));
+    await user.click(await screen.findByRole('option', { name: 'Microsoft Teams (Adaptive Card)' }));
+    expect(within(dialog).getByText(/post to a channel when a webhook request is received/i)).toBeInTheDocument();
+
+    await user.click(within(dialog).getByRole('button', { name: 'Create' }));
+
+    await waitFor(() => {
+      expect(notificationChannelService.create).toHaveBeenCalledWith(expect.objectContaining({
+        name: 'teams-alerts',
+        format: 'teams',
+      }));
+    });
+  });
+
+  it('shows a Teams chip in the list and the stored format when editing', async () => {
+    const user = userEvent.setup();
+    vi.mocked(notificationChannelService.list).mockResolvedValue([
+      mockChannels[0],
+      { ...mockChannels[1], format: 'teams' },
+    ]);
+    vi.mocked(notificationChannelService.update).mockResolvedValue({ ...mockChannels[1], format: 'generic' });
+    renderPage();
+
+    expect(await screen.findByText('Teams')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: /edit teams-dev/i }));
+    const dialog = await screen.findByRole('dialog');
+    const select = within(dialog).getByRole('combobox', { name: /format/i });
+    expect(select).toHaveTextContent('Microsoft Teams (Adaptive Card)');
+
+    await user.click(select);
+    await user.click(await screen.findByRole('option', { name: 'Generic JSON' }));
+    await user.click(within(dialog).getByRole('button', { name: 'Update' }));
+
+    await waitFor(() => {
+      expect(notificationChannelService.update).toHaveBeenCalledWith('ch2', expect.objectContaining({ format: 'generic' }));
+    });
+  });
+
+  it('treats a channel without format as generic when editing', async () => {
+    const user = userEvent.setup();
+    vi.mocked(notificationChannelService.list).mockResolvedValue([mockChannels[0]]);
+    vi.mocked(notificationChannelService.update).mockResolvedValue({ ...mockChannels[0] });
+    renderPage();
+
+    await user.click(await screen.findByRole('button', { name: /edit slack-prod/i }));
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByRole('combobox', { name: /format/i })).toHaveTextContent('Generic JSON');
+    expect(screen.queryByText('Teams')).not.toBeInTheDocument();
   });
 });

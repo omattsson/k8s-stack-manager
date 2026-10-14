@@ -28,6 +28,7 @@ import {
   Collapse,
   Snackbar,
   CircularProgress,
+  MenuItem,
 } from '@mui/material';
 import AddOutlined from '@mui/icons-material/AddOutlined';
 import EditOutlined from '@mui/icons-material/EditOutlined';
@@ -50,6 +51,7 @@ import { describeApiError } from '../../../utils/apiError';
 import type {
   NotificationChannel,
   NotificationChannelFilters,
+  NotificationChannelFormat,
   NotificationChannelWithCount,
   NotificationDeliveryLog,
 } from '../../../types';
@@ -63,6 +65,18 @@ import { filtersEmpty, filtersSummary, type FilterOption, type FilterOptions } f
 const SECRET_HELP =
   'With a secret, each request has the header X-StackManager-Signature (sha256= and the HMAC-SHA256 of the body). '
   + 'Use it when your receiver checks the signature. Teams and Slack incoming webhooks ignore it.';
+
+/** Labels of the body formats, in the order of the Format select. */
+const FORMAT_LABELS: Record<NotificationChannelFormat, string> = {
+  generic: 'Generic JSON',
+  teams: 'Microsoft Teams (Adaptive Card)',
+};
+
+/** Help text of the Format select for each format. */
+const FORMAT_HELP: Record<NotificationChannelFormat, string> = {
+  generic: 'Sends the stack manager event JSON.',
+  teams: 'Sends an Adaptive Card. Use a Teams workflow made from the template "Post to a channel when a webhook request is received".',
+};
 
 const EVENT_TYPE_CATEGORIES: Record<string, string[]> = {
   Deployment: [
@@ -90,6 +104,7 @@ interface ChannelFormState {
   webhook_url: string;
   secret: string;
   enabled: boolean;
+  format: NotificationChannelFormat;
   filters: NotificationChannelFilters;
 }
 
@@ -98,6 +113,7 @@ const emptyForm: ChannelFormState = {
   webhook_url: '',
   secret: '',
   enabled: true,
+  format: 'generic',
   filters: {},
 };
 
@@ -240,6 +256,7 @@ const NotificationChannels = () => {
       webhook_url: channel.webhook_url,
       secret: '',
       enabled: channel.enabled,
+      format: channel.format ?? 'generic',
       filters: channel.filters ?? {},
     });
     setFormError(null);
@@ -279,6 +296,7 @@ const NotificationChannels = () => {
           name: form.name.trim(),
           webhook_url: form.webhook_url.trim(),
           enabled: form.enabled,
+          format: form.format,
           filters,
         };
         if (form.secret) {
@@ -287,10 +305,11 @@ const NotificationChannels = () => {
         ({ warnings } = await notificationChannelService.update(editingId, payload));
         showSuccess('Channel updated');
       } else {
-        const payload: { name: string; webhook_url: string; secret?: string; enabled?: boolean; filters?: NotificationChannelFilters } = {
+        const payload: Parameters<typeof notificationChannelService.create>[0] = {
           name: form.name.trim(),
           webhook_url: form.webhook_url.trim(),
           enabled: form.enabled,
+          format: form.format,
           filters,
         };
         if (form.secret) {
@@ -513,7 +532,12 @@ const NotificationChannels = () => {
                         {expandedChannelId === channel.id ? <ExpandLessOutlined /> : <ExpandMoreOutlined />}
                       </IconButton>
                     </TableCell>
-                    <TableCell>{channel.name}</TableCell>
+                    <TableCell>
+                      {channel.name}
+                      {channel.format === 'teams' && (
+                        <Chip label="Teams" size="small" variant="outlined" sx={{ ml: 1 }} />
+                      )}
+                    </TableCell>
                     <TableCell sx={{ display: { xs: 'none', md: 'table-cell' } }}>
                       <Tooltip title={channel.webhook_url}>
                         <Typography variant="body2" sx={{ fontFamily: 'monospace', fontSize: '0.8rem' }}>
@@ -674,6 +698,18 @@ const NotificationChannels = () => {
               }
               placeholder="https://hooks.example.com/webhook"
             />
+            <TextField
+              select
+              label="Format"
+              value={form.format}
+              onChange={(e) => setForm({ ...form, format: e.target.value as NotificationChannelFormat })}
+              fullWidth
+              helperText={FORMAT_HELP[form.format]}
+            >
+              {(Object.keys(FORMAT_LABELS) as NotificationChannelFormat[]).map((f) => (
+                <MenuItem key={f} value={f}>{FORMAT_LABELS[f]}</MenuItem>
+              ))}
+            </TextField>
             <TextField
               label="Secret"
               value={form.secret}

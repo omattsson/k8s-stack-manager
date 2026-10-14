@@ -119,7 +119,7 @@ func cleanupTestEnv() {
 		"DB_HOST", "DB_PORT", "DB_USER", "DB_PASSWORD", "DB_NAME",
 		"DB_MAX_OPEN_CONNS", "DB_MAX_IDLE_CONNS", "DB_CONN_MAX_LIFETIME",
 		"SERVER_HOST", "SERVER_PORT", "SERVER_READ_TIMEOUT", "SERVER_WRITE_TIMEOUT", "SERVER_SHUTDOWN_TIMEOUT",
-		"LOG_LEVEL", "LOG_FILE",
+		"LOG_LEVEL",
 	}
 	for _, v := range vars {
 		os.Unsetenv(v)
@@ -153,7 +153,6 @@ func mockLoadConfig() (*config.Config, error) {
 		},
 		Logging: config.LogConfig{
 			Level: "debug",
-			File:  "",
 		},
 	}, nil
 }

@@ -357,7 +357,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Creates a new notification channel. Optional filters limit the channel to some stack instances: instance_name_patterns (globs, path.Match syntax, case-insensitive), owner_ids, definition_ids and cluster_ids. Each set filter must match (AND); one value of a filter is enough (OR); empty filters match all instances. Events without an instance go only to channels without filters; a cleanup policy run goes to a channel when at least one affected instance matches. An invalid pattern gives 400. An ID that does not exist gives a warning in the response; the channel is saved.",
+                "description": "Creates a new notification channel. format sets the body of the webhook request: \"generic\" (default, the event JSON) or \"teams\" (a Microsoft Teams Adaptive Card envelope for a Teams workflow made from the template \"Post to a channel when a webhook request is received\"). An unknown format gives 400. Optional filters limit the channel to some stack instances: instance_name_patterns (globs, path.Match syntax, case-insensitive), owner_ids, definition_ids and cluster_ids. Each set filter must match (AND); one value of a filter is enough (OR); empty filters match all instances. Events without an instance go only to channels without filters; a cleanup policy run goes to a channel when at least one affected instance matches. An invalid pattern gives 400. An ID that does not exist gives a warning in the response; the channel is saved.",
                 "consumes": [
                     "application/json"
                 ],
@@ -526,7 +526,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Updates an existing notification channel. filters replaces the channel filters (omit it to keep them, send {} to remove them); the rules are the same as for create. An ID that does not exist gives a warning in the response.",
+                "description": "Updates an existing notification channel. Only the fields in the body change. format (\"generic\" or \"teams\") replaces the body format; omit it to keep the format; an unknown format gives 400. filters replaces the channel filters (omit it to keep them, send {} to remove them); the rules are the same as for create. An ID that does not exist gives a warning in the response.",
                 "consumes": [
                     "application/json"
                 ],
@@ -860,7 +860,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Sends a test payload (event type \"test\") to the channel's webhook URL with one attempt. Redirects are not followed. A disabled channel can be tested too; channel_enabled in the response tells whether the channel gets events. Each test send is written to the delivery log of the channel with event_type \"test\".",
+                "description": "Sends a test payload (event type \"test\") to the channel's webhook URL with one attempt, in the format of the channel (generic event JSON or a Teams Adaptive Card envelope). Redirects are not followed. A disabled channel can be tested too; channel_enabled in the response tells whether the channel gets events. Each test send is written to the delivery log of the channel with event_type \"test\".",
                 "produces": [
                     "application/json"
                 ],
@@ -11433,6 +11433,15 @@ const docTemplate = `{
                         }
                     ]
                 },
+                "format": {
+                    "description": "Format is the body format: \"generic\" (the event JSON, default) or\n\"teams\" (a Microsoft Teams Adaptive Card envelope).",
+                    "type": "string",
+                    "enum": [
+                        "generic",
+                        "teams"
+                    ],
+                    "example": "generic"
+                },
                 "name": {
                     "type": "string"
                 },
@@ -11547,6 +11556,10 @@ const docTemplate = `{
                         }
                     ]
                 },
+                "format": {
+                    "description": "Format is the body format of the webhook request:\nNotificationChannelFormatGeneric (the event JSON) or\nNotificationChannelFormatTeams (a Microsoft Teams Adaptive Card\nenvelope). Migration 60 adds the column; existing rows get \"generic\".",
+                    "type": "string"
+                },
                 "id": {
                     "type": "string"
                 },
@@ -11585,6 +11598,10 @@ const docTemplate = `{
                             "$ref": "#/definitions/models.NotificationChannelFilters"
                         }
                     ]
+                },
+                "format": {
+                    "description": "Format is the body format of the webhook request:\nNotificationChannelFormatGeneric (the event JSON) or\nNotificationChannelFormatTeams (a Microsoft Teams Adaptive Card\nenvelope). Migration 60 adds the column; existing rows get \"generic\".",
+                    "type": "string"
                 },
                 "id": {
                     "type": "string"
@@ -11844,6 +11861,14 @@ const docTemplate = `{
                         {
                             "$ref": "#/definitions/models.NotificationChannelFilters"
                         }
+                    ]
+                },
+                "format": {
+                    "description": "Format replaces the body format (\"generic\" or \"teams\"). Omit it to\nkeep the format.",
+                    "type": "string",
+                    "enum": [
+                        "generic",
+                        "teams"
                     ]
                 },
                 "name": {
@@ -12858,6 +12883,10 @@ const docTemplate = `{
                             "$ref": "#/definitions/models.NotificationChannelFilters"
                         }
                     ]
+                },
+                "format": {
+                    "description": "Format is the body format of the webhook request:\nNotificationChannelFormatGeneric (the event JSON) or\nNotificationChannelFormatTeams (a Microsoft Teams Adaptive Card\nenvelope). Migration 60 adds the column; existing rows get \"generic\".",
+                    "type": "string"
                 },
                 "id": {
                     "type": "string"

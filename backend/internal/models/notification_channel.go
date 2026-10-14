@@ -19,6 +19,11 @@ type NotificationChannel struct {
 	Name       string    `json:"name" gorm:"size:255;uniqueIndex;not null"`
 	WebhookURL string    `json:"webhook_url" gorm:"size:2048;not null"`
 	Secret     string    `json:"-" gorm:"type:text"`
+	// Format is the body format of the webhook request:
+	// NotificationChannelFormatGeneric (the event JSON) or
+	// NotificationChannelFormatTeams (a Microsoft Teams Adaptive Card
+	// envelope). Migration 60 adds the column; existing rows get "generic".
+	Format string `json:"format" gorm:"size:20;not null;default:'generic'"`
 	// Filters limits the events of the channel to some stack instances.
 	// Empty filters (the default) let all events through.
 	Filters NotificationChannelFilters `json:"filters" gorm:"type:text"`
@@ -27,6 +32,36 @@ type NotificationChannel struct {
 	// handler sets true when the request omits it; the column keeps its
 	// database default (migration 40).
 	Enabled bool `json:"enabled"`
+}
+
+// Body formats of a notification channel (NotificationChannel.Format).
+const (
+	// NotificationChannelFormatGeneric sends the event JSON (EventPayload).
+	NotificationChannelFormatGeneric = "generic"
+	// NotificationChannelFormatTeams sends the event as a Microsoft Teams
+	// Adaptive Card envelope, for a Teams workflow made from the template
+	// "Post to a channel when a webhook request is received".
+	NotificationChannelFormatTeams = "teams"
+)
+
+// NotificationChannelFormats returns the valid channel formats.
+func NotificationChannelFormats() []string {
+	return []string{NotificationChannelFormatGeneric, NotificationChannelFormatTeams}
+}
+
+// NormalizeNotificationChannelFormat trims the format and writes it in
+// lowercase. An empty format gives NotificationChannelFormatGeneric. An
+// unknown format gives an error.
+func NormalizeNotificationChannelFormat(format string) (string, error) {
+	f := strings.ToLower(strings.TrimSpace(format))
+	switch f {
+	case "":
+		return NotificationChannelFormatGeneric, nil
+	case NotificationChannelFormatGeneric, NotificationChannelFormatTeams:
+		return f, nil
+	default:
+		return "", fmt.Errorf("format must be one of: %s", strings.Join(NotificationChannelFormats(), ", "))
+	}
 }
 
 // NotificationChannelSubscription links a channel to a specific event type.

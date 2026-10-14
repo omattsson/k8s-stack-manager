@@ -63,6 +63,7 @@ import type {
   DashboardResponse,
   NotificationChannel,
   NotificationChannelFilters,
+  NotificationChannelFormat,
   NotificationChannelSaveResult,
   NotificationChannelWithCount,
   FollowState,
@@ -2568,7 +2569,7 @@ export const notificationChannelService = {
   },
   /**
    * Create a new notification channel.
-   * @param channel - Channel fields (name, webhook_url, optional secret, enabled and instance filters)
+   * @param channel - Channel fields (name, webhook_url, optional secret, enabled, format and instance filters). `format` defaults to `generic` on the server
    * @returns The created channel, with warnings for filter IDs that do not exist
    * @see POST /api/v1/admin/notification-channels
    */
@@ -2577,6 +2578,7 @@ export const notificationChannelService = {
     webhook_url: string;
     secret?: string;
     enabled?: boolean;
+    format?: NotificationChannelFormat;
     filters?: NotificationChannelFilters;
   }): Promise<NotificationChannelSaveResult> => {
     try {
@@ -2605,7 +2607,7 @@ export const notificationChannelService = {
   /**
    * Update a notification channel.
    * @param id - Channel ID
-   * @param data - Fields to update; `filters` replaces the instance filters (`{}` removes them)
+   * @param data - Fields to update (partial); `format` sets the body format (`generic` or `teams`); `filters` replaces the instance filters (`{}` removes them)
    * @returns The updated channel, with warnings for filter IDs that do not exist
    * @see PUT /api/v1/admin/notification-channels/:id
    */

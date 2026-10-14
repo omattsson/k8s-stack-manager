@@ -52,6 +52,9 @@ type createChannelRequest struct {
 	WebhookURL string `json:"webhook_url" binding:"required"`
 	Secret     string `json:"secret,omitempty"`
 	Enabled    *bool  `json:"enabled"`
+	// Format is the body format: "generic" (the event JSON, default) or
+	// "teams" (a Microsoft Teams Adaptive Card envelope).
+	Format string `json:"format,omitempty" enums:"generic,teams" example:"generic"`
 	// Filters limits the channel to some stack instances. Omit it or send
 	// empty lists for all instances.
 	Filters *models.NotificationChannelFilters `json:"filters,omitempty"`
@@ -62,6 +65,9 @@ type updateChannelRequest struct {
 	WebhookURL string `json:"webhook_url,omitempty"`
 	Secret     *string `json:"secret,omitempty"`
 	Enabled    *bool   `json:"enabled,omitempty"`
+	// Format replaces the body format ("generic" or "teams"). Omit it to
+	// keep the format.
+	Format *string `json:"format,omitempty" enums:"generic,teams"`
 	// Filters replaces the filters of the channel. Omit it to keep them;
 	// send {} to remove all filters.
 	Filters *models.NotificationChannelFilters `json:"filters,omitempty"`
@@ -159,7 +165,7 @@ func (h *NotificationChannelHandler) ListChannels(c *gin.Context) {
 
 // CreateChannel godoc
 // @Summary     Create a notification channel
-// @Description Creates a new notification channel. Optional filters limit the channel to some stack instances: instance_name_patterns (globs, path.Match syntax, case-insensitive), owner_ids, definition_ids and cluster_ids. Each set filter must match (AND); one value of a filter is enough (OR); empty filters match all instances. Events without an instance go only to channels without filters; a cleanup policy run goes to a channel when at least one affected instance matches. An invalid pattern gives 400. An ID that does not exist gives a warning in the response; the channel is saved.
+// @Description Creates a new notification channel. format sets the body of the webhook request: "generic" (default, the event JSON) or "teams" (a Microsoft Teams Adaptive Card envelope for a Teams workflow made from the template "Post to a channel when a webhook request is received"). An unknown format gives 400. Optional filters limit the channel to some stack instances: instance_name_patterns (globs, path.Match syntax, case-insensitive), owner_ids, definition_ids and cluster_ids. Each set filter must match (AND); one value of a filter is enough (OR); empty filters match all instances. Events without an instance go only to channels without filters; a cleanup policy run goes to a channel when at least one affected instance matches. An invalid pattern gives 400. An ID that does not exist gives a warning in the response; the channel is saved.
 // @Tags        notification-channels
 // @Accept      json
 // @Produce     json
@@ -196,6 +202,11 @@ func (h *NotificationChannelHandler) CreateChannel(c *gin.Context) {
 			return
 		}
 	}
+	format, err := models.NormalizeNotificationChannelFormat(req.Format)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid format: " + err.Error()})
+		return
+	}
 
 	now := time.Now().UTC()
 	channel := models.NotificationChannel{
@@ -203,6 +214,7 @@ func (h *NotificationChannelHandler) CreateChannel(c *gin.Context) {
 		Name:       req.Name,
 		WebhookURL: req.WebhookURL,
 		Secret:     req.Secret,
+		Format:     format,
 		Filters:    filters,
 		Enabled:    true,
 		CreatedAt:  now,
@@ -255,7 +267,7 @@ func (h *NotificationChannelHandler) GetChannel(c *gin.Context) {
 
 // UpdateChannel godoc
 // @Summary     Update a notification channel
-// @Description Updates an existing notification channel. filters replaces the channel filters (omit it to keep them, send {} to remove them); the rules are the same as for create. An ID that does not exist gives a warning in the response.
+// @Description Updates an existing notification channel. Only the fields in the body change. format ("generic" or "teams") replaces the body format; omit it to keep the format; an unknown format gives 400. filters replaces the channel filters (omit it to keep them, send {} to remove them); the rules are the same as for create. An ID that does not exist gives a warning in the response.
 // @Tags        notification-channels
 // @Accept      json
 // @Produce     json
@@ -317,6 +329,14 @@ func (h *NotificationChannelHandler) UpdateChannel(c *gin.Context) {
 			return
 		}
 		existing.Filters = filters
+	}
+	if req.Format != nil {
+		format, err := models.NormalizeNotificationChannelFormat(*req.Format)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid format: " + err.Error()})
+			return
+		}
+		existing.Format = format
 	}
 
 	if err := h.repo.UpdateChannel(c.Request.Context(), existing, secretChanged); err != nil {
@@ -458,7 +478,7 @@ func (h *NotificationChannelHandler) UpdateSubscriptions(c *gin.Context) {
 
 // TestChannel godoc
 // @Summary     Test a notification channel
-// @Description Sends a test payload (event type "test") to the channel's webhook URL with one attempt. Redirects are not followed. A disabled channel can be tested too; channel_enabled in the response tells whether the channel gets events. Each test send is written to the delivery log of the channel with event_type "test".
+// @Description Sends a test payload (event type "test") to the channel's webhook URL with one attempt, in the format of the channel (generic event JSON or a Teams Adaptive Card envelope). Redirects are not followed. A disabled channel can be tested too; channel_enabled in the response tells whether the channel gets events. Each test send is written to the delivery log of the channel with event_type "test".
 // @Tags        notification-channels
 // @Produce     json
 // @Param       id path string true "Channel ID"
