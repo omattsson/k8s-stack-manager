@@ -1,6 +1,7 @@
 package config_test
 
 import (
+	"log/slog"
 	"os"
 	"testing"
 	"time"
@@ -29,7 +30,6 @@ func TestLoadConfig(t *testing.T) {
 			"SERVER_HOST": "localhost",
 			"SERVER_PORT": "3000",
 			"LOG_LEVEL":   "debug",
-			"LOG_FILE":    "test.log",
 		}
 
 		// Set environment variables
@@ -65,7 +65,6 @@ func TestLoadConfig(t *testing.T) {
 
 		// Check logging config
 		assert.Equal(t, "debug", config.Logging.Level)
-		assert.Equal(t, "test.log", config.Logging.File)
 	})
 
 	// Test with default values
@@ -76,7 +75,7 @@ func TestLoadConfig(t *testing.T) {
 			"DB_HOST", "DB_PORT", "DB_USER", "DB_PASSWORD", "DB_NAME",
 			"DB_MAX_OPEN_CONNS", "DB_MAX_IDLE_CONNS", "DB_CONN_MAX_LIFETIME",
 			"SERVER_HOST", "SERVER_PORT", "SERVER_READ_TIMEOUT", "SERVER_WRITE_TIMEOUT", "SERVER_SHUTDOWN_TIMEOUT",
-			"LOG_LEVEL", "LOG_FILE",
+			"LOG_LEVEL",
 		}
 		for _, v := range vars {
 			os.Unsetenv(v)
@@ -110,7 +109,6 @@ func TestLoadConfig(t *testing.T) {
 		assert.Equal(t, 30*time.Second, config.Server.ShutdownTimeout)
 		// Check default logging config
 		assert.Equal(t, "info", config.Logging.Level)
-		assert.Empty(t, config.Logging.File)
 	})
 }
 
@@ -802,4 +800,40 @@ func TestNamespaceRoleBindingsConfig(t *testing.T) {
 			tt.assert(t, cfg.Deployment.NamespaceRoleBindings)
 		})
 	}
+}
+
+func TestLogConfigSlogLevel(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		level   string
+		want    slog.Level
+		wantErr bool
+	}{
+		{"", slog.LevelInfo, false},
+		{"info", slog.LevelInfo, false},
+		{"DEBUG", slog.LevelDebug, false},
+		{" warn ", slog.LevelWarn, false},
+		{"warning", slog.LevelWarn, false},
+		{"error", slog.LevelError, false},
+		{"verbose", slog.LevelInfo, true},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.level, func(t *testing.T) {
+			t.Parallel()
+			got, err := config.LogConfig{Level: tt.level}.SlogLevel()
+			if tt.wantErr {
+				assert.Error(t, err)
+				return
+			}
+			assert.NoError(t, err)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestValidateRejectsInvalidLogLevel(t *testing.T) {
+	t.Setenv("LOG_LEVEL", "verbose")
+	_, err := config.LoadConfig()
+	assert.ErrorContains(t, err, "LOG_LEVEL")
 }

@@ -67,6 +67,10 @@ func main() {
 		slog.Error("Failed to load configuration", "error", err)
 		os.Exit(1)
 	}
+	// LOG_LEVEL. Validate already rejected an invalid value.
+	if level, err := cfg.Logging.SlogLevel(); err == nil {
+		slog.SetLogLoggerLevel(level)
+	}
 
 	if cfg.CORS.AllowedOrigins == "" || cfg.CORS.AllowedOrigins == "*" {
 		slog.Warn("CORS wildcard mode: cookie-based refresh tokens require an explicit CORS_ALLOWED_ORIGINS when frontend runs on a different origin")

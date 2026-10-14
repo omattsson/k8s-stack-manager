@@ -67,6 +67,8 @@ All configuration uses environment variables with a `.env` fallback (godotenv). 
 - `RATE_LIMIT` (default 100 per minute), `LOGIN_RATE_LIMIT` (default 10 per minute).
 - `KUBECONFIG_PATH`, `KUBECONFIG_ENCRYPTION_KEY`.
 - `HELM_BINARY`, `DEPLOYMENT_TIMEOUT`, `MAX_CONCURRENT_DEPLOYS` (default 5).
+- `LOG_LEVEL`: `debug`, `info` (default), `warn` or `error`. `main` applies it to the default `slog` logger. An invalid value stops the startup.
+- `AZURE_DEVOPS_PAT`, `AZURE_DEVOPS_AUTH` (`pat` or `workload-identity`), `AZURE_DEVOPS_DEFAULT_ORG` (the organization of the provider health check), `GITLAB_BASE_URL`.
 - `NAMESPACE_LABELS`: extra stack namespace labels, `k=v,k=v`.
 - `ALLOWED_CHART_REPOS`: chart repository URL prefixes (`config.ParseAllowedChartRepos`). `models.SetAllowedChartSources` sets them at startup.
 - `STACK_ACCESS_CLUSTER_ROLE`, `STACK_ACCESS_SERVICE_ACCOUNT` (`<namespace>/<name>`): namespace-scoped access (`k8s.AccessBinding`, in-cluster clusters only). Set both or neither. The leader worker `stack-access-reconcile` applies it to existing namespaces.

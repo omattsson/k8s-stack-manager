@@ -402,14 +402,35 @@ type ServerConfig struct {
 
 // LogConfig holds logging configuration
 type LogConfig struct {
+	// Level is LOG_LEVEL: debug, info, warn (or warning) or error. main
+	// applies it to the default slog logger.
 	Level string
-	File  string
+}
+
+// SlogLevel parses Level (case-insensitive). An empty Level is info.
+func (c LogConfig) SlogLevel() (slog.Level, error) {
+	switch strings.ToLower(strings.TrimSpace(c.Level)) {
+	case "", "info":
+		return slog.LevelInfo, nil
+	case "debug":
+		return slog.LevelDebug, nil
+	case "warn", "warning":
+		return slog.LevelWarn, nil
+	case "error":
+		return slog.LevelError, nil
+	default:
+		return slog.LevelInfo, fmt.Errorf("invalid LOG_LEVEL %q: use debug, info, warn or error", c.Level)
+	}
 }
 
 // Validate checks if the configuration is valid
 func (c *Config) Validate() error {
 	if err := c.App.Validate(); err != nil {
 		return fmt.Errorf("app config: %w", err)
+	}
+
+	if _, err := c.Logging.SlogLevel(); err != nil {
+		return err
 	}
 
 	if err := c.Database.Validate(); err != nil {
@@ -649,7 +670,6 @@ func LoadConfig() (*Config, error) {
 		},
 		Logging: LogConfig{
 			Level: getEnv("LOG_LEVEL", "info"),
-			File:  getEnv("LOG_FILE", ""),
 		},
 		Auth:         loadAuthConfig(),
 		GitProvider:  loadGitProviderConfig(),

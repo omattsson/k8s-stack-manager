@@ -677,6 +677,24 @@ func TestHelmClient_BuildUninstallArgs(t *testing.T) {
 				ReleaseName: "my-app",
 				Namespace:   "default",
 			},
+			wantArgs: []string{"uninstall", "my-app", "-n", "default", "--wait", "--timeout", "5m0s"},
+		},
+		{
+			name: "explicit timeout",
+			req: UninstallRequest{
+				ReleaseName: "my-app",
+				Namespace:   "default",
+				Timeout:     90 * time.Second,
+			},
+			wantArgs: []string{"uninstall", "my-app", "-n", "default", "--wait", "--timeout", "1m30s"},
+		},
+		{
+			name: "no wait",
+			req: UninstallRequest{
+				ReleaseName: "my-app",
+				Namespace:   "default",
+				NoWait:      true,
+			},
 			wantArgs: []string{"uninstall", "my-app", "-n", "default"},
 		},
 		{

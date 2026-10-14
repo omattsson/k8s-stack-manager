@@ -248,9 +248,12 @@ func (h *AdminHandler) DeleteOrphanedNamespace(c *gin.Context) {
 				logKeyNamespace, namespace, "error", listErr)
 		} else {
 			for _, release := range releases {
+				// NoWait: this runs inside the HTTP request, and the namespace
+				// delete below removes every object anyway.
 				output, unErr := helmExecutor.Uninstall(ctx, deployer.UninstallRequest{
 					ReleaseName: release,
 					Namespace:   namespace,
+					NoWait:      true,
 				})
 				if unErr != nil {
 					slog.Warn("Failed to uninstall release during orphan cleanup",

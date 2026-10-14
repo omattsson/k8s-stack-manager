@@ -74,10 +74,21 @@ type InstallRequest struct {
 	NamespaceReady bool
 }
 
+// defaultUninstallTimeout limits the --wait of one helm uninstall when the
+// request sets no Timeout.
+const defaultUninstallTimeout = 5 * time.Minute
+
 // UninstallRequest contains the parameters for a helm uninstall operation.
 type UninstallRequest struct {
 	ReleaseName string
 	Namespace   string
+	// Timeout limits the wait until Kubernetes has deleted the objects of the
+	// release (helm uninstall --wait --timeout). Zero means
+	// defaultUninstallTimeout.
+	Timeout time.Duration
+	// NoWait skips --wait: for a clean (the namespace delete removes every
+	// object anyway) and for the orphaned-namespace cleanup (an HTTP request).
+	NoWait bool
 }
 
 // ReleaseStatus holds parsed output from helm status.
@@ -177,11 +188,18 @@ func (h *HelmClient) buildUninstallArgs(req UninstallRequest) ([]string, error) 
 	if err := validatePositionalArg("release name", req.ReleaseName); err != nil {
 		return nil, err
 	}
-	return []string{
-		"uninstall",
-		req.ReleaseName,
-		"-n", req.Namespace,
-	}, nil
+	args := []string{"uninstall", req.ReleaseName, "-n", req.Namespace}
+	if req.NoWait {
+		return args, nil
+	}
+	timeout := req.Timeout
+	if timeout <= 0 {
+		timeout = defaultUninstallTimeout
+	}
+	// --wait: return only when Kubernetes has deleted the objects of the
+	// release. Without it, a stop ended while a PVC was still Terminating, and
+	// a deploy right after the stop missed that PVC (issue #563).
+	return append(args, "--wait", "--timeout", timeout.String()), nil
 }
 
 // Status runs: helm status <release> -n <namespace> -o json

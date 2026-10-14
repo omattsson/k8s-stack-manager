@@ -367,11 +367,12 @@ The application records every mutating API call (POST, PUT, DELETE) with the use
 - An event without an instance (quota warning, secret expiry) goes only to channels without filters.
 - A cleanup policy run (`cleanup.policy.executed`) goes to a filtered channel when at least one affected instance matches.
 - A channel that the filters skip gets no delivery log entry (the backend logs it at debug level).
+- **Format** (`format`) sets the body of the webhook request. `generic` (the default) sends the event JSON. `teams` sends a Microsoft Teams Adaptive Card envelope (title, message, and the facts Event, By, and Time). Use `teams` for a Teams workflow made from the template "Post to a channel when a webhook request is received". The workflow then needs no change. An unknown format gives 400. The signature (`X-StackManager-Signature`) covers the body that is sent. The test send uses the format of the channel.
 - **Test** (`POST /admin/notification-channels/:id/test`) sends one test payload (event type `test`, one attempt, no redirect), also to a disabled channel. Each test send is in the delivery log with the event type `test`. The response has `success`, `message`, `status_code`, and `channel_enabled`.
 - The backend does not follow a redirect from a channel webhook. A 3xx answer is a failed delivery: the delivery log has the status code and `HTTP <code>: redirect not followed`. Delivery log messages never contain the webhook URL. Configure the final URL.
 - The save checks the patterns. An invalid pattern gives 400. An owner, definition, or cluster ID that does not exist gives a warning in the response (`warnings`), and the channel is saved. There are at most 50 values for each filter.
 - The channel dialog has a **Filters** section: patterns as chips (press Enter after each pattern) and pickers for owners, definitions, and clusters. `admin` users pick owners from all users. `devops` users cannot read the user list (`GET /users` is for `admin` only). So their owner picker lists the users who own an instance now. The channel list shows "All instances" or a short summary of the filters.
-- Migration 52 adds the column `notification_channels.filters` (JSON text, empty for existing channels). Migration 53 adds the table `instance_followers`.
+- Migration 52 adds the column `notification_channels.filters` (JSON text, empty for existing channels). Migration 53 adds the table `instance_followers`. Migration 60 adds the column `notification_channels.format` (`generic` for existing channels).
 
 ### Cluster
 

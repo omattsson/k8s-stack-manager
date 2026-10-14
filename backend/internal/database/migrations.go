@@ -1111,6 +1111,9 @@ func (d *Database) AutoMigrate() error {
 	// Migration 59: stack_instances.cleaned_at (cleanup condition cleaned_days).
 	migrator.AddMigration(cleanedAtMigration())
 
+	// Migration 60: notification_channels.format (generic or teams).
+	migrator.AddMigration(notificationChannelFormatMigration())
+
 	// Run migrations
 	if err := migrator.MigrateUp(); err != nil {
 		return err
@@ -1954,6 +1957,41 @@ func cleanedAtMigration() schema.Migration {
 			m := tx.Migrator()
 			if m.HasTable(&models.StackInstance{}) && m.HasColumn(&models.StackInstance{}, "CleanedAt") {
 				return m.DropColumn(&models.StackInstance{}, "CleanedAt")
+			}
+			return nil
+		},
+	}
+}
+
+// notificationChannelFormatMigration is migration 60. It adds
+// notification_channels.format (varchar(20), NOT NULL, default 'generic'):
+// the body format of the channel webhook (generic event JSON or a Microsoft
+// Teams Adaptive Card envelope). Existing channels get 'generic', so they
+// keep the body they had. Up and Down are idempotent.
+func notificationChannelFormatMigration() schema.Migration {
+	return schema.Migration{
+		Version:     "20261014000060",
+		Name:        "add_notification_channels_format",
+		Description: "Add notification_channels.format (generic or teams body format of a channel)",
+		Up: func(tx *gorm.DB) error {
+			m := tx.Migrator()
+			if !m.HasTable(&models.NotificationChannel{}) {
+				return nil
+			}
+			if !m.HasColumn(&models.NotificationChannel{}, "Format") {
+				if err := m.AddColumn(&models.NotificationChannel{}, "Format"); err != nil {
+					return err
+				}
+			}
+			// The column default fills existing rows. This also repairs a
+			// row with an empty value.
+			return tx.Exec("UPDATE notification_channels SET format = ? WHERE format IS NULL OR format = ''",
+				models.NotificationChannelFormatGeneric).Error
+		},
+		Down: func(tx *gorm.DB) error {
+			m := tx.Migrator()
+			if m.HasTable(&models.NotificationChannel{}) && m.HasColumn(&models.NotificationChannel{}, "Format") {
+				return m.DropColumn(&models.NotificationChannel{}, "Format")
 			}
 			return nil
 		},

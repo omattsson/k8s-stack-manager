@@ -539,6 +539,7 @@ Developers use this application to configure, store and deploy multi-service Hel
   4. Template locked values (locked values always win).
   After the merge, the backend substitutes the template variables `{{.Branch}}`, `{{.ImageTag}}` (Docker-safe tag of the branch), `{{.Namespace}}`, `{{.InstanceName}}`, `{{.StackName}}` and `{{.Owner}}`. `valuesBuilder` is the one pipeline for all values paths.
 - **Deploy preview:** `GET /stack-instances/:id/deploy-preview` returns the merged values of each chart without a deploy.
+- **Stop and clean:** a stop runs `helm uninstall --wait` for each chart. Its `--timeout` is the time left in the stop budget minus 10 s, at most 5 minutes. The stop ends only when Kubernetes has deleted the release objects, so a deploy right after the stop creates the PVCs again (issue #563). A clean and the orphaned-namespace cleanup do not wait: the namespace delete removes every object.
 - **Namespace and Helm:** the deployer calls `k8s.Client.EnsureNamespace` before the first Helm install. If it succeeds, the install request has `NamespaceReady` and Helm gets no `--create-namespace`. With that flag, Helm always sends a namespace create. An admission policy that requires the `managed-by` label refuses that create. Without a ready namespace (no k8s client, or the check failed), Helm creates the namespace.
 - **Namespace labels:** `k8s.Client.EnsureNamespace(ctx, namespace, instanceName)` sets these labels on create. It adds or corrects them on an existing namespace (deploy, rollback to a target). Other labels stay.
   - `managed-by=k8s-stack-manager`.
@@ -625,6 +626,7 @@ Developers use this application to configure, store and deploy multi-service Hel
   - Optional `filters`: `instance_name_patterns` (globs through `path.Match`), `owner_ids`, `definition_ids`, `cluster_ids`. Filters combine with AND, values inside a filter with OR. An empty filter means all.
   - `channel.Dispatcher` matches the filters against `EventPayload.Instances`. An event without an instance goes only to channels without filters. `cleanup.policy.executed` goes to a channel when one affected instance matches.
   - A bad glob gives 400. An unknown ID adds a `warnings` entry.
+  - `format`: `generic` (default, the event JSON) or `teams` (a Microsoft Teams Adaptive Card envelope for a Teams workflow made from the template "Post to a channel when a webhook request is received"). An unknown format gives 400. The signature covers the sent body. The test send uses the format. Migration 60 adds the column.
 - **Notifications:**
   - In-app notifications for deploy, stop and clean events. Each user has notification preferences and an unread count for the badge.
   - Dispatch uses the `notifier` package. The WebSocket message `notification.new` goes only to the sockets of the notified user (`Hub.BroadcastToUser`).

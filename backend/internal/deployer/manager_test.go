@@ -4087,3 +4087,33 @@ func TestFinalizeDeploy_ReadinessWarning_AttachesHookMetadata(t *testing.T) {
 var _ StreamingHelmExecutor = (*streamingMockHelmExecutor)(nil)
 
 func (*mockInstanceRepo) CountByStatuses(statuses []string) (int, error) { return 0, nil }
+
+func TestUninstallWaitTimeout(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		left time.Duration // time left in the context; 0 means no deadline
+		min  time.Duration
+		max  time.Duration
+	}{
+		{name: "no deadline", left: 0, min: defaultUninstallTimeout, max: defaultUninstallTimeout},
+		{name: "long budget is capped", left: 30 * time.Minute, min: defaultUninstallTimeout, max: defaultUninstallTimeout},
+		{name: "short budget keeps the margin", left: 2 * time.Minute, min: 2*time.Minute - uninstallWaitMargin - 2*time.Second, max: 2*time.Minute - uninstallWaitMargin},
+		{name: "almost no time left", left: 5 * time.Second, min: time.Second, max: time.Second},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			ctx := context.Background()
+			if tt.left > 0 {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithTimeout(ctx, tt.left)
+				defer cancel()
+			}
+			got := uninstallWaitTimeout(ctx)
+			assert.GreaterOrEqual(t, got, tt.min)
+			assert.LessOrEqual(t, got, tt.max)
+		})
+	}
+}
