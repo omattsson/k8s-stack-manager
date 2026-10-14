@@ -59,6 +59,11 @@ import { useAuth } from '../../../context/AuthContext';
 import ChannelFiltersEditor from './ChannelFiltersEditor';
 import { filtersEmpty, filtersSummary, type FilterOption, type FilterOptions } from './channelFilters';
 
+/** Help text of the Secret field: what the signature is and when it helps. */
+const SECRET_HELP =
+  'With a secret, each request has the header X-StackManager-Signature (sha256= and the HMAC-SHA256 of the body). '
+  + 'Use it when your receiver checks the signature. Teams and Slack incoming webhooks ignore it.';
+
 const EVENT_TYPE_CATEGORIES: Record<string, string[]> = {
   Deployment: [
     'deployment.success',
@@ -675,7 +680,7 @@ const NotificationChannels = () => {
               onChange={(e) => setForm({ ...form, secret: e.target.value })}
               fullWidth
               type="password"
-              helperText={editingId ? 'Leave empty to keep existing secret' : 'Optional. Used for HMAC signing of webhook payloads.'}
+              helperText={editingId ? `Leave empty to keep the stored secret. ${SECRET_HELP}` : `Optional. ${SECRET_HELP}`}
             />
             <FormControlLabel
               control={
