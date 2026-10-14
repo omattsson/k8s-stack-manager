@@ -1,0 +1,29 @@
+name: Release Drafter
+
+# Updates the draft release (the next vX.Y.Z) after each merge to main.
+# Configuration: .github/release-drafter.yml. Process: RELEASING.md.
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: release-drafter
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  update_release_draft:
+    runs-on: ubuntu-latest
+    permissions:
+      # Create and update the draft release.
+      contents: write
+      # Read the merged pull requests.
+      pull-requests: read
+    steps:
+      - uses: release-drafter/release-drafter@v7
+        with:
+          config-name: release-drafter.yml
