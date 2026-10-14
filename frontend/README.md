@@ -5,7 +5,7 @@ This is the React single-page application (SPA) of K8s Stack Manager. It uses Ty
 ## Tech Stack
 
 - React 19 and TypeScript (strict mode)
-- Vite 8 with SWC (`@vitejs/plugin-react-swc`)
+- Vite 8 with `@vitejs/plugin-react` (JSX through Oxc)
 - Material UI (MUI) v9 for components and styling
 - React Router v7 for routing
 - Axios for API calls

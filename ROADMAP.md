@@ -17,7 +17,3 @@ The core platform works. This page lists the open work. The source is the [GitHu
 ## Known issues
 
 - A change of the cluster quota overwrites the instance quota overrides until the next deploy ([#512](https://github.com/omattsson/k8s-stack-manager/issues/512))
-
-## Maintenance
-
-- **Frontend build plugin**: replace `@vitejs/plugin-react-swc` with `@vitejs/plugin-react` (Vite 8 warning) ([#520](https://github.com/omattsson/k8s-stack-manager/issues/520))

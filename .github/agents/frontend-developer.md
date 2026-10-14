@@ -38,7 +38,7 @@ You are a senior frontend engineer for React, TypeScript, and Material UI (MUI).
 
 ## Project architecture
 
-- Framework: React 19, TypeScript 6 (strict), Vite 8 with `@vitejs/plugin-react-swc`, Vitest 5. Node 22 or later.
+- Framework: React 19, TypeScript 6 (strict), Vite 8 with `@vitejs/plugin-react`, Vitest 5. Node 22.12 or later.
 - UI: MUI v9. Prefer MUI components over raw HTML. Keep native controls that MUI does not provide (for example `<input type="file">` for definition import).
 - Routing: react-router-dom v7.
 - HTTP: Axios. The shared instance is in `src/api/client.ts`. It adds the JSON Web Token (JWT) and refreshes the token after a 401.
