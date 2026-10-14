@@ -275,7 +275,7 @@ Both list endpoints are paged (`page` and `pageSize`; default 25, maximum 100). 
 | Condition | Meaning |
 |---|---|
 | `status:<status>` | The instance status is `<status>`. |
-| `idle_days:N` | No deploy for N days (the creation time when the instance was never deployed). |
+| `idle_days:N` | No deploy for N days (the creation time when the instance was never deployed). A running or partial instance whose expiry is still in the future never matches: the owner set or extended the time to live (TTL), and the TTL reaper stops it at the expiry. To stop such stacks anyway, use `age_days`. |
 | `age_days:N` | The instance was created more than N days ago. This is not the time since the stop. |
 | `stopped_days:N` | The instance is stopped, and the last stop finished N or more days ago. Instances without a recorded stop time never match. |
 | `ttl_expired` | The expiry time is in the past. |

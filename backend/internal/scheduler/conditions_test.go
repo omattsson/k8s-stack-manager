@@ -93,6 +93,7 @@ func TestMatchesInstance(t *testing.T) {
 	twoDaysAgo := now.Add(-2 * 24 * time.Hour)
 	oneDayAgo := now.Add(-24 * time.Hour)
 	oneHourAgo := now.Add(-time.Hour)
+	inOneDay := now.Add(24 * time.Hour)
 
 	tests := []struct {
 		name     string
@@ -128,6 +129,42 @@ func TestMatchesInstance(t *testing.T) {
 			name:     "idle_days uses created_at when no deploy",
 			filter:   &InstanceFilter{IdleDays: 7},
 			instance: &models.StackInstance{CreatedAt: tenDaysAgo},
+			matches:  true,
+		},
+		{
+			name:     "idle_days no match — running with a future expiry (extended TTL)",
+			filter:   &InstanceFilter{IdleDays: 7},
+			instance: &models.StackInstance{Status: models.StackStatusRunning, LastDeployedAt: &tenDaysAgo, ExpiresAt: &inOneDay},
+			matches:  false,
+		},
+		{
+			name:     "idle_days match — running with a past expiry",
+			filter:   &InstanceFilter{IdleDays: 7},
+			instance: &models.StackInstance{Status: models.StackStatusRunning, LastDeployedAt: &tenDaysAgo, ExpiresAt: &oneHourAgo},
+			matches:  true,
+		},
+		{
+			name:     "idle_days match — stopped with a future expiry",
+			filter:   &InstanceFilter{IdleDays: 7},
+			instance: &models.StackInstance{Status: models.StackStatusStopped, LastDeployedAt: &tenDaysAgo, ExpiresAt: &inOneDay},
+			matches:  true,
+		},
+		{
+			name:     "idle_days no match — partial with a future expiry",
+			filter:   &InstanceFilter{IdleDays: 7},
+			instance: &models.StackInstance{Status: models.StackStatusPartial, LastDeployedAt: &tenDaysAgo, ExpiresAt: &inOneDay},
+			matches:  false,
+		},
+		{
+			name:     "idle_days match — error with a future expiry (the reaper does not stop it)",
+			filter:   &InstanceFilter{IdleDays: 7},
+			instance: &models.StackInstance{Status: models.StackStatusError, LastDeployedAt: &tenDaysAgo, ExpiresAt: &inOneDay},
+			matches:  true,
+		},
+		{
+			name:     "idle_days match — draft after a clean with a future expiry",
+			filter:   &InstanceFilter{IdleDays: 7},
+			instance: &models.StackInstance{Status: models.StackStatusDraft, LastDeployedAt: &tenDaysAgo, ExpiresAt: &inOneDay},
 			matches:  true,
 		},
 		{

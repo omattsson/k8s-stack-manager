@@ -60,7 +60,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Creates a new cleanup policy and reloads the scheduler. condition is a comma-separated list of key:value pairs (all must match): status:\u003cstatus\u003e; idle_days:\u003cN\u003e (no deploy for N days, creation time when never deployed); age_days:\u003cN\u003e (created more than N days ago); stopped_days:\u003cN\u003e (stopped, and the last stop finished N or more days ago; instances without a recorded stop time never match); ttl_expired.",
+                "description": "Creates a new cleanup policy and reloads the scheduler. condition is a comma-separated list of key:value pairs (all must match): status:\u003cstatus\u003e; idle_days:\u003cN\u003e (no deploy for N days, creation time when never deployed; a running or partial instance whose expiry is in the future never matches); age_days:\u003cN\u003e (created more than N days ago); stopped_days:\u003cN\u003e (stopped, and the last stop finished N or more days ago; instances without a recorded stop time never match); ttl_expired.",
                 "consumes": [
                     "application/json"
                 ],

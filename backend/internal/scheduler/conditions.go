@@ -12,7 +12,7 @@ import (
 // InstanceFilter holds parsed filter criteria for matching stack instances.
 type InstanceFilter struct {
 	Status      string // e.g. "stopped"
-	IdleDays    int    // days since last deploy (or creation when never deployed)
+	IdleDays    int    // days since last deploy (or creation when never deployed); skips a running or partial stack with a future expiry
 	AgeDays     int    // days since creation
 	StoppedDays int    // days since the last successful stop (StoppedAt)
 	TTLExpired  bool   // instances past their TTL
@@ -25,7 +25,10 @@ type InstanceFilter struct {
 // Format: key:value pairs separated by commas (all must match).
 // Keys:
 //   - status:<status>  the instance status equals <status>
-//   - idle_days:<N>    no deploy for N days (creation time when never deployed)
+//   - idle_days:<N>    no deploy for N days (creation time when never deployed).
+//     A running or partial instance whose TTL expiry is still in the future
+//     never matches: its owner chose (or extended) that expiry, and the TTL
+//     reaper stops it then.
 //   - age_days:<N>     created more than N days ago (creation age, not stop time)
 //   - stopped_days:<N> stopped, and the last stop finished N or more days ago;
 //     instances without a recorded stop time never match
@@ -88,6 +91,14 @@ func (f *InstanceFilter) MatchesInstance(inst *models.StackInstance) bool {
 			lastActive = &inst.CreatedAt
 		}
 		if now.Sub(*lastActive).Hours() < float64(f.IdleDays*24) {
+			return false
+		}
+		// A future expiry is a deliberate choice (for example a TTL extended
+		// for a demo), and the TTL reaper stops a running or partial instance
+		// at that expiry. Other statuses keep matching: the reaper does not
+		// stop them, and a stop or clean keeps expires_at.
+		if (inst.Status == models.StackStatusRunning || inst.Status == models.StackStatusPartial) &&
+			inst.ExpiresAt != nil && inst.ExpiresAt.After(now) {
 			return false
 		}
 	}

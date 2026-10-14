@@ -147,7 +147,7 @@ function formatCondition(condition: string): string {
 
 /** Meaning of each condition key, shown as help in the policy dialog. */
 const CONDITION_HELP: ReadonlyArray<{ key: string; meaning: string }> = [
-  { key: 'idle_days:N', meaning: 'Not deployed for more than N days (since the last deploy, or since creation when never deployed).' },
+  { key: 'idle_days:N', meaning: 'Not deployed for more than N days (since the last deploy, or since creation when never deployed). A running or partial stack whose time to live (TTL) expiry is in the future never matches.' },
   { key: 'stopped_days:N', meaning: 'Stopped for more than N days (time since the stop). Matches stopped instances only.' },
   { key: 'age_days:N', meaning: 'Created more than N days ago (creation age, not the time since the stop).' },
   { key: 'status:S', meaning: 'Has the status S, for example status:stopped or status:error.' },

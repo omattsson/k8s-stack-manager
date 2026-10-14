@@ -2528,10 +2528,11 @@ paths:
       - application/json
       description: 'Creates a new cleanup policy and reloads the scheduler. condition
         is a comma-separated list of key:value pairs (all must match): status:<status>;
-        idle_days:<N> (no deploy for N days, creation time when never deployed); age_days:<N>
-        (created more than N days ago); stopped_days:<N> (stopped, and the last stop
-        finished N or more days ago; instances without a recorded stop time never
-        match); ttl_expired.'
+        idle_days:<N> (no deploy for N days, creation time when never deployed; a
+        running or partial instance whose expiry is in the future never matches);
+        age_days:<N> (created more than N days ago); stopped_days:<N> (stopped, and
+        the last stop finished N or more days ago; instances without a recorded stop
+        time never match); ttl_expired.'
       parameters:
       - description: Cleanup policy
         in: body

@@ -611,7 +611,7 @@ Developers use this application to configure, store and deploy multi-service Hel
 - **Git provider detection:** by URL. `dev.azure.com` and `visualstudio.com` mean Azure DevOps. `gitlab.com` or a custom host means GitLab.
 - **Cleanup policies:**
   - `PUT /admin/cleanup-policies/:id` is a partial update. Only the fields in the body change. The backend validates the merged policy.
-  - A policy runs a cron-scheduled action (stop, clean, delete) on instances that match a condition: `status:`, `idle_days:` (days without a deploy), `age_days:` (creation age), `stopped_days:` (time since `StoppedAt`), `ttl_expired`.
+  - A policy runs a cron-scheduled action (stop, clean, delete) on instances that match a condition: `status:`, `idle_days:` (days without a deploy; a running or partial stack whose expiry is in the future never matches), `age_days:` (creation age), `stopped_days:` (time since `StoppedAt`), `ttl_expired`.
   - A policy targets one cluster or "all".
   - Only the leader replica runs the cron jobs. It reloads on the policy changes it handles, when it becomes leader and every minute. A scheduled run reads the policy again.
   - Any replica can run a manual run. A manual run supports dry-run mode.
