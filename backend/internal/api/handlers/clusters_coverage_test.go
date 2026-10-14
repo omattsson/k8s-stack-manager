@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -767,7 +768,8 @@ func TestPropagateQuotasToNamespaces_WithNamespaces(t *testing.T) {
 	}
 
 	// Should not panic; exercises the namespace iteration and quota application.
-	h.propagateQuotasToNamespaces("cl-1", config)
+	require.NoError(t, quotaRepo.Upsert(context.Background(), config))
+	h.propagateQuotasToNamespaces(&models.Cluster{ID: "cl-1"})
 }
 
 func TestPropagateQuotasToNamespaces_NoNamespaces(t *testing.T) {
@@ -792,7 +794,8 @@ func TestPropagateQuotasToNamespaces_NoNamespaces(t *testing.T) {
 	}
 
 	// Should not panic; no stack- namespaces to iterate.
-	h.propagateQuotasToNamespaces("cl-1", config)
+	require.NoError(t, quotaRepo.Upsert(context.Background(), config))
+	h.propagateQuotasToNamespaces(&models.Cluster{ID: "cl-1"})
 }
 
 // ---- SetDefaultCluster additional coverage ----

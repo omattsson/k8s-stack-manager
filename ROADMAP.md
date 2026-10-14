@@ -13,7 +13,3 @@ The core platform works. This page lists the open work. The source is the [GitHu
 - **Team and project grouping** for instances and templates ([#120](https://github.com/omattsson/k8s-stack-manager/issues/120), priority medium, effort medium)
 - **GitOps mode**: deploy automatically on a Git branch push ([#119](https://github.com/omattsson/k8s-stack-manager/issues/119), priority medium, effort large)
 - **Link an existing stack definition to a template**. The analytics template usage shows 0 for imported definitions ([#516](https://github.com/omattsson/k8s-stack-manager/issues/516))
-
-## Known issues
-
-- A change of the cluster quota overwrites the instance quota overrides until the next deploy ([#512](https://github.com/omattsson/k8s-stack-manager/issues/512))
