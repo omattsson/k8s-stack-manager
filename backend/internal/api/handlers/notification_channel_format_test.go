@@ -197,9 +197,20 @@ func TestNotificationChannelHandler_TestChannel_Format(t *testing.T) {
 			req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/notification-channels/ch1/test", nil)
 			router.ServeHTTP(w, req)
 			require.Equal(t, http.StatusOK, w.Code)
-			assert.Contains(t, w.Body.String(), `"success":true`)
+			if !strings.Contains(w.Body.String(), `"success":true`) {
+				// Show the reason of the failed send (the delivery log has the error).
+				repo.mu.RLock()
+				logs := repo.deliveryLogs["ch1"]
+				repo.mu.RUnlock()
+				t.Fatalf("test send failed: %s; delivery logs: %+v", w.Body.String(), logs)
+			}
 
-			body := <-bodies
+			var body []byte
+			select {
+			case body = <-bodies:
+			case <-time.After(5 * time.Second):
+				t.Fatal("the webhook server got no request")
+			}
 			var generic map[string]interface{}
 			require.NoError(t, json.Unmarshal(body, &generic))
 			if !tt.wantTeams {
