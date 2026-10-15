@@ -327,3 +327,70 @@ func TestCleanedDaysCondition_InvalidValues(t *testing.T) {
 		assert.Error(t, err, cond)
 	}
 }
+
+func TestExpiresWithinHoursCondition(t *testing.T) {
+	t.Parallel()
+
+	now := time.Now()
+	in := func(d time.Duration) *time.Time { ts := now.Add(d); return &ts }
+	running := models.StackStatusRunning
+
+	tests := []struct {
+		name      string
+		condition string
+		inst      models.StackInstance
+		want      bool
+	}{
+		{"no expiry matches", "expires_within_hours:12",
+			models.StackInstance{Status: running}, true},
+		{"expiry within the window matches", "expires_within_hours:12",
+			models.StackInstance{Status: running, ExpiresAt: in(6 * time.Hour)}, true},
+		{"past expiry matches", "expires_within_hours:12",
+			models.StackInstance{Status: running, ExpiresAt: in(-time.Hour)}, true},
+		{"extended past the window does not match", "expires_within_hours:12",
+			models.StackInstance{Status: running, ExpiresAt: in(64 * time.Hour)}, false},
+		{"just after the window does not match", "expires_within_hours:12",
+			models.StackInstance{Status: running, ExpiresAt: in(12*time.Hour + time.Minute)}, false},
+		{"0 matches only no expiry or a past expiry", "expires_within_hours:0",
+			models.StackInstance{Status: running, ExpiresAt: in(time.Minute)}, false},
+		{"combined with status: other status does not match", "status:running,expires_within_hours:12",
+			models.StackInstance{Status: models.StackStatusStopped}, false},
+		{"combined with status: weekend stop", "status:running,expires_within_hours:12",
+			models.StackInstance{Status: running, ExpiresAt: in(3 * time.Hour)}, true},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			f, err := ParseCondition(tt.condition)
+			assert.NoError(t, err)
+			inst := tt.inst
+			assert.Equal(t, tt.want, f.MatchesInstance(&inst))
+		})
+	}
+}
+
+func TestExpiresWithinHoursCondition_InvalidValues(t *testing.T) {
+	t.Parallel()
+	for _, cond := range []string{"expires_within_hours:x", "expires_within_hours:-1", "expires_within_hours", "expires_within_hours:1.5",
+		"expires_within_hours:8761", "expires_within_hours:99999999999"} {
+		_, err := ParseCondition(cond)
+		assert.Error(t, err, cond)
+	}
+}
+
+func TestExpiresWithinHoursCondition_Boundary(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 10, 16, 17, 0, 0, 0, time.UTC)
+	f, err := ParseCondition("expires_within_hours:12,idle_days:1")
+	assert.NoError(t, err)
+	at := func(d time.Duration) *time.Time { ts := now.Add(d); return &ts }
+	stopped := func(exp *time.Time) *models.StackInstance {
+		// A stopped instance: idle_days does not skip it for a future expiry.
+		return &models.StackInstance{Status: models.StackStatusStopped, CreatedAt: now.Add(-48 * time.Hour), ExpiresAt: exp}
+	}
+	assert.True(t, f.matchesAt(stopped(at(12*time.Hour)), now), "exactly N hours matches")
+	assert.False(t, f.matchesAt(stopped(at(12*time.Hour+time.Nanosecond)), now), "just after N hours does not match")
+	_, err = ParseCondition("expires_within_hours:8760")
+	assert.NoError(t, err, "one year is allowed")
+}
