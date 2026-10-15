@@ -223,6 +223,32 @@ backend:
   # at startup.
   uniqueInstanceNames: false
 
+  # Proxies that may set the client IP with X-Forwarded-For or X-Real-IP
+  # (TRUSTED_PROXIES): IP addresses or CIDR ranges. The per-IP rate limits
+  # (RATE_LIMIT, LOGIN_RATE_LIMIT, the API-key upgrade of /ws) and the IP of a
+  # refresh token use the client IP. A request from any other peer counts for
+  # the peer address, and its headers are ignored. An empty list trusts no
+  # proxy; 0.0.0.0/0 and ::/0 are refused.
+  #
+  # The default trusts the private IPv4 ranges and the IPv6 unique local range,
+  # because the ingress controller runs in the cluster. Check that the pod IPs
+  # of the ingress controller are inside the list (add for example
+  # 100.64.0.0/10 for a pod network in the shared address space). Otherwise
+  # all users count as the ingress controller and share one login limit.
+  #
+  # The ingress controller must replace X-Forwarded-For and X-Real-IP with the
+  # real client (Traefik default; do not set forwardedHeaders.insecure, and
+  # keep forwardedHeaders.trustedIPs to your own load balancers). The backend
+  # skips trusted addresses in X-Forwarded-For, so a client with a private IP
+  # (VPN, a pod in the cluster) can choose its IP when a proxy appends to its
+  # header. Pods in the cluster can also call the backend service directly;
+  # a NetworkPolicy that allows only the ingress controller prevents this.
+  trustedProxies:
+    - 10.0.0.0/8
+    - 172.16.0.0/12
+    - 192.168.0.0/16
+    - fc00::/7
+
   # Extra environment variables, volumes and volume mounts for the backend
   # container (plain Kubernetes syntax). Example: give Helm a registry login
   # file (docker config.json format) for OCI chart repositories that need

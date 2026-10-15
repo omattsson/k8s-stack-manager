@@ -11,6 +11,7 @@ import (
 	"backend/internal/scheduler"
 	"backend/internal/sessionstore"
 	"backend/internal/websocket"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -123,6 +124,16 @@ func (r *RateLimiters) Stop() {
 // Returns the rate limiters so the caller can stop them during shutdown.
 func SetupRoutes(router *gin.Engine, deps Deps) *RateLimiters {
 	cfg := deps.Config
+
+	// Client IP: only the proxies of TRUSTED_PROXIES may set it with
+	// X-Forwarded-For or X-Real-IP. Without the list Gin trusts every peer,
+	// so a client could pick a new IP for each request and pass the per-IP
+	// rate limits. config.ParseTrustedProxies validated the list; on an
+	// error, trust no proxy.
+	if err := router.SetTrustedProxies(cfg.Server.TrustedProxies); err != nil {
+		slog.Error("Invalid TRUSTED_PROXIES; no proxy is trusted", "error", err)
+		_ = router.SetTrustedProxies(nil)
+	}
 
 	// Add middleware
 	router.Use(middleware.RequestID())
