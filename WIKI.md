@@ -304,6 +304,9 @@ Both list endpoints are paged (`page` and `pageSize`; default 25, maximum 100). 
 | `stopped_days:N` | The instance is stopped, and the last stop finished N or more days ago. Instances without a recorded stop time never match. |
 | `cleaned_days:N` | The instance is a draft, and the last clean finished N or more days ago. Instances without a recorded clean time (for example never deployed) never match. |
 | `ttl_expired` | The expiry time is in the past. |
+| `expires_within_hours:N` | The instance has no expiry, or the expiry is at most N hours from now (a past expiry too). An instance whose owner set a later expiry (an extended or a custom TTL) does not match. An instance without an expiry (TTL "No expiry") matches. Use N a little above the default TTL, so stacks with the normal TTL still match. Combine it with `status:`: alone, it also matches every draft and every stack without an expiry. N is 0 to 8760. |
+
+Example for a weekend stop that developers can opt out of: the action `stop`, the schedule `0 17 * * 5` (17:00 UTC: the scheduler uses UTC) and the condition `status:running,expires_within_hours:12` (with a default TTL of 8 hours). A developer who extends the stack past Saturday 05:00 UTC keeps it running, and the TTL reaper stops it at its expiry. "No expiry" does not keep a stack running. `status:running` does not match `partial` stacks.
 
 Use `stopped_days:N` for "stopped for N days", and `cleaned_days:N` for "cleaned N days ago". Example: delete stacks 30 days after their clean with the action `delete` and the condition `cleaned_days:30`. Do not use `idle_days` for this: a clean clears the last deploy time, so `idle_days` then counts from the creation.
 

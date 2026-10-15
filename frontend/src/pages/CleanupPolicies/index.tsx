@@ -153,6 +153,7 @@ const CONDITION_HELP: ReadonlyArray<{ key: string; meaning: string }> = [
   { key: 'age_days:N', meaning: 'Created more than N days ago (creation age, not the time since the stop).' },
   { key: 'status:S', meaning: 'Has the status S, for example status:stopped or status:error.' },
   { key: 'ttl_expired', meaning: 'The TTL has expired.' },
+  { key: 'expires_within_hours:N', meaning: 'No expiry, or the expiry is at most N hours away. A stack whose owner extended the TTL past that does not match; a stack with no expiry matches. Combine it with status:. Example for a Friday stop: status:running,expires_within_hours:12.' },
 ];
 
 function describeCron(cron: string): string {
