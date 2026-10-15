@@ -397,6 +397,7 @@ The table shows the key environment variables. The full list is in `backend/inte
 | `UNIQUE_INSTANCE_NAMES` | No | `true`: an instance name must be unique on its cluster (409 on create, rename, clone and quick deploy). Use it when Ingress hosts use `{{.InstanceName}}`. Default: `false` |
 | `CORS_ALLOWED_ORIGINS` | No | Allowed CORS origins: `*` (default; development only), `same-origin` (no cross-origin requests; Helm chart default) or a comma-separated list. The web UI on the same host always passes. |
 | `RATE_LIMIT` / `LOGIN_RATE_LIMIT` | No | Requests per minute for each IP address (defaults: `100` / `10`) |
+| `TRUSTED_PROXIES` | No | Comma-separated IPs or CIDR ranges of the proxies that may set the client IP with `X-Forwarded-For` or `X-Real-IP`. The per-IP rate limits count that client IP. Default: empty (no proxy is trusted; the client IP is the TCP peer). The Helm chart trusts the private IPv4 ranges and `fc00::/7`. An invalid entry, `0.0.0.0/0` or `::/0` stops the start. |
 | `ENABLE_SWAGGER` | No | Serve the Swagger UI at `/swagger` (default: `false`) |
 | `SESSION_STORE` | No | Session store backend: `mysql` (default) or `memory` |
 | `ACCESS_TOKEN_EXPIRATION` | No | Lifetime of an access token (default: `15m`) |

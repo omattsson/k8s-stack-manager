@@ -153,6 +153,7 @@ Key values in `values.yaml`:
 - `backend.replicas`, `frontend.replicas`, `*.autoscaling`, `*.pdb`: independent scaling
 - `backend.allowedChartRepos`: chart repository URL prefixes (`ALLOWED_CHART_REPOS`). Empty means all sources.
 - `backend.uniqueInstanceNames`: unique instance names for each cluster (`UNIQUE_INSTANCE_NAMES`, default `false`)
+- `backend.trustedProxies`: proxies that may set the client IP (`TRUSTED_PROXIES`, default the private IPv4 ranges and `fc00::/7`)
 - `backend.rbac.scope` (`namespace` or `cluster`), `backend.rbac.admissionPolicy.enabled`: backend RBAC (see Key Design Decisions)
 - `backend.priorityClassName`, `frontend.priorityClassName`, `mysql.priorityClassName`, `otel.priorityClassName`: PriorityClass of each pod; empty = cluster default.
 - `backend.namespaceRoleBindings`: RoleBindings that the deployer applies to every stack namespace (`NAMESPACE_ROLE_BINDINGS_JSON`)
@@ -306,6 +307,7 @@ backend/
 - It returns `*RateLimiters` (API limiter and optional login limiter). The caller must call `Stop()` on shutdown.
 - Global middleware order: RequestID, RedactWSToken, HTTPMetrics (if `OTEL_ENABLED` or `METRICS_ENABLED`), otelgin (if `OTEL_ENABLED`), Logger, Recovery, SecurityHeaders, CORS, MaxBodySize (1 MB).
 - `/api/v1` adds the API rate limiter (`RATE_LIMIT`, default 100 requests per minute per IP). The login route gets a stricter limiter when `LOGIN_RATE_LIMIT` is greater than 0 (default 10 per minute). `POST /auth/refresh` uses the login limiter too.
+- Client IP: `SetupRoutes` calls `SetTrustedProxies` with `TRUSTED_PROXIES` (IPs or CIDRs, `config.ParseTrustedProxies`; an invalid entry stops the start). Only those peers may set the client IP with `X-Forwarded-For` or `X-Real-IP`. Code default: no trusted proxy (the TCP peer). `0.0.0.0/0`, `::/0` and IPv4-mapped IPv6 entries are refused. The Helm chart (`backend.trustedProxies`) trusts the private IPv4 ranges and `fc00::/7`. The rate limiters, the `/ws` API-key limit and the refresh token IP use `c.ClientIP()`.
 - The authenticated group adds `CombinedAuth` (JWT and API key, checks the token blocklist and disabled users), `SpanEnrichUser` (if `OTEL_ENABLED`) and `NewAuditMiddleware` (if an audit logger is configured).
 - Role gates use `RequireAdmin()` and `RequireDevOps()`.
 - WebSocket: `/ws` (outside the `/api/v1` rate limiter). Health: `/health/*`. Swagger UI: `/swagger/*` only when `ENABLE_SWAGGER=true`.
@@ -705,7 +707,7 @@ Developers use this application to configure, store and deploy multi-service Hel
 - Set all secrets through environment variables. Never hard-code credentials.
 - GORM parameterizes queries. Never interpolate user input into raw SQL.
 - CORS allows `*` in dev only (code default; a startup warning when `GO_ENV=production`). The Helm chart default is `same-origin`: no cross-origin requests, the web UI on the same host passes. Set a list of origins only for other browser clients.
-- Rate limiting: a per-IP sliding window on API routes, and a stricter login limiter (`LOGIN_RATE_LIMIT`).
+- Rate limiting: a per-IP sliding window on API routes, and a stricter login limiter (`LOGIN_RATE_LIMIT`). The IP is the TCP peer, or the client behind a proxy of `TRUSTED_PROXIES`. Never trust all proxies: a client could then pick a new IP for each request.
 - The `SecurityHeaders` middleware sets baseline headers on every response. Never remove it.
 - The Recovery middleware catches panics globally. Never remove it.
 - `sessionstore` holds the revoked access-token `jti` values and the blocked users. `RefreshTokenRepository` holds the revoked refresh tokens. JWT auth and the `/ws` upgrade check the blocklist. Every auth path (login, refresh, OIDC, API key) rejects `User.Disabled`.

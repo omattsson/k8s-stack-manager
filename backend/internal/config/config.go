@@ -398,6 +398,10 @@ type ServerConfig struct {
 	Host      string
 	Port      string
 	PprofAddr string
+	// TrustedProxies are the IPs and CIDR ranges that may set the client IP
+	// with X-Forwarded-For or X-Real-IP (TRUSTED_PROXIES, see
+	// ParseTrustedProxies); nil = no proxy is trusted.
+	TrustedProxies []string
 	// 4-byte fields
 	RateLimit      int32
 	LoginRateLimit int32
@@ -704,6 +708,12 @@ func LoadConfig() (*Config, error) {
 		return nil, fmt.Errorf("invalid configuration: %w", err)
 	}
 	cfg.Deployment.AllowedChartRepos = chartRepos
+
+	trustedProxies, err := ParseTrustedProxies(getEnv("TRUSTED_PROXIES", ""))
+	if err != nil {
+		return nil, fmt.Errorf("invalid configuration: %w", err)
+	}
+	cfg.Server.TrustedProxies = trustedProxies
 
 	stackAccess, err := ParseStackAccess(getEnv("STACK_ACCESS_CLUSTER_ROLE", ""), getEnv("STACK_ACCESS_SERVICE_ACCOUNT", ""))
 	if err != nil {

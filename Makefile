@@ -382,7 +382,16 @@ helm-test: ## Verify default and External Secrets Helm renders
 	grep -q 'DEPLOY_LOG_RETENTION_DAYS: "180"' "$$template_file" && grep -q 'AUDIT_LOG_RETENTION_DAYS: "365"' "$$template_file" \
 		&& grep -q 'NOTIFICATION_RETENTION_DAYS: "90"' "$$template_file" && grep -q 'DELIVERY_LOG_RETENTION_DAYS: "30"' "$$template_file" \
 		|| { echo "backend ConfigMap must have the default log retention" >&2; exit 1; }; \
+	grep -q 'TRUSTED_PROXIES: "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,fc00::/7"' "$$template_file" \
+		|| { echo "backend ConfigMap must trust the private ranges by default" >&2; exit 1; }; \
 	if grep -q 'UNIQUE_INSTANCE_NAMES:' "$$template_file"; then echo "UNIQUE_INSTANCE_NAMES must be off by default" >&2; exit 1; fi; \
+	helm template $(HELM_RELEASE) $(HELM_CHART) --show-only templates/backend/configmap.yaml \
+		--set backend.secrets.JWT_SECRET=dummy-jwt-secret-for-template --set backend.env.TRUSTED_PROXIES=10.1.0.0/16 > "$$template_file"; \
+	test "$$(grep -c 'TRUSTED_PROXIES:' "$$template_file")" = 1 && grep -q 'TRUSTED_PROXIES: "10.1.0.0/16"' "$$template_file" \
+		|| { echo "backend.env.TRUSTED_PROXIES must win over backend.trustedProxies" >&2; exit 1; }; \
+	helm template $(HELM_RELEASE) $(HELM_CHART) --show-only templates/backend/configmap.yaml \
+		--set backend.secrets.JWT_SECRET=dummy-jwt-secret-for-template --set 'backend.trustedProxies=null' > "$$template_file"; \
+	if grep -q 'TRUSTED_PROXIES:' "$$template_file"; then echo "an empty backend.trustedProxies must render no TRUSTED_PROXIES" >&2; exit 1; fi; \
 	helm template $(HELM_RELEASE) $(HELM_CHART) --show-only templates/backend/configmap.yaml \
 		--set backend.secrets.JWT_SECRET=dummy-jwt-secret-for-template --set backend.uniqueInstanceNames=true > "$$template_file"; \
 	grep -q 'UNIQUE_INSTANCE_NAMES: "true"' "$$template_file" \

@@ -65,6 +65,7 @@ All configuration uses environment variables with a `.env` fallback (godotenv). 
 - `DB_*`, `JWT_*`, `OIDC_*`.
 - `SESSION_STORE`, `SESSION_IDLE_TIMEOUT`.
 - `RATE_LIMIT` (default 100 per minute), `LOGIN_RATE_LIMIT` (default 10 per minute).
+- `TRUSTED_PROXIES`: IPs or CIDRs that may set the client IP with `X-Forwarded-For` or `X-Real-IP` (`config.ParseTrustedProxies`, applied in `routes.SetupRoutes`). Empty (code default): the client IP is the TCP peer.
 - `KUBECONFIG_PATH`, `KUBECONFIG_ENCRYPTION_KEY`.
 - `HELM_BINARY`, `DEPLOYMENT_TIMEOUT`, `MAX_CONCURRENT_DEPLOYS` (default 5).
 - `LOG_LEVEL`: `debug`, `info` (default), `warn` or `error`. `main` applies it to the default `slog` logger. An invalid value stops the startup.
