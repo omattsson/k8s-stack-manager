@@ -162,6 +162,39 @@ describe('QuickDeployDialog', () => {
     });
   }, 15_000);
 
+  it('shows the owner and the free names of a 409 name conflict', async () => {
+    const user = userEvent.setup();
+    (templateService.quickDeploy as ReturnType<typeof vi.fn>).mockRejectedValue({
+      response: {
+        status: 409,
+        data: {
+          error: 'instance name already exists',
+          message: 'A stack named "demo" already exists on this cluster (owner: carol)',
+          suggestions: ['demo-3', 'demo-4'],
+        },
+      },
+    });
+
+    render(
+      <MemoryRouter>
+        <QuickDeployDialog open={true} onClose={vi.fn()} template={template} />
+      </MemoryRouter>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByLabelText(/instance name/i)).toBeInTheDocument();
+    });
+
+    await user.type(screen.getByLabelText(/instance name/i), 'demo');
+    await user.click(screen.getByRole('button', { name: /deploy/i }));
+
+    await waitFor(() => {
+      expect(screen.getByRole('alert')).toHaveTextContent(
+        'A stack named "demo" already exists on this cluster (owner: carol). Free names: demo-3, demo-4.',
+      );
+    });
+  }, 15_000);
+
   it('validates the instance name live and blocks an invalid name', async () => {
     const user = userEvent.setup();
     render(

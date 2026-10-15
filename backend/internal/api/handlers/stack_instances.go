@@ -142,6 +142,20 @@ type InstanceHandler struct {
 	sharedValuesRepo   models.SharedValuesRepository
 	clusterQuotaRepo   models.ResourceQuotaRepository
 	followerRepo       models.InstanceFollowerRepository
+	uniqueNames        bool
+}
+
+// WithUniqueInstanceNames turns on UNIQUE_INSTANCE_NAMES: create, rename and
+// clone refuse a name that another instance uses on the same cluster (409),
+// and generated clone names skip those names. Returns h for chaining.
+func (h *InstanceHandler) WithUniqueInstanceNames(enabled bool) *InstanceHandler {
+	h.uniqueNames = enabled
+	return h
+}
+
+// nameGuard returns the UNIQUE_INSTANCE_NAMES check of h.
+func (h *InstanceHandler) nameGuard() instanceNameGuard {
+	return instanceNameGuard{instanceRepo: h.instanceRepo, userRepo: h.userRepo, registry: h.registry}
 }
 
 // WithClusterQuotas attaches the cluster quota repository. Clone then copies
@@ -419,7 +433,7 @@ func (h *InstanceHandler) GetRecentInstances(c *gin.Context) {
 // @Failure     401      {object} map[string]string
 // @Failure     403      {object} map[string]string "A pre-instance-create hook rejected the request"
 // @Failure     404      {object} map[string]string "Stack definition not found"
-// @Failure     409      {object} NamespaceConflictResponse "Namespace already exists"
+// @Failure     409      {object} NamespaceConflictResponse "Namespace already exists, or the name is taken on the cluster (UNIQUE_INSTANCE_NAMES)"
 // @Failure     500      {object} map[string]string
 // @Router      /api/v1/stack-instances [post]
 // createInstanceRequest is the JSON-binding DTO for CreateInstance.
@@ -522,7 +536,10 @@ func (h *InstanceHandler) CreateInstance(c *gin.Context) {
 	// NOTE: This is a TOCTOU check — concurrent creates can still race past it.
 	// For strict uniqueness, a storage-level constraint (e.g. unique index or
 	// namespace-reservation entity) would be needed.
-	if h.checkNamespaceUniqueness(c, inst.Namespace, inst.Name) {
+	if h.checkNamespaceUniqueness(c, inst.Namespace, inst.Name, inst.ClusterID, owner) {
+		return
+	}
+	if h.uniqueNames && h.nameGuard().check(c, inst.Name, inst.ClusterID, "", owner) {
 		return
 	}
 
@@ -656,6 +673,7 @@ func (h *InstanceHandler) GetInstance(c *gin.Context) {
 // @Failure     401      {object} map[string]string
 // @Failure     403      {object} map[string]string "Caller is not the owner, an admin or a devops user"
 // @Failure     404      {object} map[string]string
+// @Failure     409      {object} NamespaceConflictResponse "The new name is taken on the cluster (UNIQUE_INSTANCE_NAMES)"
 // @Failure     500      {object} map[string]string
 // @Router      /api/v1/stack-instances/{id} [put]
 func (h *InstanceHandler) UpdateInstance(c *gin.Context) {
@@ -693,6 +711,10 @@ func (h *InstanceHandler) UpdateInstance(c *gin.Context) {
 		// before the rule existed can still be updated.
 		if err := models.ValidateInstanceName(*update.Name); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		// A rename keeps the namespace, so only the name on the cluster counts.
+		if h.uniqueNames && h.nameGuard().check(c, *update.Name, existing.ClusterID, existing.ID, "") {
 			return
 		}
 		existing.Name = *update.Name
@@ -1092,7 +1114,7 @@ func cloneNameCandidate(base string, n int) string {
 // @Failure     401  {object} map[string]string
 // @Failure     403  {object} map[string]string
 // @Failure     404  {object} map[string]string
-// @Failure     409  {object} NamespaceConflictResponse "Namespace already exists (given name), or no free generated name"
+// @Failure     409  {object} NamespaceConflictResponse "Namespace already exists (given name), the name is taken on the cluster (UNIQUE_INSTANCE_NAMES), or no free generated name"
 // @Failure     500  {object} map[string]string
 // @Router      /api/v1/stack-instances/{id}/clone [post]
 func (h *InstanceHandler) CloneInstance(c *gin.Context) {
@@ -1140,7 +1162,10 @@ func (h *InstanceHandler) CloneInstance(c *gin.Context) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
 		}
-		if h.checkNamespaceUniqueness(c, buildNamespace(cloneName, ownerName), cloneName) {
+		if h.checkNamespaceUniqueness(c, buildNamespace(cloneName, ownerName), cloneName, source.ClusterID, ownerName) {
+			return
+		}
+		if h.uniqueNames && h.nameGuard().check(c, cloneName, source.ClusterID, "", ownerName) {
 			return
 		}
 	} else {
@@ -1149,20 +1174,38 @@ func (h *InstanceHandler) CloneInstance(c *gin.Context) {
 		for n := 1; n <= maxCloneNameAttempts; n++ {
 			candidate := cloneNameCandidate(base, n)
 			_, findErr := h.instanceRepo.FindByNamespace(buildNamespace(candidate, ownerName))
-			if errors.Is(findErr, dberrors.ErrNotFound) {
-				cloneName = candidate
-				break
-			}
-			if findErr != nil {
+			if findErr != nil && !errors.Is(findErr, dberrors.ErrNotFound) {
 				slog.Error("Failed to check namespace uniqueness for clone",
 					logKeyInstanceID, id, "error", findErr)
 				c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
 				return
 			}
+			if findErr == nil {
+				continue // the namespace is taken
+			}
+			if h.uniqueNames {
+				holder, nameErr := h.nameGuard().nameHolder(candidate, source.ClusterID, "")
+				if nameErr != nil {
+					slog.Error("Failed to check instance name uniqueness for clone",
+						logKeyInstanceID, id, "error", nameErr)
+					c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
+					return
+				}
+				if holder != nil {
+					continue // the name is taken on the cluster
+				}
+			}
+			cloneName = candidate
+			break
 		}
 		if cloneName == "" {
+			code := "namespace already exists"
+			if h.uniqueNames {
+				// The cause can also be a name that is taken on the cluster.
+				code = "no free clone name"
+			}
 			c.JSON(http.StatusConflict, NamespaceConflictResponse{
-				Error:       "namespace already exists",
+				Error:       code,
 				Message:     fmt.Sprintf("No free clone name found; send a name in the request body (tried %d names)", maxCloneNameAttempts),
 				Suggestions: []string{},
 			})
@@ -2053,8 +2096,10 @@ func (h *InstanceHandler) GetInstancePods(c *gin.Context) {
 
 // checkNamespaceUniqueness checks whether the given namespace is already in use.
 // If it is, it returns true and writes a 409 response with suggestions.
-// The caller should return immediately when this returns true.
-func (h *InstanceHandler) checkNamespaceUniqueness(c *gin.Context, namespace, instanceName string) bool {
+// The caller should return immediately when this returns true. With
+// UNIQUE_INSTANCE_NAMES the suggestions are only names that are free on
+// clusterID and give a free namespace for owner.
+func (h *InstanceHandler) checkNamespaceUniqueness(c *gin.Context, namespace, instanceName, clusterID, owner string) bool {
 	existing, err := h.instanceRepo.FindByNamespace(namespace)
 	if err != nil {
 		// Not found is the happy path — namespace is available.
@@ -2077,6 +2122,9 @@ func (h *InstanceHandler) checkNamespaceUniqueness(c *gin.Context, namespace, in
 		"existing_instance_name", existing.Name,
 	)
 	suggestions := generateNameSuggestions(instanceName)
+	if h.uniqueNames {
+		suggestions = h.nameGuard().freeSuggestions(instanceName, clusterID, owner)
+	}
 	c.JSON(http.StatusConflict, NamespaceConflictResponse{
 		Error:       "namespace already exists",
 		Message:     fmt.Sprintf("Namespace %q is already in use", namespace),

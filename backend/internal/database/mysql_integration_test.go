@@ -199,6 +199,26 @@ func TestMySQLIntegration_StackInstanceRepository(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 1, count)
 
+	// FindByNameOnCluster and DuplicateInstanceNames (UNIQUE_INSTANCE_NAMES)
+	second := &models.StackInstance{
+		Name:              "Test-Instance",
+		Namespace:         "stack-test-instance-user2",
+		StackDefinitionID: "def1",
+		OwnerID:           "user2",
+		Status:            "pending",
+	}
+	require.NoError(t, repo.Create(second))
+	instances, err = repo.FindByNameOnCluster("TEST-instance", "cluster1", true)
+	require.NoError(t, err)
+	assert.Len(t, instances, 2)
+	instances, err = repo.FindByNameOnCluster("test-instance", "cluster1", false)
+	require.NoError(t, err)
+	assert.Len(t, instances, 1)
+	dups, err := repo.DuplicateInstanceNames("cluster1")
+	require.NoError(t, err)
+	assert.Equal(t, []models.DuplicateInstanceName{{ClusterID: "cluster1", Name: "test-instance", Count: 2}}, dups)
+	require.NoError(t, repo.Delete(second.ID))
+
 	// Update
 	instance.Status = "running"
 	err = repo.Update(instance)

@@ -5361,6 +5361,12 @@ const docTemplate = `{
                             }
                         }
                     },
+                    "409": {
+                        "description": "The new name is taken on the cluster (UNIQUE_INSTANCE_NAMES)",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.NamespaceConflictResponse"
+                        }
+                    },
                     "500": {
                         "description": "Internal Server Error",
                         "schema": {
@@ -6196,7 +6202,7 @@ const docTemplate = `{
                         }
                     },
                     "409": {
-                        "description": "Namespace already exists (given name), or no free generated name",
+                        "description": "Namespace already exists (given name), the name is taken on the cluster (UNIQUE_INSTANCE_NAMES), or no free generated name",
                         "schema": {
                             "$ref": "#/definitions/handlers.NamespaceConflictResponse"
                         }
@@ -8820,7 +8826,7 @@ const docTemplate = `{
                         }
                     },
                     "409": {
-                        "description": "Namespace already exists, or the template has no published version ({error})",
+                        "description": "Namespace already exists, the name is taken on the cluster (UNIQUE_INSTANCE_NAMES), or the template has no published version ({error})",
                         "schema": {
                             "$ref": "#/definitions/handlers.NamespaceConflictResponse"
                         }

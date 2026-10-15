@@ -215,6 +215,14 @@ backend:
   #   - oci://registry.example.com/charts
   allowedChartRepos: []
 
+  # Unique instance names for each cluster (UNIQUE_INSTANCE_NAMES). When true,
+  # create, rename, clone and quick deploy refuse a name that another instance
+  # uses on the same cluster (409, compared without case). Turn it on when the
+  # Ingress hosts of the stacks use {{.InstanceName}}: two stacks with the same
+  # name claim the same host. Existing duplicates stay; the backend logs them
+  # at startup.
+  uniqueInstanceNames: false
+
   # Extra environment variables, volumes and volume mounts for the backend
   # container (plain Kubernetes syntax). Example: give Helm a registry login
   # file (docker config.json format) for OCI chart repositories that need

@@ -44,6 +44,15 @@ type QuickDeployHandler struct {
 	txRunner           database.TxRunner
 	sharedValuesRepo   models.SharedValuesRepository
 	versionRepo        models.TemplateVersionRepository
+	uniqueNames        bool
+}
+
+// WithUniqueInstanceNames turns on UNIQUE_INSTANCE_NAMES: quick deploy refuses
+// a name that another instance uses on the same cluster (409). Returns h for
+// chaining.
+func (h *QuickDeployHandler) WithUniqueInstanceNames(enabled bool) *QuickDeployHandler {
+	h.uniqueNames = enabled
+	return h
 }
 
 // WithTemplateVersions attaches the template version repository. Quick deploy
@@ -140,7 +149,7 @@ type quickDeployResponse struct {
 // @Failure     401  {object} map[string]string
 // @Failure     403  {object} map[string]string
 // @Failure     404  {object} map[string]string
-// @Failure     409  {object} NamespaceConflictResponse "Namespace already exists, or the template has no published version ({error})"
+// @Failure     409  {object} NamespaceConflictResponse "Namespace already exists, the name is taken on the cluster (UNIQUE_INSTANCE_NAMES), or the template has no published version ({error})"
 // @Failure     500  {object} map[string]string
 // @Security    BearerAuth
 // @Router      /api/v1/templates/{id}/quick-deploy [post]
@@ -301,13 +310,20 @@ func (h *QuickDeployHandler) QuickDeploy(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": msgInternalServerError})
 		return
 	}
+	guard := instanceNameGuard{instanceRepo: h.instanceRepo, userRepo: h.userRepo, registry: h.registry}
 	if existingInst != nil {
 		suggestions := generateNameSuggestions(inst.Name)
+		if h.uniqueNames {
+			suggestions = guard.freeSuggestions(inst.Name, inst.ClusterID, username)
+		}
 		c.JSON(http.StatusConflict, NamespaceConflictResponse{
 			Error:       "namespace already exists",
 			Message:     fmt.Sprintf("Namespace %q is already in use", inst.Namespace),
 			Suggestions: suggestions,
 		})
+		return
+	}
+	if h.uniqueNames && guard.check(c, inst.Name, inst.ClusterID, "", username) {
 		return
 	}
 
