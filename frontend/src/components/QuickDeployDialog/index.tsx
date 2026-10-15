@@ -21,6 +21,7 @@ import type { Cluster, StackTemplate } from '../../types';
 import { trackRecentTemplate } from '../../utils/recentTemplates';
 import { isNoPublishedVersionError, NO_PUBLISHED_VERSION_MESSAGE } from '../../utils/templateVersion';
 import { INSTANCE_NAME_RULE, validateInstanceName } from '../../utils/instanceName';
+import { describeNameConflict } from '../../utils/apiError';
 
 interface QuickDeployDialogProps {
   open: boolean;
@@ -93,7 +94,8 @@ const QuickDeployDialog = ({ open, onClose, template }: QuickDeployDialogProps) 
     } catch (err: unknown) {
       const message = isNoPublishedVersionError(err)
         ? NO_PUBLISHED_VERSION_MESSAGE
-        : (err as { response?: { data?: { error?: string } } })?.response?.data?.error ||
+        : describeNameConflict(err) ||
+          (err as { response?: { data?: { error?: string } } })?.response?.data?.error ||
           'Failed to deploy. Please try again.';
       setError(message);
     } finally {

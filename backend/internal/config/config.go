@@ -352,6 +352,10 @@ type AppConfig struct {
 	DefaultInstanceTTLMinutes int
 	Debug                     bool
 	EnableSwagger             bool
+	// UniqueInstanceNames (UNIQUE_INSTANCE_NAMES) makes an instance name
+	// unique on its cluster. Turn it on when Ingress hosts use
+	// {{.InstanceName}}: two stacks with the same name claim the same host.
+	UniqueInstanceNames bool
 }
 
 // DatabaseConfig holds database-specific configuration
@@ -737,6 +741,7 @@ func loadAppConfig() AppConfig {
 		DefaultInstanceTTLMinutes: int(getEnvInt32("DEFAULT_INSTANCE_TTL_MINUTES", 0)),
 		Debug:                     getEnvBool("APP_DEBUG", true),
 		EnableSwagger:             getEnvBool("ENABLE_SWAGGER", false),
+		UniqueInstanceNames:       getEnvBool("UNIQUE_INSTANCE_NAMES", false),
 	}
 }
 

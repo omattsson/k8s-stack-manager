@@ -285,3 +285,75 @@ func TestGORMStackInstanceRepository_CountByStatuses(t *testing.T) {
 		})
 	}
 }
+
+func TestGORMStackInstanceRepository_FindByNameOnCluster(t *testing.T) {
+	t.Parallel()
+
+	repo := setupStackInstanceRepo(t)
+	for _, inst := range []models.StackInstance{
+		{Name: "demo", Namespace: "stack-demo-alice", OwnerID: "alice", ClusterID: "c1"},
+		{Name: "Demo", Namespace: "stack-demo-bob", OwnerID: "bob", ClusterID: "c2"},
+		{Name: "demo", Namespace: "stack-demo-carol", OwnerID: "carol"},
+		{Name: "other", Namespace: "stack-other-alice", OwnerID: "alice", ClusterID: "c1"},
+	} {
+		inst := inst
+		inst.StackDefinitionID = "d1"
+		inst.Branch = "main"
+		inst.Status = models.StackStatusDraft
+		require.NoError(t, repo.Create(&inst))
+	}
+
+	tests := []struct {
+		name              string
+		lookup            string
+		clusterID         string
+		includeUnassigned bool
+		wantOwners        []string
+	}{
+		{name: "same cluster", lookup: "demo", clusterID: "c1", wantOwners: []string{"alice"}},
+		{name: "case-insensitive", lookup: "DEMO", clusterID: "c2", wantOwners: []string{"bob"}},
+		{name: "default cluster includes unassigned", lookup: "demo", clusterID: "c1", includeUnassigned: true, wantOwners: []string{"alice", "carol"}},
+		{name: "other cluster", lookup: "demo", clusterID: "c3", wantOwners: []string{}},
+		{name: "no cluster", lookup: "demo", clusterID: "", includeUnassigned: true, wantOwners: []string{"carol"}},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got, err := repo.FindByNameOnCluster(tt.lookup, tt.clusterID, tt.includeUnassigned)
+			require.NoError(t, err)
+			owners := make([]string, 0, len(got))
+			for _, inst := range got {
+				owners = append(owners, inst.OwnerID)
+			}
+			assert.ElementsMatch(t, tt.wantOwners, owners)
+		})
+	}
+}
+
+func TestGORMStackInstanceRepository_DuplicateInstanceNames(t *testing.T) {
+	t.Parallel()
+
+	repo := setupStackInstanceRepo(t)
+	for _, inst := range []models.StackInstance{
+		{Name: "demo", Namespace: "stack-demo-alice", OwnerID: "alice", ClusterID: "c1"},
+		{Name: "Demo", Namespace: "stack-demo-bob", OwnerID: "bob", ClusterID: "c1"},
+		{Name: "demo", Namespace: "stack-demo-carol", OwnerID: "carol", ClusterID: "c2"},
+		{Name: "api", Namespace: "stack-api-alice", OwnerID: "alice", ClusterID: "c2"},
+		{Name: "api", Namespace: "stack-api-bob", OwnerID: "bob"},
+		{Name: "solo", Namespace: "stack-solo-bob", OwnerID: "bob", ClusterID: "c1"},
+	} {
+		inst := inst
+		inst.StackDefinitionID = "d1"
+		inst.Branch = "main"
+		inst.Status = models.StackStatusDraft
+		require.NoError(t, repo.Create(&inst))
+	}
+
+	got, err := repo.DuplicateInstanceNames("c2")
+	require.NoError(t, err)
+	assert.Equal(t, []models.DuplicateInstanceName{
+		{ClusterID: "c1", Name: "demo", Count: 2},
+		{ClusterID: "c2", Name: "api", Count: 2},
+	}, got)
+}

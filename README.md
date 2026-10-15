@@ -394,6 +394,7 @@ The table shows the key environment variables. The full list is in `backend/inte
 | `KUBECONFIG_ENCRYPTION_KEY` | No | Passphrase. The backend derives an AES-256 key from it (SHA-256) to encrypt kubeconfig data, registry passwords, and webhook channel secrets. Without it, the backend rejects a cluster that has kubeconfig data. Use a kubeconfig path or in-cluster configuration then. |
 | `ALLOWED_CHART_REPOS` | No | Comma-separated chart repository URL prefixes (`oci://`, `https://`, `http://`). Empty: every chart source is allowed. |
 | `NAMESPACE_LABELS` | No | Extra labels for stack namespaces (`key=value,key=value`) |
+| `UNIQUE_INSTANCE_NAMES` | No | `true`: an instance name must be unique on its cluster (409 on create, rename, clone and quick deploy). Use it when Ingress hosts use `{{.InstanceName}}`. Default: `false` |
 | `CORS_ALLOWED_ORIGINS` | No | Allowed CORS origins: `*` (default; development only), `same-origin` (no cross-origin requests; Helm chart default) or a comma-separated list. The web UI on the same host always passes. |
 | `RATE_LIMIT` / `LOGIN_RATE_LIMIT` | No | Requests per minute for each IP address (defaults: `100` / `10`) |
 | `ENABLE_SWAGGER` | No | Serve the Swagger UI at `/swagger` (default: `false`) |

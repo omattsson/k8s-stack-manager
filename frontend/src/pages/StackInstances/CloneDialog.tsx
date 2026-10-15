@@ -13,7 +13,7 @@ import {
 import { instanceService } from '../../api/client';
 import TtlSelector from '../../components/TtlSelector';
 import type { StackInstance } from '../../types';
-import { describeApiError } from '../../utils/apiError';
+import { describeApiError, describeNameConflict } from '../../utils/apiError';
 import {
   INSTANCE_NAME_MAX_LENGTH,
   INSTANCE_NAME_RULE,
@@ -67,7 +67,7 @@ const CloneDialog = ({ open, source, onClose, onCloned }: CloneDialogProps) => {
       });
       onCloned(cloned);
     } catch (err) {
-      setError(await describeApiError(err, 'Failed to clone instance'));
+      setError(describeNameConflict(err) ?? (await describeApiError(err, 'Failed to clone instance')));
       setSubmitting(false);
     }
   };

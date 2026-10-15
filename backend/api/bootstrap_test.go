@@ -1305,3 +1305,25 @@ func TestBuildLogRetention(t *testing.T) {
 		})
 	}
 }
+
+// UNIQUE_INSTANCE_NAMES needs an instance repository with name lookup; the
+// test stub has none, so buildHandlers must refuse to start.
+func TestBuildHandlers_UniqueInstanceNamesNeedsNameLookup(t *testing.T) {
+	t.Parallel()
+
+	cfg := buildTestConfig()
+	cfg.App.UniqueInstanceNames = true
+	repos := buildTestRepositorySet()
+	hub := buildTestHub(t)
+	healthChecker := health.New()
+
+	svc, err := buildDomainServices(cfg, repos, hub, healthChecker)
+	require.NoError(t, err)
+
+	sessStore := sessionstore.NewMemoryStore()
+	t.Cleanup(func() { sessStore.Stop() })
+
+	_, err = buildHandlers(cfg, repos, svc, sessStore, hub)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "UNIQUE_INSTANCE_NAMES")
+}

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { describeApiError } from '../apiError';
+import { describeApiError, describeNameConflict } from '../apiError';
 
 describe('describeApiError', () => {
   it('returns the fallback when there is no HTTP response', async () => {
@@ -36,5 +36,25 @@ describe('describeApiError', () => {
   it('shows only the status when nothing else is known', async () => {
     const err = { response: { status: 418, data: {} } };
     expect(await describeApiError(err, 'Failed')).toBe('Failed (HTTP 418)');
+  });
+});
+
+describe('describeNameConflict', () => {
+  const conflict = (data: unknown, status = 409) => ({ response: { status, data } });
+
+  it('joins the message and the free names', () => {
+    const err = conflict({ error: 'instance name already exists', message: 'A stack named "demo" already exists on this cluster (owner: carol)', suggestions: ['demo-2', 'demo-3'] });
+    expect(describeNameConflict(err)).toBe('A stack named "demo" already exists on this cluster (owner: carol). Free names: demo-2, demo-3.');
+  });
+
+  it('returns the message alone when no name is free', () => {
+    expect(describeNameConflict(conflict({ message: 'Namespace "stack-a-bob" is already in use', suggestions: [] }))).toBe('Namespace "stack-a-bob" is already in use.');
+  });
+
+  it('returns null for other errors', () => {
+    expect(describeNameConflict(conflict({ error: 'Template has no published version' }))).toBeNull();
+    expect(describeNameConflict(conflict({ message: 'x', suggestions: ['a'] }, 400))).toBeNull();
+    expect(describeNameConflict(new Error('Network Error'))).toBeNull();
+    expect(describeNameConflict(null)).toBeNull();
   });
 });

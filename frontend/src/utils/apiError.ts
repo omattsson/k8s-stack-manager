@@ -70,3 +70,20 @@ export function getApiErrorInfo(error: unknown): { status?: number; message?: st
   }
   return { status: typeof response.status === 'number' ? response.status : undefined, message };
 }
+
+/**
+ * Read a name conflict (HTTP 409 with `message` and `suggestions`, the
+ * NamespaceConflictResponse of create, clone and quick deploy) as one
+ * user-facing sentence.
+ * @param error - The thrown error (usually an AxiosError)
+ * @returns For example 'A stack named "demo" already exists on this cluster (owner: carol). Free names: demo-2, demo-3.', or null when the error is not a name conflict
+ */
+export function describeNameConflict(error: unknown): string | null {
+  const response = (error as HttpErrorLike | null)?.response;
+  if (response?.status !== 409) return null;
+  const data = response.data as { message?: unknown; suggestions?: unknown } | null | undefined;
+  if (!data || typeof data !== 'object' || typeof data.message !== 'string' || !data.message) return null;
+  if (!Array.isArray(data.suggestions)) return null;
+  const names = data.suggestions.filter((s): s is string => typeof s === 'string' && s !== '');
+  return names.length > 0 ? `${data.message}. Free names: ${names.join(', ')}.` : `${data.message}.`;
+}

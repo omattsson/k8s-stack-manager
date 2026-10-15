@@ -152,6 +152,7 @@ Key values in `values.yaml`:
 - `backend.secrets.*`: secret environment variables, for example `JWT_SECRET` (required), `ADMIN_PASSWORD`, `KUBECONFIG_ENCRYPTION_KEY`, `DB_PASSWORD` (Secret or ExternalSecret)
 - `backend.replicas`, `frontend.replicas`, `*.autoscaling`, `*.pdb`: independent scaling
 - `backend.allowedChartRepos`: chart repository URL prefixes (`ALLOWED_CHART_REPOS`). Empty means all sources.
+- `backend.uniqueInstanceNames`: unique instance names for each cluster (`UNIQUE_INSTANCE_NAMES`, default `false`)
 - `backend.rbac.scope` (`namespace` or `cluster`), `backend.rbac.admissionPolicy.enabled`: backend RBAC (see Key Design Decisions)
 - `backend.priorityClassName`, `frontend.priorityClassName`, `mysql.priorityClassName`, `otel.priorityClassName`: PriorityClass of each pod; empty = cluster default.
 - `backend.namespaceRoleBindings`: RoleBindings that the deployer applies to every stack namespace (`NAMESPACE_ROLE_BINDINGS_JSON`)
@@ -501,6 +502,14 @@ Developers use this application to configure, store and deploy multi-service Hel
 - **Branch default:** `master` (`DEFAULT_BRANCH`), unless the stack definition sets `DefaultBranch`.
 - **Namespace naming:** the handler generates `stack-{instance-name}-{owner}` (`buildNamespace`).
 - **Instance names:** a new or changed name must be an RFC 1123 label (lowercase `a-z`, `0-9`, `-`; start and end alphanumeric; at most 50 characters). `models.ValidateInstanceName` checks it on create, rename, clone and quick deploy. `StackInstance.Validate` does not check it, so older instances keep working.
+- **Unique names for each cluster:** with `UNIQUE_INSTANCE_NAMES=true`, a name must be unique on its cluster. Turn it on when Ingress hosts use `{{.InstanceName}}`: two stacks with the same name claim the same host.
+  - Create, rename, clone and quick deploy refuse a name that another instance uses on the same cluster: 409 `instance name already exists`, message `A stack named "x" already exists on this cluster (owner: y)`, and free name suggestions.
+  - The comparison ignores case. An instance without a cluster counts on the default cluster. A rename does not count the instance itself.
+  - Generated clone names skip the names taken on the cluster. When all are taken, the 409 error is `no free clone name`.
+  - The suggestions (in this 409 and in the namespace 409) are names that are free on the cluster and give a free namespace for the caller.
+  - The create form, the clone dialog and the quick deploy dialog show the message and the free names (`describeNameConflict` in `utils/apiError.ts`).
+  - `instanceNameGuard` (`handlers/instance_names.go`) runs the check through `models.InstanceNameLookup`. It is an application check after the namespace check: two concurrent requests can both pass.
+  - Existing duplicates stay. At startup the backend logs a warning for each duplicate name (`LogDuplicateInstanceNames`).
 - **Clone:** `POST /stack-instances/:id/clone` takes an optional `{name, branch, ttl_minutes}`.
   - Without a name, it picks `<name>-copy`, `<name>-copy-2`, and so on.
   - It copies the cluster, TTL, value overrides and branch overrides.

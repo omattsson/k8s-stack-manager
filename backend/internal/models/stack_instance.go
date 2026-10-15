@@ -111,6 +111,26 @@ type CleanStartMarker interface {
 	ClearDeleteAfterClean(id string) error
 }
 
+// InstanceNameLookup is implemented by stack instance repositories that can
+// look up instance names on a cluster. UNIQUE_INSTANCE_NAMES needs it.
+type InstanceNameLookup interface {
+	// FindByNameOnCluster returns the instances that use name on clusterID.
+	// It compares the names without case. With includeUnassigned it also
+	// returns the instances without a cluster (they use the default cluster).
+	FindByNameOnCluster(name, clusterID string, includeUnassigned bool) ([]StackInstance, error)
+	// DuplicateInstanceNames returns the names that more than one instance
+	// uses on the same cluster (compared without case). Instances without a
+	// cluster count as defaultClusterID.
+	DuplicateInstanceNames(defaultClusterID string) ([]DuplicateInstanceName, error)
+}
+
+// DuplicateInstanceName is a name that Count instances use on one cluster.
+type DuplicateInstanceName struct {
+	ClusterID string
+	Name      string
+	Count     int
+}
+
 // StackInstanceFilter selects the stack instances that ListPaged returns.
 // An empty field does not filter. The handler resolves "me" and usernames
 // to OwnerID before it calls the repository.

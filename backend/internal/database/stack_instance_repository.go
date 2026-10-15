@@ -258,6 +258,47 @@ func (r *GORMStackInstanceRepository) FindByName(name string) ([]models.StackIns
 	return instances, nil
 }
 
+// GORMStackInstanceRepository implements the lookup of UNIQUE_INSTANCE_NAMES.
+var _ models.InstanceNameLookup = (*GORMStackInstanceRepository)(nil)
+
+// FindByNameOnCluster returns the stack instances that use name on clusterID.
+// It compares the names without case (LOWER on both sides, so the result does
+// not depend on the column collation). With
+// includeUnassigned it also returns the instances without a cluster.
+func (r *GORMStackInstanceRepository) FindByNameOnCluster(name, clusterID string, includeUnassigned bool) ([]models.StackInstance, error) {
+	var instances []models.StackInstance
+	q := r.db.Select(listColumns).Where("LOWER(name) = LOWER(?)", name)
+	if includeUnassigned {
+		q = q.Where("(cluster_id = ? OR cluster_id = '' OR cluster_id IS NULL)", clusterID)
+	} else {
+		q = q.Where("cluster_id = ?", clusterID)
+	}
+	if err := q.Order("created_at ASC").Find(&instances).Error; err != nil {
+		return nil, dberrors.NewDatabaseError("find_by_name_on_cluster", err)
+	}
+	return instances, nil
+}
+
+// DuplicateInstanceNames returns the names that more than one instance uses on
+// the same cluster, compared without case. Instances without a cluster count
+// as defaultClusterID.
+func (r *GORMStackInstanceRepository) DuplicateInstanceNames(defaultClusterID string) ([]models.DuplicateInstanceName, error) {
+	var rows []models.DuplicateInstanceName
+	err := r.db.Raw(`SELECT cid AS cluster_id, lname AS name, COUNT(*) AS count
+		FROM (
+			SELECT CASE WHEN cluster_id IS NULL OR cluster_id = '' THEN ? ELSE cluster_id END AS cid,
+				LOWER(name) AS lname
+			FROM stack_instances
+		) AS named
+		GROUP BY cid, lname
+		HAVING COUNT(*) > 1
+		ORDER BY cid, lname`, defaultClusterID).Scan(&rows).Error
+	if err != nil {
+		return nil, dberrors.NewDatabaseError("duplicate_instance_names", err)
+	}
+	return rows, nil
+}
+
 // FindByCluster returns all stack instances targeting the given cluster.
 func (r *GORMStackInstanceRepository) FindByCluster(clusterID string) ([]models.StackInstance, error) {
 	var instances []models.StackInstance

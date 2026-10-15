@@ -950,6 +950,8 @@ type MockStackInstanceRepository struct {
 	err       error
 	fetchErr  error
 	createErr error
+	// nameLookupErr fails only FindByNameOnCluster (UNIQUE_INSTANCE_NAMES).
+	nameLookupErr error
 }
 
 func NewMockStackInstanceRepository() *MockStackInstanceRepository {
@@ -1106,6 +1108,50 @@ func (m *MockStackInstanceRepository) FindByName(name string) ([]models.StackIns
 	for _, i := range m.items {
 		if i.Name == name {
 			out = append(out, *i)
+		}
+	}
+	return out, nil
+}
+
+func (m *MockStackInstanceRepository) FindByNameOnCluster(name, clusterID string, includeUnassigned bool) ([]models.StackInstance, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.err != nil {
+		return nil, m.err
+	}
+	if m.nameLookupErr != nil {
+		return nil, m.nameLookupErr
+	}
+	var out []models.StackInstance
+	for _, i := range m.items {
+		if !strings.EqualFold(i.Name, name) {
+			continue
+		}
+		if i.ClusterID == clusterID || (includeUnassigned && i.ClusterID == "") {
+			out = append(out, *i)
+		}
+	}
+	return out, nil
+}
+
+func (m *MockStackInstanceRepository) DuplicateInstanceNames(defaultClusterID string) ([]models.DuplicateInstanceName, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.err != nil {
+		return nil, m.err
+	}
+	counts := map[[2]string]int{}
+	for _, i := range m.items {
+		cid := i.ClusterID
+		if cid == "" {
+			cid = defaultClusterID
+		}
+		counts[[2]string{cid, strings.ToLower(i.Name)}]++
+	}
+	var out []models.DuplicateInstanceName
+	for k, n := range counts {
+		if n > 1 {
+			out = append(out, models.DuplicateInstanceName{ClusterID: k[0], Name: k[1], Count: n})
 		}
 	}
 	return out, nil

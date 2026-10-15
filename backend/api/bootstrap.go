@@ -425,6 +425,23 @@ func buildHandlers(
 		WithTemplateCharts(repos.TemplateChartConfig).
 		WithUserRepo(repos.User)
 
+	// UNIQUE_INSTANCE_NAMES: an instance name is unique on its cluster.
+	if cfg.App.UniqueInstanceNames {
+		lookup, ok := repos.StackInstance.(models.InstanceNameLookup)
+		if !ok {
+			return nil, fmt.Errorf("UNIQUE_INSTANCE_NAMES: the instance repository cannot look up names on a cluster")
+		}
+		defaultClusterID := ""
+		if svc.ClusterRegistry != nil {
+			if id, resolveErr := svc.ClusterRegistry.ResolveClusterID(""); resolveErr == nil {
+				defaultClusterID = id
+			}
+		}
+		slog.Info("Instance names are unique for each cluster (UNIQUE_INSTANCE_NAMES)")
+		// One query over all instances on every replica start; small table.
+		handlers.LogDuplicateInstanceNames(lookup, defaultClusterID)
+	}
+
 	// Instance handler.
 	instanceHandler, err := handlers.NewInstanceHandlerWithDeployer(
 		repos.StackInstance, repos.ValueOverride, repos.ChartBranchOverride,
@@ -439,7 +456,7 @@ func buildHandlers(
 	}
 	instanceHandler.WithHooks(svc.HookDispatcher).WithActions(svc.ActionRegistry).WithNotifier(svc.LifecycleNotifier).WithSharedValues(repos.SharedValues).
 		WithTemplateVersions(repos.TemplateVersion).WithClusterQuotas(repos.ResourceQuota).
-		WithFollowers(repos.InstanceFollower)
+		WithFollowers(repos.InstanceFollower).WithUniqueInstanceNames(cfg.App.UniqueInstanceNames)
 
 	// Git handler.
 	gitHandler := handlers.NewGitHandler(svc.GitRegistry)
@@ -497,7 +514,8 @@ func buildHandlers(
 	if err != nil {
 		return nil, fmt.Errorf("create quick deploy handler: %w", err)
 	}
-	quickDeployHandler.WithSharedValues(repos.SharedValues).WithTemplateVersions(repos.TemplateVersion)
+	quickDeployHandler.WithSharedValues(repos.SharedValues).WithTemplateVersions(repos.TemplateVersion).
+		WithUniqueInstanceNames(cfg.App.UniqueInstanceNames)
 
 	// Cluster shared values are the lowest values layer of every deploy.
 	// Warn loudly if they are not wired: deploys would silently skip them.

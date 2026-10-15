@@ -71,6 +71,7 @@ All configuration uses environment variables with a `.env` fallback (godotenv). 
 - `AZURE_DEVOPS_PAT`, `AZURE_DEVOPS_AUTH` (`pat` or `workload-identity`), `AZURE_DEVOPS_DEFAULT_ORG` (the organization of the provider health check), `GITLAB_BASE_URL`.
 - `NAMESPACE_LABELS`: extra stack namespace labels, `k=v,k=v`.
 - `ALLOWED_CHART_REPOS`: chart repository URL prefixes (`config.ParseAllowedChartRepos`). `models.SetAllowedChartSources` sets them at startup.
+- `UNIQUE_INSTANCE_NAMES` (default false): an instance name is unique on its cluster (`handlers/instance_names.go`).
 - `STACK_ACCESS_CLUSTER_ROLE`, `STACK_ACCESS_SERVICE_ACCOUNT` (`<namespace>/<name>`): namespace-scoped access (`k8s.AccessBinding`, in-cluster clusters only). Set both or neither. The leader worker `stack-access-reconcile` applies it to existing namespaces.
 - `GIN_MODE`: wins when set. Otherwise the mode is debug when `APP_DEBUG` is true, and release when it is false. The code default of `APP_DEBUG` is `true`. The Helm chart sets `false`.
 - `ENABLE_SWAGGER` (default false), `PPROF_ENABLED`, `PPROF_ADDR`.

@@ -107,6 +107,10 @@ data:
   {{- if and .Values.backend.allowedChartRepos (not (hasKey .Values.backend.env "ALLOWED_CHART_REPOS")) }}
   ALLOWED_CHART_REPOS: {{ join "," .Values.backend.allowedChartRepos | quote }}
   {{- end }}
+  {{- /* Unique instance names for each cluster. An explicit backend.env value wins. */}}
+  {{- if and .Values.backend.uniqueInstanceNames (not (hasKey .Values.backend.env "UNIQUE_INSTANCE_NAMES")) }}
+  UNIQUE_INSTANCE_NAMES: "true"
+  {{- end }}
   {{- if .Values.metrics.enabled }}
   METRICS_ENABLED: "true"
   METRICS_ADDR: ":{{ .Values.metrics.port }}"

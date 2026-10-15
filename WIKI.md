@@ -152,6 +152,14 @@ Both list endpoints are paged (`page` and `pageSize`; default 25, maximum 100). 
 - The API checks the rule on create, clone, quick deploy, and rename (400).
 - Older instances with other names keep working. An update that keeps the name does not fail.
 
+**Unique names for each cluster.** Two owners can use the same name, because the namespace includes the owner. When charts build host names from `{{.InstanceName}}`, both stacks then claim the same host, and the ingress controller sends the traffic to one of them. Set `UNIQUE_INSTANCE_NAMES=true` (Helm value `backend.uniqueInstanceNames`) to prevent this.
+
+- Create, rename, clone and quick deploy refuse a name that another instance uses on the same cluster (409). The message names the owner of the other stack, for example `A stack named "test" already exists on this cluster (owner: alice)`.
+- The check ignores case. The same name on another cluster is allowed.
+- A clone without a name gets the first name that is free on the cluster (`<name>-copy`, `<name>-copy-2`, ...).
+- Existing duplicates stay. The backend logs them at startup. Rename all but one of them.
+- The default is `false`.
+
 **Clone.** `POST /stack-instances/:id/clone` accepts an optional body `{"name": "...", "branch": "...", "ttl_minutes": N}`.
 
 - Without a name, the API uses the first free name of `<name>-copy`, `<name>-copy-2`, and so on.
