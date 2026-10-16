@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
+import { StrictMode } from 'react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import Builder from '../Builder';
@@ -349,5 +350,31 @@ describe('Templates Builder', () => {
 
     expect(await screen.findByText('Failed to save template')).toBeInTheDocument();
     expect(mockNavigate).not.toHaveBeenCalled();
+  });
+
+  it('keeps an edit when a late, stale template response arrives (StrictMode, #596)', async () => {
+    // StrictMode runs the load effect twice. The first (stale) response comes last.
+    let resolveFirst: (v: unknown) => void = () => {};
+    let resolveSecond: (v: unknown) => void = () => {};
+    (templateService.get as ReturnType<typeof vi.fn>)
+      .mockReturnValueOnce(new Promise((r) => { resolveFirst = r; }))
+      .mockReturnValueOnce(new Promise((r) => { resolveSecond = r; }));
+    const user = userEvent.setup();
+    render(
+      <StrictMode>
+        <MemoryRouter initialEntries={['/templates/t1/edit']}>
+          <Routes>
+            <Route path="/templates/:id/edit" element={<Builder />} />
+          </Routes>
+        </MemoryRouter>
+      </StrictMode>
+    );
+    await waitFor(() => expect(templateService.get).toHaveBeenCalledTimes(2));
+    await act(async () => resolveSecond({ id: 't1', name: 'My Template', description: '', category: 'Web', version: '1.0.0', default_branch: 'main', charts: [] }));
+    const field = await screen.findByDisplayValue('My Template');
+    await user.clear(field);
+    await user.type(field, 'Renamed Template');
+    await act(async () => resolveFirst({ id: 't1', name: 'My Template', description: '', category: 'Web', version: '1.0.0', default_branch: 'main', charts: [] }));
+    expect(screen.getByDisplayValue('Renamed Template')).toBeInTheDocument();
   });
 });

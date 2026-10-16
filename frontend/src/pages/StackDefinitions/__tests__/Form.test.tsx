@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
+import { StrictMode } from 'react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import Form from '../Form';
@@ -580,5 +581,34 @@ describe('StackDefinitions Form', () => {
     await waitFor(() => expect(definitionService.setTemplateLink).toHaveBeenCalledWith('123', 't1', ''));
     expect(await screen.findByText(/Derived from template Web stack \(v1.0.0\)/)).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /link to a template/i })).not.toBeInTheDocument();
+  });
+
+  it('keeps an edit when a late, stale definition response arrives (StrictMode, #596)', async () => {
+    // StrictMode runs the load effect twice. The first (stale) response comes last.
+    let resolveFirst: (v: unknown) => void = () => {};
+    let resolveSecond: (v: unknown) => void = () => {};
+    const def = { id: '123', name: 'Test Def', description: 'A test definition', default_branch: 'develop', charts: [] };
+    (definitionService.get as ReturnType<typeof vi.fn>)
+      .mockReturnValueOnce(new Promise((r) => { resolveFirst = r; }))
+      .mockReturnValueOnce(new Promise((r) => { resolveSecond = r; }));
+    const user = userEvent.setup();
+    render(
+      <StrictMode>
+        <MemoryRouter initialEntries={['/stack-definitions/123/edit']}>
+          <NotificationProvider>
+            <Routes>
+              <Route path="/stack-definitions/:id/edit" element={<Form />} />
+            </Routes>
+          </NotificationProvider>
+        </MemoryRouter>
+      </StrictMode>
+    );
+    await waitFor(() => expect(definitionService.get).toHaveBeenCalledTimes(2));
+    await act(async () => resolveSecond(def));
+    const field = await screen.findByDisplayValue('Test Def');
+    await user.clear(field);
+    await user.type(field, 'Renamed Def');
+    await act(async () => resolveFirst(def));
+    expect(screen.getByDisplayValue('Renamed Def')).toBeInTheDocument();
   });
 });

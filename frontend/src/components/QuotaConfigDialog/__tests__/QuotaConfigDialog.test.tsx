@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
+import { StrictMode } from 'react';
 import userEvent from '@testing-library/user-event';
 import QuotaConfigDialog from '../index';
 import { NotificationProvider } from '../../../context/NotificationContext';
@@ -496,5 +497,29 @@ describe('QuotaConfigDialog', () => {
 
       expect(screen.getByRole('button', { name: /^save$/i })).toBeEnabled();
     });
+  });
+
+  it('keeps an edit when a late, stale quota response arrives (StrictMode, #596)', async () => {
+    // StrictMode runs the load effect twice. The first (stale) response comes last.
+    let resolveFirst: (v: unknown) => void = () => {};
+    let resolveSecond: (v: unknown) => void = () => {};
+    (clusterService.getQuotas as ReturnType<typeof vi.fn>)
+      .mockReturnValueOnce(new Promise((r) => { resolveFirst = r; }))
+      .mockReturnValueOnce(new Promise((r) => { resolveSecond = r; }));
+    const user = userEvent.setup();
+    render(
+      <StrictMode>
+        <NotificationProvider>
+          <QuotaConfigDialog open onClose={vi.fn()} clusterId="c1" clusterName="production" />
+        </NotificationProvider>
+      </StrictMode>,
+    );
+    await waitFor(() => expect(clusterService.getQuotas).toHaveBeenCalledTimes(2));
+    await act(async () => resolveSecond(mockQuota));
+    const field = await screen.findByDisplayValue('500m');
+    await user.clear(field);
+    await user.type(field, '750m');
+    await act(async () => resolveFirst(mockQuota));
+    expect(screen.getByDisplayValue('750m')).toBeInTheDocument();
   });
 });
