@@ -121,7 +121,8 @@ backend:
     MAX_CONCURRENT_DEPLOYS: "5"
     # TTL in minutes of a new instance that does not set one. The create forms
     # of the web UI start with this value (GET /api/v1/ui-config). "0" means no
-    # expiry; the maximum is 43200 (30 days).
+    # expiry; the maximum is backend.maxInstanceTtlDays (default 30 days, 43200
+    # minutes).
     DEFAULT_INSTANCE_TTL_MINUTES: "480"
     # Wildcard TLS secret replication — copies a shared TLS secret into every
     # stack namespace so ingresses can reference it. Disabled when
@@ -222,6 +223,13 @@ backend:
   # name claim the same host. Existing duplicates stay; the backend logs them
   # at startup.
   uniqueInstanceNames: false
+
+  # Maximum TTL of an instance, and the maximum distance of a fixed stop time
+  # from now, in days (MAX_INSTANCE_TTL_DAYS). A whole number from 1 to 365.
+  # Create, update, clone, quick deploy and extend refuse a longer TTL or a
+  # later stop time (400). The web UI limits its TTL field and date picker
+  # with it.
+  maxInstanceTtlDays: 30
 
   # Proxies that may set the client IP with X-Forwarded-For or X-Real-IP
   # (TRUSTED_PROXIES): IP addresses or CIDR ranges. The per-IP rate limits

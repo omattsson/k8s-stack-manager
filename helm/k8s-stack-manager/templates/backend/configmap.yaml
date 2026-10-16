@@ -115,6 +115,15 @@ data:
   {{- if and .Values.backend.uniqueInstanceNames (not (hasKey .Values.backend.env "UNIQUE_INSTANCE_NAMES")) }}
   UNIQUE_INSTANCE_NAMES: "true"
   {{- end }}
+  {{- /* Maximum TTL in days (1 to 365). An explicit backend.env value wins. */}}
+  {{- if not (hasKey .Values.backend.env "MAX_INSTANCE_TTL_DAYS") }}
+  {{- $maxTtlDays := .Values.backend.maxInstanceTtlDays }}
+  {{- if kindIs "invalid" $maxTtlDays }}{{- $maxTtlDays = 30 }}{{- end }}
+  {{- if or (not (regexMatch "^[0-9]+$" (toString $maxTtlDays))) (lt (int $maxTtlDays) 1) (gt (int $maxTtlDays) 365) }}
+  {{- fail (printf "backend.maxInstanceTtlDays must be a whole number from 1 to 365, got %v" $maxTtlDays) }}
+  {{- end }}
+  MAX_INSTANCE_TTL_DAYS: {{ $maxTtlDays | toString | quote }}
+  {{- end }}
   {{- if .Values.metrics.enabled }}
   METRICS_ENABLED: "true"
   METRICS_ADDR: ":{{ .Values.metrics.port }}"
