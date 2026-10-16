@@ -114,6 +114,34 @@ describe('StackInstances Form', () => {
     expect(definitionService.listAll).toHaveBeenCalledTimes(1);
   });
 
+  it('preselects the definition of the ?definition= URL parameter', async () => {
+    (definitionService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue(mockDefinitions);
+    render(
+      <MemoryRouter initialEntries={['/stack-instances/new?definition=def2']}>
+        <Form />
+      </MemoryRouter>
+    );
+    const select = await screen.findByRole('combobox', { name: /stack definition/i });
+    await waitFor(() => {
+      expect(select).toHaveTextContent('API Stack');
+    });
+    // The branch follows the default branch of the selected definition
+    expect(screen.getByDisplayValue('develop')).toBeInTheDocument();
+  });
+
+  it('ignores a ?definition= value that is not in the list', async () => {
+    (definitionService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue(mockDefinitions);
+    render(
+      <MemoryRouter initialEntries={['/stack-instances/new?definition=missing']}>
+        <Form />
+      </MemoryRouter>
+    );
+    const select = await screen.findByRole('combobox', { name: /stack definition/i });
+    expect(select).not.toHaveTextContent('Web Stack');
+    expect(select).not.toHaveTextContent('API Stack');
+    expect(screen.getByRole('button', { name: /create instance/i })).toBeDisabled();
+  });
+
   it('shows helper text about auto-generated namespace', async () => {
     (definitionService.listAll as ReturnType<typeof vi.fn>).mockResolvedValue(mockDefinitions);
     render(

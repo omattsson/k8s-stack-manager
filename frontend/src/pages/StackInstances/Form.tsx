@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Box,
   Typography,
@@ -26,6 +26,10 @@ interface ConflictResponse {
 
 const Form = () => {
   const navigate = useNavigate();
+  // ?definition=<id> (the deploy button of the Definitions list) preselects
+  // that definition when it is in the list.
+  const [searchParams] = useSearchParams();
+  const requestedDefId = searchParams.get('definition');
 
   const [definitions, setDefinitions] = useState<StackDefinition[]>([]);
   const [clusters, setClusters] = useState<Cluster[]>([]);
@@ -48,8 +52,12 @@ const Form = () => {
     const fetchData = async () => {
       try {
         const [defs, cls] = await Promise.all([definitionService.listAll(), clusterService.list()]);
-        setDefinitions(defs || []);
+        const list = defs || [];
+        setDefinitions(list);
         setClusters(cls || []);
+        if (requestedDefId && list.some((d) => d.id === requestedDefId)) {
+          setSelectedDefId(requestedDefId);
+        }
       } catch {
         setError('Failed to load form data');
       } finally {
@@ -57,7 +65,7 @@ const Form = () => {
       }
     };
     fetchData();
-  }, []);
+  }, [requestedDefId]);
 
   useEffect(() => {
     const def = definitions.find((d) => d.id === selectedDefId);

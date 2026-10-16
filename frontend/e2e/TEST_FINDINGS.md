@@ -61,7 +61,7 @@ useBlocker must be used within a data router
 
 **Root cause:** `make dev-local` starts the backend with `RATE_LIMIT=1000` (requests each minute for each IP address) by default. `make test-e2e` starts the backend with `RATE_LIMIT=10000` and `LOGIN_RATE_LIMIT=10000`. With the lower limit, concurrent workers reach the limit.
 
-**Mitigation:** Run the e2e tests with `make test-e2e`. It starts the backend with the higher limits. Or reduce the workers with `PW_WORKERS=1` (or `--workers=1`). The Playwright configuration uses 1 worker in CI (`CI` is set). Locally it uses `PW_WORKERS`, or the Playwright default.
+**Mitigation:** Run the e2e tests with `make test-e2e`. It starts the backend with the higher limits. Or reduce the workers with `PW_WORKERS=1` (or `--workers=1`). The Playwright configuration uses `PW_WORKERS` when it is set (the E2E workflow sets 2). Else it uses 1 worker in CI (`CI` is set) and the Playwright default locally.
 
 ## Root Cause 5: Shared Database State Between Parallel Workers (Critical)
 
@@ -136,13 +136,21 @@ The tests use the lowest role that the page or the API needs. The helpers are in
 | `profile.spec.ts` | `getByRole('heading', { name: 'API Keys' })` | Strict mode: the text matched a heading and a paragraph |
 | `navigation.spec.ts` | Separate logins for the admin and user navigation tests | The admin links show only to `admin` users |
 | `playwright.config.ts` | `workers` comes from `PW_WORKERS` (else the Playwright default; 1 in CI) | Configurable parallelism for local and CI runs |
+| `e2e/global-setup.ts`, `ensureDefaultCluster` | One shared default cluster `e2e-default-cluster`; no spec deletes it | Instance creates need a default cluster; a cluster that one worker deleted broke the specs of other workers |
 | Various spec files | Adjusted selectors, labels, and test flows | Align the tests with the real UI |
 
 ## Running the Tests
 
 ```bash
 make test-e2e                          # starts MySQL and the backend, runs Playwright
+E2E_KUBECONFIG=~/.kube/local-cluster.yaml make test-e2e   # also run the specs that need a cluster
 cd frontend && PW_WORKERS=1 npx playwright test   # run against a backend that you started
 ```
 
 `make test-e2e` writes the logs to `frontend/test-logs/` (`backend.log` and `playwright.log`). The Playwright configuration starts the Vite dev server (`npm run dev`) when none runs.
+
+Isolation: `make test-e2e` uses its own database (`E2E_DB_NAME`, default `app_e2e`) and creates it fresh on each run, so the tests always start empty. The dev database can hold cluster rows with an absolute kubeconfig path (`make dev-local` stores `~/.kube/config`). The backend runs with `HOME=backend/tmp/e2e-home`. An in-cluster cluster outside a pod falls back to `$HOME/.kube/config`, and Helm reads `KUBECONFIG` or `$HOME/.kube/config`. So both see only a copy of `E2E_KUBECONFIG` (an absolute path, or a path relative to the repository root), or no kubeconfig at all. The specs that need a cluster skip themselves without `E2E_KUBECONFIG`. Set it only to a local cluster (for example Rancher Desktop or kind), never to a shared cluster: the specs create and delete stack namespaces.
+
+Stop `make dev` before `make test-e2e`: both use port 8081, and `make test-e2e` stops when the port is in use.
+
+CI: the workflow `.github/workflows/e2e.yml` runs `make test-e2e` on pull requests and pushes to `main` that change `frontend/`, `backend/`, `docker-compose.yml` or the `Makefile`, and on manual dispatch. It uploads the Playwright report, the test results and the logs as the artifact `playwright-report`.

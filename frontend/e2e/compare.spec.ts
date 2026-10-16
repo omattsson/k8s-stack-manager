@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { loginAsDevops, uniqueName, createAndPublishTemplate, instantiateTemplate } from './helpers';
+import { loginAsDevops, uniqueName, createAndPublishTemplate, instantiateTemplate, mockListAPI } from './helpers';
 
 const mockInstances = [
   {
@@ -80,16 +80,7 @@ async function mockCompareAPIs(
   page: import('@playwright/test').Page,
   compareResult = mockCompareResult,
 ) {
-  await page.route('**/api/v1/stack-instances', (route) => {
-    if (route.request().method() === 'GET') {
-      return route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify(mockInstances),
-      });
-    }
-    return route.continue();
-  });
+  await mockListAPI(page, '/api/v1/stack-instances', mockInstances);
 
   // Also mock the recent endpoint so Dashboard doesn't interfere
   await page.route('**/api/v1/stack-instances/recent', (route) =>
