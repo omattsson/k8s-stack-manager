@@ -10,8 +10,12 @@ export const DEFAULT_FAVICON_URL = '/favicon.svg';
 /** Built-in product name. */
 export const DEFAULT_APP_TITLE = 'K8s Stack Manager';
 
-/** Highest TTL in minutes that the server accepts (30 days). */
+/** Highest TTL in minutes that the server accepts by default (30 days). */
 export const MAX_TTL_MINUTES = 43200;
+
+/** Default and highest values of MAX_INSTANCE_TTL_DAYS. */
+const DEFAULT_MAX_TTL_DAYS = 30;
+const MAX_TTL_DAYS_LIMIT = 365;
 
 /** Display values and form defaults of the web UI (GET /api/v1/ui-config). */
 export interface Branding {
@@ -23,6 +27,8 @@ export interface Branding {
   faviconUrl: string;
   /** Start value of the TTL field in the create forms, in minutes. 0: no expiry. */
   defaultTtlMinutes: number;
+  /** Maximum TTL and stop-time distance from now, in days (MAX_INSTANCE_TTL_DAYS). */
+  maxTtlDays: number;
 }
 
 /** Values used when the UI config cannot be loaded, and outside a BrandingProvider. */
@@ -31,15 +37,27 @@ export const BRANDING_DEFAULTS: Branding = {
   logoUrl: DEFAULT_LOGO_URL,
   faviconUrl: DEFAULT_FAVICON_URL,
   defaultTtlMinutes: 0,
+  maxTtlDays: DEFAULT_MAX_TTL_DAYS,
 };
 
 /**
- * Accept a whole number of minutes from 0 to MAX_TTL_MINUTES.
+ * Accept a whole number of days from 1 to 365.
+ * @param value - MAX_INSTANCE_TTL_DAYS from the server
+ * @returns The value, or the default (30) when it is missing or invalid
+ */
+const maxTtlDaysFromConfig = (value: unknown): number =>
+  typeof value === 'number' && Number.isInteger(value) && value >= 1 && value <= MAX_TTL_DAYS_LIMIT
+    ? value
+    : DEFAULT_MAX_TTL_DAYS;
+
+/**
+ * Accept a whole number of minutes from 0 to the limit.
  * @param value - TTL default from the server
+ * @param maxDays - The limit in days
  * @returns The value, or 0 when it is not a valid TTL
  */
-const ttlFromConfig = (value: unknown): number =>
-  typeof value === 'number' && Number.isInteger(value) && value > 0 && value <= MAX_TTL_MINUTES ? value : 0;
+const ttlFromConfig = (value: unknown, maxDays: number): number =>
+  typeof value === 'number' && Number.isInteger(value) && value > 0 && value <= maxDays * 24 * 60 ? value : 0;
 
 const BrandingContext = createContext<Branding>(BRANDING_DEFAULTS);
 
@@ -74,11 +92,13 @@ export const isSafeImageUrl = (value: unknown): value is string => {
 export const brandingFromConfig = (data: unknown): Branding => {
   const cfg = (data && typeof data === 'object' ? data : {}) as Record<string, unknown>;
   const title = typeof cfg.title === 'string' && cfg.title.trim() !== '' ? cfg.title.trim() : DEFAULT_APP_TITLE;
+  const maxTtlDays = maxTtlDaysFromConfig(cfg.max_instance_ttl_days);
   return {
     title,
     logoUrl: isSafeImageUrl(cfg.logo_url) ? cfg.logo_url : DEFAULT_LOGO_URL,
     faviconUrl: isSafeImageUrl(cfg.favicon_url) ? cfg.favicon_url : DEFAULT_FAVICON_URL,
-    defaultTtlMinutes: ttlFromConfig(cfg.default_instance_ttl_minutes),
+    defaultTtlMinutes: ttlFromConfig(cfg.default_instance_ttl_minutes, maxTtlDays),
+    maxTtlDays,
   };
 };
 
@@ -113,6 +133,7 @@ const cacheUIConfig = (data: unknown) => {
         logo_url: cfg.logo_url,
         favicon_url: cfg.favicon_url,
         default_instance_ttl_minutes: cfg.default_instance_ttl_minutes,
+        max_instance_ttl_days: cfg.max_instance_ttl_days,
       }),
     );
   } catch {

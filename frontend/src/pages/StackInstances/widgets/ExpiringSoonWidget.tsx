@@ -53,6 +53,7 @@ const ExpiringRow = ({ item, onExtended }: ExpiringRowProps) => {
             instanceId={item.id}
             instanceName={item.name}
             label="Extend TTL"
+            expiresAt={item.expires_at}
             onExtended={(updated) => onExtended(item.id, updated.expires_at ?? '')}
           />
         )}

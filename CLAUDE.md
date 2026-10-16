@@ -153,6 +153,7 @@ Key values in `values.yaml`:
 - `backend.replicas`, `frontend.replicas`, `*.autoscaling`, `*.pdb`: independent scaling
 - `backend.allowedChartRepos`: chart repository URL prefixes (`ALLOWED_CHART_REPOS`). Empty means all sources.
 - `backend.uniqueInstanceNames`: unique instance names for each cluster (`UNIQUE_INSTANCE_NAMES`, default `false`)
+- `backend.maxInstanceTtlDays`: maximum TTL and stop-time distance in days (`MAX_INSTANCE_TTL_DAYS`, default `30`, 1 to 365; another value fails the render)
 - `backend.trustedProxies`: proxies that may set the client IP (`TRUSTED_PROXIES`, default the private IPv4 ranges and `fc00::/7`)
 - `backend.rbac.scope` (`namespace` or `cluster`), `backend.rbac.admissionPolicy.enabled`: backend RBAC (see Key Design Decisions)
 - `backend.priorityClassName`, `frontend.priorityClassName`, `mysql.priorityClassName`, `otel.priorityClassName`: PriorityClass of each pod; empty = cluster default.
@@ -218,7 +219,8 @@ backend/
       template_charts.go         # Template chart config management
       template_versions.go       # TemplateVersionHandler: version history listing and diff
       users.go                   # UserHandler: user management, role change (local users only)
-      ui_config.go               # Public GET /ui-config: branding (APP_TITLE, APP_LOGO_URL, APP_FAVICON_URL) and default_instance_ttl_minutes
+      ui_config.go               # Public GET /ui-config: branding (APP_TITLE, APP_LOGO_URL, APP_FAVICON_URL), default_instance_ttl_minutes and max_instance_ttl_days
+      instance_ttl.go            # TTL and stop-time rules: MAX_INSTANCE_TTL_DAYS limit, expires_at, stop time passed (409 on deploy)
       value_overrides.go         # Per-chart value overrides
       websocket.go               # WebSocket upgrade handler
       content_disposition.go     # Safe Content-Disposition header for downloads
@@ -406,7 +408,7 @@ frontend/src/
     EmptyState/                # Placeholder for empty lists
     EntityLink/                # Link to a related entity
     ErrorBoundary/             # React error boundary wrapper
-    ExtendTtlMenu/             # Menu that adds time to the expiry of an instance
+    ExtendTtlMenu/             # Menu that adds time to the expiry of an instance (+1 h, +4 h, +24 h, Custom... with until)
     FavoriteButton/            # Bookmark toggle for templates and instances
     FollowButton/              # Follow toggle for an instance
     InstanceActionsMenu/       # Custom actions (`useInstanceActions`: first group of the instance "Actions" menu), parameter form, result, job log polling
@@ -419,8 +421,9 @@ frontend/src/
     QuotaConfigDialog/         # Resource quota configuration modal
     SetupWizard/               # First-run checklist (cluster, template, instance), can be dismissed
     StatusBadge/               # Colored status chip
+    StopTimePicker/            # Stop time picker (datetime-local with min and max, time left); used by TtlSelector and ExtendTtlMenu
     TemplateFieldDiffList/     # Template field changes of a version diff
-    TtlSelector/               # TTL duration picker
+    TtlSelector/               # TTL presets and "Custom stop time" (fixed stop time, expires_at)
     YamlEditor/                # YAML text editor (Monaco)
   pages/                       # Simple pages export from index.tsx; domain pages use named files
     Login/                     # Authentication page
@@ -452,7 +455,7 @@ frontend/src/
     typography.ts              # Typography variant overrides
     components.ts              # MUI component default prop and style overrides
   types/                       # Shared TypeScript type definitions
-  utils/                       # roles, timeAgo, expiry, instanceName, instanceState, jwt, quantity, apiError, download, deployHistory, templateVersion, notificationEventTypes, notificationHelpers, recentTemplates, setupWizard
+  utils/                       # roles, timeAgo, expiry, instanceName, instanceState, jwt, quantity, apiError, download, deployHistory, templateVersion, notificationEventTypes, notificationHelpers, recentTemplates, setupWizard, stopTime
 ```
 
 **Stack:** React 19, MUI v9, react-router-dom v7, Vite 8, TypeScript 6, Vitest 5, Playwright (26 specs in `frontend/e2e/`).
@@ -512,9 +515,9 @@ Developers use this application to configure, store and deploy multi-service Hel
   - The create form, the clone dialog and the quick deploy dialog show the message and the free names (`describeNameConflict` in `utils/apiError.ts`).
   - `instanceNameGuard` (`handlers/instance_names.go`) runs the check through `models.InstanceNameLookup`. It is an application check after the namespace check: two concurrent requests can both pass.
   - Existing duplicates stay. At startup the backend logs a warning for each duplicate name (`LogDuplicateInstanceNames`).
-- **Clone:** `POST /stack-instances/:id/clone` takes an optional `{name, branch, ttl_minutes}`.
+- **Clone:** `POST /stack-instances/:id/clone` takes an optional `{name, branch, ttl_minutes}` or `expires_at` instead of `ttl_minutes`.
   - Without a name, it picks `<name>-copy`, `<name>-copy-2`, and so on.
-  - It copies the cluster, TTL, value overrides and branch overrides.
+  - It copies the cluster, TTL (or a future fixed stop time), value overrides and branch overrides.
   - It copies the quota override only when the caller may modify the source (owner, admin, devops). An owner without the admin or devops role gets the copy only when the override stays within the cluster quota. Otherwise the clone uses the cluster quota.
 - **Per-chart branch overrides:** an instance can override the branch of each chart (default: `DefaultBranch` of the definition). Helm values use it through `{{.Branch}}` and `{{.ImageTag}}`.
 - **Instance comparison:** `GET /stack-instances/compare` compares two instances side by side, including the merged Helm values of each chart.
@@ -526,10 +529,13 @@ Developers use this application to configure, store and deploy multi-service Hel
 - **Primary URL:** an Ingress with the annotation `k8s-stack-manager.io/primary-url: "true"` (`k8s.PrimaryURLAnnotation`) is the main entry point of the stack. `GET /stack-instances/:id/status` lists it first (`primary: true`), and the stack list card shows it. Without the annotation, the first Ingress by name is the primary URL.
 - **TTL auto-expiry:**
   - A create request without `ttl_minutes` gets `DEFAULT_INSTANCE_TTL_MINUTES` (Helm chart default `480`, code default `0` = no expiry). `GET /ui-config` returns it as `default_instance_ttl_minutes` (0 when it is out of range). Create Instance and Quick Deploy start the TTL field with it and leave out `ttl_minutes` until the user changes the field.
-  - An instance with `TTLMinutes > 0` gets `ExpiresAt` on deploy: now plus the TTL, or the current expiry when that is later. A redeploy never shortens an extended expiry. Bulk deploy does the same.
+  - `MAX_INSTANCE_TTL_DAYS` (default 30, 1 to 365; an invalid value, or a `DEFAULT_INSTANCE_TTL_MINUTES` above it, stops the start and fails the Helm render; Helm `backend.maxInstanceTtlDays`) limits the TTL and the stop time in create, update, clone, quick deploy and extend (400). A deploy caps a TTL expiry at now plus the limit. `GET /ui-config` returns it as `max_instance_ttl_days`. `handlers/instance_ttl.go` holds the rules (`requestedExpiry`, `stopTimeError`).
+  - Fixed stop time: create, update, clone and quick deploy accept `expires_at` (RFC 3339 with a time zone) instead of `ttl_minutes`. It sets `ExpiresAt` and `TTLMinutes = 0` (no new column). Both in one request, a past time or a time after the limit give 400. On update, an `expires_at` equal to the stored value is no change, and with an unchanged `ttl_minutes` the expiry stays (clients that send the whole instance back keep a TTL expiry or a fixed stop time). A clone copies a future fixed stop time of the source.
+  - An instance with `TTLMinutes > 0` gets `ExpiresAt` on deploy: now plus the TTL, or the current expiry when that is later. A redeploy never shortens an extended expiry. Bulk deploy does the same. A fixed stop time stays on deploy; when it has passed, deploy and bulk deploy refuse (409 "The stop time has passed. Set a new stop time or a TTL.").
   - The reaper (leader replica only) checks every minute and stops expired instances.
   - The expiry warner sends one warning 30 minutes before expiry. It sets `stack_instances.expiry_warned_at` with a conditional update before it notifies. The repository `Update` never writes that column. It clears the column when `ExpiresAt` changes (deploy, extend).
-  - `POST /:id/extend` with `{"minutes": N}` adds N minutes to the expiry. It never shortens the expiry, never changes `ttl_minutes`, and caps the result at now plus 30 days (`MaxTTLMinutes`, 43200). An empty body adds one TTL. The deprecated body `{"ttl_minutes": N}` alone keeps the old reset behavior.
+  - `POST /:id/extend` with `{"minutes": N}` adds N minutes to the expiry. It never shortens the expiry, never changes `ttl_minutes`, and caps the result at now plus `MAX_INSTANCE_TTL_DAYS`. `{"until": "<RFC 3339>"}` sets the expiry to that time: after the current expiry, at most now plus the limit (400), for a TTL and a fixed stop time. An empty body adds one TTL. The deprecated body `{"ttl_minutes": N}` alone keeps the old reset behavior.
+  - Web UI: "Custom stop time" in `TtlSelector` shows `StopTimePicker` (native `datetime-local`, now plus 15 minutes to now plus `max_instance_ttl_days`, local time zone) and the forms send `expires_at`. The Extend menu has "Custom..." (a dialog that sends `until`). `ExpiryChip` and the instance page show a fixed stop time as "Stops at <time>", also before the deploy.
 - **Follow:**
   - Any user who can view an instance can follow it: `POST` and `DELETE /stack-instances/:id/follow` (idempotent, audited as `follow` and `unfollow`).
   - `GET /stack-instances/:id` adds `following` and `follower_count`.
@@ -697,7 +703,7 @@ Developers use this application to configure, store and deploy multi-service Hel
 | Favorites | `/api/v1/favorites` | User bookmarks |
 | Notifications | `/api/v1/notifications` | List, read and unread, count, preferences |
 | Analytics | `/api/v1/analytics` | Usage overview, template stats, user stats |
-| UI Config | `/api/v1/ui-config` | Public branding values (title, logo, favicon) and the TTL default of the create forms |
+| UI Config | `/api/v1/ui-config` | Public branding values (title, logo, favicon), the TTL default of the create forms and the TTL limit (`max_instance_ttl_days`) |
 | Health | `/health/*` | Liveness and readiness |
 | WebSocket | `/ws` | Real-time status and log events. Replicas share them through `ws_events` when `WS_FANOUT_ENABLED=true`. `RedactWSToken` removes the token from logs. |
 

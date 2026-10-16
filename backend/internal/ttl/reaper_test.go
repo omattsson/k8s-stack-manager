@@ -360,6 +360,7 @@ func TestReaper_NotifiesStackExpired(t *testing.T) {
 		name        string
 		stopper     InstanceStopper
 		noNotifier  bool
+		fixedStop   bool
 		wantCalls   int
 		wantMessage string
 	}{
@@ -382,6 +383,13 @@ func TestReaper_NotifiesStackExpired(t *testing.T) {
 			wantMessage: `Stack "exp" expired after its TTL and was stopped`,
 		},
 		{
+			name:        "a fixed stop time (no TTL) has its own text",
+			stopper:     fakeStopper{},
+			fixedStop:   true,
+			wantCalls:   1,
+			wantMessage: `Stack "exp" reached its stop time and is being stopped`,
+		},
+		{
 			name:       "no notifier sends nothing",
 			stopper:    nil,
 			noNotifier: true,
@@ -395,9 +403,13 @@ func TestReaper_NotifiesStackExpired(t *testing.T) {
 
 			repo := newMockInstanceRepo()
 			past := time.Now().Add(-time.Minute)
+			ttl := 30
+			if tt.fixedStop {
+				ttl = 0
+			}
 			require.NoError(t, repo.Create(&models.StackInstance{
 				ID: "exp-1", Name: "exp", OwnerID: "owner-1",
-				Status: models.StackStatusRunning, TTLMinutes: 30, ExpiresAt: &past,
+				Status: models.StackStatusRunning, TTLMinutes: ttl, ExpiresAt: &past,
 			}))
 
 			notifier := &mockExpiryNotifier{}

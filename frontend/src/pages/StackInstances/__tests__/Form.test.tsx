@@ -1,10 +1,11 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import axios from 'axios';
 import Form from '../Form';
 import { BRANDING_DEFAULTS, StaticBrandingProvider } from '../../../context/BrandingContext';
+import { toLocalInputValue } from '../../../utils/stopTime';
 
 const mockNavigate = vi.fn();
 vi.mock('react-router-dom', async () => {
@@ -574,6 +575,34 @@ describe('StackInstances Form', () => {
       await user.click(screen.getByRole('option', { name: 'No expiry' }));
       const body = await create(user);
       expect(body).toHaveProperty('ttl_minutes', 0);
+    });
+
+    it('sends a custom stop time as expires_at, without ttl_minutes', async () => {
+      const user = userEvent.setup();
+      await renderWithDefault(480);
+      await user.click(screen.getByRole('combobox', { name: /ttl/i }));
+      await user.click(screen.getByRole('option', { name: 'Custom stop time' }));
+      const stop = new Date(Date.now() + 3 * 86_400_000);
+      stop.setSeconds(0, 0);
+      fireEvent.change(screen.getByLabelText('Stop at'), { target: { value: toLocalInputValue(stop) } });
+      const body = await create(user);
+      expect(body).toHaveProperty('expires_at', stop.toISOString());
+      expect(body).not.toHaveProperty('ttl_minutes');
+    });
+
+    it('blocks Create for a stop time after the limit', async () => {
+      const user = userEvent.setup();
+      await renderWithDefault(480);
+      await user.click(screen.getByRole('combobox', { name: /stack definition/i }));
+      await user.click(screen.getByText(/Web Stack/));
+      await user.type(screen.getByRole('textbox', { name: /instance name/i }), 'my-app');
+      await user.click(screen.getByRole('combobox', { name: /ttl/i }));
+      await user.click(screen.getByRole('option', { name: 'Custom stop time' }));
+      fireEvent.change(screen.getByLabelText('Stop at'), {
+        target: { value: toLocalInputValue(new Date(Date.now() + 40 * 86_400_000)) },
+      });
+      expect(screen.getByText(/^Choose a time before /)).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /create instance/i })).toBeDisabled();
     });
   });
 });

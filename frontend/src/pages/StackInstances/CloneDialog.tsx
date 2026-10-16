@@ -13,6 +13,8 @@ import {
 import { instanceService } from '../../api/client';
 import TtlSelector from '../../components/TtlSelector';
 import type { StackInstance } from '../../types';
+import { useBranding } from '../../context/BrandingContext';
+import { hasFixedStopTime, stopTimeBounds, stopTimeError } from '../../utils/stopTime';
 import { describeApiError, describeNameConflict } from '../../utils/apiError';
 import {
   INSTANCE_NAME_MAX_LENGTH,
@@ -38,6 +40,17 @@ const CloneDialog = ({ open, source, onClose, onCloned }: CloneDialogProps) => {
   const [name, setName] = useState('');
   const [branch, setBranch] = useState('');
   const [ttlMinutes, setTtlMinutes] = useState(0);
+  // A fixed stop time (expires_at) instead of a TTL. It starts with a future
+  // fixed stop time of the source.
+  const { maxTtlDays } = useBranding();
+  const [stopTime, setStopTime] = useState<string | null | undefined>(undefined);
+  // The future stop time of the source is valid as it is (also less than
+  // 15 minutes away); a changed time must be in the picker range.
+  const sourceStopTime = hasFixedStopTime(source) && new Date(source.expires_at as string).getTime() > Date.now()
+    ? source.expires_at
+    : undefined;
+  const stopTimeInvalid = stopTime !== undefined && stopTime !== sourceStopTime
+    && stopTimeError(stopTime, stopTimeBounds(maxTtlDays)) !== null;
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -46,10 +59,12 @@ const CloneDialog = ({ open, source, onClose, onCloned }: CloneDialogProps) => {
       setName(suggestCloneName(source.name));
       setBranch(source.branch);
       setTtlMinutes(source.ttl_minutes ?? 0);
+      setStopTime(sourceStopTime);
       setError(null);
       setSubmitting(false);
     }
-  }, [open, source.name, source.branch, source.ttl_minutes]);
+    // Fields only: the page makes a new instance object on every status update.
+  }, [open, source.id, source.name, source.branch, source.ttl_minutes, sourceStopTime]);
 
   const nameError = validateInstanceName(name);
   // When the user keeps the suggested name, the server picks a free `<name>-copy[-N]`.
@@ -63,7 +78,7 @@ const CloneDialog = ({ open, source, onClose, onCloned }: CloneDialogProps) => {
       const cloned = await instanceService.clone(source.id, {
         ...(nameEdited ? { name } : {}),
         ...(branch.trim() ? { branch: branch.trim() } : {}),
-        ttl_minutes: ttlMinutes,
+        ...(stopTime ? { expires_at: stopTime } : { ttl_minutes: ttlMinutes }),
       });
       onCloned(cloned);
     } catch (err) {
@@ -103,7 +118,14 @@ const CloneDialog = ({ open, source, onClose, onCloned }: CloneDialogProps) => {
             fullWidth
             helperText="Leave empty to use the branch of the source"
           />
-          <TtlSelector value={ttlMinutes} onChange={setTtlMinutes} disabled={submitting} />
+          <TtlSelector
+            value={ttlMinutes}
+            onChange={setTtlMinutes}
+            stopTime={stopTime}
+            onStopTimeChange={setStopTime}
+            acceptStopTime={sourceStopTime}
+            disabled={submitting}
+          />
         </Box>
       </DialogContent>
       <DialogActions sx={{ px: 3, pb: 2 }}>
@@ -111,7 +133,7 @@ const CloneDialog = ({ open, source, onClose, onCloned }: CloneDialogProps) => {
         <Button
           variant="contained"
           onClick={handleSubmit}
-          disabled={submitting || nameError !== null}
+          disabled={submitting || nameError !== null || stopTimeInvalid}
           startIcon={submitting ? <CircularProgress size={18} /> : undefined}
         >
           {submitting ? 'Cloning...' : 'Create Clone'}

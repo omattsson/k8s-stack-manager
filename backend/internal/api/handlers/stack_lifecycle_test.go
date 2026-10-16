@@ -134,7 +134,7 @@ func TestExtendExpiry(t *testing.T) {
 		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			got := extendExpiry(tt.current, tt.minutes, now)
+			got := extendExpiry(tt.current, tt.minutes, MaxTTLMinutes, now)
 			require.NotNil(t, got)
 			assert.True(t, got.Equal(tt.want), "got %s want %s", got, tt.want)
 		})
@@ -777,7 +777,7 @@ func TestDeployExpiry(t *testing.T) {
 		{"extended expiry is kept", &later, later},
 	}
 	for _, tt := range tests {
-		got := deployExpiry(tt.current, 240, now)
+		got := deployExpiry(tt.current, 240, MaxTTLMinutes, now)
 		assert.True(t, got.Equal(tt.want), "%s: got %s want %s", tt.name, got, tt.want)
 	}
 }

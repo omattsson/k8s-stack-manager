@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import ExpiryChip from '../ExpiryChip';
+import { formatStopTimeWhen } from '../../../utils/stopTime';
 import type { StackInstance } from '../../../types';
 
 vi.mock('../../../hooks/useCountdown', () => ({
@@ -19,6 +20,7 @@ const baseInstance: StackInstance = {
   branch: 'main',
   status: 'running',
   stack_definition_id: 'def1',
+  ttl_minutes: 60,
   created_at: '',
   updated_at: '',
 };
@@ -156,5 +158,29 @@ describe('ExpiryChip', () => {
     );
 
     expect(screen.getByText('Expired')).toBeInTheDocument();
+  });
+
+  describe('fixed stop time (no TTL)', () => {
+    const counting = { remaining: '1d 2h', isWarning: false, isCritical: false, isExpired: false };
+    const stop = '2026-10-17T16:00:00Z';
+
+    it.each(['running', 'draft'] as const)('shows "Stops at" for a %s instance', (status) => {
+      (useCountdown as unknown as MockFn).mockReturnValue(counting);
+      render(<ExpiryChip instance={{ ...baseInstance, status, ttl_minutes: 0, expires_at: stop }} />);
+      const chip = screen.getByText(/^⏱ Stops at /);
+      expect(chip.textContent).toContain(formatStopTimeWhen(new Date(stop)));
+    });
+
+    it('shows Expired for a stopped instance after the stop time', () => {
+      (useCountdown as unknown as MockFn).mockReturnValue({ ...counting, isExpired: true });
+      render(<ExpiryChip instance={{ ...baseInstance, status: 'stopped', ttl_minutes: 0, expires_at: '2020-01-01T00:00:00Z' }} />);
+      expect(screen.getByText('Expired')).toBeInTheDocument();
+    });
+
+    it('shows nothing for a draft with a TTL', () => {
+      (useCountdown as unknown as MockFn).mockReturnValue(counting);
+      const { container } = render(<ExpiryChip instance={{ ...baseInstance, status: 'draft', ttl_minutes: 60, expires_at: stop }} />);
+      expect(container).toBeEmptyDOMElement();
+    });
   });
 });

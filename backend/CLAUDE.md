@@ -73,6 +73,7 @@ All configuration uses environment variables with a `.env` fallback (godotenv). 
 - `NAMESPACE_LABELS`: extra stack namespace labels, `k=v,k=v`.
 - `ALLOWED_CHART_REPOS`: chart repository URL prefixes (`config.ParseAllowedChartRepos`). `models.SetAllowedChartSources` sets them at startup.
 - `UNIQUE_INSTANCE_NAMES` (default false): an instance name is unique on its cluster (`handlers/instance_names.go`).
+- `DEFAULT_INSTANCE_TTL_MINUTES` (default 0): TTL of a create request without `ttl_minutes`. `MAX_INSTANCE_TTL_DAYS` (default 30, 1 to 365; another value stops the start): maximum TTL and stop-time distance (`config/instance_ttl.go`, `handlers/instance_ttl.go`).
 - `STACK_ACCESS_CLUSTER_ROLE`, `STACK_ACCESS_SERVICE_ACCOUNT` (`<namespace>/<name>`): namespace-scoped access (`k8s.AccessBinding`, in-cluster clusters only). Set both or neither. The leader worker `stack-access-reconcile` applies it to existing namespaces.
 - `GIN_MODE`: wins when set. Otherwise the mode is debug when `APP_DEBUG` is true, and release when it is false. The code default of `APP_DEBUG` is `true`. The Helm chart sets `false`.
 - `ENABLE_SWAGGER` (default false), `PPROF_ENABLED`, `PPROF_ADDR`.

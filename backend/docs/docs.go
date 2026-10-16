@@ -4869,6 +4869,89 @@ const docTemplate = `{
                         }
                     }
                 }
+            },
+            "post": {
+                "description": "Create a new stack instance from a definition.\nExpiry: ttl_minutes counts from the deploy (omitted: DEFAULT_INSTANCE_TTL_MINUTES; 0: no expiry). expires_at (RFC 3339 with a time zone) is a fixed stop time instead: ttl_minutes becomes 0, and a deploy keeps the stop time. expires_at must be in the future and not later than now + MAX_INSTANCE_TTL_DAYS (default 30). A TTL above that limit, or expires_at together with ttl_minutes, gives 400.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "stack-instances"
+                ],
+                "summary": "Create a stack instance",
+                "parameters": [
+                    {
+                        "description": "Instance object",
+                        "name": "instance",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handlers.createInstanceRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/models.StackInstance"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid body, or name is not a DNS label (lowercase a-z, 0-9, '-', start and end alphanumeric, at most 50 characters)",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "A pre-instance-create hook rejected the request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Stack definition not found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "409": {
+                        "description": "Namespace already exists, or the name is taken on the cluster (UNIQUE_INSTANCE_NAMES)",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.NamespaceConflictResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
             }
         },
         "/api/v1/stack-instances/bulk/clean": {
@@ -5289,7 +5372,7 @@ const docTemplate = `{
                 }
             },
             "put": {
-                "description": "Update a stack instance (branch, name, etc.). A changed name must be a DNS label (lowercase a-z, 0-9, '-', start and end alphanumeric, at most 50 characters); an unchanged name is not checked, so older instances with other names stay editable. A rename does not change the namespace.",
+                "description": "Update a stack instance (branch, name, etc.). A changed name must be a DNS label (lowercase a-z, 0-9, '-', start and end alphanumeric, at most 50 characters); an unchanged name is not checked, so older instances with other names stay editable. A rename does not change the namespace.\nttl_minutes sets a new TTL from now (0 clears the expiry). expires_at (RFC 3339 with a time zone) sets a fixed stop time and ttl_minutes 0. Do not send both (400). The limits are the same as for create (MAX_INSTANCE_TTL_DAYS).",
                 "consumes": [
                     "application/json"
                 ],
@@ -6130,7 +6213,7 @@ const docTemplate = `{
         },
         "/api/v1/stack-instances/{id}/clone": {
             "post": {
-                "description": "Create a new draft stack instance as a copy of an existing one. The clone belongs to the caller and uses the cluster and definition of the source.\nIt copies the TTL (unless ttl_minutes is given), the value overrides and the branch overrides. It copies the instance quota override only when the caller owns the source or is admin or devops; for an owner without the admin or devops role only when the override stays within the cluster quota. When it is not copied for that reason (or the cluster quota lookup fails), the response has a warning and the clone uses the cluster quota.\nThe body is optional. Without a name, the server picks the first free name of \u003csource\u003e-copy, \u003csource\u003e-copy-2, ... (the namespace stack-\u003cname\u003e-\u003cowner\u003e must be free). A given name must be a DNS label (lowercase a-z, 0-9, '-', start and end alphanumeric, at most 50 characters).",
+                "description": "Create a new draft stack instance as a copy of an existing one. The clone belongs to the caller and uses the cluster and definition of the source.\nIt copies the TTL (unless ttl_minutes or expires_at is given; a future fixed stop time of the source is copied too), the value overrides and the branch overrides. It copies the instance quota override only when the caller owns the source or is admin or devops; for an owner without the admin or devops role only when the override stays within the cluster quota. When it is not copied for that reason (or the cluster quota lookup fails), the response has a warning and the clone uses the cluster quota.\nThe body is optional. Without a name, the server picks the first free name of \u003csource\u003e-copy, \u003csource\u003e-copy-2, ... (the namespace stack-\u003cname\u003e-\u003cowner\u003e must be free). A given name must be a DNS label (lowercase a-z, 0-9, '-', start and end alphanumeric, at most 50 characters).",
                 "consumes": [
                     "application/json"
                 ],
@@ -6221,7 +6304,7 @@ const docTemplate = `{
         },
         "/api/v1/stack-instances/{id}/deploy": {
             "post": {
-                "description": "Trigger Helm deployment for a stack instance. Allowed for draft, stopped, error, partial and running instances (running = redeploy, a Helm upgrade with the current values). With a TTL, the expiry becomes now + ttl_minutes, unless the current expiry is later (a redeploy never makes the expiry earlier).",
+                "description": "Trigger Helm deployment for a stack instance. Allowed for draft, stopped, error, partial and running instances (running = redeploy, a Helm upgrade with the current values). With a TTL, the expiry becomes now + ttl_minutes, unless the current expiry is later (a redeploy never makes the expiry earlier). A fixed stop time (ttl_minutes 0 with expires_at) stays; when it has passed, the deploy gives 409 \"The stop time has passed. Set a new stop time or a TTL.\"",
                 "produces": [
                     "application/json"
                 ],
@@ -6276,7 +6359,7 @@ const docTemplate = `{
                         }
                     },
                     "409": {
-                        "description": "Already deploying",
+                        "description": "Already deploying, or the fixed stop time has passed",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {
@@ -6495,7 +6578,7 @@ const docTemplate = `{
         },
         "/api/v1/stack-instances/{id}/extend": {
             "post": {
-                "description": "Extend the expiry time of a stack instance. The extend never makes the expiry earlier and never changes ttl_minutes.\n- {\"minutes\": N}: adds N minutes (N \u003e 0) to the current expires_at, or to now when the instance already expired or has no expiry time. The new expiry is capped at now + 43200 minutes (30 days).\n- Empty body: adds the instance's ttl_minutes in the same way (400 when ttl_minutes is 0).\n- Deprecated {\"ttl_minutes\": N} (without minutes): the old behaviour for older clients (stackctl 0.4.0 and earlier). It sets ttl_minutes to N and expires_at to now + N, which can make the expiry earlier. The response has a Warning header; the server logs a deprecation warning.\nAn instance without TTL and without expiry time has nothing to extend (400).",
+                "description": "Extend the expiry time of a stack instance. The extend never makes the expiry earlier and never changes ttl_minutes.\n- {\"minutes\": N}: adds N minutes (N \u003e 0) to the current expires_at, or to now when the instance already expired or has no expiry time. The new expiry is capped at now + MAX_INSTANCE_TTL_DAYS (default 30 days).\n- {\"until\": \"\u003cRFC 3339\u003e\"}: sets expires_at to this time. It must be after the current expiry (or after now when the expiry has passed) and not later than now + MAX_INSTANCE_TTL_DAYS (400). It works for a TTL and for a fixed stop time. Do not send it with minutes or ttl_minutes (400).\n- Empty body: adds the instance's ttl_minutes in the same way (400 when ttl_minutes is 0).\n- Deprecated {\"ttl_minutes\": N} (without minutes): the old behaviour for older clients (stackctl 0.4.0 and earlier). It sets ttl_minutes to N and expires_at to now + N, which can make the expiry earlier. The response has a Warning header; the server logs a deprecation warning.\nAn instance without TTL and without expiry time has nothing to extend (400).",
                 "consumes": [
                     "application/json"
                 ],
@@ -6515,7 +6598,7 @@ const docTemplate = `{
                         "required": true
                     },
                     {
-                        "description": "Minutes to add (or the deprecated ttl_minutes)",
+                        "description": "Minutes to add, the new expiry (until), or the deprecated ttl_minutes",
                         "name": "body",
                         "in": "body",
                         "schema": {
@@ -8753,7 +8836,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Instantiate a template, create an instance, set branch overrides, and trigger deployment in a single call.\ninstance_name must be a DNS label (lowercase a-z, 0-9, '-', start and end alphanumeric, at most 50 characters).\nThe template content comes from the latest published snapshot, not the working copy. A template that is not published, or has no snapshot, gives 409 \"Template has no published version\".\nThe new stack definition is owned by the instance (owner_instance_id): deleting the instance deletes the definition when no other instance uses it. The definition is named after the instance; when the caller already has a definition with that name, the name gets the suffix \" (2)\", \" (3)\", ...",
+                "description": "Instantiate a template, create an instance, set branch overrides, and trigger deployment in a single call.\ninstance_name must be a DNS label (lowercase a-z, 0-9, '-', start and end alphanumeric, at most 50 characters).\nExpiry: ttl_minutes (omitted: DEFAULT_INSTANCE_TTL_MINUTES; 0: no expiry) or expires_at, a fixed stop time (RFC 3339 with a time zone, in the future, not later than now + MAX_INSTANCE_TTL_DAYS). Do not send both (400).\nThe template content comes from the latest published snapshot, not the working copy. A template that is not published, or has no snapshot, gives 409 \"Template has no published version\".\nThe new stack definition is owned by the instance (owner_instance_id): deleting the instance deletes the definition when no other instance uses it. The definition is named after the instance; when the caller already has a definition with that name, the name gets the suffix \" (2)\", \" (3)\", ...",
                 "consumes": [
                     "application/json"
                 ],
@@ -9150,7 +9233,7 @@ const docTemplate = `{
         },
         "/api/v1/ui-config": {
             "get": {
-                "description": "Returns the display values of the web UI: product title, logo URL and favicon URL (APP_TITLE, APP_LOGO_URL, APP_FAVICON_URL), and the start value of the TTL field in the create forms (default_instance_ttl_minutes, DEFAULT_INSTANCE_TTL_MINUTES; 0 means no expiry). Public: no authentication, so the login page can use it. An empty logo_url means the built-in logo. A URL is a same-origin path or an https URL. Cached for 5 minutes.",
+                "description": "Returns the display values of the web UI: product title, logo URL and favicon URL (APP_TITLE, APP_LOGO_URL, APP_FAVICON_URL), the start value of the TTL field in the create forms (default_instance_ttl_minutes, DEFAULT_INSTANCE_TTL_MINUTES; 0 means no expiry), and the maximum TTL and stop-time distance in days (max_instance_ttl_days, MAX_INSTANCE_TTL_DAYS). Public: no authentication, so the login page can use it. An empty logo_url means the built-in logo. A URL is a same-origin path or an https URL. Cached for 5 minutes.",
                 "produces": [
                     "application/json"
                 ],
@@ -11148,6 +11231,11 @@ const docTemplate = `{
                     "type": "string",
                     "example": ""
                 },
+                "max_instance_ttl_days": {
+                    "description": "MaxInstanceTTLDays is the maximum TTL and the maximum distance of a\nstop time from now (MAX_INSTANCE_TTL_DAYS). The forms limit the\nTTL field and the stop-time picker with it.",
+                    "type": "integer",
+                    "example": 30
+                },
                 "title": {
                     "description": "Title is the product name (APP_TITLE).",
                     "type": "string",
@@ -11520,6 +11608,10 @@ const docTemplate = `{
                     "description": "Branch of the clone. Default: the branch of the source.",
                     "type": "string"
                 },
+                "expires_at": {
+                    "description": "ExpiresAt is a fixed stop time of the clone (RFC 3339 with a time\nzone). Do not send it with ttl_minutes. Default: a future fixed stop\ntime of the source.",
+                    "type": "string"
+                },
                 "name": {
                     "description": "Name of the clone. Must be a DNS label (lowercase a-z, 0-9, '-', start\nand end alphanumeric, at most 50 characters). When empty, the server\npicks the first free name of \u003csource\u003e-copy, \u003csource\u003e-copy-2, ...",
                     "type": "string"
@@ -11574,6 +11666,31 @@ const docTemplate = `{
                 },
                 "webhook_url": {
                     "type": "string"
+                }
+            }
+        },
+        "handlers.createInstanceRequest": {
+            "type": "object",
+            "properties": {
+                "branch": {
+                    "type": "string"
+                },
+                "cluster_id": {
+                    "type": "string"
+                },
+                "expires_at": {
+                    "description": "ExpiresAt is a fixed stop time (RFC 3339 with a time zone). It sets\nttl_minutes to 0, and a deploy keeps it. Do not send it with ttl_minutes.",
+                    "type": "string",
+                    "example": "2026-10-17T18:00:00+02:00"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "stack_definition_id": {
+                    "type": "string"
+                },
+                "ttl_minutes": {
+                    "type": "integer"
                 }
             }
         },
@@ -11677,6 +11794,11 @@ const docTemplate = `{
                 "ttl_minutes": {
                     "description": "TTLMinutes is deprecated. Sent alone, it keeps the old behaviour: set\nthe TTL to this value and the expiry to now + TTL. Use minutes instead.",
                     "type": "integer"
+                },
+                "until": {
+                    "description": "Until sets the expiry to this time (RFC 3339 with a time zone). It must\nbe after the current expiry and not later than now plus the limit\n(MAX_INSTANCE_TTL_DAYS). Do not send it with minutes or ttl_minutes.",
+                    "type": "string",
+                    "example": "2026-10-17T18:00:00+02:00"
                 }
             }
         },
@@ -11881,6 +12003,11 @@ const docTemplate = `{
                 },
                 "cluster_id": {
                     "type": "string"
+                },
+                "expires_at": {
+                    "description": "ExpiresAt is a fixed stop time (RFC 3339 with a time zone). It sets\nttl_minutes to 0. Do not send it with ttl_minutes.",
+                    "type": "string",
+                    "example": "2026-10-17T18:00:00+02:00"
                 },
                 "instance_description": {
                     "type": "string"
@@ -12819,7 +12946,7 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "condition": {
-                    "description": "e.g. \"idle_days:7\", \"status:stopped,age_days:14\", \"stopped_days:3\", \"ttl_expired\"",
+                    "description": "e.g. \"idle_days:7\", \"status:stopped,age_days:14\", \"stopped_days:3\", \"ttl_expired\", \"status:running,expires_within_hours:12\"",
                     "type": "string"
                 },
                 "created_at": {

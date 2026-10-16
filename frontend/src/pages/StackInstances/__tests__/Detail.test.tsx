@@ -1060,7 +1060,7 @@ describe('StackInstances Detail', () => {
       isCritical: false,
       isExpired: false,
     });
-    setupMocks({ status: 'running', expires_at: '2026-01-01T12:00:00Z' });
+    setupMocks({ status: 'running', ttl_minutes: 60, expires_at: '2026-01-01T12:00:00Z' });
     renderDetail();
 
     await waitFor(() => {
@@ -1077,7 +1077,7 @@ describe('StackInstances Detail', () => {
       isCritical: false,
       isExpired: false,
     });
-    setupMocks({ status: 'running', expires_at: '2026-01-01T12:00:00Z' });
+    setupMocks({ status: 'running', ttl_minutes: 60, expires_at: '2026-01-01T12:00:00Z' });
     renderDetail();
 
     await waitFor(() => {
@@ -1095,7 +1095,7 @@ describe('StackInstances Detail', () => {
       isCritical: false,
       isExpired: false,
     });
-    const inst = setupMocks({ status: 'running', expires_at: '2026-01-01T12:00:00Z' });
+    const inst = setupMocks({ status: 'running', ttl_minutes: 60, expires_at: '2026-01-01T12:00:00Z' });
     (instanceService.extend as MockFn).mockResolvedValue({ ...inst, expires_at: '2026-01-01T16:00:00Z' });
 
     renderDetail();
@@ -2207,7 +2207,7 @@ describe('StackInstances Detail permissions', () => {
       isCritical: false,
       isExpired: false,
     });
-    setupMocks({ status: 'running', expires_at: '2026-01-01T12:00:00Z' });
+    setupMocks({ status: 'running', ttl_minutes: 60, expires_at: '2026-01-01T12:00:00Z' });
     renderDetail();
 
     await waitFor(() => {
@@ -2224,7 +2224,7 @@ describe('StackInstances Detail permissions', () => {
       isCritical: false,
       isExpired: false,
     });
-    setupMocks({ status: 'running', expires_at: '2026-01-01T12:00:00Z' });
+    setupMocks({ status: 'running', ttl_minutes: 60, expires_at: '2026-01-01T12:00:00Z' });
     renderDetail();
 
     await waitFor(() => {

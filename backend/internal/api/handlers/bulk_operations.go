@@ -140,6 +140,11 @@ func (h *InstanceHandler) BulkDeploy(c *gin.Context) {
 			return "", fmt.Errorf("cannot deploy: instance is currently %s", inst.Status)
 		}
 
+		// Same rule as DeployInstance: a passed fixed stop time blocks the deploy.
+		if stopTimePassed(inst.TTLMinutes, inst.ExpiresAt, time.Now().UTC()) {
+			return "", fmt.Errorf("%s", msgStopTimePassed)
+		}
+
 		def, err := h.definitionRepo.FindByID(inst.StackDefinitionID)
 		if err != nil {
 			return "", fmt.Errorf("stack definition not found")
@@ -186,7 +191,7 @@ func (h *InstanceHandler) BulkDeploy(c *gin.Context) {
 		// it, a bulk deploy of an expired instance kept the old expiry and the
 		// TTL reaper stopped the instance right after the deploy.
 		if inst.TTLMinutes > 0 {
-			inst.ExpiresAt = deployExpiry(inst.ExpiresAt, inst.TTLMinutes, time.Now().UTC())
+			inst.ExpiresAt = deployExpiry(inst.ExpiresAt, inst.TTLMinutes, h.maxTTL(), time.Now().UTC())
 			_ = h.instanceRepo.Update(inst)
 		}
 

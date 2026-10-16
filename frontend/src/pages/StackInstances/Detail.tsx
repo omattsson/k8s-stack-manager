@@ -51,6 +51,8 @@ import { canModifyInstance, hasAtLeastRole } from '../../utils/roles';
 import { describeApiError } from '../../utils/apiError';
 import { downloadBlob } from '../../utils/download';
 import ExtendTtlMenu from '../../components/ExtendTtlMenu';
+import { useBranding } from '../../context/BrandingContext';
+import { formatStopTime, hasFixedStopTime, stopTimeBounds, stopTimeError } from '../../utils/stopTime';
 import { useInstanceActions, actionSecondaryText } from '../../components/InstanceActionsMenu';
 import { successfulDeploys, currentDeployLogId, defaultRollbackTarget } from '../../utils/deployHistory';
 import { mergeInstanceUpdate } from '../../utils/instanceState';
@@ -82,6 +84,9 @@ const Detail = () => {
   const [editedOverrides, setEditedOverrides] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  // Stop time in the TTL field: undefined (a preset), null (incomplete
+  // input) or the ISO time. It starts with the saved fixed stop time.
+  const [stopDraft, setStopDraft] = useState<string | null | undefined>(undefined);
   const [error, setError] = useState<string | null>(null);
   /** Set when an instance.deleted message for this instance arrives. */
   const [deletedRemotely, setDeletedRemotely] = useState(false);
@@ -633,24 +638,49 @@ const Detail = () => {
     } catch (e) { console.error('Failed to refresh deploy logs after rollback', e); }
   };
 
-  const handleTtlChange = async (ttlMinutes: number) => {
-    if (!id || !instance) return;
+  // Show the saved fixed stop time in the TTL field after a load or a save.
+  const savedStopTime = hasFixedStopTime(instance) ? instance?.expires_at : undefined;
+  useEffect(() => {
+    setStopDraft(savedStopTime);
+  }, [savedStopTime]);
+
+  const { maxTtlDays } = useBranding();
+  const stopDraftChanged = stopDraft !== undefined && stopDraft !== savedStopTime;
+  const stopDraftError = stopDraftChanged ? stopTimeError(stopDraft, stopTimeBounds(maxTtlDays)) : null;
+
+  const handleStopTimeSave = async () => {
+    if (!id || !stopDraft || stopDraftError) return;
     setSaving(true);
     setError(null);
     try {
-      let updated: StackInstance;
-      if (ttlMinutes > 0) {
-        // Sets the TTL and restarts the expiry from now.
-        updated = await instanceService.update(id, { ttl_minutes: ttlMinutes });
-      } else {
-        // Clear TTL — send full instance so required fields are preserved
-        updated = await instanceService.update(id, { ...instance, ttl_minutes: 0 });
-      }
+      // A fixed stop time: ttl_minutes becomes 0, and a deploy keeps the time.
+      const updated = await instanceService.update(id, { expires_at: stopDraft });
+      setInstance((prev) => mergeInstanceUpdate(prev, updated));
+      showSuccess(`Stop time set: ${formatStopTime(updated.expires_at)}`);
+    } catch (err) {
+      setError(await describeApiError(err, 'Failed to set the stop time'));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleTtlChange = async (ttlMinutes: number) => {
+    if (!id || !instance) return;
+    // Back from an unsaved stop time to the current TTL: nothing to save
+    // (a PUT would restart the TTL).
+    if (!hasFixedStopTime(instance) && ttlMinutes === (instance.ttl_minutes ?? 0)) return;
+    setSaving(true);
+    setError(null);
+    try {
+      // The update is partial. ttl_minutes > 0 sets the TTL and restarts the
+      // expiry from now; 0 clears the expiry (also a fixed stop time).
+      const updated: StackInstance = await instanceService.update(id, { ttl_minutes: ttlMinutes });
       // Keep the follow state if the response does not have it.
       setInstance((prev) => mergeInstanceUpdate(prev, updated));
       showSuccess('TTL updated');
     } catch {
       setError('Failed to update TTL');
+      setStopDraft(savedStopTime);
     } finally {
       setSaving(false);
     }
@@ -859,10 +889,15 @@ const Detail = () => {
             <Typography variant="body2" color="text.secondary">
               Owner: {instance.owner_username || instance.owner_id}
             </Typography>
-            {countdown && !countdown.isExpired && (instance.status === 'running' || instance.status === 'partial') && (
+            {countdown && !countdown.isExpired && (
+              (instance.status === 'running' || instance.status === 'partial') ||
+              (hasFixedStopTime(instance) && instance.status !== 'stopped')
+            ) && (
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 0.5 }}>
                 <Chip
-                  label={`Expires in ${countdown.remaining}`}
+                  label={hasFixedStopTime(instance)
+                    ? `Stops at ${formatStopTime(instance.expires_at)}`
+                    : `Expires in ${countdown.remaining}`}
                   size="small"
                   color={countdown.isCritical ? 'error' : countdown.isWarning ? 'warning' : 'success'}
                   icon={<span>⏱</span>}
@@ -870,6 +905,7 @@ const Detail = () => {
                 {canModify && (
                   <ExtendTtlMenu
                     instanceId={instance.id}
+                    expiresAt={instance.expires_at}
                     onExtended={(updated) => setInstance((prev) => mergeInstanceUpdate(prev, updated))}
                     onError={setError}
                   />
@@ -979,11 +1015,27 @@ const Detail = () => {
 
         <Box sx={{ mt: 2 }}>
           <Typography variant="subtitle2" gutterBottom>TTL (Time to Live)</Typography>
-          <TtlSelector
-            value={instance.ttl_minutes ?? 0}
-            onChange={handleTtlChange}
-            disabled={saving || !canModify}
-          />
+          <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 2, flexWrap: 'wrap' }}>
+            <TtlSelector
+              value={instance.ttl_minutes ?? 0}
+              onChange={handleTtlChange}
+              stopTime={stopDraft}
+              onStopTimeChange={setStopDraft}
+              acceptStopTime={savedStopTime}
+              disabled={saving || !canModify}
+            />
+            {stopDraftChanged && canModify && (
+              <Button
+                variant="contained"
+                size="small"
+                onClick={handleStopTimeSave}
+                disabled={saving || !stopDraft || stopDraftError !== null}
+                sx={{ mt: 0.5 }}
+              >
+                Save stop time
+              </Button>
+            )}
+          </Box>
         </Box>
       </Paper>
 

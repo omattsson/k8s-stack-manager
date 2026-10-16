@@ -33,6 +33,7 @@
   - `notificationHelpers.tsx`: toast helpers. `notificationEventTypes.ts`: in-app event types.
   - `recentTemplates.ts`: recently used templates in localStorage.
   - `setupWizard.ts`: dismissed flag of the first-run wizard in localStorage.
+  - `stopTime.ts`: fixed stop time helpers (bounds from `max_instance_ttl_days`, `datetime-local` values, "Stops at" text).
 
 ## Component Patterns
 - Use functional components only. Do not use class components.
@@ -47,7 +48,7 @@
     - `Templates/`: `Gallery.tsx`, `Builder.tsx`, `Instantiate.tsx`, `Preview.tsx`, `VersionHistory.tsx`, `PublishDialog.tsx`, `CloneTemplateDialog.tsx`.
     - `Admin/`: `Clusters/`, `NotificationChannels/`, `OrphanedNamespaces/`, `Users/`.
 - Shared components are in `src/components/`:
-  - Layout, AccessUrls, BranchSelector, BrandLogo, ConfirmDialog, EmptyState, EntityLink, ErrorBoundary, LoadingState, ProtectedRoute, StatusBadge, TtlSelector, YamlEditor.
+  - Layout, AccessUrls, BranchSelector, BrandLogo, ConfirmDialog, EmptyState, EntityLink, ErrorBoundary, LoadingState, ProtectedRoute, StatusBadge, StopTimePicker, TtlSelector, YamlEditor.
   - ChartDiffList and TemplateFieldDiffList (template version diff).
   - DeployPreviewDialog (merged values before deploy, `GET /stack-instances/:id/deploy-preview`).
   - DeploymentLogViewer, PodStatusDisplay, QuickDeployDialog, QuotaConfigDialog.

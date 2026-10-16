@@ -432,6 +432,31 @@ helm-test: ## Verify default and External Secrets Helm renders
 	grep -q 'TRUSTED_PROXIES: "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,fc00::/7"' "$$template_file" \
 		|| { echo "backend ConfigMap must trust the private ranges by default" >&2; exit 1; }; \
 	if grep -q 'UNIQUE_INSTANCE_NAMES:' "$$template_file"; then echo "UNIQUE_INSTANCE_NAMES must be off by default" >&2; exit 1; fi; \
+	grep -q 'MAX_INSTANCE_TTL_DAYS: "30"' "$$template_file" \
+		|| { echo "backend ConfigMap must have MAX_INSTANCE_TTL_DAYS 30 by default" >&2; exit 1; }; \
+	helm template $(HELM_RELEASE) $(HELM_CHART) --show-only templates/backend/configmap.yaml \
+		--set backend.secrets.JWT_SECRET=dummy-jwt-secret-for-template --set backend.maxInstanceTtlDays=7 > "$$template_file"; \
+	grep -q 'MAX_INSTANCE_TTL_DAYS: "7"' "$$template_file" \
+		|| { echo "backend.maxInstanceTtlDays=7 must render MAX_INSTANCE_TTL_DAYS 7" >&2; exit 1; }; \
+	helm template $(HELM_RELEASE) $(HELM_CHART) --show-only templates/backend/configmap.yaml \
+		--set backend.secrets.JWT_SECRET=dummy-jwt-secret-for-template --set backend.env.MAX_INSTANCE_TTL_DAYS=14 > "$$template_file"; \
+	test "$$(grep -c 'MAX_INSTANCE_TTL_DAYS:' "$$template_file")" = 1 && grep -q 'MAX_INSTANCE_TTL_DAYS: "14"' "$$template_file" \
+		|| { echo "backend.env.MAX_INSTANCE_TTL_DAYS must win over backend.maxInstanceTtlDays" >&2; exit 1; }; \
+	for bad in 0 366 abc 1.5; do \
+		if helm template $(HELM_RELEASE) $(HELM_CHART) --show-only templates/backend/configmap.yaml \
+			--set backend.secrets.JWT_SECRET=dummy-jwt-secret-for-template --set-string backend.maxInstanceTtlDays=$$bad >/dev/null 2>&1; then \
+			echo "backend.maxInstanceTtlDays=$$bad must fail the render" >&2; exit 1; fi; \
+	done; \
+	if helm template $(HELM_RELEASE) $(HELM_CHART) --show-only templates/backend/configmap.yaml \
+		--set backend.secrets.JWT_SECRET=dummy-jwt-secret-for-template --set backend.maxInstanceTtlDays=0 >/dev/null 2>&1; then \
+		echo "a numeric backend.maxInstanceTtlDays=0 must fail the render" >&2; exit 1; fi; \
+	if helm template $(HELM_RELEASE) $(HELM_CHART) --show-only templates/backend/configmap.yaml \
+		--set backend.secrets.JWT_SECRET=dummy-jwt-secret-for-template --set backend.maxInstanceTtlDays=1 \
+		--set-string backend.env.DEFAULT_INSTANCE_TTL_MINUTES=2880 >/dev/null 2>&1; then \
+		echo "a TTL default above backend.maxInstanceTtlDays must fail the render" >&2; exit 1; fi; \
+	helm template $(HELM_RELEASE) $(HELM_CHART) --show-only templates/backend/configmap.yaml \
+		--set backend.secrets.JWT_SECRET=dummy-jwt-secret-for-template --set backend.maxInstanceTtlDays=1 \
+		| grep -q 'MAX_INSTANCE_TTL_DAYS: "1"' || { echo "the default TTL (480) must fit backend.maxInstanceTtlDays=1" >&2; exit 1; }; \
 	helm template $(HELM_RELEASE) $(HELM_CHART) --show-only templates/backend/configmap.yaml \
 		--set backend.secrets.JWT_SECRET=dummy-jwt-secret-for-template --set backend.env.TRUSTED_PROXIES=10.1.0.0/16 > "$$template_file"; \
 	test "$$(grep -c 'TRUSTED_PROXIES:' "$$template_file")" = 1 && grep -q 'TRUSTED_PROXIES: "10.1.0.0/16"' "$$template_file" \

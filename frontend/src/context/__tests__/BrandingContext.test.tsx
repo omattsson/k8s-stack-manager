@@ -198,9 +198,9 @@ describe('BrandingContext', () => {
 
   describe('brandingFromConfig', () => {
     it.each([
-      ['empty logo uses the built-in logo', { title: 'A', logo_url: '', favicon_url: '/f.svg' }, { title: 'A', logoUrl: '/logo.svg', faviconUrl: '/f.svg', defaultTtlMinutes: 0 }],
-      ['blank title uses the default', { title: '  ', logo_url: '/l.svg', favicon_url: '/f.svg' }, { title: BRANDING_DEFAULTS.title, logoUrl: '/l.svg', faviconUrl: '/f.svg', defaultTtlMinutes: 0 }],
-      ['javascript URL is ignored', { title: 'A', logo_url: 'javascript:alert(1)', favicon_url: 'data:image/svg+xml,<svg/>' }, { title: 'A', logoUrl: '/logo.svg', faviconUrl: '/favicon.svg', defaultTtlMinutes: 0 }],
+      ['empty logo uses the built-in logo', { title: 'A', logo_url: '', favicon_url: '/f.svg' }, { title: 'A', logoUrl: '/logo.svg', faviconUrl: '/f.svg', defaultTtlMinutes: 0, maxTtlDays: 30 }],
+      ['blank title uses the default', { title: '  ', logo_url: '/l.svg', favicon_url: '/f.svg' }, { title: BRANDING_DEFAULTS.title, logoUrl: '/l.svg', faviconUrl: '/f.svg', defaultTtlMinutes: 0, maxTtlDays: 30 }],
+      ['javascript URL is ignored', { title: 'A', logo_url: 'javascript:alert(1)', favicon_url: 'data:image/svg+xml,<svg/>' }, { title: 'A', logoUrl: '/logo.svg', faviconUrl: '/favicon.svg', defaultTtlMinutes: 0, maxTtlDays: 30 }],
       ['non-object body gives the defaults', 'not json', BRANDING_DEFAULTS],
     ])('%s', (_name, input, expected) => {
       expect(brandingFromConfig(input)).toEqual(expected);
@@ -217,6 +217,24 @@ describe('BrandingContext', () => {
       ['a missing value', undefined, 0],
     ])('TTL default: %s gives %s', (_name, value, expected) => {
       expect(brandingFromConfig({ title: 'A', default_instance_ttl_minutes: value }).defaultTtlMinutes).toBe(expected);
+    });
+
+    it.each([
+      ['a valid limit', 7, 7],
+      ['one year', 365, 365],
+      ['0', 0, 30],
+      ['above one year', 366, 30],
+      ['a fraction', 1.5, 30],
+      ['a string', '7', 30],
+      ['a missing value', undefined, 30],
+    ])('TTL limit: %s gives %s days', (_name, value, expected) => {
+      expect(brandingFromConfig({ title: 'A', max_instance_ttl_days: value }).maxTtlDays).toBe(expected);
+    });
+
+    it('checks the TTL default against the configured limit', () => {
+      expect(brandingFromConfig({ default_instance_ttl_minutes: 7 * 1440, max_instance_ttl_days: 7 }).defaultTtlMinutes).toBe(7 * 1440);
+      expect(brandingFromConfig({ default_instance_ttl_minutes: 7 * 1440 + 1, max_instance_ttl_days: 7 }).defaultTtlMinutes).toBe(0);
+      expect(brandingFromConfig({ default_instance_ttl_minutes: 50000, max_instance_ttl_days: 90 }).defaultTtlMinutes).toBe(50000);
     });
   });
 
