@@ -145,7 +145,12 @@ type DeploymentConfig struct {
 	ClusterHealthPollInterval time.Duration
 	HelmBinary                string
 	KubeconfigPath            string
-	KubeconfigEncryptionKey   string
+	// InClusterFallbackKubeconfig (IN_CLUSTER_FALLBACK_KUBECONFIG) is for
+	// local development only: outside a pod, an in-cluster cluster uses this
+	// kubeconfig for the Kubernetes client and Helm. Empty (default): an
+	// in-cluster cluster outside a pod is unreachable (#582).
+	InClusterFallbackKubeconfig string
+	KubeconfigEncryptionKey     string
 	// WildcardTLSSourceNamespace + WildcardTLSSourceSecret point at a pre-existing
 	// TLS secret that is copied into each stack namespace before chart install
 	// (so ingresses can reference it). When WildcardTLSSourceSecret is empty, the
@@ -842,19 +847,20 @@ func loadDeploymentConfig() DeploymentConfig {
 	// lives in out-of-process extension subscribers — see internal/hooks and
 	// EXTENDING.md. HOOKS_CONFIG_FILE points at the JSON file describing them.
 	return DeploymentConfig{
-		HelmBinary:                 getEnv("HELM_BINARY", "helm"),
-		KubeconfigPath:             getEnv("KUBECONFIG_PATH", getEnv("KUBECONFIG", "")),
-		KubeconfigEncryptionKey:    getEnv("KUBECONFIG_ENCRYPTION_KEY", ""),
-		DeploymentTimeout:          getEnvDuration("DEPLOYMENT_TIMEOUT", 10*time.Minute),
-		ClusterHealthPollInterval:  getEnvDuration("CLUSTER_HEALTH_POLL_INTERVAL", 60*time.Second),
-		StabilizeTimeout:           getEnvDuration("DEPLOY_STABILIZE_TIMEOUT", 5*time.Minute),
-		StabilizePollInterval:      getEnvDuration("DEPLOY_STABILIZE_POLL_INTERVAL", 5*time.Second),
-		MaxConcurrentDeploys:       getEnvInt32("MAX_CONCURRENT_DEPLOYS", 5),
-		WildcardTLSSourceNamespace: getEnv("WILDCARD_TLS_SOURCE_NAMESPACE", ""),
-		WildcardTLSSourceSecret:    getEnv("WILDCARD_TLS_SOURCE_SECRET", ""),
-		WildcardTLSTargetSecret:    getEnv("WILDCARD_TLS_TARGET_SECRET", ""),
-		NamespaceRoleBindings:      parseNamespaceRoleBindings(getEnv("NAMESPACE_ROLE_BINDINGS_JSON", "")),
-		HooksConfigFile:            getEnv("HOOKS_CONFIG_FILE", ""),
+		HelmBinary:                  getEnv("HELM_BINARY", "helm"),
+		KubeconfigPath:              getEnv("KUBECONFIG_PATH", getEnv("KUBECONFIG", "")),
+		InClusterFallbackKubeconfig: getEnv("IN_CLUSTER_FALLBACK_KUBECONFIG", ""),
+		KubeconfigEncryptionKey:     getEnv("KUBECONFIG_ENCRYPTION_KEY", ""),
+		DeploymentTimeout:           getEnvDuration("DEPLOYMENT_TIMEOUT", 10*time.Minute),
+		ClusterHealthPollInterval:   getEnvDuration("CLUSTER_HEALTH_POLL_INTERVAL", 60*time.Second),
+		StabilizeTimeout:            getEnvDuration("DEPLOY_STABILIZE_TIMEOUT", 5*time.Minute),
+		StabilizePollInterval:       getEnvDuration("DEPLOY_STABILIZE_POLL_INTERVAL", 5*time.Second),
+		MaxConcurrentDeploys:        getEnvInt32("MAX_CONCURRENT_DEPLOYS", 5),
+		WildcardTLSSourceNamespace:  getEnv("WILDCARD_TLS_SOURCE_NAMESPACE", ""),
+		WildcardTLSSourceSecret:     getEnv("WILDCARD_TLS_SOURCE_SECRET", ""),
+		WildcardTLSTargetSecret:     getEnv("WILDCARD_TLS_TARGET_SECRET", ""),
+		NamespaceRoleBindings:       parseNamespaceRoleBindings(getEnv("NAMESPACE_ROLE_BINDINGS_JSON", "")),
+		HooksConfigFile:             getEnv("HOOKS_CONFIG_FILE", ""),
 	}
 }
 

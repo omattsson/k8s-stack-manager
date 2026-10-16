@@ -8,10 +8,9 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"log/slog"
-	"os"
-	"path/filepath"
 	"sort"
 	"time"
 
@@ -40,11 +39,25 @@ type Client struct {
 	accessBinding *AccessBinding
 }
 
+// ErrInClusterUnavailable is returned by NewClient("") when the process does
+// not run in a pod (no service account token and no KUBERNETES_SERVICE_HOST).
+var ErrInClusterUnavailable = errors.New("in-cluster config is not available: the backend does not run in a pod")
+
+// InClusterAvailable reports whether the in-cluster config (the service
+// account of the pod) can be loaded.
+func InClusterAvailable() bool {
+	_, err := rest.InClusterConfig()
+	return err == nil
+}
+
 // NewClient creates a Kubernetes client.
 // When kubeconfigPath is provided, it is used directly (no in-cluster fallback)
 // so that multi-cluster routing always targets the intended cluster.
-// When kubeconfigPath is empty, it tries in-cluster config first, then the
-// default kubeconfig path (~/.kube/config).
+// When kubeconfigPath is empty, it uses only the in-cluster config (the
+// service account of the pod). Outside a pod it returns
+// ErrInClusterUnavailable: it never falls back to ~/.kube/config, which would
+// send the requests of an in-cluster cluster to the current context of the
+// person who runs the backend (#582).
 func NewClient(kubeconfigPath string) (*Client, error) {
 	var config *rest.Config
 	var err error
@@ -56,15 +69,9 @@ func NewClient(kubeconfigPath string) (*Client, error) {
 			return nil, fmt.Errorf("build kubeconfig from %s: %w", kubeconfigPath, err)
 		}
 	} else {
-		// No kubeconfig path — try in-cluster config first, then default file.
 		config, err = rest.InClusterConfig()
 		if err != nil {
-			home, _ := os.UserHomeDir()
-			defaultPath := filepath.Join(home, ".kube", "config")
-			config, err = clientcmd.BuildConfigFromFlags("", defaultPath)
-			if err != nil {
-				return nil, fmt.Errorf("build kubeconfig: %w", err)
-			}
+			return nil, fmt.Errorf("%w: %v", ErrInClusterUnavailable, err)
 		}
 	}
 

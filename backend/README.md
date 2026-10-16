@@ -161,6 +161,7 @@ The backend reads all configuration from environment variables. It also reads a 
 |---|---|---|
 | `HELM_BINARY` | `helm` | Path of the Helm binary |
 | `KUBECONFIG_PATH` | `KUBECONFIG`, else empty | Kubeconfig of the default cluster |
+| `IN_CLUSTER_FALLBACK_KUBECONFIG` | empty | Local development only. Outside a pod, a cluster with `use_in_cluster` uses this kubeconfig for the Kubernetes client and Helm. Empty: such a cluster is unreachable outside a pod; the backend never reads `~/.kube/config` for it. In Docker Compose it is a path in the container (`make dev-k8s`: `/root/.kube/config`). |
 | `KUBECONFIG_ENCRYPTION_KEY` | empty | Passphrase. The backend derives an AES-256 key from it (SHA-256) to encrypt kubeconfig data, registry passwords, and webhook channel secrets at rest. Without it, the backend rejects a cluster that has kubeconfig data. |
 | `DEPLOYMENT_TIMEOUT` | `10m` | `helm --timeout` for one chart. A deploy of N charts can take N times this value. |
 | `DEPLOY_STABILIZE_TIMEOUT` | `5m` | Time to wait for pod readiness after the installs. `0` turns the wait off. |

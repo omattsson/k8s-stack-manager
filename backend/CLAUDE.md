@@ -67,6 +67,7 @@ All configuration uses environment variables with a `.env` fallback (godotenv). 
 - `RATE_LIMIT` (default 100 per minute), `LOGIN_RATE_LIMIT` (default 10 per minute).
 - `TRUSTED_PROXIES`: IPs or CIDRs that may set the client IP with `X-Forwarded-For` or `X-Real-IP` (`config.ParseTrustedProxies`, applied in `routes.SetupRoutes`). Empty (code default): the client IP is the TCP peer.
 - `KUBECONFIG_PATH`, `KUBECONFIG_ENCRYPTION_KEY`.
+- `IN_CLUSTER_FALLBACK_KUBECONFIG` (local development only): the kubeconfig of an in-cluster cluster when the backend does not run in a pod. Empty (default): such a cluster is unreachable; the backend never falls back to `~/.kube/config`.
 - `HELM_BINARY`, `DEPLOYMENT_TIMEOUT`, `MAX_CONCURRENT_DEPLOYS` (default 5).
 - `LOG_LEVEL`: `debug`, `info` (default), `warn` or `error`. `main` applies it to the default `slog` logger. An invalid value stops the startup.
 - `AZURE_DEVOPS_PAT`, `AZURE_DEVOPS_AUTH` (`pat` or `workload-identity`), `AZURE_DEVOPS_DEFAULT_ORG` (the organization of the provider health check), `GITLAB_BASE_URL`.

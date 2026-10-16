@@ -634,6 +634,8 @@ Developers use this application to configure, store and deploy multi-service Hel
 - **Multi-cluster:** register clusters through `/api/v1/clusters` with kubeconfig data (encrypted at rest through `pkg/crypto`) or a kubeconfig path.
   - `ClusterRegistry` manages the K8s and Helm clients of each cluster. The health poller monitors the status.
   - A cluster with `use_in_cluster` uses the backend service account and has no API server URL.
+    - The Kubernetes client uses only `rest.InClusterConfig()`, and Helm gets `KUBECONFIG=/dev/null` (`HelmClient.command`), so neither reads `$KUBECONFIG` or `~/.kube/config`.
+    - Outside a pod (`make dev-local`, a binary on a laptop), such a cluster is unreachable (`k8s.ErrInClusterUnavailable`). For local development, `IN_CLUSTER_FALLBACK_KUBECONFIG=<path>` gives both clients that kubeconfig, with a warning in the log (#582). In Docker Compose the path is in the container (`make dev-k8s`: `/root/.kube/config`).
   - An instance targets one cluster (or the default).
   - Per-cluster registry credentials (`registry_url`, `registry_username`, `registry_password`) give automatic image pull secret provisioning at deploy time and a refresh every 4 hours (`SecretRefresher`).
 - **Git provider detection:** by URL. `dev.azure.com` and `visualstudio.com` mean Azure DevOps. `gitlab.com` or a custom host means GitLab.

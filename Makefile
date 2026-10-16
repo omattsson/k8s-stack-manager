@@ -97,10 +97,10 @@ test-frontend:
 # - The run uses its own database (E2E_DB_NAME, default app_e2e) and creates
 #   it fresh on each run. The dev database can hold cluster rows with an
 #   absolute kubeconfig path (make dev-local stores ~/.kube/config).
-# - The backend runs with HOME=backend/tmp/e2e-home. An in-cluster cluster
-#   outside a pod falls back to $HOME/.kube/config, and Helm reads KUBECONFIG
-#   or $HOME/.kube/config. So both see only the E2E_KUBECONFIG copy, or no
-#   kubeconfig at all.
+# - The backend runs with HOME=backend/tmp/e2e-home, and KUBECONFIG and
+#   KUBECONFIG_PATH point only at the E2E_KUBECONFIG copy (or are empty). An
+#   in-cluster cluster outside a pod is unreachable (no fallback to
+#   ~/.kube/config, #582), unless IN_CLUSTER_FALLBACK_KUBECONFIG is set.
 # - Set E2E_KUBECONFIG only to a local cluster (Rancher Desktop, kind): the
 #   specs create and delete stack namespaces. Without it, the specs that need
 #   a cluster are skipped.
