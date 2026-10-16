@@ -134,7 +134,7 @@ func TestExtendExpiry(t *testing.T) {
 		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			got := extendExpiry(tt.current, tt.minutes, now)
+			got := extendExpiry(tt.current, tt.minutes, MaxTTLMinutes, now)
 			require.NotNil(t, got)
 			assert.True(t, got.Equal(tt.want), "got %s want %s", got, tt.want)
 		})

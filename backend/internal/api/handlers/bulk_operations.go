@@ -140,6 +140,11 @@ func (h *InstanceHandler) BulkDeploy(c *gin.Context) {
 			return "", fmt.Errorf("cannot deploy: instance is currently %s", inst.Status)
 		}
 
+		// Same rule as DeployInstance: a passed fixed stop time blocks the deploy.
+		if stopTimePassed(inst.TTLMinutes, inst.ExpiresAt, time.Now().UTC()) {
+			return "", fmt.Errorf("%s", msgStopTimePassed)
+		}
+
 		def, err := h.definitionRepo.FindByID(inst.StackDefinitionID)
 		if err != nil {
 			return "", fmt.Errorf("stack definition not found")

@@ -388,7 +388,8 @@ func TestQuickDeploy_NegativeTTL(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 	var resp map[string]string
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-	assert.Contains(t, resp["error"], "TTL")
+	// Same message as create and clone (shared TTL rules).
+	assert.Equal(t, "ttl_minutes must be non-negative", resp["error"])
 }
 
 // TestQuickDeploy_ExcessiveTTL covers the TTL > MaxTTLMinutes path (lines 260-264).

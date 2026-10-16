@@ -347,11 +347,17 @@ type Config struct {
 
 // AppConfig holds application-wide configuration
 type AppConfig struct {
-	Name                      string
-	Environment               string
+	Name        string
+	Environment string
+	// maxInstanceTTLDaysErr is the parse error of MAX_INSTANCE_TTL_DAYS.
+	// Validate returns it, so an invalid value stops the start.
+	maxInstanceTTLDaysErr     error
 	DefaultInstanceTTLMinutes int
-	Debug                     bool
-	EnableSwagger             bool
+	// MaxInstanceTTLDays (MAX_INSTANCE_TTL_DAYS, default 30) is the maximum
+	// TTL of an instance and the maximum distance of a stop time from now.
+	MaxInstanceTTLDays int
+	Debug              bool
+	EnableSwagger      bool
 	// UniqueInstanceNames (UNIQUE_INSTANCE_NAMES) makes an instance name
 	// unique on its cluster. Turn it on when Ingress hosts use
 	// {{.InstanceName}}: two stacks with the same name claim the same host.
@@ -511,6 +517,10 @@ func (c *AppConfig) Validate() error {
 
 	if c.Environment == "" {
 		return errors.New("environment is required")
+	}
+
+	if c.maxInstanceTTLDaysErr != nil {
+		return c.maxInstanceTTLDaysErr
 	}
 
 	return nil
@@ -745,6 +755,7 @@ func loadDotEnv() error {
 }
 
 func loadAppConfig() AppConfig {
+	maxTTLDays, maxTTLDaysErr := ParseMaxInstanceTTLDays(getEnv("MAX_INSTANCE_TTL_DAYS", ""))
 	return AppConfig{
 		Name:                      getEnv("APP_NAME", "backend-api"),
 		Environment:               getEnv("GO_ENV", "development"),
@@ -752,6 +763,8 @@ func loadAppConfig() AppConfig {
 		Debug:                     getEnvBool("APP_DEBUG", true),
 		EnableSwagger:             getEnvBool("ENABLE_SWAGGER", false),
 		UniqueInstanceNames:       getEnvBool("UNIQUE_INSTANCE_NAMES", false),
+		MaxInstanceTTLDays:        maxTTLDays,
+		maxInstanceTTLDaysErr:     maxTTLDaysErr,
 	}
 }
 

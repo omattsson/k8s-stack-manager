@@ -24,17 +24,28 @@ type UIConfigResponse struct {
 	// DefaultInstanceTTLMinutes is the start value of the TTL field in the
 	// create forms (DEFAULT_INSTANCE_TTL_MINUTES). 0: no expiry.
 	DefaultInstanceTTLMinutes int `json:"default_instance_ttl_minutes" example:"480"`
+	// MaxInstanceTTLDays is the maximum TTL and the maximum distance of a
+	// stop time from now (MAX_INSTANCE_TTL_DAYS). The forms limit the
+	// TTL field and the stop-time picker with it.
+	MaxInstanceTTLDays int `json:"max_instance_ttl_days" example:"30"`
 }
 
 // NewUIConfigHandler returns the handler of GET /api/v1/ui-config. The
 // branding values come from config.BrandingConfig, which LoadConfig validates
 // at startup. An empty title or favicon URL gets the default. defaultTTLMinutes
-// is DEFAULT_INSTANCE_TTL_MINUTES. A value below 1 or above MaxTTLMinutes is
-// sent as 0: the create endpoints ignore a value below 1 and reject a TTL
-// above MaxTTLMinutes, so the forms must not start with it.
-func NewUIConfigHandler(b config.BrandingConfig, defaultTTLMinutes int) gin.HandlerFunc {
-	resp := UIConfigResponse{Title: b.Title, LogoURL: b.LogoURL, FaviconURL: b.FaviconURL}
-	if defaultTTLMinutes > 0 && defaultTTLMinutes <= MaxTTLMinutes {
+// is DEFAULT_INSTANCE_TTL_MINUTES, maxTTLDays is MAX_INSTANCE_TTL_DAYS (a
+// value below 1 gives the default of 30 days). A default TTL below 1 or above
+// the limit is sent as 0: the create endpoints ignore a value below 1 and
+// reject a TTL above the limit, so the forms must not start with it.
+func NewUIConfigHandler(b config.BrandingConfig, defaultTTLMinutes, maxTTLDays int) gin.HandlerFunc {
+	maxTTL := maxTTLMinutesFromDays(maxTTLDays)
+	resp := UIConfigResponse{
+		Title:              b.Title,
+		LogoURL:            b.LogoURL,
+		FaviconURL:         b.FaviconURL,
+		MaxInstanceTTLDays: maxTTL / (24 * 60),
+	}
+	if defaultTTLMinutes > 0 && defaultTTLMinutes <= maxTTL {
 		resp.DefaultInstanceTTLMinutes = defaultTTLMinutes
 	}
 	if resp.Title == "" {

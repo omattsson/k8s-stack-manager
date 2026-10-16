@@ -138,7 +138,7 @@ func (r *Reaper) processExpired() {
 				// Stop initiated; async process handles status transitions.
 				slog.Info("Expired instance stop initiated via deployer", "instance_id", inst.ID)
 				r.logExpiry(inst)
-				r.notifyExpired(inst, "Stack %q expired after its TTL and is being stopped")
+				r.notifyExpired(inst, "is being stopped")
 				rMetrics.expiredTotal.Add(ctx, 1)
 				continue
 			}
@@ -156,7 +156,7 @@ func (r *Reaper) processExpired() {
 		}
 
 		r.logExpiry(inst)
-		r.notifyExpired(inst, "Stack %q expired after its TTL and was stopped")
+		r.notifyExpired(inst, "was stopped")
 		rMetrics.expiredTotal.Add(ctx, 1)
 
 		slog.Info("Instance expired and stopped", "instance_id", inst.ID)
@@ -168,15 +168,21 @@ func (r *Reaper) processExpired() {
 }
 
 // notifyExpired sends "stack.expired" to the owner and the followers of the
-// instance. format gets the instance name. The stop itself later sends
-// "deployment.stopped" (or "stop.error"); a user can switch off each type in
-// the notification preferences.
-func (r *Reaper) notifyExpired(inst *models.StackInstance, format string) {
+// instance. outcome ends the message ("is being stopped" or "was stopped").
+// An instance without a TTL had a fixed stop time (expires_at). The stop
+// itself later sends "deployment.stopped" (or "stop.error"); a user can
+// switch off each type in the notification preferences.
+func (r *Reaper) notifyExpired(inst *models.StackInstance, outcome string) {
 	if r.notifier == nil {
 		return
 	}
+	cause := "expired after its TTL"
+	if inst.TTLMinutes == 0 {
+		cause = "reached its stop time"
+	}
+	msg := fmt.Sprintf("Stack %q %s and %s", inst.Name, cause, outcome)
 	if err := r.notifier.NotifyInstance(context.Background(), models.NewNotificationTarget(inst),
-		"stack.expired", "Stack expired", fmt.Sprintf(format, inst.Name)); err != nil {
+		"stack.expired", "Stack expired", msg); err != nil {
 		slog.Error("Failed to send stack expired notification", "instance_id", inst.ID, "error", err)
 	}
 }

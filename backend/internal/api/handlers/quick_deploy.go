@@ -41,10 +41,19 @@ type QuickDeployHandler struct {
 	registry           *cluster.Registry
 	k8sWatcher         *k8s.Watcher
 	defaultTTLMinutes  int
+	maxTTLMinutes      int
 	txRunner           database.TxRunner
 	sharedValuesRepo   models.SharedValuesRepository
 	versionRepo        models.TemplateVersionRepository
 	uniqueNames        bool
+}
+
+// WithMaxTTLDays sets MAX_INSTANCE_TTL_DAYS: the maximum TTL and the maximum
+// distance of a stop time from now. A value below 1 keeps the default (30
+// days). Returns h for chaining.
+func (h *QuickDeployHandler) WithMaxTTLDays(days int) *QuickDeployHandler {
+	h.maxTTLMinutes = maxTTLMinutesFromDays(days)
+	return h
 }
 
 // WithUniqueInstanceNames turns on UNIQUE_INSTANCE_NAMES: quick deploy refuses
@@ -118,6 +127,9 @@ func NewQuickDeployHandler(
 
 // quickDeployRequest is the request body for Quick Deploy.
 type quickDeployRequest struct {
+	// ExpiresAt is a fixed stop time (RFC 3339 with a time zone). It sets
+	// ttl_minutes to 0. Do not send it with ttl_minutes.
+	ExpiresAt           *time.Time        `json:"expires_at" example:"2026-10-17T18:00:00+02:00"`
 	InstanceName        string            `json:"instance_name"`
 	InstanceDescription string            `json:"instance_description"`
 	Branch              string            `json:"branch"`
@@ -137,6 +149,7 @@ type quickDeployResponse struct {
 // @Summary     Quick deploy from a template
 // @Description Instantiate a template, create an instance, set branch overrides, and trigger deployment in a single call.
 // @Description instance_name must be a DNS label (lowercase a-z, 0-9, '-', start and end alphanumeric, at most 50 characters).
+// @Description Expiry: ttl_minutes (omitted: DEFAULT_INSTANCE_TTL_MINUTES; 0: no expiry) or expires_at, a fixed stop time (RFC 3339 with a time zone, in the future, not later than now + MAX_INSTANCE_TTL_DAYS). Do not send both (400).
 // @Description The template content comes from the latest published snapshot, not the working copy. A template that is not published, or has no snapshot, gives 409 "Template has no published version".
 // @Description The new stack definition is owned by the instance (owner_instance_id): deleting the instance deletes the definition when no other instance uses it. The definition is named after the instance; when the caller already has a definition with that name, the name gets the suffix " (2)", " (3)", ...
 // @Tags        templates
@@ -256,26 +269,19 @@ func (h *QuickDeployHandler) QuickDeploy(c *gin.Context) {
 		UpdatedAt:         now,
 	}
 
-	// Apply TTL — nil means "use default", explicit 0 means "no expiry".
-	var ttl int
-	if req.TTLMinutes == nil && h.defaultTTLMinutes > 0 {
-		ttl = h.defaultTTLMinutes
-	} else if req.TTLMinutes != nil {
-		ttl = *req.TTLMinutes
+	// Apply TTL — nil means "use default", explicit 0 means "no expiry",
+	// expires_at is a fixed stop time.
+	maxTTL := h.maxTTLMinutes
+	if maxTTL <= 0 {
+		maxTTL = MaxTTLMinutes
 	}
-	if ttl < 0 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "TTL must not be negative"})
-		return
-	}
-	if ttl > MaxTTLMinutes {
-		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("TTL must not exceed %d minutes (30 days)", MaxTTLMinutes)})
+	ttl, expiresAt, ttlMsg := requestedExpiry(req.TTLMinutes, req.ExpiresAt, h.defaultTTLMinutes, maxTTL, now)
+	if ttlMsg != "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": ttlMsg})
 		return
 	}
 	inst.TTLMinutes = ttl
-	if ttl > 0 {
-		exp := now.Add(time.Duration(ttl) * time.Minute)
-		inst.ExpiresAt = &exp
-	}
+	inst.ExpiresAt = expiresAt
 
 	// Resolve cluster ID via registry.
 	if h.registry != nil {
