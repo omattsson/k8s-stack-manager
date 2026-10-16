@@ -263,11 +263,11 @@ const ClusterHealth = () => {
 
   return (
     <Box>
-      <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 3 }}>
+      <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 2, mb: 3 }}>
         <Typography variant="h4" component="h1">
           Cluster Health
         </Typography>
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, flexWrap: 'wrap' }}>
           <FormControlLabel
             control={
               <Switch
@@ -278,7 +278,7 @@ const ClusterHealth = () => {
             label="Auto-refresh"
           />
           {clusters.length > 0 && (
-            <FormControl size="small" sx={{ minWidth: 200 }}>
+            <FormControl size="small" sx={{ minWidth: { xs: 160, sm: 200 } }}>
               <InputLabel id="cluster-select-label">Cluster</InputLabel>
               <Select
                 labelId="cluster-select-label"

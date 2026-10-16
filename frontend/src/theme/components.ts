@@ -33,6 +33,17 @@ export function getComponentOverrides(mode: 'light' | 'dark'): ThemeOptions['com
         },
       },
     },
+    MuiInputBase: {
+      styleOverrides: {
+        // iOS Safari zooms the page when a field with a font size under
+        // 16px gets focus. Use 16px on phones (body1 is 14px).
+        input: ({ theme }) => ({
+          [theme.breakpoints.down('sm')]: {
+            fontSize: '1rem',
+          },
+        }),
+      },
+    },
     MuiTextField: {
       defaultProps: {
         variant: 'outlined' as const,

@@ -24,6 +24,8 @@ import {
   MenuItem,
   Breadcrumbs,
   Link as MuiLink,
+  useMediaQuery,
+  useTheme,
 } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
 import DeleteIcon from '@mui/icons-material/Delete';
@@ -65,6 +67,9 @@ const serverErrorMessage = (err: unknown): string | undefined =>
   (err as { response?: { data?: { error?: string } } })?.response?.data?.error;
 
 const AdminUsers = () => {
+  // Phones hide the Display Name, Sign-in and Status columns.
+  const theme = useTheme();
+  const isPhone = useMediaQuery(theme.breakpoints.down('sm'));
   const { user: currentUser } = useAuth();
 
   // Users list
@@ -349,10 +354,10 @@ const AdminUsers = () => {
               <TableRow>
                 <TableCell width={48} />
                 <TableCell>Username</TableCell>
-                <TableCell>Display Name</TableCell>
+                <TableCell sx={{ display: { xs: 'none', sm: 'table-cell' } }}>Display Name</TableCell>
                 <TableCell>Role</TableCell>
-                <TableCell>Sign-in</TableCell>
-                <TableCell>Status</TableCell>
+                <TableCell sx={{ display: { xs: 'none', sm: 'table-cell' } }}>Sign-in</TableCell>
+                <TableCell sx={{ display: { xs: 'none', sm: 'table-cell' } }}>Status</TableCell>
                 <TableCell sx={{ display: { xs: 'none', md: 'table-cell' } }}>Created At</TableCell>
                 <TableCell>Actions</TableCell>
               </TableRow>
@@ -383,8 +388,15 @@ const AdminUsers = () => {
                         <Typography variant="body2" sx={{ fontWeight: 'medium' }}>
                           {u.username}
                         </Typography>
+                        {/* Phones hide the Display Name and Status columns: show them here. */}
+                        {isPhone && u.display_name && (
+                          <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>
+                            {u.display_name}
+                          </Typography>
+                        )}
+                        {isPhone && u.disabled && <Chip label="Disabled" size="small" variant="outlined" sx={{ mt: 0.5 }} />}
                       </TableCell>
-                      <TableCell>{u.display_name || '—'}</TableCell>
+                      <TableCell sx={{ display: { xs: 'none', sm: 'table-cell' } }}>{u.display_name || '—'}</TableCell>
                       <TableCell>
                         <Chip label={u.role} size="small" color={getRoleChipColor(u.role)} />
                         {!isLocalUser(u) && (
@@ -397,10 +409,10 @@ const AdminUsers = () => {
                           </Typography>
                         )}
                       </TableCell>
-                      <TableCell>
+                      <TableCell sx={{ display: { xs: 'none', sm: 'table-cell' } }}>
                         <Chip label={authProviderLabel(u.auth_provider)} size="small" variant="outlined" />
                       </TableCell>
-                      <TableCell>
+                      <TableCell sx={{ display: { xs: 'none', sm: 'table-cell' } }}>
                         <Chip
                           label={u.disabled ? 'Disabled' : 'Active'}
                           size="small"
@@ -409,7 +421,7 @@ const AdminUsers = () => {
                         />
                       </TableCell>
                       <TableCell sx={{ display: { xs: 'none', md: 'table-cell' } }}>{new Date(u.created_at).toLocaleDateString()}</TableCell>
-                      <TableCell>
+                      <TableCell sx={{ whiteSpace: 'nowrap' }}>
                         {isLocalUser(u) && (
                           <Tooltip title={u.id === currentUser.id ? 'Cannot change your own role' : 'Edit role'}>
                             <span>

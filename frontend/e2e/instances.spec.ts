@@ -390,8 +390,8 @@ test.describe('Stack Instance Management', () => {
       timeout: 10_000,
     });
 
-    // The TTL selector heading should be visible
-    await expect(page.getByRole('heading', { name: 'TTL (Time to Live)' })).toBeVisible({
+    // The TTL selector should be visible
+    await expect(page.getByRole('combobox', { name: 'TTL (Time to Live)' })).toBeVisible({
       timeout: 10_000,
     });
 

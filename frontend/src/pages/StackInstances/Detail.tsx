@@ -1003,8 +1003,8 @@ const Detail = () => {
           <AccessUrls status={k8sStatus} showPortForward={hasAtLeastRole(user?.role, 'devops')} />
         )}
 
-        <Box sx={{ maxWidth: 400 }}>
-          <Typography variant="subtitle2" gutterBottom>Branch</Typography>
+        {/* The fields have their own labels ("Branch", "TTL (Time to Live)"). */}
+        <Box sx={{ maxWidth: 400, mt: 1 }}>
           <BranchSelector
             repoUrl={allRepoUrls}
             value={branch}
@@ -1014,7 +1014,6 @@ const Detail = () => {
         </Box>
 
         <Box sx={{ mt: 2 }}>
-          <Typography variant="subtitle2" gutterBottom>TTL (Time to Live)</Typography>
           <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 2, flexWrap: 'wrap' }}>
             <TtlSelector
               value={instance.ttl_minutes ?? 0}
@@ -1055,8 +1054,9 @@ const Detail = () => {
                   {chart.chart_version && ` | Version: ${chart.chart_version}`}
                 </Typography>
 
-                <Box sx={{ mb: 2, display: 'flex', alignItems: 'center', gap: 2 }}>
-                  <Box sx={{ maxWidth: 300, flex: 1 }}>
+                {/* On a phone the chip goes below the field, so the helper text keeps its width. */}
+                <Box sx={{ mb: 2, display: 'flex', alignItems: 'flex-start', gap: 2, flexWrap: 'wrap' }}>
+                  <Box sx={{ maxWidth: 300, flex: '1 1 240px', minWidth: 0 }}>
                     <BranchSelector
                       repoUrl={chart.source_repo_url || getRepoUrl()}
                       value={branchOverrides[chart.id] || branch}
