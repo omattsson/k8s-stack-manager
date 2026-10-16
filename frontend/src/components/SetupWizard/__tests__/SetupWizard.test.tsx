@@ -28,7 +28,7 @@ describe('SetupWizard', () => {
 
   it('uses the configured title in the welcome heading', () => {
     render(
-      <StaticBrandingProvider value={{ title: 'Platform Portal', logoUrl: '/logo.svg', faviconUrl: '/favicon.svg', defaultTtlMinutes: 0 }}>
+      <StaticBrandingProvider value={{ title: 'Platform Portal', logoUrl: '/logo.svg', faviconUrl: '/favicon.svg', defaultTtlMinutes: 0, maxTtlDays: 30 }}>
         <MemoryRouter>
           <SetupWizard
             hasClusters={false}

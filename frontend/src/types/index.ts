@@ -189,6 +189,8 @@ export interface CloneInstanceRequest {
   name?: string;
   branch?: string;
   ttl_minutes?: number;
+  /** Fixed stop time (ISO 8601). Do not send it with ttl_minutes. */
+  expires_at?: string;
 }
 
 export interface DeploymentLog {
@@ -474,6 +476,8 @@ export interface QuickDeployRequest {
   branch?: string;
   cluster_id?: string;
   ttl_minutes?: number;
+  /** Fixed stop time (ISO 8601). Do not send it with ttl_minutes. */
+  expires_at?: string;
   branch_overrides?: Record<string, string>;
 }
 
@@ -1069,4 +1073,8 @@ export interface UIConfig {
   logo_url: string;
   /** Browser tab icon URL. */
   favicon_url: string;
+  /** Start value of the TTL field in the create forms, in minutes (DEFAULT_INSTANCE_TTL_MINUTES). 0: no expiry. */
+  default_instance_ttl_minutes?: number;
+  /** Maximum TTL and stop-time distance from now, in days (MAX_INSTANCE_TTL_DAYS). */
+  max_instance_ttl_days?: number;
 }

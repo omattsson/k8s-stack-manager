@@ -15,6 +15,7 @@ import { instanceService, definitionService, clusterService } from '../../api/cl
 import type { StackDefinition, Cluster } from '../../types';
 import TtlSelector from '../../components/TtlSelector';
 import { useBranding } from '../../context/BrandingContext';
+import { stopTimeBounds, stopTimeError } from '../../utils/stopTime';
 import LoadingState from '../../components/LoadingState';
 import { INSTANCE_NAME_MAX_LENGTH, INSTANCE_NAME_RULE, validateInstanceName } from '../../utils/instanceName';
 
@@ -41,9 +42,12 @@ const Form = () => {
   // null: the user has not changed the TTL field. The field shows the server
   // default and the request leaves out ttl_minutes, so the server applies its
   // own default (DEFAULT_INSTANCE_TTL_MINUTES).
-  const { defaultTtlMinutes } = useBranding();
+  const { defaultTtlMinutes, maxTtlDays } = useBranding();
   const [ttlChoice, setTtlChoice] = useState<number | null>(null);
   const ttlMinutes = ttlChoice ?? defaultTtlMinutes;
+  // "Custom stop time": a fixed stop time (expires_at) instead of a TTL.
+  const [stopTime, setStopTime] = useState<string | null | undefined>(undefined);
+  const stopTimeInvalid = stopTime !== undefined && stopTimeError(stopTime, stopTimeBounds(maxTtlDays)) !== null;
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [suggestions, setSuggestions] = useState<string[]>([]);
@@ -87,7 +91,7 @@ const Form = () => {
         name,
         branch,
         ...(selectedClusterId ? { cluster_id: selectedClusterId } : {}),
-        ...(ttlChoice !== null ? { ttl_minutes: ttlChoice } : {}),
+        ...(stopTime ? { expires_at: stopTime } : ttlChoice !== null ? { ttl_minutes: ttlChoice } : {}),
       });
       navigate(`/stack-instances/${instance.id}`);
     } catch (err) {
@@ -185,7 +189,7 @@ const Form = () => {
             fullWidth
           />
 
-          <TtlSelector value={ttlMinutes} onChange={setTtlChoice} />
+          <TtlSelector value={ttlMinutes} onChange={setTtlChoice} stopTime={stopTime} onStopTimeChange={setStopTime} />
 
           {clusters.length > 0 && (
             <TextField
@@ -245,7 +249,7 @@ const Form = () => {
           <Button
             variant="contained"
             onClick={handleCreate}
-            disabled={saving || !name || !selectedDefId || nameError !== null}
+            disabled={saving || !name || !selectedDefId || nameError !== null || stopTimeInvalid}
           >
             {saving ? 'Creating...' : 'Create Instance'}
           </Button>

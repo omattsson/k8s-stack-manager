@@ -1400,6 +1400,24 @@ export const instanceService = {
     }
   },
   /**
+   * Extend the expiry of an instance to a stop time. The time must be after
+   * the current expiry and not later than now plus MAX_INSTANCE_TTL_DAYS.
+   * Works for a TTL and for a fixed stop time; does not change the TTL setting.
+   * @param id - Instance ID
+   * @param until - The new expiry (ISO 8601)
+   * @returns The updated instance with the new `expires_at`
+   * @see POST /api/v1/stack-instances/:id/extend
+   */
+  extendUntil: async (id: string, until: string): Promise<StackInstance> => {
+    try {
+      const response = await api.post(`/api/v1/stack-instances/${id}/extend`, { until });
+      return response.data;
+    } catch (error) {
+      console.error('Failed to extend TTL:', error);
+      throw error;
+    }
+  },
+  /**
    * Follow a stack instance. The current user then gets the in-app
    * notifications of the instance (filtered by the own notification preferences).
    * Following again is not an error.
