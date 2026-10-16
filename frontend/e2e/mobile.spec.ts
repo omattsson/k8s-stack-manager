@@ -109,9 +109,12 @@ test.describe('Mobile layout', () => {
     await page.goto('/stack-instances/new');
     const name = page.getByLabel('Instance Name');
     await expect(name).toBeVisible({ timeout: 10_000 });
+    // Only fields that can get focus: the hidden native input of a MUI Select
+    // (aria-hidden, tabindex -1) never gets focus, so iOS does not zoom on it.
     const sizes = await page.evaluate(() =>
       Array.from(document.querySelectorAll('main input:not([type=hidden]):not([type=checkbox]):not([type=radio]), main textarea'))
         .filter((e) => e.getBoundingClientRect().width > 0)
+        .filter((e) => e.getAttribute('aria-hidden') !== 'true' && e.getAttribute('tabindex') !== '-1')
         .map((e) => parseFloat(getComputedStyle(e).fontSize)),
     );
     expect(sizes.length).toBeGreaterThan(0);
@@ -120,13 +123,10 @@ test.describe('Mobile layout', () => {
 
   test('compare shows a unified diff on a phone', async ({ page }) => {
     await page.goto(`/stack-instances/compare?left=${ids.left}&right=${ids.right}`);
-    // A split view has two code columns side by side; a unified view has one.
-    const table = page.locator('main table').filter({ has: page.locator('pre') }).first();
+    // react-diff-viewer marks the table of a split view with the class label
+    // "split-view"; a unified view has only "diff-container".
+    const table = page.locator('main table[class*="diff-container"]').first();
     await expect(table).toBeVisible({ timeout: 15_000 });
-    const columns = await table.evaluate((t) => {
-      const row = Array.from(t.querySelectorAll('tr')).find((r) => r.querySelectorAll('pre').length > 0);
-      return row ? row.querySelectorAll('pre').length : 0;
-    });
-    expect(columns).toBe(1);
+    await expect(table).not.toHaveClass(/split-view/);
   });
 });
