@@ -391,7 +391,8 @@ const Clusters = () => {
                   maxRows={10}
                   placeholder="Paste kubeconfig YAML here"
                   disabled={!!(form.kubeconfig_path ?? '').trim()}
-                  slotProps={{ htmlInput: { style: { fontFamily: 'monospace', fontSize: '0.85rem' } } }}
+                  slotProps={{ htmlInput: { style: { fontFamily: 'monospace' } } }}
+                  sx={{ '& textarea': { fontSize: { xs: '1rem', sm: '0.85rem' } } }}
                   helperText="Paste kubeconfig content directly, or use the path field below"
                 />
                 <TextField

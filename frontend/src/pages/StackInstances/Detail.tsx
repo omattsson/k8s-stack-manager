@@ -1070,6 +1070,7 @@ const Detail = () => {
                       label={`Override: ${branchOverrides[chart.id]}`}
                       color="warning"
                       size="small"
+                      sx={{ mt: 1 }}
                       onDelete={canModify ? () => handleChartBranchChange(chart.id, '') : undefined}
                       deleteIcon={canModify ? (
                         <Tooltip title="Reset to instance branch">
@@ -1078,7 +1079,7 @@ const Detail = () => {
                       ) : undefined}
                     />
                   ) : (
-                    <Chip label="Using instance branch" size="small" variant="outlined" />
+                    <Chip label="Using instance branch" size="small" variant="outlined" sx={{ mt: 1 }} />
                   )}
                 </Box>
 

@@ -41,12 +41,13 @@ test.describe('Page errors', () => {
     for (const path of paths) {
       current = `goto ${path}`;
       await page.goto(path);
-      await page.waitForLoadState('networkidle').catch(() => undefined);
+      await page.waitForLoadState('networkidle', { timeout: 5_000 }).catch(() => undefined);
     }
     // In-app navigation away from a page with editors (no reload)
     current = 'in-app from the instance page';
     await page.goto(`/stack-instances/${instanceId}`);
-    await expect(page.getByText('Default Values').first()).toBeVisible({ timeout: 15_000 });
+    // Wait until the YAML editors (Monaco) are loaded.
+    await expect(page.locator('.monaco-editor').first()).toBeVisible({ timeout: 20_000 });
     await page.getByRole('link', { name: 'Templates' }).first().click();
     await page.waitForURL('**/templates');
     await page.goBack();

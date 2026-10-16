@@ -87,7 +87,7 @@ test.describe('Mobile layout', () => {
     test(`${name}: no horizontal page scroll, app bar can be tapped`, async ({ page }) => {
       await page.goto(path());
       await expect(page.locator('main')).toBeVisible({ timeout: 10_000 });
-      await page.waitForLoadState('networkidle').catch(() => undefined);
+      await page.waitForLoadState('networkidle', { timeout: 5_000 }).catch(() => undefined);
 
       const overflow = await pageOverflow(page);
       expect(overflow, `page is ${overflow}px wider than the screen: ${(await overflowingElements(page)).join('; ')}`).toBeLessThanOrEqual(1);
@@ -98,8 +98,10 @@ test.describe('Mobile layout', () => {
       expect(box, 'notification bell').not.toBeNull();
       expect(box!.x + box!.width).toBeLessThanOrEqual(PHONE_WIDTH);
       await bell.tap();
-      await expect(page.locator('.MuiPopover-paper')).toBeVisible();
+      const popover = page.locator('.MuiPopover-paper').filter({ hasText: 'Notifications' });
+      await expect(popover).toBeVisible();
       await page.keyboard.press('Escape');
+      await expect(popover).toBeHidden();
       await page.locator('header').getByRole('button', { name: 'Open navigation' }).tap();
       await expect(page.getByRole('navigation', { name: 'Main navigation' })).toBeVisible();
     });
