@@ -368,6 +368,30 @@ func TestUpdateInstance_StopTime(t *testing.T) {
 		assert.True(t, inTwoDays.Equal(*got.ExpiresAt))
 	})
 
+	t.Run("an echoed expires_at with ttl_minutes (whole instance sent back) uses the TTL", func(t *testing.T) {
+		t.Parallel()
+		env := newTTLTestEnv(t, 0)
+		stored := time.Now().UTC().Add(3 * time.Hour)
+		env.seed(t, "i1", models.StackStatusRunning, 240, &stored)
+		w := env.do(t, http.MethodPut, "/api/v1/stack-instances/i1",
+			map[string]any{"name": "stack-i1", "ttl_minutes": 0, "expires_at": stored.Format(time.RFC3339Nano)})
+		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+		got := env.get(t, "i1")
+		assert.Equal(t, 0, got.TTLMinutes)
+		assert.Nil(t, got.ExpiresAt, "ttl_minutes 0 clears the expiry")
+	})
+
+	t.Run("a changed expires_at with ttl_minutes gives 400", func(t *testing.T) {
+		t.Parallel()
+		env := newTTLTestEnv(t, 0)
+		stored := time.Now().UTC().Add(3 * time.Hour)
+		env.seed(t, "i1", models.StackStatusRunning, 240, &stored)
+		w := env.do(t, http.MethodPut, "/api/v1/stack-instances/i1",
+			map[string]any{"ttl_minutes": 60, "expires_at": rfc3339(stored.Add(24 * time.Hour))})
+		require.Equal(t, http.StatusBadRequest, w.Code)
+		assert.Equal(t, msgTTLAndStopTime, errorOf(t, w))
+	})
+
 	t.Run("expires_at after the limit", func(t *testing.T) {
 		t.Parallel()
 		env := newTTLTestEnv(t, 0)

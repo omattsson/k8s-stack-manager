@@ -669,14 +669,9 @@ const Detail = () => {
     setSaving(true);
     setError(null);
     try {
-      let updated: StackInstance;
-      if (ttlMinutes > 0) {
-        // Sets the TTL and restarts the expiry from now.
-        updated = await instanceService.update(id, { ttl_minutes: ttlMinutes });
-      } else {
-        // Clear TTL — send full instance so required fields are preserved
-        updated = await instanceService.update(id, { ...instance, ttl_minutes: 0 });
-      }
+      // The update is partial. ttl_minutes > 0 sets the TTL and restarts the
+      // expiry from now; 0 clears the expiry (also a fixed stop time).
+      const updated: StackInstance = await instanceService.update(id, { ttl_minutes: ttlMinutes });
       // Keep the follow state if the response does not have it.
       setInstance((prev) => mergeInstanceUpdate(prev, updated));
       showSuccess('TTL updated');

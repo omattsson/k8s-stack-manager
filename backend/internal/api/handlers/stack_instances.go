@@ -744,8 +744,14 @@ func (h *InstanceHandler) UpdateInstance(c *gin.Context) {
 
 	// Update the TTL or the stop time only when one was sent. ttl_minutes 0
 	// clears the expiry; expires_at sets a fixed stop time (ttl_minutes 0).
-	if update.TTLMinutes != nil || update.ExpiresAt != nil {
-		ttl, expiresAt, ttlMsg := requestedExpiry(update.TTLMinutes, update.ExpiresAt, 0, h.maxTTL(), existing.UpdatedAt)
+	reqStop := update.ExpiresAt
+	if reqStop != nil && update.TTLMinutes != nil && existing.ExpiresAt != nil && reqStop.Equal(*existing.ExpiresAt) {
+		// A client that sends the whole instance (GET, change, PUT) echoes
+		// the stored expires_at with ttl_minutes: the TTL counts.
+		reqStop = nil
+	}
+	if update.TTLMinutes != nil || reqStop != nil {
+		ttl, expiresAt, ttlMsg := requestedExpiry(update.TTLMinutes, reqStop, 0, h.maxTTL(), existing.UpdatedAt)
 		if ttlMsg != "" {
 			c.JSON(http.StatusBadRequest, gin.H{"error": ttlMsg})
 			return
