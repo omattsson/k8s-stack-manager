@@ -166,13 +166,14 @@ Both list endpoints are paged (`page` and `pageSize`; default 25, maximum 100). 
 - The clone gets the cluster, the TTL, the value overrides, and the branch overrides of the source.
 - The clone gets the quota override only when the caller owns the source or is `admin` or `devops`. Any other user gets the cluster quota. A quota override is a resource grant, not configuration.
 - An owner without the `admin` or `devops` role gets the quota override only when it stays within the cluster quota (the same rule as for setting a quota override, see below). Otherwise the clone uses the cluster quota. The response has a `warning` field that says so, and the backend logs the skip. The clone still succeeds.
-- `branch` and `ttl_minutes` replace the values of the source. The clone is a draft and belongs to the caller.
+- `branch` and `ttl_minutes` (or `expires_at`, a fixed stop time) replace the values of the source. Without them, the clone gets the TTL of the source, or its fixed stop time when that is still in the future. The clone is a draft and belongs to the caller.
 
 **Extend.** `POST /stack-instances/:id/extend` never makes the expiry earlier and never changes `ttl_minutes`.
 
 - `{"minutes": N}` adds N minutes to the current expiry. When the instance already expired or has no expiry time, it adds N minutes to now. N must be greater than 0.
+- `{"until": "<RFC 3339>"}` sets the expiry to that time. It must be after the current expiry (or after now, when the expiry has passed) and at most now + `MAX_INSTANCE_TTL_DAYS`. It works for a TTL and for a fixed stop time. Do not send it with `minutes` (400). In the web UI: Extend > Custom...
 - An empty body adds the TTL of the instance (`ttl_minutes`) in the same way.
-- The new expiry is at most now + 30 days.
+- The new expiry is at most now + `MAX_INSTANCE_TTL_DAYS` days (default 30).
 - Deprecated: a body with only `ttl_minutes` keeps the old behavior (expiry = now + `ttl_minutes`, and `ttl_minutes` changes). stackctl 0.4.0 and earlier send this body. The response has a `Warning` header.
 - The response is the instance with the new `expires_at`.
 
@@ -271,7 +272,15 @@ Both list endpoints are paged (`page` and `pageSize`; default 25, maximum 100). 
 
 **Expiry.** When the TTL reaper stops an expired instance, the owner and the followers get one "Stack expired" notification (`stack.expired`; notification channels can subscribe to it). The stop then gives the usual "Stack stopped" (or "Stop failed") notification.
 
-**TTL.** An instance can have a time to live (`ttl_minutes`). The maximum is 43200 minutes (30 days). A new instance without a TTL gets `DEFAULT_INSTANCE_TTL_MINUTES` when you set it (code default `0`, which means no TTL; the Helm chart sets `480`, 8 hours). The forms Create Instance and Quick Deploy start the TTL field with this value (`GET /api/v1/ui-config`). "No expiry" stays a choice that the user makes. A deploy sets the expiry (`expires_at`) to now + `ttl_minutes` (see Redeploy below for a running instance).
+**TTL.** An instance can have a time to live (`ttl_minutes`). The maximum is `MAX_INSTANCE_TTL_DAYS` days (default 30, 43200 minutes; Helm `backend.maxInstanceTtlDays`). A new instance without a TTL gets `DEFAULT_INSTANCE_TTL_MINUTES` when you set it (code default `0`, which means no TTL; the Helm chart sets `480`, 8 hours). The forms Create Instance and Quick Deploy start the TTL field with this value (`GET /api/v1/ui-config`). "No expiry" stays a choice that the user makes. A deploy sets the expiry (`expires_at`) to now + `ttl_minutes` (see Redeploy below for a running instance).
+
+**Stop time.** Instead of a TTL, an instance can have a fixed stop time: "Custom stop time" in the TTL field shows a date and time picker in your local time zone. The API field is `expires_at` (RFC 3339 with a time zone) on create, update, clone and quick deploy; `ttl_minutes` is then 0.
+
+- The stop time must be in the future and at most `MAX_INSTANCE_TTL_DAYS` days from now. The picker allows only those times.
+- Do not send `expires_at` and `ttl_minutes` together (400). A later `ttl_minutes` replaces the stop time.
+- A deploy keeps the stop time. It is exact also for a draft. When the stop time has passed, a deploy gives 409 "The stop time has passed. Set a new stop time or a TTL."
+- The stack list and the instance page show "Stops at <time>". The TTL reaper stops the stack at that time, and the notification says "reached its stop time".
+- On the instance page, choose "Custom stop time", pick the time and click "Save stop time".
 
 **Redeploy.** `POST /stack-instances/:id/deploy` also works for a `running` instance. It upgrades the releases with the current values. With a TTL, the expiry becomes now + `ttl_minutes`, unless the current expiry is later. A redeploy never makes the expiry earlier.
 
