@@ -611,4 +611,5 @@ describe('StackDefinitions Form', () => {
     await act(async () => resolveFirst(def));
     expect(screen.getByDisplayValue('Renamed Def')).toBeInTheDocument();
   });
+
 });

@@ -143,8 +143,13 @@ const Detail = () => {
     // late response would overwrite the edits of the user (#596).
     let stale = false;
     const fetchData = async () => {
+      // Reset the state of the previous instance (a route change): its
+      // pod request can be stale and never reset statusLoading.
       setDeployLogs([]);
       setK8sStatus(null);
+      setStatusLoading(false);
+      setError(null);
+      setLoading(true);
       try {
         const inst = await instanceService.get(id);
         if (stale) return;
