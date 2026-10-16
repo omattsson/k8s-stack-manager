@@ -1,5 +1,5 @@
 import { test, expect, Page } from '@playwright/test';
-import { loginAsDevops, loginAsUser, uniqueName, createTemplate, createAndPublishTemplate } from './helpers';
+import { loginAsDevops, loginAsUser, uniqueName, createTemplate, createAndPublishTemplate, mockListAPI } from './helpers';
 
 // ---------------------------------------------------------------------------
 // Mock data & helpers
@@ -75,16 +75,7 @@ const mockDefinitions = [
  * Mock dashboard API endpoints to avoid needing real data.
  */
 async function mockDashboardAPIs(page: Page) {
-  await page.route('**/api/v1/stack-instances', (route) => {
-    if (route.request().method() === 'GET') {
-      return route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify(mockInstances),
-      });
-    }
-    return route.continue();
-  });
+  await mockListAPI(page, '/api/v1/stack-instances', mockInstances);
 
   await page.route('**/api/v1/stack-instances/recent', (route) =>
     route.fulfill({
@@ -118,28 +109,10 @@ async function mockDashboardAPIs(page: Page) {
  * Mock the definitions list API.
  */
 async function mockDefinitionsAPI(page: Page) {
-  await page.route('**/api/v1/stack-definitions', (route) => {
-    if (route.request().method() === 'GET') {
-      return route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify(mockDefinitions),
-      });
-    }
-    return route.continue();
-  });
+  await mockListAPI(page, '/api/v1/stack-definitions', mockDefinitions);
 
   // Template list for the upgrade-check logic in the List
-  await page.route('**/api/v1/templates', (route) => {
-    if (route.request().method() === 'GET') {
-      return route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify([]),
-      });
-    }
-    return route.continue();
-  });
+  await mockListAPI(page, '/api/v1/templates', []);
 
   await page.route('**/api/v1/favorites', (route) =>
     route.fulfill({

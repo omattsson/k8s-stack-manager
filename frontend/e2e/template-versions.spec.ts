@@ -117,7 +117,7 @@ test.describe('Template Version History', () => {
     // Edit a value in the builder and save: the release stays the same
     await page.goto(`/templates/${templateId}/edit`);
     await expect(page.getByRole('heading', { level: 1, name: 'Edit Template' })).toBeVisible({ timeout: 10_000 });
-    await page.getByLabel('Version').fill('1.1.0');
+    await page.getByLabel('Version', { exact: true }).fill('1.1.0');
     await page.getByLabel('Description').fill('Changed description');
     await page.getByRole('button', { name: 'Save Template' }).click();
     await page.waitForURL(/\/templates\/(?!new)[^/]+$/, { timeout: 10_000 });

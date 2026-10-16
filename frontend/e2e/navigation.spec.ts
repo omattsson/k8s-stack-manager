@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { loginAsAdmin, loginAsUser } from './helpers';
+import { loginAsAdmin, loginAsDevops, loginAsUser } from './helpers';
 
 test.describe('Navigation & Layout', () => {
   let username: string;
@@ -53,7 +53,13 @@ test.describe('Navigation & Layout', () => {
     });
   });
 
-  test('Audit Log link navigates to /audit-log', async ({ page }) => {
+  test('Audit Log link navigates to /audit-log (devops and admin)', async ({ page }) => {
+    // The role user does not see the Audit Log
+    await expect(page.getByRole('link', { name: 'Dashboard' })).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByRole('link', { name: 'Audit Log' })).toHaveCount(0);
+
+    await loginAsDevops(page);
+    await page.goto('/');
     await page.getByRole('link', { name: 'Audit Log' }).click();
     await expect(page).toHaveURL('/audit-log');
     await expect(page.getByRole('heading', { level: 1, name: 'Audit Log' })).toBeVisible({

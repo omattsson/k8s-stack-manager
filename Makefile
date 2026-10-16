@@ -67,7 +67,7 @@ integration-infra-start:
 	@echo "Waiting for MySQL to be ready..."
 	@n=0; while ! docker compose exec -T mysql mysqladmin ping -h localhost -uroot -p"$${DB_PASSWORD:-rootpassword}" --silent 2>/dev/null; do \
 		n=$$((n+1)); \
-		if [ $$n -ge 30 ]; then echo "ERROR: MySQL failed to start after 30s"; exit 1; fi; \
+		if [ $$n -ge 90 ]; then echo "ERROR: MySQL failed to start after 90s"; exit 1; fi; \
 		sleep 1; \
 	done
 	@echo "MySQL is ready on :3306"
@@ -92,29 +92,69 @@ test-frontend:
 
 # Run frontend e2e tests (requires MySQL running, starts backend natively)
 # Logs are written to frontend/test-logs/ for post-mortem troubleshooting.
+#
+# Isolation from the developer's cluster and data:
+# - The run uses its own database (E2E_DB_NAME, default app_e2e) and creates
+#   it fresh on each run. The dev database can hold cluster rows with an
+#   absolute kubeconfig path (make dev-local stores ~/.kube/config).
+# - The backend runs with HOME=backend/tmp/e2e-home. An in-cluster cluster
+#   outside a pod falls back to $HOME/.kube/config, and Helm reads KUBECONFIG
+#   or $HOME/.kube/config. So both see only the E2E_KUBECONFIG copy, or no
+#   kubeconfig at all.
+# - Set E2E_KUBECONFIG only to a local cluster (Rancher Desktop, kind): the
+#   specs create and delete stack namespaces. Without it, the specs that need
+#   a cluster are skipped.
+E2E_DB_NAME ?= app_e2e
+E2E_HOME := $(CURDIR)/backend/tmp/e2e-home
+E2E_PID := $(CURDIR)/backend/tmp/e2e-backend.pid
+E2E_STOP_BACKEND = kill $$(cat $(E2E_PID) 2>/dev/null) 2>/dev/null; rm -rf $(E2E_HOME) $(E2E_PID)
+
 test-e2e: integration-infra-start
+	@if lsof -ti:8081 >/dev/null 2>&1; then \
+		echo "ERROR: port 8081 is in use. Stop make dev (or the other backend) first."; exit 1; \
+	fi
 	@mkdir -p frontend/test-logs
+	@echo "Creating a fresh database $(E2E_DB_NAME)..."
+	@docker compose exec -T mysql mysql -uroot -p"$${DB_PASSWORD:-rootpassword}" \
+		-e 'DROP DATABASE IF EXISTS `$(E2E_DB_NAME)`; CREATE DATABASE `$(E2E_DB_NAME)`' 2>/dev/null
 	@echo "Building and starting backend..."
 	@cd backend && mkdir -p tmp && go build -o tmp/main ./api
+	@rm -rf $(E2E_HOME) && mkdir -p $(E2E_HOME)/.kube
 	@cd backend && \
+		export HOME="$(E2E_HOME)" KUBECONFIG= KUBECONFIG_PATH=; \
+		if [ -n "$${E2E_KUBECONFIG:-}" ]; then \
+			case "$$E2E_KUBECONFIG" in /*) kc="$$E2E_KUBECONFIG" ;; *) kc="$(CURDIR)/$$E2E_KUBECONFIG" ;; esac; \
+			[ -f "$$kc" ] || { echo "ERROR: E2E_KUBECONFIG file not found: $$kc"; exit 1; }; \
+			cp "$$kc" "$$HOME/.kube/config"; \
+			export KUBECONFIG="$$HOME/.kube/config" KUBECONFIG_PATH="$$HOME/.kube/config"; \
+			echo "Cluster access: a copy of $$kc"; \
+		else \
+			echo "E2E_KUBECONFIG is not set: the backend runs without cluster access."; \
+		fi; \
 		DB_HOST=$${DB_HOST:-127.0.0.1} DB_PORT=$${DB_PORT:-3306} \
-		DB_USER=$${DB_USER:-root} DB_PASSWORD=$${DB_PASSWORD:-rootpassword} DB_NAME=$${DB_NAME:-app} \
+		DB_USER=$${DB_USER:-root} DB_PASSWORD=$${DB_PASSWORD:-rootpassword} DB_NAME=$(E2E_DB_NAME) \
 		JWT_SECRET="dev-secret-change-in-production-minimum-16-chars" \
 		ADMIN_USERNAME=admin ADMIN_PASSWORD=admin SELF_REGISTRATION=true \
 		HELM_BINARY=$${HELM_BINARY:-helm} \
-		KUBECONFIG_PATH=$${KUBECONFIG_PATH:-$$HOME/.kube/config} \
 		CORS_ALLOWED_ORIGINS=http://localhost:3000 \
 		RATE_LIMIT=10000 LOGIN_RATE_LIMIT=10000 PORT=8081 \
-		./tmp/main > ../frontend/test-logs/backend.log 2>&1 &
+		./tmp/main > ../frontend/test-logs/backend.log 2>&1 & echo $$! > $(E2E_PID)
 	@echo "Waiting for backend to be healthy..."
-	@until curl -sf http://localhost:8081/health/live >/dev/null 2>&1; do \
+	@n=0; until curl -sf http://localhost:8081/health/live >/dev/null 2>&1; do \
+		if ! kill -0 $$(cat $(E2E_PID)) 2>/dev/null; then \
+			echo "ERROR: the backend stopped. Last lines of frontend/test-logs/backend.log:"; \
+			tail -20 frontend/test-logs/backend.log; $(E2E_STOP_BACKEND); $(MAKE) integration-infra-stop; exit 1; \
+		fi; \
+		n=$$((n+1)); if [ $$n -ge 90 ]; then \
+			echo "ERROR: the backend is not healthy after 90s"; $(E2E_STOP_BACKEND); $(MAKE) integration-infra-stop; exit 1; \
+		fi; \
 		sleep 1; \
 	done
 	@echo "Backend is ready, running Playwright tests..."
 	cd frontend && bash -o pipefail -c 'npx playwright test 2>&1 | tee test-logs/playwright.log' || \
-		(kill $$(lsof -ti:8081) 2>/dev/null; $(MAKE) integration-infra-stop; exit 1)
+		($(E2E_STOP_BACKEND); $(MAKE) -C $(CURDIR) integration-infra-stop; exit 1)
 	@echo "Stopping backend..."
-	@kill $$(lsof -ti:8081) 2>/dev/null || true
+	@$(E2E_STOP_BACKEND) || true
 	$(MAKE) integration-infra-stop
 
 # Install dependencies
@@ -292,7 +332,7 @@ mysql-start: ## Start MySQL container
 	@echo "Waiting for MySQL to be ready..."
 	@n=0; while ! docker compose exec -T mysql mysqladmin ping -h localhost -uroot -p"$${DB_PASSWORD:-rootpassword}" --silent 2>/dev/null; do \
 		n=$$((n+1)); \
-		if [ $$n -ge 30 ]; then echo "ERROR: MySQL failed to start after 30s"; exit 1; fi; \
+		if [ $$n -ge 90 ]; then echo "ERROR: MySQL failed to start after 90s"; exit 1; fi; \
 		sleep 1; \
 	done
 	@echo "MySQL is ready on :3306"
@@ -322,7 +362,7 @@ loadtest-mysql-start: ## Start MySQL + OTel + mysqld-exporter for load testing
 	@echo "Waiting for MySQL to be ready..."
 	@n=0; while ! docker compose exec -T mysql mysqladmin ping -h localhost -uroot -p"$${DB_PASSWORD:-rootpassword}" --silent 2>/dev/null; do \
 		n=$$((n+1)); \
-		if [ $$n -ge 30 ]; then echo "ERROR: MySQL failed to start after 30s"; exit 1; fi; \
+		if [ $$n -ge 90 ]; then echo "ERROR: MySQL failed to start after 90s"; exit 1; fi; \
 		sleep 1; \
 	done
 	@echo "Waiting for OTel Collector..."

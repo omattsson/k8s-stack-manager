@@ -58,7 +58,7 @@ startHTTPServer              # main server, optional pprof and metrics servers
 | All backend tests (unit and integration) | `make test-backend-all` (starts MySQL) |
 | Frontend tests | `cd frontend && npm test` |
 | Unit tests (backend and frontend) | `make test` |
-| End-to-end tests | `make test-e2e` (starts infrastructure, backend and Playwright) |
+| End-to-end tests | `make test-e2e` (starts infrastructure, backend and Playwright; no cluster access unless `E2E_KUBECONFIG` names a local kubeconfig; CI: `.github/workflows/e2e.yml`) |
 | Swagger docs | `make docs` (runs `swag init -g api/main.go` in `backend`) |
 | Coverage (80% threshold) | `cd backend && make test-coverage` |
 | Format | `make fmt` |

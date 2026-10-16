@@ -67,6 +67,7 @@ test.describe('Orphaned Namespaces', () => {
   });
 
   test('shows empty state or table of orphaned namespaces', async ({ page }) => {
+    test.skip(!process.env.E2E_KUBECONFIG, 'Needs a cluster: set E2E_KUBECONFIG (see make test-e2e)');
     // After loading completes, either the empty state message or the table should be visible.
     const emptyMessage = page.getByText(
       'No orphaned namespaces found. All stack namespaces have matching instances.',
@@ -76,6 +77,7 @@ test.describe('Orphaned Namespaces', () => {
   });
 
   test('table has correct column headers when namespaces exist', async ({ page }) => {
+    test.skip(!process.env.E2E_KUBECONFIG, 'Needs a cluster: set E2E_KUBECONFIG (see make test-e2e)');
     // This test checks the table structure if there are orphaned namespaces.
     // If empty state is shown, we verify the empty message instead.
     const emptyMessage = page.getByText('No orphaned namespaces found');
@@ -95,6 +97,7 @@ test.describe('Orphaned Namespaces', () => {
   });
 
   test('refresh button reloads data', async ({ page }) => {
+    test.skip(!process.env.E2E_KUBECONFIG, 'Needs a cluster: set E2E_KUBECONFIG (see make test-e2e)');
     // Wait for initial load to complete (empty state, table, or error visible).
     const emptyMessage = page.getByText('No orphaned namespaces found');
     const table = page.locator('table');
