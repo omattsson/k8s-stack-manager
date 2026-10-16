@@ -241,20 +241,20 @@ const Builder = () => {
         <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
           <TextField label="Name" value={name} onChange={(e) => setName(e.target.value)} required fullWidth />
           <TextField label="Description" value={description} onChange={(e) => setDescription(e.target.value)} fullWidth multiline rows={2} />
-          <Box sx={{ display: 'flex', gap: 2 }}>
+          <Box sx={{ display: 'flex', flexDirection: { xs: 'column', sm: 'row' }, gap: 2 }}>
             <TextField
               label="Category"
               value={categoryVal}
               onChange={(e) => setCategoryVal(e.target.value)}
               select
-              sx={{ minWidth: 200 }}
+              sx={{ minWidth: { sm: 200 } }}
             >
               {CATEGORIES.map((c) => (
                 <MenuItem key={c} value={c}>{c}</MenuItem>
               ))}
             </TextField>
-            <TextField label="Version" value={version} onChange={(e) => setVersion(e.target.value)} sx={{ minWidth: 150 }} />
-            <TextField label="Default Branch" value={defaultBranch} onChange={(e) => setDefaultBranch(e.target.value)} sx={{ minWidth: 150 }} />
+            <TextField label="Version" value={version} onChange={(e) => setVersion(e.target.value)} sx={{ minWidth: { sm: 150 } }} />
+            <TextField label="Default Branch" value={defaultBranch} onChange={(e) => setDefaultBranch(e.target.value)} sx={{ minWidth: { sm: 150 } }} />
           </Box>
           {hasRelease && (
             <Alert severity="info">

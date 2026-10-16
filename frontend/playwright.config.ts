@@ -24,6 +24,14 @@ export default defineConfig({
     {
       name: 'chromium',
       use: { ...devices['Desktop Chrome'] },
+      testIgnore: /mobile\.spec\.ts$/,
+    },
+    {
+      // Phone layout checks (#577): page width, tappable app bar, input font size.
+      name: 'mobile',
+      // Chromium with the iPhone viewport, touch and user agent: CI installs Chromium only.
+      use: { ...devices['iPhone 13'], browserName: 'chromium' },
+      testMatch: /mobile\.spec\.ts$/,
     },
   ],
   webServer: {

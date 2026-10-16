@@ -1,5 +1,5 @@
 import Editor, { type OnMount } from '@monaco-editor/react';
-import { Box, Typography } from '@mui/material';
+import { Box, Typography, useMediaQuery, useTheme } from '@mui/material';
 import { useState, useCallback, useRef } from 'react';
 import { load as loadYaml } from 'js-yaml';
 import { useThemeMode } from '../../context/ThemeContext';
@@ -17,6 +17,9 @@ interface YamlEditorProps {
 
 const YamlEditor = ({ value, onChange, label, height = '300px', readOnly = false, error }: YamlEditorProps) => {
   const { mode } = useThemeMode();
+  // iOS Safari zooms on focus below 16px: use 16px on phones.
+  const theme = useTheme();
+  const isPhone = useMediaQuery(theme.breakpoints.down('sm'));
   const [validationError, setValidationError] = useState<string | null>(null);
   const editorRef = useRef<EditorInstance | null>(null);
 
@@ -69,7 +72,7 @@ const YamlEditor = ({ value, onChange, label, height = '300px', readOnly = false
             lineNumbers: 'on',
             scrollBeyondLastLine: false,
             wordWrap: 'on',
-            fontSize: 13,
+            fontSize: isPhone ? 16 : 13,
             tabSize: 2,
             // On Enter, keep the indentation of the current line. The default
             // ('advanced') also adds an indent after a line that ends with a

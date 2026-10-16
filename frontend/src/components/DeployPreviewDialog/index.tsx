@@ -12,6 +12,8 @@ import {
   Alert,
   CircularProgress,
   Typography,
+  useMediaQuery,
+  useTheme,
 } from '@mui/material';
 import ReactDiffViewer from 'react-diff-viewer-continued';
 import { instanceService } from '../../api/client';
@@ -34,6 +36,9 @@ const DeployPreviewDialog = ({
   onClose,
 }: DeployPreviewDialogProps) => {
   const { mode } = useThemeMode();
+  // Side by side needs the width of a desktop; a phone gets one column.
+  const theme = useTheme();
+  const splitView = useMediaQuery(theme.breakpoints.up('md'));
   const [preview, setPreview] = useState<DeployPreviewResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -153,7 +158,7 @@ const DeployPreviewDialog = ({
                       <ReactDiffViewer
                         oldValue={activeChart.previous_values || ''}
                         newValue={activeChart.pending_values || ''}
-                        splitView
+                        splitView={splitView}
                         leftTitle="Previous Values"
                         rightTitle="Pending Values"
                         showDiffOnly={false}

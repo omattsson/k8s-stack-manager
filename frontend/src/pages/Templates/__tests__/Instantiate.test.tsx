@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
+import { StrictMode } from 'react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import Instantiate from '../Instantiate';
@@ -284,5 +285,33 @@ describe('Templates Instantiate', () => {
 
     await user.click(screen.getByRole('button', { name: /cancel/i }));
     expect(mockNavigate).toHaveBeenCalledWith('/templates/t1');
+  });
+
+  it('keeps a typed name when a late, stale template response arrives (StrictMode)', async () => {
+    // StrictMode runs the load effect twice. The first (stale) response comes last.
+    let resolveFirst: (v: unknown) => void = () => {};
+    let resolveSecond: (v: unknown) => void = () => {};
+    (templateService.get as ReturnType<typeof vi.fn>)
+      .mockReturnValueOnce(new Promise((r) => { resolveFirst = r; }))
+      .mockReturnValueOnce(new Promise((r) => { resolveSecond = r; }));
+    const user = userEvent.setup();
+    render(
+      <StrictMode>
+        <MemoryRouter initialEntries={['/templates/t1/use']}>
+          <Routes>
+            <Route path="/templates/:id/use" element={<Instantiate />} />
+          </Routes>
+        </MemoryRouter>
+      </StrictMode>
+    );
+    await waitFor(() => expect(templateService.get).toHaveBeenCalledTimes(2));
+
+    await act(async () => resolveSecond(mockTemplate));
+    const field = await screen.findByDisplayValue('Web Stack Template - My Stack');
+    await user.clear(field);
+    await user.type(field, 'my-own-name');
+
+    await act(async () => resolveFirst(mockTemplate));
+    expect(screen.getByDisplayValue('my-own-name')).toBeInTheDocument();
   });
 });

@@ -44,9 +44,14 @@ const Instantiate = () => {
 
   useEffect(() => {
     if (!id) return;
+    // Ignore a stale response. React StrictMode (development) runs this
+    // effect twice; a late second response overwrote the name the user had
+    // already typed.
+    let stale = false;
     const fetchTemplate = async () => {
       try {
         const data = await templateService.get(id);
+        if (stale) return;
         setTemplate(data);
         setDefName(`${data.name} - My Stack`);
         setDefDescription(data.description);
@@ -63,12 +68,15 @@ const Instantiate = () => {
           );
         }
       } catch {
-        setError('Failed to load template');
+        if (!stale) setError('Failed to load template');
       } finally {
-        setLoading(false);
+        if (!stale) setLoading(false);
       }
     };
     fetchTemplate();
+    return () => {
+      stale = true;
+    };
   }, [id]);
 
   const updateOverride = (index: number, values: string) => {

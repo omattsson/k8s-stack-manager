@@ -105,6 +105,36 @@ describe('AdminUsers Page', () => {
     expect(screen.getByText('Ops User')).toBeInTheDocument();
   });
 
+  it('on a phone, shows the display name and a Disabled chip in the username cell', async () => {
+    // A phone: MUI useMediaQuery(theme.breakpoints.down('sm')) asks for max-width.
+    const original = window.matchMedia;
+    window.matchMedia = ((query: string) => ({
+      matches: query.includes('max-width'),
+      media: query,
+      onchange: null,
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    })) as unknown as typeof window.matchMedia;
+    try {
+      (userService.list as ReturnType<typeof vi.fn>).mockResolvedValue([
+        ...mockUsers,
+        { ...mockUsers[0], id: 'u-off', username: 'offuser', display_name: 'Off User', disabled: true },
+      ]);
+      renderWithProviders();
+      const devCell = (await screen.findByText('devuser')).closest('td') as HTMLElement;
+      expect(within(devCell).getByText('Dev User')).toBeInTheDocument();
+      const offCell = screen.getByText('offuser').closest('td') as HTMLElement;
+      expect(within(offCell).getByText('Off User')).toBeInTheDocument();
+      expect(within(offCell).getByText('Disabled')).toBeInTheDocument();
+      expect(within(devCell).queryByText('Disabled')).not.toBeInTheDocument();
+    } finally {
+      window.matchMedia = original;
+    }
+  });
+
   it('shows error alert when fetch fails', async () => {
     (userService.list as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('Network error'));
 
