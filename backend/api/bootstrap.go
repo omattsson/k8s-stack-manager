@@ -195,6 +195,8 @@ func buildDomainServices(
 		HelmTimeout:     cfg.Deployment.DeploymentTimeout,
 		NamespaceLabels: cfg.Deployment.NamespaceLabels,
 		AccessBinding:   stackAccessBinding(cfg.Deployment.StackAccess),
+		// Local development only (#582); empty in a pod.
+		InClusterFallbackKubeconfig: cfg.Deployment.InClusterFallbackKubeconfig,
 	})
 
 	// Extended health checks.

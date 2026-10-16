@@ -1015,3 +1015,79 @@ func TestGetClients_AppliesNamespaceLabels(t *testing.T) {
 		"pod-security.kubernetes.io/enforce": "baseline",
 	}, ns.Labels)
 }
+
+// An in-cluster cluster gets the same kubeconfig for the Kubernetes client
+// and Helm: the in-cluster config ("") in a pod, the fallback outside a pod
+// only when IN_CLUSTER_FALLBACK_KUBECONFIG is set, and never ~/.kube/config
+// (#582).
+func TestBuildClients_InClusterConfigSource(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		fallback  string
+		inCluster bool
+		wantPath  string
+	}{
+		{name: "outside a pod, no fallback", fallback: "", inCluster: false, wantPath: ""},
+		{name: "outside a pod, fallback set", fallback: "/dev/kubeconfig", inCluster: false, wantPath: "/dev/kubeconfig"},
+		{name: "in a pod, fallback set", fallback: "/dev/kubeconfig", inCluster: true, wantPath: ""},
+		{name: "in a pod, no fallback", fallback: "", inCluster: true, wantPath: ""},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			repo := newMockClusterRepo()
+			repo.clusters["ic"] = &models.Cluster{ID: "ic", Name: "In-cluster", UseInCluster: true}
+
+			reg := NewRegistry(RegistryOptions{ClusterRepo: repo, InClusterFallbackKubeconfig: tt.fallback})
+			reg.inClusterAvailable = func() bool { return tt.inCluster }
+
+			var mu sync.Mutex
+			var k8sPath, helmPath string
+			k8sCalled, helmCalled := false, false
+			reg.k8sFactory = func(path string) (*k8s.Client, error) {
+				mu.Lock()
+				defer mu.Unlock()
+				k8sPath, k8sCalled = path, true
+				return k8s.NewClientFromInterface(nil), nil
+			}
+			reg.helmFactory = func(_, kubeconfig string, _ time.Duration) deployer.HelmExecutor {
+				mu.Lock()
+				defer mu.Unlock()
+				helmPath, helmCalled = kubeconfig, true
+				return nil
+			}
+
+			_, err := reg.GetClients("ic")
+			require.NoError(t, err)
+			mu.Lock()
+			defer mu.Unlock()
+			require.True(t, k8sCalled)
+			require.True(t, helmCalled)
+			assert.Equal(t, tt.wantPath, k8sPath, "k8s client kubeconfig")
+			assert.Equal(t, tt.wantPath, helmPath, "helm kubeconfig")
+		})
+	}
+}
+
+// With the real client factory, an in-cluster cluster outside a pod and
+// without a fallback is an error (the health poller marks it unreachable).
+func TestGetClients_InClusterOutsidePodIsError(t *testing.T) {
+	t.Parallel()
+	if k8s.InClusterAvailable() {
+		t.Skip("runs in a pod: the in-cluster config is available")
+	}
+
+	repo := newMockClusterRepo()
+	repo.clusters["ic"] = &models.Cluster{ID: "ic", Name: "In-cluster", UseInCluster: true}
+	reg := NewRegistry(RegistryOptions{ClusterRepo: repo})
+	reg.helmFactory = stubHelmFactory
+
+	cc, err := reg.GetClients("ic")
+	require.Error(t, err)
+	assert.ErrorIs(t, err, k8s.ErrInClusterUnavailable)
+	assert.Nil(t, cc)
+}

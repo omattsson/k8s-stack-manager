@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"os"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -372,20 +373,33 @@ func (h *HelmClient) RegistryLogin(ctx context.Context, host, username, password
 	return nil
 }
 
-// run executes a helm command with the given arguments and returns the combined output.
-func (h *HelmClient) run(ctx context.Context, args []string) (string, error) {
-	// Prepend --kubeconfig flag so helm always uses the configured kubeconfig
-	// regardless of the process environment.
+// command returns the helm command for args with the kubeconfig of the
+// cluster. With a kubeconfig path, it prepends --kubeconfig, so helm always
+// uses that file regardless of the process environment. Without one (an
+// in-cluster cluster), it sets KUBECONFIG to an empty file: helm then reads
+// neither $KUBECONFIG nor ~/.kube/config and uses the service account of the
+// pod, like k8s.NewClient(""). Outside a pod it cannot reach any cluster
+// (#582).
+func (h *HelmClient) command(ctx context.Context, args []string) (*exec.Cmd, []string) {
 	if h.kubeconfig != "" {
 		args = append([]string{"--kubeconfig", h.kubeconfig}, args...)
 	}
+	cmd := newHelmCommand(ctx, h.binaryPath, args)
+	if h.kubeconfig == "" {
+		// The last value of a duplicate key wins (os/exec).
+		cmd.Env = append(os.Environ(), "KUBECONFIG="+os.DevNull)
+	}
+	return cmd, args
+}
+
+// run executes a helm command with the given arguments and returns the combined output.
+func (h *HelmClient) run(ctx context.Context, args []string) (string, error) {
+	cmd, args := h.command(ctx, args)
 
 	slog.Info("executing helm command",
 		"binary", h.binaryPath,
 		"args", args,
 	)
-
-	cmd := newHelmCommand(ctx, h.binaryPath, args)
 
 	var combined bytes.Buffer
 	cmd.Stdout = &combined
@@ -409,17 +423,13 @@ const maxScannerLineSize = 256 * 1024
 // Stdout and stderr are merged via io.MultiReader into a single scanner to
 // preserve deterministic line ordering (same approach as the non-streaming run()).
 func (h *HelmClient) runStreaming(ctx context.Context, args []string, onLine func(string)) (string, error) {
-	if h.kubeconfig != "" {
-		args = append([]string{"--kubeconfig", h.kubeconfig}, args...)
-	}
+	cmd, args := h.command(ctx, args)
 
 	slog.Info("executing helm command",
 		"binary", h.binaryPath,
 		"args", args,
 		"streaming", true,
 	)
-
-	cmd := newHelmCommand(ctx, h.binaryPath, args)
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {

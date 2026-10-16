@@ -57,6 +57,8 @@ services:
       # Deployment
       - HELM_BINARY=${HELM_BINARY:-helm}
       - KUBECONFIG_PATH=${KUBECONFIG_PATH:-}
+      # Local development only: the kubeconfig of an in-cluster cluster (#582).
+      - IN_CLUSTER_FALLBACK_KUBECONFIG=${IN_CLUSTER_FALLBACK_KUBECONFIG:-}
       - DEPLOYMENT_TIMEOUT=${DEPLOYMENT_TIMEOUT:-10m}
       - MAX_CONCURRENT_DEPLOYS=${MAX_CONCURRENT_DEPLOYS:-5}
       - DEFAULT_INSTANCE_TTL_MINUTES=${DEFAULT_INSTANCE_TTL_MINUTES:-0}
@@ -263,8 +265,11 @@ volumes:
   grafana_data: {}
   tempo_data: {}
 
+# Fixed names (#581): a name with ${GO_ENV}/${NODE_ENV} changed between
+# `make dev` and `make test-e2e`, and Compose then failed with "container ...
+# is not connected to the network ...". The two networks stay separate.
 networks:
   backend-net:
-    name: backend-network-${GO_ENV:-prod}
+    name: backend-network
   frontend-net:
-    name: frontend-network-${NODE_ENV:-prod}
+    name: frontend-network

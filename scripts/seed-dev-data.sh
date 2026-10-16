@@ -232,7 +232,8 @@ else
   }' > /dev/null
   CLUSTER_ID=$(require_id "Register the placeholder cluster")
   warn "No cluster was registered. Registered 'placeholder-cluster' (${CLUSTER_ID}) as the default."
-  warn "Deploys fail on it. Use make dev-k8s for a real cluster, and delete the placeholder under Admin > Clusters."
+  warn "Deploys fail on it (an in-cluster cluster outside a pod is unreachable). Use make dev-k8s for a real cluster, and delete the placeholder under Admin > Clusters."
+  warn "Or set IN_CLUSTER_FALLBACK_KUBECONFIG to a kubeconfig path inside the backend container (make dev-k8s: /root/.kube/config)."
 fi
 
 # ══════════════════════════════════════════════════════════════════════

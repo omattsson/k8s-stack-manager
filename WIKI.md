@@ -418,7 +418,7 @@ A cluster is a registered Kubernetes cluster that instances can be deployed to.
 - Each cluster stores connection details (a kubeconfig path or encrypted kubeconfig data). The application monitors it with periodic health checks.
 - One cluster can be the **default** target.
 - `admin` users manage clusters on the page `/admin/clusters`.
-- A cluster with **in-cluster configuration** (`use_in_cluster`) uses the service account of the backend pod. It has no API server URL and no kubeconfig. The cluster dialog has a checkbox for it. The URL is then optional, and the list shows "in-cluster".
+- A cluster with **in-cluster configuration** (`use_in_cluster`) uses the service account of the backend pod. It has no API server URL and no kubeconfig. The cluster dialog has a checkbox for it. The URL is then optional, and the list shows "in-cluster". When the backend does not run in a pod (local development), such a cluster is unreachable, unless `IN_CLUSTER_FALLBACK_KUBECONFIG` names a kubeconfig.
 - Kubeconfig data needs `KUBECONFIG_ENCRYPTION_KEY`. Without the key, the backend rejects a cluster with kubeconfig data (400). Use a kubeconfig path or in-cluster configuration then.
 
 **Cluster Health page** (`/admin/cluster-health`, `admin` and `devops`). The page shows CPU and memory as Kubernetes quantities in cores and binary units (`1620m` of `16` is 10 %, and `247 GiB`).
