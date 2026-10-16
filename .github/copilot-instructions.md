@@ -458,7 +458,7 @@ frontend/src/
   utils/                       # roles, timeAgo, expiry, instanceName, instanceState, jwt, quantity, apiError, download, deployHistory, templateVersion, notificationEventTypes, notificationHelpers, recentTemplates, setupWizard, stopTime
 ```
 
-**Stack:** React 19, MUI v9, react-router-dom v7, Vite 8, TypeScript 6, Vitest 5, Playwright (26 specs in `frontend/e2e/`).
+**Stack:** React 19, MUI v9, react-router-dom v7, Vite 8, TypeScript 6, Vitest 5, Playwright (29 specs in `frontend/e2e/`; the project `mobile` runs `mobile.spec.ts` with the iPhone 13 viewport, the project `chromium` runs the rest).
 
 **Patterns.**
 - Use MUI components (no raw HTML) and the `sx` prop for styling.
