@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { StrictMode } from 'react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import axios from 'axios';
@@ -604,5 +605,35 @@ describe('StackInstances Form', () => {
       expect(screen.getByText(/^Choose a time before /)).toBeInTheDocument();
       expect(screen.getByRole('button', { name: /create instance/i })).toBeDisabled();
     });
+  });
+
+  it('keeps the chosen definition and branch when a late, stale list arrives (StrictMode, #596)', async () => {
+    // StrictMode runs the load effect twice. The first (stale) response comes last.
+    let resolveFirst: (v: unknown) => void = () => {};
+    let resolveSecond: (v: unknown) => void = () => {};
+    (definitionService.listAll as ReturnType<typeof vi.fn>)
+      .mockReturnValueOnce(new Promise((r) => { resolveFirst = r; }))
+      .mockReturnValueOnce(new Promise((r) => { resolveSecond = r; }));
+    const user = userEvent.setup();
+    render(
+      <StrictMode>
+        <MemoryRouter initialEntries={['/stack-instances/new?definition=def1']}>
+          <Form />
+        </MemoryRouter>
+      </StrictMode>
+    );
+    await waitFor(() => expect(definitionService.listAll).toHaveBeenCalledTimes(2));
+    await act(async () => resolveSecond(mockDefinitions));
+    const select = await screen.findByRole('combobox', { name: /stack definition/i });
+    await waitFor(() => expect(select).toHaveTextContent('Web Stack'));
+    // The user picks another definition and changes its branch.
+    await user.click(select);
+    await user.click(screen.getByRole('option', { name: /API Stack/ }));
+    const branch = screen.getByRole('textbox', { name: 'Branch' });
+    await user.clear(branch);
+    await user.type(branch, 'feature/x');
+    await act(async () => resolveFirst(mockDefinitions));
+    expect(select).toHaveTextContent('API Stack');
+    expect(branch).toHaveValue('feature/x');
   });
 });

@@ -138,11 +138,21 @@ const Detail = () => {
 
   useEffect(() => {
     if (!id) return;
+    // Ignore a stale response: React StrictMode (development) runs this
+    // effect twice, and the route can change before a request returns. A
+    // late response would overwrite the edits of the user (#596).
+    let stale = false;
     const fetchData = async () => {
+      // Reset the state of the previous instance (a route change): its
+      // pod request can be stale and never reset statusLoading.
       setDeployLogs([]);
       setK8sStatus(null);
+      setStatusLoading(false);
+      setError(null);
+      setLoading(true);
       try {
         const inst = await instanceService.get(id);
+        if (stale) return;
         setInstance(inst);
         setBranch(inst.branch);
 
@@ -155,6 +165,7 @@ const Detail = () => {
           mayModify ? instanceService.getOverrides(id) : Promise.resolve([] as ValueOverride[]),
           mayModify ? branchOverrideService.list(id) : Promise.resolve([] as ChartBranchOverride[]),
         ]);
+        if (stale) return;
         setCharts(defData.charts || []);
         setOverrides(overrideData || []);
 
@@ -178,6 +189,7 @@ const Detail = () => {
         // Fetch deployment logs
         try {
           const logs = await instanceService.getDeployLog(id);
+          if (stale) return;
           setDeployLogs(logs);
         } catch { /* ignore — no logs yet */ }
 
@@ -186,17 +198,21 @@ const Detail = () => {
           try {
             setStatusLoading(true);
             const status = await instanceService.getPods(id);
+            if (stale) return;
             setK8sStatus(status);
           } catch { /* ignore */ }
-          finally { setStatusLoading(false); }
+          finally { if (!stale) setStatusLoading(false); }
         }
       } catch {
-        setError('Failed to load instance details');
+        if (!stale) setError('Failed to load instance details');
       } finally {
-        setLoading(false);
+        if (!stale) setLoading(false);
       }
     };
     fetchData();
+    return () => {
+      stale = true;
+    };
   }, [id, userId, userRole]);
 
   /**

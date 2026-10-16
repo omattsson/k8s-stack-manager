@@ -228,12 +228,17 @@ const QuotaConfigDialog = ({ open, onClose, clusterId, clusterName }: QuotaConfi
 
   useEffect(() => {
     if (!open || !clusterId) return;
+    // Ignore a stale response: React StrictMode (development) runs this
+    // effect twice, and the dialog can close or switch clusters before a
+    // request returns. A late response would overwrite the edits (#596).
+    let stale = false;
     const fetchQuotas = async () => {
       setLoading(true);
       setError(null);
       setTouched({});
       try {
         const config = await clusterService.getQuotas(clusterId);
+        if (stale) return;
         if (config) {
           const loaded = toForm(config);
           setForm(loaded);
@@ -247,12 +252,15 @@ const QuotaConfigDialog = ({ open, onClose, clusterId, clusterName }: QuotaConfi
           setHasExisting(false);
         }
       } catch {
-        setError('Failed to load quota configuration');
+        if (!stale) setError('Failed to load quota configuration');
       } finally {
-        setLoading(false);
+        if (!stale) setLoading(false);
       }
     };
     fetchQuotas();
+    return () => {
+      stale = true;
+    };
   }, [open, clusterId]);
 
   const handleSave = async () => {

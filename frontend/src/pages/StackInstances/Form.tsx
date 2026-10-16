@@ -53,9 +53,14 @@ const Form = () => {
   const [suggestions, setSuggestions] = useState<string[]>([]);
 
   useEffect(() => {
+    // Ignore a stale response: React StrictMode (development) runs this
+    // effect twice, and the route can change before a request returns. A
+    // late response would replace the definition the user picked (#596).
+    let stale = false;
     const fetchData = async () => {
       try {
         const [defs, cls] = await Promise.all([definitionService.listAll(), clusterService.list()]);
+        if (stale) return;
         const list = defs || [];
         setDefinitions(list);
         setClusters(cls || []);
@@ -63,12 +68,15 @@ const Form = () => {
           setSelectedDefId(requestedDefId);
         }
       } catch {
-        setError('Failed to load form data');
+        if (!stale) setError('Failed to load form data');
       } finally {
-        setLoading(false);
+        if (!stale) setLoading(false);
       }
     };
     fetchData();
+    return () => {
+      stale = true;
+    };
   }, [requestedDefId]);
 
   useEffect(() => {

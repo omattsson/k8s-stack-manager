@@ -132,9 +132,14 @@ const Form = () => {
 
   useEffect(() => {
     if (!id) return;
+    // Ignore a stale response: React StrictMode (development) runs this
+    // effect twice, and the route can change before a request returns. A
+    // late response would overwrite the edits of the user (#596).
+    let stale = false;
     const fetchDefinition = async () => {
       try {
         const data = await definitionService.get(id);
+        if (stale) return;
         const loadedCharts = (data.charts ?? []).map(toChartFormData);
         setName(data.name ?? '');
         setDescription(data.description ?? '');
@@ -149,21 +154,28 @@ const Form = () => {
           charts: loadedCharts,
         }));
         if (data.source_template_id) {
-          await loadSourceTemplate(data.source_template_id);
+          await loadSourceTemplate(data.source_template_id, () => stale);
         }
       } catch {
-        setError('Failed to load definition');
+        if (!stale) setError('Failed to load definition');
       } finally {
-        setLoading(false);
+        if (!stale) setLoading(false);
       }
     };
     fetchDefinition();
+    return () => {
+      stale = true;
+    };
   }, [id]);
 
-  /** Loads the name and the charts of the source template (best effort). */
-  const loadSourceTemplate = async (templateId: string) => {
+  /**
+   * Loads the name and the charts of the source template (best effort).
+   * isStale tells the caller's effect that its response is stale.
+   */
+  const loadSourceTemplate = async (templateId: string, isStale: () => boolean = () => false) => {
     try {
       const tmpl = await templateService.get(templateId);
+      if (isStale()) return;
       setSourceTemplateName(tmpl.name);
       setTemplateCharts(tmpl.charts || []);
     } catch {

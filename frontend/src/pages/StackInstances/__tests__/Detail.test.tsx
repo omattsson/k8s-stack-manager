@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { StrictMode } from 'react';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import Detail from '../Detail';
 import { NotificationProvider } from '../../../context/NotificationContext';
@@ -2883,5 +2884,54 @@ describe('StackInstances Detail Actions menu', () => {
     const exportMenu = await screen.findByRole('menu', { name: 'Export values' });
     expect(within(exportMenu).getByRole('menuitem', { name: 'All charts (ZIP)' })).toBeInTheDocument();
     expect(within(exportMenu).getByRole('menuitem', { name: 'frontend (YAML)' })).toBeInTheDocument();
+  });
+});
+
+describe('StackInstances Detail stale responses (#596)', () => {
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  /** Renders Detail in StrictMode; the first (stale) instance response comes last. */
+  const renderWithStaleFirstResponse = async () => {
+    const inst = setupMocks();
+    let resolveFirst: (v: unknown) => void = () => {};
+    let resolveSecond: (v: unknown) => void = () => {};
+    (instanceService.get as MockFn)
+      .mockReturnValueOnce(new Promise((r) => { resolveFirst = r; }))
+      .mockReturnValueOnce(new Promise((r) => { resolveSecond = r; }));
+    render(
+      <StrictMode>
+        <MemoryRouter initialEntries={['/stack-instances/123']}>
+          <NotificationProvider>
+            <Routes>
+              <Route path="/stack-instances/:id" element={<Detail />} />
+            </Routes>
+          </NotificationProvider>
+        </MemoryRouter>
+      </StrictMode>
+    );
+    await waitFor(() => expect(instanceService.get).toHaveBeenCalledTimes(2));
+    await act(async () => resolveSecond(inst));
+    await waitFor(() => expect(screen.getByRole('tab', { name: 'frontend' })).toBeInTheDocument());
+    return { resolveStale: () => act(async () => resolveFirst(inst)) };
+  };
+
+  it('keeps the edited instance branch (StrictMode)', async () => {
+    const user = userEvent.setup();
+    const { resolveStale } = await renderWithStaleFirstResponse();
+    await user.click(screen.getAllByText('change-branch')[0]);
+    expect(within(screen.getAllByTestId('branch-selector')[0]).getByText('feature/new-branch')).toBeInTheDocument();
+    await resolveStale();
+    expect(within(screen.getAllByTestId('branch-selector')[0]).getByText('feature/new-branch')).toBeInTheDocument();
+  });
+
+  it('keeps an edited chart branch override (StrictMode)', async () => {
+    const user = userEvent.setup();
+    const { resolveStale } = await renderWithStaleFirstResponse();
+    await user.click(screen.getAllByText('change-branch')[1]);
+    expect(screen.getByText('Override: feature/new-branch')).toBeInTheDocument();
+    await resolveStale();
+    expect(screen.getByText('Override: feature/new-branch')).toBeInTheDocument();
   });
 });
