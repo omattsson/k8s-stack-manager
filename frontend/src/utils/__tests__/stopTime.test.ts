@@ -3,6 +3,7 @@ import {
   formatStopTime,
   fromLocalInputValue,
   hasFixedStopTime,
+  MAX_STOP_TIME_MARGIN_MINUTES,
   MIN_STOP_TIME_MINUTES,
   stopTimeBounds,
   stopTimeError,
@@ -22,10 +23,10 @@ describe('stopTime', () => {
     expect(fromLocalInputValue(value)).toBeNull();
   });
 
-  it('bounds: now plus the minimum, to now plus the limit', () => {
+  it('bounds: now plus the minimum, to now plus the limit minus the clock margin', () => {
     const { min, max } = stopTimeBounds(7, now);
     expect(min.getTime()).toBe(now.getTime() + MIN_STOP_TIME_MINUTES * 60_000);
-    expect(max.getTime()).toBe(now.getTime() + 7 * 86_400_000);
+    expect(max.getTime()).toBe(now.getTime() + 7 * 86_400_000 - MAX_STOP_TIME_MARGIN_MINUTES * 60_000);
   });
 
   it('bounds: a later current expiry moves the minimum after it', () => {
@@ -34,7 +35,7 @@ describe('stopTime', () => {
   });
 
   it('bounds: an invalid limit gives 30 days', () => {
-    expect(stopTimeBounds(0, now).max.getTime()).toBe(now.getTime() + 30 * 86_400_000);
+    expect(stopTimeBounds(0, now).max.getTime()).toBe(now.getTime() + 30 * 86_400_000 - MAX_STOP_TIME_MARGIN_MINUTES * 60_000);
   });
 
   it('checks a stop time against the bounds', () => {

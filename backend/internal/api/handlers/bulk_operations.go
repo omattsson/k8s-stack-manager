@@ -191,7 +191,7 @@ func (h *InstanceHandler) BulkDeploy(c *gin.Context) {
 		// it, a bulk deploy of an expired instance kept the old expiry and the
 		// TTL reaper stopped the instance right after the deploy.
 		if inst.TTLMinutes > 0 {
-			inst.ExpiresAt = deployExpiry(inst.ExpiresAt, inst.TTLMinutes, time.Now().UTC())
+			inst.ExpiresAt = deployExpiry(inst.ExpiresAt, inst.TTLMinutes, h.maxTTL(), time.Now().UTC())
 			_ = h.instanceRepo.Update(inst)
 		}
 

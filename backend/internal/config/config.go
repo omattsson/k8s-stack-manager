@@ -522,6 +522,10 @@ func (c *AppConfig) Validate() error {
 	if c.maxInstanceTTLDaysErr != nil {
 		return c.maxInstanceTTLDaysErr
 	}
+	if maxMinutes := c.MaxInstanceTTLDays * 24 * 60; c.MaxInstanceTTLDays > 0 && c.DefaultInstanceTTLMinutes > maxMinutes {
+		return fmt.Errorf("DEFAULT_INSTANCE_TTL_MINUTES (%d) must not exceed MAX_INSTANCE_TTL_DAYS (%d days, %d minutes)",
+			c.DefaultInstanceTTLMinutes, c.MaxInstanceTTLDays, maxMinutes)
+	}
 
 	return nil
 }

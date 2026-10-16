@@ -5,7 +5,7 @@ import ExtendTtlMenu from '..';
 import { NotificationProvider } from '../../../context/NotificationContext';
 import { instanceService } from '../../../api/client';
 import type { StackInstance } from '../../../types';
-import { toLocalInputValue } from '../../../utils/stopTime';
+import { MAX_STOP_TIME_MARGIN_MINUTES, toLocalInputValue } from '../../../utils/stopTime';
 
 vi.mock('../../../api/client', () => ({
   instanceService: { extend: vi.fn(), extendUntil: vi.fn() },
@@ -94,7 +94,7 @@ describe('ExtendTtlMenu', () => {
       expect(screen.getByRole('dialog', { name: 'Extend until' })).toBeInTheDocument();
       expect(input.min).toBe(toLocalInputValue(new Date(expiresAt.getTime() + 60_000)));
       const max = new Date(input.max).getTime();
-      expect(Math.abs(max - (Date.now() + 30 * 86_400_000))).toBeLessThan(2 * 60_000);
+      expect(Math.abs(max - (Date.now() + 30 * 86_400_000 - MAX_STOP_TIME_MARGIN_MINUTES * 60_000))).toBeLessThan(90_000);
       // The start value is one day after the current expiry.
       expect(input.value).toBe(toLocalInputValue(new Date(expiresAt.getTime() + 86_400_000)));
     });

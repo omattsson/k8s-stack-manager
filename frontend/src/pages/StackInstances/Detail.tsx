@@ -645,8 +645,8 @@ const Detail = () => {
   }, [savedStopTime]);
 
   const { maxTtlDays } = useBranding();
-  const stopDraftError = stopDraft === undefined ? null : stopTimeError(stopDraft, stopTimeBounds(maxTtlDays));
   const stopDraftChanged = stopDraft !== undefined && stopDraft !== savedStopTime;
+  const stopDraftError = stopDraftChanged ? stopTimeError(stopDraft, stopTimeBounds(maxTtlDays)) : null;
 
   const handleStopTimeSave = async () => {
     if (!id || !stopDraft || stopDraftError) return;
@@ -666,6 +666,9 @@ const Detail = () => {
 
   const handleTtlChange = async (ttlMinutes: number) => {
     if (!id || !instance) return;
+    // Back from an unsaved stop time to the current TTL: nothing to save
+    // (a PUT would restart the TTL).
+    if (!hasFixedStopTime(instance) && ttlMinutes === (instance.ttl_minutes ?? 0)) return;
     setSaving(true);
     setError(null);
     try {
@@ -677,6 +680,7 @@ const Detail = () => {
       showSuccess('TTL updated');
     } catch {
       setError('Failed to update TTL');
+      setStopDraft(savedStopTime);
     } finally {
       setSaving(false);
     }
@@ -1017,6 +1021,7 @@ const Detail = () => {
               onChange={handleTtlChange}
               stopTime={stopDraft}
               onStopTimeChange={setStopDraft}
+              acceptStopTime={savedStopTime}
               disabled={saving || !canModify}
             />
             {stopDraftChanged && canModify && (

@@ -777,7 +777,7 @@ func TestDeployExpiry(t *testing.T) {
 		{"extended expiry is kept", &later, later},
 	}
 	for _, tt := range tests {
-		got := deployExpiry(tt.current, 240, now)
+		got := deployExpiry(tt.current, 240, MaxTTLMinutes, now)
 		assert.True(t, got.Equal(tt.want), "%s: got %s want %s", tt.name, got, tt.want)
 	}
 }

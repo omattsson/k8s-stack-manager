@@ -3,7 +3,7 @@ import { fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import TtlSelector from '../../../components/TtlSelector';
 import { BRANDING_DEFAULTS, StaticBrandingProvider } from '../../../context/BrandingContext';
-import { toLocalInputValue } from '../../../utils/stopTime';
+import { MAX_STOP_TIME_MARGIN_MINUTES, toLocalInputValue } from '../../../utils/stopTime';
 
 describe('TtlSelector', () => {
   it('renders preset options', () => {
@@ -84,10 +84,16 @@ describe('TtlSelector', () => {
     const input = screen.getByLabelText('Stop at') as HTMLInputElement;
     expect(input.type).toBe('datetime-local');
     expect(input.value).toBe(toLocalInputValue(stop));
-    expect(Math.abs(new Date(input.max).getTime() - (Date.now() + 7 * 86_400_000))).toBeLessThan(2 * 60_000);
+    expect(Math.abs(new Date(input.max).getTime() - (Date.now() + 7 * 86_400_000 - MAX_STOP_TIME_MARGIN_MINUTES * 60_000))).toBeLessThan(90_000);
     expect(Math.abs(new Date(input.min).getTime() - (Date.now() + 15 * 60_000))).toBeLessThan(2 * 60_000);
     // The chosen time and the time left
     expect(screen.getByText(/\(in 1d 23h\)|\(in 2d 0h\)/)).toBeInTheDocument();
+  });
+
+  it('accepts a saved stop time less than 15 minutes away', () => {
+    const soon = new Date(Date.now() + 5 * 60_000).toISOString();
+    render(<TtlSelector value={0} onChange={vi.fn()} stopTime={soon} onStopTimeChange={vi.fn()} acceptStopTime={soon} />);
+    expect(screen.queryByText(/^Choose a time/)).not.toBeInTheDocument();
   });
 
   it('reports a time after the maximum', () => {

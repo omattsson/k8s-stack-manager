@@ -437,6 +437,20 @@ func (h *InstanceHandler) GetRecentInstances(c *gin.Context) {
 	c.JSON(http.StatusOK, instances)
 }
 
+// createInstanceRequest is the JSON-binding DTO for CreateInstance.
+// TTLMinutes is *int so we can distinguish "omitted" (nil → use default)
+// from an explicit 0 (meaning "no expiry").
+type createInstanceRequest struct {
+	// ExpiresAt is a fixed stop time (RFC 3339 with a time zone). It sets
+	// ttl_minutes to 0, and a deploy keeps it. Do not send it with ttl_minutes.
+	ExpiresAt         *time.Time `json:"expires_at" example:"2026-10-17T18:00:00+02:00"`
+	StackDefinitionID string     `json:"stack_definition_id"`
+	Name              string     `json:"name"`
+	Branch            string     `json:"branch"`
+	ClusterID         string     `json:"cluster_id"`
+	TTLMinutes        *int       `json:"ttl_minutes"`
+}
+
 // CreateInstance godoc
 // @Summary     Create a stack instance
 // @Description Create a new stack instance from a definition.
@@ -453,20 +467,6 @@ func (h *InstanceHandler) GetRecentInstances(c *gin.Context) {
 // @Failure     409      {object} NamespaceConflictResponse "Namespace already exists, or the name is taken on the cluster (UNIQUE_INSTANCE_NAMES)"
 // @Failure     500      {object} map[string]string
 // @Router      /api/v1/stack-instances [post]
-// createInstanceRequest is the JSON-binding DTO for CreateInstance.
-// TTLMinutes is *int so we can distinguish "omitted" (nil → use default)
-// from an explicit 0 (meaning "no expiry").
-type createInstanceRequest struct {
-	// ExpiresAt is a fixed stop time (RFC 3339 with a time zone). It sets
-	// ttl_minutes to 0, and a deploy keeps it. Do not send it with ttl_minutes.
-	ExpiresAt         *time.Time `json:"expires_at" example:"2026-10-17T18:00:00+02:00"`
-	StackDefinitionID string     `json:"stack_definition_id"`
-	Name              string     `json:"name"`
-	Branch            string     `json:"branch"`
-	ClusterID         string     `json:"cluster_id"`
-	TTLMinutes        *int       `json:"ttl_minutes"`
-}
-
 func (h *InstanceHandler) CreateInstance(c *gin.Context) {
 	var req createInstanceRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -744,14 +744,19 @@ func (h *InstanceHandler) UpdateInstance(c *gin.Context) {
 
 	// Update the TTL or the stop time only when one was sent. ttl_minutes 0
 	// clears the expiry; expires_at sets a fixed stop time (ttl_minutes 0).
-	reqStop := update.ExpiresAt
-	if reqStop != nil && update.TTLMinutes != nil && existing.ExpiresAt != nil && reqStop.Equal(*existing.ExpiresAt) {
-		// A client that sends the whole instance (GET, change, PUT) echoes
-		// the stored expires_at with ttl_minutes: the TTL counts.
+	// A client that sends the whole instance back (GET, change, PUT) echoes
+	// the stored expires_at, and often the stored ttl_minutes. An echoed
+	// expires_at is no change; with an unchanged ttl_minutes, the expiry
+	// stays as it is (a rename keeps a TTL expiry and a fixed stop time).
+	reqTTL, reqStop := update.TTLMinutes, update.ExpiresAt
+	if reqStop != nil && existing.ExpiresAt != nil && reqStop.Equal(*existing.ExpiresAt) {
 		reqStop = nil
+		if reqTTL != nil && *reqTTL == existing.TTLMinutes {
+			reqTTL = nil
+		}
 	}
-	if update.TTLMinutes != nil || reqStop != nil {
-		ttl, expiresAt, ttlMsg := requestedExpiry(update.TTLMinutes, reqStop, 0, h.maxTTL(), existing.UpdatedAt)
+	if reqTTL != nil || reqStop != nil {
+		ttl, expiresAt, ttlMsg := requestedExpiry(reqTTL, reqStop, 0, h.maxTTL(), existing.UpdatedAt)
 		if ttlMsg != "" {
 			c.JSON(http.StatusBadRequest, gin.H{"error": ttlMsg})
 			return
@@ -1579,7 +1584,7 @@ func (h *InstanceHandler) DeployInstance(c *gin.Context) {
 	// Restart the TTL clock on deploy, but never make the expiry earlier: a
 	// redeploy of an instance that was extended keeps the later expiry.
 	if inst.TTLMinutes > 0 {
-		inst.ExpiresAt = deployExpiry(inst.ExpiresAt, inst.TTLMinutes, time.Now().UTC())
+		inst.ExpiresAt = deployExpiry(inst.ExpiresAt, inst.TTLMinutes, h.maxTTL(), time.Now().UTC())
 		_ = h.instanceRepo.Update(inst)
 	}
 
@@ -2339,9 +2344,14 @@ func (h *InstanceHandler) ExtendTTL(c *gin.Context) {
 	c.JSON(http.StatusOK, inst)
 }
 
-// deployExpiry returns the expiry after a deploy: now + ttl, or the current
-// expiry when it is later (a redeploy never shortens an extended expiry).
-func deployExpiry(current *time.Time, ttlMinutes int, now time.Time) *time.Time {
+// deployExpiry returns the expiry after a deploy: now + ttl, capped at now +
+// maxMinutes (MAX_INSTANCE_TTL_DAYS, for a TTL set before the limit was
+// lowered), or the current expiry when it is later (a redeploy never shortens
+// an extended expiry).
+func deployExpiry(current *time.Time, ttlMinutes, maxMinutes int, now time.Time) *time.Time {
+	if ttlMinutes > maxMinutes {
+		ttlMinutes = maxMinutes
+	}
 	exp := now.Add(time.Duration(ttlMinutes) * time.Minute)
 	if current != nil && current.After(exp) {
 		exp = *current

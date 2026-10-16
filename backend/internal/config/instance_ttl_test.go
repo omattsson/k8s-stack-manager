@@ -56,6 +56,20 @@ func TestAppConfig_MaxInstanceTTLDays(t *testing.T) {
 		{name: "zero stops the start", env: "0", wantErr: true},
 		{name: "366 stops the start", env: "366", wantErr: true},
 	}
+	t.Run("a default TTL above the limit stops the start", func(t *testing.T) {
+		t.Setenv("MAX_INSTANCE_TTL_DAYS", "1")
+		t.Setenv("DEFAULT_INSTANCE_TTL_MINUTES", "2880")
+		app := loadAppConfig()
+		err := app.Validate()
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "DEFAULT_INSTANCE_TTL_MINUTES (2880) must not exceed MAX_INSTANCE_TTL_DAYS (1 days, 1440 minutes)")
+	})
+	t.Run("a default TTL at the limit is valid", func(t *testing.T) {
+		t.Setenv("MAX_INSTANCE_TTL_DAYS", "1")
+		t.Setenv("DEFAULT_INSTANCE_TTL_MINUTES", "1440")
+		app := loadAppConfig()
+		require.NoError(t, app.Validate())
+	})
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Setenv("MAX_INSTANCE_TTL_DAYS", tt.env)

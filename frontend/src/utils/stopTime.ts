@@ -6,6 +6,13 @@ export const MIN_STOP_TIME_MINUTES = 15;
 /** Maximum TTL and stop-time distance when the server sends none (MAX_INSTANCE_TTL_DAYS). */
 export const DEFAULT_MAX_TTL_DAYS = 30;
 
+/**
+ * The latest stop time is this many minutes before now plus the limit: the
+ * browser clock can run ahead of the server, and the server refuses a time
+ * after its own now plus the limit.
+ */
+export const MAX_STOP_TIME_MARGIN_MINUTES = 2;
+
 const pad = (n: number) => String(n).padStart(2, '0');
 
 /**
@@ -40,7 +47,8 @@ export interface StopTimeBounds {
 
 /**
  * The allowed range of a stop time: from now plus MIN_STOP_TIME_MINUTES (or
- * from `after`, when it is later) to now plus `maxDays`.
+ * from `after`, when it is later) to now plus `maxDays`, minus
+ * MAX_STOP_TIME_MARGIN_MINUTES.
  *
  * @param maxDays - MAX_INSTANCE_TTL_DAYS from the UI config.
  * @param now - The current time (for tests).
@@ -53,7 +61,7 @@ export function stopTimeBounds(maxDays: number, now: Date = new Date(), after?: 
     min = new Date(after.getTime() + 60_000);
   }
   const days = maxDays > 0 ? maxDays : DEFAULT_MAX_TTL_DAYS;
-  return { min, max: new Date(now.getTime() + days * 24 * 60 * 60_000) };
+  return { min, max: new Date(now.getTime() + days * 24 * 60 * 60_000 - MAX_STOP_TIME_MARGIN_MINUTES * 60_000) };
 }
 
 /**

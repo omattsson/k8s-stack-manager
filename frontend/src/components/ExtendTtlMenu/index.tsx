@@ -16,6 +16,7 @@ import { instanceService } from '../../api/client';
 import StopTimePicker from '../StopTimePicker';
 import { useBranding } from '../../context/BrandingContext';
 import { useNotification } from '../../context/NotificationContext';
+import { describeApiError } from '../../utils/apiError';
 import { formatExpiry } from '../../utils/expiry';
 import { stopTimeBounds, stopTimeError } from '../../utils/stopTime';
 import type { StackInstance } from '../../types';
@@ -70,8 +71,9 @@ const ExtendTtlMenu = ({ instanceId, instanceName, label = 'Extend', expiresAt, 
       onExtended(updated);
       const expiry = formatExpiry(updated.expires_at);
       showSuccess(`${done}${expiry ? ` ${expiry}` : ''}`);
-    } catch {
-      const message = instanceName ? `Failed to extend TTL for ${instanceName}` : 'Failed to extend TTL';
+    } catch (err) {
+      const fallback = instanceName ? `Failed to extend TTL for ${instanceName}` : 'Failed to extend TTL';
+      const message = await describeApiError(err, fallback);
       if (onError) onError(message);
       else showError(message);
     } finally {
@@ -127,7 +129,7 @@ const ExtendTtlMenu = ({ instanceId, instanceName, label = 'Extend', expiresAt, 
           </MenuItem>
         ))}
         <Divider />
-        <MenuItem onClick={openCustom}>Custom...</MenuItem>
+        <MenuItem onClick={openCustom} aria-haspopup="dialog">Custom...</MenuItem>
       </Menu>
       <Dialog open={customOpen} onClose={() => setCustomOpen(false)} aria-labelledby={`${baseId}-custom-title`}>
         <DialogTitle id={`${baseId}-custom-title`}>Extend until</DialogTitle>

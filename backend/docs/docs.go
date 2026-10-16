@@ -4869,6 +4869,89 @@ const docTemplate = `{
                         }
                     }
                 }
+            },
+            "post": {
+                "description": "Create a new stack instance from a definition.\nExpiry: ttl_minutes counts from the deploy (omitted: DEFAULT_INSTANCE_TTL_MINUTES; 0: no expiry). expires_at (RFC 3339 with a time zone) is a fixed stop time instead: ttl_minutes becomes 0, and a deploy keeps the stop time. expires_at must be in the future and not later than now + MAX_INSTANCE_TTL_DAYS (default 30). A TTL above that limit, or expires_at together with ttl_minutes, gives 400.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "stack-instances"
+                ],
+                "summary": "Create a stack instance",
+                "parameters": [
+                    {
+                        "description": "Instance object",
+                        "name": "instance",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handlers.createInstanceRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/models.StackInstance"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid body, or name is not a DNS label (lowercase a-z, 0-9, '-', start and end alphanumeric, at most 50 characters)",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "A pre-instance-create hook rejected the request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Stack definition not found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "409": {
+                        "description": "Namespace already exists, or the name is taken on the cluster (UNIQUE_INSTANCE_NAMES)",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.NamespaceConflictResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
             }
         },
         "/api/v1/stack-instances/bulk/clean": {
@@ -9150,7 +9233,7 @@ const docTemplate = `{
         },
         "/api/v1/ui-config": {
             "get": {
-                "description": "Returns the display values of the web UI: product title, logo URL and favicon URL (APP_TITLE, APP_LOGO_URL, APP_FAVICON_URL), and the start value of the TTL field in the create forms (default_instance_ttl_minutes, DEFAULT_INSTANCE_TTL_MINUTES; 0 means no expiry). Public: no authentication, so the login page can use it. An empty logo_url means the built-in logo. A URL is a same-origin path or an https URL. Cached for 5 minutes.",
+                "description": "Returns the display values of the web UI: product title, logo URL and favicon URL (APP_TITLE, APP_LOGO_URL, APP_FAVICON_URL), the start value of the TTL field in the create forms (default_instance_ttl_minutes, DEFAULT_INSTANCE_TTL_MINUTES; 0 means no expiry), and the maximum TTL and stop-time distance in days (max_instance_ttl_days, MAX_INSTANCE_TTL_DAYS). Public: no authentication, so the login page can use it. An empty logo_url means the built-in logo. A URL is a same-origin path or an https URL. Cached for 5 minutes.",
                 "produces": [
                     "application/json"
                 ],
@@ -11583,6 +11666,31 @@ const docTemplate = `{
                 },
                 "webhook_url": {
                     "type": "string"
+                }
+            }
+        },
+        "handlers.createInstanceRequest": {
+            "type": "object",
+            "properties": {
+                "branch": {
+                    "type": "string"
+                },
+                "cluster_id": {
+                    "type": "string"
+                },
+                "expires_at": {
+                    "description": "ExpiresAt is a fixed stop time (RFC 3339 with a time zone). It sets\nttl_minutes to 0, and a deploy keeps it. Do not send it with ttl_minutes.",
+                    "type": "string",
+                    "example": "2026-10-17T18:00:00+02:00"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "stack_definition_id": {
+                    "type": "string"
+                },
+                "ttl_minutes": {
+                    "type": "integer"
                 }
             }
         },

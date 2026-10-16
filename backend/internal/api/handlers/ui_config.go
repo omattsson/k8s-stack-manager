@@ -61,7 +61,7 @@ func NewUIConfigHandler(b config.BrandingConfig, defaultTTLMinutes, maxTTLDays i
 
 // getUIConfig godoc
 // @Summary      Web UI display config
-// @Description  Returns the display values of the web UI: product title, logo URL and favicon URL (APP_TITLE, APP_LOGO_URL, APP_FAVICON_URL), and the start value of the TTL field in the create forms (default_instance_ttl_minutes, DEFAULT_INSTANCE_TTL_MINUTES; 0 means no expiry). Public: no authentication, so the login page can use it. An empty logo_url means the built-in logo. A URL is a same-origin path or an https URL. Cached for 5 minutes.
+// @Description  Returns the display values of the web UI: product title, logo URL and favicon URL (APP_TITLE, APP_LOGO_URL, APP_FAVICON_URL), the start value of the TTL field in the create forms (default_instance_ttl_minutes, DEFAULT_INSTANCE_TTL_MINUTES; 0 means no expiry), and the maximum TTL and stop-time distance in days (max_instance_ttl_days, MAX_INSTANCE_TTL_DAYS). Public: no authentication, so the login page can use it. An empty logo_url means the built-in logo. A URL is a same-origin path or an https URL. Cached for 5 minutes.
 // @Tags         ui
 // @Produce      json
 // @Success      200  {object}  UIConfigResponse

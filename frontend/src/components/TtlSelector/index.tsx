@@ -22,6 +22,8 @@ interface TtlSelectorProps {
    * has no "Custom stop time".
    */
   onStopTimeChange?: (iso: string | null | undefined) => void;
+  /** A saved stop time that is valid as it is (for example less than 15 minutes away). */
+  acceptStopTime?: string | null;
   disabled?: boolean;
 }
 
@@ -41,7 +43,7 @@ const CUSTOM_SENTINEL = -1;
  * "Custom", a fixed stop time from a date and time picker. The picker allows
  * times up to now plus MAX_INSTANCE_TTL_DAYS (ui-config).
  */
-const TtlSelector = ({ value, onChange, stopTime, onStopTimeChange, disabled }: TtlSelectorProps) => {
+const TtlSelector = ({ value, onChange, stopTime, onStopTimeChange, acceptStopTime, disabled }: TtlSelectorProps) => {
   const { maxTtlDays } = useBranding();
   // undefined: no stop time; null: "Custom" with an incomplete input.
   const custom = stopTime !== undefined && onStopTimeChange !== undefined;
@@ -85,7 +87,13 @@ const TtlSelector = ({ value, onChange, stopTime, onStopTimeChange, disabled }: 
       </TextField>
 
       {custom && (
-        <StopTimePicker value={stopTime ?? null} onChange={onStopTimeChange} bounds={bounds} disabled={disabled} />
+        <StopTimePicker
+          value={stopTime ?? null}
+          onChange={onStopTimeChange}
+          bounds={bounds}
+          acceptValue={acceptStopTime}
+          disabled={disabled}
+        />
       )}
     </Box>
   );

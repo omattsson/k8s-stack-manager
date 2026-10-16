@@ -16,6 +16,8 @@ interface StopTimePickerProps {
   bounds: StopTimeBounds;
   /** Field label. */
   label?: string;
+  /** A value that is valid as it is, also outside the bounds (a saved stop time). */
+  acceptValue?: string | null;
   disabled?: boolean;
 }
 
@@ -24,8 +26,8 @@ interface StopTimePickerProps {
  * Uses the native `datetime-local` input with `min` and `max`, and shows the
  * chosen time with the time left, or why the time is not allowed.
  */
-const StopTimePicker = ({ value, onChange, bounds, label = 'Stop at', disabled }: StopTimePickerProps) => {
-  const error = stopTimeError(value, bounds);
+const StopTimePicker = ({ value, onChange, bounds, label = 'Stop at', acceptValue, disabled }: StopTimePickerProps) => {
+  const error = value !== null && value === acceptValue ? null : stopTimeError(value, bounds);
   return (
     <TextField
       type="datetime-local"

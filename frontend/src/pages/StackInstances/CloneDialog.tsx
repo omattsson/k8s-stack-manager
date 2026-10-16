@@ -44,7 +44,13 @@ const CloneDialog = ({ open, source, onClose, onCloned }: CloneDialogProps) => {
   // fixed stop time of the source.
   const { maxTtlDays } = useBranding();
   const [stopTime, setStopTime] = useState<string | null | undefined>(undefined);
-  const stopTimeInvalid = stopTime !== undefined && stopTimeError(stopTime, stopTimeBounds(maxTtlDays)) !== null;
+  // The future stop time of the source is valid as it is (also less than
+  // 15 minutes away); a changed time must be in the picker range.
+  const sourceStopTime = hasFixedStopTime(source) && new Date(source.expires_at as string).getTime() > Date.now()
+    ? source.expires_at
+    : undefined;
+  const stopTimeInvalid = stopTime !== undefined && stopTime !== sourceStopTime
+    && stopTimeError(stopTime, stopTimeBounds(maxTtlDays)) !== null;
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -53,14 +59,12 @@ const CloneDialog = ({ open, source, onClose, onCloned }: CloneDialogProps) => {
       setName(suggestCloneName(source.name));
       setBranch(source.branch);
       setTtlMinutes(source.ttl_minutes ?? 0);
-      const sourceStop = hasFixedStopTime(source) && new Date(source.expires_at as string).getTime() > Date.now()
-        ? source.expires_at
-        : undefined;
-      setStopTime(sourceStop);
+      setStopTime(sourceStopTime);
       setError(null);
       setSubmitting(false);
     }
-  }, [open, source]);
+    // Fields only: the page makes a new instance object on every status update.
+  }, [open, source.id, source.name, source.branch, source.ttl_minutes, sourceStopTime]);
 
   const nameError = validateInstanceName(name);
   // When the user keeps the suggested name, the server picks a free `<name>-copy[-N]`.
@@ -119,6 +123,7 @@ const CloneDialog = ({ open, source, onClose, onCloned }: CloneDialogProps) => {
             onChange={setTtlMinutes}
             stopTime={stopTime}
             onStopTimeChange={setStopTime}
+            acceptStopTime={sourceStopTime}
             disabled={submitting}
           />
         </Box>

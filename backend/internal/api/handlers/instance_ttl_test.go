@@ -149,6 +149,18 @@ func TestExtendExpiry_ConfiguredLimit(t *testing.T) {
 	assert.WithinDuration(t, inTenDays, *got, time.Second, "an extend never shortens the expiry")
 }
 
+func TestDeployExpiry_ConfiguredLimit(t *testing.T) {
+	t.Parallel()
+	now := time.Now().UTC()
+	week := 7 * 24 * 60
+	got := deployExpiry(nil, 20*24*60, week, now)
+	require.NotNil(t, got)
+	assert.WithinDuration(t, now.Add(7*24*time.Hour), *got, time.Second, "a TTL above a lowered limit is capped")
+	later := now.Add(10 * 24 * time.Hour)
+	got = deployExpiry(&later, 60, week, now)
+	assert.True(t, later.Equal(*got), "a later current expiry stays")
+}
+
 func TestWithMaxTTLDays(t *testing.T) {
 	t.Parallel()
 	h := (&InstanceHandler{}).WithMaxTTLDays(7)
@@ -379,6 +391,45 @@ func TestUpdateInstance_StopTime(t *testing.T) {
 		got := env.get(t, "i1")
 		assert.Equal(t, 0, got.TTLMinutes)
 		assert.Nil(t, got.ExpiresAt, "ttl_minutes 0 clears the expiry")
+	})
+
+	t.Run("the whole fixed-stop instance sent back keeps the stop time", func(t *testing.T) {
+		t.Parallel()
+		env := newTTLTestEnv(t, 0)
+		env.seed(t, "i1", models.StackStatusDraft, 0, &inTwoDays)
+		w := env.do(t, http.MethodPut, "/api/v1/stack-instances/i1",
+			map[string]any{"name": "renamed", "ttl_minutes": 0, "expires_at": inTwoDays.Format(time.RFC3339Nano)})
+		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+		got := env.get(t, "i1")
+		assert.Equal(t, "renamed", got.Name)
+		assert.Equal(t, 0, got.TTLMinutes)
+		require.NotNil(t, got.ExpiresAt)
+		assert.True(t, inTwoDays.Equal(*got.ExpiresAt))
+	})
+
+	t.Run("a passed stop time sent back without ttl_minutes does not block a rename", func(t *testing.T) {
+		t.Parallel()
+		env := newTTLTestEnv(t, 0)
+		past := time.Now().UTC().Add(-time.Hour)
+		env.seed(t, "i1", models.StackStatusStopped, 0, &past)
+		w := env.do(t, http.MethodPut, "/api/v1/stack-instances/i1",
+			map[string]any{"name": "renamed", "expires_at": past.Format(time.RFC3339Nano)})
+		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+		assert.Equal(t, "renamed", env.get(t, "i1").Name)
+	})
+
+	t.Run("the whole TTL instance sent back keeps the expiry", func(t *testing.T) {
+		t.Parallel()
+		env := newTTLTestEnv(t, 0)
+		stored := time.Now().UTC().Add(3 * time.Hour)
+		env.seed(t, "i1", models.StackStatusRunning, 240, &stored)
+		w := env.do(t, http.MethodPut, "/api/v1/stack-instances/i1",
+			map[string]any{"name": "renamed", "ttl_minutes": 240, "expires_at": stored.Format(time.RFC3339Nano)})
+		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+		got := env.get(t, "i1")
+		assert.Equal(t, 240, got.TTLMinutes)
+		require.NotNil(t, got.ExpiresAt)
+		assert.True(t, stored.Equal(*got.ExpiresAt), "a rename does not restart the TTL")
 	})
 
 	t.Run("a changed expires_at with ttl_minutes gives 400", func(t *testing.T) {

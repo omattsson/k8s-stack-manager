@@ -450,6 +450,13 @@ helm-test: ## Verify default and External Secrets Helm renders
 	if helm template $(HELM_RELEASE) $(HELM_CHART) --show-only templates/backend/configmap.yaml \
 		--set backend.secrets.JWT_SECRET=dummy-jwt-secret-for-template --set backend.maxInstanceTtlDays=0 >/dev/null 2>&1; then \
 		echo "a numeric backend.maxInstanceTtlDays=0 must fail the render" >&2; exit 1; fi; \
+	if helm template $(HELM_RELEASE) $(HELM_CHART) --show-only templates/backend/configmap.yaml \
+		--set backend.secrets.JWT_SECRET=dummy-jwt-secret-for-template --set backend.maxInstanceTtlDays=1 \
+		--set-string backend.env.DEFAULT_INSTANCE_TTL_MINUTES=2880 >/dev/null 2>&1; then \
+		echo "a TTL default above backend.maxInstanceTtlDays must fail the render" >&2; exit 1; fi; \
+	helm template $(HELM_RELEASE) $(HELM_CHART) --show-only templates/backend/configmap.yaml \
+		--set backend.secrets.JWT_SECRET=dummy-jwt-secret-for-template --set backend.maxInstanceTtlDays=1 \
+		| grep -q 'MAX_INSTANCE_TTL_DAYS: "1"' || { echo "the default TTL (480) must fit backend.maxInstanceTtlDays=1" >&2; exit 1; }; \
 	helm template $(HELM_RELEASE) $(HELM_CHART) --show-only templates/backend/configmap.yaml \
 		--set backend.secrets.JWT_SECRET=dummy-jwt-secret-for-template --set backend.env.TRUSTED_PROXIES=10.1.0.0/16 > "$$template_file"; \
 	test "$$(grep -c 'TRUSTED_PROXIES:' "$$template_file")" = 1 && grep -q 'TRUSTED_PROXIES: "10.1.0.0/16"' "$$template_file" \
