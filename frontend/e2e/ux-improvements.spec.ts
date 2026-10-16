@@ -759,7 +759,7 @@ test.describe('Definitions Inline Deploy Button', () => {
     await expect(page.getByRole('button', { name: /Deploy Backend Service/ })).toBeVisible();
   });
 
-  test('clicking deploy button navigates to new instance page with definition param', async ({ page }) => {
+  test('clicking deploy button opens the new instance form with the definition selected', async ({ page }) => {
     await page.goto('/stack-definitions');
     await expect(page.getByText('My App')).toBeVisible({ timeout: 10_000 });
 
@@ -767,6 +767,12 @@ test.describe('Definitions Inline Deploy Button', () => {
 
     // Should navigate to new instance with definition query param
     await page.waitForURL(/\/stack-instances\/new\?definition=def-001/, { timeout: 10_000 });
+
+    // The form selects that definition, and the branch is its default branch
+    await expect(page.getByRole('combobox', { name: 'Stack Definition' })).toHaveText(/My App/, {
+      timeout: 10_000,
+    });
+    await expect(page.getByRole('textbox', { name: 'Branch' })).toHaveValue('main');
   });
 });
 
