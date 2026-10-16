@@ -113,10 +113,17 @@ test-e2e: integration-infra-start
 	@if lsof -ti:8081 >/dev/null 2>&1; then \
 		echo "ERROR: port 8081 is in use. Stop make dev (or the other backend) first."; exit 1; \
 	fi
-	@mkdir -p frontend/test-logs
+	@mkdir -p frontend/test-logs backend/tmp
 	@echo "Creating a fresh database $(E2E_DB_NAME)..."
-	@docker compose exec -T mysql mysql -uroot -p"$${DB_PASSWORD:-rootpassword}" \
-		-e 'DROP DATABASE IF EXISTS `$(E2E_DB_NAME)`; CREATE DATABASE `$(E2E_DB_NAME)`' 2>/dev/null
+	@# On a fresh volume, mysqladmin ping already answers during the init of the
+	@# entrypoint (temporary server), so retry until the statement works.
+	@n=0; until docker compose exec -T mysql mysql -uroot -p"$${DB_PASSWORD:-rootpassword}" \
+		-e 'DROP DATABASE IF EXISTS `$(E2E_DB_NAME)`; CREATE DATABASE `$(E2E_DB_NAME)`' 2>$(CURDIR)/backend/tmp/e2e-db.err; do \
+		n=$$((n+1)); if [ $$n -ge 30 ]; then \
+			echo "ERROR: could not create the database $(E2E_DB_NAME):"; cat $(CURDIR)/backend/tmp/e2e-db.err; exit 1; \
+		fi; \
+		sleep 2; \
+	done; rm -f $(CURDIR)/backend/tmp/e2e-db.err
 	@echo "Building and starting backend..."
 	@cd backend && mkdir -p tmp && go build -o tmp/main ./api
 	@rm -rf $(E2E_HOME) && mkdir -p $(E2E_HOME)/.kube
