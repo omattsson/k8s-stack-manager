@@ -137,8 +137,11 @@ func (p *githubProvider) ProviderType() string {
 
 func parseGitHubURL(rawURL string) (*githubRepoInfo, error) {
 	rawURL = strings.TrimSpace(rawURL)
-	if strings.HasPrefix(rawURL, githubSCPPrefix) {
-		return parseGitHubPath(strings.TrimPrefix(rawURL, githubSCPPrefix))
+	// The scp form is "git@<host>:"; the host is case-insensitive like any
+	// DNS name, while the "git" user is matched exactly.
+	if len(rawURL) >= len(githubSCPPrefix) && strings.HasPrefix(rawURL, "git@") &&
+		strings.EqualFold(rawURL[:len(githubSCPPrefix)], githubSCPPrefix) {
+		return parseGitHubPath(rawURL[len(githubSCPPrefix):])
 	}
 
 	parsed, err := url.Parse(rawURL)

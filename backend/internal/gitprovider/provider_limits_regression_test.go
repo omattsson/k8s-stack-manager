@@ -130,7 +130,7 @@ func TestProviderBranchResponsesEnforceLimitsWithoutCaching(t *testing.T) {
 		{
 			name:           "GitLab oversized body",
 			provider:       "gitlab",
-			repoURL:        "https://gitlab.com/mygroup/myproject",
+			repoURL:        "{server}/mygroup/myproject", // custom GitLab origin = test server
 			errorFragment:  "response exceeds size limit",
 			responseMarker: "gitlab-response-secret-marker",
 			body: []byte(`[{"name":"gitlab-response-secret-marker","default":true,"padding":"` +
@@ -145,7 +145,7 @@ func TestProviderBranchResponsesEnforceLimitsWithoutCaching(t *testing.T) {
 		{
 			name:           "GitLab too many branches",
 			provider:       "gitlab",
-			repoURL:        "https://gitlab.com/mygroup/myproject",
+			repoURL:        "{server}/mygroup/myproject", // custom GitLab origin = test server
 			body:           gitLabTooManyBody,
 			errorFragment:  "collection limit exceeded",
 			responseMarker: "gitlab-too-many-response-secret-marker",
@@ -172,7 +172,8 @@ func TestProviderBranchResponsesEnforceLimitsWithoutCaching(t *testing.T) {
 			defer server.Close()
 
 			registry := tt.newRegistry(t, server)
-			branches, err := registry.ListBranches(context.Background(), tt.repoURL)
+			repoURL := strings.ReplaceAll(tt.repoURL, "{server}", server.URL)
+			branches, err := registry.ListBranches(context.Background(), repoURL)
 
 			assert.Zero(t, len(branches), "rejected provider responses must return no branches")
 			if assert.Error(t, err) {

@@ -93,7 +93,8 @@ func TestDetectProviderCustomGitLabDomain(t *testing.T) {
 	}{
 		{"Custom HTTPS", "https://git.example.com/group/project", "gitlab", nil, false},
 		{"Custom SSH", "git@git.example.com:group/project.git", "gitlab", nil, false},
-		{"gitlab.com also matched", "https://gitlab.com/group/project", "gitlab", nil, false},
+		{"gitlab.com not routed to custom host provider", "https://gitlab.com/group/project", "", ErrUnsupportedProvider, true},
+		{"gitlab.com SSH not routed to custom host provider", "git@gitlab.com:group/project.git", "", ErrUnsupportedProvider, true},
 		{"Custom host lookalike is unsupported", "https://git.example.com.evil.example/group/project", "", ErrUnsupportedProvider, true},
 	}
 	for _, tt := range tests {
@@ -351,7 +352,8 @@ func TestRegistryCacheHit(t *testing.T) {
 	registry := mustNewRegistry(t, Config{GitLab: GitLabConfig{Token: "test-token", BaseURL: server.URL}})
 	registry.gitlab.baseURL = server.URL
 	ctx := context.Background()
-	repoURL := "https://gitlab.com/mygroup/myproject"
+	// Repository URLs must be on the configured custom GitLab origin.
+	repoURL := server.URL + "/mygroup/myproject"
 
 	b1, err := registry.ListBranches(ctx, repoURL)
 	require.NoError(t, err)
@@ -379,7 +381,8 @@ func TestRegistryCacheExpiry(t *testing.T) {
 	now := time.Now()
 	registry.nowFunc = func() time.Time { return now }
 	ctx := context.Background()
-	repoURL := "https://gitlab.com/mygroup/myproject"
+	// Repository URLs must be on the configured custom GitLab origin.
+	repoURL := server.URL + "/mygroup/myproject"
 
 	_, err := registry.ListBranches(ctx, repoURL)
 	require.NoError(t, err)
@@ -398,7 +401,7 @@ func TestRegistryBranchFillRechecksCacheAfterInitialMiss(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		providerCalls.Add(1)
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`[{"name":"redundant-upstream-result"}]`))
+		_, _ = w.Write([]byte(`[{"name":"main"}]`))
 	}))
 	defer server.Close()
 
@@ -408,23 +411,31 @@ func TestRegistryBranchFillRechecksCacheAfterInitialMiss(t *testing.T) {
 	repoURL := "https://github.com/octo-org/octo-repo"
 	key := normalizeCacheKey(repoURL)
 
-	registry.mu.RLock()
-	_, found := registry.cache[key]
-	registry.mu.RUnlock()
-	require.False(t, found)
+	var hookCalls atomic.Int32
+	registry.afterCacheMiss = func(missedKey string) {
+		if hookCalls.Add(1) != 1 {
+			return // the concurrent fill below also misses; let it proceed
+		}
+		assert.Equal(t, key, missedKey)
+		// A concurrent caller completes a real fill between this caller's
+		// initial cache miss and its joinBranchFill.
+		branches, err := registry.ListBranches(context.Background(), repoURL)
+		require.NoError(t, err)
+		assert.Equal(t, []Branch{{Name: "main"}}, branches)
 
-	expected := []Branch{{Name: "main"}}
-	registry.storeCacheEntry(key, expected)
-	fill := registry.joinBranchFill(context.Background(), key, registry.github, repoURL)
-	select {
-	case <-fill.done:
-	case <-time.After(time.Second):
-		require.FailNow(t, "branch fill did not complete")
+		registry.fillMu.Lock()
+		_, inflight := registry.inflight[key]
+		registry.fillMu.Unlock()
+		assert.False(t, inflight, "concurrent fill must have finished")
+		_, cached := registry.cachedBranches(key)
+		assert.True(t, cached, "concurrent fill must have stored the cache entry")
 	}
 
-	require.NoError(t, fill.err)
-	assert.Equal(t, expected, fill.branches)
-	assert.Zero(t, providerCalls.Load())
+	branches, err := registry.ListBranches(context.Background(), repoURL)
+	require.NoError(t, err)
+	assert.Equal(t, []Branch{{Name: "main"}}, branches)
+	assert.Equal(t, int32(2), hookCalls.Load())
+	assert.Equal(t, int32(1), providerCalls.Load(), "the recheck in joinBranchFill must reuse the cached result")
 }
 
 func TestRegistryConcurrentIdenticalMissesUseOneProviderCall(t *testing.T) {
@@ -650,7 +661,8 @@ func TestRegistryInvalidateCache(t *testing.T) {
 	registry := mustNewRegistry(t, Config{GitLab: GitLabConfig{Token: "test-token", BaseURL: server.URL}})
 	registry.gitlab.baseURL = server.URL
 	ctx := context.Background()
-	repoURL := "https://gitlab.com/mygroup/myproject"
+	// Repository URLs must be on the configured custom GitLab origin.
+	repoURL := server.URL + "/mygroup/myproject"
 
 	_, err := registry.ListBranches(ctx, repoURL)
 	require.NoError(t, err)
@@ -676,11 +688,11 @@ func TestRegistryCacheNormalization(t *testing.T) {
 	registry.gitlab.baseURL = server.URL
 	ctx := context.Background()
 
-	_, err := registry.ListBranches(ctx, "https://gitlab.com/mygroup/myproject")
+	_, err := registry.ListBranches(ctx, server.URL+"/mygroup/myproject")
 	require.NoError(t, err)
 	assert.Equal(t, 1, callCount)
 
-	_, err = registry.ListBranches(ctx, "https://gitlab.com/mygroup/myproject.git")
+	_, err = registry.ListBranches(ctx, server.URL+"/mygroup/myproject.git")
 	require.NoError(t, err)
 	assert.Equal(t, 1, callCount)
 }
@@ -699,7 +711,8 @@ func TestRegistryValidateBranch(t *testing.T) {
 	registry := mustNewRegistry(t, Config{GitLab: GitLabConfig{Token: "test-token", BaseURL: server.URL}})
 	registry.gitlab.baseURL = server.URL
 	ctx := context.Background()
-	repoURL := "https://gitlab.com/mygroup/myproject"
+	// Repository URLs must be on the configured custom GitLab origin.
+	repoURL := server.URL + "/mygroup/myproject"
 
 	valid, err := registry.ValidateBranch(ctx, repoURL, "main")
 	require.NoError(t, err)

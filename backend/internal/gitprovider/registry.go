@@ -44,6 +44,12 @@ type Registry struct {
 	github           *githubProvider
 	gitlab           *gitlabProvider
 	gitlabCustomHost string
+	// gitlabCustomPort is the effective port (explicit or scheme default) of
+	// the configured custom GitLab base URL. Empty when gitlab.com is used.
+	gitlabCustomPort string
+	// afterCacheMiss is a test seam invoked by ListBranches between the
+	// initial cache miss and joining a branch fill. Always nil in production.
+	afterCacheMiss   func(key string)
 	mu               sync.RWMutex
 	cache            map[string]cacheEntry
 	nowFunc          func() time.Time
@@ -55,6 +61,10 @@ type Registry struct {
 
 // NewRegistry creates a new provider registry from validated configuration.
 func NewRegistry(cfg Config) (*Registry, error) {
+	return newRegistryWithLogger(cfg, slog.Default())
+}
+
+func newRegistryWithLogger(cfg Config, logger *slog.Logger) (*Registry, error) {
 	gitLabBaseURL, err := NormalizeGitLabBaseURL(cfg.GitLab.BaseURL)
 	if err != nil {
 		return nil, fmt.Errorf("invalid Git provider configuration: %w", err)
@@ -77,37 +87,96 @@ func NewRegistry(cfg Config) (*Registry, error) {
 		r.azureDevOps = newAzureDevOpsProvider(cfg.AzureDevOps)
 	}
 
-	host := repositoryHostname(cfg.GitLab.BaseURL)
-	if host != "gitlab.com" {
-		r.gitlabCustomHost = host
+	baseOrigin, _ := parseRepositoryOrigin(cfg.GitLab.BaseURL)
+	if baseOrigin.host != "gitlab.com" {
+		r.gitlabCustomHost = baseOrigin.host
+		r.gitlabCustomPort = baseOrigin.effectivePort()
 	}
 	if cfg.GitLab.Token != "" {
 		r.gitlab = newGitLabProvider(cfg.GitLab)
+		if baseOrigin.scheme == "http" && logger != nil {
+			logger.Warn("GitLab base URL uses plain HTTP; token is sent unencrypted", "host", baseOrigin.host)
+		}
 	}
 
 	return r, nil
 }
 
 func (r *Registry) detectProvider(repoURL string) (GitProvider, error) {
-	host := repositoryHostname(repoURL)
+	origin, _ := parseRepositoryOrigin(repoURL)
 	switch {
 	case isGitHubURLCandidate(repoURL):
 		return r.detectGitHubProvider(repoURL)
-	case isAzureDevOpsHost(host):
+	case isAzureDevOpsHost(origin.host):
 		return r.detectAzureDevOpsProvider(repoURL)
-	case r.gitlabCustomHost != "" && host == r.gitlabCustomHost:
-		return r.detectGitLabProvider(repoURL)
-	case host == "gitlab.com":
+	case r.gitlabCustomHost != "":
+		// With a custom GitLab base URL, only URLs on that origin are routed to
+		// the GitLab provider. gitlab.com URLs are not: the provider would query
+		// the custom server (with its token) for a project that lives elsewhere.
+		if r.matchesGitLabCustomOrigin(origin) {
+			return r.detectGitLabProvider(repoURL)
+		}
+		return nil, providerError(ErrUnsupportedProvider, "", "unsupported Git provider URL", nil)
+	case origin.host == "gitlab.com":
 		return r.detectGitLabProvider(repoURL)
 	default:
 		return nil, providerError(ErrUnsupportedProvider, "", "unsupported Git provider URL", nil)
 	}
 }
 
-func repositoryHostname(rawURL string) string {
+// matchesGitLabCustomOrigin reports whether a repository URL belongs to the
+// configured custom GitLab server.
+//
+// The hostname must match exactly. For http(s) repository URLs the effective
+// port (explicit, or 80/443 from the scheme) must also equal the effective port
+// of the base URL. The scheme itself is not compared: http and https URLs only
+// match when they resolve to the same port, which keeps the rule simple and
+// still rejects a different service on the same host. SSH URLs (scp-style
+// git@host:path and ssh://) match on hostname only, because the SSH port is
+// unrelated to the API port. Other schemes match on hostname so the GitLab
+// parser can reject them as invalid repository URLs.
+func (r *Registry) matchesGitLabCustomOrigin(origin repositoryOrigin) bool {
+	if origin.host == "" || origin.host != r.gitlabCustomHost {
+		return false
+	}
+	switch origin.scheme {
+	case "http", "https":
+		return origin.effectivePort() == r.gitlabCustomPort
+	default:
+		return true
+	}
+}
+
+// repositoryOrigin is the scheme, lowercase hostname and explicit port of a
+// repository URL. scp-style SSH URLs (user@host:path) report scheme "ssh".
+type repositoryOrigin struct {
+	scheme string
+	host   string
+	port   string
+}
+
+func (o repositoryOrigin) effectivePort() string {
+	if o.port != "" {
+		return o.port
+	}
+	switch o.scheme {
+	case "http":
+		return "80"
+	case "https":
+		return "443"
+	default:
+		return ""
+	}
+}
+
+// parseRepositoryOrigin extracts the origin from a repository URL by parsing
+// only its authority, so malformed paths still yield a hostname for routing.
+// The hostname is returned verbatim apart from lowercasing: a trailing dot is
+// kept so that "dev.azure.com." or "gitlab.com." never match a provider host.
+func parseRepositoryOrigin(rawURL string) (repositoryOrigin, bool) {
 	rawURL = strings.TrimSpace(rawURL)
 	if rawURL == "" {
-		return ""
+		return repositoryOrigin{}, false
 	}
 	if !strings.Contains(rawURL, "://") {
 		if colon := strings.IndexByte(rawURL, ':'); colon > 0 && strings.Contains(rawURL[:colon], "@") {
@@ -118,7 +187,7 @@ func repositoryHostname(rawURL string) string {
 	}
 	schemeEnd := strings.Index(rawURL, "://")
 	if schemeEnd < 0 {
-		return ""
+		return repositoryOrigin{}, false
 	}
 	authorityEnd := len(rawURL)
 	if separator := strings.IndexAny(rawURL[schemeEnd+3:], "/?#"); separator >= 0 {
@@ -126,9 +195,18 @@ func repositoryHostname(rawURL string) string {
 	}
 	parsed, err := url.Parse(rawURL[:authorityEnd])
 	if err != nil {
-		return ""
+		return repositoryOrigin{}, false
 	}
-	return strings.ToLower(strings.TrimSuffix(parsed.Hostname(), "."))
+	return repositoryOrigin{
+		scheme: strings.ToLower(parsed.Scheme),
+		host:   strings.ToLower(parsed.Hostname()),
+		port:   parsed.Port(),
+	}, true
+}
+
+func repositoryHostname(rawURL string) string {
+	origin, _ := parseRepositoryOrigin(rawURL)
+	return origin.host
 }
 
 func isAzureDevOpsHost(host string) bool {
@@ -183,15 +261,25 @@ func (r *Registry) ListBranches(ctx context.Context, repoURL string) ([]Branch, 
 		recordBranchListResult(providerTypeName(provider), "success", time.Since(start))
 		return branches, nil
 	}
+	if r.afterCacheMiss != nil {
+		r.afterCacheMiss(key)
+	}
 
 	fill := r.joinBranchFill(ctx, key, provider, repoURL)
 	var branches []Branch
 	select {
 	case <-fill.done:
+		// Prefer a result that is already available (e.g. the cache was filled
+		// concurrently) over a cancelled context, matching the initial cache hit.
 		branches, err = cloneBranches(fill.branches), fill.err
-	case <-ctx.Done():
-		r.leaveBranchFill(key, fill)
-		err = ctx.Err()
+	default:
+		select {
+		case <-fill.done:
+			branches, err = cloneBranches(fill.branches), fill.err
+		case <-ctx.Done():
+			r.leaveBranchFill(key, fill)
+			err = ctx.Err()
+		}
 	}
 	if err != nil {
 		recordBranchListResult(providerTypeName(provider), "failure", time.Since(start))
@@ -233,9 +321,12 @@ func (r *Registry) joinBranchFill(ctx context.Context, key string, provider GitP
 		return fill
 	}
 	if branches, found := r.cachedBranches(key); found {
+		// Synthetic, already-completed fill for a cache hit found after the
+		// initial miss. It is never registered in r.inflight; the no-op cancel
+		// keeps it safe if a caller ever cancels or leaves it.
 		done := make(chan struct{})
 		close(done)
-		return &branchFill{done: done, branches: branches}
+		return &branchFill{done: done, cancel: func() {}, branches: branches}
 	}
 
 	fillContext, cancel := context.WithCancel(context.WithoutCancel(ctx))
@@ -284,7 +375,9 @@ func (r *Registry) leaveBranchFill(key string, fill *branchFill) {
 	}
 	fill.abandoned = true
 	delete(r.inflight, key)
-	fill.cancel()
+	if fill.cancel != nil {
+		fill.cancel()
+	}
 }
 
 func (r *Registry) storeCacheEntry(key string, branches []Branch) {

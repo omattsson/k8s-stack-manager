@@ -12,33 +12,69 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestGitHubRejectsSameOriginRedirectWithEncodedRawPath(t *testing.T) {
+func TestGitHubRejectsDisallowedAPIRedirects(t *testing.T) {
 	t.Parallel()
 
-	var targetRequests atomic.Int32
-	var targetAuthorization atomic.Value
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.RawPath == "" {
-			assert.Equal(t, "/repos/octo-org/octo-repo/branches", r.URL.Path)
-			w.Header().Set("Location", "/repos/octo-org/octo-repo%2Fbranches")
-			w.WriteHeader(http.StatusFound)
-			return
-		}
+	// Each server answers the first (authenticated) API request with a
+	// redirect; every later request counts as a followed redirect.
+	tests := []struct {
+		name     string
+		location string
+		token    string
+	}{
+		{
+			name:     "same origin redirect with encoded raw path",
+			location: "/repos/octo-org/octo-repo%2Fbranches",
+			token:    "encoded-path-token-marker",
+		},
+		{
+			name:     "renamed repository redirect to unexpected canonical path",
+			location: "/repositories/12345/other",
+			token:    "redirect-token-marker",
+		},
+		{
+			name:     "redirect to a different repository",
+			location: "/repos/other-org/other-repo/branches",
+			token:    "other-repo-token-marker",
+		},
+		{
+			name:     "same path redirect with fragment",
+			location: "/repos/octo-org/octo-repo/branches#fragment",
+			token:    "fragment-token-marker",
+		},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 
-		targetRequests.Add(1)
-		targetAuthorization.Store(r.Header.Get("Authorization"))
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`[{"name":"main"}]`))
-	}))
-	defer server.Close()
+			var apiRequests, targetRequests atomic.Int32
+			var targetAuthorization atomic.Value
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if apiRequests.Add(1) == 1 {
+					assert.Equal(t, "/repos/octo-org/octo-repo/branches", r.URL.Path)
+					assert.Empty(t, r.URL.RawPath)
+					w.Header().Set("Location", tt.location)
+					w.WriteHeader(http.StatusFound)
+					return
+				}
 
-	provider := newTestGitHubProvider(server, "encoded-path-token-marker")
-	_, err := provider.ListBranches(context.Background(), "https://github.com/octo-org/octo-repo")
-	require.Error(t, err)
-	assert.ErrorIs(t, err, errGitHubRedirect)
-	assert.NotContains(t, err.Error(), "encoded-path-token-marker")
-	assert.Zero(t, targetRequests.Load())
-	assert.Nil(t, targetAuthorization.Load())
+				targetRequests.Add(1)
+				targetAuthorization.Store(r.Header.Get("Authorization"))
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`[{"name":"main"}]`))
+			}))
+			t.Cleanup(server.Close)
+
+			provider := newTestGitHubProvider(server, tt.token)
+			_, err := provider.ListBranches(context.Background(), "https://github.com/octo-org/octo-repo")
+			require.Error(t, err)
+			assert.ErrorIs(t, err, errGitHubRedirect)
+			assert.NotContains(t, err.Error(), tt.token)
+			assert.Zero(t, targetRequests.Load(), "redirect must not be followed")
+			assert.Nil(t, targetAuthorization.Load(), "token must not be sent to the redirect target")
+		})
+	}
 }
 
 func TestGitHubFollowsRenamedRepositoryRedirectForBranchesWithPagination(t *testing.T) {
@@ -101,29 +137,6 @@ func TestGitHubFollowsRenamedRepositoryRedirectForDefaultBranch(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "trunk", branch)
 	assert.Equal(t, int32(1), canonicalRequests.Load())
-}
-
-func TestGitHubRejectsRenamedRepositoryRedirectToUnexpectedCanonicalPath(t *testing.T) {
-	t.Parallel()
-
-	var targetRequests atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/repos/octo-org/octo-repo/branches" {
-			http.Redirect(w, r, "/repositories/12345/other", http.StatusMovedPermanently)
-			return
-		}
-		targetRequests.Add(1)
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`[{"name":"main"}]`))
-	}))
-	defer server.Close()
-
-	provider := newTestGitHubProvider(server, "redirect-token-marker")
-	_, err := provider.ListBranches(context.Background(), "https://github.com/octo-org/octo-repo")
-	require.Error(t, err)
-	assert.ErrorIs(t, err, errGitHubRedirect)
-	assert.NotContains(t, err.Error(), "redirect-token-marker")
-	assert.Zero(t, targetRequests.Load())
 }
 
 func TestGitHubRedirectPolicyRenamedRepositoryRules(t *testing.T) {

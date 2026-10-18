@@ -17,12 +17,26 @@ import (
 func TestGitLabMalformedRepositoryURLsReturnSanitizedBadRequest(t *testing.T) {
 	t.Parallel()
 
-	server := httptest.NewServer(gitlabBranchesHandler([]map[string]interface{}{
+	var upstreamRequests atomic.Int32
+	branches := gitlabBranchesHandler([]map[string]interface{}{
 		{"name": "main", "default": true},
+	})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upstreamRequests.Add(1)
+		branches(w, r)
 	}))
 	t.Cleanup(server.Close)
+	t.Cleanup(func() {
+		assert.Zero(t, upstreamRequests.Load(), "rejected URLs must not reach the GitLab server")
+	})
 
 	router := setupGitRouter(server.URL)
+	// The GitLab provider is configured with the test server as custom base
+	// URL, so only URLs on that origin (gitlab.com is no longer routed to a
+	// custom GitLab) exercise the GitLab parser. They must be rejected there.
+	origin, err := url.Parse(server.URL)
+	require.NoError(t, err)
+	gitLabHost := origin.Host
 	tests := []struct {
 		name            string
 		repoURL         string
@@ -30,12 +44,12 @@ func TestGitLabMalformedRepositoryURLsReturnSanitizedBadRequest(t *testing.T) {
 	}{
 		{
 			name:            "userinfo on GitLab host",
-			repoURL:         "https://user:credential-marker@gitlab.com/group/repo",
+			repoURL:         "http://user:credential-marker@" + gitLabHost + "/group/repo",
 			expectedMessage: "Invalid repository URL",
 		},
 		{
 			name:            "unsupported FTP scheme",
-			repoURL:         "ftp://gitlab.com/group/repo",
+			repoURL:         "ftp://" + gitLabHost + "/group/repo",
 			expectedMessage: "Invalid repository URL",
 		},
 		{
@@ -45,7 +59,7 @@ func TestGitLabMalformedRepositoryURLsReturnSanitizedBadRequest(t *testing.T) {
 		},
 		{
 			name:            "malformed path escape",
-			repoURL:         "https://gitlab.com/group/%zz",
+			repoURL:         server.URL + "/group/%zz",
 			expectedMessage: "Invalid repository URL",
 		},
 		{
@@ -61,6 +75,11 @@ func TestGitLabMalformedRepositoryURLsReturnSanitizedBadRequest(t *testing.T) {
 		{
 			name:            "GitLab domain embedded in query",
 			repoURL:         "https://example.com/group/repo?provider=gitlab.com",
+			expectedMessage: "Unsupported Git provider",
+		},
+		{
+			name:            "gitlab.com is not routed to the custom GitLab host",
+			repoURL:         "https://gitlab.com/group/repo",
 			expectedMessage: "Unsupported Git provider",
 		},
 	}
@@ -106,14 +125,14 @@ func TestCanonicalAzureAndGitLabRepositoryURLsReturnSanitizedBadRequest(t *testi
 		},
 		{
 			name: "GitLab query",
-			repoURL: func(string) string {
-				return "https://gitlab.com/group/repo?version=credential-marker"
+			repoURL: func(baseURL string) string {
+				return baseURL + "/group/repo.git?version=credential-marker"
 			},
 		},
 		{
 			name: "GitLab fragment",
-			repoURL: func(string) string {
-				return "https://gitlab.com/group/repo#credential-marker"
+			repoURL: func(baseURL string) string {
+				return baseURL + "/group/repo.git#credential-marker"
 			},
 		},
 		{

@@ -65,14 +65,14 @@ func TestDetectProviderRejectsMalformedAndDeceptiveGitLabURLs(t *testing.T) {
 	}{
 		{
 			name:         "userinfo on GitLab host",
-			repoURL:      "https://user:credential-marker@gitlab.com/group/repo",
-			expectedHost: "gitlab.com",
+			repoURL:      "https://user:credential-marker@git.example.com/group/repo",
+			expectedHost: "git.example.com",
 			expectedKind: ErrInvalidRepositoryURL,
 		},
 		{
 			name:         "unsupported FTP scheme",
-			repoURL:      "ftp://gitlab.com/group/repo",
-			expectedHost: "gitlab.com",
+			repoURL:      "ftp://git.example.com/group/repo",
+			expectedHost: "git.example.com",
 			expectedKind: ErrInvalidRepositoryURL,
 		},
 		{
@@ -82,7 +82,7 @@ func TestDetectProviderRejectsMalformedAndDeceptiveGitLabURLs(t *testing.T) {
 		},
 		{
 			name:         "malformed path escape",
-			repoURL:      "https://gitlab.com/group/%zz",
+			repoURL:      "https://git.example.com/group/%zz",
 			expectedKind: ErrInvalidRepositoryURL,
 			parseFails:   true,
 		},
@@ -141,7 +141,6 @@ func TestDetectProviderAcceptsValidGitLabAndCustomHostURLs(t *testing.T) {
 		name    string
 		repoURL string
 	}{
-		{name: "gitlab.com", repoURL: "https://gitlab.com/group/repo"},
 		{name: "configured custom host", repoURL: "https://git.example.com/group/repo"},
 	}
 
@@ -155,6 +154,15 @@ func TestDetectProviderAcceptsValidGitLabAndCustomHostURLs(t *testing.T) {
 			assert.Equal(t, "gitlab", provider.ProviderType())
 		})
 	}
+
+	t.Run("gitlab.com is not routed to the custom host provider", func(t *testing.T) {
+		t.Parallel()
+
+		provider, err := registry.detectProvider("https://gitlab.com/group/repo")
+		require.Error(t, err)
+		assert.Nil(t, provider)
+		assert.ErrorIs(t, err, ErrUnsupportedProvider)
+	})
 }
 
 func TestNewRegistryNormalizesGitLabBaseURL(t *testing.T) {

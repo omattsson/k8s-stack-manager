@@ -42,7 +42,27 @@ func parseGitLabProjectPath(rawURL string) (string, error) {
 	if strings.HasPrefix(rawURL, "git@") {
 		return parseGitLabSSH(rawURL)
 	}
+	if len(rawURL) >= len("ssh://") && strings.EqualFold(rawURL[:len("ssh://")], "ssh://") {
+		return parseGitLabSSHURL(rawURL)
+	}
 	return parseGitLabHTTP(rawURL)
+}
+
+// parseGitLabSSHURL parses ssh:// GitLab URLs such as
+// ssh://git@gitlab.example.com:2222/group/project.git. The SSH port is not
+// related to the API and is ignored; userinfo may only carry a username.
+func parseGitLabSSHURL(rawURL string) (string, error) {
+	parsed, err := url.Parse(rawURL)
+	if err != nil || strings.Contains(rawURL, "#") || parsed.Hostname() == "" || parsed.Opaque != "" ||
+		parsed.RawQuery != "" || parsed.ForceQuery {
+		return "", providerError(ErrInvalidRepositoryURL, "gitlab", "invalid GitLab SSH URL", nil)
+	}
+	if parsed.User != nil {
+		if _, hasPassword := parsed.User.Password(); hasPassword {
+			return "", providerError(ErrInvalidRepositoryURL, "gitlab", "invalid GitLab SSH URL", nil)
+		}
+	}
+	return gitLabProjectPathFromURL(parsed)
 }
 
 func parseGitLabSSH(rawURL string) (string, error) {
@@ -50,18 +70,17 @@ func parseGitLabSSH(rawURL string) (string, error) {
 	if colonIdx < 0 {
 		return "", providerError(ErrInvalidRepositoryURL, "gitlab", "invalid GitLab SSH URL", nil)
 	}
-	path := strings.TrimSuffix(rawURL[colonIdx+1:], "/")
-	path = strings.TrimSuffix(path, ".git")
-	parts := strings.Split(path, "/")
-	if len(parts) < 2 {
+	escapedPath := rawURL[colonIdx+1:]
+	if strings.HasPrefix(escapedPath, "/") {
 		return "", providerError(ErrInvalidRepositoryURL, "gitlab", "invalid GitLab SSH URL path", nil)
 	}
-	for _, part := range parts {
-		if !isSafeRepositoryPathSegment(part) {
-			return "", providerError(ErrInvalidRepositoryURL, "gitlab", "invalid GitLab SSH URL path", nil)
-		}
+	// Same decoding, validation and "/-/" truncation as the HTTP and ssh://
+	// forms, so all three yield the same project path (e.g. "g/My Proj").
+	projectPath, err := gitLabProjectPathFromEscapedPath(escapedPath)
+	if err != nil {
+		return "", providerError(ErrInvalidRepositoryURL, "gitlab", "invalid GitLab SSH URL path", nil)
 	}
-	return path, nil
+	return projectPath, nil
 }
 
 func parseGitLabHTTP(rawURL string) (string, error) {
@@ -73,9 +92,38 @@ func parseGitLabHTTP(rawURL string) (string, error) {
 	if !isCanonicalRepositoryHTTPURL(parsed) {
 		return "", providerError(ErrInvalidRepositoryURL, "gitlab", "invalid GitLab repository URL", nil)
 	}
-	parts, err := decodedRepositoryPath(parsed, "gitlab")
-	if err != nil || len(parts) < 2 {
+	return gitLabProjectPathFromURL(parsed)
+}
+
+// gitLabProjectPathFromURL extracts the decoded project path from a parsed
+// GitLab URL. Browser URLs such as /group/project/-/tree/main are truncated at
+// the first "/-/" segment (GitLab's separator between the project path and
+// project routes). The escaped path is truncated before decoding so branch or
+// file names after the separator are never interpreted.
+func gitLabProjectPathFromURL(parsed *url.URL) (string, error) {
+	return gitLabProjectPathFromEscapedPath(parsed.EscapedPath())
+}
+
+// gitLabProjectPathFromEscapedPath decodes and validates an escaped GitLab
+// project path ("group/sub/project[.git]", optionally followed by "/-/...").
+func gitLabProjectPathFromEscapedPath(escapedPath string) (string, error) {
+	escapedParts := strings.Split(strings.Trim(escapedPath, "/"), "/")
+	for i, escapedPart := range escapedParts {
+		if escapedPart == "-" {
+			escapedParts = escapedParts[:i]
+			break
+		}
+	}
+	if len(escapedParts) < 2 {
 		return "", providerError(ErrInvalidRepositoryURL, "gitlab", "invalid GitLab URL path", nil)
+	}
+	parts := make([]string, len(escapedParts))
+	for i, escapedPart := range escapedParts {
+		part, err := url.PathUnescape(escapedPart)
+		if err != nil || !isSafeRepositoryPathSegment(part) || part == "-" {
+			return "", providerError(ErrInvalidRepositoryURL, "gitlab", "invalid GitLab URL path", nil)
+		}
+		parts[i] = part
 	}
 	parts[len(parts)-1] = strings.TrimSuffix(parts[len(parts)-1], ".git")
 	if !isSafeRepositoryPathSegment(parts[len(parts)-1]) {

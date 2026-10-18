@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -68,10 +69,12 @@ func TestGitProviderErrorMappings(t *testing.T) {
 		responseBody     string
 		expectedMessage  string
 		retryAfter       string
+		gitLabRepoPath   string // when set, repoURL is the GitLab server origin + this path
 		allowedRepos     []string
 		upstreamStatus   int
 		expectedStatus   int
 		expectRetryAfter bool
+		customGitLab     bool // configure the custom GitLab server even without an upstream status
 	}{
 		{
 			name:            "invalid repository",
@@ -111,8 +114,15 @@ func TestGitProviderErrorMappings(t *testing.T) {
 			expectedMessage: "Repository is not permitted",
 		},
 		{
-			name:            "repository not found",
+			name:            "gitlab.com URL with custom GitLab host is unsupported",
 			repoURL:         "https://gitlab.com/org/repo-marker",
+			customGitLab:    true,
+			expectedStatus:  http.StatusBadRequest,
+			expectedMessage: "Unsupported Git provider",
+		},
+		{
+			name:            "repository not found",
+			gitLabRepoPath:  "/org/repo-marker",
 			upstreamStatus:  http.StatusNotFound,
 			responseBody:    "raw provider not-found credential-marker",
 			expectedStatus:  http.StatusNotFound,
@@ -120,7 +130,7 @@ func TestGitProviderErrorMappings(t *testing.T) {
 		},
 		{
 			name:             "rate limited",
-			repoURL:          "https://gitlab.com/org/repo-marker",
+			gitLabRepoPath:   "/org/repo-marker",
 			upstreamStatus:   http.StatusTooManyRequests,
 			responseBody:     "raw provider rate-limit credential-marker",
 			retryAfter:       "120",
@@ -130,7 +140,7 @@ func TestGitProviderErrorMappings(t *testing.T) {
 		},
 		{
 			name:            "provider authentication failure",
-			repoURL:         "https://gitlab.com/org/repo-marker",
+			gitLabRepoPath:  "/org/repo-marker",
 			upstreamStatus:  http.StatusUnauthorized,
 			responseBody:    "raw provider auth credential-marker",
 			expectedStatus:  http.StatusBadGateway,
@@ -138,7 +148,7 @@ func TestGitProviderErrorMappings(t *testing.T) {
 		},
 		{
 			name:            "provider permission failure",
-			repoURL:         "https://gitlab.com/org/repo-marker",
+			gitLabRepoPath:  "/org/repo-marker",
 			upstreamStatus:  http.StatusForbidden,
 			responseBody:    "raw provider permission credential-marker",
 			expectedStatus:  http.StatusBadGateway,
@@ -146,7 +156,7 @@ func TestGitProviderErrorMappings(t *testing.T) {
 		},
 		{
 			name:            "provider upstream failure",
-			repoURL:         "https://gitlab.com/org/repo-marker",
+			gitLabRepoPath:  "/org/repo-marker",
 			upstreamStatus:  http.StatusBadGateway,
 			responseBody:    "raw provider upstream credential-marker",
 			expectedStatus:  http.StatusServiceUnavailable,
@@ -154,7 +164,7 @@ func TestGitProviderErrorMappings(t *testing.T) {
 		},
 		{
 			name:            "provider unavailable",
-			repoURL:         "https://gitlab.com/org/repo-marker",
+			gitLabRepoPath:  "/org/repo-marker",
 			upstreamStatus:  http.StatusServiceUnavailable,
 			responseBody:    "raw provider unavailable credential-marker",
 			expectedStatus:  http.StatusServiceUnavailable,
@@ -179,11 +189,14 @@ func TestGitProviderErrorMappings(t *testing.T) {
 					t.Parallel()
 
 					var server *httptest.Server
+					var upstreamRequests atomic.Int32
+					repoURL := tt.repoURL
 					config := gitprovider.Config{
 						GitHub: gitprovider.GitHubConfig{AllowedRepositories: tt.allowedRepos},
 					}
-					if tt.upstreamStatus != 0 {
+					if tt.upstreamStatus != 0 || tt.customGitLab {
 						server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+							upstreamRequests.Add(1)
 							w.Header().Set("X-Upstream-Debug", "credential-marker")
 							if tt.retryAfter != "" {
 								w.Header().Set("Retry-After", tt.retryAfter)
@@ -193,10 +206,15 @@ func TestGitProviderErrorMappings(t *testing.T) {
 						}))
 						t.Cleanup(server.Close)
 						config.GitLab = gitprovider.GitLabConfig{Token: "provider-token-marker", BaseURL: server.URL}
+						if tt.gitLabRepoPath != "" {
+							// The custom GitLab base URL only serves repositories on its own origin.
+							repoURL = server.URL + tt.gitLabRepoPath
+						}
 					}
+					require.NotEmpty(t, repoURL)
 
 					router := setupGitRouterWithConfig(config)
-					requestURL := endpoint.path + "?repo=" + url.QueryEscape(tt.repoURL)
+					requestURL := endpoint.path + "?repo=" + url.QueryEscape(repoURL)
 					if strings.Contains(endpoint.path, "validate-branch") {
 						requestURL += "&branch=branch-credential-marker"
 					}
@@ -219,6 +237,12 @@ func TestGitProviderErrorMappings(t *testing.T) {
 						assert.NotContains(t, responseHeaders, sensitive)
 					}
 
+					if tt.upstreamStatus == 0 {
+						assert.Zero(t, upstreamRequests.Load(), "rejected URLs must not reach the provider")
+					} else {
+						assert.Positive(t, upstreamRequests.Load())
+					}
+
 					if tt.expectRetryAfter {
 						delay, err := strconv.Atoi(response.Header().Get("Retry-After"))
 						require.NoError(t, err, "Retry-After must contain integer seconds")
@@ -239,10 +263,17 @@ func TestGitProviderUnconfiguredRecognizedProviderReturnsServiceUnavailable(t *t
 	providers := []struct {
 		name    string
 		repoURL string
+		config  gitprovider.Config
 	}{
 		{name: "Azure DevOps", repoURL: "https://dev.azure.com/org-marker/project/_git/repo-marker"},
 		{name: "Azure DevOps visualstudio.com", repoURL: "https://org-marker.visualstudio.com/project/_git/repo-marker"},
 		{name: "GitLab", repoURL: "https://gitlab.com/org-marker/repo-marker"},
+		{
+			// A custom base URL without a token is recognized but not configured.
+			name:    "custom GitLab host without token",
+			repoURL: "https://gitlab.example.com/org-marker/repo-marker",
+			config:  gitprovider.Config{GitLab: gitprovider.GitLabConfig{BaseURL: "https://gitlab.example.com"}},
+		},
 	}
 	endpoints := []struct {
 		name string
@@ -268,7 +299,7 @@ func TestGitProviderUnconfiguredRecognizedProviderReturnsServiceUnavailable(t *t
 					request := httptest.NewRequest(http.MethodGet, requestURL, nil)
 					response := httptest.NewRecorder()
 
-					setupGitRouter("").ServeHTTP(response, request)
+					setupGitRouterWithConfig(provider.config).ServeHTTP(response, request)
 
 					assert.Equal(t, http.StatusServiceUnavailable, response.Code)
 					assert.JSONEq(t, `{"error":"Git provider is unavailable"}`, response.Body.String())
@@ -343,7 +374,7 @@ func TestListBranches(t *testing.T) {
 
 		router := setupGitRouter(server.URL)
 		w := httptest.NewRecorder()
-		req, _ := http.NewRequest(http.MethodGet, "/api/v1/git/branches?repo=https://gitlab.com/org/repo", nil)
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/git/branches?repo="+url.QueryEscape(server.URL+"/org/repo"), nil)
 		router.ServeHTTP(w, req)
 
 		assert.Equal(t, http.StatusOK, w.Code)
@@ -458,7 +489,7 @@ func TestListBranches(t *testing.T) {
 
 		router := setupGitRouter(server.URL)
 		w := httptest.NewRecorder()
-		req, _ := http.NewRequest(http.MethodGet, "/api/v1/git/branches?repo=https://gitlab.com/org/repo", nil)
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/git/branches?repo="+url.QueryEscape(server.URL+"/org/repo"), nil)
 		router.ServeHTTP(w, req)
 
 		assert.Equal(t, http.StatusServiceUnavailable, w.Code)
@@ -480,8 +511,8 @@ func TestValidateBranch(t *testing.T) {
 
 		router := setupGitRouter(server.URL)
 		w := httptest.NewRecorder()
-		req, _ := http.NewRequest(http.MethodGet,
-			"/api/v1/git/validate-branch?repo=https://gitlab.com/org/repo&branch=main", nil)
+		req := httptest.NewRequest(http.MethodGet,
+			"/api/v1/git/validate-branch?repo="+url.QueryEscape(server.URL+"/org/repo")+"&branch=main", nil)
 		router.ServeHTTP(w, req)
 
 		assert.Equal(t, http.StatusOK, w.Code)
@@ -500,8 +531,8 @@ func TestValidateBranch(t *testing.T) {
 
 		router := setupGitRouter(server.URL)
 		w := httptest.NewRecorder()
-		req, _ := http.NewRequest(http.MethodGet,
-			"/api/v1/git/validate-branch?repo=https://gitlab.com/org/repo&branch=nonexistent", nil)
+		req := httptest.NewRequest(http.MethodGet,
+			"/api/v1/git/validate-branch?repo="+url.QueryEscape(server.URL+"/org/repo")+"&branch=nonexistent", nil)
 		router.ServeHTTP(w, req)
 
 		assert.Equal(t, http.StatusOK, w.Code)

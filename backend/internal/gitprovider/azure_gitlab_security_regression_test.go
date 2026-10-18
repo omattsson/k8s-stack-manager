@@ -209,25 +209,68 @@ func TestAzureDevOpsRejectsEncodedRepositoryIdentifiersBeforeAuthenticatedReques
 func TestAzureDevOpsSSHRepositorySuffixIsNormalizedInAPIPath(t *testing.T) {
 	t.Parallel()
 
-	const repoURL = "git@ssh.dev.azure.com:v3/org/project/repo.git"
-	info, err := parseAzureDevOpsURL(repoURL)
-	require.NoError(t, err)
-	assert.Equal(t, &azureRepoInfo{Org: "org", Project: "project", Repo: "repo"}, info)
+	tests := []struct {
+		name         string
+		repoURL      string
+		expectedInfo *azureRepoInfo
+		expectedPath string
+	}{
+		{
+			name:         "scp form with .git suffix",
+			repoURL:      "git@ssh.dev.azure.com:v3/org/project/repo.git",
+			expectedInfo: &azureRepoInfo{Org: "org", Project: "project", Repo: "repo"},
+			expectedPath: "/org/project/_apis/git/repositories/repo/refs",
+		},
+		{
+			name:         "scp form without suffix",
+			repoURL:      "git@ssh.dev.azure.com:v3/org/project/repo",
+			expectedInfo: &azureRepoInfo{Org: "org", Project: "project", Repo: "repo"},
+			expectedPath: "/org/project/_apis/git/repositories/repo/refs",
+		},
+		{
+			name:         "scp form with .git suffix and trailing slash",
+			repoURL:      "git@ssh.dev.azure.com:v3/org/project/repo.git/",
+			expectedInfo: &azureRepoInfo{Org: "org", Project: "project", Repo: "repo"},
+			expectedPath: "/org/project/_apis/git/repositories/repo/refs",
+		},
+		{
+			name:         "legacy vs-ssh host with .git suffix",
+			repoURL:      "org@vs-ssh.visualstudio.com:v3/org/project/repo.git",
+			expectedInfo: &azureRepoInfo{Org: "org", Project: "project", Repo: "repo"},
+			expectedPath: "/org/project/_apis/git/repositories/repo/refs",
+		},
+		{
+			name:         "ssh URL form with .git suffix",
+			repoURL:      "ssh://git@ssh.dev.azure.com/v3/org/project/repo.git",
+			expectedInfo: &azureRepoInfo{Org: "org", Project: "project", Repo: "repo"},
+			expectedPath: "/org/project/_apis/git/repositories/repo/refs",
+		},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 
-	var requests atomic.Int32
-	provider := newAzureDevOpsProvider(AzureDevOpsConfig{PAT: "azure-token-marker"})
-	provider.httpClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
-		requests.Add(1)
-		assert.Equal(t, "/org/project/_apis/git/repositories/repo/refs", req.URL.Path)
-		assert.Equal(t, "filter=heads/&api-version=7.1", req.URL.RawQuery)
-		assert.Empty(t, req.URL.Fragment)
-		assert.NotEmpty(t, req.Header.Get("Authorization"))
-		return providerResponse(req, `{"value":[]}`), nil
-	})
+			info, err := parseAzureDevOpsURL(tt.repoURL)
+			require.NoError(t, err)
+			assert.Equal(t, tt.expectedInfo, info)
 
-	_, err = provider.ListBranches(context.Background(), repoURL)
-	require.NoError(t, err)
-	assert.Equal(t, int32(1), requests.Load())
+			var requests atomic.Int32
+			provider := newAzureDevOpsProvider(AzureDevOpsConfig{PAT: "azure-token-marker"})
+			provider.httpClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+				requests.Add(1)
+				assert.Equal(t, tt.expectedPath, req.URL.Path)
+				assert.Equal(t, "filter=heads/&api-version=7.1", req.URL.RawQuery)
+				assert.Empty(t, req.URL.Fragment)
+				assert.NotEmpty(t, req.Header.Get("Authorization"))
+				return providerResponse(req, `{"value":[]}`), nil
+			})
+
+			_, err = provider.ListBranches(context.Background(), tt.repoURL)
+			require.NoError(t, err)
+			assert.Equal(t, int32(1), requests.Load())
+		})
+	}
 }
 
 func TestCanonicalHTTPRepositoryURLsRejectQueryAndFragment(t *testing.T) {
@@ -295,17 +338,62 @@ func TestCanonicalHTTPRepositoryURLsRejectQueryAndFragment(t *testing.T) {
 func TestCanonicalHTTPRepositoryURLsPreserveValidAzureAndGitLabURLs(t *testing.T) {
 	t.Parallel()
 
-	azureInfo, err := parseAzureDevOpsURL("https://dev.azure.com/org/project/_git/repo.git")
-	require.NoError(t, err)
-	assert.Equal(t, &azureRepoInfo{Org: "org", Project: "project", Repo: "repo"}, azureInfo)
-
-	for _, repoURL := range []string{
-		"https://gitlab.com/group/repo.git",
-		"https://git.example.com/team/repo.git",
-	} {
-		projectPath, err := parseGitLabProjectPath(repoURL)
-		require.NoError(t, err)
-		assert.NotContains(t, projectPath, ".git")
+	tests := []struct {
+		name                string
+		repoURL             string
+		expectedAzure       *azureRepoInfo
+		expectedProjectPath string
+	}{
+		{
+			name:          "Azure dev.azure.com with .git",
+			repoURL:       "https://dev.azure.com/org/project/_git/repo.git",
+			expectedAzure: &azureRepoInfo{Org: "org", Project: "project", Repo: "repo"},
+		},
+		{
+			name:          "Azure visualstudio.com with .git",
+			repoURL:       "https://org.visualstudio.com/project/_git/repo.git",
+			expectedAzure: &azureRepoInfo{Org: "org", Project: "project", Repo: "repo"},
+		},
+		{
+			name:          "Azure dev.azure.com with trailing slash",
+			repoURL:       "https://dev.azure.com/org/project/_git/repo/",
+			expectedAzure: &azureRepoInfo{Org: "org", Project: "project", Repo: "repo"},
+		},
+		{
+			name:                "gitlab.com with .git",
+			repoURL:             "https://gitlab.com/group/repo.git",
+			expectedProjectPath: "group/repo",
+		},
+		{
+			name:                "custom GitLab with .git",
+			repoURL:             "https://git.example.com/team/repo.git",
+			expectedProjectPath: "team/repo",
+		},
+		{
+			name:                "GitLab subgroup with .git",
+			repoURL:             "https://gitlab.com/group/sub/repo.git",
+			expectedProjectPath: "group/sub/repo",
+		},
+		{
+			name:                "GitLab repository name containing .git",
+			repoURL:             "https://gitlab.com/group/repo.github.io",
+			expectedProjectPath: "group/repo.github.io",
+		},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if tt.expectedAzure != nil {
+				info, err := parseAzureDevOpsURL(tt.repoURL)
+				require.NoError(t, err)
+				assert.Equal(t, tt.expectedAzure, info)
+				return
+			}
+			projectPath, err := parseGitLabProjectPath(tt.repoURL)
+			require.NoError(t, err)
+			assert.Equal(t, tt.expectedProjectPath, projectPath)
+		})
 	}
 }
 

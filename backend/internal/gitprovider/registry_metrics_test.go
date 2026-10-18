@@ -61,6 +61,9 @@ func branchListDurationCount(t *testing.T, reader sdkmetric.Reader) int {
 	return total
 }
 
+// Not parallel: this test swaps the process-global otel MeterProvider and the
+// package-level gitProviderMeter/instruments, so concurrent tests would record
+// into (or reset) the wrong reader.
 func TestRegistryListBranches_MetricLabels(t *testing.T) {
 	reader := sdkmetric.NewManualReader()
 	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
@@ -115,6 +118,10 @@ func TestRegistryListBranches_MetricLabels(t *testing.T) {
 	assert.GreaterOrEqual(t, branchListDurationCount(t, reader), 1, "branch_list.duration must have datapoints")
 }
 
+// Not parallel: this test swaps the process-global otel MeterProvider and the
+// package-level gitProviderMeter/instruments (see initGitProviderMetrics), so
+// running it alongside other tests would mix their metrics into this reader
+// or make them record into a provider that is shut down in Cleanup.
 func TestRegistryListBranches_UnavailableProviderMetricLabels(t *testing.T) {
 	reader := sdkmetric.NewManualReader()
 	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
@@ -141,6 +148,10 @@ func TestRegistryListBranches_UnavailableProviderMetricLabels(t *testing.T) {
 	for _, tt := range tests {
 		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
+			// Not parallel: the parent asserts exact counter values after the
+			// loop, and the subtests share the swapped global MeterProvider.
+			// Parallel subtests would only run after the parent body returns,
+			// i.e. after the assertions below.
 			_, err := registry.ListBranches(context.Background(), tt.repoURL)
 			require.ErrorIs(t, err, ErrProviderUnavailable)
 		})

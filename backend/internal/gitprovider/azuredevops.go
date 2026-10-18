@@ -44,12 +44,17 @@ func parseAzureDevOpsURL(rawURL string) (*azureRepoInfo, error) {
 	if !strings.Contains(rawURL, "://") && isAzureDevOpsSSHHost(repositoryHostname(rawURL)) {
 		return parseAzureSSH(rawURL)
 	}
+	if len(rawURL) >= len("ssh://") && strings.EqualFold(rawURL[:len("ssh://")], "ssh://") {
+		return parseAzureSSHURL(rawURL)
+	}
 
 	parsed, err := parseAzureHTTPURL(rawURL)
 	if err != nil {
 		return nil, err
 	}
-	host := strings.ToLower(strings.TrimSuffix(parsed.Hostname(), "."))
+	// Hostnames are matched exactly; a trailing dot ("dev.azure.com.") is
+	// rejected for consistency with provider detection.
+	host := strings.ToLower(parsed.Hostname())
 	switch {
 	case host == "dev.azure.com":
 		return parseAzureDevURL(parsed)
@@ -74,7 +79,37 @@ func parseAzureSSH(rawURL string) (*azureRepoInfo, error) {
 	if colonIdx < 0 || !strings.Contains(rawURL[:colonIdx], "@") {
 		return nil, providerError(ErrInvalidRepositoryURL, "azure_devops", "invalid Azure DevOps SSH URL", nil)
 	}
-	path := strings.TrimSuffix(rawURL[colonIdx+4:], "/")
+	return parseAzureSSHPath(rawURL[colonIdx+4:])
+}
+
+// parseAzureSSHURL parses ssh:// Azure DevOps URLs of the form
+// ssh://user@host[:22]/v3/{org}/{project}/{repo}[.git], applying the same
+// decoding and validation as the scp form.
+func parseAzureSSHURL(rawURL string) (*azureRepoInfo, error) {
+	parsed, err := url.Parse(rawURL)
+	if err != nil || strings.Contains(rawURL, "#") || parsed.RawQuery != "" || parsed.ForceQuery || parsed.Opaque != "" {
+		return nil, providerError(ErrInvalidRepositoryURL, "azure_devops", "invalid Azure DevOps SSH URL", nil)
+	}
+	if !isAzureDevOpsSSHHost(strings.ToLower(parsed.Hostname())) || (parsed.Port() != "" && parsed.Port() != "22") {
+		return nil, providerError(ErrInvalidRepositoryURL, "azure_devops", "invalid Azure DevOps SSH URL", nil)
+	}
+	if parsed.User == nil || parsed.User.Username() == "" {
+		return nil, providerError(ErrInvalidRepositoryURL, "azure_devops", "invalid Azure DevOps SSH URL", nil)
+	}
+	if _, hasPassword := parsed.User.Password(); hasPassword {
+		return nil, providerError(ErrInvalidRepositoryURL, "azure_devops", "invalid Azure DevOps SSH URL", nil)
+	}
+	escapedPath := parsed.EscapedPath()
+	if !strings.HasPrefix(escapedPath, "/v3/") {
+		return nil, providerError(ErrInvalidRepositoryURL, "azure_devops", "invalid Azure DevOps SSH URL", nil)
+	}
+	return parseAzureSSHPath(strings.TrimPrefix(escapedPath, "/v3/"))
+}
+
+// parseAzureSSHPath parses the escaped "{org}/{project}/{repo}[.git]" part of
+// an Azure DevOps SSH URL.
+func parseAzureSSHPath(escapedPath string) (*azureRepoInfo, error) {
+	path := strings.TrimSuffix(escapedPath, "/")
 	escapedParts := strings.Split(path, "/")
 	if len(escapedParts) != 3 {
 		return nil, providerError(ErrInvalidRepositoryURL, "azure_devops", "invalid Azure DevOps SSH URL path", nil)
@@ -154,6 +189,11 @@ func parseAzureDevURL(parsed *url.URL) (*azureRepoInfo, error) {
 
 func parseAzureVSParsedURL(parsed *url.URL, host string) (*azureRepoInfo, error) {
 	parts, err := decodedRepositoryPath(parsed, "azure_devops")
+	// Legacy TFS-style URLs include the collection name:
+	// https://org.visualstudio.com/DefaultCollection/{project}/_git/{repo}.
+	if err == nil && len(parts) == 4 && strings.EqualFold(parts[0], "DefaultCollection") {
+		parts = parts[1:]
+	}
 	if err != nil || len(parts) != 3 || parts[1] != "_git" {
 		return nil, providerError(ErrInvalidRepositoryURL, "azure_devops", "invalid Azure DevOps visualstudio.com URL format", nil)
 	}

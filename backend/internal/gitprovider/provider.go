@@ -198,6 +198,9 @@ func NormalizeGitLabBaseURL(rawURL string) (string, error) {
 	if parsed.Hostname() == "" {
 		return "", errors.New("GitLab base URL must include a hostname")
 	}
+	if strings.HasSuffix(parsed.Hostname(), ".") {
+		return "", errors.New("GitLab base URL hostname must not end with a dot")
+	}
 	if parsed.User != nil {
 		return "", errors.New("GitLab base URL must not include user information")
 	}
