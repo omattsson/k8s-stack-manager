@@ -1596,15 +1596,56 @@ export const instanceService = {
   },
 };
 
-/** Git provider service for branch listing and validation. Maps to `/api/v1/git`. */
+/** Availability status for a supported Git provider. */
+export interface ProviderStatus {
+  /** Provider type: `azure_devops`, `github` or `gitlab`. */
+  type: string;
+  /** Whether the provider is configured on the backend. */
+  available: boolean;
+  /**
+   * API origin of the provider (scheme, lowercase host and optional port, no
+   * path), for example `https://gitlab.com` or `https://git.example.com:8443`.
+   * Set only on the `gitlab` entry: the normalized GITLAB_BASE_URL, which
+   * decides which repository hosts the backend routes to GitLab.
+   */
+  origin?: string;
+}
+
 /** Time a loaded branch list stays in the cache, in milliseconds. */
 export const BRANCH_CACHE_TTL_MS = 60 * 1000;
 
 /** Most branch list requests that run at the same time. */
 export const BRANCH_MAX_CONCURRENT = 4;
 
+/**
+ * Timeout of one branch list request, in milliseconds. A stalled backend then
+ * cannot hold one of the BRANCH_MAX_CONCURRENT slots for ever.
+ */
+export const BRANCH_REQUEST_TIMEOUT_MS = 30 * 1000;
+
+/** Options for a branch list call. */
+export interface BranchRequestOptions {
+  /**
+   * Cancels this call only. The shared request for the URL goes on while
+   * other callers wait for it; it is aborted shortly after every caller has
+   * cancelled (unless a new caller joins it first).
+   */
+  signal?: AbortSignal;
+}
+
+/** A cached branch list, or a branch list request in flight. */
+interface BranchCacheEntry {
+  promise: Promise<string[]>;
+  /** Infinity while the request is in flight. */
+  expiresAt: number;
+  /** Callers that wait for the request in flight. */
+  waiting: number;
+  /** Aborts the shared request (only when no caller waits any more). */
+  controller: AbortController;
+}
+
 /** Cached branch lists (or requests in flight), keyed by repository URL. */
-const branchCache = new Map<string, { promise: Promise<string[]>; expiresAt: number }>();
+const branchCache = new Map<string, BranchCacheEntry>();
 let branchRequestsRunning = 0;
 const branchRequestQueue: Array<() => void> = [];
 
@@ -1623,6 +1664,68 @@ const withBranchSlot = async <T>(task: () => Promise<T>): Promise<T> => {
 };
 
 /**
+ * Abort a branch request in flight that no caller waits for any more, after a
+ * macrotask. A component that changes its URL list (or a StrictMode remount)
+ * cancels its calls and starts new ones in the same task: a URL that is in
+ * both lists joins the request again in that window and the request goes on.
+ * @param repoUrl - Repository URL of the request
+ * @param entry - The cache entry of the request
+ */
+const abortBranchRequestIfUnused = (repoUrl: string, entry: BranchCacheEntry): void => {
+  setTimeout(() => {
+    if (entry.waiting > 0 || entry.expiresAt !== Number.POSITIVE_INFINITY) return;
+    // Drop it from the cache, so no cancelled request is reused. A request
+    // that is no longer cached (for example after clearBranchCache) is still
+    // aborted: no caller can join it again, and it frees its slot.
+    if (branchCache.get(repoUrl) === entry) branchCache.delete(repoUrl);
+    entry.controller.abort();
+  }, 0);
+};
+
+/** The error a cancelled branch list call rejects with. */
+const branchAbortError = (): DOMException => new DOMException('Branch request cancelled', 'AbortError');
+
+/**
+ * Start the shared branch list request for a URL and cache it. The request
+ * has no caller signal: only its own controller aborts it. A failed or
+ * aborted request removes its cache entry.
+ */
+const startBranchRequest = (repoUrl: string): BranchCacheEntry => {
+  const controller = new AbortController();
+  const entry: BranchCacheEntry = {
+    promise: Promise.resolve([]),
+    expiresAt: Number.POSITIVE_INFINITY,
+    waiting: 0,
+    controller,
+  };
+  entry.promise = withBranchSlot(async () => {
+    // Every caller cancelled while the request waited for a slot.
+    if (controller.signal.aborted) throw branchAbortError();
+    const response = await api.get('/api/v1/git/branches', {
+      params: { repo: repoUrl },
+      signal: controller.signal,
+      timeout: BRANCH_REQUEST_TIMEOUT_MS,
+    });
+    return (response.data as Array<{ name: string }>).map((b) => b.name);
+  }).then(
+    (branches) => {
+      entry.expiresAt = Date.now() + BRANCH_CACHE_TTL_MS;
+      return branches;
+    },
+    (error: unknown) => {
+      if (branchCache.get(repoUrl) === entry) branchCache.delete(repoUrl);
+      if (!controller.signal.aborted) console.error('Failed to fetch branches:', error);
+      throw error;
+    },
+  );
+  // Callers get their own promises; this keeps a rejection that no caller
+  // waits for (all cancelled) from being reported as unhandled.
+  entry.promise.catch(() => undefined);
+  branchCache.set(repoUrl, entry);
+  return entry;
+};
+
+/**
  * Clear the branch list cache of gitService.branches (for example in tests).
  * @returns Nothing
  * @see GET /api/v1/git/branches
@@ -1631,36 +1734,65 @@ export const clearBranchCache = (): void => {
   branchCache.clear();
 };
 
+/** Git provider service for branch listing and validation. Maps to `/api/v1/git`. */
 export const gitService = {
   /**
-   * List branches for a git repository. Calls for the same URL share one
-   * request; a loaded list stays cached for BRANCH_CACHE_TTL_MS. A failed
-   * request is not cached. At most BRANCH_MAX_CONCURRENT requests run at the
-   * same time.
-   * @param repoUrl - Repository URL (Azure DevOps or GitLab)
+   * List branches for a git repository (Azure DevOps, GitHub or GitLab).
+   * Calls for the same URL share one request; a loaded list stays cached for
+   * BRANCH_CACHE_TTL_MS. A failed request is not cached. At most
+   * BRANCH_MAX_CONCURRENT requests run at the same time.
+   *
+   * An abort of `options.signal` rejects only this call at once, with a
+   * DOMException named `AbortError`. Other callers of the same URL still get
+   * the list. When every caller of a request in flight has cancelled, the
+   * request is aborted after a macrotask and removed from the cache, so a
+   * later call starts a new request. A call in that window (for example from
+   * a component that re-renders with a changed URL list) joins the request
+   * in flight instead. Each request times out after BRANCH_REQUEST_TIMEOUT_MS.
+   * @param repoUrl - Repository URL (Azure DevOps, GitHub, or GitLab)
+   * @param options - Optional abort signal that cancels this call
    * @returns Array of branch names
    * @see GET /api/v1/git/branches
    */
-  branches: async (repoUrl: string): Promise<string[]> => {
-    const now = Date.now();
+  branches: (repoUrl: string, options?: BranchRequestOptions): Promise<string[]> => {
+    const signal = options?.signal;
+    if (signal?.aborted) return Promise.reject(branchAbortError());
+
     const cached = branchCache.get(repoUrl);
-    if (cached && cached.expiresAt > now) return cached.promise;
-    const promise = withBranchSlot(async () => {
-      const response = await api.get('/api/v1/git/branches', { params: { repo: repoUrl } });
-      return (response.data as Array<{ name: string }>).map((b) => b.name);
+    const entry = cached && cached.expiresAt > Date.now() ? cached : startBranchRequest(repoUrl);
+    entry.waiting += 1;
+
+    return new Promise<string[]>((resolve, reject) => {
+      let settled = false;
+      const release = (): void => {
+        settled = true;
+        entry.waiting -= 1;
+        signal?.removeEventListener('abort', onAbort);
+      };
+      function onAbort(): void {
+        if (settled) return;
+        release();
+        reject(branchAbortError());
+        // The last caller of a request in flight left: abort the request
+        // unless a caller joins it again before the deferred check.
+        if (entry.waiting === 0 && entry.expiresAt === Number.POSITIVE_INFINITY) {
+          abortBranchRequestIfUnused(repoUrl, entry);
+        }
+      }
+      signal?.addEventListener('abort', onAbort, { once: true });
+      entry.promise.then(
+        (branches) => {
+          if (settled) return;
+          release();
+          resolve(branches);
+        },
+        (error: unknown) => {
+          if (settled) return;
+          release();
+          reject(error);
+        },
+      );
     });
-    // In flight: no expiry until the request ends.
-    const entry = { promise, expiresAt: Number.POSITIVE_INFINITY };
-    branchCache.set(repoUrl, entry);
-    try {
-      const branches = await promise;
-      entry.expiresAt = Date.now() + BRANCH_CACHE_TTL_MS;
-      return branches;
-    } catch (error) {
-      if (branchCache.get(repoUrl) === entry) branchCache.delete(repoUrl);
-      console.error('Failed to fetch branches:', error);
-      throw error;
-    }
   },
   /**
    * Check whether a branch exists in a repository.
@@ -1679,13 +1811,13 @@ export const gitService = {
     }
   },
   /**
-   * List configured git providers.
-   * @returns Array of provider names
+   * List availability statuses for supported Git providers.
+   * @returns Array of provider status objects
    * @see GET /api/v1/git/providers
    */
-  providers: async (): Promise<string[]> => {
+  providers: async (): Promise<ProviderStatus[]> => {
     try {
-      const response = await api.get('/api/v1/git/providers');
+      const response = await api.get<ProviderStatus[]>('/api/v1/git/providers');
       return response.data;
     } catch (error) {
       console.error('Failed to fetch providers:', error);

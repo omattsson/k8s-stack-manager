@@ -27,7 +27,7 @@ Store durable knowledge without asking: workflow sequences, dependency chains, r
 | --- | --- | --- |
 | go-api-developer | Go backend: models, repositories, handlers, routes, migrations, Swagger, auth, hooks | Backend features, data layer, backend bugs |
 | frontend-developer | React, TypeScript: pages, components, API services, routing, WebSocket | UI features, frontend bugs |
-| git-provider | Azure DevOps and GitLab: branch listing, URL detection | Git provider work |
+| git-provider | Azure DevOps, GitHub and GitLab: branch listing, URL parsing and detection, provider authentication | Git provider work |
 | helm-values | Values merge, template variables, Helm CLI wrapper | Values generation and deploy logic |
 | devops-engineer | Docker, nginx, Helm chart, Makefile, continuous integration and delivery (CI/CD) | Infrastructure changes |
 | qa-engineer | Test strategy, unit, integration, and end-to-end (e2e) tests, coverage | Tests and coverage audits |

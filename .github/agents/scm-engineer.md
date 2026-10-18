@@ -90,7 +90,7 @@ Adds CRUD endpoints for orders.
 
 ## How Has This Been Tested?
 
-- cd backend && go test ./... -v -short
+- cd backend && go test -p 2 ./... -short
 
 Fixes #42" \
   --base main
@@ -117,7 +117,7 @@ Split a working tree with more than one concern into separate commits (for examp
 
 1. No secrets: `git diff --cached | grep -iE "(password|secret|key|token)" || echo "clean"`.
 2. Generated files: `backend/docs/swagger.json`, `swagger.yaml`, and `docs.go` are tracked. Commit them when a handler annotation changed (run `cd backend && make docs`). Do not commit test output (`coverage/`, `frontend/test-logs/`, `test-results/`, `playwright-report/`). Not all of these are in `.gitignore`, so check `git status`.
-3. Tests pass: `cd backend && go test ./... -short` for backend changes. `cd frontend && npm test` for frontend changes.
+3. Tests pass: `cd backend && go test -p 2 ./... -short` for backend changes. `cd frontend && npm test` for frontend changes.
 4. Lint passes: `make lint`. For chart changes, run `make helm-lint` and `make helm-test`.
 5. Do not format whole Go files. Many files have `gofmt` differences that CI accepts. A format-only change adds noise to the diff.
 6. Review `git diff --cached`. Only the intended changes must be in it.

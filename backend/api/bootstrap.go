@@ -164,17 +164,24 @@ func buildDomainServices(
 			slog.Info("Azure DevOps branch listing uses workload identity")
 		}
 	}
-	gitRegistry := gitprovider.NewRegistry(gitprovider.Config{
+	gitRegistry, err := gitprovider.NewRegistry(gitprovider.Config{
 		AzureDevOps: gitprovider.AzureDevOpsConfig{
 			PAT:         cfg.GitProvider.AzureDevOpsPAT,
 			DefaultOrg:  cfg.GitProvider.AzureDevOpsDefaultOrg,
 			TokenSource: azdoTokenSource,
+		},
+		GitHub: gitprovider.GitHubConfig{
+			Token:               cfg.GitProvider.GitHubToken,
+			AllowedRepositories: cfg.GitProvider.GitHubAllowedRepositories,
 		},
 		GitLab: gitprovider.GitLabConfig{
 			Token:   cfg.GitProvider.GitLabToken,
 			BaseURL: cfg.GitProvider.GitLabBaseURL,
 		},
 	})
+	if err != nil {
+		return nil, fmt.Errorf("build Git provider registry: %w", err)
+	}
 
 	valuesGen := helm.NewValuesGenerator()
 

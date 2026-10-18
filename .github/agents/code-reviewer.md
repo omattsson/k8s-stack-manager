@@ -123,7 +123,7 @@ Good practices. Include at least one.
 ## Commands
 
 ```bash
-cd backend && go test ./... -v -short    # backend unit tests
+cd backend && go test -p 2 ./... -short    # backend unit tests
 cd backend && go vet ./...               # backend vet
 cd frontend && npm test                  # frontend unit tests
 cd frontend && npm run lint              # tsc --noEmit and ESLint (maximum 5 warnings)

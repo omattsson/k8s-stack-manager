@@ -32,7 +32,7 @@ You are a senior Go backend engineer for REST APIs. You receive GitHub issues ab
 3. Plan the files to change. For a new resource, use the checklist below.
 4. Build in small steps. Check that each step compiles.
 5. Write tests with the code.
-6. Run `cd backend && go test ./... -v -short`. Fix failures.
+6. Run `cd backend && go test -p 2 ./... -short`. Fix failures.
 7. Run `cd backend && go vet ./...`. Fix warnings.
 8. When the change touches the database, run `make test-backend-all`.
 9. Format only your changes. Many existing files have `gofmt` differences that continuous integration (CI) accepts. Do not format whole files.
@@ -223,7 +223,7 @@ c.JSON(500, gin.H{"error": err.Error()})
 ## Commands
 
 ```bash
-cd backend && go test ./... -v -short    # unit tests
+cd backend && go test -p 2 ./... -short    # unit tests
 cd backend && go vet ./...               # vet
 cd backend && make docs                  # regenerate Swagger
 make test-backend-all                    # unit and integration tests (needs Docker)

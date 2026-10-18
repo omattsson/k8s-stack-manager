@@ -27,7 +27,7 @@ You are a tech lead for a team of specialist agents. You receive feature request
 | --- | --- | --- |
 | **go-api-developer** | Go backend: models, repositories, handlers, routes, migrations, Swagger | New endpoints, backend features, data layer, backend bugs |
 | **frontend-developer** | React, TypeScript: pages, components, API services, routing | UI pages, frontend features, frontend bugs |
-| **git-provider** | Azure DevOps and GitLab: branch listing, URL detection | Git provider features |
+| **git-provider** | Azure DevOps, GitHub and GitLab: branch listing, URL parsing and detection, provider APIs | Git provider features |
 | **helm-values** | Values merge, template variables, Helm CLI wrapper | Values generation, deploy logic |
 | **devops-engineer** | Docker, nginx, Helm chart, Makefile, continuous integration and delivery (CI/CD) | Infrastructure, new services, build and deploy issues |
 | **qa-engineer** | Test strategy, unit, integration, and end-to-end (e2e) tests | Tests, coverage audits, test infrastructure |

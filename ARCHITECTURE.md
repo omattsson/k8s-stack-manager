@@ -16,11 +16,11 @@ See [WIKI.md](WIKI.md) for the concepts and rules, [EXTENDING.md](EXTENDING.md) 
 +------+----------+----------+----------+----------+-----------+
 |MySQL | Cluster  | Git      | Helm     | Hook     | K8s       |
 |(GORM)| Registry | Provider | Values   | Dispatch | Deployer  |
-|      | (multi)  | (ADO+GL) | (merge)  | (events) | (helm)    |
+|      | (multi)  |ADO+GH+GL | (merge)  | (events) | (helm)    |
 +------+----------+----------+----------+----------+-----------+
 ```
 
-ADO is Azure DevOps. GL is GitLab. PKCE is Proof Key for Code Exchange.
+ADO is Azure DevOps. GH is GitHub. GL is GitLab. PKCE is Proof Key for Code Exchange.
 
 ## Package Structure
 
@@ -37,7 +37,7 @@ backend/internal/
 |-- config/           # Configuration loading from environment variables
 |-- database/         # GORM repositories (one for each model), migrations
 |-- deployer/         # Helm deploy, undeploy, rollback manager; expiry stopper; cleanup executor
-|-- gitprovider/      # Azure DevOps and GitLab branch listing, URL detection, cache
+|-- gitprovider/      # Azure DevOps, GitHub and GitLab branch listing, URL detection, cache
 |-- health/           # Liveness and readiness checks
 |-- helm/             # Values deep merge, template variable substitution
 |-- hooks/            # Event dispatcher, action routing, HMAC signing
@@ -246,6 +246,7 @@ A replica can stop without a clean shutdown (SIGKILL, OOM kill, node loss). It t
 - The HTTP metrics middleware is active when `OTEL_ENABLED` or `METRICS_ENABLED` is true. The tracing middleware and the span enrichment are active only when `OTEL_ENABLED` is true.
 - HTTP metrics and auth outcome counters come from the middleware. Database pool metrics and business KPIs come from `telemetry`.
 - `RedactWSToken` removes the WebSocket `?token=` query parameter before logging and tracing.
+- `RedactGitRepoQuery` redacts the `?repo=` value of `/git` requests before logging, metrics and tracing.
 - The Helm chart can deploy an OpenTelemetry collector (`otel.enabled`) and a ServiceMonitor (`metrics.serviceMonitor.enabled`).
 - A Grafana dashboard for the backend metrics is in `helm/k8s-stack-manager/dashboards/k8s-stack-manager.json`. Import it in Grafana, or set `metrics.grafanaDashboard.enabled` so that a Grafana dashboard sidecar loads it from a ConfigMap. It has a data source variable and a job variable. It needs the Prometheus scrape of `/metrics` (`metrics.enabled` and a ServiceMonitor or scrape job). `make dev-otel` sets `METRICS_ENABLED` and scrapes the backend, and its Grafana loads the dashboard.
 - Local development: `make dev-otel` starts a collector, Tempo, Prometheus (`:9090`), and Grafana (`:3001`).

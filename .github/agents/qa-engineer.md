@@ -44,7 +44,7 @@ You are a senior QA engineer. You own the test strategy, the end-to-end (e2e) te
 - `Item` tests: `MockRepository` (`handlers/mock_repository.go`, in memory, `Item` only) and `setupTestRouter()` in `items_test.go`.
 - Domain handler tests: mocks in `handlers/mock_domain_repositories_test.go`, `mock_session_store_test.go`, and `mock_tx_runner_test.go`. Each test file has a router helper with the caller ID and role.
 - Response schemas: `gojsonschema` (`handlers/test_schemas.go`).
-- Run: `cd backend && go test ./... -v -short`.
+- Run: `cd backend && go test -p 2 ./... -short`.
 - Coverage: `cd backend && make test-coverage` (80% minimum).
 
 ### Backend integration tests
@@ -211,7 +211,7 @@ Priorities:
 ## Commands
 
 ```bash
-cd backend && go test ./... -v -short    # backend unit tests
+cd backend && go test -p 2 ./... -short    # backend unit tests
 cd backend && go vet ./...               # backend vet
 cd backend && make test-coverage         # coverage (80% minimum)
 cd frontend && npm test                  # frontend unit tests

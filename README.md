@@ -78,7 +78,7 @@ On the profile page, you manage your account, create API keys for CI/CD automati
 ### Additional Features
 
 - **Multi-cluster support.** Register more than one Kubernetes cluster. Kubeconfig data is encrypted at rest with AES-GCM (Advanced Encryption Standard, Galois/Counter Mode). A cluster can also use the service account of the backend (`use_in_cluster`). The application monitors the health and the resource use of each cluster.
-- **Git provider integration.** The application lists branches from Azure DevOps and GitLab repositories (`gitlab.com`, or the host of `GITLAB_BASE_URL`). You can set a branch for each chart.
+- **Git provider integration.** The application lists branches from Azure DevOps, GitHub, and GitLab repositories (`gitlab.com`, or the origin of `GITLAB_BASE_URL`). You can set a branch for each chart.
 - **Helm values deep merge.** Chart defaults merge with instance overrides. The application replaces template variables (`{{.Branch}}`, `{{.Namespace}}`, `{{.InstanceName}}`, `{{.StackName}}`, `{{.Owner}}`) in the values.
 - **Deploy preview and rollback.** See the merged values before you deploy. Roll back one revision, or roll back to the values of an earlier successful deploy.
 - **Resource quotas.** Set a ResourceQuota and a LimitRange for the stack namespaces of a cluster. You can set an override for one instance.
@@ -136,7 +136,7 @@ Frontend (React + MUI + TypeScript)
 Backend (Go + Gin)
   |-- REST API with JWT and API-key auth
   |-- MySQL (GORM)
-  |-- Git providers (Azure DevOps + GitLab)
+  |-- Git providers (Azure DevOps + GitHub + GitLab)
   |-- Helm values (deep merge + template substitution)
   |-- Multi-cluster support (kubeconfig encrypted at rest)
   |-- Hooks and actions (HTTP, HMAC signed)
@@ -305,7 +305,7 @@ backend/                        Go API server
     config/                     Environment-based configuration
     database/                   Repositories and migrations
     deployer/                   Helm CLI wrapper for deploy, stop, clean, rollback
-    gitprovider/                Azure DevOps and GitLab integration
+    gitprovider/                Azure DevOps, GitHub and GitLab integration
     health/                     Liveness and readiness checks
     helm/                       Values merge and template substitution
     hooks/                      Outbound lifecycle hooks and custom actions
@@ -389,7 +389,10 @@ The table shows the key environment variables. The full list is in `backend/inte
 | `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME` | No | MySQL connection. Set them for your database (defaults: `localhost`, `3306`, `root`, empty, `app`). The Helm chart sets them for the bundled MySQL. |
 | `AZURE_DEVOPS_PAT` | No | Azure DevOps personal access token (PAT) |
 | `AZURE_DEVOPS_AUTH` | No | `pat` (default) or `workload-identity`. With `workload-identity`, the backend lists Azure DevOps branches with an Entra ID token from `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, and `AZURE_FEDERATED_TOKEN_FILE`, not with a PAT. |
+| `GITHUB_TOKEN` | No | GitHub fine-grained personal access token. It requires `GITHUB_ALLOWED_REPOSITORIES`. See [GitHub authentication](#github-authentication). |
+| `GITHUB_ALLOWED_REPOSITORIES` | With `GITHUB_TOKEN` | Comma-separated `owner/repository` entries that may use the token (exact match) |
 | `GITLAB_TOKEN` | No | GitLab access token |
+| `GITLAB_BASE_URL` | No | Origin of a self-hosted GitLab (default: `https://gitlab.com`). See [GitLab custom origins](#gitlab-custom-origins). |
 | `DEFAULT_BRANCH` | No | Default Git branch (default: `master`) |
 | `KUBECONFIG_ENCRYPTION_KEY` | No | Passphrase. The backend derives an AES-256 key from it (SHA-256) to encrypt kubeconfig data, registry passwords, and webhook channel secrets. Without it, the backend rejects a cluster that has kubeconfig data. Use a kubeconfig path or in-cluster configuration then. |
 | `ALLOWED_CHART_REPOS` | No | Comma-separated chart repository URL prefixes (`oci://`, `https://`, `http://`). Empty: every chart source is allowed. |
@@ -419,6 +422,35 @@ The table shows the key environment variables. The full list is in `backend/inte
 | `APP_FAVICON_URL` | No | Browser tab icon. The same URL rule applies (default: `/favicon.svg`). Other schemes (`http:`, `javascript:`, `data:`) stop the startup with an error. |
 
 See [Sessions](WIKI.md#sessions) for the way the session limits work together. See [Branding](WIKI.md#branding) for the branding settings (Helm values `branding.*`).
+
+### GitHub authentication
+
+Public repositories work without a token. Leave `GITHUB_TOKEN` and `GITHUB_ALLOWED_REPOSITORIES` empty. GitHub then applies its lower rate limit for requests without authentication.
+
+For private repositories or a higher rate limit, use a fine-grained personal access token:
+
+- Give the token access only to the repositories in `GITHUB_ALLOWED_REPOSITORIES`, and only the permission **Contents: read**.
+- Set an expiry date. Replace the token before it expires.
+- `GITHUB_ALLOWED_REPOSITORIES` is a comma-separated list of `owner/repository` names. The match is exact and ignores case. Owners, wildcards, prefixes, and URLs are not accepted.
+- A request for a repository that is not in the list gives HTTP 403.
+- The backend does not start when `GITHUB_TOKEN` is set and the list is empty.
+- GitHub App authentication is not available.
+
+> **Upgrade: GitHub tokens.** If an installation sets `GITHUB_TOKEN`, set `GITHUB_ALLOWED_REPOSITORIES` before you update. Otherwise the new backend pods do not start. Installations without `GITHUB_TOKEN` are not affected.
+
+The backend follows a GitHub redirect only when it keeps the repository path, or when it goes to the `/repositories/{id}` path of a renamed or moved repository. Any other redirect is an upstream failure (HTTP 503), so the token never goes to another repository path.
+
+### GitLab custom origins
+
+`GITLAB_BASE_URL` is optional. The default is `https://gitlab.com`.
+
+- The value must be an absolute HTTP(S) origin: a scheme, a host name, and an optional port.
+- Credentials, query strings, fragments, paths (for example `/api/v4`), and a host name that ends with a dot are not accepted. The backend removes spaces around the value and a trailing slash, and adds `/api/v4`.
+- For Helm, set the value in `backend.env.GITLAB_BASE_URL`. It is not secret. Do not put it in `backend.secrets` or External Secrets.
+- With a custom origin, only repository URLs on that origin use the GitLab provider. HTTP(S) URLs must also use the same port. `gitlab.com` URLs are then not supported.
+- With an `http://` origin and a token, the backend logs a warning at startup, because the token goes over the network without encryption.
+
+> **Upgrade: GitLab.** The backend checks `GITLAB_BASE_URL` at startup and does not start when the value is not valid. A GitLab that uses a relative URL root (for example `https://example.com/gitlab`) is not supported. Branch listing did not work for it before. Check the value before you update. Repository URLs with a query string or a fragment are not accepted for any provider. Host names that end with a dot (for example `gitlab.com.`) are not supported.
 
 ## Helm Chart (Kubernetes Deployment)
 
@@ -497,6 +529,11 @@ The fullname for a release called `stack-manager` is `stack-manager-k8s-stack-ma
 
 ```yaml
 # external-secrets-values.yaml
+backend:
+  env:
+    # The exact repositories that the token below may access.
+    GITHUB_ALLOWED_REPOSITORIES: example-org/api
+
 externalSecrets:
   enabled: true
   azureKeyVault:
@@ -512,6 +549,9 @@ externalSecrets:
     - secretKey: ADMIN_PASSWORD
       remoteRef:
         key: k8s-stack-manager-admin-password
+    - secretKey: GITHUB_TOKEN
+      remoteRef:
+        key: k8s-stack-manager-github-token
     - secretKey: MYSQL_ROOT_PASSWORD
       remoteRef:
         key: k8s-stack-manager-mysql-root-password
@@ -544,6 +584,8 @@ externalSecrets:
 - Do not put Key Vault values or Azure credentials in the values file.
 
 To use a store that another team manages, set `externalSecrets.secretStore.create=false`, `externalSecrets.secretStore.kind=ClusterSecretStore` (or `SecretStore`), and `externalSecrets.secretStore.name`. The chart then creates only the `ExternalSecret`. It does not configure the Azure authentication, and it does not annotate the ServiceAccount.
+
+When the remote `GITHUB_TOKEN` changes, ESO updates the Kubernetes Secret. A running backend process does not read the new value. After a rotation, restart the backend Deployment or start an Argo Rollout, unless a restart controller watches the Secret. A change of the remote value does not change the checksum of the chart, because Helm cannot see the remote value.
 
 To use a service principal for a store that the chart creates, set `authType: ServicePrincipal`. Set `externalSecrets.azureKeyVault.servicePrincipal.secretName` to an existing Kubernetes Secret. The Secret must contain the keys `client-id` and `client-secret`. Set `clientIdKey` and `clientSecretKey` in the same block when your keys have other names.
 

@@ -25,7 +25,7 @@ Store durable findings without asking: recurring bug shapes, security pitfalls, 
 1. Read the pull request (PR) description. Understand the intent.
 2. Read every changed line.
 3. Compare the change with the reference code: `items.go` (generic create, read, update, and delete handlers), `stack_definitions.go` and `stack_instances.go` (domain handlers), `pages/StackInstances/` (frontend).
-4. Run `cd backend && go test ./... -v -short` and `cd frontend && npm test`.
+4. Run `cd backend && go test -p 2 ./... -short` and `cd frontend && npm test`.
 5. Run `make lint` (`go vet`, `tsc --noEmit`, and ESLint with a maximum of 5 warnings).
 6. For chart changes, run `make helm-lint` and `make helm-test`.
 7. Write the review in the output format below.

@@ -28,7 +28,7 @@ You are a senior Go backend engineer. Build the requested feature or fix from st
 2. Read the related code, starting with `internal/api/handlers/items.go` and a domain handler.
 3. Build in small steps.
 4. Write tests with the code.
-5. Run `cd backend && go test ./... -v -short`. Fix failures.
+5. Run `cd backend && go test -p 2 ./... -short`. Fix failures.
 6. Run `cd backend && go vet ./...`. Fix warnings.
 7. After a handler change, run `cd backend && make docs`.
 8. Format only your changes. Many existing files have `gofmt` differences that continuous integration (CI) accepts. Do not format whole files.

@@ -55,6 +55,7 @@ import {
   clearBranchCache,
   BRANCH_CACHE_TTL_MS,
   BRANCH_MAX_CONCURRENT,
+  BRANCH_REQUEST_TIMEOUT_MS,
 } from '../client';
 
 beforeEach(() => {
@@ -1004,8 +1005,313 @@ describe('gitService', () => {
 
     expect(api.get).toHaveBeenCalledWith('/api/v1/git/branches', {
       params: { repo: 'https://dev.azure.com/org/proj/_git/repo' },
+      signal: expect.any(AbortSignal),
+      timeout: BRANCH_REQUEST_TIMEOUT_MS,
     });
     expect(result).toEqual(['main', 'develop', 'feature/x']);
+  });
+
+  it('branches: a timed-out request rejects, is not cached and frees its slot', async () => {
+    const api = mockApi;
+    expect(BRANCH_REQUEST_TIMEOUT_MS).toBe(30000);
+    const timeoutError = Object.assign(new Error('timeout of 30000ms exceeded'), { code: 'ECONNABORTED' });
+    api.get
+      .mockRejectedValueOnce(timeoutError)
+      .mockResolvedValueOnce(mockResponse([{ name: 'main' }]));
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    try {
+      await expect(gitService.branches('repo-timeout')).rejects.toBe(timeoutError);
+      const config = api.get.mock.calls[0][1] as { timeout: number };
+      expect(config.timeout).toBe(BRANCH_REQUEST_TIMEOUT_MS);
+      // A timeout is a failure (logged), not a cancellation.
+      expect(errorSpy).toHaveBeenCalledWith('Failed to fetch branches:', timeoutError);
+
+      // Not cached: the next call sends a new request (and gets a slot).
+      await expect(gitService.branches('repo-timeout')).resolves.toEqual(['main']);
+      expect(api.get).toHaveBeenCalledTimes(2);
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+
+  it('branches resolves for a caller with a signal that is not aborted', async () => {
+    const api = mockApi;
+    const controller = new AbortController();
+    api.get.mockResolvedValueOnce(mockResponse([{ name: 'main' }]));
+
+    await expect(
+      gitService.branches('https://github.com/org/repo', { signal: controller.signal }),
+    ).resolves.toEqual(['main']);
+
+    // The shared request uses its own signal, not the signal of one caller.
+    const config = api.get.mock.calls[0][1] as { signal: AbortSignal };
+    expect(config.signal).toBeInstanceOf(AbortSignal);
+    expect(config.signal).not.toBe(controller.signal);
+  });
+
+  it('branches rejects at once for an already aborted signal', async () => {
+    const api = mockApi;
+    const controller = new AbortController();
+    controller.abort();
+
+    await expect(
+      gitService.branches('repo-pre-aborted', { signal: controller.signal }),
+    ).rejects.toMatchObject({ name: 'AbortError' });
+    expect(api.get).not.toHaveBeenCalled();
+  });
+
+  it('branches: a cancelled caller does not affect another caller of the same URL', async () => {
+    const api = mockApi;
+    let resolveRequest!: (value: AxiosResponse) => void;
+    api.get.mockImplementationOnce(() => new Promise((resolve) => { resolveRequest = resolve; }));
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    try {
+      const first = new AbortController();
+      const cancelled = gitService.branches('repo-shared', { signal: first.signal });
+      const kept = gitService.branches('repo-shared');
+      expect(api.get).toHaveBeenCalledTimes(1);
+
+      first.abort();
+      await expect(cancelled).rejects.toMatchObject({ name: 'AbortError' });
+
+      // The shared request goes on for the other caller.
+      const sharedSignal = (api.get.mock.calls[0][1] as { signal: AbortSignal }).signal;
+      expect(sharedSignal.aborted).toBe(false);
+      resolveRequest(mockResponse([{ name: 'main' }]));
+      await expect(kept).resolves.toEqual(['main']);
+
+      // The loaded list is cached for later callers.
+      await expect(gitService.branches('repo-shared')).resolves.toEqual(['main']);
+      expect(api.get).toHaveBeenCalledTimes(1);
+      expect(errorSpy).not.toHaveBeenCalled();
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+
+  it('branches: an aborted request does not leave a rejected cache entry', async () => {
+    const api = mockApi;
+    api.get
+      .mockImplementationOnce((_url: string, config: { signal: AbortSignal }) => new Promise((_resolve, reject) => {
+        config.signal.addEventListener('abort', () => reject(new Error('canceled')));
+      }))
+      .mockResolvedValueOnce(mockResponse([{ name: 'develop' }]));
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    try {
+      const controller = new AbortController();
+      const cancelled = gitService.branches('repo-aborted', { signal: controller.signal });
+      controller.abort();
+      // The caller is rejected at once ...
+      await expect(cancelled).rejects.toMatchObject({ name: 'AbortError' });
+
+      // ... and the request itself is aborted after a macrotask, because the
+      // only caller left.
+      const firstSignal = (api.get.mock.calls[0][1] as { signal: AbortSignal }).signal;
+      expect(firstSignal.aborted).toBe(false);
+      await new Promise((r) => setTimeout(r, 0));
+      expect(firstSignal.aborted).toBe(true);
+
+      // The next call starts a new request instead of reusing the aborted one.
+      await expect(gitService.branches('repo-aborted')).resolves.toEqual(['develop']);
+      expect(api.get).toHaveBeenCalledTimes(2);
+      // A cancellation is not logged as a failure.
+      expect(errorSpy).not.toHaveBeenCalled();
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+
+  it('branches: an abort after the list loaded keeps the cached list', async () => {
+    const api = mockApi;
+    api.get.mockResolvedValueOnce(mockResponse([{ name: 'main' }]));
+    const controller = new AbortController();
+
+    await expect(
+      gitService.branches('repo-loaded', { signal: controller.signal }),
+    ).resolves.toEqual(['main']);
+    controller.abort();
+
+    await expect(gitService.branches('repo-loaded')).resolves.toEqual(['main']);
+    expect(api.get).toHaveBeenCalledTimes(1);
+  });
+
+  it('branches does not send a request queued for a slot when every caller cancelled', async () => {
+    const api = mockApi;
+    const pending: Array<() => void> = [];
+    api.get.mockImplementation(
+      () => new Promise((resolve) => pending.push(() => resolve(mockResponse([{ name: 'main' }])))),
+    );
+    const busy = Array.from({ length: BRANCH_MAX_CONCURRENT }, (_, i) => gitService.branches(`repo-busy-${i}`));
+    await vi.waitFor(() => expect(api.get).toHaveBeenCalledTimes(BRANCH_MAX_CONCURRENT));
+
+    const controller = new AbortController();
+    const queued = gitService.branches('repo-queued', { signal: controller.signal });
+    controller.abort();
+    await expect(queued).rejects.toMatchObject({ name: 'AbortError' });
+    // Let the deferred abort of the unused request run.
+    await new Promise((r) => setTimeout(r, 0));
+
+    pending.splice(0).forEach((p) => p());
+    await Promise.all(busy);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(api.get).toHaveBeenCalledTimes(BRANCH_MAX_CONCURRENT);
+    expect(api.get.mock.calls.map((call) => (call[1] as { params: { repo: string } }).params.repo))
+      .not.toContain('repo-queued');
+  });
+
+  it('branches: a changed URL list does not restart the request of a URL in both lists', async () => {
+    const api = mockApi;
+    const pending = new Map<string, () => void>();
+    api.get.mockImplementation((_url: string, config: { params: { repo: string }; signal: AbortSignal }) => (
+      new Promise((resolve, reject) => {
+        pending.set(config.params.repo, () => resolve(mockResponse([{ name: `${config.params.repo}-main` }])));
+        config.signal.addEventListener('abort', () => reject(new Error('canceled')));
+      })
+    ));
+
+    // The pattern of a component effect: [A, B], then cleanup + new effect
+    // with [A, C] in the same task.
+    const first = new AbortController();
+    const oldA = gitService.branches('repo-A', { signal: first.signal });
+    const oldB = gitService.branches('repo-B', { signal: first.signal });
+    await vi.waitFor(() => expect(api.get).toHaveBeenCalledTimes(2));
+    const signalOf = (repo: string) => (api.get.mock.calls
+      .find((call) => (call[1] as { params: { repo: string } }).params.repo === repo)?.[1] as { signal: AbortSignal })
+      .signal;
+
+    first.abort();
+    const second = new AbortController();
+    const newA = gitService.branches('repo-A', { signal: second.signal });
+    const newC = gitService.branches('repo-C', { signal: second.signal });
+    await expect(oldA).rejects.toMatchObject({ name: 'AbortError' });
+    await expect(oldB).rejects.toMatchObject({ name: 'AbortError' });
+    await vi.waitFor(() => expect(api.get).toHaveBeenCalledTimes(3));
+    await new Promise((r) => setTimeout(r, 0));
+
+    const repos = api.get.mock.calls.map((call) => (call[1] as { params: { repo: string } }).params.repo);
+    expect(repos).toEqual(['repo-A', 'repo-B', 'repo-C']);
+    // A goes on; B lost its last caller and is aborted.
+    expect(signalOf('repo-A').aborted).toBe(false);
+    expect(signalOf('repo-B').aborted).toBe(true);
+
+    pending.get('repo-A')?.();
+    pending.get('repo-C')?.();
+    await expect(newA).resolves.toEqual(['repo-A-main']);
+    await expect(newC).resolves.toEqual(['repo-C-main']);
+    expect(api.get).toHaveBeenCalledTimes(3);
+  });
+
+  it('branches: a caller that joins within the deferral window reuses the request in flight', async () => {
+    const api = mockApi;
+    let resolveRequest!: (value: AxiosResponse) => void;
+    api.get.mockImplementationOnce(() => new Promise((resolve) => { resolveRequest = resolve; }));
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+
+    try {
+      const first = new AbortController();
+      const cancelled = gitService.branches('repo-rejoin', { signal: first.signal });
+      await vi.waitFor(() => expect(api.get).toHaveBeenCalledOnce());
+      const sharedSignal = (api.get.mock.calls[0][1] as { signal: AbortSignal }).signal;
+
+      first.abort();
+      await expect(cancelled).rejects.toMatchObject({ name: 'AbortError' });
+      // A new caller joins before the deferred abort runs.
+      const joined = gitService.branches('repo-rejoin');
+      vi.runAllTimers();
+
+      expect(sharedSignal.aborted).toBe(false);
+      expect(api.get).toHaveBeenCalledOnce();
+      resolveRequest(mockResponse([{ name: 'main' }]));
+      await expect(joined).resolves.toEqual(['main']);
+      expect(api.get).toHaveBeenCalledOnce();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('branches: the last caller leaving aborts the shared request after the deferral', async () => {
+    const api = mockApi;
+    api.get.mockImplementationOnce((_url: string, config: { signal: AbortSignal }) => new Promise((_resolve, reject) => {
+      config.signal.addEventListener('abort', () => reject(new Error('canceled')));
+    }));
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+
+    try {
+      // Two callers (as two mounted selectors); both unmount.
+      const one = new AbortController();
+      const two = new AbortController();
+      const first = gitService.branches('repo-unmount', { signal: one.signal });
+      const second = gitService.branches('repo-unmount', { signal: two.signal });
+      await vi.waitFor(() => expect(api.get).toHaveBeenCalledOnce());
+      const sharedSignal = (api.get.mock.calls[0][1] as { signal: AbortSignal }).signal;
+
+      one.abort();
+      await expect(first).rejects.toMatchObject({ name: 'AbortError' });
+      vi.runAllTimers();
+      // One caller still waits.
+      expect(sharedSignal.aborted).toBe(false);
+
+      two.abort();
+      await expect(second).rejects.toMatchObject({ name: 'AbortError' });
+      // Rejected at once, but the shared request waits for the deferral.
+      expect(sharedSignal.aborted).toBe(false);
+      vi.runAllTimers();
+      expect(sharedSignal.aborted).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('branches: aborting a running request releases its slot to the next queued request', async () => {
+    const api = mockApi;
+    const pending: Array<() => void> = [];
+    api.get.mockImplementation((_url: string, config: { params: { repo: string }; signal: AbortSignal }) => {
+      if (config.params.repo === 'repo-next') return Promise.resolve(mockResponse([{ name: 'next' }]));
+      return new Promise((resolve, reject) => {
+        pending.push(() => resolve(mockResponse([{ name: 'main' }])));
+        config.signal.addEventListener('abort', () => reject(new Error('canceled')));
+      });
+    });
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    try {
+      // Fill every slot; the first running request has a cancellable caller.
+      const controller = new AbortController();
+      const running = gitService.branches('repo-running-0', { signal: controller.signal });
+      const others = Array.from(
+        { length: BRANCH_MAX_CONCURRENT - 1 },
+        (_, i) => gitService.branches(`repo-running-${i + 1}`),
+      );
+      await vi.waitFor(() => expect(api.get).toHaveBeenCalledTimes(BRANCH_MAX_CONCURRENT));
+
+      // One more URL waits for a slot.
+      const next = gitService.branches('repo-next');
+      await new Promise((r) => setTimeout(r, 0));
+      expect(api.get).toHaveBeenCalledTimes(BRANCH_MAX_CONCURRENT);
+
+      // The last (only) caller of a running request leaves.
+      controller.abort();
+      await expect(running).rejects.toMatchObject({ name: 'AbortError' });
+
+      // Its slot goes to the queued URL, which is fetched next and resolves.
+      await expect(next).resolves.toEqual(['next']);
+      expect(api.get).toHaveBeenCalledTimes(BRANCH_MAX_CONCURRENT + 1);
+      expect((api.get.mock.calls[BRANCH_MAX_CONCURRENT][1] as { params: { repo: string } }).params.repo)
+        .toBe('repo-next');
+      const abortedSignal = (api.get.mock.calls[0][1] as { signal: AbortSignal }).signal;
+      expect(abortedSignal.aborted).toBe(true);
+      // A cancellation is not logged as a failure.
+      expect(errorSpy).not.toHaveBeenCalled();
+
+      // Free the other slots for later tests.
+      pending.splice(0).forEach((p) => p());
+      await expect(Promise.all(others)).resolves.toHaveLength(BRANCH_MAX_CONCURRENT - 1);
+    } finally {
+      errorSpy.mockRestore();
+    }
   });
 
   it('branches throws on error', async () => {
@@ -1092,10 +1398,15 @@ describe('gitService', () => {
 
   it('providers sends GET to /api/v1/git/providers', async () => {
     const api = mockApi;
-    const providers = ['azure-devops', 'gitlab'];
+    const providers = [
+      { type: 'azure_devops', available: false },
+      { type: 'github', available: true },
+      { type: 'gitlab', available: false, origin: 'https://git.example.com:8443' },
+    ];
     api.get.mockResolvedValueOnce(mockResponse(providers));
 
     const result = await gitService.providers();
+    expect(result.find((p) => p.type === 'gitlab')?.origin).toBe('https://git.example.com:8443');
 
     expect(api.get).toHaveBeenCalledWith('/api/v1/git/providers');
     expect(result).toEqual(providers);

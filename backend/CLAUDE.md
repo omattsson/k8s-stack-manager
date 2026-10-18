@@ -8,7 +8,7 @@ Domain packages in `internal/`:
 - `cache`: generic in-memory TTL cache.
 - `cluster`: ClusterRegistry, health poller, quota monitor, secret monitor and refresher, `AccessReconciler`.
 - `deployer`: Helm CLI wrapper, cleanup executor, expiry stopper, interrupted operation recovery.
-- `gitprovider`: Azure DevOps and GitLab.
+- `gitprovider`: Azure DevOps, GitHub and GitLab.
 - `helm`: values deep-merge and template variables.
 - `hooks`: outbound lifecycle webhooks with HMAC signing and custom actions. See `docs/hooks.md` and `EXTENDING.md` in the repository root.
 - `k8s`: cluster client, watcher, quotas, pod exec, scaling, `AccessBinding`.
@@ -70,7 +70,7 @@ All configuration uses environment variables with a `.env` fallback (godotenv). 
 - `IN_CLUSTER_FALLBACK_KUBECONFIG` (local development only): the kubeconfig of an in-cluster cluster when the backend does not run in a pod. Empty (default): such a cluster is unreachable; the backend never falls back to `~/.kube/config`.
 - `HELM_BINARY`, `DEPLOYMENT_TIMEOUT`, `MAX_CONCURRENT_DEPLOYS` (default 5).
 - `LOG_LEVEL`: `debug`, `info` (default), `warn` or `error`. `main` applies it to the default `slog` logger. An invalid value stops the startup.
-- `AZURE_DEVOPS_PAT`, `AZURE_DEVOPS_AUTH` (`pat` or `workload-identity`), `AZURE_DEVOPS_DEFAULT_ORG` (the organization of the provider health check), `GITLAB_BASE_URL`.
+- `AZURE_DEVOPS_PAT`, `AZURE_DEVOPS_AUTH` (`pat` or `workload-identity`), `AZURE_DEVOPS_DEFAULT_ORG` (the organization of the provider health check), `GITHUB_TOKEN`, `GITHUB_ALLOWED_REPOSITORIES` (required with `GITHUB_TOKEN`), `GITLAB_TOKEN`, `GITLAB_BASE_URL` (an origin without a path).
 - `NAMESPACE_LABELS`: extra stack namespace labels, `k=v,k=v`.
 - `ALLOWED_CHART_REPOS`: chart repository URL prefixes (`config.ParseAllowedChartRepos`). `models.SetAllowedChartSources` sets them at startup.
 - `UNIQUE_INSTANCE_NAMES` (default false): an instance name is unique on its cluster (`handlers/instance_names.go`).
@@ -114,7 +114,7 @@ All configuration uses environment variables with a `.env` fallback (godotenv). 
 - Send through the hub methods only. Never write `ws_events` directly. Use `BroadcastToUser` for per-user messages, not `Broadcast`.
 
 ## Middleware Order
-`routes.SetupRoutes()` applies this order: RequestID, RedactWSToken, HTTPMetrics (if `OTEL_ENABLED` or `METRICS_ENABLED`), otelgin (if `OTEL_ENABLED`), Logger, Recovery, SecurityHeaders, CORS, MaxBodySize (1 MB).
+`routes.SetupRoutes()` applies this order: RequestID, RedactWSToken, RedactGitRepoQuery, HTTPMetrics (if `OTEL_ENABLED` or `METRICS_ENABLED`), otelgin (if `OTEL_ENABLED`), Logger, Recovery, SecurityHeaders, CORS, MaxBodySize (1 MB).
 - The `/api/v1` group adds the API rate limiter.
 - The authenticated group adds `CombinedAuth` (JWT and API key), `SpanEnrichUser` (if `OTEL_ENABLED`) and `NewAuditMiddleware` (if an audit logger is configured).
 - `SetupRoutes` returns `*RateLimiters` (API limiter and optional login limiter). Call `Stop()` on shutdown.

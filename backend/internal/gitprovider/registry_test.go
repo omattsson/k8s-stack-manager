@@ -244,6 +244,35 @@ func TestRegistryHealthCheck_CancelledContext(t *testing.T) {
 	assert.Contains(t, err.Error(), "unreachable")
 }
 
+func TestRegistryHealthCheckGitHub(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/user", r.URL.Path)
+		assert.Equal(t, "Bearer test-token", r.Header.Get("Authorization"))
+		assert.Equal(t, "application/vnd.github+json", r.Header.Get("Accept"))
+		assert.Equal(t, githubAPIVersion, r.Header.Get("X-GitHub-Api-Version"))
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	registry := mustNewRegistry(t, Config{GitHub: GitHubConfig{
+		Token:               "test-token",
+		AllowedRepositories: []string{"octo-org/octo-repo"},
+	}})
+	registry.github.baseURL = server.URL
+	registry.github.httpClient = server.Client()
+
+	require.NoError(t, registry.HealthCheck(context.Background()))
+}
+
+func TestRegistryHealthCheckSkipsPublicGitHubWithoutToken(t *testing.T) {
+	t.Parallel()
+
+	registry := mustNewRegistry(t, Config{})
+	require.NoError(t, registry.HealthCheck(context.Background()))
+}
+
 func TestRegistryHealthCheck_AzureDevOpsPingURLIncludesOrg(t *testing.T) {
 	t.Parallel()
 

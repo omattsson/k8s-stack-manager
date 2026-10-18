@@ -2,9 +2,8 @@ package gitprovider
 
 import (
 	"context"
-	"encoding/json"
+	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -12,21 +11,27 @@ import (
 )
 
 type gitlabProvider struct {
-	token      string
-	baseURL    string
-	httpClient *http.Client
+	token            string
+	baseURL          string
+	httpClient       *http.Client
+	operationTimeout time.Duration
 }
 
 func newGitLabProvider(cfg GitLabConfig) *gitlabProvider {
+	return newGitLabProviderWithClient(cfg, &http.Client{Timeout: 15 * time.Second})
+}
+
+func newGitLabProviderWithClient(cfg GitLabConfig, client *http.Client) *gitlabProvider {
 	baseURL := cfg.BaseURL
 	if baseURL == "" {
 		baseURL = "https://gitlab.com"
 	}
 	baseURL = strings.TrimSuffix(baseURL, "/")
 	return &gitlabProvider{
-		token:      cfg.Token,
-		baseURL:    baseURL,
-		httpClient: &http.Client{Timeout: 15 * time.Second},
+		token:            cfg.Token,
+		baseURL:          baseURL,
+		httpClient:       redirectRejectingHTTPClient(client, 15*time.Second),
+		operationTimeout: providerOperationTimeout,
 	}
 }
 
@@ -36,38 +41,115 @@ func (p *gitlabProvider) ProviderType() string {
 
 func parseGitLabProjectPath(rawURL string) (string, error) {
 	rawURL = strings.TrimSpace(rawURL)
-	if strings.HasPrefix(rawURL, "git@") {
+	if isSCPStyleURL(rawURL) {
 		return parseGitLabSSH(rawURL)
 	}
-	return parseGitLabHTTPS(rawURL)
+	if len(rawURL) >= len("ssh://") && strings.EqualFold(rawURL[:len("ssh://")], "ssh://") {
+		return parseGitLabSSHURL(rawURL)
+	}
+	return parseGitLabHTTP(rawURL)
 }
 
+// parseGitLabSSHURL parses ssh:// GitLab URLs such as
+// ssh://git@gitlab.example.com:2222/group/project.git. The SSH port is not
+// related to the API and is ignored; userinfo may only carry a username.
+func parseGitLabSSHURL(rawURL string) (string, error) {
+	parsed, err := url.Parse(rawURL)
+	if err != nil || strings.Contains(rawURL, "#") || parsed.Hostname() == "" || parsed.Opaque != "" ||
+		parsed.RawQuery != "" || parsed.ForceQuery {
+		return "", providerError(ErrInvalidRepositoryURL, "gitlab", "invalid GitLab SSH URL", nil)
+	}
+	if parsed.User != nil {
+		if _, hasPassword := parsed.User.Password(); hasPassword {
+			return "", providerError(ErrInvalidRepositoryURL, "gitlab", "invalid GitLab SSH URL", nil)
+		}
+	}
+	return gitLabProjectPathFromURL(parsed)
+}
+
+// isSCPStyleURL reports whether rawURL looks like an scp-style SSH URL
+// (user@host:path): no scheme and an "@" before the first ":".
+func isSCPStyleURL(rawURL string) bool {
+	if strings.Contains(rawURL, "://") {
+		return false
+	}
+	colon := strings.IndexByte(rawURL, ':')
+	return colon > 0 && strings.Contains(rawURL[:colon], "@")
+}
+
+// parseGitLabSSH parses scp-style GitLab SSH URLs (user@host:group/project).
+// Any SSH username is accepted, as in the ssh:// form; it must be non-empty
+// and must not contain ":", "@" or "/". The host must be non-empty.
 func parseGitLabSSH(rawURL string) (string, error) {
 	colonIdx := strings.Index(rawURL, ":")
 	if colonIdx < 0 {
-		return "", fmt.Errorf("invalid GitLab SSH URL: %s", rawURL)
+		return "", providerError(ErrInvalidRepositoryURL, "gitlab", "invalid GitLab SSH URL", nil)
 	}
-	path := rawURL[colonIdx+1:]
-	path = strings.TrimSuffix(path, ".git")
-	if path == "" || !strings.Contains(path, "/") {
-		return "", fmt.Errorf("invalid GitLab SSH URL path: %s", rawURL)
+	at := strings.IndexByte(rawURL[:colonIdx], '@')
+	if at <= 0 || at == colonIdx-1 || strings.ContainsAny(rawURL[:at], ":@/") ||
+		strings.ContainsAny(rawURL[at+1:colonIdx], "@/") {
+		return "", providerError(ErrInvalidRepositoryURL, "gitlab", "invalid GitLab SSH URL", nil)
 	}
-	return path, nil
+	escapedPath := rawURL[colonIdx+1:]
+	if strings.HasPrefix(escapedPath, "/") {
+		return "", providerError(ErrInvalidRepositoryURL, "gitlab", "invalid GitLab SSH URL path", nil)
+	}
+	// Same decoding, validation and "/-/" truncation as the HTTP and ssh://
+	// forms, so all three yield the same project path (e.g. "g/My Proj").
+	projectPath, err := gitLabProjectPathFromEscapedPath(escapedPath)
+	if err != nil {
+		return "", providerError(ErrInvalidRepositoryURL, "gitlab", "invalid GitLab SSH URL path", nil)
+	}
+	return projectPath, nil
 }
 
-func parseGitLabHTTPS(rawURL string) (string, error) {
-	rawURL = strings.TrimPrefix(rawURL, "https://")
-	rawURL = strings.TrimPrefix(rawURL, "http://")
-	rawURL = strings.TrimSuffix(rawURL, ".git")
-	slashIdx := strings.Index(rawURL, "/")
-	if slashIdx < 0 {
-		return "", fmt.Errorf("invalid GitLab URL: missing path")
+func parseGitLabHTTP(rawURL string) (string, error) {
+	parsed, err := url.Parse(rawURL)
+	// url.Parse drops an empty fragment ("...repo#"), so check the raw input.
+	if err != nil || strings.Contains(rawURL, "#") {
+		return "", providerError(ErrInvalidRepositoryURL, "gitlab", "invalid GitLab repository URL", nil)
 	}
-	path := rawURL[slashIdx+1:]
-	if path == "" || !strings.Contains(path, "/") {
-		return "", fmt.Errorf("invalid GitLab URL path: %s", rawURL)
+	if !isCanonicalRepositoryHTTPURL(parsed) {
+		return "", providerError(ErrInvalidRepositoryURL, "gitlab", "invalid GitLab repository URL", nil)
 	}
-	return path, nil
+	return gitLabProjectPathFromURL(parsed)
+}
+
+// gitLabProjectPathFromURL extracts the decoded project path from a parsed
+// GitLab URL. Browser URLs such as /group/project/-/tree/main are truncated at
+// the first "/-/" segment (GitLab's separator between the project path and
+// project routes). The escaped path is truncated before decoding so branch or
+// file names after the separator are never interpreted.
+func gitLabProjectPathFromURL(parsed *url.URL) (string, error) {
+	return gitLabProjectPathFromEscapedPath(parsed.EscapedPath())
+}
+
+// gitLabProjectPathFromEscapedPath decodes and validates an escaped GitLab
+// project path ("group/sub/project[.git]", optionally followed by "/-/...").
+func gitLabProjectPathFromEscapedPath(escapedPath string) (string, error) {
+	escapedParts := strings.Split(strings.Trim(escapedPath, "/"), "/")
+	for i, escapedPart := range escapedParts {
+		if escapedPart == "-" {
+			escapedParts = escapedParts[:i]
+			break
+		}
+	}
+	if len(escapedParts) < 2 {
+		return "", providerError(ErrInvalidRepositoryURL, "gitlab", "invalid GitLab URL path", nil)
+	}
+	parts := make([]string, len(escapedParts))
+	for i, escapedPart := range escapedParts {
+		part, err := url.PathUnescape(escapedPart)
+		if err != nil || !isSafeRepositoryPathSegment(part) || part == "-" {
+			return "", providerError(ErrInvalidRepositoryURL, "gitlab", "invalid GitLab URL path", nil)
+		}
+		parts[i] = part
+	}
+	parts[len(parts)-1] = strings.TrimSuffix(parts[len(parts)-1], ".git")
+	if !isSafeRepositoryPathSegment(parts[len(parts)-1]) {
+		return "", providerError(ErrInvalidRepositoryURL, "gitlab", "invalid GitLab URL path", nil)
+	}
+	return strings.Join(parts, "/"), nil
 }
 
 type gitlabBranchResponse struct {
@@ -80,6 +162,8 @@ func (p *gitlabProvider) ListBranches(ctx context.Context, repoURL string) ([]Br
 	if err != nil {
 		return nil, err
 	}
+	ctx, cancel := context.WithTimeout(ctx, positiveDuration(p.operationTimeout, providerOperationTimeout))
+	defer cancel()
 
 	encodedPath := url.PathEscape(projectPath)
 	apiURL := fmt.Sprintf("%s/api/v4/projects/%s/repository/branches?per_page=100", p.baseURL, encodedPath)
@@ -92,24 +176,23 @@ func (p *gitlabProvider) ListBranches(ctx context.Context, repoURL string) ([]Br
 
 	resp, err := p.httpClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("GitLab API request failed: %w", err)
+		if errors.Is(err, errProviderRedirect) {
+			return nil, providerError(ErrUpstreamFailure, "gitlab", errProviderRedirect.Error(), errProviderRedirect)
+		}
+		return nil, providerError(ErrUpstreamFailure, "gitlab", "GitLab API request failed", err)
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode == http.StatusUnauthorized {
-		return nil, fmt.Errorf("GitLab authentication failed (HTTP 401)")
-	}
-	if resp.StatusCode == http.StatusNotFound {
-		return nil, fmt.Errorf("GitLab project not found: %s", projectPath)
-	}
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return nil, fmt.Errorf("GitLab API returned HTTP %d: %s", resp.StatusCode, string(body))
+	if err := gitLabResponseError(resp); err != nil {
+		return nil, err
 	}
 
 	var glBranches []gitlabBranchResponse
-	if err := json.NewDecoder(resp.Body).Decode(&glBranches); err != nil {
-		return nil, fmt.Errorf("decode GitLab response: %w", err)
+	if err := decodeProviderJSON(resp.Body, &glBranches, "gitlab", "GitLab", "GitLab"); err != nil {
+		return nil, err
+	}
+	if len(glBranches) > providerMaxBranches {
+		return nil, providerError(ErrUpstreamFailure, "gitlab", "GitLab branch collection limit exceeded", nil)
 	}
 
 	branches := make([]Branch, 0, len(glBranches))
@@ -117,6 +200,22 @@ func (p *gitlabProvider) ListBranches(ctx context.Context, repoURL string) ([]Br
 		branches = append(branches, Branch{Name: b.Name, IsDefault: b.Default})
 	}
 	return branches, nil
+}
+
+func gitLabResponseError(resp *http.Response) error {
+	if resp.StatusCode == http.StatusOK {
+		return nil
+	}
+	if resp.StatusCode == http.StatusTooManyRequests {
+		return rateLimitError("gitlab", "GitLab API rate limit exceeded; retry later", parseRetryAfter(resp.Header.Get("Retry-After"), time.Now()))
+	}
+	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+		return providerError(ErrAuthentication, "gitlab", fmt.Sprintf("GitLab authentication failed or permission denied (HTTP %d)", resp.StatusCode), nil)
+	}
+	if resp.StatusCode == http.StatusNotFound {
+		return providerError(ErrRepositoryNotFound, "gitlab", "GitLab project not found", nil)
+	}
+	return providerError(ErrUpstreamFailure, "gitlab", fmt.Sprintf("GitLab API returned HTTP %d", resp.StatusCode), nil)
 }
 
 func (p *gitlabProvider) GetDefaultBranch(ctx context.Context, repoURL string) (string, error) {
@@ -129,7 +228,7 @@ func (p *gitlabProvider) GetDefaultBranch(ctx context.Context, repoURL string) (
 			return b.Name, nil
 		}
 	}
-	return "", fmt.Errorf("no default branch found for %s", repoURL)
+	return "", providerError(ErrUpstreamFailure, "gitlab", "GitLab project has no default branch", nil)
 }
 
 func (p *gitlabProvider) ValidateBranch(ctx context.Context, repoURL string, branch string) (bool, error) {
@@ -143,22 +242,4 @@ func (p *gitlabProvider) ValidateBranch(ctx context.Context, repoURL string, bra
 		}
 	}
 	return false, nil
-}
-
-func gitlabHost(rawURL string) string {
-	rawURL = strings.TrimSpace(rawURL)
-	if strings.HasPrefix(rawURL, "git@") {
-		colonIdx := strings.Index(rawURL, ":")
-		if colonIdx > 4 {
-			return rawURL[4:colonIdx]
-		}
-		return ""
-	}
-	rawURL = strings.TrimPrefix(rawURL, "https://")
-	rawURL = strings.TrimPrefix(rawURL, "http://")
-	slashIdx := strings.Index(rawURL, "/")
-	if slashIdx > 0 {
-		return rawURL[:slashIdx]
-	}
-	return rawURL
 }

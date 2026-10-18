@@ -32,7 +32,7 @@ Store durable test knowledge without asking: causes of flaky tests, fixture patt
 2. Find coverage gaps in the existing tests.
 3. Design the cases: happy path, errors, edge cases, concurrency, roles.
 4. Write the tests with the established patterns.
-5. Run `cd backend && go test ./... -v -short` and `cd frontend && npm test`.
+5. Run `cd backend && go test -p 2 ./... -short` and `cd frontend && npm test`.
 6. Run `cd backend && make test-coverage` (80% minimum).
 
 ## Backend tests

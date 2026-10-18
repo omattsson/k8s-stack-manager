@@ -1,6 +1,6 @@
 # K8s Stack Manager: Backend
 
-This is the Go backend of K8s Stack Manager. It uses the Gin framework. It provides a REST API for stack definitions, stack instances, templates, and value overrides. It supports JWT authentication, audit logging, Git provider integration (Azure DevOps and GitLab), Helm values generation, and multi-cluster management with encrypted kubeconfig storage.
+This is the Go backend of K8s Stack Manager. It uses the Gin framework. It provides a REST API for stack definitions, stack instances, templates, and value overrides. It supports JWT authentication, audit logging, Git provider integration (Azure DevOps, GitHub and GitLab), Helm values generation, and multi-cluster management with encrypted kubeconfig storage.
 
 ## Project Structure
 
@@ -22,7 +22,7 @@ backend/
 |   |   |-- migrations.go               # Versioned schema migrations
 |   |   `-- errors.go                   # Re-exports from pkg/dberrors
 |   |-- deployer/                       # Helm CLI wrapper for deploy, undeploy, rollback (multi-cluster)
-|   |-- gitprovider/                    # Azure DevOps and GitLab branch listing
+|   |-- gitprovider/                    # Azure DevOps, GitHub and GitLab branch listing
 |   |-- health/                         # Liveness and readiness checks
 |   |-- helm/                           # Values deep merge and template substitution
 |   |-- hooks/                          # Outbound lifecycle hooks and custom actions
@@ -151,9 +151,13 @@ The backend reads all configuration from environment variables. It also reads a 
 |---|---|---|
 | `AZURE_DEVOPS_PAT` | empty | Azure DevOps personal access token (PAT) |
 | `AZURE_DEVOPS_AUTH` | `pat` | `workload-identity` uses an Entra ID token (`AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_FEDERATED_TOKEN_FILE`) instead of the PAT |
+| `GITHUB_TOKEN` | empty | GitHub fine-grained personal access token. Requires `GITHUB_ALLOWED_REPOSITORIES` |
+| `GITHUB_ALLOWED_REPOSITORIES` | empty | Comma-separated `owner/repository` entries that may use the token (exact match) |
 | `GITLAB_TOKEN` | empty | GitLab access token |
-| `GITLAB_BASE_URL` | empty (`https://gitlab.com`) | Base URL of a self-hosted GitLab |
+| `GITLAB_BASE_URL` | empty (`https://gitlab.com`) | Origin of a self-hosted GitLab (scheme, host and optional port; no path) |
 | `DEFAULT_BRANCH` | `master` | Default Git branch |
+
+Public GitHub repositories work without a token, at the lower rate limit of GitHub for requests without authentication. For other repositories, use a fine-grained personal access token. Give it access only to the repositories of the allowlist and only the permission **Contents: read**. Set an expiry date and replace the token before it expires. The allowlist uses exact matches that ignore case. It does not accept wildcards, prefixes, owners or URLs. A repository that is not in the allowlist gives HTTP 403. The server does not start when `GITHUB_TOKEN` is set without an allowlist. GitHub App authentication is not available.
 
 ### Deployment and clusters
 

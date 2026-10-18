@@ -124,6 +124,12 @@ backend:
     # expiry; the maximum is backend.maxInstanceTtlDays (default 30 days, 43200
     # minutes).
     DEFAULT_INSTANCE_TTL_MINUTES: "480"
+    # Exact, comma-separated owner/repository entries allowed for authenticated
+    # GitHub requests. Required when GITHUB_TOKEN is non-empty.
+    GITHUB_ALLOWED_REPOSITORIES: ""
+    # Optional GitLab HTTP(S) origin (scheme + hostname, optional port). Do not
+    # include credentials, query, fragment, or a path such as /api/v4.
+    GITLAB_BASE_URL: ""
     # Wildcard TLS secret replication — copies a shared TLS secret into every
     # stack namespace so ingresses can reference it. Disabled when
     # WILDCARD_TLS_SOURCE_SECRET is empty. Set to enable for local dev flows
@@ -290,6 +296,8 @@ backend:
     # projected service-account token (audience api://AzureADTokenExchange) with
     # backend.extraVolumes / backend.extraVolumeMounts.
     AZURE_DEVOPS_PAT: ""
+    # Keep this in the Secret (or ExternalSecret), never backend.env.
+    GITHUB_TOKEN: ""
     GITLAB_TOKEN: ""
     # OIDC secrets (optional)
     OIDC_CLIENT_SECRET: ""
@@ -403,6 +411,9 @@ externalSecrets:
   # - secretKey: ADMIN_PASSWORD
   #   remoteRef:
   #     key: k8s-stack-manager-admin-password
+  # - secretKey: GITHUB_TOKEN
+  #   remoteRef:
+  #     key: k8s-stack-manager-github-token
 
 # ---------------------------------------------------------------------------
 # Frontend

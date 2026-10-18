@@ -61,6 +61,9 @@ func branchListDurationCount(t *testing.T, reader sdkmetric.Reader) int {
 	return total
 }
 
+// Not parallel: this test swaps the process-global otel MeterProvider and the
+// package-level gitProviderMeter/instruments, so concurrent tests would record
+// into (or reset) the wrong reader.
 func TestRegistryListBranches_MetricLabels(t *testing.T) {
 	reader := sdkmetric.NewManualReader()
 	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
@@ -113,4 +116,50 @@ func TestRegistryListBranches_MetricLabels(t *testing.T) {
 	assert.Equal(t, int64(2), counts[[2]string{"azure_devops", "success"}], "provider success + cache hit")
 	assert.Equal(t, int64(1), counts[[2]string{"azure_devops", "failure"}], "provider failure")
 	assert.GreaterOrEqual(t, branchListDurationCount(t, reader), 1, "branch_list.duration must have datapoints")
+}
+
+// Not parallel: this test swaps the process-global otel MeterProvider and the
+// package-level gitProviderMeter/instruments (see initGitProviderMetrics), so
+// running it alongside other tests would mix their metrics into this reader
+// or make them record into a provider that is shut down in Cleanup.
+func TestRegistryListBranches_UnavailableProviderMetricLabels(t *testing.T) {
+	reader := sdkmetric.NewManualReader()
+	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
+	prev := otel.GetMeterProvider()
+	otel.SetMeterProvider(mp)
+	t.Cleanup(func() {
+		otel.SetMeterProvider(prev)
+		_ = mp.Shutdown(context.Background())
+	})
+	prevMeter := gitProviderMeter
+	gitProviderMeter = mp.Meter("gitprovider")
+	initGitProviderMetrics()
+	t.Cleanup(func() { gitProviderMeter = prevMeter })
+
+	registry := &Registry{cache: make(map[string]cacheEntry), nowFunc: time.Now}
+	tests := []struct {
+		name         string
+		repoURL      string
+		providerType string
+	}{
+		{name: "Azure DevOps", repoURL: "https://dev.azure.com/org/proj/_git/repo", providerType: "azure_devops"},
+		{name: "GitLab", repoURL: "https://gitlab.com/org/repo", providerType: "gitlab"},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			// Not parallel: the parent asserts exact counter values after the
+			// loop, and the subtests share the swapped global MeterProvider.
+			// Parallel subtests would only run after the parent body returns,
+			// i.e. after the assertions below.
+			_, err := registry.ListBranches(context.Background(), tt.repoURL)
+			require.ErrorIs(t, err, ErrProviderUnavailable)
+		})
+	}
+
+	counts := branchListCounts(t, reader)
+	assert.Zero(t, counts[[2]string{"unknown", "failure"}])
+	for _, tt := range tests {
+		assert.Equal(t, int64(1), counts[[2]string{tt.providerType, "failure"}])
+	}
 }

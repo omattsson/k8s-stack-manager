@@ -270,14 +270,14 @@ func TestParseAzureSSH_TooFewParts(t *testing.T) {
 
 func TestParseAzureVSURL_InvalidHost(t *testing.T) {
 	t.Parallel()
-	_, err := parseAzureVSURL("https://.visualstudio.com/project/_git/repo")
+	_, err := parseAzureDevOpsURL("https://.visualstudio.com/project/_git/repo")
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "cannot extract org from host")
 }
 
 func TestParseAzureVSURL_TooFewParts(t *testing.T) {
 	t.Parallel()
-	_, err := parseAzureVSURL("https://myorg.visualstudio.com/project/repo")
+	_, err := parseAzureDevOpsURL("https://myorg.visualstudio.com/project/repo")
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid Azure DevOps visualstudio.com URL format")
 }
@@ -326,6 +326,8 @@ func (t *urlRewritingTransport) RoundTrip(req *http.Request) (*http.Response, er
 	return base.RoundTrip(newReq)
 }
 
+var errFederationFailed = errors.New("federation failed")
+
 func TestAzureDevOpsAuthorization(t *testing.T) {
 	t.Parallel()
 
@@ -335,6 +337,8 @@ func TestAzureDevOpsAuthorization(t *testing.T) {
 		source     TokenSource
 		wantHeader string
 		wantErr    string
+		wantKind   error
+		wantCause  error
 	}{
 		{
 			name:       "PAT uses basic auth",
@@ -353,13 +357,16 @@ func TestAzureDevOpsAuthorization(t *testing.T) {
 			wantHeader: "Basic " + base64.StdEncoding.EncodeToString([]byte(":test-pat")),
 		},
 		{
-			name:    "token source error is returned",
-			source:  func(context.Context) (string, error) { return "", errors.New("federation failed") },
-			wantErr: "get token: federation failed",
+			name:      "token source error is returned",
+			source:    func(context.Context) (string, error) { return "", errFederationFailed },
+			wantErr:   "Azure DevOps token could not be obtained",
+			wantKind:  ErrAuthentication,
+			wantCause: errFederationFailed,
 		},
 		{
-			name:    "no credentials",
-			wantErr: "no credentials configured",
+			name:     "no credentials",
+			wantErr:  "Azure DevOps provider is not configured",
+			wantKind: ErrProviderUnavailable,
 		},
 	}
 
@@ -383,7 +390,12 @@ func TestAzureDevOpsAuthorization(t *testing.T) {
 			_, err := p.ListBranches(context.Background(), "https://dev.azure.com/myorg/myproject/_git/myrepo")
 			if tt.wantErr != "" {
 				require.Error(t, err)
-				assert.Contains(t, err.Error(), tt.wantErr)
+				assert.Equal(t, tt.wantErr, err.Error(), "the message must not include the underlying error")
+				assert.ErrorIs(t, err, tt.wantKind)
+				if tt.wantCause != nil {
+					assert.ErrorIs(t, err, tt.wantCause, "the cause must stay available for logs")
+				}
+				assert.Empty(t, got, "no request without credentials")
 				return
 			}
 			require.NoError(t, err)
@@ -395,15 +407,16 @@ func TestAzureDevOpsAuthorization(t *testing.T) {
 func TestNewRegistry_AzureDevOpsWithTokenSource(t *testing.T) {
 	t.Parallel()
 
-	r := NewRegistry(Config{AzureDevOps: AzureDevOpsConfig{
+	r, err := NewRegistry(Config{AzureDevOps: AzureDevOpsConfig{
 		TokenSource: func(context.Context) (string, error) { return "t", nil },
 	}})
+	require.NoError(t, err)
 	p, err := r.detectProvider("https://dev.azure.com/org/project/_git/repo")
 	require.NoError(t, err)
 	assert.Equal(t, "azure_devops", p.ProviderType())
 
-	none := NewRegistry(Config{})
+	none, err := NewRegistry(Config{})
+	require.NoError(t, err)
 	_, err = none.detectProvider("https://dev.azure.com/org/project/_git/repo")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "no PAT or workload identity")
+	require.ErrorIs(t, err, ErrProviderUnavailable)
 }

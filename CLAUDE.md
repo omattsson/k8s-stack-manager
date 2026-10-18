@@ -239,6 +239,7 @@ backend/
       auth_metrics.go            # Auth outcome counters (login, refresh, OIDC, API key)
       otel.go                    # SpanEnrichUser: adds user attributes to the active span
       ws_redact.go               # RedactWSToken: strips ?token= from /ws URLs before logging and tracing
+      git_repo_redact.go         # RedactGitRepoQuery: redacts the ?repo= value of /git URLs before logging and tracing
     config/                      # config.go (env vars with godotenv .env fallback, typed config structs); branding.go, chart_repos.go, namespace_labels.go, stack_access.go (parsers for the matching env vars)
     database/database.go         # Database struct that wraps gorm.DB, NewDatabase(), Transaction, Ping
     database/config.go           # Database connection Config struct, loaded from env vars
@@ -256,7 +257,7 @@ backend/
     cache/                       # Generic concurrent in-memory TTL cache
     cluster/                     # ClusterRegistry (multi-cluster coordination), health poller, quota monitor, secret monitor and refresher, AccessReconciler
     deployer/                    # Helm CLI wrapper for deploy, undeploy, rollback, status (multi-cluster through the registry), cleanup executor, expiry stopper, interrupted operation recovery
-    gitprovider/                 # Azure DevOps and GitLab branch listing, URL detection, 5-minute cache
+    gitprovider/                 # Azure DevOps, GitHub and GitLab branch listing, URL detection, 5-minute cache
     helm/                        # Values deep-merge, template variable substitution
     hooks/                       # Outbound lifecycle webhooks: dispatcher, HMAC-signed client, actions, config file (see docs/hooks.md and EXTENDING.md)
     k8s/                         # Kubernetes cluster client, status watcher, resource quotas, pod exec, scaling, AccessBinding
@@ -307,7 +308,7 @@ backend/
 **Routes registration.**
 - `SetupRoutes()` takes a `Deps` struct with all handlers and repositories. Handlers are optional. Register each one inside an `if deps.XHandler != nil` block.
 - It returns `*RateLimiters` (API limiter and optional login limiter). The caller must call `Stop()` on shutdown.
-- Global middleware order: RequestID, RedactWSToken, HTTPMetrics (if `OTEL_ENABLED` or `METRICS_ENABLED`), otelgin (if `OTEL_ENABLED`), Logger, Recovery, SecurityHeaders, CORS, MaxBodySize (1 MB).
+- Global middleware order: RequestID, RedactWSToken, RedactGitRepoQuery, HTTPMetrics (if `OTEL_ENABLED` or `METRICS_ENABLED`), otelgin (if `OTEL_ENABLED`), Logger, Recovery, SecurityHeaders, CORS, MaxBodySize (1 MB).
 - `/api/v1` adds the API rate limiter (`RATE_LIMIT`, default 100 requests per minute per IP). The login route gets a stricter limiter when `LOGIN_RATE_LIMIT` is greater than 0 (default 10 per minute). `POST /auth/refresh` uses the login limiter too.
 - Client IP: `SetupRoutes` calls `SetTrustedProxies` with `TRUSTED_PROXIES` (IPs or CIDRs, `config.ParseTrustedProxies`; an invalid entry stops the start). Only those peers may set the client IP with `X-Forwarded-For` or `X-Real-IP`. Code default: no trusted proxy (the TCP peer). `0.0.0.0/0`, `::/0` and IPv4-mapped IPv6 entries are refused. The Helm chart (`backend.trustedProxies`) trusts the private IPv4 ranges and `fc00::/7`. The rate limiters, the `/ws` API-key limit and the refresh token IP use `c.ClientIP()`.
 - The authenticated group adds `CombinedAuth` (JWT and API key, checks the token blocklist and disabled users), `SpanEnrichUser` (if `OTEL_ENABLED`) and `NewAuditMiddleware` (if an audit logger is configured).
@@ -638,7 +639,7 @@ Developers use this application to configure, store and deploy multi-service Hel
     - Outside a pod (`make dev-local`, a binary on a laptop), such a cluster is unreachable (`k8s.ErrInClusterUnavailable`). For local development, `IN_CLUSTER_FALLBACK_KUBECONFIG=<path>` gives both clients that kubeconfig, with a warning in the log (#582). In Docker Compose the path is in the container (`make dev-k8s`: `/root/.kube/config`).
   - An instance targets one cluster (or the default).
   - Per-cluster registry credentials (`registry_url`, `registry_username`, `registry_password`) give automatic image pull secret provisioning at deploy time and a refresh every 4 hours (`SecretRefresher`).
-- **Git provider detection:** by URL. `dev.azure.com` and `visualstudio.com` mean Azure DevOps. `gitlab.com` or a custom host means GitLab.
+- **Git provider detection:** by the exact host of the URL. `dev.azure.com` and `*.visualstudio.com` mean Azure DevOps. `github.com` means GitHub. `gitlab.com`, or the custom `GITLAB_BASE_URL` origin, means GitLab. With a custom origin, `gitlab.com` URLs are not supported. A known provider without credentials gives HTTP 503.
 - **Cleanup policies:**
   - `PUT /admin/cleanup-policies/:id` is a partial update. Only the fields in the body change. The backend validates the merged policy.
   - A policy runs a cron-scheduled action (stop, clean, delete) on instances that match a condition: `status:`, `idle_days:` (days without a deploy; a running or partial stack whose expiry is in the future never matches), `age_days:` (creation age), `stopped_days:` (time since `StoppedAt`), `cleaned_days:` (time since `CleanedAt`, drafts only), `ttl_expired`, `expires_within_hours:` (no expiry, or an expiry at most N hours away, N 0 to 8760; an extended TTL keeps a stack out of a scheduled stop, for example `status:running,expires_within_hours:12` on Fridays; "No expiry" still matches).

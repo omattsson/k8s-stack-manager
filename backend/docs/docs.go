@@ -3314,8 +3314,59 @@ const docTemplate = `{
                             }
                         }
                     },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "429": {
+                        "description": "Too Many Requests",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        },
+                        "headers": {
+                            "Retry-After": {
+                                "type": "integer",
+                                "description": "Provider rate limit retry delay in seconds, when supplied"
+                            }
+                        }
+                    },
                     "500": {
                         "description": "Internal Server Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "502": {
+                        "description": "Bad Gateway",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {
@@ -3352,6 +3403,33 @@ const docTemplate = `{
                             "type": "array",
                             "items": {
                                 "$ref": "#/definitions/gitprovider.ProviderStatus"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "429": {
+                        "description": "Too Many Requests",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
                             }
                         }
                     }
@@ -3400,8 +3478,59 @@ const docTemplate = `{
                             }
                         }
                     },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "429": {
+                        "description": "Too Many Requests",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        },
+                        "headers": {
+                            "Retry-After": {
+                                "type": "integer",
+                                "description": "Provider rate limit retry delay in seconds, when supplied"
+                            }
+                        }
+                    },
                     "500": {
                         "description": "Internal Server Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "502": {
+                        "description": "Bad Gateway",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {
@@ -3514,8 +3643,7 @@ const docTemplate = `{
                         "schema": {
                             "type": "object",
                             "additionalProperties": {
-                                "type": "integer",
-                                "format": "int64"
+                                "type": "integer"
                             }
                         }
                     },
@@ -10168,6 +10296,11 @@ const docTemplate = `{
             "properties": {
                 "available": {
                     "type": "boolean"
+                },
+                "origin": {
+                    "description": "Origin is the API origin of the provider (scheme, host and optional\nport). It is set only for GitLab, whose origin is configurable\n(GITLAB_BASE_URL), so that clients can attribute repository URLs the\nsame way as the registry. It never contains credentials or a path.",
+                    "type": "string",
+                    "example": "https://gitlab.com"
                 },
                 "type": {
                     "type": "string"

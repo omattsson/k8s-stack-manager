@@ -663,9 +663,14 @@ WebSocket connections (`/ws`):
 
 ### Git Integration
 
-- The application detects the provider from the repository URL. `dev.azure.com` or `visualstudio.com` gives Azure DevOps. `gitlab.com` or the host of `GITLAB_BASE_URL` gives GitLab. Any other URL is not supported.
+- The application detects the provider from the exact host of the repository URL. `dev.azure.com` or `*.visualstudio.com` gives Azure DevOps. `github.com` gives GitHub. `gitlab.com`, or the origin of `GITLAB_BASE_URL`, gives GitLab. With a custom origin, `gitlab.com` URLs are not supported. Any other URL is not supported.
 - Branch listing uses an in-memory cache (5-minute TTL).
 - The application uses service-level tokens (PAT or token), not tokens of single users.
+- Public GitHub repositories work without a token, at the lower GitHub rate limit for requests without authentication.
+- A GitHub token needs an allowlist (`GITHUB_ALLOWED_REPOSITORIES`) of exact `owner/repository` entries. The match ignores case. Wildcards, prefixes, owners, and URLs are not accepted. A repository that is not in the list gives HTTP 403. The backend does not start when `GITHUB_TOKEN` is set without an allowlist.
+- Use a fine-grained GitHub personal access token. Give it access only to the repositories of the allowlist, and only the permission **Contents: read**. Set an expiry date and replace the token in time. GitHub App authentication is not available.
+- `GITLAB_BASE_URL` sets a custom GitLab origin: an absolute HTTP(S) origin with a host name and an optional port. Credentials, query strings, fragments, and paths (for example `/api/v4`) are not accepted. The provider adds `/api/v4`.
+- A known provider without credentials gives HTTP 503. A URL that is not valid gives HTTP 400.
 
 ### Helm Values
 
@@ -730,7 +735,7 @@ See `.github/instructions/api-extension.instructions.md` for the step-by-step gu
 
 - **JWT errors.** Make sure that `JWT_SECRET` is set and has at least 16 characters.
 - **Database connection errors (MySQL).** Make sure that MySQL runs. Check the environment variables `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, and `DB_NAME`.
-- **Git provider errors.** Check that `AZURE_DEVOPS_PAT` (or `AZURE_DEVOPS_AUTH=workload-identity` with the `AZURE_*` variables) or `GITLAB_TOKEN` is correct. An empty token is valid. The provider is then not available.
+- **Git provider errors.** Check that `AZURE_DEVOPS_PAT` (or `AZURE_DEVOPS_AUTH=workload-identity` with the `AZURE_*` variables), `GITHUB_TOKEN`, or `GITLAB_TOKEN` is correct. An empty token is valid. The provider is then not available (HTTP 503), except GitHub: public GitHub repositories work without a token. With a GitHub token, the repository must be in `GITHUB_ALLOWED_REPOSITORIES`, or the request gives HTTP 403. For a self-hosted GitLab, set `GITLAB_BASE_URL` in `backend.env`, not in a Secret.
 - **Cluster connection errors.** Check that the kubeconfig path or data is valid. Use the "Test Connection" button on the Clusters admin page. If `KUBECONFIG_ENCRYPTION_KEY` is set, the backend encrypts all kubeconfig data at rest. A different key makes existing encrypted data unreadable.
 - **A chart is rejected with "chart source not allowed".** The chart is not in a repository of `ALLOWED_CHART_REPOS`. Add the repository to the list, or change the chart config.
 - **The UI cannot reach the API behind a port-forward.** The frontend pod does not proxy the API. Open the UI through the ingress.
