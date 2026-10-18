@@ -32,21 +32,34 @@ func TestDetectProvider(t *testing.T) {
 		name         string
 		url          string
 		expectedType string
+		expectedErr  error
 		expectErr    bool
 	}{
-		{"AzDO dev.azure.com", "https://dev.azure.com/myorg/myproject/_git/myrepo", "azure_devops", false},
-		{"AzDO visualstudio.com", "https://myorg.visualstudio.com/myproject/_git/myrepo", "azure_devops", false},
-		{"AzDO SSH", "myorg@vs-ssh.visualstudio.com:v3/myorg/myproject/myrepo", "azure_devops", false},
-		{"GitLab HTTPS", "https://gitlab.com/mygroup/myproject", "gitlab", false},
-		{"GitLab HTTPS .git", "https://gitlab.com/mygroup/myproject.git", "gitlab", false},
-		{"GitLab SSH", "git@gitlab.com:mygroup/myproject.git", "gitlab", false},
-		{"GitHub HTTPS", "https://github.com/user/repo", "github", false},
-		{"GitHub HTTPS .git", "https://github.com/user/repo.git", "github", false},
-		{"GitHub SSH", "git@github.com:user/repo.git", "github", false},
-		{"GitHub query cannot reroute to GitLab", "https://github.com/user/repo?target=gitlab.com", "", true},
-		{"GitHub credentials rejected", "https://user:secret@github.com/user/repo", "", true},
-		{"Unknown", "https://example.com/user/repo", "", true},
-		{"Empty", "", "", true},
+		{"AzDO dev.azure.com", "https://dev.azure.com/myorg/myproject/_git/myrepo", "azure_devops", nil, false},
+		{"AzDO visualstudio.com", "https://myorg.visualstudio.com/myproject/_git/myrepo", "azure_devops", nil, false},
+		{"AzDO SSH", "myorg@vs-ssh.visualstudio.com:v3/myorg/myproject/myrepo", "azure_devops", nil, false},
+		{"AzDO Clone URL with username", "https://myorg@dev.azure.com/myorg/My%20Project/_git/repo", "azure_devops", nil, false},
+		{"AzDO Clone URL with password rejected", "https://myorg:secret@dev.azure.com/myorg/project/_git/repo", "", ErrInvalidRepositoryURL, true},
+		{"AzDO SSH encoded project", "git@ssh.dev.azure.com:v3/myorg/My%20Project/repo", "azure_devops", nil, false},
+		{"AzDO SSH dev.azure.com", "git@ssh.dev.azure.com:v3/myorg/myproject/myrepo", "azure_devops", nil, false},
+		{"AzDO SSH dev.azure.com .git", "git@ssh.dev.azure.com:v3/myorg/myproject/myrepo.git", "azure_devops", nil, false},
+		{"AzDO SSH query delimiter rejected", "git@ssh.dev.azure.com:v3/myorg/myproject/myrepo?x=1", "", ErrInvalidRepositoryURL, true},
+		{"AzDO HTTPS query rejected", "https://dev.azure.com/myorg/myproject/_git/myrepo?path=/", "", ErrInvalidRepositoryURL, true},
+		{"GitLab HTTPS fragment rejected", "https://gitlab.com/mygroup/myproject#readme", "", ErrInvalidRepositoryURL, true},
+		{"GitLab SSH fragment rejected", "git@gitlab.com:mygroup/myproject.git#x", "", ErrInvalidRepositoryURL, true},
+		{"GitLab HTTPS", "https://gitlab.com/mygroup/myproject", "gitlab", nil, false},
+		{"GitLab HTTPS .git", "https://gitlab.com/mygroup/myproject.git", "gitlab", nil, false},
+		{"GitLab SSH", "git@gitlab.com:mygroup/myproject.git", "gitlab", nil, false},
+		{"GitHub HTTPS", "https://github.com/user/repo", "github", nil, false},
+		{"GitHub HTTPS .git", "https://github.com/user/repo.git", "github", nil, false},
+		{"GitHub SSH", "git@github.com:user/repo.git", "github", nil, false},
+		{"GitHub query cannot reroute to GitLab", "https://github.com/user/repo?target=gitlab.com", "", nil, true},
+		{"GitLab in query is unsupported", "https://example.com/user/repo?target=gitlab.com", "", ErrUnsupportedProvider, true},
+		{"Azure lookalike host is unsupported", "https://dev.azure.com.evil.example/org/project/_git/repo", "", ErrUnsupportedProvider, true},
+		{"GitLab lookalike host is unsupported", "https://gitlab.com.evil.example/group/project", "", ErrUnsupportedProvider, true},
+		{"GitHub credentials rejected", "https://user:secret@github.com/user/repo", "", nil, true},
+		{"Unknown", "https://example.com/user/repo", "", nil, true},
+		{"Empty", "", "", nil, true},
 	}
 	for _, tt := range tests {
 		tt := tt
@@ -54,7 +67,10 @@ func TestDetectProvider(t *testing.T) {
 			t.Parallel()
 			provider, err := registry.detectProvider(tt.url)
 			if tt.expectErr {
-				assert.Error(t, err)
+				require.Error(t, err)
+				if tt.expectedErr != nil {
+					assert.ErrorIs(t, err, tt.expectedErr)
+				}
 				return
 			}
 			require.NoError(t, err)
@@ -72,11 +88,13 @@ func TestDetectProviderCustomGitLabDomain(t *testing.T) {
 		name         string
 		url          string
 		expectedType string
+		expectedErr  error
 		expectErr    bool
 	}{
-		{"Custom HTTPS", "https://git.example.com/group/project", "gitlab", false},
-		{"Custom SSH", "git@git.example.com:group/project.git", "gitlab", false},
-		{"gitlab.com also matched", "https://gitlab.com/group/project", "gitlab", false},
+		{"Custom HTTPS", "https://git.example.com/group/project", "gitlab", nil, false},
+		{"Custom SSH", "git@git.example.com:group/project.git", "gitlab", nil, false},
+		{"gitlab.com also matched", "https://gitlab.com/group/project", "gitlab", nil, false},
+		{"Custom host lookalike is unsupported", "https://git.example.com.evil.example/group/project", "", ErrUnsupportedProvider, true},
 	}
 	for _, tt := range tests {
 		tt := tt
@@ -84,7 +102,8 @@ func TestDetectProviderCustomGitLabDomain(t *testing.T) {
 			t.Parallel()
 			provider, err := registry.detectProvider(tt.url)
 			if tt.expectErr {
-				assert.Error(t, err)
+				require.Error(t, err)
+				assert.ErrorIs(t, err, tt.expectedErr)
 				return
 			}
 			require.NoError(t, err)
@@ -96,20 +115,45 @@ func TestDetectProviderCustomGitLabDomain(t *testing.T) {
 func TestDetectProviderUnconfigured(t *testing.T) {
 	t.Parallel()
 	registry := mustNewRegistry(t, Config{})
-	tests := []struct {
-		name string
-		url  string
+	providers := []struct {
+		name         string
+		url          string
+		providerType string
 	}{
-		{"AzDO unconfigured", "https://dev.azure.com/org/proj/_git/repo"},
-		{"GitLab unconfigured", "https://gitlab.com/group/project"},
+		{"AzDO unconfigured", "https://dev.azure.com/org/proj/_git/repo", "azure_devops"},
+		{"GitLab unconfigured", "https://gitlab.com/group/project", "gitlab"},
 	}
-	for _, tt := range tests {
-		tt := tt
-		t.Run(tt.name, func(t *testing.T) {
+	operations := []struct {
+		name string
+		run  func(*Registry, string) error
+	}{
+		{name: "list", run: func(registry *Registry, repoURL string) error {
+			_, err := registry.ListBranches(context.Background(), repoURL)
+			return err
+		}},
+		{name: "validate", run: func(registry *Registry, repoURL string) error {
+			_, err := registry.ValidateBranch(context.Background(), repoURL, "main")
+			return err
+		}},
+	}
+	for _, provider := range providers {
+		provider := provider
+		t.Run(provider.name, func(t *testing.T) {
 			t.Parallel()
-			_, err := registry.detectProvider(tt.url)
-			assert.Error(t, err)
-			assert.Contains(t, err.Error(), "not configured")
+			for _, operation := range operations {
+				operation := operation
+				t.Run(operation.name, func(t *testing.T) {
+					t.Parallel()
+					err := operation.run(registry, provider.url)
+					require.Error(t, err)
+					assert.ErrorIs(t, err, ErrProviderUnavailable)
+					assert.NotErrorIs(t, err, ErrUnsupportedProvider)
+					var providerErr *ProviderError
+					if assert.ErrorAs(t, err, &providerErr) {
+						assert.Equal(t, provider.providerType, providerErr.Provider)
+					}
+				})
+			}
 		})
 	}
 }
@@ -178,25 +222,6 @@ func TestParseGitLabProjectPath(t *testing.T) {
 			}
 			require.NoError(t, err)
 			assert.Equal(t, tt.path, path)
-		})
-	}
-}
-
-func TestGitLabHost(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		name, url, expected string
-	}{
-		{"HTTPS", "https://gitlab.com/group/project", "gitlab.com"},
-		{"SSH", "git@gitlab.com:group/project.git", "gitlab.com"},
-		{"custom", "https://git.example.com/group/project", "git.example.com"},
-		{"custom SSH", "git@git.example.com:group/project.git", "git.example.com"},
-	}
-	for _, tt := range tests {
-		tt := tt
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			assert.Equal(t, tt.expected, gitlabHost(tt.url))
 		})
 	}
 }
@@ -364,6 +389,42 @@ func TestRegistryCacheExpiry(t *testing.T) {
 	_, err = registry.ListBranches(ctx, repoURL)
 	require.NoError(t, err)
 	assert.Equal(t, 2, callCount)
+}
+
+func TestRegistryBranchFillRechecksCacheAfterInitialMiss(t *testing.T) {
+	t.Parallel()
+
+	var providerCalls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		providerCalls.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`[{"name":"redundant-upstream-result"}]`))
+	}))
+	defer server.Close()
+
+	registry := mustNewRegistry(t, Config{})
+	registry.github.baseURL = server.URL
+	registry.github.httpClient = server.Client()
+	repoURL := "https://github.com/octo-org/octo-repo"
+	key := normalizeCacheKey(repoURL)
+
+	registry.mu.RLock()
+	_, found := registry.cache[key]
+	registry.mu.RUnlock()
+	require.False(t, found)
+
+	expected := []Branch{{Name: "main"}}
+	registry.storeCacheEntry(key, expected)
+	fill := registry.joinBranchFill(context.Background(), key, registry.github, repoURL)
+	select {
+	case <-fill.done:
+	case <-time.After(time.Second):
+		require.FailNow(t, "branch fill did not complete")
+	}
+
+	require.NoError(t, fill.err)
+	assert.Equal(t, expected, fill.branches)
+	assert.Zero(t, providerCalls.Load())
 }
 
 func TestRegistryConcurrentIdenticalMissesUseOneProviderCall(t *testing.T) {

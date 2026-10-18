@@ -32,6 +32,9 @@ var (
 	githubOwnerPattern             = regexp.MustCompile(`^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$`)
 	githubRepoPattern              = regexp.MustCompile(`^[A-Za-z0-9_.-]{1,100}$`)
 	githubCanonicalBranchesPattern = regexp.MustCompile(`^/repositories/[1-9][0-9]*/branches$`)
+	githubCanonicalRepoPattern     = regexp.MustCompile(`^/repositories/[1-9][0-9]*$`)
+	githubRepoAPIPathPattern       = regexp.MustCompile(`^/repos/[^/]+/[^/]+$`)
+	githubBranchesAPIPathPattern   = regexp.MustCompile(`^/repos/[^/]+/[^/]+/branches$`)
 	errGitHubRedirect              = errors.New("GitHub API redirect rejected")
 )
 
@@ -84,13 +87,47 @@ func githubRedirectPolicy(baseURL string, fallback func(*http.Request, []*http.R
 		if len(via) >= 10 {
 			return errGitHubRedirect
 		}
-		if parseErr != nil || req.URL.Scheme != trusted.Scheme || !strings.EqualFold(req.URL.Host, trusted.Host) || req.URL.User != nil {
+		if !githubRedirectTargetAllowed(req, via, trusted, parseErr) {
 			return errGitHubRedirect
 		}
 		if fallback != nil {
 			return fallback(req, via)
 		}
 		return nil
+	}
+}
+
+func githubRedirectTargetAllowed(req *http.Request, via []*http.Request, trusted *url.URL, parseErr error) bool {
+	if parseErr != nil || req == nil || req.URL == nil || req.URL.Scheme != trusted.Scheme || !strings.EqualFold(req.URL.Host, trusted.Host) ||
+		req.URL.User != nil || req.URL.RawPath != "" || req.URL.Fragment != "" {
+		return false
+	}
+	if len(via) == 0 {
+		return true
+	}
+	if via[0] == nil || via[0].URL == nil || via[0].URL.RawPath != "" {
+		return false
+	}
+	if req.URL.EscapedPath() == via[0].URL.EscapedPath() {
+		return true
+	}
+	return githubRenamedRepositoryRedirect(via[0].URL.Path, req.URL.Path)
+}
+
+// githubRenamedRepositoryRedirect reports whether a redirect from the original
+// request path to target is GitHub's canonical move for a renamed or
+// transferred repository: /repos/{owner}/{repo} -> /repositories/{id} and
+// /repos/{owner}/{repo}/branches -> /repositories/{id}/branches. The host is
+// already pinned to the GitHub API origin; any other path change (for example
+// to a different /repos/{owner}/{repo}) is rejected.
+func githubRenamedRepositoryRedirect(originalPath, targetPath string) bool {
+	switch {
+	case githubRepoAPIPathPattern.MatchString(originalPath):
+		return githubCanonicalRepoPattern.MatchString(targetPath)
+	case githubBranchesAPIPathPattern.MatchString(originalPath):
+		return githubCanonicalBranchesPattern.MatchString(targetPath)
+	default:
+		return false
 	}
 }
 
@@ -273,8 +310,16 @@ func githubNextPageURL(linkHeader, baseURL string, responseURL *url.URL, expecte
 			return "", paginationPath, fmt.Errorf("invalid GitHub pagination URL")
 		}
 		base, err := url.Parse(baseURL)
-		if err != nil || responseURL == nil || responseURL.Scheme != base.Scheme || !strings.EqualFold(responseURL.Host, base.Host) || responseURL.User != nil || responseURL.RawPath != "" || responseURL.Path != paginationPath {
+		if err != nil || responseURL == nil || responseURL.Scheme != base.Scheme || !strings.EqualFold(responseURL.Host, base.Host) || responseURL.User != nil || responseURL.RawPath != "" {
 			return "", paginationPath, fmt.Errorf("invalid GitHub pagination URL")
+		}
+		if responseURL.Path != paginationPath {
+			// The first page may have been served from GitHub's canonical
+			// /repositories/{id}/branches path after a rename redirect.
+			if paginationPath != expectedPath || !githubCanonicalBranchesPattern.MatchString(responseURL.Path) {
+				return "", paginationPath, fmt.Errorf("invalid GitHub pagination URL")
+			}
+			paginationPath = responseURL.Path
 		}
 		if next.Scheme != base.Scheme || !strings.EqualFold(next.Host, base.Host) || next.User != nil || next.RawPath != "" || next.Fragment != "" {
 			return "", paginationPath, fmt.Errorf("invalid GitHub pagination URL")

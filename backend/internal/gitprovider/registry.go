@@ -3,10 +3,12 @@ package gitprovider
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -53,6 +55,11 @@ type Registry struct {
 
 // NewRegistry creates a new provider registry from validated configuration.
 func NewRegistry(cfg Config) (*Registry, error) {
+	gitLabBaseURL, err := NormalizeGitLabBaseURL(cfg.GitLab.BaseURL)
+	if err != nil {
+		return nil, fmt.Errorf("invalid Git provider configuration: %w", err)
+	}
+	cfg.GitLab.BaseURL = gitLabBaseURL
 	if err := cfg.Validate(); err != nil {
 		return nil, fmt.Errorf("invalid Git provider configuration: %w", err)
 	}
@@ -70,55 +77,91 @@ func NewRegistry(cfg Config) (*Registry, error) {
 		r.azureDevOps = newAzureDevOpsProvider(cfg.AzureDevOps)
 	}
 
+	host := repositoryHostname(cfg.GitLab.BaseURL)
+	if host != "gitlab.com" {
+		r.gitlabCustomHost = host
+	}
 	if cfg.GitLab.Token != "" {
 		r.gitlab = newGitLabProvider(cfg.GitLab)
-		baseURL := cfg.GitLab.BaseURL
-		if baseURL == "" {
-			baseURL = "https://gitlab.com"
-		}
-		host := strings.TrimPrefix(baseURL, "https://")
-		host = strings.TrimPrefix(host, "http://")
-		host = strings.TrimSuffix(host, "/")
-		if host != "gitlab.com" {
-			r.gitlabCustomHost = host
-		}
 	}
 
 	return r, nil
 }
 
 func (r *Registry) detectProvider(repoURL string) (GitProvider, error) {
-	normalized := strings.ToLower(repoURL)
-	if isGitHubURLCandidate(repoURL) {
-		if _, err := parseGitHubURL(repoURL); err != nil {
-			return nil, err
-		}
-		return r.github, nil
+	host := repositoryHostname(repoURL)
+	switch {
+	case isGitHubURLCandidate(repoURL):
+		return r.detectGitHubProvider(repoURL)
+	case isAzureDevOpsHost(host):
+		return r.detectAzureDevOpsProvider(repoURL)
+	case r.gitlabCustomHost != "" && host == r.gitlabCustomHost:
+		return r.detectGitLabProvider(repoURL)
+	case host == "gitlab.com":
+		return r.detectGitLabProvider(repoURL)
+	default:
+		return nil, providerError(ErrUnsupportedProvider, "", "unsupported Git provider URL", nil)
 	}
+}
 
-	if strings.Contains(normalized, "dev.azure.com") ||
-		strings.Contains(normalized, "visualstudio.com") {
-		if r.azureDevOps == nil {
-			return nil, providerError(ErrUnsupportedProvider, "azure_devops", "Azure DevOps provider is not configured (PAT not set)", nil)
-		}
-		return r.azureDevOps, nil
+func repositoryHostname(rawURL string) string {
+	rawURL = strings.TrimSpace(rawURL)
+	if rawURL == "" {
+		return ""
 	}
-
-	if r.gitlabCustomHost != "" && strings.Contains(normalized, strings.ToLower(r.gitlabCustomHost)) {
-		if r.gitlab == nil {
-			return nil, providerError(ErrUnsupportedProvider, "gitlab", "GitLab provider is not configured (token not set)", nil)
+	if !strings.Contains(rawURL, "://") {
+		if colon := strings.IndexByte(rawURL, ':'); colon > 0 && strings.Contains(rawURL[:colon], "@") {
+			rawURL = "ssh://" + rawURL[:colon] + "/" + rawURL[colon+1:]
+		} else {
+			rawURL = "https://" + rawURL
 		}
-		return r.gitlab, nil
 	}
-
-	if strings.Contains(normalized, "gitlab.com") {
-		if r.gitlab == nil {
-			return nil, providerError(ErrUnsupportedProvider, "gitlab", "GitLab provider is not configured (token not set)", nil)
-		}
-		return r.gitlab, nil
+	schemeEnd := strings.Index(rawURL, "://")
+	if schemeEnd < 0 {
+		return ""
 	}
+	authorityEnd := len(rawURL)
+	if separator := strings.IndexAny(rawURL[schemeEnd+3:], "/?#"); separator >= 0 {
+		authorityEnd = schemeEnd + 3 + separator
+	}
+	parsed, err := url.Parse(rawURL[:authorityEnd])
+	if err != nil {
+		return ""
+	}
+	return strings.ToLower(strings.TrimSuffix(parsed.Hostname(), "."))
+}
 
-	return nil, providerError(ErrUnsupportedProvider, "", "unsupported Git provider URL", nil)
+func isAzureDevOpsHost(host string) bool {
+	return host == "dev.azure.com" || host == "ssh.dev.azure.com" ||
+		(strings.HasSuffix(host, ".visualstudio.com") && host != "visualstudio.com")
+}
+
+func (r *Registry) detectGitHubProvider(repoURL string) (GitProvider, error) {
+	if _, err := parseGitHubURL(repoURL); err != nil {
+		return nil, err
+	}
+	return configuredProvider(r.github != nil, r.github, "github", "GitHub provider is not configured")
+}
+
+func (r *Registry) detectAzureDevOpsProvider(repoURL string) (GitProvider, error) {
+	if _, err := parseAzureDevOpsURL(repoURL); err != nil {
+		return nil, err
+	}
+	return configuredProvider(r.azureDevOps != nil, r.azureDevOps, "azure_devops", "Azure DevOps provider is not configured")
+}
+
+func (r *Registry) detectGitLabProvider(repoURL string) (GitProvider, error) {
+	if _, err := parseGitLabProjectPath(repoURL); err != nil {
+		return nil, err
+	}
+	return configuredProvider(r.gitlab != nil, r.gitlab, "gitlab", "GitLab provider is not configured")
+}
+
+func configuredProvider(configured bool, provider GitProvider, providerType, message string) (GitProvider, error) {
+	if !configured {
+		return nil, providerError(ErrProviderUnavailable, providerType, message, nil)
+	}
+	return provider, nil
 }
 
 // ListBranches detects the provider, checks the cache, and returns branches.
@@ -126,7 +169,7 @@ func (r *Registry) ListBranches(ctx context.Context, repoURL string) ([]Branch, 
 	start := time.Now()
 	provider, err := r.detectProvider(repoURL)
 	if err != nil {
-		recordBranchListResult("unknown", "failure", time.Since(start))
+		recordBranchListResult(unavailableProviderType(err), "failure", time.Since(start))
 		return nil, err
 	}
 	if err := authorizeRepository(provider, repoURL); err != nil {
@@ -136,13 +179,9 @@ func (r *Registry) ListBranches(ctx context.Context, repoURL string) ([]Branch, 
 
 	key := normalizeCacheKey(repoURL)
 
-	r.mu.RLock()
-	entry, found := r.cache[key]
-	r.mu.RUnlock()
-
-	if found && r.nowFunc().Before(entry.expiresAt) {
+	if branches, found := r.cachedBranches(key); found {
 		recordBranchListResult(providerTypeName(provider), "success", time.Since(start))
-		return cloneBranches(entry.branches), nil
+		return branches, nil
 	}
 
 	fill := r.joinBranchFill(ctx, key, provider, repoURL)
@@ -161,6 +200,17 @@ func (r *Registry) ListBranches(ctx context.Context, repoURL string) ([]Branch, 
 
 	recordBranchListResult(providerTypeName(provider), "success", time.Since(start))
 	return branches, nil
+}
+
+func unavailableProviderType(err error) string {
+	if !errors.Is(err, ErrProviderUnavailable) {
+		return "unknown"
+	}
+	var providerErr *ProviderError
+	if errors.As(err, &providerErr) && providerErr.Provider != "" {
+		return providerErr.Provider
+	}
+	return "unknown"
 }
 
 func authorizeRepository(provider GitProvider, repoURL string) error {
@@ -182,12 +232,27 @@ func (r *Registry) joinBranchFill(ctx context.Context, key string, provider GitP
 		fill.waiters++
 		return fill
 	}
+	if branches, found := r.cachedBranches(key); found {
+		done := make(chan struct{})
+		close(done)
+		return &branchFill{done: done, branches: branches}
+	}
 
 	fillContext, cancel := context.WithCancel(context.WithoutCancel(ctx))
 	fill := &branchFill{done: make(chan struct{}), cancel: cancel, waiters: 1}
 	r.inflight[key] = fill
 	go r.runBranchFill(fillContext, key, repoURL, provider, fill)
 	return fill
+}
+
+func (r *Registry) cachedBranches(key string) ([]Branch, bool) {
+	r.mu.RLock()
+	entry, found := r.cache[key]
+	r.mu.RUnlock()
+	if !found || !r.nowFunc().Before(entry.expiresAt) {
+		return nil, false
+	}
+	return cloneBranches(entry.branches), true
 }
 
 func (r *Registry) runBranchFill(ctx context.Context, key, repoURL string, provider GitProvider, fill *branchFill) {

@@ -2,6 +2,7 @@ package gitprovider
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -16,6 +17,10 @@ type gitlabProvider struct {
 }
 
 func newGitLabProvider(cfg GitLabConfig) *gitlabProvider {
+	return newGitLabProviderWithClient(cfg, &http.Client{Timeout: 15 * time.Second})
+}
+
+func newGitLabProviderWithClient(cfg GitLabConfig, client *http.Client) *gitlabProvider {
 	baseURL := cfg.BaseURL
 	if baseURL == "" {
 		baseURL = "https://gitlab.com"
@@ -24,7 +29,7 @@ func newGitLabProvider(cfg GitLabConfig) *gitlabProvider {
 	return &gitlabProvider{
 		token:      cfg.Token,
 		baseURL:    baseURL,
-		httpClient: &http.Client{Timeout: 15 * time.Second},
+		httpClient: redirectRejectingHTTPClient(client, 15*time.Second),
 	}
 }
 
@@ -37,7 +42,7 @@ func parseGitLabProjectPath(rawURL string) (string, error) {
 	if strings.HasPrefix(rawURL, "git@") {
 		return parseGitLabSSH(rawURL)
 	}
-	return parseGitLabHTTPS(rawURL)
+	return parseGitLabHTTP(rawURL)
 }
 
 func parseGitLabSSH(rawURL string) (string, error) {
@@ -45,27 +50,38 @@ func parseGitLabSSH(rawURL string) (string, error) {
 	if colonIdx < 0 {
 		return "", providerError(ErrInvalidRepositoryURL, "gitlab", "invalid GitLab SSH URL", nil)
 	}
-	path := rawURL[colonIdx+1:]
+	path := strings.TrimSuffix(rawURL[colonIdx+1:], "/")
 	path = strings.TrimSuffix(path, ".git")
-	if path == "" || !strings.Contains(path, "/") {
+	parts := strings.Split(path, "/")
+	if len(parts) < 2 {
 		return "", providerError(ErrInvalidRepositoryURL, "gitlab", "invalid GitLab SSH URL path", nil)
+	}
+	for _, part := range parts {
+		if !isSafeRepositoryPathSegment(part) {
+			return "", providerError(ErrInvalidRepositoryURL, "gitlab", "invalid GitLab SSH URL path", nil)
+		}
 	}
 	return path, nil
 }
 
-func parseGitLabHTTPS(rawURL string) (string, error) {
-	rawURL = strings.TrimPrefix(rawURL, "https://")
-	rawURL = strings.TrimPrefix(rawURL, "http://")
-	rawURL = strings.TrimSuffix(rawURL, ".git")
-	slashIdx := strings.Index(rawURL, "/")
-	if slashIdx < 0 {
-		return "", providerError(ErrInvalidRepositoryURL, "gitlab", "invalid GitLab URL: missing path", nil)
+func parseGitLabHTTP(rawURL string) (string, error) {
+	parsed, err := url.Parse(rawURL)
+	// url.Parse drops an empty fragment ("...repo#"), so check the raw input.
+	if err != nil || strings.Contains(rawURL, "#") {
+		return "", providerError(ErrInvalidRepositoryURL, "gitlab", "invalid GitLab repository URL", nil)
 	}
-	path := rawURL[slashIdx+1:]
-	if path == "" || !strings.Contains(path, "/") {
+	if !isCanonicalRepositoryHTTPURL(parsed) {
+		return "", providerError(ErrInvalidRepositoryURL, "gitlab", "invalid GitLab repository URL", nil)
+	}
+	parts, err := decodedRepositoryPath(parsed, "gitlab")
+	if err != nil || len(parts) < 2 {
 		return "", providerError(ErrInvalidRepositoryURL, "gitlab", "invalid GitLab URL path", nil)
 	}
-	return path, nil
+	parts[len(parts)-1] = strings.TrimSuffix(parts[len(parts)-1], ".git")
+	if !isSafeRepositoryPathSegment(parts[len(parts)-1]) {
+		return "", providerError(ErrInvalidRepositoryURL, "gitlab", "invalid GitLab URL path", nil)
+	}
+	return strings.Join(parts, "/"), nil
 }
 
 type gitlabBranchResponse struct {
@@ -90,6 +106,9 @@ func (p *gitlabProvider) ListBranches(ctx context.Context, repoURL string) ([]Br
 
 	resp, err := p.httpClient.Do(req)
 	if err != nil {
+		if errors.Is(err, errProviderRedirect) {
+			return nil, providerError(ErrUpstreamFailure, "gitlab", errProviderRedirect.Error(), errProviderRedirect)
+		}
 		return nil, providerError(ErrUpstreamFailure, "gitlab", "GitLab API request failed", err)
 	}
 	defer resp.Body.Close()
@@ -153,22 +172,4 @@ func (p *gitlabProvider) ValidateBranch(ctx context.Context, repoURL string, bra
 		}
 	}
 	return false, nil
-}
-
-func gitlabHost(rawURL string) string {
-	rawURL = strings.TrimSpace(rawURL)
-	if strings.HasPrefix(rawURL, "git@") {
-		colonIdx := strings.Index(rawURL, ":")
-		if colonIdx > 4 {
-			return rawURL[4:colonIdx]
-		}
-		return ""
-	}
-	rawURL = strings.TrimPrefix(rawURL, "https://")
-	rawURL = strings.TrimPrefix(rawURL, "http://")
-	slashIdx := strings.Index(rawURL, "/")
-	if slashIdx > 0 {
-		return rawURL[:slashIdx]
-	}
-	return rawURL
 }

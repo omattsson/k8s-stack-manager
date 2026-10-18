@@ -268,14 +268,14 @@ func TestParseAzureSSH_TooFewParts(t *testing.T) {
 
 func TestParseAzureVSURL_InvalidHost(t *testing.T) {
 	t.Parallel()
-	_, err := parseAzureVSURL("https://.visualstudio.com/project/_git/repo")
+	_, err := parseAzureDevOpsURL("https://.visualstudio.com/project/_git/repo")
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "cannot extract org from host")
 }
 
 func TestParseAzureVSURL_TooFewParts(t *testing.T) {
 	t.Parallel()
-	_, err := parseAzureVSURL("https://myorg.visualstudio.com/project/repo")
+	_, err := parseAzureDevOpsURL("https://myorg.visualstudio.com/project/repo")
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid Azure DevOps visualstudio.com URL format")
 }

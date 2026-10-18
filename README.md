@@ -325,6 +325,7 @@ Key environment variables (see `docker-compose.yml` for full list):
 | `GITHUB_TOKEN` | No | GitHub fine-grained personal access token; requires `GITHUB_ALLOWED_REPOSITORIES` |
 | `GITHUB_ALLOWED_REPOSITORIES` | With `GITHUB_TOKEN` | Exact comma-separated `owner/repository` entries allowed to use the token |
 | `GITLAB_TOKEN` | No | GitLab access token |
+| `GITLAB_BASE_URL` | No | Custom GitLab origin; defaults to `https://gitlab.com` |
 | `DEFAULT_BRANCH` | No | Default Git branch (default: `master`) |
 | `KUBECONFIG_ENCRYPTION_KEY` | No | Passphrase for deriving AES-256 key (SHA-256) to encrypt kubeconfig data at rest |
 | `SESSION_STORE` | No | Session store backend: `mysql` (default) or `memory` |
@@ -336,6 +337,14 @@ Leave both `GITHUB_TOKEN` and `GITHUB_ALLOWED_REPOSITORIES` empty to query publi
 For private repositories or higher rate limits, use a fine-grained personal access token restricted to exactly the repositories listed in `GITHUB_ALLOWED_REPOSITORIES`, grant only **Contents: read**, set an expiration, and rotate it before expiry. The allowlist is a comma-separated list of exact, case-insensitive `owner/repository` names; it does not support owner-wide entries, wildcards, prefixes, or repository URLs. Authenticated requests for repositories outside the list are denied with HTTP 403. Configuration fails closed at startup when `GITHUB_TOKEN` is set without a non-empty allowlist. GitHub App authentication remains an optional future integration and is not implemented.
 
 > **Upgrade required for GitHub tokens:** Before rolling out this version, existing installations that set `GITHUB_TOKEN` must configure `GITHUB_ALLOWED_REPOSITORIES` with the exact `owner/repository` entries the token may access. Ideally, apply this non-secret configuration before updating the workload so every new backend pod starts successfully. Installations without `GITHUB_TOKEN` are unaffected.
+
+### GitLab custom origins
+
+`GITLAB_BASE_URL` is optional and defaults to `https://gitlab.com`. It must be an absolute HTTP(S) origin containing a scheme and hostname, with an optional port. Credentials, query strings, fragments, and paths such as `/api/v4` are rejected. Surrounding whitespace is trimmed, a trailing slash is removed, and the provider appends `/api/v4`. For Helm installs, set the non-sensitive value at `backend.env.GITLAB_BASE_URL`; do not place it in `backend.secrets` or External Secrets.
+
+> **Upgrade note for GitLab:** The backend now validates `GITLAB_BASE_URL` at startup and refuses to start if it is invalid. GitLab instances served under a relative URL root (for example `https://example.com/gitlab`) are not supported; branch listing never worked for them, and such a value now fails configuration validation. Check this value before upgrading. Repository URLs routed to GitLab also no longer accept query strings or fragments.
+
+**Upgrade note for GitHub redirects:** Branch requests only follow GitHub redirects that keep the original repository path or point to the canonical `/repositories/{id}` endpoint for a renamed or transferred repository. Any other redirect is rejected as an upstream failure, so the token is never sent to a different repository path.
 
 ## Helm Chart (Kubernetes Deployment)
 

@@ -59,6 +59,7 @@ Template → (instantiate) → Definition + ChartConfigs → (create instance) �
 - Requests outside the GitHub allowlist return HTTP 403; setting `GITHUB_TOKEN` without an allowlist fails closed at startup
 - Use a fine-grained GitHub PAT restricted to exactly the allowlisted repositories with only **Contents: read**, an expiration, and a rotation schedule
 - GitHub App authentication is optional future work and is not implemented
+- `GITLAB_BASE_URL` optionally selects a custom GitLab origin. It must be an absolute HTTP(S) origin with a hostname and optional port; credentials, query, fragment, and paths such as `/api/v4` are rejected. Whitespace and a trailing slash are normalized, and the provider appends `/api/v4`
 
 ### Helm Values
 - Deep merge: chart defaults ← instance overrides
@@ -92,5 +93,5 @@ See `.github/instructions/api-extension.instructions.md` for the step-by-step gu
 
 - **JWT errors**: Ensure `JWT_SECRET` is set and at least 16 characters.
 - **Database connection errors (MySQL)**: Ensure MySQL is running. Check `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD` environment variables.
-- **Git provider errors**: Check `AZURE_DEVOPS_PAT`, `GITHUB_TOKEN`, or `GITLAB_TOKEN` are set correctly. GitHub public repositories support tokenless access at lower rate limits. For authenticated GitHub access, ensure `GITHUB_ALLOWED_REPOSITORIES` contains the exact `owner/repository`; requests outside it return HTTP 403.
+- **Git provider errors**: Check `AZURE_DEVOPS_PAT`, `GITHUB_TOKEN`, or `GITLAB_TOKEN` are set correctly. GitHub public repositories support tokenless access at lower rate limits. For authenticated GitHub access, ensure `GITHUB_ALLOWED_REPOSITORIES` contains the exact `owner/repository`; requests outside it return HTTP 403. For self-managed GitLab, set non-sensitive `GITLAB_BASE_URL` directly or through Helm `backend.env`, not Secrets.
 - **Cluster connection errors**: Verify the kubeconfig path or data is valid. Use the "Test Connection" button on the Clusters admin page. If `KUBECONFIG_ENCRYPTION_KEY` is set, all kubeconfig data is encrypted at rest — changing the key will make existing encrypted data unreadable.

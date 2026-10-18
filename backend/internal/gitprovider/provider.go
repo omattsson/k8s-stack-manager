@@ -8,15 +8,17 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
 )
 
 var (
+	errProviderRedirect = errors.New("Git provider API redirect rejected")
 	// ErrInvalidRepositoryURL identifies a malformed or invalid repository URL.
 	ErrInvalidRepositoryURL = errors.New("invalid repository URL")
-	// ErrUnsupportedProvider identifies a repository hosted by an unsupported or unconfigured provider.
+	// ErrUnsupportedProvider identifies a repository hosted by an unsupported provider.
 	ErrUnsupportedProvider = errors.New("unsupported Git provider URL")
 	// ErrAuthentication identifies provider authentication or permission failures.
 	ErrAuthentication = errors.New("Git provider authentication or permission denied")
@@ -30,6 +32,9 @@ var (
 	ErrRepositoryNotAllowed = errors.New("Git repository is not allowed")
 	// ErrUpstreamFailure identifies an unexpected provider or transport failure.
 	ErrUpstreamFailure = errors.New("Git provider upstream failure")
+	// ErrProviderUnavailable identifies a recognized provider that is not configured.
+	// It wraps ErrUpstreamFailure to preserve the handler's established HTTP 503 mapping.
+	ErrProviderUnavailable = fmt.Errorf("Git provider is unavailable: %w", ErrUpstreamFailure)
 )
 
 // ProviderError classifies a sanitized provider failure while preserving its cause.
@@ -83,6 +88,17 @@ func providerError(kind error, provider, message string, cause error) error {
 
 func rateLimitError(provider, message string, retryAfter time.Time) error {
 	return &RateLimitError{Provider: provider, Message: message, RetryAfter: retryAfter}
+}
+
+func redirectRejectingHTTPClient(client *http.Client, timeout time.Duration) *http.Client {
+	if client == nil {
+		client = &http.Client{Timeout: timeout}
+	}
+	safeClient := *client
+	safeClient.CheckRedirect = func(_ *http.Request, _ []*http.Request) error {
+		return errProviderRedirect
+	}
+	return &safeClient
 }
 
 func parseRetryAfter(rawValue string, now time.Time) time.Time {
@@ -152,6 +168,9 @@ func (c Config) Validate() error {
 	if err := c.GitHub.Validate(); err != nil {
 		return fmt.Errorf("GitHub configuration: %w", err)
 	}
+	if _, err := NormalizeGitLabBaseURL(c.GitLab.BaseURL); err != nil {
+		return fmt.Errorf("GitLab configuration: %w", err)
+	}
 	return nil
 }
 
@@ -159,4 +178,42 @@ func (c Config) Validate() error {
 type GitLabConfig struct {
 	Token   string
 	BaseURL string
+}
+
+// NormalizeGitLabBaseURL validates and normalizes the GitLab API origin.
+func NormalizeGitLabBaseURL(rawURL string) (string, error) {
+	rawURL = strings.TrimSpace(rawURL)
+	if rawURL == "" {
+		return "https://gitlab.com", nil
+	}
+
+	parsed, err := url.Parse(rawURL)
+	if err != nil || !parsed.IsAbs() {
+		return "", errors.New("GitLab base URL must be an absolute HTTP(S) origin")
+	}
+	parsed.Scheme = strings.ToLower(parsed.Scheme)
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return "", errors.New("GitLab base URL must use HTTP or HTTPS")
+	}
+	if parsed.Hostname() == "" {
+		return "", errors.New("GitLab base URL must include a hostname")
+	}
+	if parsed.User != nil {
+		return "", errors.New("GitLab base URL must not include user information")
+	}
+	if parsed.Opaque != "" {
+		return "", errors.New("GitLab base URL must be an absolute HTTP(S) origin")
+	}
+	// url.Parse drops an empty fragment ("https://host/#") entirely, so also
+	// check the raw input for a fragment delimiter.
+	if parsed.RawQuery != "" || parsed.ForceQuery || parsed.Fragment != "" || parsed.RawFragment != "" || strings.Contains(rawURL, "#") {
+		return "", errors.New("GitLab base URL must not include a query or fragment")
+	}
+	if parsed.EscapedPath() != "" && parsed.EscapedPath() != "/" {
+		return "", errors.New("GitLab base URL must not include a path")
+	}
+
+	parsed.Path = ""
+	parsed.RawPath = ""
+	return parsed.String(), nil
 }

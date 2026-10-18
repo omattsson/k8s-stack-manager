@@ -114,3 +114,41 @@ func TestRegistryListBranches_MetricLabels(t *testing.T) {
 	assert.Equal(t, int64(1), counts[[2]string{"azure_devops", "failure"}], "provider failure")
 	assert.GreaterOrEqual(t, branchListDurationCount(t, reader), 1, "branch_list.duration must have datapoints")
 }
+
+func TestRegistryListBranches_UnavailableProviderMetricLabels(t *testing.T) {
+	reader := sdkmetric.NewManualReader()
+	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
+	prev := otel.GetMeterProvider()
+	otel.SetMeterProvider(mp)
+	t.Cleanup(func() {
+		otel.SetMeterProvider(prev)
+		_ = mp.Shutdown(context.Background())
+	})
+	prevMeter := gitProviderMeter
+	gitProviderMeter = mp.Meter("gitprovider")
+	initGitProviderMetrics()
+	t.Cleanup(func() { gitProviderMeter = prevMeter })
+
+	registry := &Registry{cache: make(map[string]cacheEntry), nowFunc: time.Now}
+	tests := []struct {
+		name         string
+		repoURL      string
+		providerType string
+	}{
+		{name: "Azure DevOps", repoURL: "https://dev.azure.com/org/proj/_git/repo", providerType: "azure_devops"},
+		{name: "GitLab", repoURL: "https://gitlab.com/org/repo", providerType: "gitlab"},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := registry.ListBranches(context.Background(), tt.repoURL)
+			require.ErrorIs(t, err, ErrProviderUnavailable)
+		})
+	}
+
+	counts := branchListCounts(t, reader)
+	assert.Zero(t, counts[[2]string{"unknown", "failure"}])
+	for _, tt := range tests {
+		assert.Equal(t, int64(1), counts[[2]string{tt.providerType, "failure"}])
+	}
+}

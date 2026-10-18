@@ -378,10 +378,13 @@ helm-test: ## Verify Deployment, Argo Rollout, and External Secrets Helm renders
 	helm template $(HELM_RELEASE) $(HELM_CHART) --show-only templates/backend/configmap.yaml \
 		--set backend.secrets.JWT_SECRET=dummy-jwt-secret-for-template > "$$template_file"; \
 	grep -q 'GITHUB_ALLOWED_REPOSITORIES: ""' "$$template_file"; \
+	grep -q 'GITLAB_BASE_URL: ""' "$$template_file"; \
 	helm template $(HELM_RELEASE) $(HELM_CHART) --show-only templates/backend/configmap.yaml \
 		--set backend.secrets.JWT_SECRET=dummy-jwt-secret-for-template \
-		--set-string 'backend.env.GITHUB_ALLOWED_REPOSITORIES=example-org/api\,example-org/web' > "$$template_file"; \
+		--set-string 'backend.env.GITHUB_ALLOWED_REPOSITORIES=example-org/api\,example-org/web' \
+		--set-string backend.env.GITLAB_BASE_URL=https://gitlab.example.com:8443 > "$$template_file"; \
 	grep -q 'GITHUB_ALLOWED_REPOSITORIES: "example-org/api,example-org/web"' "$$template_file"; \
+	grep -q 'GITLAB_BASE_URL: "https://gitlab.example.com:8443"' "$$template_file"; \
 	for rollout_mode in false true; do \
 		if [ "$$rollout_mode" = true ]; then \
 			workload_template=templates/backend/rollout.yaml; \
@@ -399,6 +402,14 @@ helm-test: ## Verify Deployment, Argo Rollout, and External Secrets Helm renders
 		base_secret_checksum=$$(awk '/checksum\/secret:/{print $$2; exit}' "$$template_file"); \
 		test -n "$$base_config_checksum"; \
 		test -n "$$base_secret_checksum"; \
+		helm template $(HELM_RELEASE) $(HELM_CHART) --show-only "$$workload_template" \
+			--set backend.secrets.JWT_SECRET=dummy-jwt-secret-for-template \
+			--set argoRollouts.enabled="$$rollout_mode" \
+			--set-string backend.env.GITLAB_BASE_URL=https://gitlab.example.com:8443 > "$$template_file"; \
+		gitlab_config_checksum=$$(awk '/checksum\/config:/{print $$2; exit}' "$$template_file"); \
+		gitlab_secret_checksum=$$(awk '/checksum\/secret:/{print $$2; exit}' "$$template_file"); \
+		test "$$base_config_checksum" != "$$gitlab_config_checksum"; \
+		test "$$base_secret_checksum" = "$$gitlab_secret_checksum"; \
 		helm template $(HELM_RELEASE) $(HELM_CHART) --show-only "$$workload_template" \
 			--set backend.secrets.JWT_SECRET=dummy-jwt-secret-for-template \
 			--set argoRollouts.enabled="$$rollout_mode" \

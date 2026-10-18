@@ -469,27 +469,33 @@ func TestGitHubRejectsCrossOriginRedirectWithoutForwardingAuthorization(t *testi
 	assert.Nil(t, forwardedAuthorization.Load())
 }
 
-func TestGitHubAllowsSameOriginRedirect(t *testing.T) {
+func TestGitHubRejectsSameOriginRedirectToDifferentRepository(t *testing.T) {
 	t.Parallel()
 
-	observations := make(chan string, 2)
+	var targetRequests atomic.Int32
+	var targetAuthorization atomic.Value
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		observations <- r.URL.Path + " " + r.Header.Get("Authorization")
-		if r.URL.Path == "/repos/octo-org/octo-repo/branches" {
-			http.Redirect(w, r, "/redirected-branches", http.StatusFound)
-			return
+		switch r.URL.Path {
+		case "/repos/octo-org/octo-repo/branches":
+			assert.Equal(t, "Bearer test-token", r.Header.Get("Authorization"))
+			http.Redirect(w, r, "/repos/other/repo/branches", http.StatusFound)
+		case "/repos/other/repo/branches":
+			targetRequests.Add(1)
+			targetAuthorization.Store(r.Header.Get("Authorization"))
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`[{"name":"main"}]`))
+		default:
+			assert.Fail(t, "unexpected redirect path", "path: %q", r.URL.Path)
 		}
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`[{"name":"main"}]`))
 	}))
 	defer server.Close()
 
 	provider := newTestGitHubProvider(server, "test-token")
-	branches, err := provider.ListBranches(context.Background(), "https://github.com/octo-org/octo-repo")
-	require.NoError(t, err)
-	assert.Equal(t, []Branch{{Name: "main"}}, branches)
-	assert.Equal(t, "/repos/octo-org/octo-repo/branches Bearer test-token", <-observations)
-	assert.Equal(t, "/redirected-branches Bearer test-token", <-observations)
+	_, err := provider.ListBranches(context.Background(), "https://github.com/octo-org/octo-repo")
+	assert.Error(t, err)
+	assert.ErrorIs(t, err, errGitHubRedirect)
+	assert.Zero(t, targetRequests.Load())
+	assert.Nil(t, targetAuthorization.Load())
 }
 
 func TestGitHubRedirectPolicyRejectsUnsafeTargets(t *testing.T) {

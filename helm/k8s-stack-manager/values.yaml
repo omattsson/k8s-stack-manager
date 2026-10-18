@@ -63,6 +63,9 @@ backend:
     # Exact, comma-separated owner/repository entries allowed for authenticated
     # GitHub requests. Required when GITHUB_TOKEN is non-empty.
     GITHUB_ALLOWED_REPOSITORIES: ""
+    # Optional GitLab HTTP(S) origin (scheme + hostname, optional port). Do not
+    # include credentials, query, fragment, or a path such as /api/v4.
+    GITLAB_BASE_URL: ""
     # Wildcard TLS secret replication — copies a shared TLS secret into every
     # stack namespace so ingresses can reference it. Disabled when
     # WILDCARD_TLS_SOURCE_SECRET is empty. Set to enable for local dev flows

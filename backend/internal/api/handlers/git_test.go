@@ -86,6 +86,24 @@ func TestGitProviderErrorMappings(t *testing.T) {
 			expectedMessage: "Unsupported Git provider",
 		},
 		{
+			name:            "GitLab domain in query is unsupported",
+			repoURL:         "https://example.com/org/repo-marker?target=gitlab.com",
+			expectedStatus:  http.StatusBadRequest,
+			expectedMessage: "Unsupported Git provider",
+		},
+		{
+			name:            "Azure lookalike host is unsupported",
+			repoURL:         "https://dev.azure.com.evil.example/org/project/_git/repo-marker",
+			expectedStatus:  http.StatusBadRequest,
+			expectedMessage: "Unsupported Git provider",
+		},
+		{
+			name:            "GitLab lookalike host is unsupported",
+			repoURL:         "https://gitlab.com.evil.example/org/repo-marker",
+			expectedStatus:  http.StatusBadRequest,
+			expectedMessage: "Unsupported Git provider",
+		},
+		{
 			name:            "repository not allowed",
 			repoURL:         "https://github.com/octo-org/repo-marker",
 			allowedRepos:    []string{"octo-org/permitted"},
@@ -215,6 +233,54 @@ func TestGitProviderErrorMappings(t *testing.T) {
 	}
 }
 
+func TestGitProviderUnconfiguredRecognizedProviderReturnsServiceUnavailable(t *testing.T) {
+	t.Parallel()
+
+	providers := []struct {
+		name    string
+		repoURL string
+	}{
+		{name: "Azure DevOps", repoURL: "https://dev.azure.com/org-marker/project/_git/repo-marker"},
+		{name: "Azure DevOps visualstudio.com", repoURL: "https://org-marker.visualstudio.com/project/_git/repo-marker"},
+		{name: "GitLab", repoURL: "https://gitlab.com/org-marker/repo-marker"},
+	}
+	endpoints := []struct {
+		name string
+		path string
+	}{
+		{name: "list branches", path: "/api/v1/git/branches"},
+		{name: "validate branch", path: "/api/v1/git/validate-branch"},
+	}
+
+	for _, endpoint := range endpoints {
+		endpoint := endpoint
+		t.Run(endpoint.name, func(t *testing.T) {
+			t.Parallel()
+			for _, provider := range providers {
+				provider := provider
+				t.Run(provider.name, func(t *testing.T) {
+					t.Parallel()
+
+					requestURL := endpoint.path + "?repo=" + url.QueryEscape(provider.repoURL)
+					if endpoint.path == "/api/v1/git/validate-branch" {
+						requestURL += "&branch=branch-marker"
+					}
+					request := httptest.NewRequest(http.MethodGet, requestURL, nil)
+					response := httptest.NewRecorder()
+
+					setupGitRouter("").ServeHTTP(response, request)
+
+					assert.Equal(t, http.StatusServiceUnavailable, response.Code)
+					assert.JSONEq(t, `{"error":"Git provider is unavailable"}`, response.Body.String())
+					assert.NotContains(t, response.Body.String(), "org-marker")
+					assert.NotContains(t, response.Body.String(), "repo-marker")
+					assert.NotContains(t, response.Body.String(), "branch-marker")
+				})
+			}
+		})
+	}
+}
+
 func TestGitProviderRateLimitHeader(t *testing.T) {
 	t.Parallel()
 
@@ -286,6 +352,26 @@ func TestListBranches(t *testing.T) {
 		assert.Len(t, branches, 2)
 		assert.Equal(t, "main", branches[0].Name)
 		assert.True(t, branches[0].IsDefault)
+	})
+
+	t.Run("returns branch list for configured custom GitLab host", func(t *testing.T) {
+		t.Parallel()
+		server := httptest.NewServer(gitlabBranchesHandler([]map[string]interface{}{
+			{"name": "main", "default": true},
+		}))
+		defer server.Close()
+
+		router := setupGitRouter(server.URL)
+		w := httptest.NewRecorder()
+		requestURL := "/api/v1/git/branches?repo=" + url.QueryEscape(server.URL+"/org/repo")
+		req := httptest.NewRequest(http.MethodGet, requestURL, nil)
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		var branches []gitprovider.Branch
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &branches))
+		require.Len(t, branches, 1)
+		assert.Equal(t, "main", branches[0].Name)
 	})
 
 	t.Run("invalid credential-bearing GitHub repo returns 400 without exposing credentials", func(t *testing.T) {

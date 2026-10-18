@@ -304,6 +304,11 @@ func (c *GitProviderConfig) Validate() error {
 	if c.GitHubToken != "" && len(c.GitHubAllowedRepositories) == 0 {
 		return errors.New("GITHUB_ALLOWED_REPOSITORIES is required when GITHUB_TOKEN is set")
 	}
+	gitLabBaseURL, err := gitprovider.NormalizeGitLabBaseURL(c.GitLabBaseURL)
+	if err != nil {
+		return fmt.Errorf("GITLAB_BASE_URL is invalid: %w", err)
+	}
+	c.GitLabBaseURL = gitLabBaseURL
 	return nil
 }
 
