@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -48,7 +49,9 @@ type Registry struct {
 	gitlabCustomPort string
 	// afterCacheMiss is a test seam invoked by ListBranches between the
 	// initial cache miss and joining a branch fill. Always nil in production.
-	afterCacheMiss   func(key string)
+	afterCacheMiss func(key string)
+	// logger receives provider failure diagnostics; nil means slog.Default().
+	logger           *slog.Logger
 	mu               sync.RWMutex
 	cache            map[string]cacheEntry
 	nowFunc          func() time.Time
@@ -80,6 +83,7 @@ func newRegistryWithLogger(cfg Config, logger *slog.Logger) (*Registry, error) {
 		cacheWeightLimit: maxBranchCacheWeight,
 		inflight:         make(map[string]*branchFill),
 		github:           newGitHubProvider(cfg.GitHub),
+		logger:           logger,
 	}
 
 	if cfg.AzureDevOps.PAT != "" || cfg.AzureDevOps.TokenSource != nil {
@@ -140,7 +144,8 @@ func (r *Registry) matchesGitLabCustomOrigin(origin repositoryOrigin) bool {
 	}
 	switch origin.scheme {
 	case "http", "https":
-		return origin.effectivePort() == r.gitlabCustomPort
+		port := origin.effectivePort()
+		return port != "" && port == r.gitlabCustomPort
 	default:
 		return true
 	}
@@ -154,9 +159,16 @@ type repositoryOrigin struct {
 	port   string
 }
 
+// effectivePort returns the numeric port (explicit, or 80/443 from the
+// scheme) in canonical decimal form, so ":0443" and ":443" compare equal.
+// It returns "" for non-numeric or out-of-range ports, which never match.
 func (o repositoryOrigin) effectivePort() string {
 	if o.port != "" {
-		return o.port
+		port, err := strconv.ParseUint(o.port, 10, 16)
+		if err != nil || port == 0 {
+			return ""
+		}
+		return strconv.FormatUint(port, 10)
 	}
 	switch o.scheme {
 	case "http":
@@ -349,6 +361,11 @@ func (r *Registry) runBranchFill(ctx context.Context, key, repoURL string, provi
 	branches, err := provider.ListBranches(ctx, repoURL)
 
 	r.fillMu.Lock()
+	// Log once per failed fill (not per waiting caller). Fills cancelled
+	// because every caller left are not provider failures.
+	if err != nil && !fill.abandoned {
+		r.logProviderFailure("list_branches", provider, err)
+	}
 	if !fill.abandoned && err == nil {
 		r.storeCacheEntry(key, branches)
 	}
@@ -489,7 +506,11 @@ func (r *Registry) GetDefaultBranch(ctx context.Context, repoURL string) (string
 	if err := authorizeRepository(provider, repoURL); err != nil {
 		return "", err
 	}
-	return provider.GetDefaultBranch(ctx, repoURL)
+	branch, err := provider.GetDefaultBranch(ctx, repoURL)
+	if err != nil && ctx.Err() == nil {
+		r.logProviderFailure("get_default_branch", provider, err)
+	}
+	return branch, err
 }
 
 // ValidateBranch checks whether the branch exists using the cached branch list.
@@ -555,7 +576,11 @@ func (r *Registry) HealthCheck(ctx context.Context) error {
 		}
 	}
 
-	slog.Warn("all configured git providers unreachable", "last_error", lastErr)
+	attrs := []any{"last_error", lastErr}
+	if cause := providerFailureCause(lastErr); cause != "" {
+		attrs = append(attrs, "cause", cause)
+	}
+	r.log().Warn("all configured git providers unreachable", attrs...)
 	return fmt.Errorf("all configured git providers are unreachable")
 }
 
@@ -570,7 +595,7 @@ func hasGitHubToken(provider *githubProvider) bool {
 func (r *Registry) pingAzureDevOps(ctx context.Context, p *azureDevOpsProvider) error {
 	pingURL := "https://dev.azure.com/_apis/connectionData"
 	if p.defaultOrg != "" {
-		pingURL = fmt.Sprintf("https://dev.azure.com/%s/_apis/connectionData", p.defaultOrg)
+		pingURL = fmt.Sprintf("https://dev.azure.com/%s/_apis/connectionData", url.PathEscape(p.defaultOrg))
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, pingURL, nil)
 	if err != nil {
@@ -641,4 +666,53 @@ func normalizeCacheKey(repoURL string) string {
 	key = strings.TrimSuffix(key, "/")
 	key = strings.TrimSuffix(key, ".git")
 	return key
+}
+
+func (r *Registry) log() *slog.Logger {
+	if r.logger != nil {
+		return r.logger
+	}
+	return slog.Default()
+}
+
+// logProviderFailure records the server-side cause of a provider failure.
+// HTTP responses only carry sanitized messages, so this is the one place
+// operators can see e.g. an Entra ID (AADSTS) error or a transport failure.
+// It logs the provider, error kind, sanitized message and the wrapped cause;
+// causes come from token sources and the HTTP client and never include
+// request headers, so credentials are not logged.
+func (r *Registry) logProviderFailure(operation string, provider GitProvider, err error) {
+	attrs := []any{
+		"operation", operation,
+		"provider", providerTypeName(provider),
+		"kind", providerFailureKind(err),
+		"error", err,
+	}
+	if cause := providerFailureCause(err); cause != "" {
+		attrs = append(attrs, "cause", cause)
+	}
+	r.log().Warn("git provider operation failed", attrs...)
+}
+
+func providerFailureKind(err error) string {
+	var rateLimitErr *RateLimitError
+	if errors.As(err, &rateLimitErr) {
+		return "rate_limited"
+	}
+	var providerErr *ProviderError
+	if errors.As(err, &providerErr) && providerErr.Kind != nil {
+		return providerErr.Kind.Error()
+	}
+	return "unknown"
+}
+
+// providerFailureCause returns the cause wrapped by a ProviderError, whose
+// Error() only exposes the sanitized message. Other errors already print their
+// full chain through the "error"/"last_error" attribute, so "" is returned.
+func providerFailureCause(err error) string {
+	var providerErr *ProviderError
+	if errors.As(err, &providerErr) && providerErr.Cause != nil {
+		return providerErr.Cause.Error()
+	}
+	return ""
 }

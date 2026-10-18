@@ -36,27 +36,71 @@ const providerLabels: Record<ProviderType, string> = {
 };
 
 /**
- * Git provider of a repository URL, by exact hostname. Any other HTTP(S) host
- * is a (self-hosted) GitLab, as on the backend.
+ * Lowercase hostname of a repository URL. Like the backend, an scp-style SSH
+ * URL (`git@host:path`) is read as `ssh://git@host/path`, and a URL without a
+ * scheme as `https://...`. Only the authority is parsed, so an odd path still
+ * gives a hostname.
  * @param repoUrl - Repository URL
- * @returns The provider, or null for an invalid or non-HTTP(S) URL
+ * @returns The hostname, or null for an invalid URL or a scheme other than
+ *   http, https or ssh
  */
-export const detectProvider = (repoUrl: string): ProviderType | null => {
+const repositoryHostname = (repoUrl: string): string | null => {
+  let raw = repoUrl.trim();
+  if (!raw) return null;
+  if (!raw.includes('://')) {
+    const colon = raw.indexOf(':');
+    raw = colon > 0 && raw.slice(0, colon).includes('@')
+      ? `ssh://${raw.slice(0, colon)}/${raw.slice(colon + 1)}`
+      : `https://${raw}`;
+  }
+  const schemeEnd = raw.indexOf('://');
+  const rest = raw.slice(schemeEnd + 3);
+  const separator = rest.search(/[/?#]/);
+  const authority = separator >= 0 ? raw.slice(0, schemeEnd + 3 + separator) : raw;
+
   let url: URL;
   try {
-    url = new URL(repoUrl);
+    url = new URL(authority);
   } catch {
     return null;
   }
+  if (url.protocol !== 'http:' && url.protocol !== 'https:' && url.protocol !== 'ssh:') return null;
+  // ssh:// hosts are opaque in the URL standard and keep their case.
+  return url.hostname.toLowerCase();
+};
 
-  if (url.protocol !== 'http:' && url.protocol !== 'https:') return null;
+/**
+ * Git provider of a repository URL, by exact hostname (case-insensitive).
+ * Accepts https, http, ssh:// and scp-style (`git@host:path`) URLs.
+ *
+ * - GitHub: github.com.
+ * - Azure DevOps: dev.azure.com, ssh.dev.azure.com and *.visualstudio.com
+ *   (includes vs-ssh.visualstudio.com).
+ * - GitLab: gitlab.com only.
+ *
+ * The backend also routes a self-hosted GitLab (its configured GITLAB_BASE_URL
+ * origin) to GitLab, and then no longer serves gitlab.com. GET
+ * /api/v1/git/providers does not expose that origin, so any other host is
+ * unknown here: no provider status is shown and manual entry stays. A
+ * hostname with a trailing dot (as on the backend) or another empty label is
+ * never a provider host.
+ * @param repoUrl - Repository URL
+ * @returns The provider, or null for an unknown host or an invalid URL
+ */
+export const detectProvider = (repoUrl: string): ProviderType | null => {
+  const hostname = repositoryHostname(repoUrl);
+  if (!hostname || hostname.split('.').includes('')) return null;
 
-  const hostname = url.hostname.toLowerCase();
   if (hostname === 'github.com') return 'github';
-  if (hostname === 'dev.azure.com' || hostname.endsWith('.visualstudio.com')) {
+  if (
+    hostname === 'dev.azure.com'
+    || hostname === 'ssh.dev.azure.com'
+    || hostname.endsWith('.visualstudio.com')
+  ) {
     return 'azure_devops';
   }
-  return 'gitlab';
+  if (hostname === 'gitlab.com') return 'gitlab';
+  return null;
 };
 
 let providerStatusesRequest: Promise<ProviderStatus[]> | null = null;

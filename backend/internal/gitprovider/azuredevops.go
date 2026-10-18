@@ -11,11 +11,20 @@ import (
 	"time"
 )
 
+const (
+	// azureTokenTimeout bounds a single token-source call. The token exchange
+	// is not covered by http.Client.Timeout, and fill contexts only end when
+	// every waiter leaves, so an unbounded token source could hang a fill.
+	azureTokenTimeout = 15 * time.Second
+)
+
 type azureDevOpsProvider struct {
-	pat         string
-	tokenSource TokenSource
-	defaultOrg  string
-	httpClient  *http.Client
+	pat              string
+	tokenSource      TokenSource
+	defaultOrg       string
+	httpClient       *http.Client
+	tokenTimeout     time.Duration
+	operationTimeout time.Duration
 }
 
 func newAzureDevOpsProvider(cfg AzureDevOpsConfig) *azureDevOpsProvider {
@@ -24,10 +33,12 @@ func newAzureDevOpsProvider(cfg AzureDevOpsConfig) *azureDevOpsProvider {
 
 func newAzureDevOpsProviderWithClient(cfg AzureDevOpsConfig, client *http.Client) *azureDevOpsProvider {
 	return &azureDevOpsProvider{
-		pat:         cfg.PAT,
-		tokenSource: cfg.TokenSource,
-		defaultOrg:  cfg.DefaultOrg,
-		httpClient:  redirectRejectingHTTPClient(client, 15*time.Second),
+		pat:              cfg.PAT,
+		tokenSource:      cfg.TokenSource,
+		defaultOrg:       cfg.DefaultOrg,
+		httpClient:       redirectRejectingHTTPClient(client, 15*time.Second),
+		tokenTimeout:     azureTokenTimeout,
+		operationTimeout: providerOperationTimeout,
 	}
 }
 
@@ -42,7 +53,9 @@ func (p *azureDevOpsProvider) authorize(req *http.Request) error {
 	if p.tokenSource == nil {
 		return providerError(ErrProviderUnavailable, "azure_devops", "Azure DevOps provider is not configured", nil)
 	}
-	token, err := p.tokenSource(req.Context())
+	tokenCtx, cancel := context.WithTimeout(req.Context(), positiveDuration(p.tokenTimeout, azureTokenTimeout))
+	defer cancel()
+	token, err := p.tokenSource(tokenCtx)
 	if err != nil {
 		return providerError(ErrAuthentication, "azure_devops", "Azure DevOps token could not be obtained", err)
 	}
@@ -282,6 +295,8 @@ func (p *azureDevOpsProvider) ListBranches(ctx context.Context, repoURL string) 
 	if err != nil {
 		return nil, err
 	}
+	ctx, cancel := context.WithTimeout(ctx, positiveDuration(p.operationTimeout, providerOperationTimeout))
+	defer cancel()
 
 	apiURL := fmt.Sprintf(
 		"https://dev.azure.com/%s/%s/_apis/git/repositories/%s/refs?filter=heads/&api-version=7.1",
@@ -330,6 +345,8 @@ func (p *azureDevOpsProvider) GetDefaultBranch(ctx context.Context, repoURL stri
 	if err != nil {
 		return "", err
 	}
+	ctx, cancel := context.WithTimeout(ctx, positiveDuration(p.operationTimeout, providerOperationTimeout))
+	defer cancel()
 
 	apiURL := fmt.Sprintf(
 		"https://dev.azure.com/%s/%s/_apis/git/repositories/%s?api-version=7.1",

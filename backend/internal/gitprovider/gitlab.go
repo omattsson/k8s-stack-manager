@@ -11,9 +11,10 @@ import (
 )
 
 type gitlabProvider struct {
-	token      string
-	baseURL    string
-	httpClient *http.Client
+	token            string
+	baseURL          string
+	httpClient       *http.Client
+	operationTimeout time.Duration
 }
 
 func newGitLabProvider(cfg GitLabConfig) *gitlabProvider {
@@ -27,9 +28,10 @@ func newGitLabProviderWithClient(cfg GitLabConfig, client *http.Client) *gitlabP
 	}
 	baseURL = strings.TrimSuffix(baseURL, "/")
 	return &gitlabProvider{
-		token:      cfg.Token,
-		baseURL:    baseURL,
-		httpClient: redirectRejectingHTTPClient(client, 15*time.Second),
+		token:            cfg.Token,
+		baseURL:          baseURL,
+		httpClient:       redirectRejectingHTTPClient(client, 15*time.Second),
+		operationTimeout: providerOperationTimeout,
 	}
 }
 
@@ -39,7 +41,7 @@ func (p *gitlabProvider) ProviderType() string {
 
 func parseGitLabProjectPath(rawURL string) (string, error) {
 	rawURL = strings.TrimSpace(rawURL)
-	if strings.HasPrefix(rawURL, "git@") {
+	if isSCPStyleURL(rawURL) {
 		return parseGitLabSSH(rawURL)
 	}
 	if len(rawURL) >= len("ssh://") && strings.EqualFold(rawURL[:len("ssh://")], "ssh://") {
@@ -65,9 +67,27 @@ func parseGitLabSSHURL(rawURL string) (string, error) {
 	return gitLabProjectPathFromURL(parsed)
 }
 
+// isSCPStyleURL reports whether rawURL looks like an scp-style SSH URL
+// (user@host:path): no scheme and an "@" before the first ":".
+func isSCPStyleURL(rawURL string) bool {
+	if strings.Contains(rawURL, "://") {
+		return false
+	}
+	colon := strings.IndexByte(rawURL, ':')
+	return colon > 0 && strings.Contains(rawURL[:colon], "@")
+}
+
+// parseGitLabSSH parses scp-style GitLab SSH URLs (user@host:group/project).
+// Any SSH username is accepted, as in the ssh:// form; it must be non-empty
+// and must not contain ":", "@" or "/". The host must be non-empty.
 func parseGitLabSSH(rawURL string) (string, error) {
 	colonIdx := strings.Index(rawURL, ":")
 	if colonIdx < 0 {
+		return "", providerError(ErrInvalidRepositoryURL, "gitlab", "invalid GitLab SSH URL", nil)
+	}
+	at := strings.IndexByte(rawURL[:colonIdx], '@')
+	if at <= 0 || at == colonIdx-1 || strings.ContainsAny(rawURL[:at], ":@/") ||
+		strings.ContainsAny(rawURL[at+1:colonIdx], "@/") {
 		return "", providerError(ErrInvalidRepositoryURL, "gitlab", "invalid GitLab SSH URL", nil)
 	}
 	escapedPath := rawURL[colonIdx+1:]
@@ -142,6 +162,8 @@ func (p *gitlabProvider) ListBranches(ctx context.Context, repoURL string) ([]Br
 	if err != nil {
 		return nil, err
 	}
+	ctx, cancel := context.WithTimeout(ctx, positiveDuration(p.operationTimeout, providerOperationTimeout))
+	defer cancel()
 
 	encodedPath := url.PathEscape(projectPath)
 	apiURL := fmt.Sprintf("%s/api/v4/projects/%s/repository/branches?per_page=100", p.baseURL, encodedPath)

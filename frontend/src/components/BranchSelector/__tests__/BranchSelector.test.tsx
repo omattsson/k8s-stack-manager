@@ -531,10 +531,14 @@ describe('BranchSelector', () => {
   it.each([
     ['Azure DevOps', 'https://dev.azure.com/organization/project/_git/repository'],
     ['Azure DevOps', 'https://organization.visualstudio.com/project/_git/repo'],
+    ['Azure DevOps', 'git@ssh.dev.azure.com:v3/organization/project/repository'],
     ['GitHub', 'https://github.com/organization/repository'],
+    ['GitHub', 'git@github.com:organization/repository.git'],
+    ['GitHub', 'ssh://git@github.com/organization/repository.git'],
+    ['GitHub', 'https://GITHUB.COM/organization/repository'],
     ['GitLab', 'https://gitlab.com/organization/repository'],
-    ['GitLab', 'https://git.example.internal/organization/repository'],
-  ])('announces when %s is available', async (providerName, repoUrl) => {
+    ['GitLab', 'git@GitLab.com:organization/repository.git'],
+  ])('announces when %s is available for %s', async (providerName, repoUrl) => {
     (gitService.branches as ReturnType<typeof vi.fn>).mockResolvedValue(['main']);
 
     render(<BranchSelector {...defaultProps} repoUrl={repoUrl} />);
@@ -545,30 +549,46 @@ describe('BranchSelector', () => {
   it.each([
     'https://git.example.internal/github.com/organization/repository',
     'https://github.com.evil.example/organization/repository?source=github.com',
+    'git@github.com.evil.example:organization/repository.git',
   ])('does not classify GitHub text outside the exact hostname for %s', async (repoUrl) => {
     (gitService.branches as ReturnType<typeof vi.fn>).mockResolvedValue(['main']);
 
     render(<BranchSelector {...defaultProps} repoUrl={repoUrl} />);
 
-    expect(await screen.findByText('GitLab available.')).toBeInTheDocument();
-    expect(screen.getByRole('status')).not.toHaveTextContent('GitHub available.');
+    await waitFor(() => expect(gitService.branches).toHaveBeenCalledOnce());
+    expect(gitService.providers).not.toHaveBeenCalled();
+    expect(screen.queryByRole('status')).not.toBeInTheDocument();
   });
 
   it.each([
     'https://dev.azure.com.evil.example/organization/project/_git/repository',
     'https://visualstudio.com.evil.example/project/_git/repository',
     'https://git.example.internal/dev.azure.com/project?source=team.visualstudio.com',
+    'https://visualstudio.com/project/_git/repository',
   ])('does not classify Azure text outside an exact supported hostname for %s', async (repoUrl) => {
     (gitService.branches as ReturnType<typeof vi.fn>).mockResolvedValue(['main']);
 
     render(<BranchSelector {...defaultProps} repoUrl={repoUrl} />);
 
-    expect(await screen.findByText('GitLab available.')).toBeInTheDocument();
-    expect(screen.getByRole('status')).not.toHaveTextContent('Azure DevOps available.');
+    await waitFor(() => expect(gitService.branches).toHaveBeenCalledOnce());
+    expect(gitService.providers).not.toHaveBeenCalled();
+    expect(screen.queryByRole('status')).not.toBeInTheDocument();
   });
 
-  it.each(['relative/repository', 'not a URL', 'ssh://github.com/organization/repository'])(
-    'does not request provider status for invalid or non-HTTP URL %s',
+  it.each([
+    'relative/repository',
+    'not a URL',
+    'git://github.com/organization/repository',
+    'file:///srv/git/repository',
+    // A host that only the backend can attribute (a self-hosted GitLab).
+    'https://git.example.internal/organization/repository',
+    'git@gitlab.example.internal:group/repository.git',
+    // A trailing dot is never a provider host.
+    'https://github.com./organization/repository',
+    'https://gitlab.com./organization/repository',
+    'git@github.com.:organization/repository.git',
+  ])(
+    'does not request provider status for an unknown host or invalid URL %s',
     async (repoUrl) => {
       (gitService.branches as ReturnType<typeof vi.fn>).mockResolvedValue([]);
 
@@ -723,12 +743,61 @@ describe('BranchSelector', () => {
   it('detects the provider by exact hostname', () => {
     expect(detectProvider('https://github.com/org/repo')).toBe('github');
     expect(detectProvider('https://GitHub.com/org/repo')).toBe('github');
+    expect(detectProvider('http://github.com/org/repo')).toBe('github');
+    expect(detectProvider('github.com/org/repo')).toBe('github');
     expect(detectProvider('https://dev.azure.com/org/project/_git/repo')).toBe('azure_devops');
     expect(detectProvider('https://org.visualstudio.com/project/_git/repo')).toBe('azure_devops');
-    expect(detectProvider('https://gitlab.example.internal/group/repo')).toBe('gitlab');
-    expect(detectProvider('https://github.com.evil.example/org/repo')).toBe('gitlab');
-    expect(detectProvider('git@github.com:org/repo.git')).toBeNull();
+    expect(detectProvider('https://gitlab.com/group/repo')).toBe('gitlab');
+    expect(detectProvider('https://github.com.evil.example/org/repo')).toBeNull();
     expect(detectProvider('')).toBeNull();
+    expect(detectProvider('   ')).toBeNull();
+  });
+
+  it('detects the provider for uppercase hosts', () => {
+    expect(detectProvider('https://GITHUB.COM/org/repo')).toBe('github');
+    expect(detectProvider('https://DEV.AZURE.COM/org/project/_git/repo')).toBe('azure_devops');
+    expect(detectProvider('https://Org.VisualStudio.com/project/_git/repo')).toBe('azure_devops');
+    expect(detectProvider('https://GitLab.com/group/repo')).toBe('gitlab');
+    expect(detectProvider('ssh://git@GitHub.com/org/repo.git')).toBe('github');
+    expect(detectProvider('git@GITHUB.COM:org/repo.git')).toBe('github');
+    expect(detectProvider('git@SSH.DEV.AZURE.COM:v3/org/project/repo')).toBe('azure_devops');
+  });
+
+  it('detects the provider of ssh:// and scp-style URLs', () => {
+    expect(detectProvider('git@github.com:org/repo.git')).toBe('github');
+    expect(detectProvider('ssh://git@github.com/org/repo.git')).toBe('github');
+    expect(detectProvider('ssh://git@github.com:22/org/repo.git')).toBe('github');
+    expect(detectProvider('git@ssh.dev.azure.com:v3/org/project/repo')).toBe('azure_devops');
+    expect(detectProvider('ssh://git@ssh.dev.azure.com/v3/org/project/repo')).toBe('azure_devops');
+    expect(detectProvider('org@vs-ssh.visualstudio.com:v3/org/project/repo')).toBe('azure_devops');
+    expect(detectProvider('git@gitlab.com:group/repo.git')).toBe('gitlab');
+    expect(detectProvider('ssh://git@gitlab.com/group/repo.git')).toBe('gitlab');
+    expect(detectProvider('git@github.com.evil.example:org/repo.git')).toBeNull();
+    expect(detectProvider('git://github.com/org/repo.git')).toBeNull();
+  });
+
+  it('gives no provider for an unknown host', () => {
+    // A self-hosted GitLab is only known to the backend (GITLAB_BASE_URL).
+    expect(detectProvider('https://gitlab.example.internal/group/repo')).toBeNull();
+    expect(detectProvider('https://gitlab.example.internal:8443/group/repo')).toBeNull();
+    expect(detectProvider('git@gitlab.example.internal:group/repo.git')).toBeNull();
+    expect(detectProvider('ssh://git@gitlab.example.internal:2222/group/repo.git')).toBeNull();
+    expect(detectProvider('https://visualstudio.com/project/_git/repo')).toBeNull();
+    expect(detectProvider('https://dev.azure.com.evil.example/org/project/_git/repo')).toBeNull();
+    expect(detectProvider('https://gitlab.com.evil.example/group/repo')).toBeNull();
+    expect(detectProvider('not a URL')).toBeNull();
+  });
+
+  it('gives no provider for a host with a trailing dot or an empty label', () => {
+    expect(detectProvider('https://github.com./org/repo')).toBeNull();
+    expect(detectProvider('git@github.com.:org/repo.git')).toBeNull();
+    expect(detectProvider('ssh://git@github.com./org/repo.git')).toBeNull();
+    expect(detectProvider('https://dev.azure.com./org/project/_git/repo')).toBeNull();
+    expect(detectProvider('https://org.visualstudio.com./project/_git/repo')).toBeNull();
+    expect(detectProvider('git@ssh.dev.azure.com.:v3/org/project/repo')).toBeNull();
+    expect(detectProvider('https://gitlab.com./group/repo')).toBeNull();
+    expect(detectProvider('https://.visualstudio.com/project/_git/repo')).toBeNull();
+    expect(detectProvider('https://org..visualstudio.com/project/_git/repo')).toBeNull();
   });
 
   it('announces the status of each provider for a URL list', async () => {
@@ -744,7 +813,8 @@ describe('BranchSelector', () => {
         {...defaultProps}
         repoUrl={[
           'https://github.com/org/a',
-          'https://gitlab.example.internal/group/b',
+          'https://gitlab.com/group/b',
+          'https://git.example.internal/group/unknown',
           'https://github.com/org/c',
           'not a URL',
         ]}
@@ -757,7 +827,7 @@ describe('BranchSelector', () => {
       );
     });
     expect(gitService.providers).toHaveBeenCalledOnce();
-    expect(gitService.branches).toHaveBeenCalledTimes(4);
+    expect(gitService.branches).toHaveBeenCalledTimes(5);
   });
 
   it('shows the provider status together with the branch warning', async () => {

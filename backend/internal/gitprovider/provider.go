@@ -90,6 +90,19 @@ func rateLimitError(provider, message string, retryAfter time.Time) error {
 	return &RateLimitError{Provider: provider, Message: message, RetryAfter: retryAfter}
 }
 
+// providerOperationTimeout bounds a whole Azure DevOps or GitLab operation
+// (token exchange, request and response body), mirroring
+// githubOperationTimeout. It is applied inside each provider so that direct
+// calls such as GetDefaultBranch are bounded too, not only Registry fills.
+const providerOperationTimeout = 30 * time.Second
+
+func positiveDuration(value, fallback time.Duration) time.Duration {
+	if value > 0 {
+		return value
+	}
+	return fallback
+}
+
 func redirectRejectingHTTPClient(client *http.Client, timeout time.Duration) *http.Client {
 	if client == nil {
 		client = &http.Client{Timeout: timeout}
@@ -204,6 +217,11 @@ func NormalizeGitLabBaseURL(rawURL string) (string, error) {
 	}
 	if parsed.Hostname() == "" {
 		return "", errors.New("GitLab base URL must include a hostname")
+	}
+	if port := parsed.Port(); port != "" {
+		if value, err := strconv.ParseUint(port, 10, 16); err != nil || value == 0 {
+			return "", errors.New("GitLab base URL port must be between 1 and 65535")
+		}
 	}
 	if strings.HasSuffix(parsed.Hostname(), ".") {
 		return "", errors.New("GitLab base URL hostname must not end with a dot")

@@ -1608,11 +1608,18 @@ export const BRANCH_CACHE_TTL_MS = 60 * 1000;
 /** Most branch list requests that run at the same time. */
 export const BRANCH_MAX_CONCURRENT = 4;
 
+/**
+ * Timeout of one branch list request, in milliseconds. A stalled backend then
+ * cannot hold one of the BRANCH_MAX_CONCURRENT slots for ever.
+ */
+export const BRANCH_REQUEST_TIMEOUT_MS = 30 * 1000;
+
 /** Options for a branch list call. */
 export interface BranchRequestOptions {
   /**
    * Cancels this call only. The shared request for the URL goes on while
-   * other callers wait for it; it is aborted when every caller has cancelled.
+   * other callers wait for it; it is aborted shortly after every caller has
+   * cancelled (unless a new caller joins it first).
    */
   signal?: AbortSignal;
 }
@@ -1647,6 +1654,25 @@ const withBranchSlot = async <T>(task: () => Promise<T>): Promise<T> => {
   }
 };
 
+/**
+ * Abort a branch request in flight that no caller waits for any more, after a
+ * macrotask. A component that changes its URL list (or a StrictMode remount)
+ * cancels its calls and starts new ones in the same task: a URL that is in
+ * both lists joins the request again in that window and the request goes on.
+ * @param repoUrl - Repository URL of the request
+ * @param entry - The cache entry of the request
+ */
+const abortBranchRequestIfUnused = (repoUrl: string, entry: BranchCacheEntry): void => {
+  setTimeout(() => {
+    if (entry.waiting > 0 || entry.expiresAt !== Number.POSITIVE_INFINITY) return;
+    // Drop it from the cache, so no cancelled request is reused. A request
+    // that is no longer cached (for example after clearBranchCache) is still
+    // aborted: no caller can join it again, and it frees its slot.
+    if (branchCache.get(repoUrl) === entry) branchCache.delete(repoUrl);
+    entry.controller.abort();
+  }, 0);
+};
+
 /** The error a cancelled branch list call rejects with. */
 const branchAbortError = (): DOMException => new DOMException('Branch request cancelled', 'AbortError');
 
@@ -1669,6 +1695,7 @@ const startBranchRequest = (repoUrl: string): BranchCacheEntry => {
     const response = await api.get('/api/v1/git/branches', {
       params: { repo: repoUrl },
       signal: controller.signal,
+      timeout: BRANCH_REQUEST_TIMEOUT_MS,
     });
     return (response.data as Array<{ name: string }>).map((b) => b.name);
   }).then(
@@ -1706,10 +1733,13 @@ export const gitService = {
    * BRANCH_CACHE_TTL_MS. A failed request is not cached. At most
    * BRANCH_MAX_CONCURRENT requests run at the same time.
    *
-   * An abort of `options.signal` rejects only this call, with a DOMException
-   * named `AbortError`. Other callers of the same URL still get the list. When
-   * every caller of a request in flight has cancelled, the request is aborted
-   * and removed from the cache, so the next call starts a new request.
+   * An abort of `options.signal` rejects only this call at once, with a
+   * DOMException named `AbortError`. Other callers of the same URL still get
+   * the list. When every caller of a request in flight has cancelled, the
+   * request is aborted after a macrotask and removed from the cache, so a
+   * later call starts a new request. A call in that window (for example from
+   * a component that re-renders with a changed URL list) joins the request
+   * in flight instead. Each request times out after BRANCH_REQUEST_TIMEOUT_MS.
    * @param repoUrl - Repository URL (Azure DevOps, GitHub, or GitLab)
    * @param options - Optional abort signal that cancels this call
    * @returns Array of branch names
@@ -1733,13 +1763,12 @@ export const gitService = {
       function onAbort(): void {
         if (settled) return;
         release();
-        // The last caller of a request in flight left: abort it and drop it
-        // from the cache, so no cancelled request is reused.
-        if (entry.waiting === 0 && entry.expiresAt === Number.POSITIVE_INFINITY) {
-          if (branchCache.get(repoUrl) === entry) branchCache.delete(repoUrl);
-          entry.controller.abort();
-        }
         reject(branchAbortError());
+        // The last caller of a request in flight left: abort the request
+        // unless a caller joins it again before the deferred check.
+        if (entry.waiting === 0 && entry.expiresAt === Number.POSITIVE_INFINITY) {
+          abortBranchRequestIfUnused(repoUrl, entry);
+        }
       }
       signal?.addEventListener('abort', onAbort, { once: true });
       entry.promise.then(
