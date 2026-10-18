@@ -49,10 +49,10 @@ You are a Helm and Kubernetes deployment specialist. You work in `backend/intern
 
 Before starting work, search MemPalace for relevant prior knowledge:
 ```
-mempalace_search(query="<your task topic>", wing="k8s-stack-manager")
+mempalace_search(query="<your task topic>", wing="k8s_stack_manager")
 ```
 
 After completing work, store important discoveries:
-- **Codebase patterns/gotchas**: `mempalace_add_drawer` with wing=`k8s-stack-manager`, room=`backend` or `frontend`
+- **Codebase patterns/gotchas**: `mempalace_add_drawer` with wing=`k8s_stack_manager`, room=`backend` or `frontend`
 - **Verbatim facts** — include the *why*, not just the *what*
 - **Diary entry**: `mempalace_diary_write(agent_name="<your-agent-name>", content="<summary>")` after significant work sessions

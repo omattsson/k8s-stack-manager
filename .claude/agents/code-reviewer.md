@@ -24,7 +24,7 @@ When the review surfaces durable patterns or anti-patterns — recurring bug sha
 1. Read the PR description or understand what changed
 2. Read ALL changed files — every line
 3. Cross-reference against reference implementations (`items.go` for backend, `pages/StackInstances/` for frontend)
-4. Run `cd backend && go test ./... -v -short` and `cd frontend && npm test`
+4. Run `cd backend && go test -p 2 ./... -short` and `cd frontend && npm test`
 5. Run `make lint`
 6. Provide structured feedback
 

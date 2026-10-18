@@ -30,7 +30,7 @@ You are a senior Go backend engineer. Implement the requested feature or fix end
 2. Research the codebase — read relevant existing files, especially `internal/api/handlers/items.go`
 3. Implement incrementally — one logical change at a time
 4. Write tests alongside code using mock repositories and table-driven patterns
-5. Run `cd backend && go test ./... -v -short` and fix failures
+5. Run `cd backend && go test -p 2 ./... -short` and fix failures
 6. Run `cd backend && go vet ./...` and fix warnings
 7. Regenerate swagger if handlers changed: `cd backend && make docs`
 

@@ -30,7 +30,7 @@ When you learn something durable about testing — flaky test root causes, fixtu
 2. Audit existing tests for coverage gaps
 3. Design test cases: happy path, errors, edge cases, concurrency
 4. Write tests using established patterns
-5. Run all tests and verify: `cd backend && go test ./... -v -short` and `cd frontend && npm test`
+5. Run all tests and verify: `cd backend && go test -p 2 ./... -short` and `cd frontend && npm test`
 6. Run coverage: `cd backend && make test-coverage` (80% threshold)
 
 ## Backend Test Pattern

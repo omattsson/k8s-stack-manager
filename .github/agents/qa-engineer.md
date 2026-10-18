@@ -44,7 +44,7 @@ When given a task:
 - **Framework**: Go `testing` + `testify/assert`
 - **Mock**: `MockRepository` in `handlers/mock_repository.go` (in-memory, same package)
 - **Schemas**: JSON response schemas in `handlers/test_schemas.go` via `gojsonschema`
-- **Run**: `cd backend && go test ./... -v -short`
+- **Run**: `cd backend && go test -p 2 ./... -short`
 - **Coverage**: `cd backend && make test-coverage` (80% threshold)
 
 ### Backend Integration Tests
@@ -228,7 +228,7 @@ When asked to create a test strategy for a feature, use this structure:
 
 ## Commands
 ```bash
-cd backend && go test ./... -v -short    # Backend unit tests
+cd backend && go test -p 2 ./... -short    # Backend unit tests
 cd backend && go vet ./...                # Backend lint
 cd backend && make test-coverage          # Coverage (80% threshold)
 cd frontend && npm test                   # Frontend unit tests
@@ -266,10 +266,10 @@ Common handoff targets:
 
 Before starting work, search MemPalace for relevant prior knowledge:
 ```
-mempalace_search(query="<your task topic>", wing="k8s-stack-manager")
+mempalace_search(query="<your task topic>", wing="k8s_stack_manager")
 ```
 
 After completing work, store important discoveries:
-- **Codebase patterns/gotchas**: `mempalace_add_drawer` with wing=`k8s-stack-manager`, room=`backend` or `frontend`
+- **Codebase patterns/gotchas**: `mempalace_add_drawer` with wing=`k8s_stack_manager`, room=`backend` or `frontend`
 - **Verbatim facts** — include the *why*, not just the *what*
 - **Diary entry**: `mempalace_diary_write(agent_name="<your-agent-name>", content="<summary>")` after significant work sessions

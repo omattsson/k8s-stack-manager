@@ -34,7 +34,7 @@ When given a GitHub issue:
 3. **Plan before coding** — identify all files that need to change; if adding a new resource follow the 8-step checklist below
 4. **Implement incrementally** — one logical change at a time, verify each step compiles
 5. **Write tests first or alongside code** — never leave code untested
-6. **Run tests** — execute `cd backend && go test ./... -v -short` and fix any failures before considering work complete
+6. **Run tests** — execute `cd backend && go test -p 2 ./... -short` and fix any failures before considering work complete
 7. **Run lint** — execute `cd backend && go vet ./...` and ensure zero warnings
 8. **Verify integration** — if the change touches DB: run `make test-backend-all`
 
@@ -194,7 +194,7 @@ c.JSON(500, gin.H{"error": err.Error()})  // LEAKS INTERNALS
 
 ### Commands to verify your work
 ```bash
-cd backend && go test ./... -v -short    # Unit tests
+cd backend && go test -p 2 ./... -short    # Unit tests
 cd backend && go vet ./...                # Lint
 make test-backend-all                     # Unit + integration (needs Docker)
 make lint                                 # Full lint (backend + frontend)
@@ -226,10 +226,10 @@ Common handoff targets:
 
 Before starting work, search MemPalace for relevant prior knowledge:
 ```
-mempalace_search(query="<your task topic>", wing="k8s-stack-manager")
+mempalace_search(query="<your task topic>", wing="k8s_stack_manager")
 ```
 
 After completing work, store important discoveries:
-- **Codebase patterns/gotchas**: `mempalace_add_drawer` with wing=`k8s-stack-manager`, room=`backend` or `frontend`
+- **Codebase patterns/gotchas**: `mempalace_add_drawer` with wing=`k8s_stack_manager`, room=`backend` or `frontend`
 - **Verbatim facts** — include the *why*, not just the *what*
 - **Diary entry**: `mempalace_diary_write(agent_name="<your-agent-name>", content="<summary>")` after significant work sessions

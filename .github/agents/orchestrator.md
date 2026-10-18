@@ -27,7 +27,7 @@ You are a tech lead coordinating a team of specialized agents. You receive featu
 |---|---|---|
 | **go-api-developer** | Go backend: models, repositories, handlers, routes, migrations, swagger | New API endpoints, backend features, data layer, backend bugs |
 | **frontend-developer** | React/TypeScript: pages, components, API services, routing, data fetching | New UI pages, frontend features, API integration, frontend bugs |
-| **git-provider** | Azure DevOps + GitLab: branch listing, URL detection, provider APIs | Git provider integration features |
+| **git-provider** | Azure DevOps + GitHub + GitLab: branch listing, URL parsing/detection, provider APIs | Git provider integration features |
 | **helm-values** | Helm values merge, YAML deep-merge, template variable substitution | Helm values generation and deployment prep |
 | **devops-engineer** | Docker, nginx, Makefile, CI/CD, deployment | Infrastructure changes, new services, build/deploy issues |
 | **qa-engineer** | Test strategy, unit/integration/e2e tests, coverage gaps, test utilities | Writing tests, auditing coverage, test infrastructure |
@@ -279,10 +279,10 @@ gh issue edit 3 --add-assignee @me       # Assign to self
 
 Before starting work, search MemPalace for relevant prior knowledge:
 ```
-mempalace_search(query="<your task topic>", wing="k8s-stack-manager")
+mempalace_search(query="<your task topic>", wing="k8s_stack_manager")
 ```
 
 After completing work, store important discoveries:
-- **Codebase patterns/gotchas**: `mempalace_add_drawer` with wing=`k8s-stack-manager`, room=`backend` or `frontend`
+- **Codebase patterns/gotchas**: `mempalace_add_drawer` with wing=`k8s_stack_manager`, room=`backend` or `frontend`
 - **Verbatim facts** — include the *why*, not just the *what*
 - **Diary entry**: `mempalace_diary_write(agent_name="<your-agent-name>", content="<summary>")` after significant work sessions

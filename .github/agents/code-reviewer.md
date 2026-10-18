@@ -36,7 +36,7 @@ When reviewing code:
 3. **Cross-reference with existing patterns** — compare against reference implementations (`items.go` for backend, `pages/StackInstances/` for frontend)
 4. **Check the instruction files** — verify compliance with `.github/instructions/*.md` rules
 5. **Check diagnostics** — use the `problems` tool to see any compile or lint errors in changed files
-6. **Run tests** — execute `cd backend && go test ./... -v -short` and `cd frontend && npm test`
+6. **Run tests** — execute `cd backend && go test -p 2 ./... -short` and `cd frontend && npm test`
 7. **Run lint** — execute `make lint`
 8. **Provide structured feedback** — categorize findings by severity
 
@@ -121,7 +121,7 @@ Good practices worth noting — always include at least one.
 
 ## Commands to verify
 ```bash
-cd backend && go test ./... -v -short    # Backend unit tests
+cd backend && go test -p 2 ./... -short    # Backend unit tests
 cd backend && go vet ./...                # Backend lint
 cd frontend && npm test                   # Frontend unit tests
 cd frontend && npm run lint              # Frontend TypeScript check
@@ -157,10 +157,10 @@ Common handoff targets:
 
 Before starting work, search MemPalace for relevant prior knowledge:
 ```
-mempalace_search(query="<your task topic>", wing="k8s-stack-manager")
+mempalace_search(query="<your task topic>", wing="k8s_stack_manager")
 ```
 
 After completing work, store important discoveries:
-- **Codebase patterns/gotchas**: `mempalace_add_drawer` with wing=`k8s-stack-manager`, room=`backend` or `frontend`
+- **Codebase patterns/gotchas**: `mempalace_add_drawer` with wing=`k8s_stack_manager`, room=`backend` or `frontend`
 - **Verbatim facts** — include the *why*, not just the *what*
 - **Diary entry**: `mempalace_diary_write(agent_name="<your-agent-name>", content="<summary>")` after significant work sessions

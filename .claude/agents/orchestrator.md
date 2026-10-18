@@ -27,7 +27,7 @@ When planning surfaces durable knowledge — workflow sequences, dependency chai
 |---|---|---|
 | go-api-developer | Go backend: models, repos, handlers, routes, migrations, swagger, auth, hooks | Backend features, data layer, backend bugs |
 | frontend-developer | React/TypeScript: pages, components, API services, routing, WebSocket | UI pages, frontend features, frontend bugs |
-| git-provider | Azure DevOps + GitLab: branch listing, URL detection | Git provider integration |
+| git-provider | Azure DevOps + GitHub + GitLab: branch listing, URL parsing/detection, provider auth | Git provider integration |
 | helm-values | Helm values merge, YAML deep-merge, template variable substitution | Helm values generation |
 | devops-engineer | Docker, nginx, Helm chart, Makefile, CI/CD, deployment | Infrastructure changes |
 | qa-engineer | Test strategy, unit/integration/e2e tests, coverage | Writing tests, coverage audits |
