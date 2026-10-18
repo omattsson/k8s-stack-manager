@@ -35,16 +35,24 @@ const providerLabels: Record<ProviderType, string> = {
   gitlab: 'GitLab',
 };
 
+/** Scheme, lowercase hostname and port of a repository URL. */
+interface RepositoryOrigin {
+  scheme: 'http' | 'https' | 'ssh';
+  host: string;
+  /** Explicit port; empty when absent (or the scheme default for http(s)). */
+  port: string;
+}
+
 /**
- * Lowercase hostname of a repository URL. Like the backend, an scp-style SSH
- * URL (`git@host:path`) is read as `ssh://git@host/path`, and a URL without a
+ * Origin of a repository URL. Like the backend, an scp-style SSH URL
+ * (`git@host:path`) is read as `ssh://git@host/path`, and a URL without a
  * scheme as `https://...`. Only the authority is parsed, so an odd path still
  * gives a hostname.
  * @param repoUrl - Repository URL
- * @returns The hostname, or null for an invalid URL or a scheme other than
- *   http, https or ssh
+ * @returns The origin, or null for an invalid URL, a scheme other than http,
+ *   https or ssh, or a hostname with an empty label (such as a trailing dot)
  */
-const repositoryHostname = (repoUrl: string): string | null => {
+const parseRepositoryOrigin = (repoUrl: string): RepositoryOrigin | null => {
   let raw = repoUrl.trim();
   if (!raw) return null;
   if (!raw.includes('://')) {
@@ -64,44 +72,103 @@ const repositoryHostname = (repoUrl: string): string | null => {
   } catch {
     return null;
   }
-  if (url.protocol !== 'http:' && url.protocol !== 'https:' && url.protocol !== 'ssh:') return null;
+  const scheme = url.protocol.slice(0, -1);
+  if (scheme !== 'http' && scheme !== 'https' && scheme !== 'ssh') return null;
   // ssh:// hosts are opaque in the URL standard and keep their case.
-  return url.hostname.toLowerCase();
+  const host = url.hostname.toLowerCase();
+  if (!host || host.split('.').includes('')) return null;
+  return { scheme, host, port: url.port };
 };
 
 /**
- * Git provider of a repository URL, by exact hostname (case-insensitive).
- * Accepts https, http, ssh:// and scp-style (`git@host:path`) URLs.
+ * Effective port of an origin, as on the backend: the explicit port in
+ * canonical decimal form (`0443` is `443`), else 80 or 443 from an http(s)
+ * scheme.
+ * @param origin - Scheme and explicit port
+ * @returns The port, or an empty string for an invalid port or an SSH URL
+ *   without a port
+ */
+const effectivePort = (origin: Pick<RepositoryOrigin, 'scheme' | 'port'>): string => {
+  if (origin.port !== '') {
+    const port = Number(origin.port);
+    return Number.isInteger(port) && port > 0 && port <= 65535 ? String(port) : '';
+  }
+  if (origin.scheme === 'http') return '80';
+  if (origin.scheme === 'https') return '443';
+  return '';
+};
+
+/**
+ * Host and effective port of a custom GitLab origin (the `origin` of the
+ * gitlab entry of GET /api/v1/git/providers).
+ * @param gitlabOrigin - The GitLab origin, for example `https://git.example.com:8443`
+ * @returns The custom origin, or null when the origin is missing, malformed or
+ *   on gitlab.com (then the default rule applies)
+ */
+const parseCustomGitLabOrigin = (gitlabOrigin?: string): { host: string; port: string } | null => {
+  if (!gitlabOrigin) return null;
+  let url: URL;
+  try {
+    url = new URL(gitlabOrigin);
+  } catch {
+    return null;
+  }
+  const scheme = url.protocol.slice(0, -1);
+  if (scheme !== 'http' && scheme !== 'https') return null;
+  const host = url.hostname.toLowerCase();
+  if (!host || host.split('.').includes('') || host === 'gitlab.com') return null;
+  const port = effectivePort({ scheme, port: url.port });
+  return port ? { host, port } : null;
+};
+
+/**
+ * Git provider of a repository URL, by exact hostname (case-insensitive), with
+ * the routing rules of the backend. Accepts https, http, ssh:// and scp-style
+ * (`git@host:path`) URLs.
  *
  * - GitHub: github.com.
  * - Azure DevOps: dev.azure.com, ssh.dev.azure.com and *.visualstudio.com
  *   (includes vs-ssh.visualstudio.com).
- * - GitLab: gitlab.com only.
+ * - GitLab, default origin (gitlab.com, or no origin known): gitlab.com.
+ * - GitLab, custom origin (GITLAB_BASE_URL): only the host of that origin.
+ *   An http(s) URL must also have the same effective port (explicit, or
+ *   80/443 from the scheme; the scheme itself is not compared). An ssh:// or
+ *   scp-style URL matches on the host only. gitlab.com is then not GitLab.
  *
- * The backend also routes a self-hosted GitLab (its configured GITLAB_BASE_URL
- * origin) to GitLab, and then no longer serves gitlab.com. GET
- * /api/v1/git/providers does not expose that origin, so any other host is
- * unknown here: no provider status is shown and manual entry stays. A
- * hostname with a trailing dot (as on the backend) or another empty label is
- * never a provider host.
+ * Any other host is unknown: no provider status is shown and manual entry
+ * stays. A hostname with a trailing dot (as on the backend) or another empty
+ * label is never a provider host.
  * @param repoUrl - Repository URL
+ * @param gitlabOrigin - The GitLab origin from GET /api/v1/git/providers;
+ *   omit it while the origin is not known (gitlab.com is then GitLab)
  * @returns The provider, or null for an unknown host or an invalid URL
  */
-export const detectProvider = (repoUrl: string): ProviderType | null => {
-  const hostname = repositoryHostname(repoUrl);
-  if (!hostname || hostname.split('.').includes('')) return null;
+export const detectProvider = (repoUrl: string, gitlabOrigin?: string): ProviderType | null => {
+  const origin = parseRepositoryOrigin(repoUrl);
+  if (!origin) return null;
+  const { host } = origin;
 
-  if (hostname === 'github.com') return 'github';
-  if (
-    hostname === 'dev.azure.com'
-    || hostname === 'ssh.dev.azure.com'
-    || hostname.endsWith('.visualstudio.com')
-  ) {
+  if (host === 'github.com') return 'github';
+  if (host === 'dev.azure.com' || host === 'ssh.dev.azure.com' || host.endsWith('.visualstudio.com')) {
     return 'azure_devops';
   }
-  if (hostname === 'gitlab.com') return 'gitlab';
-  return null;
+
+  const custom = parseCustomGitLabOrigin(gitlabOrigin);
+  if (custom) {
+    if (host !== custom.host) return null;
+    if (origin.scheme === 'ssh') return 'gitlab';
+    return effectivePort(origin) === custom.port ? 'gitlab' : null;
+  }
+  return host === 'gitlab.com' ? 'gitlab' : null;
 };
+
+/**
+ * Whether a repository URL can belong to a Git provider once the GitLab origin
+ * is known (any http, https or ssh URL with a valid hostname).
+ * @param repoUrl - Repository URL
+ * @returns True when the provider statuses are needed for this URL
+ */
+const mayHaveProvider = (repoUrl: string): boolean => parseRepositoryOrigin(repoUrl) !== null;
 
 let providerStatusesRequest: Promise<ProviderStatus[]> | null = null;
 
@@ -182,7 +249,10 @@ export const mergeBranchLists = (lists: readonly (readonly string[])[]): string[
  * user commits it, so the user can clear the field and type a search without
  * a change of the selected branch. Empty text on blur restores the selected
  * branch. Below the field it shows whether the Git provider of the
- * repositories is available; manual entry works in every case.
+ * repositories is available; manual entry works in every case. Which hosts
+ * are GitLab depends on the GitLab origin in the provider statuses, so a
+ * GitLab status shows only after the statuses load; a host that no provider
+ * serves shows no status.
  */
 const BranchSelector = ({ repoUrl, value, onChange, label = 'Branch', disabled = false }: BranchSelectorProps) => {
   const [branches, setBranches] = useState<string[]>([]);
@@ -192,17 +262,42 @@ const BranchSelector = ({ repoUrl, value, onChange, label = 'Branch', disabled =
   const [partial, setPartial] = useState<{ failed: number; total: number } | null>(null);
   const [inputValue, setInputValue] = useState(value);
   const [focused, setFocused] = useState(false);
-  const [providerStates, setProviderStates] = useState<Partial<Record<ProviderType, ProviderAvailability>>>({});
+  /**
+   * Provider statuses (null when the request failed), with the key of the
+   * repositories they were loaded for.
+   */
+  const [statusResult, setStatusResult] = useState<{ key: string; statuses: ProviderStatus[] | null } | null>(null);
 
   const urls = normalizeRepoUrls(repoUrl);
   // A stable key, so a new array with the same URLs does not load again.
   const urlsKey = JSON.stringify(urls);
+  // The URLs that can belong to a provider; the statuses are loaded for them.
+  const statusKey = JSON.stringify(urls.filter(mayHaveProvider));
+
+  // Statuses of the current URLs only: a result of old URLs can remain for
+  // one render after the URLs change, and then counts as loading.
+  const statusesLoaded = statusResult?.key === statusKey;
+  const statuses = statusesLoaded ? statusResult.statuses : null;
+  // The GitLab origin decides which hosts are GitLab. Without it (request in
+  // flight or failed) the default rule applies: GitLab is gitlab.com.
+  const gitlabOrigin = statuses?.find(({ type }) => type === 'gitlab')?.origin;
   const providerTypes: ProviderType[] = [];
   for (const url of urls) {
-    const type = detectProvider(url);
-    if (type && !providerTypes.includes(type)) providerTypes.push(type);
+    const type = detectProvider(url, gitlabOrigin);
+    // While the statuses load, the GitLab origin is unknown: show no GitLab
+    // status yet instead of a guess for gitlab.com.
+    if (!type || (type === 'gitlab' && !statusesLoaded)) continue;
+    if (!providerTypes.includes(type)) providerTypes.push(type);
   }
-  const providersKey = providerTypes.join(',');
+  const providerStates: Partial<Record<ProviderType, ProviderAvailability>> = {};
+  for (const type of providerTypes) {
+    if (!statusesLoaded) {
+      providerStates[type] = 'loading';
+    } else {
+      const status = statuses?.find((s) => s.type === type);
+      providerStates[type] = status ? (status.available ? 'available' : 'unavailable') : 'error';
+    }
+  }
 
   // Load the branches of all repositories. A new URL list clears the old
   // options and error at once, and aborts the requests of the old list; a
@@ -240,35 +335,23 @@ const BranchSelector = ({ repoUrl, value, onChange, label = 'Branch', disabled =
     };
   }, [urlsKey]);
 
-  // Check whether the Git providers of the repositories are available.
+  // Load the provider statuses (availability and the GitLab origin) for the
+  // repositories that can belong to a provider. A response for older URLs
+  // that ends after the URLs changed is ignored.
   useEffect(() => {
-    const types = (providersKey ? providersKey.split(',') : []) as ProviderType[];
-    const all = (state: ProviderAvailability) => Object.fromEntries(types.map((t) => [t, state]));
+    if (statusKey === '[]') return undefined;
     let active = true;
-
-    setProviderStates(all('loading'));
-    if (types.length === 0) {
-      return () => {
-        active = false;
-      };
-    }
-
     getProviderStatuses()
-      .then((statuses: ProviderStatus[]) => {
-        if (!active) return;
-        setProviderStates(Object.fromEntries(types.map((t) => {
-          const status = statuses.find(({ type }) => type === t);
-          return [t, status ? (status.available ? 'available' : 'unavailable') : 'error'];
-        })));
+      .then((loaded: ProviderStatus[]) => {
+        if (active) setStatusResult({ key: statusKey, statuses: loaded });
       })
       .catch(() => {
-        if (active) setProviderStates(all('error'));
+        if (active) setStatusResult({ key: statusKey, statuses: null });
       });
-
     return () => {
       active = false;
     };
-  }, [providersKey]);
+  }, [statusKey]);
 
   // Show a new selected branch (for example after a reset by the parent).
   useEffect(() => {
@@ -307,10 +390,8 @@ const BranchSelector = ({ repoUrl, value, onChange, label = 'Branch', disabled =
     : undefined;
   const fieldText = warning ?? hint ?? partialText;
 
-  // Only providers of the current URLs (a state of old URLs can remain for
-  // one render after the URLs change).
   const shownProviderStates = providerTypes.map((t) => providerStates[t]);
-  const providerHint = providerTypes.length > 0 && shownProviderStates.every(Boolean) ? (
+  const providerHint = providerTypes.length > 0 ? (
     <Box
       component="span"
       role="status"

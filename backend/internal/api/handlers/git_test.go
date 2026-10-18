@@ -634,6 +634,27 @@ func TestGetProviders(t *testing.T) {
 		}, providerMap)
 	})
 
+	t.Run("reports the GitLab origin only on the gitlab entry", func(t *testing.T) {
+		t.Parallel()
+		router := setupGitRouter("https://git.example.com:8443/")
+
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest(http.MethodGet, "/api/v1/git/providers", nil)
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		var raw []map[string]any
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &raw))
+		require.Len(t, raw, 3)
+		for _, entry := range raw {
+			if entry["type"] == "gitlab" {
+				assert.Equal(t, "https://git.example.com:8443", entry["origin"])
+				continue
+			}
+			assert.NotContains(t, entry, "origin", "only GitLab has a configurable origin")
+		}
+	})
+
 	t.Run("returns public github when no tokens configured", func(t *testing.T) {
 		t.Parallel()
 		router := setupGitRouter("")

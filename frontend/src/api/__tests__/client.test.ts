@@ -1401,11 +1401,12 @@ describe('gitService', () => {
     const providers = [
       { type: 'azure_devops', available: false },
       { type: 'github', available: true },
-      { type: 'gitlab', available: false },
+      { type: 'gitlab', available: false, origin: 'https://git.example.com:8443' },
     ];
     api.get.mockResolvedValueOnce(mockResponse(providers));
 
     const result = await gitService.providers();
+    expect(result.find((p) => p.type === 'gitlab')?.origin).toBe('https://git.example.com:8443');
 
     expect(api.get).toHaveBeenCalledWith('/api/v1/git/providers');
     expect(result).toEqual(providers);

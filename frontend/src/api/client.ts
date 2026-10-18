@@ -1598,8 +1598,17 @@ export const instanceService = {
 
 /** Availability status for a supported Git provider. */
 export interface ProviderStatus {
+  /** Provider type: `azure_devops`, `github` or `gitlab`. */
   type: string;
+  /** Whether the provider is configured on the backend. */
   available: boolean;
+  /**
+   * API origin of the provider (scheme, lowercase host and optional port, no
+   * path), for example `https://gitlab.com` or `https://git.example.com:8443`.
+   * Set only on the `gitlab` entry: the normalized GITLAB_BASE_URL, which
+   * decides which repository hosts the backend routes to GitLab.
+   */
+  origin?: string;
 }
 
 /** Time a loaded branch list stays in the cache, in milliseconds. */

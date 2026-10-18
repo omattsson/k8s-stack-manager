@@ -756,7 +756,7 @@ func TestGetProviderStatusRemainsExactWithGitHubConfig(t *testing.T) {
 	expected := []ProviderStatus{
 		{Type: "azure_devops", Available: false},
 		{Type: "github", Available: true},
-		{Type: "gitlab", Available: false},
+		{Type: "gitlab", Available: false, Origin: "https://gitlab.com"},
 	}
 	tests := []struct {
 		name   string
@@ -779,6 +779,40 @@ func TestGetProviderStatusRemainsExactWithGitHubConfig(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			assert.Equal(t, expected, mustNewRegistry(t, Config{GitHub: tt.config}).GetProviderStatus())
+		})
+	}
+}
+
+func TestGetProviderStatusReportsGitLabOrigin(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name          string
+		config        GitLabConfig
+		wantOrigin    string
+		wantAvailable bool
+	}{
+		{name: "default origin without token", config: GitLabConfig{}, wantOrigin: "https://gitlab.com"},
+		{name: "default origin with token", config: GitLabConfig{Token: "t"}, wantOrigin: "https://gitlab.com", wantAvailable: true},
+		{name: "custom origin with port", config: GitLabConfig{Token: "t", BaseURL: "https://git.example.com:8443"}, wantOrigin: "https://git.example.com:8443", wantAvailable: true},
+		{name: "custom origin is normalized", config: GitLabConfig{Token: "t", BaseURL: "  HTTPS://git.example.com/  "}, wantOrigin: "https://git.example.com", wantAvailable: true},
+		{name: "custom origin without token", config: GitLabConfig{BaseURL: "https://git.example.com"}, wantOrigin: "https://git.example.com"},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			statuses := mustNewRegistry(t, Config{GitLab: tt.config}).GetProviderStatus()
+			require.Len(t, statuses, 3)
+			for _, status := range statuses {
+				if status.Type != "gitlab" {
+					assert.Empty(t, status.Origin, "only GitLab reports an origin")
+					continue
+				}
+				assert.Equal(t, tt.wantOrigin, status.Origin)
+				assert.Equal(t, tt.wantAvailable, status.Available)
+				assert.NotContains(t, status.Origin, "t@", "the origin never carries credentials")
+			}
 		})
 	}
 }

@@ -44,6 +44,9 @@ type Registry struct {
 	github           *githubProvider
 	gitlab           *gitlabProvider
 	gitlabCustomHost string
+	// gitlabOrigin is the normalized GitLab base URL (default
+	// https://gitlab.com). GetProviderStatus reports it to clients.
+	gitlabOrigin string
 	// gitlabCustomPort is the effective port (explicit or scheme default) of
 	// the configured custom GitLab base URL. Empty when gitlab.com is used.
 	gitlabCustomPort string
@@ -90,6 +93,7 @@ func newRegistryWithLogger(cfg Config, logger *slog.Logger) (*Registry, error) {
 		r.azureDevOps = newAzureDevOpsProvider(cfg.AzureDevOps)
 	}
 
+	r.gitlabOrigin = cfg.GitLab.BaseURL
 	baseOrigin, _ := parseRepositoryOrigin(cfg.GitLab.BaseURL)
 	if baseOrigin.host != "gitlab.com" {
 		r.gitlabCustomHost = baseOrigin.host
@@ -528,11 +532,13 @@ func (r *Registry) ValidateBranch(ctx context.Context, repoURL string, branch st
 }
 
 // GetProviderStatus returns the availability status of all configured providers.
+// The GitLab entry also carries the configured GitLab origin, so that a client
+// can tell which repository URLs the GitLab provider accepts.
 func (r *Registry) GetProviderStatus() []ProviderStatus {
 	return []ProviderStatus{
 		{Type: "azure_devops", Available: r.azureDevOps != nil},
 		{Type: "github", Available: r.github != nil},
-		{Type: "gitlab", Available: r.gitlab != nil},
+		{Type: "gitlab", Available: r.gitlab != nil, Origin: r.gitlabOrigin},
 	}
 }
 

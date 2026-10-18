@@ -143,6 +143,11 @@ type Branch struct {
 type ProviderStatus struct {
 	Type      string `json:"type"`
 	Available bool   `json:"available"`
+	// Origin is the API origin of the provider (scheme, host and optional
+	// port). It is set only for GitLab, whose origin is configurable
+	// (GITLAB_BASE_URL), so that clients can attribute repository URLs the
+	// same way as the registry. It never contains credentials or a path.
+	Origin string `json:"origin,omitempty" example:"https://gitlab.com"`
 }
 
 // Config holds configuration for all Git providers.

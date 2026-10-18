@@ -24,9 +24,18 @@ describe('BranchSelector', () => {
     (gitService.providers as ReturnType<typeof vi.fn>).mockResolvedValue([
       { type: 'azure_devops', available: true },
       { type: 'github', available: true },
-      { type: 'gitlab', available: true },
+      { type: 'gitlab', available: true, origin: 'https://gitlab.com' },
     ]);
   });
+
+  /** Wait until the branch and provider status requests settled. */
+  const waitForRequests = async () => {
+    await waitFor(() => expect(gitService.branches).toHaveBeenCalled());
+    await waitFor(() => expect(gitService.providers).toHaveBeenCalledOnce());
+    await act(async () => {
+      await Promise.resolve();
+    });
+  };
 
   afterEach(() => {
     vi.clearAllMocks();
@@ -555,8 +564,7 @@ describe('BranchSelector', () => {
 
     render(<BranchSelector {...defaultProps} repoUrl={repoUrl} />);
 
-    await waitFor(() => expect(gitService.branches).toHaveBeenCalledOnce());
-    expect(gitService.providers).not.toHaveBeenCalled();
+    await waitForRequests();
     expect(screen.queryByRole('status')).not.toBeInTheDocument();
   });
 
@@ -570,25 +578,35 @@ describe('BranchSelector', () => {
 
     render(<BranchSelector {...defaultProps} repoUrl={repoUrl} />);
 
-    await waitFor(() => expect(gitService.branches).toHaveBeenCalledOnce());
-    expect(gitService.providers).not.toHaveBeenCalled();
+    await waitForRequests();
     expect(screen.queryByRole('status')).not.toBeInTheDocument();
   });
 
   it.each([
     'relative/repository',
+    // Not the GitLab origin of the providers response (gitlab.com).
+    'https://git.example.internal/organization/repository',
+    'git@gitlab.example.internal:group/repository.git',
+  ])('shows no provider status for an unknown host %s', async (repoUrl) => {
+    (gitService.branches as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+
+    render(<BranchSelector {...defaultProps} repoUrl={repoUrl} />);
+
+    // The statuses are loaded: a custom GitLab origin could serve the host.
+    await waitForRequests();
+    expect(screen.queryByRole('status')).not.toBeInTheDocument();
+  });
+
+  it.each([
     'not a URL',
     'git://github.com/organization/repository',
     'file:///srv/git/repository',
-    // A host that only the backend can attribute (a self-hosted GitLab).
-    'https://git.example.internal/organization/repository',
-    'git@gitlab.example.internal:group/repository.git',
     // A trailing dot is never a provider host.
     'https://github.com./organization/repository',
     'https://gitlab.com./organization/repository',
     'git@github.com.:organization/repository.git',
   ])(
-    'does not request provider status for an unknown host or invalid URL %s',
+    'does not request provider status for an invalid URL or host %s',
     async (repoUrl) => {
       (gitService.branches as ReturnType<typeof vi.fn>).mockResolvedValue([]);
 
@@ -683,14 +701,14 @@ describe('BranchSelector', () => {
       .mockResolvedValueOnce([{ type: 'azure_devops', available: true }]);
 
     const first = render(<BranchSelector {...defaultProps} />);
-    expect(await screen.findByRole('status')).toHaveTextContent(
+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent(
       'Could not check Azure DevOps. Enter a branch name manually.',
-    );
+    ));
     first.unmount();
 
     render(<BranchSelector {...defaultProps} />);
 
-    expect(await screen.findByRole('status')).toHaveTextContent('Azure DevOps available.');
+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Azure DevOps available.'));
     expect(gitService.providers).toHaveBeenCalledTimes(2);
   });
 
@@ -706,9 +724,9 @@ describe('BranchSelector', () => {
 
     render(<BranchSelector {...defaultProps} value="" onChange={onChange} />);
 
-    expect(await screen.findByRole('status')).toHaveTextContent(
+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent(
       'Azure DevOps unavailable. Enter a branch name manually.',
-    );
+    ));
     expect(gitService.branches).toHaveBeenCalledWith(
       defaultProps.repoUrl,
       { signal: expect.any(AbortSignal) },
@@ -729,15 +747,205 @@ describe('BranchSelector', () => {
 
     render(<BranchSelector {...defaultProps} value="" onChange={onChange} />);
 
-    expect(await screen.findByRole('status')).toHaveTextContent(
+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent(
       'Could not check Azure DevOps. Enter a branch name manually.',
-    );
+    ));
     expect(screen.queryByText(/token and repository details/i)).not.toBeInTheDocument();
 
     await user.type(screen.getByRole('combobox'), 'fallback-branch');
     await user.tab();
     expect(onChange).toHaveBeenCalledOnce();
     expect(onChange).toHaveBeenLastCalledWith('fallback-branch');
+  });
+
+  describe('with a custom GitLab origin', () => {
+    const customStatuses = (available: boolean) => [
+      { type: 'azure_devops', available: true },
+      { type: 'github', available: true },
+      { type: 'gitlab', available, origin: 'https://git.example.com:8443' },
+    ];
+
+    it.each([
+      'https://git.example.com:8443/group/repository',
+      'git@git.example.com:group/repository.git',
+      'ssh://git@GIT.example.com:2222/group/repository.git',
+    ])('announces GitLab for %s on the origin', async (repoUrl) => {
+      (gitService.branches as ReturnType<typeof vi.fn>).mockResolvedValue(['main']);
+      (gitService.providers as ReturnType<typeof vi.fn>).mockResolvedValue(customStatuses(true));
+
+      render(<BranchSelector {...defaultProps} repoUrl={repoUrl} />);
+
+      await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('GitLab available.'));
+    });
+
+    it.each([
+      'https://gitlab.com/group/repository',
+      'git@gitlab.com:group/repository.git',
+      // Same host, another port.
+      'https://git.example.com/group/repository',
+    ])('shows no GitLab status for %s off the origin', async (repoUrl) => {
+      (gitService.branches as ReturnType<typeof vi.fn>).mockResolvedValue(['main']);
+      (gitService.providers as ReturnType<typeof vi.fn>).mockResolvedValue(customStatuses(true));
+
+      render(<BranchSelector {...defaultProps} repoUrl={repoUrl} />);
+
+      await waitForRequests();
+      expect(screen.queryByRole('status')).not.toBeInTheDocument();
+      expect(screen.queryByText(/GitLab/)).not.toBeInTheDocument();
+    });
+
+    it('shows no GitLab status for gitlab.com while the statuses load', async () => {
+      let resolveProviderRequest!: (statuses: { type: string; available: boolean; origin?: string }[]) => void;
+      (gitService.branches as ReturnType<typeof vi.fn>).mockResolvedValue(['main']);
+      (gitService.providers as ReturnType<typeof vi.fn>).mockReturnValue(
+        new Promise((resolve) => {
+          resolveProviderRequest = resolve;
+        }),
+      );
+
+      render(
+        <BranchSelector
+          {...defaultProps}
+          repoUrl={['https://github.com/org/a', 'https://gitlab.com/group/b']}
+        />,
+      );
+
+      // GitHub does not depend on the origin; GitLab waits for it.
+      expect(screen.getByRole('status')).toHaveTextContent('Checking GitHub...');
+      expect(screen.getByRole('status')).not.toHaveTextContent('GitLab');
+
+      await act(async () => {
+        resolveProviderRequest(customStatuses(true));
+      });
+      expect(screen.getByRole('status')).toHaveTextContent('GitHub available.');
+      expect(screen.getByRole('status')).not.toHaveTextContent('GitLab');
+    });
+
+    it('announces an unavailable GitLab for a URL on the origin', async () => {
+      (gitService.branches as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+      (gitService.providers as ReturnType<typeof vi.fn>).mockResolvedValue(customStatuses(false));
+
+      render(<BranchSelector {...defaultProps} repoUrl="https://git.example.com:8443/group/repository" />);
+
+      await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent(
+        'GitLab unavailable. Enter a branch name manually.',
+      ));
+    });
+
+    it('falls back to the default GitLab rule when the statuses do not load', async () => {
+      (gitService.branches as ReturnType<typeof vi.fn>).mockResolvedValue(['main']);
+      (gitService.providers as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('down'));
+
+      const { unmount } = render(<BranchSelector {...defaultProps} repoUrl="https://gitlab.com/group/repository" />);
+      await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent(
+        'Could not check GitLab. Enter a branch name manually.',
+      ));
+      unmount();
+
+      render(<BranchSelector {...defaultProps} repoUrl="https://git.example.com:8443/group/repository" />);
+      await waitFor(() => expect(gitService.providers).toHaveBeenCalledTimes(2));
+      await act(async () => {
+        await Promise.resolve();
+      });
+      expect(screen.queryByRole('status')).not.toBeInTheDocument();
+    });
+
+    it('applies the provider response to the current URL list after a change', async () => {
+      let resolveProviderRequest!: (statuses: { type: string; available: boolean; origin?: string }[]) => void;
+      (gitService.branches as ReturnType<typeof vi.fn>).mockResolvedValue(['main']);
+      (gitService.providers as ReturnType<typeof vi.fn>).mockReturnValue(
+        new Promise((resolve) => {
+          resolveProviderRequest = resolve;
+        }),
+      );
+
+      const { rerender } = render(
+        <BranchSelector {...defaultProps} repoUrl="https://gitlab.com/group/old" />,
+      );
+      rerender(<BranchSelector {...defaultProps} repoUrl="https://git.example.com:8443/group/new" />);
+      expect(screen.queryByRole('status')).not.toBeInTheDocument();
+
+      // One shared request; its result is read with the origin for the new URL.
+      await act(async () => {
+        resolveProviderRequest(customStatuses(false));
+      });
+      expect(gitService.providers).toHaveBeenCalledOnce();
+      expect(screen.getByRole('status')).toHaveTextContent('GitLab unavailable.');
+    });
+  });
+
+  describe('detectProvider with a GitLab origin', () => {
+    const custom = 'https://git.example.com:8443';
+
+    it('uses gitlab.com for the default origin', () => {
+      expect(detectProvider('https://gitlab.com/group/repo', 'https://gitlab.com')).toBe('gitlab');
+      expect(detectProvider('git@gitlab.com:group/repo.git', 'https://gitlab.com')).toBe('gitlab');
+      expect(detectProvider('https://git.example.com/group/repo', 'https://gitlab.com')).toBeNull();
+      // gitlab.com with a port is still the default rule (as on the backend).
+      expect(detectProvider('https://gitlab.com/group/repo', 'https://gitlab.com:8443')).toBe('gitlab');
+    });
+
+    it('matches the host and effective port of a custom origin', () => {
+      expect(detectProvider('https://git.example.com:8443/group/repo', custom)).toBe('gitlab');
+      expect(detectProvider('https://GIT.EXAMPLE.COM:8443/group/repo', custom)).toBe('gitlab');
+      expect(detectProvider('http://git.example.com:8443/group/repo', custom)).toBe('gitlab');
+      expect(detectProvider('https://git.example.com:08443/group/repo', custom)).toBe('gitlab');
+      // Port mismatch, or no port (443).
+      expect(detectProvider('https://git.example.com:9443/group/repo', custom)).toBeNull();
+      expect(detectProvider('https://git.example.com/group/repo', custom)).toBeNull();
+      // Another host.
+      expect(detectProvider('https://other.example.com:8443/group/repo', custom)).toBeNull();
+      expect(detectProvider('https://sub.git.example.com:8443/group/repo', custom)).toBeNull();
+    });
+
+    it('compares the effective port, not the scheme', () => {
+      const https = 'https://git.example.com';
+      expect(detectProvider('https://git.example.com/group/repo', https)).toBe('gitlab');
+      expect(detectProvider('https://git.example.com:443/group/repo', https)).toBe('gitlab');
+      expect(detectProvider('https://git.example.com:0443/group/repo', https)).toBe('gitlab');
+      expect(detectProvider('http://git.example.com:443/group/repo', https)).toBe('gitlab');
+      expect(detectProvider('http://git.example.com/group/repo', https)).toBeNull();
+      expect(detectProvider('https://git.example.com:0/group/repo', https)).toBeNull();
+
+      const http = 'http://git.example.com';
+      expect(detectProvider('http://git.example.com/group/repo', http)).toBe('gitlab');
+      expect(detectProvider('https://git.example.com:80/group/repo', http)).toBe('gitlab');
+      expect(detectProvider('https://git.example.com/group/repo', http)).toBeNull();
+      expect(detectProvider('https://git.example.com/group/repo', 'https://git.example.com:443')).toBe('gitlab');
+    });
+
+    it('matches ssh and scp URLs on the custom host only', () => {
+      expect(detectProvider('git@git.example.com:group/repo.git', custom)).toBe('gitlab');
+      expect(detectProvider('git@GIT.example.com:group/repo.git', custom)).toBe('gitlab');
+      expect(detectProvider('ssh://git@git.example.com/group/repo.git', custom)).toBe('gitlab');
+      expect(detectProvider('ssh://git@git.example.com:2222/group/repo.git', custom)).toBe('gitlab');
+      expect(detectProvider('git@other.example.com:group/repo.git', custom)).toBeNull();
+    });
+
+    it('does not treat gitlab.com as GitLab with a custom origin', () => {
+      expect(detectProvider('https://gitlab.com/group/repo', custom)).toBeNull();
+      expect(detectProvider('git@gitlab.com:group/repo.git', custom)).toBeNull();
+      expect(detectProvider('ssh://git@gitlab.com/group/repo.git', custom)).toBeNull();
+    });
+
+    it('keeps GitHub and Azure DevOps with a custom origin', () => {
+      expect(detectProvider('https://github.com/org/repo', custom)).toBe('github');
+      expect(detectProvider('https://dev.azure.com/org/project/_git/repo', custom)).toBe('azure_devops');
+    });
+
+    it('never matches a trailing-dot host', () => {
+      expect(detectProvider('https://git.example.com.:8443/group/repo', custom)).toBeNull();
+      expect(detectProvider('git@git.example.com.:group/repo.git', custom)).toBeNull();
+      expect(detectProvider('https://gitlab.com./group/repo', 'https://gitlab.com')).toBeNull();
+    });
+
+    it.each([undefined, '', 'not a url', 'ftp://git.example.com', 'https://', 'https://git.example.com.'])(
+      'falls back to the default rule for the missing or malformed origin %s',
+      (origin) => {
+        expect(detectProvider('https://gitlab.com/group/repo', origin)).toBe('gitlab');
+        expect(detectProvider('https://git.example.com/group/repo', origin)).toBeNull();
+      },
+    );
   });
 
   it('detects the provider by exact hostname', () => {

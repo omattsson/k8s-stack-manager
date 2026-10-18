@@ -10297,6 +10297,11 @@ const docTemplate = `{
                 "available": {
                     "type": "boolean"
                 },
+                "origin": {
+                    "description": "Origin is the API origin of the provider (scheme, host and optional\nport). It is set only for GitLab, whose origin is configurable\n(GITLAB_BASE_URL), so that clients can attribute repository URLs the\nsame way as the registry. It never contains credentials or a path.",
+                    "type": "string",
+                    "example": "https://gitlab.com"
+                },
                 "type": {
                     "type": "string"
                 }
